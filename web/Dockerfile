@@ -19,9 +19,11 @@ FROM base AS migrator
 ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
+COPY prisma.config.ts ./
 COPY prisma ./prisma
 COPY scripts ./scripts
 COPY src/lib/jornada ./src/lib/jornada
+RUN npm run prisma:generate
 CMD ["sh", "-c", "npm run db:deploy"]
 
 FROM base AS runner

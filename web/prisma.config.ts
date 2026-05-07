@@ -2,7 +2,7 @@ import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
 process.env.DATABASE_URL ??=
-  "postgresql://postgres:postgres@localhost:5432/projeto?schema=public";
+  "postgresql://postgres:postgres@localhost:5432/perfectutilitares?schema=public";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
