@@ -83,6 +83,7 @@ track(
 
 if (!values.get("POSTGRES_USER")) values.set("POSTGRES_USER", "postgres");
 if (!values.get("POSTGRES_DB")) values.set("POSTGRES_DB", "perfectutilitares");
+if (!values.get("POSTGRES_PORT")) values.set("POSTGRES_PORT", "5433");
 if (!values.get("APP_PORT")) values.set("APP_PORT", "3002");
 track(
   "AUTH_URL",
@@ -106,9 +107,10 @@ if (!currentDatabaseUrl || currentDatabaseUrl.includes("postgres:postgres@")) {
   const user = encodeURIComponent(values.get("POSTGRES_USER"));
   const password = encodeURIComponent(values.get("POSTGRES_PASSWORD"));
   const db = encodeURIComponent(values.get("POSTGRES_DB"));
+  const port = encodeURIComponent(values.get("POSTGRES_PORT"));
   values.set(
     "DATABASE_URL",
-    `postgresql://${user}:${password}@localhost:5432/${db}?schema=public`,
+    `postgresql://${user}:${password}@localhost:${port}/${db}?schema=public`,
   );
   changed.push("DATABASE_URL");
 }
@@ -117,6 +119,7 @@ const orderedKeys = [
   "POSTGRES_USER",
   "POSTGRES_PASSWORD",
   "POSTGRES_DB",
+  "POSTGRES_PORT",
   "DATABASE_URL",
   "AUTH_SECRET",
   "APP_PORT",
