@@ -49,6 +49,9 @@ releases/
 Output/
 **/Output/
 
+# Runtime data kept on the server, outside Docker volumes
+storage/
+
 # Legacy reference projects kept locally, not published with the web product
 EditorFotos3x4/
 ValidadorJornada/

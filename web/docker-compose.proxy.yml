@@ -1,6 +1,7 @@
 services:
   app:
     networks:
+      default:
       npm-proxy:
         aliases:
           - perfectutilitares

@@ -4,8 +4,11 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Projeto Web",
+  title: "PerfectUtilitares",
   description: "Sistema web para jornadas e fotos 3x4",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({

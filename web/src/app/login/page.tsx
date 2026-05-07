@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { loginAction } from "./actions";
 
 export default async function LoginPage({
@@ -20,10 +19,7 @@ export default async function LoginPage({
       : "E-mail ou senha inválidos.";
 
   return (
-    <main className="relative grid min-h-dvh place-items-center bg-neutral-100 px-4 py-8">
-      <div className="absolute right-4 top-4">
-        <ThemeToggle />
-      </div>
+    <main className="grid min-h-dvh place-items-center bg-neutral-100 px-4 py-8">
       <form
         action={loginAction}
         className="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
@@ -44,6 +40,7 @@ export default async function LoginPage({
           <input
             name="email"
             type="email"
+            autoComplete="username"
             required
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
             placeholder="seuemail@empresa.com.br"
@@ -55,6 +52,7 @@ export default async function LoginPage({
           <input
             name="password"
             type="password"
+            autoComplete="current-password"
             required
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
             placeholder="Digite sua senha"

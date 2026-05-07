@@ -47,3 +47,13 @@ No Proxy Host, aponte para:
 - Scheme: `http`
 
 O arquivo `docker-compose.proxy.yml` conecta apenas o app na rede externa do NPM. O banco permanece privado na rede interna do projeto.
+
+## Dados persistentes do banco
+
+O PostgreSQL usa uma pasta do servidor por padrao:
+
+```env
+POSTGRES_DATA_DIR="../storage/postgres"
+```
+
+Como o compose roda dentro de `web`, essa pasta fica em `/home/ubuntu/PerfectUtilitares/storage/postgres`. Assim, remover containers com `docker rm` nao apaga o banco.
