@@ -76,13 +76,13 @@ track(
 );
 track(
   "ADMIN_PASSWORD",
-  setIfMissingOrDefault(values, "ADMIN_PASSWORD", ["admin123"], () =>
+  setIfMissingOrDefault(values, "ADMIN_PASSWORD", ["admin123", "troque-esta-senha"], () =>
     generateSecret(18),
   ),
 );
 
 if (!values.get("POSTGRES_USER")) values.set("POSTGRES_USER", "postgres");
-if (!values.get("POSTGRES_DB")) values.set("POSTGRES_DB", "projeto");
+if (!values.get("POSTGRES_DB")) values.set("POSTGRES_DB", "perfectutilitares");
 if (!values.get("APP_PORT")) values.set("APP_PORT", "3002");
 track(
   "AUTH_URL",

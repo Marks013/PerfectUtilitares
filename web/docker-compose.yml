@@ -5,13 +5,13 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?execute npm run setup:env antes do docker compose}
-      POSTGRES_DB: ${POSTGRES_DB:-projeto}
+      POSTGRES_DB: ${POSTGRES_DB:-perfectutilitares}
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-projeto}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-perfectutilitares}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,7 +29,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?execute npm run setup:env antes do docker compose}
       DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Principal}
       DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-principal}
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-projeto}?schema=public"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-perfectutilitares}?schema=public"
 
   app:
     build:
@@ -50,7 +50,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?execute npm run setup:env antes do docker compose}
       DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Principal}
       DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-principal}
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-projeto}?schema=public"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-perfectutilitares}?schema=public"
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-Sistema Web <onboarding@resend.dev>}"
