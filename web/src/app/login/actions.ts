@@ -4,10 +4,11 @@ import { AuthError } from "next-auth";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { signIn, signOut } from "@/auth";
+import { normalizeEmail } from "@/lib/auth/email";
 import { checkRateLimit, getClientIp } from "@/lib/api/rate-limit";
 
 export async function loginAction(formData: FormData) {
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const email = normalizeEmail(formData.get("email"));
   const password = String(formData.get("password") ?? "");
   const headerStore = await headers();
   const clientIp = getClientIp(headerStore);

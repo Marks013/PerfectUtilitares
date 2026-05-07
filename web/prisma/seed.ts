@@ -7,9 +7,13 @@ const prisma = new PrismaClient();
 
 async function main() {
   const adminEmail =
-    process.env.ADMIN_EMAIL ??
-    process.env.SEED_ADMIN_EMAIL ??
-    "admin@local.test";
+    (
+      process.env.ADMIN_EMAIL ??
+      process.env.SEED_ADMIN_EMAIL ??
+      "admin@local.test"
+    )
+      .trim()
+      .toLowerCase();
   const adminPassword =
     process.env.ADMIN_PASSWORD ??
     process.env.SEED_ADMIN_PASSWORD ??

@@ -3,6 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { normalizeEmail } from "@/lib/auth/email";
 
 export type AppRole = "ADMIN" | "OPERATOR";
 
@@ -74,7 +75,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
 
         const user = await prisma.user.findUnique({
-          where: { email: parsed.data.email.toLowerCase() },
+          where: { email: normalizeEmail(parsed.data.email) },
         });
 
         if (!user || !user.isActive) {
