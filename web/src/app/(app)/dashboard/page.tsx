@@ -1,128 +1,123 @@
-import { DashboardChart } from "@/components/dashboard-chart";
-import { StatCard } from "@/components/stat-card";
-import { prisma } from "@/lib/prisma";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clock3,
+  ScanFace,
+  Scissors,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
+import Link from "next/link";
+import { auth } from "@/auth";
 
-function formatDay(date: Date) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-  }).format(date);
-}
+const moduleCards = [
+  {
+    href: "/fotos",
+    accessKey: "canAccessFotos",
+    eyebrow: "Editor de Fotos",
+    title: "Fotos 3x4 prontas para usar",
+    description:
+      "Corte, ajuste, padronize e exporte retratos com uma area de trabalho mais direta.",
+    cta: "Abrir editor",
+    tone: "photo",
+    icon: ScanFace,
+    details: [
+      { icon: Scissors, label: "Recorte guiado" },
+      { icon: Sparkles, label: "Ajustes visuais" },
+    ],
+  },
+  {
+    href: "/jornada/validar",
+    accessKey: "canAccessJornada",
+    eyebrow: "Validador de jornada",
+    title: "Valide horarios sem rodeio",
+    description:
+      "Cole a jornada, confira regras e receba o retorno operacional no modulo certo.",
+    cta: "Validar jornada",
+    tone: "journey",
+    icon: Clock3,
+    details: [
+      { icon: CheckCircle2, label: "Resposta imediata" },
+      { icon: ShieldCheck, label: "Regras ativas" },
+    ],
+  },
+] as const;
 
 export default async function DashboardPage() {
-  const inicioHoje = new Date();
-  inicioHoje.setHours(0, 0, 0, 0);
+  const session = await auth();
+  const canUseAllModules = session?.user.role === "ADMIN";
 
-  const [
-    validacoes,
-    validas,
-    validacoesHoje,
-    regras,
-    codigos,
-    fotosProcessadas,
-    recentes,
-  ] = await Promise.all([
-    prisma.jornadaValidation.count(),
-    prisma.jornadaValidation.count({ where: { valido: true } }),
-    prisma.jornadaValidation.count({ where: { createdAt: { gte: inicioHoje } } }),
-    prisma.jornadaRule.count({ where: { active: true } }),
-    prisma.codigoJornada.count(),
-    prisma.auditLog.count({
-      where: {
-        action: {
-          in: ["PHOTO_3X4_PROCESSED", "PHOTO_3X4_BATCH_PROCESSED"],
-        },
-      },
-    }),
-    prisma.jornadaValidation.findMany({
-      include: { user: { select: { name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 30,
-    }),
-  ]);
-
-  const invalidas = validacoes - validas;
-  const taxaValidasValor = validacoes
-    ? Math.round((validas / validacoes) * 100)
-    : 0;
-  const taxaValidas = `${taxaValidasValor}%`;
-  const buckets = new Map<string, { name: string; validas: number; invalidas: number }>();
-
-  recentes.forEach((item) => {
-    const key = formatDay(item.createdAt);
-    const current = buckets.get(key) ?? { name: key, validas: 0, invalidas: 0 };
-    if (item.valido) current.validas += 1;
-    else current.invalidas += 1;
-    buckets.set(key, current);
+  const visibleCards = moduleCards.filter((card) => {
+    if (canUseAllModules) return true;
+    return Boolean(session?.user[card.accessKey]);
   });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-neutral-950">Dashboard</h1>
-        <p className="mt-1 text-sm text-neutral-600">
-          Visão operacional das validações manuais.
+    <div className="dashboard-home">
+      <section className="dashboard-hero">
+        <div>
+          <p className="dashboard-kicker">Central de utilitarios</p>
+          <h1>Escolha o modulo e va direto ao trabalho.</h1>
+        </div>
+        <p>
+          A antiga visao operacional saiu de cena. Agora a entrada principal
+          prioriza as duas tarefas que realmente importam no dia a dia.
         </p>
-      </div>
+      </section>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Validações" value={validacoes} />
-        <StatCard label="Válidas" value={validas} />
-        <StatCard label="Inválidas" value={invalidas} />
-        <StatCard
-          label="Taxa válida"
-          value={taxaValidas}
-          progress={taxaValidasValor}
-          tone={taxaValidasValor >= 70 ? "green" : "red"}
-        />
-      </div>
+      <section className="module-grid" aria-label="Modulos principais">
+        {visibleCards.map((card) => {
+          const Icon = card.icon;
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Validações hoje" value={validacoesHoje} />
-        <StatCard label="Códigos" value={codigos} />
-        <StatCard label="Fotos processadas" value={fotosProcessadas} />
-      </div>
+          return (
+            <Link
+              key={card.href}
+              href={card.href}
+              className="module-card"
+              data-tone={card.tone}
+            >
+              <span className="module-card__shine" aria-hidden="true" />
+              <span className="module-card__topline">
+                <span className="module-card__icon">
+                  <Icon className="size-7" aria-hidden="true" />
+                </span>
+                <span className="module-card__eyebrow">{card.eyebrow}</span>
+              </span>
+              <span className="module-card__content">
+                <span className="module-card__title">{card.title}</span>
+                <span className="module-card__description">
+                  {card.description}
+                </span>
+              </span>
+              <span className="module-card__details">
+                {card.details.map((detail) => {
+                  const DetailIcon = detail.icon;
+                  return (
+                    <span key={detail.label}>
+                      <DetailIcon className="size-4" aria-hidden="true" />
+                      {detail.label}
+                    </span>
+                  );
+                })}
+              </span>
+              <span className="module-card__cta">
+                {card.cta}
+                <ArrowRight className="size-5" aria-hidden="true" />
+              </span>
+            </Link>
+          );
+        })}
+      </section>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
-        <DashboardChart data={[...buckets.values()].reverse()} />
-        <StatCard label="Regras ativas" value={regras} />
-      </div>
-
-      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-neutral-50 text-neutral-600">
-            <tr>
-              <th className="px-4 py-3">Data</th>
-              <th className="px-4 py-3">Horários</th>
-              <th className="px-4 py-3">Resultado</th>
-              <th className="px-4 py-3">Usuário</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recentes.slice(0, 8).map((item) => (
-              <tr key={item.id} className="border-t border-neutral-100">
-                <td className="px-4 py-3">
-                  {new Intl.DateTimeFormat("pt-BR", {
-                    dateStyle: "short",
-                    timeStyle: "short",
-                  }).format(item.createdAt)}
-                </td>
-                <td className="px-4 py-3">{item.horariosNormalizado}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={item.valido ? "text-green-700" : "text-red-700"}
-                  >
-                    {item.mensagem}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  {item.user?.name ?? item.user?.email ?? "-"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {visibleCards.length === 0 ? (
+        <section className="empty-access-panel">
+          <h2>Nenhum modulo liberado ainda</h2>
+          <p>
+            Sua conta esta ativa, mas ainda nao possui acesso ao Editor de
+            Fotos ou ao Validador de jornada.
+          </p>
+        </section>
+      ) : null}
     </div>
   );
 }

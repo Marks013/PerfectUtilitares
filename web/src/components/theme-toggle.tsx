@@ -49,7 +49,7 @@ export function ThemeToggle() {
       aria-label={isDark ? "Ativar tema claro" : "Ativar tema escuro"}
       title={isDark ? "Tema claro" : "Tema escuro"}
       onClick={toggleTheme}
-      className="inline-flex size-10 items-center justify-center rounded-md border border-neutral-300 text-neutral-700 hover:bg-neutral-50"
+      className="app-icon-button"
     >
       {isDark ? (
         <Sun className="size-4" aria-hidden="true" />

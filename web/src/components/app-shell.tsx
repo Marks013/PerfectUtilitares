@@ -1,7 +1,8 @@
+import { LogOut } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { logoutAction } from "@/app/login/actions";
+import { auth } from "@/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const jornadaNavItems = [
@@ -12,7 +13,7 @@ const jornadaNavItems = [
 ];
 
 const baseNavItems = [
-  { href: "/dashboard", label: "Dashboard" },
+  { href: "/dashboard", label: "Início" },
   { href: "/conta", label: "Conta" },
 ];
 
@@ -37,35 +38,49 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
       : []),
   ];
 
+  const userLabel = session.user.name ?? session.user.email ?? "Usuário";
+
   return (
-    <div className="min-h-dvh bg-neutral-100">
-      <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <Link href="/dashboard" className="text-base font-semibold text-neutral-950">
-            Sistema Web
+    <div className="app-frame min-h-dvh">
+      <div className="app-ambient" aria-hidden="true" />
+      <header className="sticky top-0 z-30 px-3 pt-3 sm:px-5">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 rounded-[1.75rem] border border-white/10 bg-[color:var(--app-shell)] px-4 py-3 shadow-[var(--app-shell-shadow)] backdrop-blur-xl sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+          <Link href="/dashboard" className="group flex items-center gap-3">
+            <span className="grid size-11 place-items-center rounded-2xl bg-[linear-gradient(135deg,var(--app-coral),var(--app-teal))] text-base font-black text-white shadow-[0_18px_40px_rgba(14,165,157,0.28)] transition-transform duration-300 group-hover:rotate-3 group-hover:scale-105">
+              PU
+            </span>
+            <span className="min-w-0">
+              <span className="block text-base font-black tracking-normal text-[color:var(--app-fg)]">
+                PerfectUtilitares
+              </span>
+              <span className="block max-w-[13rem] truncate text-xs font-medium text-[color:var(--app-muted)]">
+                {userLabel}
+              </span>
+            </span>
           </Link>
-          <nav className="flex max-w-full items-center gap-1 overflow-x-auto pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0">
+
+          <nav className="flex max-w-full items-center gap-2 overflow-x-auto pb-1 lg:flex-wrap lg:justify-center lg:overflow-visible lg:pb-0">
             {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="rounded-md px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
-              >
+              <Link key={item.href} href={item.href} className="app-nav-link">
                 {item.label}
               </Link>
             ))}
           </nav>
+
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <form action={logoutAction}>
-              <button className="rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50">
-                Sair
+              <button className="app-icon-button app-logout-button" title="Sair">
+                <LogOut className="size-4" aria-hidden="true" />
+                <span className="sr-only">Sair</span>
               </button>
             </form>
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">{children}</main>
+      <main className="relative z-10 mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:py-10">
+        {children}
+      </main>
     </div>
   );
 }
