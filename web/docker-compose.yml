@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?execute npm run setup:env antes do docker compose}
+      POSTGRES_DB: ${POSTGRES_DB:-projeto}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-projeto}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local.test}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?execute npm run setup:env antes do docker compose}
+      DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Principal}
+      DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-principal}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-projeto}?schema=public"
+
+  app:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:?execute npm run setup:env antes do docker compose}
+      AUTH_TRUST_HOST: "true"
+      AUTH_URL: ${AUTH_URL:-http://localhost:3002}
+      APP_URL: ${APP_URL:-http://localhost:3002}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local.test}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?execute npm run setup:env antes do docker compose}
+      DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Principal}
+      DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-principal}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-projeto}?schema=public"
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-Sistema Web <onboarding@resend.dev>}"
+      SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
+      SENTRY_ORG: ${SENTRY_ORG:-}
+      SENTRY_PROJECT: ${SENTRY_PROJECT:-}
+      SENTRY_PROFILES_SAMPLE_RATE: ${SENTRY_PROFILES_SAMPLE_RATE:-0.1}
+      SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE: ${SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE:-1.0}
+      SENTRY_REPLAYS_SESSION_SAMPLE_RATE: ${SENTRY_REPLAYS_SESSION_SAMPLE_RATE:-0.0}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+    ports:
+      - "${APP_PORT:-3002}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres-data:

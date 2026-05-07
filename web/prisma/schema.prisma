@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CodigoOrigem {
+  XLSX
+  CSV
+  JSON
+  MANUAL
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+model CodigoJornada {
+  id                  String       @id @default(cuid())
+  codigo              String
+  horariosOriginal    String
+  horariosNormalizado String       @unique
+  origem              CodigoOrigem @default(MANUAL)
+  linha               Int?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+}
+
+model User {
+  id               String              @id @default(cuid())
+  tenantId         String?
+  tenant           Tenant?             @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  email            String              @unique
+  name             String
+  passwordHash     String
+  role             UserRole            @default(OPERATOR)
+  isActive         Boolean             @default(true)
+  canAccessJornada Boolean             @default(true)
+  canAccessFotos   Boolean             @default(true)
+  validations      JornadaValidation[]
+  auditLogs        AuditLog[]
+  invitations      UserInvitation[]    @relation("InvitedBy")
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([tenantId])
+}
+
+model Tenant {
+  id          String           @id @default(cuid())
+  name        String
+  slug        String           @unique
+  users       User[]
+  invitations UserInvitation[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model UserInvitation {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedById      String?
+  invitedBy        User?     @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  email            String
+  name             String
+  role             UserRole  @default(OPERATOR)
+  canAccessJornada Boolean   @default(true)
+  canAccessFotos   Boolean   @default(true)
+  tokenHash        String    @unique
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([email])
+  @@index([expiresAt])
+}
+
+model JornadaRule {
+  id             String   @id @default(cuid())
+  nome           String   @unique
+  duracaoMinutos Int
+  horasSemanais  Int
+  horasMensais   Int
+  intervaloMin   Int
+  intervaloMax   Int
+  diasValidos    String[]
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model JornadaValidation {
+  id                  String   @id @default(cuid())
+  userId              String?
+  user                User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  horariosOriginal    String
+  horariosNormalizado String
+  valido              Boolean
+  mensagem            String
+  duracaoCalculada    String?
+  tipoDia             String
+  codigo              String?
+  horasSemanais       Int?
+  horasMensais        Int?
+  intervalo           String?
+  createdAt           DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([valido])
+  @@index([userId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
+}

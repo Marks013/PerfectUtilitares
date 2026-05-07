@@ -1,0 +1,3 @@
+ALTER TABLE "User"
+ADD COLUMN "canAccessJornada" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN "canAccessFotos" BOOLEAN NOT NULL DEFAULT true;

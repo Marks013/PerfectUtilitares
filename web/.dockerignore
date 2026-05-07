@@ -1,0 +1,16 @@
+node_modules
+.next
+.turbo
+tsconfig.tsbuildinfo
+.env
+.env.*
+!.env.example
+npm-debug.log*
+coverage
+.cache
+.vercel
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+README.md
