@@ -31,3 +31,19 @@ Crie um Proxy Host apontando para:
 - SSL: emitir certificado Let's Encrypt para o dominio
 
 O container continua usando `PORT=3000` internamente; nao altere isso no Compose.
+
+## Nginx Proxy Manager em Docker
+
+Se o Nginx Proxy Manager tambem estiver em Docker, suba o projeto com a rede de proxy:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d --build
+```
+
+No Proxy Host, aponte para:
+
+- Forward Hostname/IP: `perfectutilitares`
+- Forward Port: `3000`
+- Scheme: `http`
+
+O arquivo `docker-compose.proxy.yml` conecta apenas o app na rede externa do NPM. O banco permanece privado na rede interna do projeto.

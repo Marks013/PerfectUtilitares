@@ -1,0 +1,11 @@
+services:
+  app:
+    networks:
+      npm-proxy:
+        aliases:
+          - perfectutilitares
+
+networks:
+  npm-proxy:
+    external: true
+    name: ${NPM_NETWORK:-nginx-proxy-manager_default}
