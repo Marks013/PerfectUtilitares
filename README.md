@@ -1,6 +1,6 @@
-# JornadaFoto 360
+# PerfectUtilitares
 
-Sistema web para validação manual de jornadas e edição de fotos 3x4, recriado a partir dos projetos legados para uma operação moderna em navegador.
+Suite web para validação manual de jornadas e edição de fotos 3x4, recriada a partir dos projetos legados para uma operação moderna em navegador.
 
 ## Módulos
 
