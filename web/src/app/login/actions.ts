@@ -25,8 +25,9 @@ export async function loginAction(formData: FormData) {
     await signIn("credentials", {
       email,
       password,
-      redirectTo: "/dashboard",
+      redirect: false,
     });
+    redirect("/dashboard");
   } catch (error) {
     if (error instanceof AuthError) {
       redirect("/login?error=credentials");

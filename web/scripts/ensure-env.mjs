@@ -57,6 +57,26 @@ const baseContent = existsSync(envPath)
     : "";
 const values = parseEnv(baseContent);
 const changed = [];
+const processEnvKeys = [
+  "POSTGRES_USER",
+  "POSTGRES_PASSWORD",
+  "POSTGRES_DB",
+  "POSTGRES_DATA_DIR",
+  "AUTH_SECRET",
+  "APP_PORT",
+  "AUTH_URL",
+  "NEXTAUTH_URL",
+  "APP_URL",
+  "AUTH_TRUST_HOST",
+  "ADMIN_EMAIL",
+  "ADMIN_PASSWORD",
+  "DEFAULT_TENANT_NAME",
+  "DEFAULT_TENANT_SLUG",
+];
+
+for (const key of processEnvKeys) {
+  if (process.env[key]) values.set(key, process.env[key]);
+}
 
 function track(key, updated) {
   if (updated) changed.push(key);
@@ -96,6 +116,15 @@ track(
     values.get("AUTH_URL"),
   ),
 );
+track(
+  "NEXTAUTH_URL",
+  setIfMissingOrDefault(
+    values,
+    "NEXTAUTH_URL",
+    ["http://localhost:3000"],
+    () => values.get("AUTH_URL"),
+  ),
+);
 if (!values.get("AUTH_TRUST_HOST")) values.set("AUTH_TRUST_HOST", "true");
 if (!values.get("ADMIN_EMAIL")) values.set("ADMIN_EMAIL", "admin@local.test");
 if (!values.get("DEFAULT_TENANT_NAME")) values.set("DEFAULT_TENANT_NAME", "Principal");
@@ -121,6 +150,7 @@ const orderedKeys = [
   "AUTH_SECRET",
   "APP_PORT",
   "AUTH_URL",
+  "NEXTAUTH_URL",
   "APP_URL",
   "AUTH_TRUST_HOST",
   "ADMIN_EMAIL",

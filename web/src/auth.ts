@@ -105,6 +105,30 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
+    async redirect({ url, baseUrl }) {
+      const publicBaseUrl = process.env.APP_URL ?? process.env.AUTH_URL ?? baseUrl;
+
+      if (url.startsWith("/")) {
+        return `${publicBaseUrl}${url}`;
+      }
+
+      try {
+        const targetUrl = new URL(url);
+        const publicUrl = new URL(publicBaseUrl);
+
+        if (
+          targetUrl.origin === publicUrl.origin ||
+          targetUrl.origin === baseUrl ||
+          ["localhost", "127.0.0.1", "0.0.0.0"].includes(targetUrl.hostname)
+        ) {
+          return `${publicUrl.origin}${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
+        }
+      } catch {
+        return publicBaseUrl;
+      }
+
+      return publicBaseUrl;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;

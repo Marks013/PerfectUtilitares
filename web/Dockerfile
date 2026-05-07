@@ -10,6 +10,12 @@ COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
 FROM base AS builder
+ARG AUTH_URL=http://localhost:3002
+ARG NEXTAUTH_URL=http://localhost:3002
+ARG APP_URL=http://localhost:3002
+ENV AUTH_URL=$AUTH_URL
+ENV NEXTAUTH_URL=$NEXTAUTH_URL
+ENV APP_URL=$APP_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run prisma:generate
