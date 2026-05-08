@@ -473,10 +473,12 @@ table {
 .login-gateway {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(20rem, 26rem);
-  gap: clamp(1.5rem, 5vw, 4rem);
+  width: min(100%, 88rem);
+  margin-inline: auto;
+  grid-template-columns: minmax(0, 1.08fr) minmax(20rem, 24rem);
+  gap: clamp(2rem, 6vw, 5.5rem);
   align-items: center;
-  justify-content: center;
+  justify-content: stretch;
   overflow: hidden;
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--app-teal) 18%, transparent), transparent 34%),
@@ -503,7 +505,12 @@ table {
 
 .login-gateway__intro {
   max-width: 43rem;
+  justify-self: start;
   color: var(--app-fg);
+}
+
+.login-gateway__form {
+  justify-self: end;
 }
 
 .login-gateway__brand {
@@ -612,6 +619,12 @@ table {
   .login-gateway {
     grid-template-columns: 1fr;
     align-content: center;
+    justify-items: center;
+  }
+
+  .login-gateway__intro,
+  .login-gateway__form {
+    justify-self: center;
   }
 
   .login-gateway__intro h1 {

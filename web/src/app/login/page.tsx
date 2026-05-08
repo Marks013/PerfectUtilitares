@@ -71,7 +71,7 @@ export default async function LoginPage({
             autoComplete="username"
             required
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
-            placeholder="seuemail@empresa.com.br"
+            placeholder="Digite seu E-mail"
           />
         </label>
 

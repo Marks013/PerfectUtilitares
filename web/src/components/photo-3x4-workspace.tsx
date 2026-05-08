@@ -986,7 +986,6 @@ export function Photo3x4Workspace() {
               onChange={(event) =>
                 setSelectedEditorState({ contrast: Number(event.target.value) })
               }
-              disabled={!hasFiles}
               className="mt-2 w-full"
             />
             <span className="mt-1 block text-xs text-neutral-500">
@@ -1005,7 +1004,6 @@ export function Photo3x4Workspace() {
               onChange={(event) =>
                 setSelectedEditorState({ brightness: Number(event.target.value) })
               }
-              disabled={!hasFiles}
               className="mt-2 w-full"
             />
             <span className="mt-1 block text-xs text-neutral-500">

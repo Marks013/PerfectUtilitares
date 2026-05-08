@@ -1,15 +1,19 @@
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { CodigoJornadaManager } from "@/components/codigo-jornada-manager";
-import { requirePageModuleAccess } from "@/lib/modules/access";
 import { prisma } from "@/lib/prisma";
 
 export default async function CodigosPage() {
-  const [session, codigos] = await Promise.all([
-    requirePageModuleAccess("jornada"),
-    prisma.codigoJornada.findMany({
-      orderBy: { updatedAt: "desc" },
-      take: 200,
-    }),
-  ]);
+  const session = await auth();
+
+  if (session?.user.role !== "ADMIN") {
+    redirect("/dashboard");
+  }
+
+  const codigos = await prisma.codigoJornada.findMany({
+    orderBy: { updatedAt: "desc" },
+    take: 200,
+  });
 
   return (
     <div className="space-y-4">
@@ -21,7 +25,7 @@ export default async function CodigosPage() {
       </div>
 
       <CodigoJornadaManager
-        canManage={session?.user.role === "ADMIN"}
+        canManage
         initialCodigos={codigos.map((codigo) => ({
           ...codigo,
           createdAt: codigo.createdAt.toISOString(),

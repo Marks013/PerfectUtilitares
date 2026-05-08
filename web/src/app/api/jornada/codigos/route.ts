@@ -8,7 +8,6 @@ import {
   requireAdmin,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
 import { codigoJornadaSchema, zodIssueDetails } from "@/lib/codigos/schema";
@@ -17,7 +16,7 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 export async function GET() {
-  const guard = await requireModuleAccess("jornada");
+  const guard = await requireAdmin();
   if (!guard.ok) {
     return guard.response;
   }
