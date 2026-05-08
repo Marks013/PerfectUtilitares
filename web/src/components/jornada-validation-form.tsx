@@ -22,6 +22,10 @@ import { calcularDuracaoMinutos, parseHorario } from "@/lib/jornada/time";
 
 const AUTO_FORMAT_KEY = "jornada:auto-formatar";
 
+function getAutoFormatStorageKey(userId: string) {
+  return `${AUTO_FORMAT_KEY}:${userId}`;
+}
+
 const schema = z
   .object({
     horarios: z.string().min(1, "Digite os horarios"),
@@ -272,7 +276,7 @@ async function downloadPdf(ids: string[]) {
   URL.revokeObjectURL(url);
 }
 
-export function JornadaValidationForm() {
+export function JornadaValidationForm({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -295,17 +299,20 @@ export function JornadaValidationForm() {
     () => isPrincipalReadyForSaturday(horarios),
     [horarios],
   );
+  const autoFormatStorageKey = getAutoFormatStorageKey(userId);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(AUTO_FORMAT_KEY);
+    const stored =
+      window.localStorage.getItem(autoFormatStorageKey) ??
+      window.localStorage.getItem(AUTO_FORMAT_KEY);
     if (stored != null) {
       form.setValue("autoFormatar", stored === "true");
     }
-  }, [form]);
+  }, [autoFormatStorageKey, form]);
 
   useEffect(() => {
-    window.localStorage.setItem(AUTO_FORMAT_KEY, String(autoFormatar));
-  }, [autoFormatar]);
+    window.localStorage.setItem(autoFormatStorageKey, String(autoFormatar));
+  }, [autoFormatStorageKey, autoFormatar]);
 
   useEffect(() => {
     if (!canShowSabado) {

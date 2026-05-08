@@ -68,6 +68,10 @@ const DEFAULT_EDITOR_STATE: EditorState = {
   brightness: PHOTO_DEFAULTS.brightness,
 };
 
+function getPhotoSettingsStorageKey(userId: string) {
+  return `${PHOTO_SETTINGS_STORAGE_KEY}:${userId}`;
+}
+
 async function getErrorMessage(response: Response) {
   try {
     const data = (await response.json()) as ApiErrorBody;
@@ -136,7 +140,7 @@ function isSameFileName(a: string, b: string) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-export function Photo3x4Workspace() {
+export function Photo3x4Workspace({ userId }: { userId: string }) {
   const [files, setFiles] = useState<File[]>([]);
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -148,6 +152,7 @@ export function Photo3x4Workspace() {
   const [looseResults, setLooseResults] = useState<ResultFile[]>([]);
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
+  const photoSettingsStorageKey = getPhotoSettingsStorageKey(userId);
 
   const selectedFile = files[selectedIndex] ?? files[0] ?? null;
   const selectedKey = selectedFile ? getFileKey(selectedFile) : null;
@@ -196,7 +201,9 @@ export function Photo3x4Workspace() {
 
   useEffect(() => {
     try {
-      const rawSettings = window.localStorage.getItem(PHOTO_SETTINGS_STORAGE_KEY);
+      const rawSettings =
+        window.localStorage.getItem(photoSettingsStorageKey) ??
+        window.localStorage.getItem(PHOTO_SETTINGS_STORAGE_KEY);
       if (rawSettings) {
         const parsed = photoSettingsSchema.safeParse(JSON.parse(rawSettings));
         if (parsed.success) {
@@ -211,11 +218,11 @@ export function Photo3x4Workspace() {
         }
       }
     } catch {
-      window.localStorage.removeItem(PHOTO_SETTINGS_STORAGE_KEY);
+      window.localStorage.removeItem(photoSettingsStorageKey);
     } finally {
       restoredSettings.current = true;
     }
-  }, [form]);
+  }, [form, photoSettingsStorageKey]);
 
   useEffect(() => {
     const subscription = form.watch((values) => {
@@ -232,14 +239,14 @@ export function Photo3x4Workspace() {
       });
       if (parsed.success) {
         window.localStorage.setItem(
-          PHOTO_SETTINGS_STORAGE_KEY,
+          photoSettingsStorageKey,
           JSON.stringify(parsed.data),
         );
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [form]);
+  }, [form, photoSettingsStorageKey]);
 
   useEffect(() => {
     if (files.length === 0) {
