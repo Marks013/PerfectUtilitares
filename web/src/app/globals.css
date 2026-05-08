@@ -150,6 +150,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-teal) 82%, white);
+  outline-offset: 3px;
+}
+
 input,
 textarea,
 select {
@@ -179,6 +184,40 @@ table {
 .app-frame {
   position: relative;
   overflow-x: hidden;
+}
+
+.app-frame .bg-white,
+.app-frame .bg-neutral-50,
+.app-frame .bg-neutral-100 {
+  background-color: color-mix(in srgb, var(--app-card) 90%, transparent);
+}
+
+.app-frame .text-neutral-950,
+.app-frame .text-neutral-900,
+.app-frame .text-neutral-800,
+.app-frame .text-neutral-700 {
+  color: var(--app-fg);
+}
+
+.app-frame .text-neutral-600,
+.app-frame .text-neutral-500 {
+  color: var(--app-muted);
+}
+
+.app-frame .border-neutral-200,
+.app-frame .border-neutral-300 {
+  border-color: color-mix(in srgb, var(--app-fg) 14%, transparent);
+}
+
+.app-frame .shadow-sm {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 18px 44px rgb(0 0 0 / 0.18);
+}
+
+.app-frame .hover\:bg-neutral-50:hover,
+.app-frame .hover\:bg-neutral-100:hover {
+  background-color: color-mix(in srgb, var(--app-fg) 7%, var(--app-card));
 }
 
 .app-ambient {
@@ -595,6 +634,57 @@ table {
   font-weight: 800;
 }
 
+.auth-gateway {
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--app-teal) 18%, transparent), transparent 34%),
+    linear-gradient(25deg, transparent 52%, color-mix(in srgb, var(--app-coral) 18%, transparent)),
+    linear-gradient(180deg, var(--app-bg), var(--app-bg-2));
+}
+
+.auth-gateway::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--app-fg) 5%, transparent) 0 1px, transparent 1px 96px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--app-fg) 4%, transparent) 0 1px, transparent 1px 96px),
+    linear-gradient(115deg, transparent 0 34%, color-mix(in srgb, var(--app-teal) 14%, transparent) 34% 42%, transparent 42%);
+  mask-image: linear-gradient(180deg, black, transparent 84%);
+}
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  border-color: color-mix(in srgb, var(--app-fg) 14%, transparent);
+  background: color-mix(in srgb, var(--app-card) 88%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    var(--app-shadow);
+}
+
+.auth-card .text-neutral-950,
+.auth-card .text-neutral-900,
+.auth-card .text-neutral-800,
+.auth-card .text-neutral-700 {
+  color: var(--app-fg);
+}
+
+.auth-card .text-neutral-600,
+.auth-card .text-neutral-500 {
+  color: var(--app-muted);
+}
+
+.auth-card .border-neutral-200,
+.auth-card .border-neutral-300 {
+  border-color: color-mix(in srgb, var(--app-fg) 14%, transparent);
+}
+
+.auth-card .hover\:bg-neutral-50:hover {
+  background-color: color-mix(in srgb, var(--app-fg) 7%, var(--app-card));
+}
+
 .progress-track {
   height: 0.65rem;
   overflow: hidden;
@@ -640,8 +730,8 @@ table {
   isolation: isolate;
   overflow: hidden;
   background:
-    radial-gradient(circle at 88% 8%, color-mix(in srgb, var(--app-teal) 11%, transparent), transparent 28%),
-    linear-gradient(145deg, color-mix(in srgb, var(--app-card-raised) 72%, transparent), color-mix(in srgb, var(--app-card) 92%, transparent));
+    radial-gradient(circle at 88% 8%, color-mix(in srgb, var(--app-teal) 9%, var(--app-card)), transparent 28%),
+    linear-gradient(145deg, color-mix(in srgb, var(--app-card-raised) 92%, var(--app-card)), color-mix(in srgb, var(--app-card) 98%, var(--app-surface)));
   padding: clamp(1rem, 2.2vw, 1.45rem);
 }
 
@@ -928,8 +1018,8 @@ table {
 }
 
 .jornada-command__intro h1 {
-  max-width: 8ch;
-  font-size: clamp(2.05rem, 3.15vw, 3.45rem);
+  max-width: 10.5ch;
+  font-size: clamp(2.05rem, 2.8vw, 3.05rem);
   font-weight: 950;
   line-height: 0.96;
   text-wrap: balance;
@@ -973,6 +1063,7 @@ table {
 .jornada-toggle,
 .jornada-primary-button,
 .jornada-secondary-button,
+.jornada-danger-button,
 .jornada-ghost-button,
 .jornada-history-item__message,
 .jornada-history-pagination {

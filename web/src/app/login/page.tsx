@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Camera, Clock3, KeyRound, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { auth } from "@/auth";
+import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 import { loginAction } from "./actions";
 
 export default async function LoginPage({
@@ -69,6 +70,7 @@ export default async function LoginPage({
             name="email"
             type="email"
             autoComplete="username"
+            maxLength={254}
             required
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
             placeholder="Digite seu E-mail"
@@ -81,6 +83,7 @@ export default async function LoginPage({
             name="password"
             type="password"
             autoComplete="current-password"
+            maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             required
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
             placeholder="Digite sua senha"

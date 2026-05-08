@@ -1,4 +1,5 @@
 const buckets = new Map<string, { count: number; resetAt: number }>();
+const MAX_BUCKETS = 10_000;
 
 export type RateLimitOptions = {
   limit: number;
@@ -15,6 +16,7 @@ export function getClientIp(headers: Headers) {
 
 export function checkRateLimit(key: string, options: RateLimitOptions) {
   const now = Date.now();
+  pruneBuckets(now);
   const bucket = buckets.get(key);
 
   if (!bucket || bucket.resetAt <= now) {
@@ -29,4 +31,24 @@ export function checkRateLimit(key: string, options: RateLimitOptions) {
     remaining: Math.max(0, options.limit - bucket.count),
     resetAt: bucket.resetAt,
   };
+}
+
+function pruneBuckets(now: number) {
+  if (buckets.size < MAX_BUCKETS) {
+    return;
+  }
+
+  for (const [key, bucket] of buckets) {
+    if (bucket.resetAt <= now) {
+      buckets.delete(key);
+    }
+  }
+
+  while (buckets.size >= MAX_BUCKETS) {
+    const oldest = buckets.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    buckets.delete(oldest.value);
+  }
 }

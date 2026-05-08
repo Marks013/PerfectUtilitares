@@ -20,6 +20,21 @@ function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+const invitationSelect = {
+  id: true,
+  tenantId: true,
+  tenant: { select: { name: true, slug: true } },
+  invitedBy: { select: { name: true, email: true } },
+  email: true,
+  name: true,
+  role: true,
+  canAccessJornada: true,
+  canAccessFotos: true,
+  expiresAt: true,
+  acceptedAt: true,
+  createdAt: true,
+} as const;
+
 export async function GET() {
   const guard = await requireAdmin();
   if (!guard.ok) {
@@ -27,10 +42,7 @@ export async function GET() {
   }
 
   const invitations = await prisma.userInvitation.findMany({
-    include: {
-      tenant: { select: { name: true, slug: true } },
-      invitedBy: { select: { name: true, email: true } },
-    },
+    select: invitationSelect,
     orderBy: { createdAt: "desc" },
     take: 200,
   });
@@ -109,7 +121,7 @@ export async function POST(request: Request) {
       tokenHash: hashToken(token),
       expiresAt,
     },
-    include: { tenant: { select: { name: true, slug: true } } },
+    select: invitationSelect,
   });
 
   if (process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL) {
@@ -142,5 +154,21 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.json({ ...invitation, inviteUrl }, { status: 201 });
+  return NextResponse.json(
+    {
+      id: invitation.id,
+      tenantId: invitation.tenantId,
+      tenant: invitation.tenant,
+      email: invitation.email,
+      name: invitation.name,
+      role: invitation.role,
+      canAccessJornada: invitation.canAccessJornada,
+      canAccessFotos: invitation.canAccessFotos,
+      expiresAt: invitation.expiresAt,
+      acceptedAt: invitation.acceptedAt,
+      createdAt: invitation.createdAt,
+      inviteUrl,
+    },
+    { status: 201 },
+  );
 }

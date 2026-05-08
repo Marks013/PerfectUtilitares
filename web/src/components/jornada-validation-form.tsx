@@ -19,7 +19,6 @@ import {
   calcularDuracaoEntrada,
   formatarHorariosEntrada,
 } from "@/lib/jornada/input-format";
-import { calcularDuracaoMinutos, parseHorario } from "@/lib/jornada/time";
 
 const AUTO_FORMAT_KEY = "jornada:auto-formatar";
 const HISTORY_PAGE_SIZE = 10;
@@ -35,7 +34,7 @@ const schema = z
     autoFormatar: z.boolean(),
   })
   .superRefine((value, ctx) => {
-    if (isPrincipalReadyForSaturday(value.horarios) && !value.sabadoHorarios?.trim()) {
+    if (isPrincipalEightHours(value.horarios) && !value.sabadoHorarios?.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["sabadoHorarios"],
@@ -149,22 +148,9 @@ function getSecondaryMessages(value: string) {
   return splitMessage(value).slice(1);
 }
 
-function isPrincipalReadyForSaturday(value: string) {
+function isPrincipalEightHours(value: string) {
   const duracao = calcularDuracaoEntrada(value);
-  if (duracao?.duracaoMinutos !== 480) return false;
-
-  const pontos = duracao.horariosNormalizado.split(" ");
-  if (pontos.length !== 4) return false;
-
-  const parsed = pontos.map(parseHorario);
-  if (parsed.some((item) => item == null)) return false;
-
-  const [inicio1, fim1, inicio2, fim2] = parsed as number[];
-  const periodo1 = calcularDuracaoMinutos(inicio1, fim1);
-  const periodo2 = calcularDuracaoMinutos(inicio2, fim2);
-  const intervalo = calcularDuracaoMinutos(fim1, inicio2);
-
-  return periodo1 <= 240 && periodo2 <= 240 && intervalo >= 60 && intervalo <= 120;
+  return duracao?.duracaoMinutos === 480;
 }
 
 function isEightHourWeekday(record: HistoryRecord) {
@@ -384,7 +370,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     [horarios],
   );
   const canShowSabado = useMemo(
-    () => isPrincipalReadyForSaturday(horarios),
+    () => isPrincipalEightHours(horarios),
     [horarios],
   );
   const autoFormatStorageKey = getAutoFormatStorageKey(userId);
@@ -574,7 +560,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
       const horariosFormatados = formatarHorariosEntrada(values.horarios);
-      const payload = isPrincipalReadyForSaturday(horariosFormatados)
+      const payload = isPrincipalEightHours(horariosFormatados)
         ? {
             modo: "sabado-combinado",
             horarios: horariosFormatados,
@@ -688,7 +674,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               ) : (
                 <p className="jornada-field-success">
                   A jornada principal está apta; informe 04:00 no sábado para
-                  completar 44h semanais.
+                  completar 44h semanais quando a regra ou exceção permitir.
                 </p>
               )}
             </>

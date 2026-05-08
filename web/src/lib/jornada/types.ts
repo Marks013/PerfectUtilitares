@@ -12,6 +12,14 @@ export type JornadaRuleInput = {
   active?: boolean;
 };
 
+export type JornadaExceptionInput = {
+  id: string;
+  nome?: string | null;
+  horariosNormalizado: string;
+  sabadoNormalizado?: string | null;
+  active?: boolean;
+};
+
 export type JornadaValidationInput = {
   horarios: string;
   tipoDia?: DiaValido;
@@ -29,6 +37,7 @@ export type JornadaValidationResult = {
   horasMensais?: number;
   intervalo?: string;
   horariosNormalizado: string;
+  excecaoId?: string;
 };
 
 export type JornadaInterjornadaResult = {

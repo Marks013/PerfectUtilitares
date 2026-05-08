@@ -42,6 +42,7 @@ model User {
   canAccessJornada Boolean             @default(true)
   canAccessFotos   Boolean             @default(true)
   validations      JornadaValidation[]
+  jornadaExceptions JornadaException[]
   auditLogs        AuditLog[]
   invitations      UserInvitation[]    @relation("InvitedBy")
   createdAt        DateTime            @default(now())
@@ -93,6 +94,26 @@ model JornadaRule {
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+model JornadaException {
+  id                   String   @id @default(cuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nome                 String?
+  horariosOriginal     String
+  horariosNormalizado  String
+  sabadoOriginal       String?
+  sabadoNormalizado    String?
+  active               Boolean  @default(true)
+  createdById          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([userId])
+  @@index([active])
+  @@index([horariosNormalizado])
+  @@index([sabadoNormalizado])
 }
 
 model JornadaValidation {

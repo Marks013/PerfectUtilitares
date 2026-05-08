@@ -122,6 +122,29 @@ describe("validarJornadaManual", () => {
     expect(result.mensagem).toContain("excede 4h");
   });
 
+  it("aceita jornada fora da regra quando existe exceção autorizada", () => {
+    const result = validarJornadaManual(
+      {
+        horarios: "08:00 11:30 13:30 18:00",
+      },
+      undefined,
+      undefined,
+      [
+        {
+          id: "exc_001",
+          nome: "Acordo gerência",
+          horariosNormalizado: "08:00 11:30 13:30 18:00",
+          sabadoNormalizado: "08:00 12:00",
+          active: true,
+        },
+      ],
+    );
+
+    expect(result.valido).toBe(true);
+    expect(result.excecaoId).toBe("exc_001");
+    expect(result.mensagem).toContain("exceção autorizada");
+  });
+
   it("rejeita duração acima do limite diário", () => {
     const result = validarJornadaManual({
       horarios: "06:00 12:00 13:00 19:30",
@@ -171,6 +194,33 @@ describe("validarJornadaComInterjornada", () => {
     expect(result.jornada2.horasSemanais).toBe(44);
     expect(result.jornada2.horasMensais).toBe(220);
     expect(result.mensagemInterjornada).toContain("semanais");
+  });
+
+  it("valida sexta e sabado combinado quando a principal usa exceção autorizada", () => {
+    const result = validarJornadaComInterjornada(
+      {
+        modo: "sabado-combinado",
+        horarios1: "08:00 11:30 13:30 18:00",
+        horarios2: "08:00 12:00",
+        validarInterjornada: false,
+      },
+      undefined,
+      undefined,
+      [
+        {
+          id: "exc_002",
+          nome: "Escala especial",
+          horariosNormalizado: "08:00 11:30 13:30 18:00",
+          sabadoNormalizado: "08:00 12:00",
+          active: true,
+        },
+      ],
+    );
+
+    expect(result.valido).toBe(true);
+    expect(result.jornada1.excecaoId).toBe("exc_002");
+    expect(result.jornada1.duracaoCalculada).toBe("08:00");
+    expect(result.jornada2.duracaoCalculada).toBe("04:00");
   });
 
   it("mantem sabado combinado valido quando a interjornada opcional esta desligada", () => {

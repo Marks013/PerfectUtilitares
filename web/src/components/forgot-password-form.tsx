@@ -32,7 +32,7 @@ export function ForgotPasswordForm() {
   return (
     <form
       onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
-      className="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
+      className="auth-card w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
     >
       <div className="flex items-center gap-2">
         <Mail className="size-5 text-neutral-500" aria-hidden="true" />
@@ -49,9 +49,10 @@ export function ForgotPasswordForm() {
         <input
           type="email"
           autoComplete="username"
+          maxLength={254}
           {...form.register("email")}
           className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-          placeholder="seuemail@empresa.com.br"
+          placeholder="Digite seu E-mail"
         />
       </label>
       {form.formState.errors.email ? (

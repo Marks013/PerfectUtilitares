@@ -30,8 +30,21 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const scope = url.searchParams.get("scope") ?? "mine";
+
+  if (!["mine", "all"].includes(scope)) {
+    return jsonError(
+      400,
+      "INVALID_SCOPE",
+      "Escopo permitido: mine ou all",
+    );
+  }
+
+  if (scope === "all" && guard.session.user.role !== "ADMIN") {
+    return jsonError(403, "FORBIDDEN", "Sem permissão");
+  }
+
   const where =
-    scope === "all" && guard.session.user.role === "ADMIN"
+    scope === "all"
       ? {}
       : { userId: guard.session.user.id };
   const retentionLimit = new Date(

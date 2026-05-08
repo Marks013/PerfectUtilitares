@@ -97,6 +97,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(400, "INVALID_USER_ID", "Identificador inválido");
   }
 
+  if (id === guard.session.user.id) {
+    return jsonError(
+      400,
+      "SELF_DELETE_BLOCKED",
+      "Não é permitido excluir seu próprio usuário administrativo",
+    );
+  }
+
   const limited = enforceRateLimit(request, {
     keyPrefix: "admin-users-update",
     limit: 30,

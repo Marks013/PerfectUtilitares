@@ -4,6 +4,7 @@ import { compare } from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/auth/email";
+import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 
 export type AppRole = "ADMIN" | "OPERATOR";
 
@@ -45,7 +46,7 @@ declare module "next-auth" {
 
 const credentialsSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(1),
+  password: z.string().min(1).max(BCRYPT_PASSWORD_MAX_LENGTH),
 });
 
 const authSecret = process.env.AUTH_SECRET;

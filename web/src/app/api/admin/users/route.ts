@@ -44,11 +44,6 @@ export function DELETE() {
   return methodNotAllowed(["GET"]);
 }
 
-export async function POST() {
-  const guard = await requireAdmin();
-  if (!guard.ok) {
-    return guard.response;
-  }
-
+export function POST() {
   return methodNotAllowed(["GET"]);
 }

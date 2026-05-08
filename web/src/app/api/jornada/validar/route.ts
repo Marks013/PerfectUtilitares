@@ -15,7 +15,11 @@ import {
   validarJornadaComInterjornada,
   validarJornadaManual,
 } from "@/lib/jornada/validator";
-import type { JornadaRuleInput, JornadaValidationResult } from "@/lib/jornada/types";
+import type {
+  JornadaExceptionInput,
+  JornadaRuleInput,
+  JornadaValidationResult,
+} from "@/lib/jornada/types";
 
 export const runtime = "nodejs";
 
@@ -78,9 +82,20 @@ export async function POST(request: Request) {
     );
   }
 
-  const [rules, codigos] = await Promise.all([
+  const userId = guard.session.user.id;
+  const [rules, codigos, exceptions] = await Promise.all([
     prisma.jornadaRule.findMany({ where: { active: true } }),
     prisma.codigoJornada.findMany(),
+    prisma.jornadaException.findMany({
+      where: { userId, active: true },
+      select: {
+        id: true,
+        nome: true,
+        horariosNormalizado: true,
+        sabadoNormalizado: true,
+        active: true,
+      },
+    }),
   ]);
 
   const codigoByHorario = new Map(
@@ -88,7 +103,7 @@ export async function POST(request: Request) {
   );
   const buscarCodigo = (horariosNormalizado: string) =>
     codigoByHorario.get(horariosNormalizado);
-  const userId = guard.session.user.id;
+  const authorizedExceptions = exceptions as JornadaExceptionInput[];
 
   async function saveValidation(
     result: JornadaValidationResult,
@@ -129,6 +144,7 @@ export async function POST(request: Request) {
       },
       rules as JornadaRuleInput[],
       buscarCodigo,
+      authorizedExceptions,
     );
 
     const [saved1, saved2] = await Promise.all([
@@ -149,6 +165,7 @@ export async function POST(request: Request) {
     },
     rules as JornadaRuleInput[],
     buscarCodigo,
+    authorizedExceptions,
   );
 
   const saved = await saveValidation(result, parsed.data.horarios);

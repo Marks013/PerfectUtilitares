@@ -7,6 +7,7 @@ import { signOut } from "next-auth/react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 
 type ApiErrorBody = {
   error?: string | { message?: string };
@@ -14,8 +15,8 @@ type ApiErrorBody = {
 
 const acceptFormSchema = z
   .object({
-    password: z.string().min(8).max(72),
-    confirmPassword: z.string().min(8).max(72),
+    password: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH),
+    confirmPassword: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH),
   })
   .refine((value) => value.password === value.confirmPassword, {
     path: ["confirmPassword"],
@@ -66,7 +67,7 @@ export function AcceptInvitationForm({ token }: { token: string }) {
   return (
     <form
       onSubmit={submit}
-      className="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
+      className="auth-card w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
     >
       <div className="flex items-center gap-2">
         <KeyRound className="size-5 text-neutral-500" aria-hidden="true" />
@@ -81,6 +82,7 @@ export function AcceptInvitationForm({ token }: { token: string }) {
         <input
           type="password"
           autoComplete="new-password"
+          maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
           {...form.register("password")}
           className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
         />
@@ -91,6 +93,7 @@ export function AcceptInvitationForm({ token }: { token: string }) {
         <input
           type="password"
           autoComplete="new-password"
+          maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
           {...form.register("confirmPassword")}
           className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
         />

@@ -1,8 +1,8 @@
 "use client";
 
-import { Download, Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 export type JornadaHistoryItem = {
   id: string;
@@ -23,35 +23,6 @@ function formatDate(value: string) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value));
-}
-
-async function downloadPdf(ids: string[]) {
-  const response = await fetch("/api/jornada/historico/exportar", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids }),
-  });
-
-  if (!response.ok) {
-    const data = (await response.json().catch(() => null)) as
-      | { error?: string | { message?: string } }
-      | null;
-    const message =
-      typeof data?.error === "string"
-        ? data.error
-        : data?.error?.message ?? "Falha ao exportar PDF";
-    throw new Error(message);
-  }
-
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "historico-jornadas.pdf";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 async function clearAllHistory() {
@@ -75,48 +46,9 @@ async function clearAllHistory() {
 
 export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
   const router = useRouter();
-  const [selected, setSelected] = useState<string[]>([]);
-  const [isExporting, setIsExporting] = useState(false);
   const [isClearingAll, setIsClearingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const exportableItems = useMemo(
-    () => items.filter((item) => item.valido),
-    [items],
-  );
-  const allSelected =
-    exportableItems.length > 0 &&
-    exportableItems.every((item) => selected.includes(item.id));
-  const selectedSet = useMemo(() => new Set(selected), [selected]);
-
-  function toggleAll() {
-    setSelected(allSelected ? [] : exportableItems.map((item) => item.id));
-  }
-
-  function toggleOne(item: JornadaHistoryItem) {
-    if (!item.valido) return;
-
-    setSelected((current) =>
-      current.includes(item.id)
-        ? current.filter((id) => id !== item.id)
-        : [...current, item.id],
-    );
-  }
-
-  async function exportSelected() {
-    setError(null);
-    setNotice(null);
-    setIsExporting(true);
-    try {
-      await downloadPdf(selected);
-    } catch (exception) {
-      setError(
-        exception instanceof Error ? exception.message : "Falha ao exportar PDF",
-      );
-    } finally {
-      setIsExporting(false);
-    }
-  }
 
   async function clearEverything() {
     const confirmed = window.confirm(
@@ -129,7 +61,6 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
     setIsClearingAll(true);
     try {
       const result = await clearAllHistory();
-      setSelected([]);
       setNotice(`Histórico global limpo. Registros removidos: ${result.deletedCount}.`);
       router.refresh();
     } catch (exception) {
@@ -145,22 +76,9 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm text-neutral-600">
-          {selected.length} jornada(s) selecionada(s)
+          {items.length} validação(ões) exibida(s)
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={exportSelected}
-            disabled={selected.length === 0 || isExporting}
-            className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
-          >
-            {isExporting ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Download className="size-4" aria-hidden="true" />
-            )}
-            Exportar PDF
-          </button>
           <button
             type="button"
             onClick={clearEverything}
@@ -192,16 +110,6 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
         <table className="w-full text-left text-sm">
           <thead className="bg-neutral-50 text-neutral-600">
             <tr>
-              <th className="px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={toggleAll}
-                  disabled={exportableItems.length === 0}
-                  aria-label="Selecionar todas as jornadas válidas exibidas"
-                  className="size-4 rounded border-neutral-300"
-                />
-              </th>
               <th className="px-4 py-3">Data</th>
               <th className="px-4 py-3">Horários</th>
               <th className="px-4 py-3">Resultado</th>
@@ -212,16 +120,6 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
           <tbody>
             {items.map((item) => (
               <tr key={item.id} className="border-t border-neutral-100">
-                <td className="px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedSet.has(item.id)}
-                    onChange={() => toggleOne(item)}
-                    disabled={!item.valido}
-                    aria-label={`Selecionar jornada ${item.horariosNormalizado}`}
-                    className="size-4 rounded border-neutral-300"
-                  />
-                </td>
                 <td className="px-4 py-3">{formatDate(item.createdAt)}</td>
                 <td className="px-4 py-3">{item.horariosNormalizado}</td>
                 <td className="px-4 py-3">
@@ -244,7 +142,7 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
             ))}
             {items.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-neutral-500" colSpan={6}>
+                <td className="px-4 py-6 text-neutral-500" colSpan={5}>
                   Nenhuma validação encontrada.
                 </td>
               </tr>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 
 const booleanishSchema = z.preprocess((value) => {
   if (value === "true") return true;
@@ -12,7 +13,7 @@ export const userCreateSchema = z.object({
   tenantId: z.string().min(8).max(64),
   email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
   name: z.string().trim().min(2).max(120),
-  password: z.string().min(8).max(72),
+  password: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH),
   role: userRoleSchema.default("OPERATOR"),
   isActive: booleanishSchema.default(true),
   canAccessJornada: booleanishSchema.default(true),
@@ -60,7 +61,7 @@ export const invitationCreateSchema = z.object({
 
 export const invitationAcceptSchema = z.object({
   token: z.string().min(32).max(160),
-  password: z.string().min(8).max(72),
+  password: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH),
 });
 
 export type UserCreateInput = z.input<typeof userCreateSchema>;

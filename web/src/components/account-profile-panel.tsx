@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { KeyRound, Save, UserRound } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 
 const profileSchema = z.object({
   name: z.string().trim().min(2, "Informe pelo menos 2 caracteres").max(80),
@@ -13,7 +14,10 @@ const profileSchema = z.object({
 const passwordSchema = z
   .object({
     currentPassword: z.string().min(1, "Digite a senha atual"),
-    newPassword: z.string().min(8, "A nova senha deve ter pelo menos 8 caracteres"),
+    newPassword: z
+      .string()
+      .min(8, "A nova senha deve ter pelo menos 8 caracteres")
+      .max(BCRYPT_PASSWORD_MAX_LENGTH, "A senha deve ter no máximo 72 caracteres"),
     confirmPassword: z.string().min(1, "Confirme a nova senha"),
   })
   .refine((value) => value.newPassword === value.confirmPassword, {
@@ -177,6 +181,7 @@ export function AccountProfilePanel({
           <input
             type="password"
             autoComplete="current-password"
+            maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             {...passwordForm.register("currentPassword")}
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
           />
@@ -192,6 +197,7 @@ export function AccountProfilePanel({
           <input
             type="password"
             autoComplete="new-password"
+            maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             {...passwordForm.register("newPassword")}
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
           />
@@ -207,6 +213,7 @@ export function AccountProfilePanel({
           <input
             type="password"
             autoComplete="new-password"
+            maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             {...passwordForm.register("confirmPassword")}
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
           />

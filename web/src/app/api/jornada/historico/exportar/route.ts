@@ -16,7 +16,6 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
-  ids: z.array(z.string().cuid()).min(1).max(100).optional(),
   entries: z
     .array(
       z.object({
@@ -29,10 +28,7 @@ const requestSchema = z.object({
       }),
     )
     .min(1)
-    .max(100)
-    .optional(),
-}).refine((value) => value.ids?.length || value.entries?.length, {
-  message: "Selecione ao menos uma jornada válida",
+    .max(100),
 });
 
 export function GET() {
@@ -64,7 +60,7 @@ export async function POST(request: Request) {
     return contentTypeError;
   }
 
-  const contentLengthError = requireMaxContentLength(request, 16 * 1024);
+  const contentLengthError = requireMaxContentLength(request, 64 * 1024);
   if (contentLengthError) {
     return contentLengthError;
   }
@@ -84,15 +80,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const entries =
-    parsed.data.entries ??
-    parsed.data.ids?.map((id) => ({
-      ids: [id],
-      nome: "",
-      matricula: "",
-      dataAlteracao: "",
-    })) ??
-    [];
+  const entries = parsed.data.entries;
   const ids = [...new Set(entries.flatMap((entry) => entry.ids))];
   const records = await prisma.jornadaValidation.findMany({
     where: {

@@ -13,6 +13,7 @@ import {
 } from "./time";
 import type {
   DiaValido,
+  JornadaExceptionInput,
   JornadaInterjornadaResult,
   JornadaRuleInput,
   JornadaValidationInput,
@@ -125,10 +126,62 @@ function hasLunchException(duracaoMinutos: number) {
   return JORNADA_CONFIG.jornadasComExcecaoAlmocoMinutos.includes(duracaoMinutos);
 }
 
+function findAuthorizedException(
+  exceptions: JornadaExceptionInput[],
+  tipoDia: DiaValido,
+  horariosNormalizado: string,
+) {
+  return exceptions.find((exception) => {
+    if (exception.active === false) return false;
+
+    return tipoDia === "sabado"
+      ? exception.sabadoNormalizado === horariosNormalizado
+      : exception.horariosNormalizado === horariosNormalizado;
+  });
+}
+
+function buildExceptionResult({
+  exception,
+  tipoDia,
+  horariosNormalizado,
+  duracaoMinutos,
+  intervaloMinutos,
+  buscarCodigo,
+}: {
+  exception: JornadaExceptionInput;
+  tipoDia: DiaValido;
+  horariosNormalizado: string;
+  duracaoMinutos: number;
+  intervaloMinutos: number | null;
+  buscarCodigo?: (horariosNormalizado: string) => string | null | undefined;
+}): JornadaValidationResult {
+  const duracaoCalculada = formatarDuracao(duracaoMinutos);
+  const nome = exception.nome?.trim() || "exceção autorizada";
+  const horasSemanais =
+    tipoDia === "util" && duracaoMinutos === 480 && exception.sabadoNormalizado
+      ? 44
+      : undefined;
+
+  return {
+    valido: true,
+    mensagem: `Jornada válida por exceção autorizada: ${nome}`,
+    duracaoCalculada,
+    tipoDia,
+    codigo: buscarCodigo?.(horariosNormalizado) ?? undefined,
+    horasSemanais,
+    horasMensais: horasSemanais ? horasSemanais * 5 : undefined,
+    intervalo:
+      intervaloMinutos == null ? undefined : formatarIntervalo(intervaloMinutos),
+    horariosNormalizado,
+    excecaoId: exception.id,
+  };
+}
+
 export function validarJornadaManual(
   input: JornadaValidationInput,
   rules: JornadaRuleInput[] = DEFAULT_JORNADA_RULES,
   buscarCodigo?: (horariosNormalizado: string) => string | null | undefined,
+  exceptions: JornadaExceptionInput[] = [],
 ): JornadaValidationResult {
   const tipoDia = input.tipoDia ?? "util";
   const horariosNormalizado = normalizarHorarios(input.horarios);
@@ -262,6 +315,22 @@ export function validarJornadaManual(
     }
   }
 
+  const authorizedException = findAuthorizedException(
+    exceptions,
+    tipoDia,
+    horariosNormalizado,
+  );
+  if (authorizedException) {
+    return buildExceptionResult({
+      exception: authorizedException,
+      tipoDia,
+      horariosNormalizado,
+      duracaoMinutos,
+      intervaloMinutos,
+      buscarCodigo,
+    });
+  }
+
   if (
     times.length === 2 &&
     !validarLimiteDiario(duracaoMinutos, JORNADA_CONFIG.periodoMaximoHoras)
@@ -373,12 +442,14 @@ export function validarJornadaComInterjornada(
   },
   rules: JornadaRuleInput[] = DEFAULT_JORNADA_RULES,
   buscarCodigo?: (horariosNormalizado: string) => string | null | undefined,
+  exceptions: JornadaExceptionInput[] = [],
 ): JornadaInterjornadaResult {
   const validarInterjornada = input.validarInterjornada ?? true;
   const jornada1 = validarJornadaManual(
     { horarios: input.horarios1, tipoDia: "util" },
     rules,
     buscarCodigo,
+    exceptions,
   );
   const jornada2 = validarJornadaManual(
     {
@@ -387,6 +458,7 @@ export function validarJornadaComInterjornada(
     },
     rules,
     buscarCodigo,
+    exceptions,
   );
   const endpoints1 = extractFirstAndLast(jornada1.horariosNormalizado);
   const endpoints2 = extractFirstAndLast(jornada2.horariosNormalizado);

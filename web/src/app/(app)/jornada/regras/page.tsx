@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
+import { JornadaExceptionsManager } from "@/components/jornada-exceptions-manager";
 import { JornadaRulesManager } from "@/components/jornada-rules-manager";
 import type { JornadaRuleFormValues } from "@/lib/jornada/rule-schema";
 import { prisma } from "@/lib/prisma";
@@ -20,9 +21,34 @@ export default async function RegrasPage() {
     redirect("/dashboard");
   }
 
-  const rules = await prisma.jornadaRule.findMany({
-    orderBy: [{ active: "desc" }, { duracaoMinutos: "asc" }],
-  });
+  const [rules, users, exceptions] = await Promise.all([
+    prisma.jornadaRule.findMany({
+      orderBy: [{ active: "desc" }, { duracaoMinutos: "asc" }],
+    }),
+    prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, email: true },
+      orderBy: [{ name: "asc" }, { email: "asc" }],
+      take: 200,
+    }),
+    prisma.jornadaException.findMany({
+      select: {
+        id: true,
+        userId: true,
+        user: { select: { name: true, email: true } },
+        nome: true,
+        horariosOriginal: true,
+        horariosNormalizado: true,
+        sabadoOriginal: true,
+        sabadoNormalizado: true,
+        active: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: [{ active: "desc" }, { updatedAt: "desc" }],
+      take: 200,
+    }),
+  ]);
 
   return (
     <div className="space-y-4">
@@ -40,6 +66,14 @@ export default async function RegrasPage() {
           diasValidos: normalizeDiasValidos(rule.diasValidos),
           createdAt: rule.createdAt.toISOString(),
           updatedAt: rule.updatedAt.toISOString(),
+        }))}
+      />
+      <JornadaExceptionsManager
+        users={users}
+        initialExceptions={exceptions.map((exception) => ({
+          ...exception,
+          createdAt: exception.createdAt.toISOString(),
+          updatedAt: exception.updatedAt.toISOString(),
         }))}
       />
     </div>

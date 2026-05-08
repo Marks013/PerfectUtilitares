@@ -4,6 +4,8 @@ import { withSentryConfig } from "@sentry/nextjs";
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  { key: "Origin-Agent-Cluster", value: "?1" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-DNS-Prefetch-Control", value: "off" },
   { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
@@ -22,7 +24,7 @@ const securityHeaders = [
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'"} blob:`,
       "worker-src 'self' blob:",
       "connect-src 'self' https://*.sentry.io",
     ].join("; "),
@@ -38,13 +40,17 @@ if (process.env.NODE_ENV === "production") {
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  serverExternalPackages: ["read-excel-file", "unzipper"],
+  serverExternalPackages: ["read-excel-file"],
   outputFileTracingIncludes: {
     "/*": ["./node_modules/pdfkit/js/data/**/*"],
   },
   poweredByHeader: false,
   async headers() {
     return [
+      {
+        source: "/api/:path*",
+        headers: [{ key: "Cache-Control", value: "no-store" }],
+      },
       {
         source: "/(.*)",
         headers: securityHeaders,

@@ -12,6 +12,7 @@ import {
   requireSameOrigin,
   requireSession,
 } from "@/lib/api/security";
+import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ const accountPatchSchema = z
   .object({
     name: z.string().trim().min(2).max(80).optional(),
     currentPassword: z.string().min(1).optional(),
-    newPassword: z.string().min(8).max(128).optional(),
+    newPassword: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.newPassword && !value.currentPassword) {
