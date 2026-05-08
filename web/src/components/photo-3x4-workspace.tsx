@@ -53,6 +53,8 @@ type EditorState = {
   zoom: number;
   croppedArea: Area | null;
   cropMode: CropMode;
+  contrast: number;
+  brightness: number;
 };
 
 const PHOTO_SETTINGS_STORAGE_KEY = "photo-3x4:settings:v2";
@@ -62,6 +64,8 @@ const DEFAULT_EDITOR_STATE: EditorState = {
   zoom: 1,
   croppedArea: null,
   cropMode: "auto",
+  contrast: PHOTO_DEFAULTS.contrast,
+  brightness: PHOTO_DEFAULTS.brightness,
 };
 
 async function getErrorMessage(response: Response) {
@@ -166,8 +170,6 @@ export function Photo3x4Workspace() {
   });
 
   const watchedQuality = form.watch("quality");
-  const watchedContrast = form.watch("contrast");
-  const watchedBrightness = form.watch("brightness");
   const watchedAddBorder = form.watch("addBorder");
   const watchedBorderWidth = form.watch("borderWidth");
   const watchedBorderColor = form.watch("borderColor");
@@ -179,7 +181,7 @@ export function Photo3x4Workspace() {
   const previewHeight = watchedAddBorder
     ? outputHeight + Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth) * 2
     : outputHeight;
-  const previewFilter = `brightness(${Number(watchedBrightness || PHOTO_DEFAULTS.brightness)}) contrast(${Number(watchedContrast || PHOTO_DEFAULTS.contrast)})`;
+  const previewFilter = `brightness(${Number(selectedEditor.brightness || PHOTO_DEFAULTS.brightness)}) contrast(${Number(selectedEditor.contrast || PHOTO_DEFAULTS.contrast)})`;
   const previewBorderWidth = watchedAddBorder
     ? Math.max(1, Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth))
     : 0;
@@ -328,6 +330,7 @@ export function Photo3x4Workspace() {
       return;
     }
 
+    clearResults();
     setEditorStates((current) => ({
       ...current,
       [selectedKey]: {
@@ -356,11 +359,20 @@ export function Photo3x4Workspace() {
 
   function resetAdjustments() {
     clearResults();
-    setEditorStates({});
     setFaceStatus(null);
     setIsDetectingFace(false);
     setMediaSize(null);
     setCropSize(null);
+
+    if (selectedKey) {
+      setEditorStates((current) => {
+        const nextStates = { ...current };
+        delete nextStates[selectedKey];
+        return nextStates;
+      });
+      return;
+    }
+
     form.reset({
       ...PHOTO_DEFAULTS,
       format: "jpeg",
@@ -404,7 +416,17 @@ export function Photo3x4Workspace() {
       const nextResults: ResultFile[] = [];
       for (const file of files) {
         const state = getEditorState(editorStates, getFileKey(file));
-        nextResults.push(await processOne(file, values, state.croppedArea));
+        nextResults.push(
+          await processOne(
+            file,
+            {
+              ...values,
+              contrast: state.contrast,
+              brightness: state.brightness,
+            },
+            state.croppedArea,
+          ),
+        );
       }
 
       return nextResults;
@@ -427,7 +449,17 @@ export function Photo3x4Workspace() {
       const processed: ResultFile[] = [];
       for (const file of files) {
         const state = getEditorState(editorStates, getFileKey(file));
-        processed.push(await processOne(file, values, state.croppedArea));
+        processed.push(
+          await processOne(
+            file,
+            {
+              ...values,
+              contrast: state.contrast,
+              brightness: state.brightness,
+            },
+            state.croppedArea,
+          ),
+        );
       }
 
       const { default: JSZip } = await import("jszip");
@@ -919,7 +951,7 @@ export function Photo3x4Workspace() {
             className="inline-flex items-center justify-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
           >
             <RotateCcw className="size-4" aria-hidden="true" />
-            Resetar ajustes
+            {hasFiles ? "Resetar foto atual" : "Resetar ajustes"}
           </button>
 
           <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
@@ -950,11 +982,15 @@ export function Photo3x4Workspace() {
               min={0.1}
               max={3}
               step={0.05}
-              {...form.register("contrast", { valueAsNumber: true })}
+              value={selectedEditor.contrast}
+              onChange={(event) =>
+                setSelectedEditorState({ contrast: Number(event.target.value) })
+              }
+              disabled={!hasFiles}
               className="mt-2 w-full"
             />
             <span className="mt-1 block text-xs text-neutral-500">
-              {Number(watchedContrast || PHOTO_DEFAULTS.contrast).toFixed(2)}
+              {Number(selectedEditor.contrast || PHOTO_DEFAULTS.contrast).toFixed(2)}
             </span>
           </label>
 
@@ -965,11 +1001,15 @@ export function Photo3x4Workspace() {
               min={0.1}
               max={3}
               step={0.05}
-              {...form.register("brightness", { valueAsNumber: true })}
+              value={selectedEditor.brightness}
+              onChange={(event) =>
+                setSelectedEditorState({ brightness: Number(event.target.value) })
+              }
+              disabled={!hasFiles}
               className="mt-2 w-full"
             />
             <span className="mt-1 block text-xs text-neutral-500">
-              {Number(watchedBrightness || PHOTO_DEFAULTS.brightness).toFixed(2)}
+              {Number(selectedEditor.brightness || PHOTO_DEFAULTS.brightness).toFixed(2)}
             </span>
           </label>
 
