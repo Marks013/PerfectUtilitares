@@ -6,50 +6,34 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  Download,
   History,
+  Loader2,
   RotateCcw,
 } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import {
   calcularDuracaoEntrada,
   formatarHorariosEntrada,
 } from "@/lib/jornada/input-format";
+import { calcularDuracaoMinutos, parseHorario } from "@/lib/jornada/time";
 
 const AUTO_FORMAT_KEY = "jornada:auto-formatar";
-const INTERJORNADA_KEY = "jornada:validar-interjornada";
 
 const schema = z
   .object({
     horarios: z.string().min(1, "Digite os horarios"),
     sabadoHorarios: z.string().optional(),
-    interjornadaAtiva: z.boolean(),
-    interjornadaHorarios: z.string().optional(),
     autoFormatar: z.boolean(),
-    tipoDia: z.enum(["util", "sabado", "domingo", "feriado"]),
   })
   .superRefine((value, ctx) => {
-    const duracao = calcularDuracaoEntrada(value.horarios);
-    const exigeSabado = duracao?.duracaoMinutos === 480;
-
-    if (exigeSabado && !value.sabadoHorarios?.trim()) {
+    if (isPrincipalReadyForSaturday(value.horarios) && !value.sabadoHorarios?.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["sabadoHorarios"],
-        message: "Digite a jornada de sábado para completar 44h semanais",
-      });
-    }
-
-    if (
-      value.interjornadaAtiva &&
-      !exigeSabado &&
-      !value.interjornadaHorarios?.trim()
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["interjornadaHorarios"],
-        message: "Digite a proxima jornada para calcular a interjornada",
+        message: "Digite a jornada de sábado com exatamente 04:00",
       });
     }
   });
@@ -64,6 +48,7 @@ type JornadaResult = {
   intervalo?: string;
   horasSemanais?: number;
   horasMensais?: number;
+  horariosNormalizado?: string;
 };
 
 type SimpleResponse = JornadaResult & { id?: string };
@@ -90,7 +75,8 @@ type HistoryRecord = JornadaResult & {
 };
 
 type HistoryItem = {
-  id: string;
+  key: string;
+  ids: string[];
   createdAt: string;
   horarios: string;
   valido: boolean;
@@ -128,6 +114,24 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function isPrincipalReadyForSaturday(value: string) {
+  const duracao = calcularDuracaoEntrada(value);
+  if (duracao?.duracaoMinutos !== 480) return false;
+
+  const pontos = duracao.horariosNormalizado.split(" ");
+  if (pontos.length !== 4) return false;
+
+  const parsed = pontos.map(parseHorario);
+  if (parsed.some((item) => item == null)) return false;
+
+  const [inicio1, fim1, inicio2, fim2] = parsed as number[];
+  const periodo1 = calcularDuracaoMinutos(inicio1, fim1);
+  const periodo2 = calcularDuracaoMinutos(inicio2, fim2);
+  const intervalo = calcularDuracaoMinutos(fim1, inicio2);
+
+  return periodo1 <= 240 && periodo2 <= 240 && intervalo >= 60 && intervalo <= 120;
+}
+
 function groupHistory(records: HistoryRecord[]): HistoryItem[] {
   const used = new Set<string>();
   const grouped: HistoryItem[] = [];
@@ -156,7 +160,8 @@ function groupHistory(records: HistoryRecord[]): HistoryItem[] {
       const codigo = joinCodigos(principal.codigo, sabado.codigo);
 
       grouped.push({
-        id: `${principal.id}:${sabado.id}`,
+        key: `${principal.id}:${sabado.id}`,
+        ids: [principal.id, sabado.id],
         createdAt: principal.createdAt,
         horarios: `${principal.horariosOriginal} + Sábado: ${sabado.horariosOriginal}`,
         valido: principal.valido && sabado.valido,
@@ -168,7 +173,8 @@ function groupHistory(records: HistoryRecord[]): HistoryItem[] {
 
     used.add(record.id);
     grouped.push({
-      id: record.id,
+      key: record.id,
+      ids: [record.id],
       createdAt: record.createdAt,
       horarios: record.horariosOriginal,
       valido: record.valido,
@@ -236,11 +242,6 @@ function ResultCard({
   );
 }
 
-function interjornadaLabel(minutos?: number) {
-  if (minutos == null) return "-";
-  return `${Math.floor(minutos / 60)}h${String(minutos % 60).padStart(2, "0")}`;
-}
-
 async function fetchHistory() {
   const response = await fetch("/api/jornada/historico");
   if (!response.ok) {
@@ -249,36 +250,56 @@ async function fetchHistory() {
   return (await response.json()) as HistoryRecord[];
 }
 
+async function downloadPdf(ids: string[]) {
+  const response = await fetch("/api/jornada/historico/exportar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "historico-jornadas.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function JornadaValidationForm() {
   const queryClient = useQueryClient();
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       horarios: "",
       sabadoHorarios: "",
-      interjornadaAtiva: false,
-      interjornadaHorarios: "",
       autoFormatar: true,
-      tipoDia: "util",
     },
   });
   const horarios = form.watch("horarios");
   const autoFormatar = form.watch("autoFormatar");
-  const interjornadaAtiva = form.watch("interjornadaAtiva");
   const duracaoPrincipal = useMemo(
     () => calcularDuracaoEntrada(horarios),
     [horarios],
   );
-  const exigeSabado = duracaoPrincipal?.duracaoMinutos === 480;
+  const canShowSabado = useMemo(
+    () => isPrincipalReadyForSaturday(horarios),
+    [horarios],
+  );
 
   useEffect(() => {
     const stored = window.localStorage.getItem(AUTO_FORMAT_KEY);
     if (stored != null) {
       form.setValue("autoFormatar", stored === "true");
-    }
-    const storedInterjornada = window.localStorage.getItem(INTERJORNADA_KEY);
-    if (storedInterjornada != null) {
-      form.setValue("interjornadaAtiva", storedInterjornada === "true");
     }
   }, [form]);
 
@@ -287,8 +308,10 @@ export function JornadaValidationForm() {
   }, [autoFormatar]);
 
   useEffect(() => {
-    window.localStorage.setItem(INTERJORNADA_KEY, String(interjornadaAtiva));
-  }, [interjornadaAtiva]);
+    if (!canShowSabado) {
+      form.setValue("sabadoHorarios", "");
+    }
+  }, [canShowSabado, form]);
 
   const historicoQuery = useQuery({
     queryKey: ["jornada", "historico"],
@@ -298,10 +321,16 @@ export function JornadaValidationForm() {
     () => groupHistory(historicoQuery.data ?? []),
     [historicoQuery.data],
   );
+  const exportable = useMemo(
+    () => historico.filter((item) => item.valido),
+    [historico],
+  );
+  const selectedSet = useMemo(() => new Set(selectedKeys), [selectedKeys]);
+  const allExportableSelected =
+    exportable.length > 0 &&
+    exportable.every((item) => selectedSet.has(item.key));
 
-  function formatField(
-    field: "horarios" | "sabadoHorarios" | "interjornadaHorarios",
-  ) {
+  function formatField(field: "horarios" | "sabadoHorarios") {
     if (!form.getValues("autoFormatar")) return;
     form.setValue(field, formatarHorariosEntrada(form.getValues(field) ?? ""), {
       shouldDirty: true,
@@ -309,32 +338,53 @@ export function JornadaValidationForm() {
     });
   }
 
+  function toggleAllExportable() {
+    setSelectedKeys(
+      allExportableSelected ? [] : exportable.map((item) => item.key),
+    );
+  }
+
+  function toggleOne(item: HistoryItem) {
+    if (!item.valido) return;
+
+    setSelectedKeys((current) =>
+      current.includes(item.key)
+        ? current.filter((key) => key !== item.key)
+        : [...current, item.key],
+    );
+  }
+
+  async function exportSelected() {
+    setExportError(null);
+    setIsExporting(true);
+    try {
+      const ids = historico
+        .filter((item) => selectedSet.has(item.key) && item.valido)
+        .flatMap((item) => item.ids);
+      await downloadPdf(ids);
+    } catch (exception) {
+      setExportError(
+        exception instanceof Error ? exception.message : "Falha ao exportar PDF",
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
-      const formatValue = (value?: string) =>
-        formatarHorariosEntrada(value ?? "");
-      const horariosFormatados = formatValue(values.horarios);
-      const isOitoHoras =
-        calcularDuracaoEntrada(horariosFormatados)?.duracaoMinutos === 480;
-      const payload = isOitoHoras
+      const horariosFormatados = formatarHorariosEntrada(values.horarios);
+      const payload = isPrincipalReadyForSaturday(horariosFormatados)
         ? {
             modo: "sabado-combinado",
             horarios: horariosFormatados,
-            horarios2: formatValue(values.sabadoHorarios),
-            validarInterjornada: values.interjornadaAtiva,
+            horarios2: formatarHorariosEntrada(values.sabadoHorarios ?? ""),
+            validarInterjornada: false,
           }
-        : values.interjornadaAtiva
-          ? {
-              modo: "interjornada",
-              horarios: horariosFormatados,
-              horarios2: formatValue(values.interjornadaHorarios),
-              validarInterjornada: true,
-            }
-          : {
-              modo: "simples",
-              horarios: horariosFormatados,
-              tipoDia: values.tipoDia,
-            };
+        : {
+            modo: "simples",
+            horarios: horariosFormatados,
+          };
 
       const response = await fetch("/api/jornada/validar", {
         method: "POST",
@@ -350,12 +400,12 @@ export function JornadaValidationForm() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jornada", "historico"] });
+      setSelectedKeys([]);
     },
   });
 
   const horariosField = form.register("horarios");
   const sabadoField = form.register("sabadoHorarios");
-  const interjornadaField = form.register("interjornadaHorarios");
 
   return (
     <div className="space-y-4">
@@ -368,27 +418,8 @@ export function JornadaValidationForm() {
             Validar jornada
           </h1>
 
-          <div className="mt-5 flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-              <input
-                type="checkbox"
-                {...form.register("interjornadaAtiva")}
-                className="size-4 rounded border-neutral-300"
-              />
-              Validar Interjornada
-            </label>
-            <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-              <input
-                type="checkbox"
-                {...form.register("autoFormatar")}
-                className="size-4 rounded border-neutral-300"
-              />
-              Auto-formatar horarios
-            </label>
-          </div>
-
           <label className="mt-5 block text-sm font-medium text-neutral-800">
-            Horarios da Jornada
+            Horários de segunda a sexta
             <input
               {...horariosField}
               onBlur={(event) => {
@@ -396,7 +427,7 @@ export function JornadaValidationForm() {
                 formatField("horarios");
               }}
               className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-              placeholder="0800 1200 1400 1620"
+              placeholder="0800 1200 1300 1700"
             />
           </label>
           {form.formState.errors.horarios ? (
@@ -408,13 +439,13 @@ export function JornadaValidationForm() {
             <Clock3 className="size-3.5" aria-hidden="true" />
             {duracaoPrincipal
               ? `Duração detectada: ${duracaoPrincipal.duracaoFormatada}`
-              : "Digite 2 ou 4 horarios separados por espaco"}
+              : "Digite 2 ou 4 horários separados por espaço"}
           </p>
 
-          {exigeSabado ? (
+          {canShowSabado ? (
             <>
               <label className="mt-4 block text-sm font-medium text-neutral-800">
-              Jornada Sábado (4 horas)
+                Complemento de sábado
                 <input
                   {...sabadoField}
                   onBlur={(event) => {
@@ -431,48 +462,21 @@ export function JornadaValidationForm() {
                 </p>
               ) : (
                 <p className="mt-1 text-xs text-emerald-700">
-                  Digite 2 horarios para completar 44h semanais e 220h mensais.
+                  A jornada principal está apta; informe 04:00 no sábado para
+                  completar 44h semanais.
                 </p>
               )}
             </>
           ) : null}
 
-          {interjornadaAtiva && !exigeSabado ? (
-            <>
-              <label className="mt-4 block text-sm font-medium text-neutral-800">
-                Proxima jornada
-                <input
-                  {...interjornadaField}
-                  onBlur={(event) => {
-                    interjornadaField.onBlur(event);
-                    formatField("interjornadaHorarios");
-                  }}
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-                  placeholder="0400 0800 0900 1300"
-                />
-              </label>
-              {form.formState.errors.interjornadaHorarios ? (
-                <p className="mt-1 text-xs text-red-700">
-                  {form.formState.errors.interjornadaHorarios.message}
-                </p>
-              ) : null}
-            </>
-          ) : null}
-
-          {!exigeSabado && !interjornadaAtiva ? (
-            <label className="mt-4 block text-sm font-medium text-neutral-800">
-              Tipo de dia
-              <select
-                {...form.register("tipoDia")}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-              >
-                <option value="util">Util</option>
-                    <option value="sabado">Sábado</option>
-                <option value="domingo">Domingo</option>
-                <option value="feriado">Feriado</option>
-              </select>
-            </label>
-          ) : null}
+          <label className="mt-5 flex items-center gap-2 text-sm font-medium text-neutral-800">
+            <input
+              type="checkbox"
+              {...form.register("autoFormatar")}
+              className="size-4 rounded border-neutral-300"
+            />
+            Auto-formatar horários
+          </label>
 
           <button
             type="submit"
@@ -494,49 +498,32 @@ export function JornadaValidationForm() {
           {mutation.data ? (
             isCombinedResponse(mutation.data) ? (
               <div className="mt-4 space-y-3">
-                <div
-                  className={
-                    mutation.data.valido
-                      ? "rounded-md border border-green-200 bg-green-50 p-4 text-green-800"
-                      : "rounded-md border border-red-200 bg-red-50 p-4 text-red-800"
-                  }
-                >
-                  <div className="whitespace-pre-wrap font-medium">
-                    {mutation.data.mensagemInterjornada}
-                  </div>
-                  <dl className="mt-2 grid gap-2 text-sm md:grid-cols-2">
-                    <div>
-                      <dt className="text-neutral-500">Código</dt>
-                      <dd>
-                        {joinCodigos(
-                          mutation.data.jornada1.codigo,
-                          mutation.data.jornada2.codigo,
-                        ) ?? "-"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-neutral-500">Interjornada</dt>
-                      <dd>
-                        {interjornadaLabel(mutation.data.interjornadaMinutos)}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-                <ResultCard title="Jornada principal" result={mutation.data.jornada1} />
-                <ResultCard title="Jornada complementar" result={mutation.data.jornada2} />
+                <ResultCard title="Resumo" result={{
+                  valido: mutation.data.valido,
+                  mensagem: mutation.data.mensagemInterjornada,
+                  codigo: joinCodigos(
+                    mutation.data.jornada1.codigo,
+                    mutation.data.jornada2.codigo,
+                  ),
+                  intervalo:
+                    mutation.data.interjornadaMinutos == null
+                      ? undefined
+                      : `${Math.floor(mutation.data.interjornadaMinutos / 60)}h${String(
+                          mutation.data.interjornadaMinutos % 60,
+                        ).padStart(2, "0")}`,
+                }} />
+                <ResultCard
+                  title="Segunda a sexta"
+                  result={mutation.data.jornada1}
+                />
+                <ResultCard
+                  title="Sábado"
+                  result={mutation.data.jornada2}
+                />
               </div>
             ) : (
-              <div
-                className={
-                  mutation.data.valido
-                    ? "mt-4 rounded-md border border-green-200 bg-green-50 p-4 text-green-800"
-                    : "mt-4 rounded-md border border-red-200 bg-red-50 p-4 text-red-800"
-                }
-              >
-                <div className="whitespace-pre-wrap font-medium">
-                  {mutation.data.mensagem}
-                </div>
-                <ResultDetails result={mutation.data} />
+              <div className="mt-4">
+                <ResultCard title="Segunda a sexta" result={mutation.data} />
               </div>
             )
           ) : (
@@ -548,32 +535,81 @@ export function JornadaValidationForm() {
       </div>
 
       <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-          <History className="size-4" aria-hidden="true" />
-          Últimas Validações
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
+            <History className="size-4" aria-hidden="true" />
+            Últimas Validações
+          </div>
+          <button
+            type="button"
+            onClick={exportSelected}
+            disabled={selectedKeys.length === 0 || isExporting}
+            className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+          >
+            {isExporting ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="size-4" aria-hidden="true" />
+            )}
+            Gerar PDF
+          </button>
         </div>
+        {exportError ? (
+          <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {exportError}
+          </div>
+        ) : null}
         {historicoQuery.isLoading ? (
           <p className="mt-4 text-sm text-neutral-600">Carregando histórico...</p>
         ) : historico.length > 0 ? (
           <div className="mt-4 divide-y divide-neutral-100 rounded-md border border-neutral-200">
+            <label className="flex items-center gap-2 p-3 text-xs font-medium text-neutral-600">
+              <input
+                type="checkbox"
+                checked={allExportableSelected}
+                onChange={toggleAllExportable}
+                disabled={exportable.length === 0}
+                className="size-4 rounded border-neutral-300"
+              />
+              Selecionar validações válidas exibidas
+            </label>
             {historico.map((item) => {
               const Icon = item.valido ? CheckCircle2 : AlertTriangle;
               return (
-                <div key={item.id} className="p-3 text-sm">
-                  <div className="text-xs text-neutral-500">
-                    [{formatDate(item.createdAt)}] {item.horarios}
-                  </div>
-                  <div
-                    className={
-                      item.valido
-                        ? "mt-1 flex items-start gap-2 text-green-800"
-                        : "mt-1 flex items-start gap-2 text-red-800"
-                    }
-                  >
-                    <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                    <span className="whitespace-pre-wrap">{item.mensagem}</span>
-                  </div>
-                </div>
+                <label
+                  key={item.key}
+                  className="flex gap-3 p-3 text-sm"
+                  aria-disabled={!item.valido}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedSet.has(item.key)}
+                    onChange={() => toggleOne(item)}
+                    disabled={!item.valido}
+                    aria-label={`Selecionar jornada ${item.horarios}`}
+                    className="mt-1 size-4 rounded border-neutral-300"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs text-neutral-500">
+                      [{formatDate(item.createdAt)}] {item.horarios}
+                    </span>
+                    <span
+                      className={
+                        item.valido
+                          ? "mt-1 flex items-start gap-2 text-green-800"
+                          : "mt-1 flex items-start gap-2 text-red-800"
+                      }
+                    >
+                      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                      <span className="whitespace-pre-wrap">{item.mensagem}</span>
+                    </span>
+                    {!item.valido ? (
+                      <span className="mt-1 block text-xs text-neutral-500">
+                        Jornadas com erro não podem ser selecionadas para PDF.
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
               );
             })}
           </div>

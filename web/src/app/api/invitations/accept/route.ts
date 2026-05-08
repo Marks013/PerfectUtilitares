@@ -78,17 +78,42 @@ export async function POST(request: Request) {
 
   try {
     const user = await prisma.$transaction(async (tx) => {
-      const createdUser = await tx.user.create({
-        data: {
-          tenantId: invitation.tenantId,
-          email: invitation.email,
-          name: invitation.name,
-          passwordHash: await hash(parsed.data.password, 12),
-          role: invitation.role,
-          isActive: true,
-          canAccessJornada: invitation.canAccessJornada,
-          canAccessFotos: invitation.canAccessFotos,
-        },
+      const passwordHash = await hash(parsed.data.password, 12);
+      const existingUser = await tx.user.findUnique({
+        where: { email: invitation.email },
+        select: { id: true },
+      });
+      const createdUser = existingUser
+        ? await tx.user.update({
+            where: { id: existingUser.id },
+            data: {
+              tenantId: invitation.tenantId,
+              name: invitation.name,
+              passwordHash,
+              role: invitation.role,
+              isActive: true,
+              canAccessJornada: invitation.canAccessJornada,
+              canAccessFotos: invitation.canAccessFotos,
+            },
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              role: true,
+              tenantId: true,
+            },
+          })
+        : await tx.user.create({
+            data: {
+              tenantId: invitation.tenantId,
+              email: invitation.email,
+              name: invitation.name,
+              passwordHash,
+              role: invitation.role,
+              isActive: true,
+              canAccessJornada: invitation.canAccessJornada,
+              canAccessFotos: invitation.canAccessFotos,
+            },
         select: {
           id: true,
           email: true,
@@ -96,7 +121,7 @@ export async function POST(request: Request) {
           role: true,
           tenantId: true,
         },
-      });
+          });
 
       await tx.userInvitation.update({
         where: { id: invitation.id },
@@ -106,7 +131,7 @@ export async function POST(request: Request) {
       await tx.auditLog.create({
         data: {
           userId: createdUser.id,
-          action: "ACCEPT_INVITATION",
+          action: existingUser ? "RESET_ACCESS_BY_INVITATION" : "ACCEPT_INVITATION",
           entity: "UserInvitation",
           entityId: invitation.id,
           metadata: {

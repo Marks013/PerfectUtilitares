@@ -58,3 +58,39 @@ export async function sendInvitationEmail({
     `,
   });
 }
+
+export async function sendPasswordResetEmail({
+  to,
+  name,
+  resetUrl,
+}: {
+  to: string;
+  name: string;
+  resetUrl: string;
+}) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+
+  if (!apiKey || !from) {
+    throw new Error("RESEND_NOT_CONFIGURED");
+  }
+
+  resendClient ??= new Resend(apiKey);
+  const safeName = escapeHtml(name);
+  const safeResetUrl = escapeHtml(resetUrl);
+
+  await resendClient.emails.send({
+    from,
+    to,
+    subject: "Redefinição de senha",
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h1>Redefinição de senha</h1>
+        <p>Olá, ${safeName}.</p>
+        <p>Use o link abaixo para definir uma nova senha.</p>
+        <p><a href="${safeResetUrl}">Redefinir senha</a></p>
+        <p>Este link expira em 1 hora.</p>
+      </div>
+    `,
+  });
+}

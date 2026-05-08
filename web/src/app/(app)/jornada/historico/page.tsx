@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { JornadaHistoryTable } from "@/components/jornada-history-table";
-import { requirePageModuleAccess } from "@/lib/modules/access";
 import { prisma } from "@/lib/prisma";
 
 type HistoricoPageProps = {
@@ -18,24 +19,22 @@ function getParam(
 export default async function HistoricoPage({
   searchParams,
 }: HistoricoPageProps) {
-  const session = await requirePageModuleAccess("jornada");
+  const session = await auth();
+
+  if (session?.user.role !== "ADMIN") {
+    redirect("/dashboard");
+  }
 
   const params = await searchParams;
   const status = getParam(params, "status") ?? "todos";
-  const tipoDia = getParam(params, "tipoDia") ?? "todos";
   const busca = (getParam(params, "q") ?? "").trim();
 
-  const where: Prisma.JornadaValidationWhereInput =
-    session.user.role === "ADMIN" ? {} : { userId: session.user.id };
+  const where: Prisma.JornadaValidationWhereInput = {};
 
   if (status === "validas") {
     where.valido = true;
   } else if (status === "invalidas") {
     where.valido = false;
-  }
-
-  if (["util", "sabado", "domingo", "feriado"].includes(tipoDia)) {
-    where.tipoDia = tipoDia;
   }
 
   if (busca) {
@@ -62,11 +61,11 @@ export default async function HistoricoPage({
       <div>
         <h1 className="text-2xl font-semibold text-neutral-950">Histórico</h1>
         <p className="mt-1 text-sm text-neutral-600">
-          Últimas validações manuais registradas.
+          Histórico global de validações. Apenas administradores podem acessar.
         </p>
       </div>
 
-      <form className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm md:grid-cols-[1fr_180px_180px_auto]">
+      <form className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm md:grid-cols-[1fr_180px_auto]">
         <label className="block text-sm font-medium text-neutral-800">
           Busca
           <input
@@ -86,20 +85,6 @@ export default async function HistoricoPage({
             <option value="todos">Todos</option>
             <option value="validas">Válidas</option>
             <option value="invalidas">Inválidas</option>
-          </select>
-        </label>
-        <label className="block text-sm font-medium text-neutral-800">
-          Tipo de dia
-          <select
-            name="tipoDia"
-            defaultValue={tipoDia}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-          >
-            <option value="todos">Todos</option>
-            <option value="util">Útil</option>
-            <option value="sabado">Sábado</option>
-            <option value="domingo">Domingo</option>
-            <option value="feriado">Feriado</option>
           </select>
         </label>
         <button className="self-end rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800">

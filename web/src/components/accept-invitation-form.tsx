@@ -71,10 +71,10 @@ export function AcceptInvitationForm({ token }: { token: string }) {
     >
       <div className="flex items-center gap-2">
         <KeyRound className="size-5 text-neutral-500" aria-hidden="true" />
-        <h1 className="text-xl font-semibold text-neutral-950">Aceitar convite</h1>
+        <h1 className="text-xl font-semibold text-neutral-950">Definir senha</h1>
       </div>
       <p className="mt-1 text-sm text-neutral-600">
-        Defina sua senha para acessar o Sistema Web.
+        Crie ou redefina sua senha para acessar o sistema.
       </p>
 
       <label className="mt-5 block text-sm font-medium text-neutral-800">
@@ -112,7 +112,7 @@ export function AcceptInvitationForm({ token }: { token: string }) {
       {mutation.isSuccess ? (
         <p className="mt-4 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           <CheckCircle2 className="size-4" aria-hidden="true" />
-          Convite aceito.
+          Senha definida.
         </p>
       ) : null}
 
@@ -121,7 +121,7 @@ export function AcceptInvitationForm({ token }: { token: string }) {
         disabled={mutation.isPending}
         className="mt-5 w-full rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
       >
-        {mutation.isPending ? "Criando acesso..." : "Criar acesso"}
+        {mutation.isPending ? "Salvando..." : "Salvar senha"}
       </button>
 
       <Link

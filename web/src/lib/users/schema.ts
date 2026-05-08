@@ -30,7 +30,6 @@ export const userPatchSchema = z
       .optional(),
     tenantId: z.string().min(8).max(64).optional(),
     name: z.string().trim().min(2).max(120).optional(),
-    password: z.string().min(8).max(72).optional(),
     role: userRoleSchema.optional(),
     isActive: booleanishSchema.optional(),
     canAccessJornada: booleanishSchema.optional(),

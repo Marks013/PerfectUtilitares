@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { hash } from "bcryptjs";
 import {
   enforceRateLimit,
   jsonError,
@@ -143,15 +142,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 
-  const { password, ...rest } = parsed.data;
-
   try {
     const user = await prisma.user.update({
       where: { id },
-      data: {
-        ...rest,
-        ...(password ? { passwordHash: await hash(password, 12) } : {}),
-      },
+      data: parsed.data,
       select: userSelect,
     });
 
@@ -168,7 +162,6 @@ export async function PATCH(request: Request, context: RouteContext) {
           isActive: user.isActive,
           canAccessJornada: user.canAccessJornada,
           canAccessFotos: user.canAccessFotos,
-          passwordChanged: Boolean(password),
         },
       },
     });

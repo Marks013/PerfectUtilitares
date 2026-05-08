@@ -14,31 +14,51 @@ describe("validarJornadaManual", () => {
     expect(result.horasMensais).toBe(120);
   });
 
-  it("valida cargas mensais pela formula semanal/6*30", () => {
-    expect(
-      validarJornadaManual({ horarios: "08:00 11:00 12:00 15:00" }),
-    ).toMatchObject({
-      valido: true,
-      duracaoCalculada: "06:00",
-      horasSemanais: 36,
-      horasMensais: 180,
+  it("rejeita jornada de 4 horas com intervalo", () => {
+    const result = validarJornadaManual({
+      horarios: "08:00 10:00 11:00 13:00",
     });
-    expect(
-      validarJornadaManual({ horarios: "08:00 10:30 11:30 14:00" }),
-    ).toMatchObject({
-      valido: true,
-      duracaoCalculada: "05:00",
-      horasSemanais: 30,
-      horasMensais: 150,
+
+    expect(result.valido).toBe(false);
+    expect(result.mensagem).toContain("04:00 não tem intervalo");
+  });
+
+  it("rejeita jornada de 6 horas como segunda a sexta", () => {
+    const result = validarJornadaManual({
+      horarios: "08:00 12:00 14:00 16:00",
     });
-    expect(
-      validarJornadaManual({ horarios: "08:00 10:10 11:10 13:20" }),
-    ).toMatchObject({
-      valido: true,
-      duracaoCalculada: "04:20",
-      horasSemanais: 26,
-      horasMensais: 130,
+
+    expect(result.valido).toBe(false);
+    expect(result.mensagem).toContain("Duração informada: 06:00");
+  });
+
+  it("valida jornada de 5h50 com intervalo de 15 minutos", () => {
+    const result = validarJornadaManual({
+      horarios: "08:00 11:00 11:15 14:05",
     });
+
+    expect(result.valido).toBe(true);
+    expect(result.duracaoCalculada).toBe("05:50");
+    expect(result.intervalo).toBe("00:15");
+  });
+
+  it("rejeita jornada de 5h50 com intervalo diferente de 15 minutos", () => {
+    const result = validarJornadaManual({
+      horarios: "08:00 11:00 11:30 14:20",
+    });
+
+    expect(result.valido).toBe(false);
+    expect(result.mensagem).toContain("Intervalo excessivo");
+  });
+
+  it("valida jornada de 7h20 com almoço de 1 hora", () => {
+    const result = validarJornadaManual({
+      horarios: "08:00 12:00 13:00 16:20",
+    });
+
+    expect(result.valido).toBe(true);
+    expect(result.duracaoCalculada).toBe("07:20");
+    expect(result.intervalo).toBe("01:00");
   });
 
   it("valida jornada de 8 horas com intervalo", () => {
@@ -111,7 +131,7 @@ describe("validarJornadaComInterjornada", () => {
     expect(result.jornada1.valido).toBe(true);
     expect(result.jornada2.valido).toBe(true);
     expect(result.valido).toBe(false);
-    expect(result.mensagemInterjornada).toContain("insuficiente");
+    expect(result.mensagemInterjornada).toContain("Interjornada");
   });
 
   it("valida sexta e sabado combinado 8h + 4h", () => {

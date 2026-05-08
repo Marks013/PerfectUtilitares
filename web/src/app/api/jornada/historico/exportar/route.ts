@@ -68,9 +68,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const ids = [...new Set(parsed.data.ids)];
   const records = await prisma.jornadaValidation.findMany({
     where: {
-      id: { in: parsed.data.ids },
+      id: { in: ids },
+      valido: true,
       ...(guard.session.user.role === "ADMIN"
         ? {}
         : { userId: guard.session.user.id }),
@@ -84,6 +86,14 @@ export async function POST(request: Request) {
       404,
       "NOT_FOUND",
       "Nenhuma jornada selecionada foi encontrada",
+    );
+  }
+
+  if (records.length !== ids.length) {
+    return jsonError(
+      400,
+      "VALIDATION_ERROR",
+      "Selecione apenas jornadas válidas para gerar o PDF",
     );
   }
 

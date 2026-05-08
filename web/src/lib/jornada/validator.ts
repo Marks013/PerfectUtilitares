@@ -83,6 +83,10 @@ function addPeriodosDetalhe(erros: string[], periodosDetalhe: string): string {
   return [...erros, periodosDetalhe].join("\n");
 }
 
+function hasLunchException(duracaoMinutos: number) {
+  return JORNADA_CONFIG.jornadasComExcecaoAlmocoMinutos.includes(duracaoMinutos);
+}
+
 export function validarJornadaManual(
   input: JornadaValidationInput,
   rules: JornadaRuleInput[] = DEFAULT_JORNADA_RULES,
@@ -189,10 +193,21 @@ export function validarJornadaManual(
       );
     }
 
-    if (intervaloMinutos < JORNADA_CONFIG.intervaloAlmocoMinimoMinutos) {
+    if (
+      !hasLunchException(duracaoMinutos) &&
+      intervaloMinutos < JORNADA_CONFIG.intervaloAlmocoMinimoMinutos
+    ) {
       erros.push(
         `Intervalo insuficiente (${formatarDuracaoLegivel(intervaloMinutos)}). Minimo: ${formatarDuracaoLegivel(
           JORNADA_CONFIG.intervaloAlmocoMinimoMinutos,
+        )}`,
+      );
+    }
+
+    if (intervaloMinutos > JORNADA_CONFIG.intervaloAlmocoMaximoMinutos) {
+      erros.push(
+        `Intervalo excessivo (${formatarDuracaoLegivel(intervaloMinutos)}). Maximo: ${formatarDuracaoLegivel(
+          JORNADA_CONFIG.intervaloAlmocoMaximoMinutos,
         )}`,
       );
     }
@@ -211,6 +226,37 @@ export function validarJornadaManual(
   ) {
     erros.push(
       `Periodo total (${formatarDuracaoLegivel(duracaoMinutos)}) excede limite de ${JORNADA_CONFIG.periodoMaximoHoras}h`,
+    );
+  }
+
+  if (
+    duracaoMinutos === JORNADA_CONFIG.complementoSabadoMinutos &&
+    times.length !== 2
+  ) {
+    erros.push(
+      "Jornada de 04:00 não tem intervalo. Digite apenas entrada e saída",
+    );
+  }
+
+  if (
+    tipoDia === "util" &&
+    !JORNADA_CONFIG.jornadasUtilAceitasMinutos.includes(duracaoMinutos)
+  ) {
+    erros.push(
+      `Jornada de segunda a sexta deve ter duração de 04:00, 05:50, 07:20 ou 08:00. Duração informada: ${formatarDuracao(duracaoMinutos)}`,
+    );
+  }
+
+  if (
+    tipoDia === "sabado" &&
+    duracaoMinutos !== JORNADA_CONFIG.complementoSabadoMinutos
+  ) {
+    erros.push(
+      `Sábado deve ter exatamente ${formatarDuracao(
+        JORNADA_CONFIG.complementoSabadoMinutos,
+      )} para completar 44h semanais. Duração informada: ${formatarDuracao(
+        duracaoMinutos,
+      )}`,
     );
   }
 
@@ -303,6 +349,40 @@ export function validarJornadaComInterjornada(
       ? calcularDuracaoMinutos(endpoints1.last, endpoints2.first)
       : undefined;
 
+  if (input.modo === "sabado-combinado") {
+    if (!jornada1.valido || jornada1.duracaoCalculada !== "08:00") {
+      return {
+        modo: input.modo,
+        valido: false,
+        jornada1,
+        jornada2: {
+          ...jornada2,
+          valido: false,
+          mensagem: "Jornada principal deve ser 8h válida para abrir sábado",
+        },
+        mensagemInterjornada: "",
+        interjornadaMinutos,
+      };
+    }
+
+    if (!jornada2.valido || jornada2.duracaoCalculada !== "04:00") {
+      return {
+        modo: input.modo,
+        valido: false,
+        jornada1,
+        jornada2: {
+          ...jornada2,
+          valido: false,
+          mensagem: jornada2.valido
+            ? "Sabado deve ter exatamente 4 horas"
+            : jornada2.mensagem,
+        },
+        mensagemInterjornada: "",
+        interjornadaMinutos,
+      };
+    }
+  }
+
   if (!jornada1.valido || !jornada2.valido || interjornadaMinutos == null) {
     return {
       modo: input.modo,
@@ -325,36 +405,6 @@ export function validarJornadaComInterjornada(
     : `Interjornada nao avaliada: ${formatarDuracaoLegivel(interjornadaMinutos)}`;
 
   if (input.modo === "sabado-combinado") {
-    if (jornada1.duracaoCalculada !== "08:00") {
-      return {
-        modo: input.modo,
-        valido: false,
-        jornada1,
-        jornada2: {
-          ...jornada2,
-          valido: false,
-          mensagem: "Jornada principal deve ser 8h para modo sabado",
-        },
-        mensagemInterjornada: "",
-        interjornadaMinutos,
-      };
-    }
-
-    if (jornada2.duracaoCalculada !== "04:00") {
-      return {
-        modo: input.modo,
-        valido: false,
-        jornada1,
-        jornada2: {
-          ...jornada2,
-          valido: false,
-          mensagem: "Sabado deve ter exatamente 4 horas",
-        },
-        mensagemInterjornada: "",
-        interjornadaMinutos,
-      };
-    }
-
     const horasSemanais = 44;
     const horasMensais = 220;
     const jornada2Combinada: JornadaValidationResult = {

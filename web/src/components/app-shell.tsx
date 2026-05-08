@@ -7,9 +7,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 
 const jornadaNavItems = [
   { href: "/jornada/validar", label: "Validar" },
-  { href: "/jornada/regras", label: "Regras" },
   { href: "/jornada/codigos", label: "Códigos" },
-  { href: "/jornada/historico", label: "Histórico" },
 ];
 
 const baseNavItems = [
@@ -34,7 +32,11 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
       ? [{ href: "/fotos", label: "Fotos 3x4" }]
       : []),
     ...(session.user.role === "ADMIN"
-      ? [{ href: "/admin/usuarios", label: "Usuários" }]
+      ? [
+          { href: "/jornada/regras", label: "Regras" },
+          { href: "/jornada/historico", label: "Histórico" },
+          { href: "/admin/usuarios", label: "Usuários" },
+        ]
       : []),
   ];
 

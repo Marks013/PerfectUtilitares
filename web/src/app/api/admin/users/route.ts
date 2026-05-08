@@ -1,17 +1,8 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
-import { hash } from "bcryptjs";
 import {
-  enforceRateLimit,
-  jsonError,
   methodNotAllowed,
-  readJsonBody,
   requireAdmin,
-  requireContentType,
-  requireMaxContentLength,
-  requireSameOrigin,
 } from "@/lib/api/security";
-import { userCreateSchema, zodIssueDetails } from "@/lib/users/schema";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -46,106 +37,18 @@ export async function GET() {
 }
 
 export function PATCH() {
-  return methodNotAllowed(["GET", "POST"]);
+  return methodNotAllowed(["GET"]);
 }
 
 export function DELETE() {
-  return methodNotAllowed(["GET", "POST"]);
+  return methodNotAllowed(["GET"]);
 }
 
-export async function POST(request: Request) {
+export async function POST() {
   const guard = await requireAdmin();
   if (!guard.ok) {
     return guard.response;
   }
 
-  const originError = requireSameOrigin(request);
-  if (originError) {
-    return originError;
-  }
-
-  const limited = enforceRateLimit(request, {
-    keyPrefix: "admin-users-create",
-    limit: 20,
-    windowMs: 60_000,
-  });
-  if (limited) {
-    return limited;
-  }
-
-  const contentTypeError = requireContentType(request, ["application/json"]);
-  if (contentTypeError) {
-    return contentTypeError;
-  }
-
-  const contentLengthError = requireMaxContentLength(request, 16 * 1024);
-  if (contentLengthError) {
-    return contentLengthError;
-  }
-
-  const json = await readJsonBody(request);
-  if (!json.ok) {
-    return json.response;
-  }
-
-  const parsed = userCreateSchema.safeParse(json.data);
-  if (!parsed.success) {
-    return jsonError(
-      400,
-      "VALIDATION_ERROR",
-      "Dados inválidos",
-      zodIssueDetails(parsed.error),
-    );
-  }
-
-  try {
-    const user = await prisma.user.create({
-      data: {
-        tenantId: parsed.data.tenantId,
-        email: parsed.data.email,
-        name: parsed.data.name,
-        passwordHash: await hash(parsed.data.password, 12),
-        role: parsed.data.role,
-        isActive: parsed.data.isActive,
-        canAccessJornada: parsed.data.canAccessJornada,
-        canAccessFotos: parsed.data.canAccessFotos,
-      },
-      select: userSelect,
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        userId: guard.session.user.id,
-        action: "CREATE",
-        entity: "User",
-        entityId: user.id,
-        metadata: {
-          email: user.email,
-          role: user.role,
-          isActive: user.isActive,
-          tenantId: user.tenantId,
-          canAccessJornada: user.canAccessJornada,
-          canAccessFotos: user.canAccessFotos,
-        },
-      },
-    });
-
-    return NextResponse.json(user, { status: 201 });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      return jsonError(409, "USER_EMAIL_EXISTS", "Email já cadastrado");
-    }
-
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2003"
-    ) {
-    return jsonError(404, "TENANT_NOT_FOUND", "Empresa não encontrada");
-    }
-
-    throw error;
-  }
+  return methodNotAllowed(["GET"]);
 }

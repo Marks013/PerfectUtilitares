@@ -141,6 +141,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const currentUser = await prisma.user.findUnique({
           where: { id: String(token.id) },
           select: {
+            email: true,
+            name: true,
             role: true,
             tenantId: true,
             isActive: true,
@@ -150,6 +152,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         });
 
         if (currentUser) {
+          token.email = currentUser.email;
+          token.name = currentUser.name;
           token.role = currentUser.role;
           token.tenantId = currentUser.tenantId;
           token.isActive = currentUser.isActive;
@@ -170,10 +174,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         isActive?: boolean;
         canAccessJornada?: boolean;
         canAccessFotos?: boolean;
+        email?: string | null;
+        name?: string | null;
       };
 
       if (tokenWithUser.id && tokenWithUser.role) {
         session.user.id = tokenWithUser.id;
+        session.user.email = tokenWithUser.email ?? session.user.email;
+        session.user.name = tokenWithUser.name ?? session.user.name;
         session.user.tenantId = tokenWithUser.tenantId ?? null;
         session.user.role = tokenWithUser.role;
         session.user.isActive = tokenWithUser.isActive ?? true;

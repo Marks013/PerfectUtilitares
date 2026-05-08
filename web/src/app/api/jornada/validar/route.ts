@@ -15,11 +15,7 @@ import {
   validarJornadaComInterjornada,
   validarJornadaManual,
 } from "@/lib/jornada/validator";
-import type {
-  DiaValido,
-  JornadaRuleInput,
-  JornadaValidationResult,
-} from "@/lib/jornada/types";
+import type { JornadaRuleInput, JornadaValidationResult } from "@/lib/jornada/types";
 
 export const runtime = "nodejs";
 
@@ -149,7 +145,7 @@ export async function POST(request: Request) {
   const result = validarJornadaManual(
     {
       horarios: parsed.data.horarios,
-      tipoDia: parsed.data.tipoDia as DiaValido,
+      tipoDia: "util",
     },
     rules as JornadaRuleInput[],
     buscarCodigo,

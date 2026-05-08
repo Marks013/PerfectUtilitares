@@ -8,7 +8,6 @@ import {
   requireAdmin,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
 import { jornadaRulePatchSchema, zodIssueDetails } from "@/lib/jornada/rule-schema";
@@ -39,7 +38,7 @@ function prismaErrorResponse(error: unknown) {
 }
 
 export async function GET(_request: Request, context: RouteContext) {
-  const guard = await requireModuleAccess("jornada");
+  const guard = await requireAdmin();
   if (!guard.ok) {
     return guard.response;
   }

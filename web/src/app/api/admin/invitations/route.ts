@@ -91,25 +91,12 @@ export async function POST(request: Request) {
     );
   }
 
-  const [tenant, existingUser] = await Promise.all([
-    prisma.tenant.findUnique({ where: { id: parsed.data.tenantId } }),
-    prisma.user.findUnique({ where: { email: parsed.data.email } }),
-  ]);
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: parsed.data.tenantId },
+  });
 
   if (!tenant) {
     return jsonError(404, "TENANT_NOT_FOUND", "Tenant não encontrado");
-  }
-
-  if (existingUser) {
-    return jsonError(409, "USER_EMAIL_EXISTS", "Email já cadastrado");
-  }
-
-  if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
-    return jsonError(
-      503,
-      "RESEND_NOT_CONFIGURED",
-      "Configure RESEND_API_KEY e RESEND_FROM_EMAIL no .env",
-    );
   }
 
   const token = randomBytes(32).toString("base64url");
@@ -125,16 +112,20 @@ export async function POST(request: Request) {
     include: { tenant: { select: { name: true, slug: true } } },
   });
 
-  try {
-    await sendInvitationEmail({
-      to: parsed.data.email,
-      name: parsed.data.name,
-      tenantName: tenant.name,
-      inviteUrl,
-    });
-  } catch (error) {
-    await prisma.userInvitation.delete({ where: { id: invitation.id } }).catch(() => {});
-    throw error;
+  if (process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL) {
+    try {
+      await sendInvitationEmail({
+        to: parsed.data.email,
+        name: parsed.data.name,
+        tenantName: tenant.name,
+        inviteUrl,
+      });
+    } catch (error) {
+      await prisma.userInvitation
+        .delete({ where: { id: invitation.id } })
+        .catch(() => {});
+      throw error;
+    }
   }
 
   await prisma.auditLog.create({
@@ -151,5 +142,5 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.json(invitation, { status: 201 });
+  return NextResponse.json({ ...invitation, inviteUrl }, { status: 201 });
 }

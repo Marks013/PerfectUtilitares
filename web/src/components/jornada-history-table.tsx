@@ -57,18 +57,26 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
   const [selected, setSelected] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const allSelected = items.length > 0 && selected.length === items.length;
+  const exportableItems = useMemo(
+    () => items.filter((item) => item.valido),
+    [items],
+  );
+  const allSelected =
+    exportableItems.length > 0 &&
+    exportableItems.every((item) => selected.includes(item.id));
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
   function toggleAll() {
-    setSelected(allSelected ? [] : items.map((item) => item.id));
+    setSelected(allSelected ? [] : exportableItems.map((item) => item.id));
   }
 
-  function toggleOne(id: string) {
+  function toggleOne(item: JornadaHistoryItem) {
+    if (!item.valido) return;
+
     setSelected((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id],
+      current.includes(item.id)
+        ? current.filter((id) => id !== item.id)
+        : [...current, item.id],
     );
   }
 
@@ -122,7 +130,8 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleAll}
-                  aria-label="Selecionar todas as jornadas exibidas"
+                  disabled={exportableItems.length === 0}
+                  aria-label="Selecionar todas as jornadas válidas exibidas"
                   className="size-4 rounded border-neutral-300"
                 />
               </th>
@@ -140,7 +149,8 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
                   <input
                     type="checkbox"
                     checked={selectedSet.has(item.id)}
-                    onChange={() => toggleOne(item.id)}
+                    onChange={() => toggleOne(item)}
+                    disabled={!item.valido}
                     aria-label={`Selecionar jornada ${item.horariosNormalizado}`}
                     className="size-4 rounded border-neutral-300"
                   />
@@ -153,6 +163,11 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
                   >
                     {item.mensagem}
                   </span>
+                  {!item.valido ? (
+                    <div className="mt-1 text-xs text-neutral-500">
+                      Jornada inválida não pode ser exportada.
+                    </div>
+                  ) : null}
                 </td>
                 <td className="px-4 py-3">{item.codigo ?? "-"}</td>
                 <td className="px-4 py-3">

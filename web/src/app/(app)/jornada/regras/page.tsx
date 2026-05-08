@@ -1,6 +1,7 @@
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { JornadaRulesManager } from "@/components/jornada-rules-manager";
 import type { JornadaRuleFormValues } from "@/lib/jornada/rule-schema";
-import { requirePageModuleAccess } from "@/lib/modules/access";
 import { prisma } from "@/lib/prisma";
 
 const diasValidos = ["util", "sabado", "domingo", "feriado"] as const;
@@ -13,12 +14,15 @@ function normalizeDiasValidos(dias: string[]) {
 }
 
 export default async function RegrasPage() {
-  const [session, rules] = await Promise.all([
-    requirePageModuleAccess("jornada"),
-    prisma.jornadaRule.findMany({
-      orderBy: [{ active: "desc" }, { duracaoMinutos: "asc" }],
-    }),
-  ]);
+  const session = await auth();
+
+  if (session?.user.role !== "ADMIN") {
+    redirect("/dashboard");
+  }
+
+  const rules = await prisma.jornadaRule.findMany({
+    orderBy: [{ active: "desc" }, { duracaoMinutos: "asc" }],
+  });
 
   return (
     <div className="space-y-4">
@@ -30,7 +34,7 @@ export default async function RegrasPage() {
       </div>
 
       <JornadaRulesManager
-        canManage={session?.user.role === "ADMIN"}
+        canManage
         initialRules={rules.map((rule) => ({
           ...rule,
           diasValidos: normalizeDiasValidos(rule.diasValidos),

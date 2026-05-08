@@ -4,6 +4,13 @@ import { hash } from "bcryptjs";
 import { DEFAULT_JORNADA_RULES } from "../src/lib/jornada/default-rules";
 
 const prisma = new PrismaClient();
+const LEGACY_JORNADA_RULE_NAMES = [
+  "Jornada Parcial 04:00",
+  "Jornada de 04:20",
+  "Jornada de 05:00",
+  "Jornada Reduzida 05:50",
+  "Jornada de 06:00",
+];
 
 async function main() {
   const adminEmail =
@@ -58,6 +65,11 @@ async function main() {
       update: { ...rule, active: true },
     });
   }
+
+  await prisma.jornadaRule.updateMany({
+    where: { nome: { in: LEGACY_JORNADA_RULE_NAMES } },
+    data: { active: false },
+  });
 }
 
 main()
