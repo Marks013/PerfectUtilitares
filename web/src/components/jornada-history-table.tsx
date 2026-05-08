@@ -1,6 +1,7 @@
 "use client";
 
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 export type JornadaHistoryItem = {
@@ -53,10 +54,32 @@ async function downloadPdf(ids: string[]) {
   URL.revokeObjectURL(url);
 }
 
+async function clearAllHistory() {
+  const response = await fetch("/api/jornada/historico?scope=all", {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => null)) as
+      | { error?: string | { message?: string } }
+      | null;
+    const message =
+      typeof data?.error === "string"
+        ? data.error
+        : data?.error?.message ?? "Falha ao limpar histórico";
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { deletedCount: number };
+}
+
 export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
+  const router = useRouter();
   const [selected, setSelected] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
+  const [isClearingAll, setIsClearingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const exportableItems = useMemo(
     () => items.filter((item) => item.valido),
     [items],
@@ -82,6 +105,7 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
 
   async function exportSelected() {
     setError(null);
+    setNotice(null);
     setIsExporting(true);
     try {
       await downloadPdf(selected);
@@ -94,30 +118,73 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
     }
   }
 
+  async function clearEverything() {
+    const confirmed = window.confirm(
+      "Limpar todo o histórico de validações de todos os usuários? Esta ação não pode ser desfeita.",
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    setNotice(null);
+    setIsClearingAll(true);
+    try {
+      const result = await clearAllHistory();
+      setSelected([]);
+      setNotice(`Histórico global limpo. Registros removidos: ${result.deletedCount}.`);
+      router.refresh();
+    } catch (exception) {
+      setError(
+        exception instanceof Error ? exception.message : "Falha ao limpar histórico",
+      );
+    } finally {
+      setIsClearingAll(false);
+    }
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm text-neutral-600">
           {selected.length} jornada(s) selecionada(s)
         </div>
-        <button
-          type="button"
-          onClick={exportSelected}
-          disabled={selected.length === 0 || isExporting}
-          className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
-        >
-          {isExporting ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Download className="size-4" aria-hidden="true" />
-          )}
-          Exportar PDF
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={exportSelected}
+            disabled={selected.length === 0 || isExporting}
+            className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+          >
+            {isExporting ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="size-4" aria-hidden="true" />
+            )}
+            Exportar PDF
+          </button>
+          <button
+            type="button"
+            onClick={clearEverything}
+            disabled={items.length === 0 || isClearingAll}
+            className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+          >
+            {isClearingAll ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Trash2 className="size-4" aria-hidden="true" />
+            )}
+            Limpar tudo
+          </button>
+        </div>
       </div>
 
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          {notice}
         </div>
       ) : null}
 

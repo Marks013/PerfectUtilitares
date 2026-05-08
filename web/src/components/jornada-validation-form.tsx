@@ -10,6 +10,7 @@ import {
   History,
   Loader2,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -133,6 +134,21 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function splitMessage(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function getPrimaryMessage(value: string) {
+  return splitMessage(value)[0] ?? value;
+}
+
+function getSecondaryMessages(value: string) {
+  return splitMessage(value).slice(1);
+}
+
 function isPrincipalReadyForSaturday(value: string) {
   const duracao = calcularDuracaoEntrada(value);
   if (duracao?.duracaoMinutos !== 480) return false;
@@ -206,28 +222,22 @@ function groupHistory(records: HistoryRecord[]): HistoryItem[] {
 }
 
 function ResultDetails({ result }: { result: JornadaResult }) {
+  const details = [
+    ["Duração", result.duracaoCalculada ?? "-"],
+    ["Código", result.codigo ?? "-"],
+    ["Intervalo", result.intervalo ?? "-"],
+    ["Horas semanais", result.horasSemanais ?? "-"],
+    ["Horas mensais", result.horasMensais ?? "-"],
+  ];
+
   return (
-    <dl className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-      <div>
-        <dt className="text-neutral-500">Duração</dt>
-        <dd>{result.duracaoCalculada ?? "-"}</dd>
-      </div>
-      <div>
-        <dt className="text-neutral-500">Código</dt>
-        <dd>{result.codigo ?? "-"}</dd>
-      </div>
-      <div>
-        <dt className="text-neutral-500">Intervalo</dt>
-        <dd>{result.intervalo ?? "-"}</dd>
-      </div>
-      <div>
-        <dt className="text-neutral-500">Horas semanais</dt>
-        <dd>{result.horasSemanais ?? "-"}</dd>
-      </div>
-      <div>
-        <dt className="text-neutral-500">Horas mensais</dt>
-        <dd>{result.horasMensais ?? "-"}</dd>
-      </div>
+    <dl className="jornada-result-details">
+      {details.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
     </dl>
   );
 }
@@ -240,21 +250,27 @@ function ResultCard({
   result: JornadaResult;
 }) {
   const Icon = result.valido ? CheckCircle2 : AlertTriangle;
+  const messages = splitMessage(result.mensagem);
+  const primary = messages[0] ?? result.mensagem;
+  const secondary = messages.slice(1);
 
   return (
-    <div
-      className={
-        result.valido
-          ? "rounded-md border border-green-200 bg-green-50 p-4 text-green-800"
-          : "rounded-md border border-red-200 bg-red-50 p-4 text-red-800"
-      }
-    >
-      <div className="flex items-center gap-2 text-xs font-medium uppercase text-neutral-500">
-        <Icon className="size-4" aria-hidden="true" />
-        {title}
+    <div className="jornada-result-card" data-valid={result.valido}>
+      <div className="jornada-result-card__heading">
+        <span className="jornada-result-card__icon">
+          <Icon className="size-4" aria-hidden="true" />
+        </span>
+        <span>{title}</span>
       </div>
-      <div className="mt-1 whitespace-pre-wrap font-medium">
-        {result.mensagem}
+      <div className="jornada-result-card__message">
+        <p>{primary}</p>
+        {secondary.length > 0 ? (
+          <ul>
+            {secondary.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       <ResultDetails result={result} />
     </div>
@@ -273,9 +289,25 @@ function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function createLocalId() {
+  const randomUUID = globalThis.crypto?.randomUUID;
+  if (typeof randomUUID === "function") {
+    return randomUUID.call(globalThis.crypto);
+  }
+
+  const randomValues = globalThis.crypto?.getRandomValues;
+  if (typeof randomValues === "function") {
+    const bytes = new Uint8Array(16);
+    randomValues.call(globalThis.crypto, bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function createPdfPerson(): PdfPerson {
   return {
-    localId: crypto.randomUUID(),
+    localId: createLocalId(),
     nome: "",
     matricula: "",
     dataAlteracao: todayInputValue(),
@@ -302,6 +334,18 @@ async function downloadPdf(entries: PdfExportEntry[]) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+async function clearOwnHistory() {
+  const response = await fetch("/api/jornada/historico?scope=mine", {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return (await response.json()) as { deletedCount: number };
 }
 
 export function JornadaValidationForm({ userId }: { userId: string }) {
@@ -378,6 +422,8 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const allExportableSelected =
     exportable.length > 0 &&
     exportable.every((item) => selectedSet.has(item.key));
+  const visibleValidCount = visibleHistorico.filter((item) => item.valido).length;
+  const visibleErrorCount = visibleHistorico.length - visibleValidCount;
 
   useEffect(() => {
     if (historyPage > historyPageCount) {
@@ -532,39 +578,63 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       setPdfPeopleByKey({});
     },
   });
+  const clearHistoryMutation = useMutation({
+    mutationFn: clearOwnHistory,
+    onSuccess: () => {
+      setSelectedKeys([]);
+      setPdfPeopleByKey({});
+      setHistoryPage(1);
+      queryClient.invalidateQueries({ queryKey: ["jornada", "historico"] });
+    },
+  });
 
   const horariosField = form.register("horarios");
   const sabadoField = form.register("sabadoHorarios");
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-[460px_1fr]">
+    <div className="jornada-studio">
+      <section className="jornada-command">
+        <div className="jornada-command__intro">
+          <p className="jornada-command__kicker">Validador de jornada</p>
+          <h1>Analisar horário em segundos.</h1>
+          <p>
+            Digite a escala, confira o diagnóstico e selecione somente jornadas
+            válidas para gerar a alteração.
+          </p>
+        </div>
+
         <form
           onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
-          className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm"
+          className="jornada-validator-panel"
         >
-          <h1 className="text-xl font-semibold text-neutral-950">
-            Validar jornada
-          </h1>
+          <div className="jornada-panel-heading">
+            <span className="jornada-panel-heading__icon">
+              <Clock3 className="size-5" aria-hidden="true" />
+            </span>
+            <div>
+              <h2>Horários de segunda a sexta</h2>
+              <p>Use 2 ou 4 marcações, com ou sem dois-pontos.</p>
+            </div>
+          </div>
 
-          <label className="mt-5 block text-sm font-medium text-neutral-800">
-            Horários de segunda a sexta
+          <label className="jornada-field">
+            <span>Jornada principal</span>
             <input
               {...horariosField}
               onBlur={(event) => {
                 horariosField.onBlur(event);
                 formatField("horarios");
               }}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+              className="jornada-time-input"
               placeholder="0800 1200 1300 1700"
             />
           </label>
           {form.formState.errors.horarios ? (
-            <p className="mt-1 text-xs text-red-700">
+            <p className="jornada-field-error">
               {form.formState.errors.horarios.message}
             </p>
           ) : null}
-          <p className="mt-1 flex items-center gap-1 text-xs text-neutral-500">
+          <p className="jornada-field-hint">
             <Clock3 className="size-3.5" aria-hidden="true" />
             {duracaoPrincipal
               ? `Duração detectada: ${duracaoPrincipal.duracaoFormatada}`
@@ -573,24 +643,24 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
 
           {canShowSabado ? (
             <>
-              <label className="mt-4 block text-sm font-medium text-neutral-800">
-                Complemento de sábado
+              <label className="jornada-field">
+                <span>Complemento de sábado</span>
                 <input
                   {...sabadoField}
                   onBlur={(event) => {
                     sabadoField.onBlur(event);
                     formatField("sabadoHorarios");
                   }}
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                  className="jornada-time-input"
                   placeholder="0800 1200"
                 />
               </label>
               {form.formState.errors.sabadoHorarios ? (
-                <p className="mt-1 text-xs text-red-700">
+                <p className="jornada-field-error">
                   {form.formState.errors.sabadoHorarios.message}
                 </p>
               ) : (
-                <p className="mt-1 text-xs text-emerald-700">
+                <p className="jornada-field-success">
                   A jornada principal está apta; informe 04:00 no sábado para
                   completar 44h semanais.
                 </p>
@@ -598,49 +668,78 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             </>
           ) : null}
 
-          <label className="mt-5 flex items-center gap-2 text-sm font-medium text-neutral-800">
+          <label className="jornada-toggle">
             <input
               type="checkbox"
               {...form.register("autoFormatar")}
-              className="size-4 rounded border-neutral-300"
             />
-            Auto-formatar horários
+            <span>
+              <strong>Auto-formatar horários</strong>
+              <small>Exemplo: 0800 vira 08:00 ao sair do campo.</small>
+            </span>
           </label>
 
           <button
             type="submit"
             disabled={mutation.isPending}
-            className="mt-5 inline-flex items-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+            className="jornada-primary-button"
           >
-            <RotateCcw className="size-4" aria-hidden="true" />
+            {mutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <RotateCcw className="size-4" aria-hidden="true" />
+            )}
             {mutation.isPending ? "Validando..." : "Validar"}
           </button>
         </form>
 
-        <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-medium text-neutral-800">Resultado</h2>
+        <section className="jornada-result-panel">
+          <div className="jornada-result-panel__header">
+            <div>
+              <p className="jornada-command__kicker">Resultado</p>
+              <h2>Diagnóstico da validação</h2>
+            </div>
+            <span
+              className={
+                mutation.data
+                  ? mutation.data.valido
+                    ? "jornada-status jornada-status--valid"
+                    : "jornada-status jornada-status--invalid"
+                  : "jornada-status"
+              }
+            >
+              {mutation.data
+                ? mutation.data.valido
+                  ? "Válida"
+                  : "Com ajuste"
+                : "Aguardando"}
+            </span>
+          </div>
           {mutation.isError ? (
-            <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="jornada-alert jornada-alert--danger">
               {mutation.error.message}
             </div>
           ) : null}
           {mutation.data ? (
             isCombinedResponse(mutation.data) ? (
-              <div className="mt-4 space-y-3">
-                <ResultCard title="Resumo" result={{
-                  valido: mutation.data.valido,
-                  mensagem: mutation.data.mensagemInterjornada,
-                  codigo: joinCodigos(
-                    mutation.data.jornada1.codigo,
-                    mutation.data.jornada2.codigo,
-                  ),
-                  intervalo:
-                    mutation.data.interjornadaMinutos == null
-                      ? undefined
-                      : `${Math.floor(mutation.data.interjornadaMinutos / 60)}h${String(
-                          mutation.data.interjornadaMinutos % 60,
-                        ).padStart(2, "0")}`,
-                }} />
+              <div className="jornada-result-stack">
+                <ResultCard
+                  title="Resumo"
+                  result={{
+                    valido: mutation.data.valido,
+                    mensagem: mutation.data.mensagemInterjornada,
+                    codigo: joinCodigos(
+                      mutation.data.jornada1.codigo,
+                      mutation.data.jornada2.codigo,
+                    ),
+                    intervalo:
+                      mutation.data.interjornadaMinutos == null
+                        ? undefined
+                        : `${Math.floor(mutation.data.interjornadaMinutos / 60)}h${String(
+                            mutation.data.interjornadaMinutos % 60,
+                          ).padStart(2, "0")}`,
+                  }}
+                />
                 <ResultCard
                   title="Segunda a sexta"
                   result={mutation.data.jornada1}
@@ -651,29 +750,46 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                 />
               </div>
             ) : (
-              <div className="mt-4">
+              <div className="jornada-result-stack">
                 <ResultCard title="Segunda a sexta" result={mutation.data} />
               </div>
             )
           ) : (
-            <p className="mt-4 text-sm text-neutral-600">
-              O resultado da validação aparecerá aqui.
-            </p>
+            <div className="jornada-result-empty">
+              <CheckCircle2 className="size-8" aria-hidden="true" />
+              <div>
+                <strong>Resultado em destaque</strong>
+                <p>
+                  Depois de validar, este painel mostra duração, código,
+                  intervalo e motivo do erro quando houver.
+                </p>
+              </div>
+            </div>
           )}
         </section>
-      </div>
+      </section>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-            <History className="size-4" aria-hidden="true" />
-            Últimas Validações
+      <section className="jornada-history-panel">
+        <div className="jornada-history-panel__header">
+          <div>
+            <div className="jornada-history-title">
+              <History className="size-4" aria-hidden="true" />
+              <h2>Últimas validações</h2>
+            </div>
+            <p>
+              Página com 10 registros. Selecione somente jornadas válidas para
+              montar o PDF.
+            </p>
+          </div>
+          <div className="jornada-history-summary">
+            <span>{visibleValidCount} válidas</span>
+            <span>{visibleErrorCount} com erro</span>
           </div>
           <button
             type="button"
             onClick={exportSelected}
             disabled={selectedKeys.length === 0 || isExporting}
-            className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+            className="jornada-secondary-button"
           >
             {isExporting ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -682,19 +798,51 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             )}
             Gerar PDF
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Limpar todo o seu histórico de validações? Esta ação não pode ser desfeita.",
+                )
+              ) {
+                clearHistoryMutation.mutate();
+              }
+            }}
+            disabled={historico.length === 0 || clearHistoryMutation.isPending}
+            className="jornada-danger-button"
+          >
+            {clearHistoryMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Trash2 className="size-4" aria-hidden="true" />
+            )}
+            Limpar meu histórico
+          </button>
         </div>
         {exportError ? (
-          <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="jornada-alert jornada-alert--danger">
             {exportError}
           </div>
         ) : null}
+        {clearHistoryMutation.isError ? (
+          <div className="jornada-alert jornada-alert--danger">
+            {clearHistoryMutation.error.message}
+          </div>
+        ) : null}
+        {clearHistoryMutation.isSuccess ? (
+          <div className="jornada-alert jornada-alert--success">
+            Histórico limpo. Registros removidos:{" "}
+            {clearHistoryMutation.data.deletedCount}.
+          </div>
+        ) : null}
         {selectedKeys.length > 0 ? (
-          <div className="mt-4 space-y-3 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+          <div className="jornada-pdf-editor">
             <div>
-              <h3 className="text-sm font-semibold text-neutral-950">
+              <h3>
                 Dados para Alteração de Jornada
               </h3>
-              <p className="mt-1 text-xs text-neutral-600">
+              <p>
                 Adicione uma ou mais pessoas para cada horário selecionado.
               </p>
             </div>
@@ -703,33 +851,33 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               .map((item) => (
                 <div
                   key={item.key}
-                  className="rounded-md border border-neutral-200 bg-white p-3"
+                  className="jornada-pdf-editor__card"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-neutral-950">
+                  <div className="jornada-pdf-editor__card-head">
+                    <div>
+                      <p>
                         {item.horarios}
                       </p>
-                      <p className="mt-1 text-xs text-neutral-600">
+                      <small>
                         Código: {item.codigo ?? "-"}
-                      </p>
+                      </small>
                     </div>
                     <button
                       type="button"
                       onClick={() => addPdfPerson(item.key)}
-                      className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-800 hover:bg-neutral-50"
+                      className="jornada-ghost-button"
                     >
                       Adicionar pessoa
                     </button>
                   </div>
-                  <div className="mt-3 space-y-2">
+                  <div className="jornada-pdf-people">
                     {(pdfPeopleByKey[item.key] ?? [createPdfPerson()]).map(
                       (person, index) => (
                         <div
                           key={person.localId}
-                          className="grid gap-2 md:grid-cols-[minmax(0,1.2fr)_160px_170px_auto]"
+                          className="jornada-pdf-person"
                         >
-                          <label className="block text-xs font-medium text-neutral-700">
+                          <label>
                             Nome
                             <input
                               value={person.nome}
@@ -741,11 +889,11 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                                   event.target.value,
                                 )
                               }
-                              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                              className="jornada-compact-input"
                               placeholder={`Pessoa ${index + 1}`}
                             />
                           </label>
-                          <label className="block text-xs font-medium text-neutral-700">
+                          <label>
                             Matrícula
                             <input
                               value={person.matricula}
@@ -757,11 +905,11 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                                   event.target.value,
                                 )
                               }
-                              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                              className="jornada-compact-input"
                               placeholder="Matrícula"
                             />
                           </label>
-                          <label className="block text-xs font-medium text-neutral-700">
+                          <label>
                             Data de alteração
                             <input
                               type="date"
@@ -774,13 +922,13 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                                   event.target.value,
                                 )
                               }
-                              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                              className="jornada-compact-input"
                             />
                           </label>
                           <button
                             type="button"
                             onClick={() => removePdfPerson(item.key, person.localId)}
-                            className="self-end rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                            className="jornada-ghost-button self-end"
                           >
                             Remover
                           </button>
@@ -793,25 +941,27 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
           </div>
         ) : null}
         {historicoQuery.isLoading ? (
-          <p className="mt-4 text-sm text-neutral-600">Carregando histórico...</p>
+          <p className="jornada-history-empty">Carregando histórico...</p>
         ) : historico.length > 0 ? (
-          <div className="mt-4 divide-y divide-neutral-100 rounded-md border border-neutral-200">
-            <label className="flex items-center gap-2 p-3 text-xs font-medium text-neutral-600">
+          <div className="jornada-history-list">
+            <label className="jornada-history-select-all">
               <input
                 type="checkbox"
                 checked={allExportableSelected}
                 onChange={toggleAllExportable}
                 disabled={exportable.length === 0}
-                className="size-4 rounded border-neutral-300"
               />
               Selecionar validações válidas exibidas
             </label>
             {visibleHistorico.map((item) => {
               const Icon = item.valido ? CheckCircle2 : AlertTriangle;
+              const primaryMessage = getPrimaryMessage(item.mensagem);
+              const secondaryMessages = getSecondaryMessages(item.mensagem);
               return (
-                <label
+                <div
                   key={item.key}
-                  className="flex gap-3 p-3 text-sm"
+                  className="jornada-history-item"
+                  data-valid={item.valido}
                   aria-disabled={!item.valido}
                 >
                   <input
@@ -820,33 +970,37 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                     onChange={() => toggleOne(item)}
                     disabled={!item.valido}
                     aria-label={`Selecionar jornada ${item.horarios}`}
-                    className="mt-1 size-4 rounded border-neutral-300"
                   />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-xs text-neutral-500">
-                      [{formatDate(item.createdAt)}] {item.horarios}
+                  <span className="jornada-history-item__body">
+                    <span className="jornada-history-item__meta">
+                      <span>{formatDate(item.createdAt)}</span>
+                      <strong>{item.horarios}</strong>
                     </span>
-                    <span
-                      className={
-                        item.valido
-                          ? "mt-1 flex items-start gap-2 text-green-800"
-                          : "mt-1 flex items-start gap-2 text-red-800"
-                      }
-                    >
+                    <span className="jornada-history-item__message">
                       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                      <span className="whitespace-pre-wrap">{item.mensagem}</span>
+                      <span>{primaryMessage}</span>
                     </span>
+                    {secondaryMessages.length > 0 ? (
+                      <details className="jornada-history-details">
+                        <summary>Ver detalhes do diagnóstico</summary>
+                        <ul>
+                          {secondaryMessages.map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
                     {!item.valido ? (
-                      <span className="mt-1 block text-xs text-neutral-500">
+                      <span className="jornada-history-item__note">
                         Jornadas com erro não podem ser selecionadas para PDF.
                       </span>
                     ) : null}
                   </span>
-                </label>
+                </div>
               );
             })}
             {historyPageCount > 1 ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm text-neutral-600">
+              <div className="jornada-history-pagination">
                 <span>
                   Página {historyPage} de {historyPageCount}
                 </span>
@@ -855,7 +1009,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                     type="button"
                     onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
                     disabled={historyPage === 1}
-                    className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                    className="jornada-ghost-button"
                   >
                     Anterior
                   </button>
@@ -865,7 +1019,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                       setHistoryPage((page) => Math.min(historyPageCount, page + 1))
                     }
                     disabled={historyPage === historyPageCount}
-                    className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                    className="jornada-ghost-button"
                   >
                     Próxima
                   </button>
@@ -874,7 +1028,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             ) : null}
           </div>
         ) : (
-          <p className="mt-4 text-sm text-neutral-600">
+          <p className="jornada-history-empty">
             Nenhuma validação registrada ainda.
           </p>
         )}
