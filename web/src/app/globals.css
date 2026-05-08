@@ -639,20 +639,14 @@ table {
   position: relative;
   isolation: isolate;
   overflow: hidden;
+  background:
+    radial-gradient(circle at 88% 8%, color-mix(in srgb, var(--app-teal) 11%, transparent), transparent 28%),
+    linear-gradient(145deg, color-mix(in srgb, var(--app-card-raised) 72%, transparent), color-mix(in srgb, var(--app-card) 92%, transparent));
   padding: clamp(1rem, 2.2vw, 1.45rem);
 }
 
 .photo-workbench::before {
-  content: "";
-  position: absolute;
-  inset: auto -10% -34% 24%;
-  z-index: -1;
-  height: 55%;
-  background:
-    linear-gradient(104deg, transparent 0 32%, rgb(255 255 255 / 0.13) 32% 39%, transparent 39%),
-    linear-gradient(90deg, color-mix(in srgb, var(--app-teal) 54%, transparent), color-mix(in srgb, var(--app-coral) 48%, transparent));
-  opacity: 0.7;
-  transform: skewY(-7deg);
+  content: none;
 }
 
 .photo-controls-panel {
