@@ -11,8 +11,8 @@ import {
   Scissors,
   SlidersHorizontal,
   Upload,
+  X,
 } from "lucide-react";
-import NextImage from "next/image";
 import { useEffect, useRef, useState } from "react";
 import Cropper, {
   getInitialCropFromCroppedAreaPixels,
@@ -21,13 +21,13 @@ import Cropper, {
   type Size,
 } from "react-easy-crop";
 import { useForm } from "react-hook-form";
+import { createFaceCropArea } from "@/lib/photos/face-crop";
 import {
   PHOTO_DEFAULTS,
   photoSettingsSchema,
-  type PhotoSettingsInput,
   type PhotoSettings,
+  type PhotoSettingsInput,
 } from "@/lib/photos/schema";
-import { createFaceCropArea } from "@/lib/photos/face-crop";
 
 type ResultFile = {
   url: string;
@@ -39,7 +39,10 @@ type ApiErrorBody = {
   error?: string | { message?: string };
 };
 
-const PHOTO_SETTINGS_STORAGE_KEY = "photo-3x4:settings:v1";
+type CropMode = "auto" | "manual";
+
+const PHOTO_SETTINGS_STORAGE_KEY = "photo-3x4:settings:v2";
+const PHOTO_ASPECT = PHOTO_DEFAULTS.width / PHOTO_DEFAULTS.height;
 
 async function getErrorMessage(response: Response) {
   try {
@@ -61,17 +64,15 @@ function getDownloadFileName(response: Response, fallback: string) {
 }
 
 function appendSettings(formData: FormData, values: PhotoSettings) {
-  formData.set("width", String(values.width));
-  formData.set("height", String(values.height));
   formData.set("quality", String(values.quality));
-  formData.set("format", values.format);
+  formData.set("format", values.format === "original" ? "jpeg" : values.format);
   formData.set("contrast", String(values.contrast));
   formData.set("brightness", String(values.brightness));
   formData.set("addBorder", String(values.addBorder));
   formData.set("borderWidth", String(values.borderWidth));
   formData.set("borderColor", values.borderColor);
-  formData.set("replaceOriginal", String(values.replaceOriginal));
-  formData.set("convertToJpg", String(values.convertToJpg));
+  formData.set("replaceOriginal", "true");
+  formData.set("convertToJpg", "false");
 }
 
 function loadImage(url: string) {
@@ -83,45 +84,61 @@ function loadImage(url: string) {
   });
 }
 
+function revokeResultUrls(results: ResultFile[]) {
+  results.forEach((result) => URL.revokeObjectURL(result.url));
+}
+
+function downloadResult(result: ResultFile) {
+  const link = document.createElement("a");
+  link.href = result.url;
+  link.download = result.fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 export function Photo3x4Workspace() {
-  const [mode, setMode] = useState<"single" | "batch">("single");
-  const [singleFile, setSingleFile] = useState<File | null>(null);
-  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [cropMode, setCropMode] = useState<CropMode>("auto");
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedArea, setCroppedArea] = useState<Area | null>(null);
   const [mediaSize, setMediaSize] = useState<MediaSize | null>(null);
   const [cropSize, setCropSize] = useState<Size | null>(null);
   const [faceStatus, setFaceStatus] = useState<string | null>(null);
-  const [singleResult, setSingleResult] = useState<ResultFile | null>(null);
-  const [batchResult, setBatchResult] = useState<ResultFile | null>(null);
-  const singleResultUrl = useRef<string | null>(null);
-  const batchResultUrl = useRef<string | null>(null);
+  const [looseResults, setLooseResults] = useState<ResultFile[]>([]);
+  const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
+
+  const selectedFile = files[0] ?? null;
+  const hasFiles = files.length > 0;
+  const isSingle = files.length === 1;
+  const isBatch = files.length > 1;
 
   const form = useForm<PhotoSettingsInput, unknown, PhotoSettings>({
     resolver: zodResolver(photoSettingsSchema),
-    defaultValues: PHOTO_DEFAULTS,
+    defaultValues: {
+      ...PHOTO_DEFAULTS,
+      format: "jpeg",
+      replaceOriginal: true,
+      convertToJpg: false,
+    },
   });
 
-  const watchedWidth = form.watch("width");
-  const watchedHeight = form.watch("height");
   const watchedQuality = form.watch("quality");
   const watchedContrast = form.watch("contrast");
   const watchedBrightness = form.watch("brightness");
   const watchedAddBorder = form.watch("addBorder");
   const watchedBorderWidth = form.watch("borderWidth");
-  const watchedConvertToJpg = Boolean(form.watch("convertToJpg"));
-  const outputWidth = Number(watchedWidth || PHOTO_DEFAULTS.width);
-  const outputHeight = Number(watchedHeight || PHOTO_DEFAULTS.height);
+  const outputWidth = PHOTO_DEFAULTS.width;
+  const outputHeight = PHOTO_DEFAULTS.height;
   const previewWidth = watchedAddBorder
     ? outputWidth + Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth) * 2
     : outputWidth;
   const previewHeight = watchedAddBorder
     ? outputHeight + Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth) * 2
     : outputHeight;
-  const aspect = outputWidth / outputHeight;
 
   useEffect(() => {
     try {
@@ -129,7 +146,14 @@ export function Photo3x4Workspace() {
       if (rawSettings) {
         const parsed = photoSettingsSchema.safeParse(JSON.parse(rawSettings));
         if (parsed.success) {
-          form.reset(parsed.data);
+          form.reset({
+            ...parsed.data,
+            width: PHOTO_DEFAULTS.width,
+            height: PHOTO_DEFAULTS.height,
+            format: parsed.data.format === "original" ? "jpeg" : parsed.data.format,
+            replaceOriginal: true,
+            convertToJpg: false,
+          });
         }
       }
     } catch {
@@ -145,7 +169,13 @@ export function Photo3x4Workspace() {
         return;
       }
 
-      const parsed = photoSettingsSchema.safeParse(values);
+      const parsed = photoSettingsSchema.safeParse({
+        ...values,
+        width: PHOTO_DEFAULTS.width,
+        height: PHOTO_DEFAULTS.height,
+        replaceOriginal: true,
+        convertToJpg: false,
+      });
       if (parsed.success) {
         window.localStorage.setItem(
           PHOTO_SETTINGS_STORAGE_KEY,
@@ -158,18 +188,12 @@ export function Photo3x4Workspace() {
   }, [form]);
 
   useEffect(() => {
-    if (watchedConvertToJpg && form.getValues("format") !== "jpeg") {
-      form.setValue("format", "jpeg", { shouldDirty: true });
-    }
-  }, [form, watchedConvertToJpg]);
-
-  useEffect(() => {
-    if (!singleFile) {
+    if (!selectedFile || !isSingle) {
       setPreviewUrl(null);
       return undefined;
     }
 
-    const nextPreviewUrl = URL.createObjectURL(singleFile);
+    const nextPreviewUrl = URL.createObjectURL(selectedFile);
     setPreviewUrl(nextPreviewUrl);
     setCrop({ x: 0, y: 0 });
     setZoom(1);
@@ -177,63 +201,100 @@ export function Photo3x4Workspace() {
     setFaceStatus(null);
 
     return () => URL.revokeObjectURL(nextPreviewUrl);
-  }, [singleFile]);
+  }, [isSingle, selectedFile]);
+
+  useEffect(() => {
+    if (isBatch && cropMode !== "auto") {
+      setCropMode("auto");
+    }
+  }, [cropMode, isBatch]);
 
   useEffect(() => {
     return () => {
-      if (singleResultUrl.current) {
-        URL.revokeObjectURL(singleResultUrl.current);
-      }
-      if (batchResultUrl.current) {
-        URL.revokeObjectURL(batchResultUrl.current);
+      revokeResultUrls(looseResults);
+      if (zipResult) {
+        URL.revokeObjectURL(zipResult.url);
       }
     };
-  }, []);
+  }, [looseResults, zipResult]);
 
-  const singleMutation = useMutation({
+  function clearResults() {
+    revokeResultUrls(looseResults);
+    setLooseResults([]);
+    if (zipResult) {
+      URL.revokeObjectURL(zipResult.url);
+      setZipResult(null);
+    }
+  }
+
+  function updateFiles(nextFiles: File[]) {
+    clearResults();
+    setFiles(nextFiles);
+    setCropMode(nextFiles.length > 1 ? "auto" : cropMode);
+  }
+
+  async function processOne(file: File, values: PhotoSettings, cropArea?: Area | null) {
+    const formData = new FormData();
+    formData.set("file", file);
+    appendSettings(formData, values);
+
+    if (cropArea) {
+      formData.set("crop", JSON.stringify(cropArea));
+    }
+
+    const response = await fetch("/api/fotos/processar", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response));
+    }
+
+    const blob = await response.blob();
+    return {
+      url: URL.createObjectURL(blob),
+      fileName: getDownloadFileName(response, "foto-3x4.jpg"),
+      label: file.name,
+    };
+  }
+
+  const looseMutation = useMutation({
     mutationFn: async (values: PhotoSettings) => {
-      if (!singleFile) {
-        throw new Error("Selecione uma foto");
+      if (!hasFiles) {
+        throw new Error("Selecione ao menos uma foto");
       }
 
-      const formData = new FormData();
-      formData.set("file", singleFile);
-      appendSettings(formData, values);
-
-      if (croppedArea) {
-        formData.set("crop", JSON.stringify(croppedArea));
+      const nextResults: ResultFile[] = [];
+      for (const file of files) {
+        nextResults.push(
+          await processOne(
+            file,
+            values,
+            isSingle && cropMode === "manual" ? croppedArea : null,
+          ),
+        );
       }
 
-      const response = await fetch("/api/fotos/processar", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response));
+      return nextResults;
+    },
+    onSuccess(results) {
+      clearResults();
+      setLooseResults(results);
+      if (results.length === 1) {
+        downloadResult(results[0]);
       }
-
-      const blob = await response.blob();
-      const fileName = getDownloadFileName(response, "foto-3x4.jpeg");
-      const url = URL.createObjectURL(blob);
-
-      if (singleResultUrl.current) {
-        URL.revokeObjectURL(singleResultUrl.current);
-      }
-
-      singleResultUrl.current = url;
-      setSingleResult({ url, fileName, label: "Imagem pronta" });
     },
   });
 
-  const batchMutation = useMutation({
+  const zipMutation = useMutation({
     mutationFn: async (values: PhotoSettings) => {
-      if (batchFiles.length === 0) {
+      if (!hasFiles) {
         throw new Error("Selecione ao menos uma foto");
       }
 
       const formData = new FormData();
-      batchFiles.forEach((file) => formData.append("files", file));
+      files.forEach((file) => formData.append("files", file));
       appendSettings(formData, values);
 
       const response = await fetch("/api/fotos/lote", {
@@ -248,23 +309,22 @@ export function Photo3x4Workspace() {
       const blob = await response.blob();
       const processed = response.headers.get("x-processed-count") ?? "0";
       const errors = response.headers.get("x-error-count") ?? "0";
-      const url = URL.createObjectURL(blob);
 
-      if (batchResultUrl.current) {
-        URL.revokeObjectURL(batchResultUrl.current);
-      }
-
-      batchResultUrl.current = url;
-      setBatchResult({
-        url,
+      return {
+        url: URL.createObjectURL(blob),
         fileName: "fotos-3x4.zip",
         label: `${processed} processadas, ${errors} ignoradas`,
-      });
+      };
+    },
+    onSuccess(result) {
+      clearResults();
+      setZipResult(result);
+      downloadResult(result);
     },
   });
 
-  const submitSingle = form.handleSubmit((values) => singleMutation.mutate(values));
-  const submitBatch = form.handleSubmit((values) => batchMutation.mutate(values));
+  const processLoose = form.handleSubmit((values) => looseMutation.mutate(values));
+  const processZip = form.handleSubmit((values) => zipMutation.mutate(values));
 
   async function detectFace() {
     if (!previewUrl) {
@@ -304,6 +364,7 @@ export function Photo3x4Workspace() {
       const detection = results.detections[0];
       if (!detection) {
         setFaceStatus("Nenhum rosto detectado. Ajuste manualmente.");
+        setCropMode("manual");
         return;
       }
 
@@ -311,8 +372,9 @@ export function Photo3x4Workspace() {
         detection.boundingBox,
         image.naturalWidth,
         image.naturalHeight,
-        aspect,
+        PHOTO_ASPECT,
       );
+      setCropMode("manual");
       setCroppedArea(area);
 
       if (mediaSize && cropSize) {
@@ -328,7 +390,7 @@ export function Photo3x4Workspace() {
         setZoom(initialCrop.zoom);
       }
 
-      setFaceStatus("Rosto detectado e corte ajustado.");
+      setFaceStatus("Auto-crop ajustado pelo rosto.");
     } catch (error) {
       setFaceStatus(
         error instanceof Error
@@ -338,226 +400,261 @@ export function Photo3x4Workspace() {
     }
   }
 
+  const isBusy = looseMutation.isPending || zipMutation.isPending;
+
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-neutral-950">Fotos 3x4</h1>
             <p className="mt-1 text-sm text-neutral-600">
-              Corte, redimensionamento e exportação.
+              Saída fixa 3x4 para uma foto ou lote selecionado.
             </p>
           </div>
-          <div className="grid grid-cols-2 rounded-md border border-neutral-200 p-1">
-            <button
-              type="button"
-              onClick={() => setMode("single")}
-              className={
-                mode === "single"
-                  ? "rounded bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
-                  : "rounded px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
-              }
-            >
-              Individual
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("batch")}
-              className={
-                mode === "batch"
-                  ? "rounded bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
-                  : "rounded px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
-              }
-            >
-              Lote
-            </button>
+          <div className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800">
+            {PHOTO_DEFAULTS.width}x{PHOTO_DEFAULTS.height}px
           </div>
         </div>
 
-        {mode === "single" ? (
-          <div className="mt-5 space-y-4">
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-4 py-5 text-sm font-medium text-neutral-700 hover:bg-neutral-100">
-              <Upload className="size-4" aria-hidden="true" />
-              <span>{singleFile ? singleFile.name : "Selecionar foto"}</span>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="sr-only"
-                onChange={(event) => {
-                  setSingleFile(event.target.files?.[0] ?? null);
-                  setSingleResult(null);
-                }}
-              />
-            </label>
+        <div className="mt-5 space-y-4">
+          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-sm font-medium text-neutral-700 hover:bg-neutral-100">
+            <Upload className="size-4" aria-hidden="true" />
+            <span>
+              {files.length
+                ? `${files.length} foto${files.length > 1 ? "s" : ""} selecionada${files.length > 1 ? "s" : ""}`
+                : "Selecionar fotos"}
+            </span>
+            <input
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              onChange={(event) => updateFiles(Array.from(event.target.files ?? []))}
+            />
+          </label>
 
-            <div className="relative h-[min(520px,62dvh)] min-h-[320px] overflow-hidden rounded-md border border-neutral-200 bg-[var(--app-canvas)]">
-              {previewUrl ? (
-                <Cropper
-                  image={previewUrl}
-                  crop={crop}
-                  zoom={zoom}
-                  aspect={aspect}
-                  onCropChange={setCrop}
-                  onCropComplete={(_, areaPixels) => setCroppedArea(areaPixels)}
-                  onCropSizeChange={setCropSize}
-                  onMediaLoaded={setMediaSize}
-                  onZoomChange={setZoom}
-                  showGrid={false}
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center text-neutral-400">
-                  <ImageIcon className="size-10" aria-hidden="true" />
-                </div>
-              )}
-            </div>
-
-            <label className="block text-sm font-medium text-neutral-800">
-              Zoom
-              <input
-                type="range"
-                min={1}
-                max={3}
-                step={0.05}
-                value={zoom}
-                onChange={(event) => setZoom(Number(event.target.value))}
-                disabled={!previewUrl}
-                className="mt-2 w-full"
-              />
-            </label>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={detectFace}
-                disabled={!previewUrl || singleMutation.isPending}
-                className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
-              >
-                <ScanFace className="size-4" aria-hidden="true" />
-                Detectar rosto
-              </button>
-              <button
-                type="button"
-                onClick={submitSingle}
-                disabled={singleMutation.isPending || !singleFile}
-                className="inline-flex items-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
-              >
-                {singleMutation.isPending ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Scissors className="size-4" aria-hidden="true" />
-                )}
-                Processar
-              </button>
-
-              {singleResult ? (
-                <a
-                  href={singleResult.url}
-                  download={singleResult.fileName}
-                  className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+          {hasFiles ? (
+            <div className="overflow-hidden rounded-md border border-neutral-200">
+              <div className="flex items-center justify-between gap-3 border-b border-neutral-100 bg-neutral-50 px-4 py-3">
+                <span className="text-sm font-semibold text-neutral-900">
+                  Arquivos
+                </span>
+                <button
+                  type="button"
+                  onClick={() => updateFiles([])}
+                  className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-white"
                 >
-                  <Download className="size-4" aria-hidden="true" />
-                  Download
-                </a>
+                  <X className="size-3" aria-hidden="true" />
+                  Limpar
+                </button>
+              </div>
+              <div className="max-h-52 overflow-auto">
+                {files.map((file) => (
+                  <div
+                    key={`${file.name}-${file.size}-${file.lastModified}`}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-100 px-4 py-3 text-sm last:border-b-0"
+                  >
+                    <span className="truncate font-medium text-neutral-900">
+                      {file.name}
+                    </span>
+                    <span className="text-neutral-500">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {isSingle ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCropMode("auto")}
+                  className={
+                    cropMode === "auto"
+                      ? "rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
+                      : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                  }
+                >
+                  Auto-crop
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCropMode("manual")}
+                  className={
+                    cropMode === "manual"
+                      ? "rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
+                      : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                  }
+                >
+                  Recorte manual
+                </button>
+                <button
+                  type="button"
+                  onClick={detectFace}
+                  disabled={!previewUrl || isBusy}
+                  className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  <ScanFace className="size-4" aria-hidden="true" />
+                  Detectar rosto
+                </button>
+              </div>
+
+              <div className="relative h-[min(520px,62dvh)] min-h-[320px] overflow-hidden rounded-md border border-neutral-200 bg-[var(--app-canvas)]">
+                {previewUrl && cropMode === "manual" ? (
+                  <Cropper
+                    image={previewUrl}
+                    crop={crop}
+                    zoom={zoom}
+                    aspect={PHOTO_ASPECT}
+                    onCropChange={setCrop}
+                    onCropComplete={(_, areaPixels) => setCroppedArea(areaPixels)}
+                    onCropSizeChange={setCropSize}
+                    onMediaLoaded={setMediaSize}
+                    onZoomChange={setZoom}
+                    showGrid={false}
+                  />
+                ) : previewUrl ? (
+                  <div className="flex h-full items-center justify-center p-6">
+                    <div
+                      className="overflow-hidden rounded-md border border-white/70 bg-white shadow-xl"
+                      style={{
+                        aspectRatio: `${PHOTO_DEFAULTS.width} / ${PHOTO_DEFAULTS.height}`,
+                        height: "100%",
+                        maxHeight: "440px",
+                      }}
+                    >
+                      <img
+                        src={previewUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-full items-center justify-center text-neutral-400">
+                    <ImageIcon className="size-10" aria-hidden="true" />
+                  </div>
+                )}
+              </div>
+
+              {cropMode === "manual" ? (
+                <label className="block text-sm font-medium text-neutral-800">
+                  Zoom
+                  <input
+                    type="range"
+                    min={1}
+                    max={3}
+                    step={0.05}
+                    value={zoom}
+                    onChange={(event) => setZoom(Number(event.target.value))}
+                    disabled={!previewUrl}
+                    className="mt-2 w-full"
+                  />
+                </label>
               ) : null}
             </div>
+          ) : null}
 
-            {faceStatus ? (
-              <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
-                {faceStatus}
-              </p>
-            ) : null}
-
-            {singleMutation.isError ? (
-              <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {singleMutation.error.message}
-              </p>
-            ) : null}
-          </div>
-        ) : (
-          <div className="mt-5 space-y-4">
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-4 py-8 text-sm font-medium text-neutral-700 hover:bg-neutral-100">
-              <Upload className="size-4" aria-hidden="true" />
-              <span>{batchFiles.length ? `${batchFiles.length} fotos` : "Selecionar lote"}</span>
-              <input
-                type="file"
-                multiple
-                accept="image/jpeg,image/png,image/webp"
-                className="sr-only"
-                onChange={(event) => {
-                  setBatchFiles(Array.from(event.target.files ?? []));
-                  setBatchResult(null);
-                }}
-              />
-            </label>
-
-            <div className="overflow-hidden rounded-md border border-neutral-200">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-neutral-50 text-neutral-600">
-                  <tr>
-                    <th className="px-4 py-3">Arquivo</th>
-                    <th className="px-4 py-3">Tamanho</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {batchFiles.slice(0, 12).map((file) => (
-                    <tr key={`${file.name}-${file.size}`} className="border-t border-neutral-100">
-                      <td className="px-4 py-3 font-medium text-neutral-900">{file.name}</td>
-                      <td className="px-4 py-3 text-neutral-600">
-                        {(file.size / 1024 / 1024).toFixed(2)} MB
-                      </td>
-                    </tr>
-                  ))}
-                  {batchFiles.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-neutral-500" colSpan={2}>
-                        Nenhum arquivo selecionado.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+          {isBatch ? (
+            <div className="rounded-md border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+              {files.length} fotos serão processadas em 3x4 com auto-crop.
             </div>
+          ) : null}
 
-            <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={processLoose}
+              disabled={!hasFiles || isBusy}
+              className="inline-flex items-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+            >
+              {looseMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Scissors className="size-4" aria-hidden="true" />
+              )}
+              {isBatch ? "Preparar fotos soltas" : "Processar foto"}
+            </button>
+
+            {isBatch ? (
               <button
                 type="button"
-                onClick={submitBatch}
-                disabled={batchMutation.isPending || batchFiles.length === 0}
-                className="inline-flex items-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+                onClick={processZip}
+                disabled={!hasFiles || isBusy}
+                className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
               >
-                {batchMutation.isPending ? (
+                {zipMutation.isPending ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                 ) : (
                   <Archive className="size-4" aria-hidden="true" />
                 )}
-                Gerar ZIP
+                Baixar ZIP
               </button>
-
-              {batchResult ? (
-                <a
-                  href={batchResult.url}
-                  download={batchResult.fileName}
-                  className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
-                >
-                  <Download className="size-4" aria-hidden="true" />
-                  ZIP
-                </a>
-              ) : null}
-            </div>
-
-            {batchResult ? (
-              <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-                {batchResult.label}
-              </p>
             ) : null}
 
-            {batchMutation.isError ? (
-              <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {batchMutation.error.message}
-              </p>
+            {looseResults.length > 1 ? (
+              <button
+                type="button"
+                onClick={() => looseResults.forEach(downloadResult)}
+                className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                Baixar todas soltas
+              </button>
+            ) : null}
+
+            {zipResult ? (
+              <a
+                href={zipResult.url}
+                download={zipResult.fileName}
+                className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                ZIP pronto
+              </a>
             ) : null}
           </div>
-        )}
+
+          {looseResults.length > 1 ? (
+            <div className="overflow-hidden rounded-md border border-neutral-200">
+              {looseResults.map((result) => (
+                <a
+                  key={result.url}
+                  href={result.url}
+                  download={result.fileName}
+                  className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3 text-sm last:border-b-0 hover:bg-neutral-50"
+                >
+                  <span className="truncate font-medium text-neutral-900">
+                    {result.fileName}
+                  </span>
+                  <Download className="size-4 text-neutral-500" aria-hidden="true" />
+                </a>
+              ))}
+            </div>
+          ) : null}
+
+          {faceStatus ? (
+            <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
+              {faceStatus}
+            </p>
+          ) : null}
+
+          {looseMutation.isError ? (
+            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {looseMutation.error.message}
+            </p>
+          ) : null}
+
+          {zipMutation.isError ? (
+            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {zipMutation.error.message}
+            </p>
+          ) : null}
+        </div>
       </section>
 
       <aside className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
@@ -566,55 +663,27 @@ export function Photo3x4Workspace() {
           Saída
         </h2>
         <div className="mt-4 grid gap-4">
-          <label className="block text-sm font-medium text-neutral-800">
-            Largura
-            <input
-              type="number"
-              min={100}
-              max={2400}
-              {...form.register("width", { valueAsNumber: true })}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-            />
-          </label>
-          <label className="block text-sm font-medium text-neutral-800">
-            Altura
-            <input
-              type="number"
-              min={100}
-              max={2400}
-              {...form.register("height", { valueAsNumber: true })}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-            />
-          </label>
+          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+            <p className="text-xs font-semibold uppercase text-neutral-500">
+              Tamanho final
+            </p>
+            <p className="mt-1 text-lg font-semibold text-neutral-950">
+              3x4 · {PHOTO_DEFAULTS.width}x{PHOTO_DEFAULTS.height}px
+            </p>
+          </div>
+
           <label className="block text-sm font-medium text-neutral-800">
             Formato
             <select
               {...form.register("format")}
-              disabled={watchedConvertToJpg}
               className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
             >
-              <option value="original">Original</option>
               <option value="jpeg">JPEG</option>
               <option value="png">PNG</option>
               <option value="webp">WEBP</option>
             </select>
           </label>
-          <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-            <input
-              type="checkbox"
-              {...form.register("replaceOriginal")}
-              className="size-4 rounded border-neutral-300"
-            />
-            Substituir original
-          </label>
-          <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-            <input
-              type="checkbox"
-              {...form.register("convertToJpg")}
-              className="size-4 rounded border-neutral-300"
-            />
-            Converter para JPG
-          </label>
+
           <label className="block text-sm font-medium text-neutral-800">
             Contraste
             <input
@@ -629,6 +698,7 @@ export function Photo3x4Workspace() {
               {Number(watchedContrast || PHOTO_DEFAULTS.contrast).toFixed(2)}
             </span>
           </label>
+
           <label className="block text-sm font-medium text-neutral-800">
             Brilho
             <input
@@ -643,6 +713,7 @@ export function Photo3x4Workspace() {
               {Number(watchedBrightness || PHOTO_DEFAULTS.brightness).toFixed(2)}
             </span>
           </label>
+
           <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
             <input
               type="checkbox"
@@ -651,6 +722,7 @@ export function Photo3x4Workspace() {
             />
             Adicionar borda
           </label>
+
           {watchedAddBorder ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm font-medium text-neutral-800">
@@ -675,6 +747,7 @@ export function Photo3x4Workspace() {
               </label>
             </div>
           ) : null}
+
           <label className="block text-sm font-medium text-neutral-800">
             Qualidade
             <input
@@ -693,20 +766,27 @@ export function Photo3x4Workspace() {
 
         {Object.values(form.formState.errors).length ? (
           <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            Revise largura, altura e qualidade.
+            Revise formato e qualidade.
           </div>
         ) : null}
 
-        {singleResult && mode === "single" ? (
+        {looseResults.length === 1 ? (
           <div className="mt-5 overflow-hidden rounded-md border border-neutral-200 bg-neutral-50 p-3">
-            <NextImage
-              src={singleResult.url}
-              alt={singleResult.label}
+            <img
+              src={looseResults[0].url}
+              alt={looseResults[0].label}
               width={previewWidth}
               height={previewHeight}
-              unoptimized
               className="mx-auto max-h-[320px] object-contain"
             />
+            <a
+              href={looseResults[0].url}
+              download={looseResults[0].fileName}
+              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-white"
+            >
+              <Download className="size-4" aria-hidden="true" />
+              Baixar foto
+            </a>
           </div>
         ) : null}
       </aside>

@@ -4,13 +4,13 @@ export const PHOTO_DEFAULTS = {
   width: 354,
   height: 472,
   quality: 92,
-  format: "original",
+  format: "jpeg",
   contrast: 1,
   brightness: 1,
   addBorder: false,
   borderWidth: 5,
   borderColor: "black",
-  replaceOriginal: false,
+  replaceOriginal: true,
   convertToJpg: false,
 } as const;
 

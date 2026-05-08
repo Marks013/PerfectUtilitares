@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  PHOTO_DEFAULTS,
   cropAreaSchema,
   photoSettingsSchema,
   type CropArea,
@@ -19,9 +20,7 @@ export function isUploadedFile(value: FormDataEntryValue | null): value is File 
 }
 
 export function parsePhotoSettings(formData: FormData): PhotoSettings {
-  return photoSettingsSchema.parse({
-    width: formData.get("width") ?? undefined,
-    height: formData.get("height") ?? undefined,
+  const parsed = photoSettingsSchema.parse({
     quality: formData.get("quality") ?? undefined,
     format: formData.get("format") ?? undefined,
     contrast: formData.get("contrast") ?? undefined,
@@ -29,9 +28,15 @@ export function parsePhotoSettings(formData: FormData): PhotoSettings {
     addBorder: formData.get("addBorder") ?? undefined,
     borderWidth: formData.get("borderWidth") ?? undefined,
     borderColor: formData.get("borderColor") ?? undefined,
-    replaceOriginal: formData.get("replaceOriginal") ?? undefined,
-    convertToJpg: formData.get("convertToJpg") ?? undefined,
   });
+
+  return {
+    ...parsed,
+    width: PHOTO_DEFAULTS.width,
+    height: PHOTO_DEFAULTS.height,
+    replaceOriginal: true,
+    convertToJpg: false,
+  };
 }
 
 export function parseCropArea(formData: FormData): CropArea | undefined {
