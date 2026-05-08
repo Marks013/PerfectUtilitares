@@ -4,6 +4,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import {
   Archive,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Image as ImageIcon,
   Loader2,
@@ -40,9 +42,26 @@ type ApiErrorBody = {
 };
 
 type CropMode = "auto" | "manual";
+type FilePreview = {
+  file: File;
+  key: string;
+  url: string;
+};
+type EditorState = {
+  crop: { x: number; y: number };
+  zoom: number;
+  croppedArea: Area | null;
+  cropMode: CropMode;
+};
 
 const PHOTO_SETTINGS_STORAGE_KEY = "photo-3x4:settings:v2";
 const PHOTO_ASPECT = PHOTO_DEFAULTS.width / PHOTO_DEFAULTS.height;
+const DEFAULT_EDITOR_STATE: EditorState = {
+  crop: { x: 0, y: 0 },
+  zoom: 1,
+  croppedArea: null,
+  cropMode: "auto",
+};
 
 async function getErrorMessage(response: Response) {
   try {
@@ -97,13 +116,26 @@ function downloadResult(result: ResultFile) {
   link.remove();
 }
 
+function getFileKey(file: File) {
+  return file.name;
+}
+
+function getEditorState(
+  states: Record<string, EditorState>,
+  key: string | null,
+) {
+  return key ? states[key] ?? DEFAULT_EDITOR_STATE : DEFAULT_EDITOR_STATE;
+}
+
+function isSameFileName(a: string, b: string) {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 export function Photo3x4Workspace() {
   const [files, setFiles] = useState<File[]>([]);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [cropMode, setCropMode] = useState<CropMode>("auto");
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedArea, setCroppedArea] = useState<Area | null>(null);
+  const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [editorStates, setEditorStates] = useState<Record<string, EditorState>>({});
   const [mediaSize, setMediaSize] = useState<MediaSize | null>(null);
   const [cropSize, setCropSize] = useState<Size | null>(null);
   const [faceStatus, setFaceStatus] = useState<string | null>(null);
@@ -111,9 +143,14 @@ export function Photo3x4Workspace() {
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
 
-  const selectedFile = files[0] ?? null;
+  const selectedFile = files[selectedIndex] ?? files[0] ?? null;
+  const selectedKey = selectedFile ? getFileKey(selectedFile) : null;
+  const selectedPreview = selectedKey
+    ? filePreviews.find((preview) => preview.key === selectedKey)
+    : null;
+  const previewUrl = selectedPreview?.url ?? null;
+  const selectedEditor = getEditorState(editorStates, selectedKey);
   const hasFiles = files.length > 0;
-  const isSingle = files.length === 1;
   const isBatch = files.length > 1;
 
   const form = useForm<PhotoSettingsInput, unknown, PhotoSettings>({
@@ -188,26 +225,31 @@ export function Photo3x4Workspace() {
   }, [form]);
 
   useEffect(() => {
-    if (!selectedFile || !isSingle) {
-      setPreviewUrl(null);
+    if (files.length === 0) {
+      setFilePreviews([]);
+      setFaceStatus(null);
+      setSelectedIndex(0);
       return undefined;
     }
 
-    const nextPreviewUrl = URL.createObjectURL(selectedFile);
-    setPreviewUrl(nextPreviewUrl);
-    setCrop({ x: 0, y: 0 });
-    setZoom(1);
-    setCroppedArea(null);
+    const nextPreviews = files.map((file) => ({
+      file,
+      key: getFileKey(file),
+      url: URL.createObjectURL(file),
+    }));
+    setFilePreviews(nextPreviews);
     setFaceStatus(null);
 
-    return () => URL.revokeObjectURL(nextPreviewUrl);
-  }, [isSingle, selectedFile]);
+    return () => {
+      nextPreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+    };
+  }, [files]);
 
   useEffect(() => {
-    if (isBatch && cropMode !== "auto") {
-      setCropMode("auto");
+    if (selectedIndex > files.length - 1) {
+      setSelectedIndex(Math.max(0, files.length - 1));
     }
-  }, [cropMode, isBatch]);
+  }, [files.length, selectedIndex]);
 
   useEffect(() => {
     return () => {
@@ -229,8 +271,72 @@ export function Photo3x4Workspace() {
 
   function updateFiles(nextFiles: File[]) {
     clearResults();
-    setFiles(nextFiles);
-    setCropMode(nextFiles.length > 1 ? "auto" : cropMode);
+    setFiles((current) => {
+      const merged = [...current];
+      for (const file of nextFiles) {
+        const existingIndex = merged.findIndex((item) =>
+          isSameFileName(item.name, file.name),
+        );
+        if (existingIndex >= 0) {
+          merged[existingIndex] = file;
+        } else {
+          merged.push(file);
+        }
+      }
+
+      const selectedName = current[selectedIndex]?.name;
+      const nextIndex = selectedName
+        ? merged.findIndex((file) => isSameFileName(file.name, selectedName))
+        : 0;
+      setSelectedIndex(nextIndex >= 0 ? nextIndex : Math.max(0, merged.length - 1));
+      setEditorStates((currentStates) => {
+        const nextStates = { ...currentStates };
+        nextFiles.forEach((file) => {
+          delete nextStates[getFileKey(file)];
+        });
+        return nextStates;
+      });
+
+      return merged;
+    });
+  }
+
+  function clearFiles() {
+    clearResults();
+    setFiles([]);
+    setEditorStates({});
+    setSelectedIndex(0);
+  }
+
+  function setSelectedEditorState(nextState: Partial<EditorState>) {
+    if (!selectedKey) {
+      return;
+    }
+
+    setEditorStates((current) => ({
+      ...current,
+      [selectedKey]: {
+        ...getEditorState(current, selectedKey),
+        ...nextState,
+      },
+    }));
+  }
+
+  function goToPhoto(direction: -1 | 1) {
+    if (files.length <= 1) {
+      return;
+    }
+
+    setSelectedIndex((current) => {
+      const next = current + direction;
+      if (next < 0) {
+        return files.length - 1;
+      }
+      if (next >= files.length) {
+        return 0;
+      }
+      return next;
+    });
   }
 
   async function processOne(file: File, values: PhotoSettings, cropArea?: Area | null) {
@@ -267,13 +373,8 @@ export function Photo3x4Workspace() {
 
       const nextResults: ResultFile[] = [];
       for (const file of files) {
-        nextResults.push(
-          await processOne(
-            file,
-            values,
-            isSingle && cropMode === "manual" ? croppedArea : null,
-          ),
-        );
+        const state = getEditorState(editorStates, getFileKey(file));
+        nextResults.push(await processOne(file, values, state.croppedArea));
       }
 
       return nextResults;
@@ -293,27 +394,24 @@ export function Photo3x4Workspace() {
         throw new Error("Selecione ao menos uma foto");
       }
 
-      const formData = new FormData();
-      files.forEach((file) => formData.append("files", file));
-      appendSettings(formData, values);
-
-      const response = await fetch("/api/fotos/lote", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response));
+      const processed: ResultFile[] = [];
+      for (const file of files) {
+        const state = getEditorState(editorStates, getFileKey(file));
+        processed.push(await processOne(file, values, state.croppedArea));
       }
 
-      const blob = await response.blob();
-      const processed = response.headers.get("x-processed-count") ?? "0";
-      const errors = response.headers.get("x-error-count") ?? "0";
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      for (const result of processed) {
+        zip.file(result.fileName, await (await fetch(result.url)).blob());
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      revokeResultUrls(processed);
 
       return {
         url: URL.createObjectURL(blob),
         fileName: "fotos-3x4.zip",
-        label: `${processed} processadas, ${errors} ignoradas`,
+        label: `${processed.length} foto${processed.length > 1 ? "s" : ""} processada${processed.length > 1 ? "s" : ""}`,
       };
     },
     onSuccess(result) {
@@ -364,7 +462,7 @@ export function Photo3x4Workspace() {
       const detection = results.detections[0];
       if (!detection) {
         setFaceStatus("Nenhum rosto detectado. Ajuste manualmente.");
-        setCropMode("manual");
+        setSelectedEditorState({ cropMode: "manual" });
         return;
       }
 
@@ -374,8 +472,7 @@ export function Photo3x4Workspace() {
         image.naturalHeight,
         PHOTO_ASPECT,
       );
-      setCropMode("manual");
-      setCroppedArea(area);
+      setSelectedEditorState({ cropMode: "manual", croppedArea: area });
 
       if (mediaSize && cropSize) {
         const initialCrop = getInitialCropFromCroppedAreaPixels(
@@ -386,8 +483,12 @@ export function Photo3x4Workspace() {
           1,
           3,
         );
-        setCrop(initialCrop.crop);
-        setZoom(initialCrop.zoom);
+        setSelectedEditorState({
+          crop: initialCrop.crop,
+          zoom: initialCrop.zoom,
+          croppedArea: area,
+          cropMode: "manual",
+        });
       }
 
       setFaceStatus("Auto-crop ajustado pelo rosto.");
@@ -430,51 +531,55 @@ export function Photo3x4Workspace() {
               multiple
               accept="image/jpeg,image/png,image/webp"
               className="sr-only"
-              onChange={(event) => updateFiles(Array.from(event.target.files ?? []))}
+              onChange={(event) => {
+                updateFiles(Array.from(event.target.files ?? []));
+                event.currentTarget.value = "";
+              }}
             />
           </label>
 
           {hasFiles ? (
-            <div className="overflow-hidden rounded-md border border-neutral-200">
-              <div className="flex items-center justify-between gap-3 border-b border-neutral-100 bg-neutral-50 px-4 py-3">
-                <span className="text-sm font-semibold text-neutral-900">
-                  Arquivos
-                </span>
-                <button
-                  type="button"
-                  onClick={() => updateFiles([])}
-                  className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-white"
-                >
-                  <X className="size-3" aria-hidden="true" />
-                  Limpar
-                </button>
-              </div>
-              <div className="max-h-52 overflow-auto">
-                {files.map((file) => (
-                  <div
-                    key={`${file.name}-${file.size}-${file.lastModified}`}
-                    className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-100 px-4 py-3 text-sm last:border-b-0"
-                  >
-                    <span className="truncate font-medium text-neutral-900">
-                      {file.name}
-                    </span>
-                    <span className="text-neutral-500">
-                      {(file.size / 1024 / 1024).toFixed(2)} MB
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {isSingle ? (
             <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-neutral-500">
+                    Editando
+                  </p>
+                  <p className="max-w-[320px] truncate text-sm font-semibold text-neutral-950">
+                    {selectedFile?.name}
+                  </p>
+                </div>
+                {isBatch ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => goToPhoto(-1)}
+                      className="inline-flex size-9 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100"
+                      aria-label="Foto anterior"
+                    >
+                      <ChevronLeft className="size-4" aria-hidden="true" />
+                    </button>
+                    <span className="min-w-16 text-center text-sm font-medium text-neutral-700">
+                      {selectedIndex + 1}/{files.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => goToPhoto(1)}
+                      className="inline-flex size-9 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100"
+                      aria-label="Próxima foto"
+                    >
+                      <ChevronRight className="size-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setCropMode("auto")}
+                  onClick={() => setSelectedEditorState({ cropMode: "auto" })}
                   className={
-                    cropMode === "auto"
+                    selectedEditor.cropMode === "auto"
                       ? "rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
                       : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
                   }
@@ -483,9 +588,9 @@ export function Photo3x4Workspace() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCropMode("manual")}
+                  onClick={() => setSelectedEditorState({ cropMode: "manual" })}
                   className={
-                    cropMode === "manual"
+                    selectedEditor.cropMode === "manual"
                       ? "rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
                       : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
                   }
@@ -499,22 +604,28 @@ export function Photo3x4Workspace() {
                   className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
                 >
                   <ScanFace className="size-4" aria-hidden="true" />
-                  Detectar rosto
+                  Auto detectar rosto
                 </button>
               </div>
 
               <div className="relative h-[min(520px,62dvh)] min-h-[320px] overflow-hidden rounded-md border border-neutral-200 bg-[var(--app-canvas)]">
-                {previewUrl && cropMode === "manual" ? (
+                {previewUrl && selectedEditor.cropMode === "manual" ? (
                   <Cropper
                     image={previewUrl}
-                    crop={crop}
-                    zoom={zoom}
+                    crop={selectedEditor.crop}
+                    zoom={selectedEditor.zoom}
                     aspect={PHOTO_ASPECT}
-                    onCropChange={setCrop}
-                    onCropComplete={(_, areaPixels) => setCroppedArea(areaPixels)}
+                    onCropChange={(nextCrop) =>
+                      setSelectedEditorState({ crop: nextCrop })
+                    }
+                    onCropComplete={(_, areaPixels) =>
+                      setSelectedEditorState({ croppedArea: areaPixels })
+                    }
                     onCropSizeChange={setCropSize}
                     onMediaLoaded={setMediaSize}
-                    onZoomChange={setZoom}
+                    onZoomChange={(nextZoom) =>
+                      setSelectedEditorState({ zoom: nextZoom })
+                    }
                     showGrid={false}
                   />
                 ) : previewUrl ? (
@@ -541,7 +652,7 @@ export function Photo3x4Workspace() {
                 )}
               </div>
 
-              {cropMode === "manual" ? (
+              {selectedEditor.cropMode === "manual" ? (
                 <label className="block text-sm font-medium text-neutral-800">
                   Zoom
                   <input
@@ -549,19 +660,52 @@ export function Photo3x4Workspace() {
                     min={1}
                     max={3}
                     step={0.05}
-                    value={zoom}
-                    onChange={(event) => setZoom(Number(event.target.value))}
+                    value={selectedEditor.zoom}
+                    onChange={(event) =>
+                      setSelectedEditorState({ zoom: Number(event.target.value) })
+                    }
                     disabled={!previewUrl}
                     className="mt-2 w-full"
                   />
                 </label>
               ) : null}
-            </div>
-          ) : null}
 
-          {isBatch ? (
-            <div className="rounded-md border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
-              {files.length} fotos serão processadas em 3x4 com auto-crop.
+              <div className="overflow-hidden rounded-md border border-neutral-200">
+                <div className="flex items-center justify-between gap-3 border-b border-neutral-100 bg-neutral-50 px-4 py-3">
+                  <span className="text-sm font-semibold text-neutral-900">
+                    Arquivos
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearFiles}
+                    className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-white"
+                  >
+                    <X className="size-3" aria-hidden="true" />
+                    Limpar
+                  </button>
+                </div>
+                <div className="max-h-52 overflow-auto">
+                  {files.map((file, index) => (
+                    <button
+                      type="button"
+                      key={`${file.name}-${file.size}-${file.lastModified}`}
+                      onClick={() => setSelectedIndex(index)}
+                      className={
+                        index === selectedIndex
+                          ? "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-100 bg-blue-50 px-4 py-3 text-left text-sm last:border-b-0"
+                          : "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-100 px-4 py-3 text-left text-sm last:border-b-0 hover:bg-neutral-50"
+                      }
+                    >
+                      <span className="truncate font-medium text-neutral-900">
+                        {file.name}
+                      </span>
+                      <span className="text-neutral-500">
+                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -577,7 +721,7 @@ export function Photo3x4Workspace() {
               ) : (
                 <Scissors className="size-4" aria-hidden="true" />
               )}
-              {isBatch ? "Preparar fotos soltas" : "Processar foto"}
+              {isBatch ? "Processar lote" : "Processar foto"}
             </button>
 
             {isBatch ? (
