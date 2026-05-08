@@ -140,6 +140,7 @@ export function Photo3x4Workspace() {
   const [mediaSize, setMediaSize] = useState<MediaSize | null>(null);
   const [cropSize, setCropSize] = useState<Size | null>(null);
   const [faceStatus, setFaceStatus] = useState<string | null>(null);
+  const [isDetectingFace, setIsDetectingFace] = useState(false);
   const [looseResults, setLooseResults] = useState<ResultFile[]>([]);
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
@@ -169,6 +170,7 @@ export function Photo3x4Workspace() {
   const watchedBrightness = form.watch("brightness");
   const watchedAddBorder = form.watch("addBorder");
   const watchedBorderWidth = form.watch("borderWidth");
+  const watchedBorderColor = form.watch("borderColor");
   const outputWidth = PHOTO_DEFAULTS.width;
   const outputHeight = PHOTO_DEFAULTS.height;
   const previewWidth = watchedAddBorder
@@ -181,7 +183,14 @@ export function Photo3x4Workspace() {
   const previewBorderWidth = watchedAddBorder
     ? Math.max(1, Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth))
     : 0;
-  const previewBorderColor = form.watch("borderColor") === "white" ? "#ffffff" : "#111827";
+  const previewBorderColor = watchedBorderColor === "white" ? "#ffffff" : "#111827";
+  const cropAreaBorderWidth = watchedAddBorder
+    ? Math.min(14, Math.max(2, Math.round(previewBorderWidth / 2)))
+    : 1;
+  const cropModeDescription =
+    selectedEditor.cropMode === "manual"
+      ? "Recorte manual permite arrastar e aproximar a foto antes de processar."
+      : "Auto-crop enquadra automaticamente a imagem em 3x4. Auto detectar rosto procura o rosto e ajusta o recorte.";
 
   useEffect(() => {
     try {
@@ -349,6 +358,7 @@ export function Photo3x4Workspace() {
     clearResults();
     setEditorStates({});
     setFaceStatus(null);
+    setIsDetectingFace(false);
     setMediaSize(null);
     setCropSize(null);
     form.reset({
@@ -444,18 +454,61 @@ export function Photo3x4Workspace() {
   const processLoose = form.handleSubmit((values) => looseMutation.mutate(values));
   const processZip = form.handleSubmit((values) => zipMutation.mutate(values));
 
+  function waitForPaint() {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  }
+
+  function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        window.setTimeout(
+          () => reject(new Error("Detecção demorou demais. Tente novamente ou use o recorte manual.")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  }
+
   async function detectFace() {
     if (!previewUrl) {
       setFaceStatus("Selecione uma foto primeiro.");
       return;
     }
+    if (isDetectingFace) {
+      return;
+    }
 
+    setIsDetectingFace(true);
     setFaceStatus("Detectando rosto...");
+    await waitForPaint();
 
+    let detector:
+      | {
+          setOptions: (options: {
+            model: "short";
+            minDetectionConfidence: number;
+          }) => void;
+          onResults: (listener: (results: {
+            detections: Array<{
+              boundingBox: {
+                xCenter: number;
+                yCenter: number;
+                width: number;
+                height: number;
+              };
+            }>;
+          }) => void) => void;
+          send: (input: { image: HTMLImageElement }) => Promise<void>;
+          close: () => Promise<void>;
+        }
+      | null = null;
     try {
       const image = await loadImage(previewUrl);
       const { FaceDetection } = await import("@mediapipe/face_detection");
-      const detector = new FaceDetection({
+      detector = new FaceDetection({
         locateFile: (file) => `/mediapipe/face_detection/${file}`,
       });
       detector.setOptions({
@@ -463,21 +516,22 @@ export function Photo3x4Workspace() {
         minDetectionConfidence: 0.55,
       });
 
-      const results = await new Promise<{
-        detections: Array<{
-          boundingBox: {
-            xCenter: number;
-            yCenter: number;
-            width: number;
-            height: number;
-          };
-        }>;
-      }>((resolve, reject) => {
-        detector.onResults((nextResults) => resolve(nextResults));
-        detector.send({ image }).catch(reject);
-      });
-
-      await detector.close();
+      const results = await withTimeout(
+        new Promise<{
+          detections: Array<{
+            boundingBox: {
+              xCenter: number;
+              yCenter: number;
+              width: number;
+              height: number;
+            };
+          }>;
+        }>((resolve, reject) => {
+          detector?.onResults((nextResults) => resolve(nextResults));
+          detector?.send({ image }).catch(reject);
+        }),
+        12_000,
+      );
 
       const detection = results.detections[0];
       if (!detection) {
@@ -518,10 +572,13 @@ export function Photo3x4Workspace() {
           ? error.message
           : "Falha ao detectar rosto automaticamente.",
       );
+    } finally {
+      await detector?.close().catch(() => {});
+      setIsDetectingFace(false);
     }
   }
 
-  const isBusy = looseMutation.isPending || zipMutation.isPending;
+  const isBusy = looseMutation.isPending || zipMutation.isPending || isDetectingFace;
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -604,7 +661,7 @@ export function Photo3x4Workspace() {
                       : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
                   }
                 >
-                  Auto-crop simples
+                  Auto-crop
                 </button>
                 <button
                   type="button"
@@ -623,12 +680,16 @@ export function Photo3x4Workspace() {
                   disabled={!previewUrl || isBusy}
                   className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
                 >
-                  <ScanFace className="size-4" aria-hidden="true" />
-                  Auto detectar rosto
+                  {isDetectingFace ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <ScanFace className="size-4" aria-hidden="true" />
+                  )}
+                  {isDetectingFace ? "Detectando..." : "Auto detectar rosto"}
                 </button>
               </div>
               <p className="text-xs text-neutral-500">
-                Auto-crop simples enquadra pelo centro/atenção da imagem. Auto detectar rosto procura o rosto e ajusta o recorte para ele.
+                {cropModeDescription}
               </p>
 
               <div className="relative h-[min(520px,62dvh)] min-h-[320px] overflow-hidden rounded-md border border-neutral-200 bg-[var(--app-canvas)]">
@@ -652,6 +713,10 @@ export function Photo3x4Workspace() {
                     style={{
                       mediaStyle: {
                         filter: previewFilter,
+                      },
+                      cropAreaStyle: {
+                        border: `${cropAreaBorderWidth}px solid ${previewBorderColor}`,
+                        boxShadow: `0 0 0 9999px rgba(15, 23, 42, 0.45), inset 0 0 0 1px ${watchedBorderColor === "white" ? "#cbd5e1" : "#000000"}`,
                       },
                     }}
                     showGrid={false}

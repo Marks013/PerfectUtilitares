@@ -207,6 +207,7 @@ export function UsersManager({
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [inviteSent, setInviteSent] = useState<Invitation | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [copyInviteError, setCopyInviteError] = useState<string | null>(null);
 
   const firstTenantId = tenants[0]?.id ?? "";
   const tenantOptions = useMemo(
@@ -318,6 +319,7 @@ export function UsersManager({
     onSuccess(invitation) {
       setInviteSent(invitation);
       setCopiedInvite(false);
+      setCopyInviteError(null);
       setInvitations((current) => [invitation, ...current].slice(0, 50));
       invitationForm.reset(invitationDefaults(invitation.tenantId));
     },
@@ -330,8 +332,34 @@ export function UsersManager({
 
   async function copyInviteLink() {
     if (!inviteSent?.inviteUrl) return;
-    await window.navigator.clipboard.writeText(inviteSent.inviteUrl);
-    setCopiedInvite(true);
+    setCopyInviteError(null);
+
+    try {
+      if (window.navigator.clipboard && window.isSecureContext) {
+        await window.navigator.clipboard.writeText(inviteSent.inviteUrl);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = inviteSent.inviteUrl;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        textarea.style.top = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+
+        if (!copied) {
+          throw new Error("copy_failed");
+        }
+      }
+
+      setCopiedInvite(true);
+    } catch {
+      setCopiedInvite(false);
+      setCopyInviteError("Não foi possível copiar automaticamente. Selecione o link e copie manualmente.");
+    }
   }
 
   const submitEdit = editForm.handleSubmit((values) => saveMutation.mutate(values));
@@ -427,24 +455,31 @@ export function UsersManager({
         </form>
 
         {inviteSent ? (
-          <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
             <div className="flex items-start gap-2">
               <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <div className="min-w-0 flex-1">
-                <p>Convite criado para {inviteSent.email}.</p>
+                <p className="font-medium text-emerald-950">
+                  Convite criado para {inviteSent.email}.
+                </p>
                 {inviteSent.inviteUrl ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <code className="min-w-0 flex-1 truncate rounded-md border border-emerald-200 bg-white/60 px-2 py-1 text-xs text-neutral-800">
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <code className="min-w-0 select-all truncate rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs text-neutral-800 shadow-sm">
                       {inviteSent.inviteUrl}
                     </code>
                     <button
                       type="button"
                       onClick={copyInviteLink}
-                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-white/60"
+                      className="inline-flex items-center justify-center gap-1 rounded-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800"
                     >
                       <Copy className="size-3.5" aria-hidden="true" />
                       {copiedInvite ? "Copiado" : "Copiar link"}
                     </button>
+                    {copyInviteError ? (
+                      <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:col-span-2">
+                        {copyInviteError}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

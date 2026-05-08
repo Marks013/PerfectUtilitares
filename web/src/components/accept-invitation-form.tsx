@@ -3,8 +3,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { CheckCircle2, KeyRound } from "lucide-react";
+import { signOut } from "next-auth/react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -36,7 +36,6 @@ async function getErrorMessage(response: Response) {
 }
 
 export function AcceptInvitationForm({ token }: { token: string }) {
-  const router = useRouter();
   const form = useForm<AcceptFormInput, unknown, AcceptFormValues>({
     resolver: zodResolver(acceptFormSchema),
     defaultValues: { password: "", confirmPassword: "" },
@@ -58,7 +57,7 @@ export function AcceptInvitationForm({ token }: { token: string }) {
     },
     onSuccess() {
       form.reset();
-      router.push("/login");
+      void signOut({ callbackUrl: "/login" });
     },
   });
 
