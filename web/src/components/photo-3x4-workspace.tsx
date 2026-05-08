@@ -9,6 +9,7 @@ import {
   Download,
   Image as ImageIcon,
   Loader2,
+  RotateCcw,
   ScanFace,
   Scissors,
   SlidersHorizontal,
@@ -176,6 +177,11 @@ export function Photo3x4Workspace() {
   const previewHeight = watchedAddBorder
     ? outputHeight + Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth) * 2
     : outputHeight;
+  const previewFilter = `brightness(${Number(watchedBrightness || PHOTO_DEFAULTS.brightness)}) contrast(${Number(watchedContrast || PHOTO_DEFAULTS.contrast)})`;
+  const previewBorderWidth = watchedAddBorder
+    ? Math.max(1, Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth))
+    : 0;
+  const previewBorderColor = form.watch("borderColor") === "white" ? "#ffffff" : "#111827";
 
   useEffect(() => {
     try {
@@ -336,6 +342,20 @@ export function Photo3x4Workspace() {
         return 0;
       }
       return next;
+    });
+  }
+
+  function resetAdjustments() {
+    clearResults();
+    setEditorStates({});
+    setFaceStatus(null);
+    setMediaSize(null);
+    setCropSize(null);
+    form.reset({
+      ...PHOTO_DEFAULTS,
+      format: "jpeg",
+      replaceOriginal: true,
+      convertToJpg: false,
     });
   }
 
@@ -584,7 +604,7 @@ export function Photo3x4Workspace() {
                       : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
                   }
                 >
-                  Auto-crop
+                  Auto-crop simples
                 </button>
                 <button
                   type="button"
@@ -607,6 +627,9 @@ export function Photo3x4Workspace() {
                   Auto detectar rosto
                 </button>
               </div>
+              <p className="text-xs text-neutral-500">
+                Auto-crop simples enquadra pelo centro/atenção da imagem. Auto detectar rosto procura o rosto e ajusta o recorte para ele.
+              </p>
 
               <div className="relative h-[min(520px,62dvh)] min-h-[320px] overflow-hidden rounded-md border border-neutral-200 bg-[var(--app-canvas)]">
                 {previewUrl && selectedEditor.cropMode === "manual" ? (
@@ -626,14 +649,21 @@ export function Photo3x4Workspace() {
                     onZoomChange={(nextZoom) =>
                       setSelectedEditorState({ zoom: nextZoom })
                     }
+                    style={{
+                      mediaStyle: {
+                        filter: previewFilter,
+                      },
+                    }}
                     showGrid={false}
                   />
                 ) : previewUrl ? (
                   <div className="flex h-full items-center justify-center p-6">
                     <div
-                      className="overflow-hidden rounded-md border border-white/70 bg-white shadow-xl"
+                      className="overflow-hidden rounded-md border border-white/70 shadow-xl"
                       style={{
                         aspectRatio: `${PHOTO_DEFAULTS.width} / ${PHOTO_DEFAULTS.height}`,
+                        backgroundColor: previewBorderColor,
+                        padding: previewBorderWidth,
                         height: "100%",
                         maxHeight: "440px",
                       }}
@@ -642,6 +672,7 @@ export function Photo3x4Workspace() {
                         src={previewUrl}
                         alt=""
                         className="h-full w-full object-cover"
+                        style={{ filter: previewFilter }}
                       />
                     </div>
                   </div>
@@ -692,14 +723,24 @@ export function Photo3x4Workspace() {
                       onClick={() => setSelectedIndex(index)}
                       className={
                         index === selectedIndex
-                          ? "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-100 bg-blue-50 px-4 py-3 text-left text-sm last:border-b-0"
+                          ? "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-900 bg-neutral-950 px-4 py-3 text-left text-sm text-white last:border-b-0"
                           : "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-100 px-4 py-3 text-left text-sm last:border-b-0 hover:bg-neutral-50"
                       }
                     >
-                      <span className="truncate font-medium text-neutral-900">
+                      <span
+                        className={
+                          index === selectedIndex
+                            ? "truncate font-medium text-white"
+                            : "truncate font-medium text-neutral-900"
+                        }
+                      >
                         {file.name}
                       </span>
-                      <span className="text-neutral-500">
+                      <span
+                        className={
+                          index === selectedIndex ? "text-neutral-200" : "text-neutral-500"
+                        }
+                      >
                         {(file.size / 1024 / 1024).toFixed(2)} MB
                       </span>
                     </button>
@@ -807,6 +848,15 @@ export function Photo3x4Workspace() {
           Saída
         </h2>
         <div className="mt-4 grid gap-4">
+          <button
+            type="button"
+            onClick={resetAdjustments}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+          >
+            <RotateCcw className="size-4" aria-hidden="true" />
+            Resetar ajustes
+          </button>
+
           <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
             <p className="text-xs font-semibold uppercase text-neutral-500">
               Tamanho final
