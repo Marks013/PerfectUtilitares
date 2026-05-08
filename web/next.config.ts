@@ -39,6 +39,9 @@ if (process.env.NODE_ENV === "production") {
 const nextConfig: NextConfig = {
   output: "standalone",
   serverExternalPackages: ["read-excel-file", "unzipper"],
+  outputFileTracingIncludes: {
+    "/*": ["./node_modules/pdfkit/js/data/**/*"],
+  },
   poweredByHeader: false,
   async headers() {
     return [

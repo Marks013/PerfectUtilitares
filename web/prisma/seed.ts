@@ -66,9 +66,8 @@ async function main() {
     });
   }
 
-  await prisma.jornadaRule.updateMany({
+  await prisma.jornadaRule.deleteMany({
     where: { nome: { in: LEGACY_JORNADA_RULE_NAMES } },
-    data: { active: false },
   });
 }
 
