@@ -167,6 +167,18 @@ function isPrincipalReadyForSaturday(value: string) {
   return periodo1 <= 240 && periodo2 <= 240 && intervalo >= 60 && intervalo <= 120;
 }
 
+function isEightHourWeekday(record: HistoryRecord) {
+  if (record.tipoDia !== "util") return false;
+  return (
+    calcularDuracaoEntrada(record.horariosNormalizado)?.duracaoMinutos === 480
+  );
+}
+
+function canGroupWithSaturday(record: HistoryRecord, candidate: HistoryRecord) {
+  const principal = record.tipoDia === "sabado" ? candidate : record;
+  return isEightHourWeekday(principal);
+}
+
 function groupHistory(records: HistoryRecord[]): HistoryItem[] {
   const used = new Set<string>();
   const grouped: HistoryItem[] = [];
@@ -182,6 +194,7 @@ function groupHistory(records: HistoryRecord[]): HistoryItem[] {
       );
       return (
         diff <= 3_000 &&
+        canGroupWithSaturday(record, candidate) &&
         ((record.tipoDia === "sabado" && candidate.tipoDia === "util") ||
           (record.tipoDia === "util" && candidate.tipoDia === "sabado"))
       );

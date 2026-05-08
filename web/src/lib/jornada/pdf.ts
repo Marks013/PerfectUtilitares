@@ -34,6 +34,13 @@ type JornadaPdfGroup = {
   people: JornadaPdfPerson[];
 };
 
+export type JornadaPdfDebugGroup = {
+  dataAlteracao: string;
+  horarios: string;
+  codigo: string;
+  peopleCount: number;
+};
+
 function formatDate(date: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
@@ -145,7 +152,28 @@ function groupEntries(entries: JornadaPdfEntry[]): JornadaPdfGroup[] {
     groups.set(key, group);
   });
 
-  return [...groups.values()];
+  return [...groups.values()].sort((a, b) => {
+    const horarioCompare = getGroupHorarios(a).localeCompare(
+      getGroupHorarios(b),
+      "pt-BR",
+    );
+    if (horarioCompare !== 0) {
+      return horarioCompare;
+    }
+
+    return a.dataAlteracao.localeCompare(b.dataAlteracao);
+  });
+}
+
+export function getJornadaPdfDebugGroups(
+  entries: JornadaPdfEntry[],
+): JornadaPdfDebugGroup[] {
+  return groupEntries(entries).map((group) => ({
+    dataAlteracao: group.dataAlteracao,
+    horarios: getGroupHorarios(group),
+    codigo: getGroupCodigo(group),
+    peopleCount: group.people.length,
+  }));
 }
 
 function drawHeader(

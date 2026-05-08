@@ -28,8 +28,10 @@ export async function GET(request: Request) {
     return limited;
   }
 
+  const url = new URL(request.url);
+  const scope = url.searchParams.get("scope") ?? "mine";
   const where =
-    guard.session.user.role === "ADMIN"
+    scope === "all" && guard.session.user.role === "ADMIN"
       ? {}
       : { userId: guard.session.user.id };
   const retentionLimit = new Date(
