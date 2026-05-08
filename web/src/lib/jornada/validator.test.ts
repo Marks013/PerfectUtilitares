@@ -29,7 +29,7 @@ describe("validarJornadaManual", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Duração informada: 06:00");
+    expect(result.mensagem).toContain("Total informado: 06:00");
   });
 
   it("valida jornada de 5h50 com intervalo de 15 minutos", () => {
@@ -76,7 +76,31 @@ describe("validarJornadaManual", () => {
     const result = validarJornadaManual({ horarios: "08:00 25:00" });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Formato inválido");
+    expect(result.mensagem).toContain("Horario incompleto ou invalido: 25:00");
+  });
+
+  it("detalha quando falta horario para fechar os pares", () => {
+    const result = validarJornadaManual({
+      horarios: "08:00 12:00 15:00",
+    });
+
+    expect(result.valido).toBe(false);
+    expect(result.mensagem).toContain("Horarios recebidos: 3");
+    expect(result.mensagem).toContain("Primeiro periodo: 4h");
+  });
+
+  it("detalha horario incompleto ou com digitos a mais", () => {
+    const incompleto = validarJornadaManual({
+      horarios: "08:00 12:00 15:00 16:0",
+    });
+    const excesso = validarJornadaManual({
+      horarios: "08:000 12:00 15:00 18:00",
+    });
+
+    expect(incompleto.valido).toBe(false);
+    expect(incompleto.mensagem).toContain("16:0");
+    expect(excesso.valido).toBe(false);
+    expect(excesso.mensagem).toContain("08:000");
   });
 
   it("rejeita intervalo insuficiente", () => {

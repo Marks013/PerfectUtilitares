@@ -77,6 +77,44 @@ function createPeriodosMessage(periodo1: number, periodo2: number): string {
   return `Primeiro periodo: ${formatarDuracaoLegivel(periodo1)}\nSegundo periodo: ${formatarDuracaoLegivel(periodo2)}`;
 }
 
+function createFormatoDetalhadoMessage(horariosNormalizado: string, mensagem: string) {
+  const pontos = horariosNormalizado.split(" ");
+  const invalido = pontos.find((ponto) => parseHorario(ponto) == null);
+  const detalhes: string[] = [];
+
+  if (pontos.length >= 2) {
+    const inicio1 = parseHorario(pontos[0]);
+    const fim1 = parseHorario(pontos[1]);
+    detalhes.push(
+      inicio1 != null && fim1 != null && inicio1 < fim1
+        ? `Primeiro periodo: ${formatarDuracaoLegivel(
+            calcularDuracaoMinutos(inicio1, fim1),
+          )}`
+        : "Primeiro periodo: nao calculado",
+    );
+  }
+
+  if (pontos.length >= 4) {
+    const inicio2 = parseHorario(pontos[2]);
+    const fim2 = parseHorario(pontos[3]);
+    detalhes.push(
+      inicio2 != null && fim2 != null && inicio2 < fim2
+        ? `Segundo periodo: ${formatarDuracaoLegivel(
+            calcularDuracaoMinutos(inicio2, fim2),
+          )}`
+        : "Segundo periodo: nao calculado",
+    );
+  }
+
+  const motivo = invalido
+    ? `Horario incompleto ou invalido: ${invalido}. Use HH:MM entre 00:00 e 23:59.`
+    : pontos.length !== 2 && pontos.length !== 4
+      ? `Quantidade incompleta: informe 2 horarios (entrada e saida) ou 4 horarios (entrada, saida, retorno e saida final). Horarios recebidos: ${pontos.length}.`
+      : mensagem;
+
+  return [motivo, ...detalhes].join("\n");
+}
+
 function addPeriodosDetalhe(erros: string[], periodosDetalhe: string): string {
   if (!periodosDetalhe) return erros.join("\n");
 
@@ -98,8 +136,11 @@ export function validarJornadaManual(
   const validacaoFormato = validarHorariosNormalizados(horariosNormalizado);
   if (!validacaoFormato.valido) {
     return createError(
-      validacaoFormato.mensagem.includes("Horario invalido")
-        ? "Formato inválido. Use HH:MM"
+      horariosNormalizado
+        ? createFormatoDetalhadoMessage(
+            horariosNormalizado,
+            validacaoFormato.mensagem,
+          )
         : validacaoFormato.mensagem,
       tipoDia,
       horariosNormalizado,
@@ -121,6 +162,7 @@ export function validarJornadaManual(
   let duracaoMinutos = 0;
   let intervaloMinutos: number | null = null;
   let periodosDetalhe = "";
+  let duracaoInvalidaParaDia = false;
   const erros: string[] = [];
 
   if (times.length === 2) {
@@ -242,8 +284,11 @@ export function validarJornadaManual(
     tipoDia === "util" &&
     !JORNADA_CONFIG.jornadasUtilAceitasMinutos.includes(duracaoMinutos)
   ) {
+    duracaoInvalidaParaDia = true;
     erros.push(
-      `Jornada de segunda a sexta deve ter duração de 04:00, 05:50, 07:20 ou 08:00. Duração informada: ${formatarDuracao(duracaoMinutos)}`,
+      `Total informado: ${formatarDuracao(
+        duracaoMinutos,
+      )}. Jornadas aceitas: 04:00, 05:50, 07:20 ou 08:00`,
     );
   }
 
@@ -251,6 +296,7 @@ export function validarJornadaManual(
     tipoDia === "sabado" &&
     duracaoMinutos !== JORNADA_CONFIG.complementoSabadoMinutos
   ) {
+    duracaoInvalidaParaDia = true;
     erros.push(
       `Sábado deve ter exatamente ${formatarDuracao(
         JORNADA_CONFIG.complementoSabadoMinutos,
@@ -261,9 +307,9 @@ export function validarJornadaManual(
   }
 
   const rule = getRule(rules, duracaoMinutos, tipoDia);
-  if (!rule) {
+  if (!rule && !duracaoInvalidaParaDia) {
     erros.push(
-      `Duracao ${formatarDuracao(duracaoMinutos)} nao possui regra ativa para ${tipoDia}`,
+      `Não existe regra ativa para jornada de ${formatarDuracao(duracaoMinutos)}`,
     );
   }
 

@@ -8,12 +8,7 @@ function formatarTokenHorario(token: string): string {
     : null;
 
   if (compacto) {
-    const horas = Number(compacto.slice(0, 2));
-    const minutos = Number(compacto.slice(2, 4));
-
-    if (horas <= 23 && minutos <= 59) {
-      return `${String(horas).padStart(2, "0")}:${String(minutos).padStart(2, "0")}`;
-    }
+    return `${compacto.slice(0, 2)}:${compacto.slice(2, 4)}`;
   }
 
   const comDoisPontos = /^(\d{1,2}):(\d{2})$/.exec(trimmed);

@@ -21,6 +21,7 @@ import {
 import { calcularDuracaoMinutos, parseHorario } from "@/lib/jornada/time";
 
 const AUTO_FORMAT_KEY = "jornada:auto-formatar";
+const HISTORY_PAGE_SIZE = 10;
 
 function getAutoFormatStorageKey(userId: string) {
   return `${AUTO_FORMAT_KEY}:${userId}`;
@@ -86,6 +87,20 @@ type HistoryItem = {
   valido: boolean;
   mensagem: string;
   codigo?: string;
+};
+
+type PdfPerson = {
+  localId: string;
+  nome: string;
+  matricula: string;
+  dataAlteracao: string;
+};
+
+type PdfExportEntry = {
+  ids: string[];
+  nome: string;
+  matricula: string;
+  dataAlteracao: string;
 };
 
 type ApiErrorBody = {
@@ -187,7 +202,7 @@ function groupHistory(records: HistoryRecord[]): HistoryItem[] {
     });
   });
 
-  return grouped.slice(0, 8);
+  return grouped;
 }
 
 function ResultDetails({ result }: { result: JornadaResult }) {
@@ -254,11 +269,24 @@ async function fetchHistory() {
   return (await response.json()) as HistoryRecord[];
 }
 
-async function downloadPdf(ids: string[]) {
+function todayInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function createPdfPerson(): PdfPerson {
+  return {
+    localId: crypto.randomUUID(),
+    nome: "",
+    matricula: "",
+    dataAlteracao: todayInputValue(),
+  };
+}
+
+async function downloadPdf(entries: PdfExportEntry[]) {
   const response = await fetch("/api/jornada/historico/exportar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify({ entries }),
   });
 
   if (!response.ok) {
@@ -269,7 +297,7 @@ async function downloadPdf(ids: string[]) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "historico-jornadas.pdf";
+  link.download = "alteracao-de-jornada.pdf";
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -279,6 +307,8 @@ async function downloadPdf(ids: string[]) {
 export function JornadaValidationForm({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [pdfPeopleByKey, setPdfPeopleByKey] = useState<Record<string, PdfPerson[]>>({});
+  const [historyPage, setHistoryPage] = useState(1);
   const [exportError, setExportError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const form = useForm<FormValues>({
@@ -328,14 +358,32 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     () => groupHistory(historicoQuery.data ?? []),
     [historicoQuery.data],
   );
+  const historyPageCount = Math.max(
+    1,
+    Math.ceil(historico.length / HISTORY_PAGE_SIZE),
+  );
+  const visibleHistorico = useMemo(
+    () =>
+      historico.slice(
+        (historyPage - 1) * HISTORY_PAGE_SIZE,
+        historyPage * HISTORY_PAGE_SIZE,
+      ),
+    [historico, historyPage],
+  );
   const exportable = useMemo(
-    () => historico.filter((item) => item.valido),
-    [historico],
+    () => visibleHistorico.filter((item) => item.valido),
+    [visibleHistorico],
   );
   const selectedSet = useMemo(() => new Set(selectedKeys), [selectedKeys]);
   const allExportableSelected =
     exportable.length > 0 &&
     exportable.every((item) => selectedSet.has(item.key));
+
+  useEffect(() => {
+    if (historyPage > historyPageCount) {
+      setHistoryPage(historyPageCount);
+    }
+  }, [historyPage, historyPageCount]);
 
   function formatField(field: "horarios" | "sabadoHorarios") {
     if (!form.getValues("autoFormatar")) return;
@@ -346,29 +394,102 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   }
 
   function toggleAllExportable() {
-    setSelectedKeys(
-      allExportableSelected ? [] : exportable.map((item) => item.key),
-    );
+    if (allExportableSelected) {
+      setSelectedKeys([]);
+      setPdfPeopleByKey({});
+      return;
+    }
+
+    setSelectedKeys(exportable.map((item) => item.key));
+    setPdfPeopleByKey((current) => {
+      const next = { ...current };
+      exportable.forEach((item) => {
+        next[item.key] = next[item.key] ?? [createPdfPerson()];
+      });
+      return next;
+    });
   }
 
   function toggleOne(item: HistoryItem) {
     if (!item.valido) return;
 
-    setSelectedKeys((current) =>
-      current.includes(item.key)
-        ? current.filter((key) => key !== item.key)
-        : [...current, item.key],
-    );
+    setSelectedKeys((current) => {
+      const selected = current.includes(item.key);
+      if (selected) {
+        setPdfPeopleByKey((people) => {
+          const next = { ...people };
+          delete next[item.key];
+          return next;
+        });
+        return current.filter((key) => key !== item.key);
+      }
+
+      setPdfPeopleByKey((people) => ({
+        ...people,
+        [item.key]: people[item.key] ?? [createPdfPerson()],
+      }));
+      return [...current, item.key];
+    });
+  }
+
+  function addPdfPerson(itemKey: string) {
+    setPdfPeopleByKey((current) => ({
+      ...current,
+      [itemKey]: [...(current[itemKey] ?? []), createPdfPerson()],
+    }));
+  }
+
+  function removePdfPerson(itemKey: string, personId: string) {
+    setPdfPeopleByKey((current) => {
+      const currentPeople = current[itemKey] ?? [];
+      const nextPeople = currentPeople.filter((person) => person.localId !== personId);
+      return {
+        ...current,
+        [itemKey]: nextPeople.length ? nextPeople : [createPdfPerson()],
+      };
+    });
+  }
+
+  function updatePdfPerson(
+    itemKey: string,
+    personId: string,
+    field: keyof Omit<PdfPerson, "localId">,
+    value: string,
+  ) {
+    setPdfPeopleByKey((current) => ({
+      ...current,
+      [itemKey]: (current[itemKey] ?? [createPdfPerson()]).map((person) =>
+        person.localId === personId ? { ...person, [field]: value } : person,
+      ),
+    }));
   }
 
   async function exportSelected() {
     setExportError(null);
     setIsExporting(true);
     try {
-      const ids = historico
-        .filter((item) => selectedSet.has(item.key) && item.valido)
-        .flatMap((item) => item.ids);
-      await downloadPdf(ids);
+      const selectedItems = historico.filter(
+        (item) => selectedSet.has(item.key) && item.valido,
+      );
+      const entries = selectedItems.flatMap((item) =>
+        (pdfPeopleByKey[item.key] ?? []).map((person) => ({
+          ids: item.ids,
+          nome: person.nome.trim(),
+          matricula: person.matricula.trim(),
+          dataAlteracao: person.dataAlteracao,
+        })),
+      );
+
+      if (
+        entries.length === 0 ||
+        entries.some(
+          (entry) => !entry.nome || !entry.matricula || !entry.dataAlteracao,
+        )
+      ) {
+        throw new Error("Informe nome, matrícula e data de alteração para gerar o PDF.");
+      }
+
+      await downloadPdf(entries);
     } catch (exception) {
       setExportError(
         exception instanceof Error ? exception.message : "Falha ao exportar PDF",
@@ -408,6 +529,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jornada", "historico"] });
       setSelectedKeys([]);
+      setPdfPeopleByKey({});
     },
   });
 
@@ -566,6 +688,110 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             {exportError}
           </div>
         ) : null}
+        {selectedKeys.length > 0 ? (
+          <div className="mt-4 space-y-3 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+            <div>
+              <h3 className="text-sm font-semibold text-neutral-950">
+                Dados para Alteração de Jornada
+              </h3>
+              <p className="mt-1 text-xs text-neutral-600">
+                Adicione uma ou mais pessoas para cada horário selecionado.
+              </p>
+            </div>
+            {historico
+              .filter((item) => selectedSet.has(item.key) && item.valido)
+              .map((item) => (
+                <div
+                  key={item.key}
+                  className="rounded-md border border-neutral-200 bg-white p-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-neutral-950">
+                        {item.horarios}
+                      </p>
+                      <p className="mt-1 text-xs text-neutral-600">
+                        Código: {item.codigo ?? "-"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => addPdfPerson(item.key)}
+                      className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-800 hover:bg-neutral-50"
+                    >
+                      Adicionar pessoa
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(pdfPeopleByKey[item.key] ?? [createPdfPerson()]).map(
+                      (person, index) => (
+                        <div
+                          key={person.localId}
+                          className="grid gap-2 md:grid-cols-[minmax(0,1.2fr)_160px_170px_auto]"
+                        >
+                          <label className="block text-xs font-medium text-neutral-700">
+                            Nome
+                            <input
+                              value={person.nome}
+                              onChange={(event) =>
+                                updatePdfPerson(
+                                  item.key,
+                                  person.localId,
+                                  "nome",
+                                  event.target.value,
+                                )
+                              }
+                              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                              placeholder={`Pessoa ${index + 1}`}
+                            />
+                          </label>
+                          <label className="block text-xs font-medium text-neutral-700">
+                            Matrícula
+                            <input
+                              value={person.matricula}
+                              onChange={(event) =>
+                                updatePdfPerson(
+                                  item.key,
+                                  person.localId,
+                                  "matricula",
+                                  event.target.value,
+                                )
+                              }
+                              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                              placeholder="Matrícula"
+                            />
+                          </label>
+                          <label className="block text-xs font-medium text-neutral-700">
+                            Data de alteração
+                            <input
+                              type="date"
+                              value={person.dataAlteracao}
+                              onChange={(event) =>
+                                updatePdfPerson(
+                                  item.key,
+                                  person.localId,
+                                  "dataAlteracao",
+                                  event.target.value,
+                                )
+                              }
+                              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => removePdfPerson(item.key, person.localId)}
+                            className="self-end rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </div>
+              ))}
+          </div>
+        ) : null}
         {historicoQuery.isLoading ? (
           <p className="mt-4 text-sm text-neutral-600">Carregando histórico...</p>
         ) : historico.length > 0 ? (
@@ -580,7 +806,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               />
               Selecionar validações válidas exibidas
             </label>
-            {historico.map((item) => {
+            {visibleHistorico.map((item) => {
               const Icon = item.valido ? CheckCircle2 : AlertTriangle;
               return (
                 <label
@@ -619,6 +845,33 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                 </label>
               );
             })}
+            {historyPageCount > 1 ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm text-neutral-600">
+                <span>
+                  Página {historyPage} de {historyPageCount}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                    disabled={historyPage === 1}
+                    className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                  >
+                    Anterior
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setHistoryPage((page) => Math.min(historyPageCount, page + 1))
+                    }
+                    disabled={historyPage === historyPageCount}
+                    className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                  >
+                    Próxima
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : (
           <p className="mt-4 text-sm text-neutral-600">

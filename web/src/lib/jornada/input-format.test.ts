@@ -12,6 +12,12 @@ describe("formatarHorariosEntrada", () => {
     );
   });
 
+  it("autoformata horarios compactos mesmo quando o valor final e invalido", () => {
+    expect(formatarHorariosEntrada("0800 1200 1500 2500")).toBe(
+      "08:00 12:00 15:00 25:00",
+    );
+  });
+
   it("detecta jornada de 8 horas para solicitar sabado", () => {
     expect(isJornadaOitoHoras("0800 1200 1400 1800")).toBe(true);
     expect(calcularDuracaoEntrada("0800 1200 1500 1820")).toMatchObject({

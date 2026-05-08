@@ -16,6 +16,13 @@ export type JornadaPdfRecord = {
   user?: { name: string | null; email: string | null } | null;
 };
 
+export type JornadaPdfEntry = {
+  nome: string;
+  matricula: string;
+  dataAlteracao: string;
+  records: JornadaPdfRecord[];
+};
+
 function formatDate(date: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
@@ -29,22 +36,123 @@ function formatDateOnly(date: Date) {
   }).format(date);
 }
 
-function getUserLabel(record: JornadaPdfRecord) {
-  return record.user?.name ?? record.user?.email ?? "Sem usuario";
+function formatInputDate(value: string) {
+  if (!value) {
+    return "____/____/________";
+  }
+
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) {
+    return value;
+  }
+
+  return `${day}/${month}/${year}`;
 }
 
-function getPeriodLabel(records: JornadaPdfRecord[]) {
-  if (records.length === 0) {
+function sortRecords(records: JornadaPdfRecord[]) {
+  return [...records].sort((a, b) => {
+    const order = (value: string) => (value === "sabado" ? 2 : 1);
+    return order(a.tipoDia) - order(b.tipoDia);
+  });
+}
+
+function joinUnique(values: Array<string | null | undefined>, fallback = "-") {
+  const unique = [...new Set(values.filter(Boolean) as string[])];
+  return unique.length ? unique.join(" + ") : fallback;
+}
+
+function getEntryHorarios(entry: JornadaPdfEntry) {
+  const records = sortRecords(entry.records);
+  return records
+    .map((record) =>
+      record.tipoDia === "sabado"
+        ? `Sábado: ${record.horariosNormalizado}`
+        : record.horariosNormalizado,
+    )
+    .join(" + ");
+}
+
+function getEntryCodigo(entry: JornadaPdfEntry) {
+  return joinUnique(entry.records.map((record) => record.codigo));
+}
+
+function getEntryDuracao(entry: JornadaPdfEntry) {
+  return joinUnique(entry.records.map((record) => record.duracaoCalculada));
+}
+
+function getEntryPeriodo(entry: JornadaPdfEntry) {
+  const dates = entry.records
+    .map((record) => record.createdAt)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (!dates.length) {
     return "-";
   }
 
-  const dates = records
-    .map((record) => record.createdAt)
-    .sort((a, b) => a.getTime() - b.getTime());
   const first = formatDateOnly(dates[0]);
   const last = formatDateOnly(dates[dates.length - 1]);
-
   return first === last ? first : `${first} a ${last}`;
+}
+
+function drawHeader(doc: PDFKit.PDFDocument, entries: JornadaPdfEntry[]) {
+  const { width } = doc.page;
+  const margin = doc.page.margins.left;
+  const contentWidth = width - margin * 2;
+  const horarioCount = new Set(
+    entries.map((entry) => `${getEntryHorarios(entry)}:${getEntryCodigo(entry)}`),
+  ).size;
+
+  doc
+    .roundedRect(margin, 34, contentWidth, 94, 16)
+    .fillAndStroke("#13231f", "#13231f");
+  doc
+    .fillColor("#f5c542")
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .text("PERFECTUTILITARES", margin + 22, 52, {
+      characterSpacing: 0.8,
+    });
+  doc
+    .fillColor("#ffffff")
+    .font("Helvetica-Bold")
+    .fontSize(24)
+    .text("Alteração de Jornada", margin + 22, 70, {
+      width: contentWidth - 44,
+    });
+  doc
+    .fillColor("#d7e5df")
+    .font("Helvetica")
+    .fontSize(9)
+    .text(`Gerado em ${formatDate(new Date())}`, margin + 22, 103, {
+      width: contentWidth - 44,
+    });
+
+  const cardY = 146;
+  const gap = 12;
+  const cardWidth = (contentWidth - gap * 2) / 3;
+  drawSummaryCard(doc, margin, cardY, cardWidth, "Pessoas", entries.length);
+  drawSummaryCard(
+    doc,
+    margin + cardWidth + gap,
+    cardY,
+    cardWidth,
+    "Horários",
+    horarioCount,
+  );
+  drawSummaryCard(
+    doc,
+    margin + (cardWidth + gap) * 2,
+    cardY,
+    cardWidth,
+    "Finalidade",
+    "Alteração",
+  );
+
+  doc
+    .fillColor("#0f172a")
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .text("Dados para alteração", margin, 224);
 }
 
 function drawSummaryCard(
@@ -66,156 +174,96 @@ function drawSummaryCard(
   doc
     .fillColor("#0f172a")
     .font("Helvetica-Bold")
-    .fontSize(15)
-    .text(String(value), x + 12, y + 27, { width: width - 24 });
+    .fontSize(14)
+    .text(String(value), x + 12, y + 28, { width: width - 24 });
 }
 
-function drawHeader(doc: PDFKit.PDFDocument, records: JornadaPdfRecord[]) {
-  const { width } = doc.page;
+function drawEntry(doc: PDFKit.PDFDocument, entry: JornadaPdfEntry, index: number, y: number) {
   const margin = doc.page.margins.left;
-  const contentWidth = width - margin * 2;
+  const width = doc.page.width - margin * 2;
+  const rowHeight = 126;
+  const horario = getEntryHorarios(entry);
+  const codigo = getEntryCodigo(entry);
 
   doc
-    .roundedRect(margin, 36, contentWidth, 92, 16)
-    .fillAndStroke("#102a43", "#102a43");
+    .roundedRect(margin, y, width, rowHeight, 12)
+    .fillAndStroke(index % 2 === 0 ? "#ffffff" : "#f8fafc", "#d9e2ec");
+
   doc
-    .fillColor("#c7d2fe")
+    .fillColor("#0f172a")
     .font("Helvetica-Bold")
-    .fontSize(8)
-    .text("VALIDADOR DE JORNADA", margin + 22, 54, {
-      characterSpacing: 0.8,
+    .fontSize(11)
+    .text(`${index + 1}. ${entry.nome || "Nome: ______________________________"}`, margin + 16, y + 15, {
+      width: 255,
     });
   doc
-    .fillColor("#ffffff")
-    .font("Helvetica-Bold")
-    .fontSize(22)
-    .text("Relatorio de jornadas validas", margin + 22, 72, {
-      width: contentWidth - 44,
-    });
-  doc
-    .fillColor("#dbeafe")
     .font("Helvetica")
     .fontSize(9)
-    .text(`Gerado em ${formatDate(new Date())}`, margin + 22, 102, {
-      width: contentWidth - 44,
+    .fillColor("#334155")
+    .text(`Matrícula: ${entry.matricula || "________________"}`, margin + 16, y + 36, {
+      width: 180,
+    })
+    .text(`Data de alteração: ${formatInputDate(entry.dataAlteracao)}`, margin + 220, y + 36, {
+      width: 180,
     });
 
-  const gap = 12;
-  const cardWidth = (contentWidth - gap * 2) / 3;
-  const summaryY = 146;
-
-  drawSummaryCard(doc, margin, summaryY, cardWidth, "Jornadas", records.length);
-  drawSummaryCard(
-    doc,
-    margin + cardWidth + gap,
-    summaryY,
-    cardWidth,
-    "Periodo",
-    getPeriodLabel(records),
-  );
-  drawSummaryCard(
-    doc,
-    margin + (cardWidth + gap) * 2,
-    summaryY,
-    cardWidth,
-    "Status",
-    "Validas",
-  );
-
   doc
-    .fillColor("#0f172a")
+    .roundedRect(margin + width - 132, y + 15, 116, 30, 10)
+    .fill("#ecfccb");
+  doc
+    .fillColor("#3f6212")
     .font("Helvetica-Bold")
-    .fontSize(12)
-    .text("Jornadas selecionadas", margin, 226);
-}
-
-function drawTableHeader(doc: PDFKit.PDFDocument, y: number) {
-  const margin = doc.page.margins.left;
-  const width = doc.page.width - margin * 2;
-
-  doc.roundedRect(margin, y, width, 26, 8).fill("#eef2f7");
-  doc
-    .fillColor("#475569")
-    .font("Helvetica-Bold")
-    .fontSize(8)
-    .text("HORARIOS", margin + 18, y + 9, { width: 190 })
-    .text("DETALHES", margin + 240, y + 9, { width: 172 })
-    .text("STATUS", margin + width - 84, y + 9, {
-      width: 66,
-      align: "right",
-    });
-}
-
-function drawRecordRow(
-  doc: PDFKit.PDFDocument,
-  record: JornadaPdfRecord,
-  index: number,
-  y: number,
-) {
-  const margin = doc.page.margins.left;
-  const width = doc.page.width - margin * 2;
-  const rowHeight = 72;
-  const user = getUserLabel(record);
-  const details = [
-    `Data: ${formatDate(record.createdAt)}`,
-    `Duracao: ${record.duracaoCalculada ?? "-"}`,
-    record.intervalo ? `Intervalo: ${record.intervalo}` : null,
-    record.codigo ? `Codigo: ${record.codigo}` : null,
-    `Usuario: ${user}`,
-  ].filter(Boolean);
-
-  doc
-    .roundedRect(margin, y, width, rowHeight, 10)
-    .fillAndStroke(index % 2 === 0 ? "#ffffff" : "#f8fafc", "#e2e8f0");
-  doc
-    .roundedRect(margin + 14, y + 18, 30, 30, 15)
-    .fill("#dbeafe");
-  doc
-    .fillColor("#1d4ed8")
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .text(String(index + 1).padStart(2, "0"), margin + 14, y + 28, {
-      width: 30,
+    .fontSize(9)
+    .text(`Código: ${codigo}`, margin + width - 124, y + 25, {
+      width: 100,
       align: "center",
-    });
-
-  doc
-    .fillColor("#0f172a")
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .text(record.horariosNormalizado, margin + 58, y + 17, {
-      width: 170,
       ellipsis: true,
     });
+
   doc
     .fillColor("#64748b")
-    .font("Helvetica")
-    .fontSize(8)
-    .text(record.mensagem.replace(/^Jornada valida:?\s*/i, ""), margin + 58, y + 39, {
-      width: 170,
-      height: 22,
-      ellipsis: true,
-    });
-
-  doc
-    .fillColor("#334155")
-    .font("Helvetica")
-    .fontSize(8.5)
-    .text(details.join("  |  "), margin + 240, y + 17, {
-      width: 176,
-      height: 42,
-      ellipsis: true,
-    });
-
-  doc
-    .roundedRect(margin + width - 74, y + 22, 56, 24, 12)
-    .fill("#dcfce7");
-  doc
-    .fillColor("#166534")
     .font("Helvetica-Bold")
     .fontSize(8)
-    .text("VALIDA", margin + width - 74, y + 30, {
-      width: 56,
+    .text("HORÁRIO VALIDADO", margin + 16, y + 64);
+  doc
+    .fillColor("#0f172a")
+    .font("Helvetica-Bold")
+    .fontSize(13)
+    .text(horario, margin + 16, y + 78, {
+      width: width - 32,
+      height: 32,
+      ellipsis: true,
+    });
+
+  doc
+    .fillColor("#475569")
+    .font("Helvetica")
+    .fontSize(8.5)
+    .text(
+      `Duração: ${getEntryDuracao(entry)}   |   Validação: ${getEntryPeriodo(entry)}`,
+      margin + 16,
+      y + 106,
+      { width: width - 32 },
+    );
+}
+
+function drawSignature(doc: PDFKit.PDFDocument, y: number) {
+  const margin = doc.page.margins.left;
+  const width = doc.page.width - margin * 2;
+  const lineWidth = 230;
+  const x = margin + (width - lineWidth) / 2;
+
+  doc
+    .moveTo(x, y)
+    .lineTo(x + lineWidth, y)
+    .strokeColor("#334155")
+    .stroke();
+  doc
+    .fillColor("#0f172a")
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .text("Assinatura da Gerência", x, y + 9, {
+      width: lineWidth,
       align: "center",
     });
 }
@@ -236,23 +284,23 @@ function drawFooter(doc: PDFKit.PDFDocument) {
       .fillColor("#64748b")
       .font("Helvetica")
       .fontSize(8)
-      .text("Perfect Utilitares", margin, 782, { width: 180 })
-      .text(`Pagina ${i + 1} de ${range.count}`, margin, 782, {
+      .text("PerfectUtilitares", margin, 782, { width: 180 })
+      .text(`Página ${i + 1} de ${range.count}`, margin, 782, {
         align: "right",
         width,
       });
   }
 }
 
-export function generateJornadaHistoryPdf(records: JornadaPdfRecord[]) {
+export function generateJornadaHistoryPdf(entries: JornadaPdfEntry[]) {
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
       margin: 48,
       bufferPages: true,
       info: {
-        Title: "Relatorio de Jornadas",
-        Author: "Perfect Utilitares",
+        Title: "Alteração de Jornada",
+        Author: "PerfectUtilitares",
       },
     });
     const chunks: Buffer[] = [];
@@ -261,24 +309,27 @@ export function generateJornadaHistoryPdf(records: JornadaPdfRecord[]) {
     doc.on("error", reject);
     doc.on("end", () => resolve(Buffer.concat(chunks)));
 
-    drawHeader(doc, records);
+    drawHeader(doc, entries);
 
     let y = 248;
-    drawTableHeader(doc, y);
-    y += 34;
-
-    records.forEach((record, index) => {
-      if (y > 690) {
+    entries.forEach((entry, index) => {
+      if (y > 640) {
         doc.addPage();
         y = 54;
-        drawTableHeader(doc, y);
-        y += 34;
       }
 
-      drawRecordRow(doc, record, index, y);
-      y += 80;
+      drawEntry(doc, entry, index, y);
+      y += 140;
     });
 
+    if (y > 690) {
+      doc.addPage();
+      y = 120;
+    } else {
+      y += 42;
+    }
+
+    drawSignature(doc, y);
     drawFooter(doc);
 
     doc.end();

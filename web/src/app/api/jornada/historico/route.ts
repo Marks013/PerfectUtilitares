@@ -7,6 +7,7 @@ import {
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
+const HISTORY_RETENTION_DAYS = 30;
 
 export async function GET(request: Request) {
   const guard = await requireModuleAccess("jornada");
@@ -27,6 +28,13 @@ export async function GET(request: Request) {
     guard.session.user.role === "ADMIN"
       ? {}
       : { userId: guard.session.user.id };
+  const retentionLimit = new Date(
+    Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  await prisma.jornadaValidation.deleteMany({
+    where: { createdAt: { lt: retentionLimit } },
+  });
 
   const historico = await prisma.jornadaValidation.findMany({
     where,

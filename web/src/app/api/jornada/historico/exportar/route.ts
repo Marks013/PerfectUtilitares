@@ -16,7 +16,25 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
-  ids: z.array(z.string().cuid()).min(1).max(100),
+  ids: z.array(z.string().cuid()).min(1).max(100).optional(),
+  entries: z
+    .array(
+      z.object({
+        ids: z.array(z.string().cuid()).min(1).max(4),
+        nome: z.string().trim().max(120).optional().default(""),
+        matricula: z.string().trim().max(60).optional().default(""),
+        dataAlteracao: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional()
+          .default(""),
+      }),
+    )
+    .min(1)
+    .max(100)
+    .optional(),
+}).refine((value) => value.ids?.length || value.entries?.length, {
+  message: "Selecione ao menos uma jornada válida",
 });
 
 export function GET() {
@@ -68,7 +86,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const ids = [...new Set(parsed.data.ids)];
+  const entries =
+    parsed.data.entries ??
+    parsed.data.ids?.map((id) => ({
+      ids: [id],
+      nome: "",
+      matricula: "",
+      dataAlteracao: "",
+    })) ??
+    [];
+  const ids = [...new Set(entries.flatMap((entry) => entry.ids))];
   const records = await prisma.jornadaValidation.findMany({
     where: {
       id: { in: ids },
@@ -97,7 +124,28 @@ export async function POST(request: Request) {
     );
   }
 
-  const pdf = await generateJornadaHistoryPdf(records);
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  const pdfEntries = entries.map((entry) => ({
+    nome: entry.nome,
+    matricula: entry.matricula,
+    dataAlteracao: entry.dataAlteracao,
+    requestedCount: entry.ids.length,
+    records: entry.ids
+      .map((id) => recordsById.get(id))
+      .filter((record): record is NonNullable<typeof record> => Boolean(record)),
+  }));
+
+  if (pdfEntries.some((entry) => entry.records.length !== entry.requestedCount)) {
+    return jsonError(
+      400,
+      "VALIDATION_ERROR",
+      "Selecione apenas jornadas válidas para gerar o PDF",
+    );
+  }
+
+  const pdf = await generateJornadaHistoryPdf(
+    pdfEntries.map(({ requestedCount: _requestedCount, ...entry }) => entry),
+  );
 
   await prisma.auditLog.create({
     data: {
@@ -107,6 +155,7 @@ export async function POST(request: Request) {
       metadata: {
         count: records.length,
         ids: records.map((record) => record.id),
+        pessoas: pdfEntries.length,
       },
     },
   });
@@ -115,7 +164,7 @@ export async function POST(request: Request) {
     status: 200,
     headers: {
       "Cache-Control": "no-store",
-      "Content-Disposition": `attachment; filename="historico-jornadas.pdf"`,
+      "Content-Disposition": `attachment; filename="alteracao-de-jornada.pdf"`,
       "Content-Length": String(pdf.byteLength),
       "Content-Type": "application/pdf",
       "X-Content-Type-Options": "nosniff",
