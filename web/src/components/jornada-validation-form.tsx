@@ -355,6 +355,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const [historyPage, setHistoryPage] = useState(1);
   const [exportError, setExportError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [hideInvalidHistory, setHideInvalidHistory] = useState(false);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -402,17 +403,24 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     () => groupHistory(historicoQuery.data ?? []),
     [historicoQuery.data],
   );
+  const filteredHistorico = useMemo(
+    () =>
+      hideInvalidHistory
+        ? historico.filter((item) => item.valido)
+        : historico,
+    [hideInvalidHistory, historico],
+  );
   const historyPageCount = Math.max(
     1,
-    Math.ceil(historico.length / HISTORY_PAGE_SIZE),
+    Math.ceil(filteredHistorico.length / HISTORY_PAGE_SIZE),
   );
   const visibleHistorico = useMemo(
     () =>
-      historico.slice(
+      filteredHistorico.slice(
         (historyPage - 1) * HISTORY_PAGE_SIZE,
         historyPage * HISTORY_PAGE_SIZE,
       ),
-    [historico, historyPage],
+    [filteredHistorico, historyPage],
   );
   const exportable = useMemo(
     () => visibleHistorico.filter((item) => item.valido),
@@ -422,8 +430,8 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const allExportableSelected =
     exportable.length > 0 &&
     exportable.every((item) => selectedSet.has(item.key));
-  const visibleValidCount = visibleHistorico.filter((item) => item.valido).length;
-  const visibleErrorCount = visibleHistorico.length - visibleValidCount;
+  const totalValidCount = historico.filter((item) => item.valido).length;
+  const totalErrorCount = historico.length - totalValidCount;
 
   useEffect(() => {
     if (historyPage > historyPageCount) {
@@ -489,9 +497,16 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     setPdfPeopleByKey((current) => {
       const currentPeople = current[itemKey] ?? [];
       const nextPeople = currentPeople.filter((person) => person.localId !== personId);
+      if (!nextPeople.length) {
+        setSelectedKeys((keys) => keys.filter((key) => key !== itemKey));
+        const next = { ...current };
+        delete next[itemKey];
+        return next;
+      }
+
       return {
         ...current,
-        [itemKey]: nextPeople.length ? nextPeople : [createPdfPerson()],
+        [itemKey]: nextPeople,
       };
     });
   }
@@ -528,11 +543,9 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
 
       if (
         entries.length === 0 ||
-        entries.some(
-          (entry) => !entry.nome || !entry.matricula || !entry.dataAlteracao,
-        )
+        entries.some((entry) => !entry.nome || !entry.dataAlteracao)
       ) {
-        throw new Error("Informe nome, matrícula e data de alteração para gerar o PDF.");
+        throw new Error("Informe nome e data de alteração para gerar o PDF.");
       }
 
       await downloadPdf(entries);
@@ -596,7 +609,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       <section className="jornada-command">
         <div className="jornada-command__intro">
           <p className="jornada-command__kicker">Validador de jornada</p>
-          <h1>Analisar horário em segundos.</h1>
+          <h1>Validar jornadas.</h1>
           <p>
             Digite a escala, confira o diagnóstico e selecione somente jornadas
             válidas para gerar a alteração.
@@ -782,8 +795,22 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             </p>
           </div>
           <div className="jornada-history-summary">
-            <span>{visibleValidCount} válidas</span>
-            <span>{visibleErrorCount} com erro</span>
+            <span>{totalValidCount} válidas</span>
+            <button
+              type="button"
+              onClick={() => {
+                setHideInvalidHistory((value) => !value);
+                setHistoryPage(1);
+              }}
+              aria-pressed={hideInvalidHistory}
+              title={
+                hideInvalidHistory
+                  ? "Mostrar jornadas com erro"
+                  : "Ocultar jornadas com erro"
+              }
+            >
+              {hideInvalidHistory ? "Erros ocultos" : `${totalErrorCount} com erro`}
+            </button>
           </div>
           <button
             type="button"
@@ -894,7 +921,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                             />
                           </label>
                           <label>
-                            Matrícula
+                            Matrícula (opcional)
                             <input
                               value={person.matricula}
                               onChange={(event) =>
@@ -942,7 +969,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
         ) : null}
         {historicoQuery.isLoading ? (
           <p className="jornada-history-empty">Carregando histórico...</p>
-        ) : historico.length > 0 ? (
+        ) : filteredHistorico.length > 0 ? (
           <div className="jornada-history-list">
             <label className="jornada-history-select-all">
               <input
@@ -1029,7 +1056,9 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
           </div>
         ) : (
           <p className="jornada-history-empty">
-            Nenhuma validação registrada ainda.
+            {hideInvalidHistory
+              ? "Nenhuma validação válida nesta visualização."
+              : "Nenhuma validação registrada ainda."}
           </p>
         )}
       </section>

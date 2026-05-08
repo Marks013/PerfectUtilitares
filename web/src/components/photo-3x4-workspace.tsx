@@ -620,22 +620,23 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   const isBusy = looseMutation.isPending || zipMutation.isPending || isDetectingFace;
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="photo-studio">
+      <section className="photo-workbench">
+        <div className="photo-workbench__header">
           <div>
-            <h1 className="text-2xl font-semibold text-neutral-950">Fotos 3x4</h1>
+            <p className="photo-workbench__kicker">Editor de fotos</p>
+            <h1>Fotos 3x4</h1>
             <p className="mt-1 text-sm text-neutral-600">
               Saída fixa 3x4 para uma foto ou lote selecionado.
             </p>
           </div>
-          <div className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800">
+          <div className="photo-size-pill">
             {PHOTO_DEFAULTS.width}x{PHOTO_DEFAULTS.height}px
           </div>
         </div>
 
         <div className="mt-5 space-y-4">
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-sm font-medium text-neutral-700 hover:bg-neutral-100">
+          <label className="photo-upload-zone">
             <Upload className="size-4" aria-hidden="true" />
             <span>
               {files.length
@@ -656,7 +657,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
           {hasFiles ? (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+              <div className="photo-current-file">
                 <div>
                   <p className="text-xs font-semibold uppercase text-neutral-500">
                     Editando
@@ -670,7 +671,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                     <button
                       type="button"
                       onClick={() => goToPhoto(-1)}
-                      className="inline-flex size-9 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100"
+                      className="photo-icon-button"
                       aria-label="Foto anterior"
                     >
                       <ChevronLeft className="size-4" aria-hidden="true" />
@@ -681,7 +682,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                     <button
                       type="button"
                       onClick={() => goToPhoto(1)}
-                      className="inline-flex size-9 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100"
+                      className="photo-icon-button"
                       aria-label="Próxima foto"
                     >
                       <ChevronRight className="size-4" aria-hidden="true" />
@@ -690,14 +691,14 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 ) : null}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="photo-editor-toolbar">
                 <button
                   type="button"
                   onClick={() => setSelectedEditorState({ cropMode: "auto" })}
                   className={
                     selectedEditor.cropMode === "auto"
-                      ? "rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
-                      : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                      ? "photo-mode-button photo-mode-button--active"
+                      : "photo-mode-button"
                   }
                 >
                   Auto-crop
@@ -707,8 +708,8 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                   onClick={() => setSelectedEditorState({ cropMode: "manual" })}
                   className={
                     selectedEditor.cropMode === "manual"
-                      ? "rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white"
-                      : "rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                      ? "photo-mode-button photo-mode-button--active"
+                      : "photo-mode-button"
                   }
                 >
                   Recorte manual
@@ -717,7 +718,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                   type="button"
                   onClick={detectFace}
                   disabled={!previewUrl || isBusy}
-                  className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                  className="photo-mode-button"
                 >
                   {isDetectingFace ? (
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -731,7 +732,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 {cropModeDescription}
               </p>
 
-              <div className="relative h-[min(520px,62dvh)] min-h-[320px] overflow-hidden rounded-md border border-neutral-200 bg-[var(--app-canvas)]">
+              <div className="photo-preview-stage">
                 {previewUrl && selectedEditor.cropMode === "manual" ? (
                   <Cropper
                     image={previewUrl}
@@ -805,15 +806,15 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 </label>
               ) : null}
 
-              <div className="overflow-hidden rounded-md border border-neutral-200">
-                <div className="flex items-center justify-between gap-3 border-b border-neutral-100 bg-neutral-50 px-4 py-3">
+              <div className="photo-file-list">
+                <div className="photo-file-list__header">
                   <span className="text-sm font-semibold text-neutral-900">
                     Arquivos
                   </span>
                   <button
                     type="button"
                     onClick={clearFiles}
-                    className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-white"
+                    className="photo-mini-button"
                   >
                     <X className="size-3" aria-hidden="true" />
                     Limpar
@@ -827,8 +828,8 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                       onClick={() => setSelectedIndex(index)}
                       className={
                         index === selectedIndex
-                          ? "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-900 bg-neutral-950 px-4 py-3 text-left text-sm text-white last:border-b-0"
-                          : "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-neutral-100 px-4 py-3 text-left text-sm last:border-b-0 hover:bg-neutral-50"
+                          ? "photo-file-row photo-file-row--active"
+                          : "photo-file-row"
                       }
                     >
                       <span
@@ -854,12 +855,12 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
             </div>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="photo-actions">
             <button
               type="button"
               onClick={processLoose}
               disabled={!hasFiles || isBusy}
-              className="inline-flex items-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+              className="photo-primary-button"
             >
               {looseMutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -874,7 +875,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 type="button"
                 onClick={processZip}
                 disabled={!hasFiles || isBusy}
-                className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                className="photo-secondary-button"
               >
                 {zipMutation.isPending ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -889,7 +890,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
               <button
                 type="button"
                 onClick={() => looseResults.forEach(downloadResult)}
-                className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                className="photo-secondary-button"
               >
                 <Download className="size-4" aria-hidden="true" />
                 Baixar todas soltas
@@ -900,7 +901,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
               <a
                 href={zipResult.url}
                 download={zipResult.fileName}
-                className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                className="photo-secondary-button"
               >
                 <Download className="size-4" aria-hidden="true" />
                 ZIP pronto
@@ -946,7 +947,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
         </div>
       </section>
 
-      <aside className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+      <aside className="photo-controls-panel">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-950">
           <SlidersHorizontal className="size-4" aria-hidden="true" />
           Saída

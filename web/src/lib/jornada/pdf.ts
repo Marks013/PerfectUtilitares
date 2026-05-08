@@ -23,6 +23,17 @@ export type JornadaPdfEntry = {
   records: JornadaPdfRecord[];
 };
 
+type JornadaPdfPerson = {
+  nome: string;
+  matricula: string;
+};
+
+type JornadaPdfGroup = {
+  dataAlteracao: string;
+  records: JornadaPdfRecord[];
+  people: JornadaPdfPerson[];
+};
+
 function formatDate(date: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
@@ -73,7 +84,22 @@ function getEntryHorarios(entry: JornadaPdfEntry) {
 }
 
 function getEntryCodigo(entry: JornadaPdfEntry) {
-  return joinUnique(entry.records.map((record) => record.codigo));
+  return getRecordsCodigo(entry.records);
+}
+
+function getRecordsCodigo(records: JornadaPdfRecord[]) {
+  const sorted = sortRecords(records);
+
+  if (sorted.length <= 1) {
+    return joinUnique(sorted.map((record) => record.codigo));
+  }
+
+  return sorted
+    .map((record) => {
+      const label = record.tipoDia === "sabado" ? "Sábado" : "Segunda a sexta";
+      return `${label}: ${record.codigo ?? "-"}`;
+    })
+    .join(" | ");
 }
 
 function getEntryDuracao(entry: JornadaPdfEntry) {
@@ -94,13 +120,43 @@ function getEntryPeriodo(entry: JornadaPdfEntry) {
   return first === last ? first : `${first} a ${last}`;
 }
 
-function drawHeader(doc: PDFKit.PDFDocument, entries: JornadaPdfEntry[]) {
+function groupEntries(entries: JornadaPdfEntry[]): JornadaPdfGroup[] {
+  const groups = new Map<string, JornadaPdfGroup>();
+
+  entries.forEach((entry) => {
+    const records = sortRecords(entry.records);
+    const key = [
+      getEntryHorarios(entry),
+      getEntryCodigo(entry),
+      entry.dataAlteracao,
+    ].join("::");
+    const group =
+      groups.get(key) ??
+      {
+        dataAlteracao: entry.dataAlteracao,
+        records,
+        people: [],
+      };
+
+    group.people.push({
+      nome: entry.nome,
+      matricula: entry.matricula,
+    });
+    groups.set(key, group);
+  });
+
+  return [...groups.values()];
+}
+
+function drawHeader(
+  doc: PDFKit.PDFDocument,
+  groups: JornadaPdfGroup[],
+  totalPeople: number,
+) {
   const { width } = doc.page;
   const margin = doc.page.margins.left;
   const contentWidth = width - margin * 2;
-  const horarioCount = new Set(
-    entries.map((entry) => `${getEntryHorarios(entry)}:${getEntryCodigo(entry)}`),
-  ).size;
+  const horarioCount = groups.length;
 
   doc
     .roundedRect(margin, 34, contentWidth, 94, 16)
@@ -130,7 +186,7 @@ function drawHeader(doc: PDFKit.PDFDocument, entries: JornadaPdfEntry[]) {
   const cardY = 146;
   const gap = 12;
   const cardWidth = (contentWidth - gap * 2) / 3;
-  drawSummaryCard(doc, margin, cardY, cardWidth, "Pessoas", entries.length);
+  drawSummaryCard(doc, margin, cardY, cardWidth, "Pessoas", totalPeople);
   drawSummaryCard(
     doc,
     margin + cardWidth + gap,
@@ -178,12 +234,47 @@ function drawSummaryCard(
     .text(String(value), x + 12, y + 28, { width: width - 24 });
 }
 
-function drawEntry(doc: PDFKit.PDFDocument, entry: JornadaPdfEntry, index: number, y: number) {
+function getGroupHorarios(group: JornadaPdfGroup) {
+  return getEntryHorarios({
+    nome: "",
+    matricula: "",
+    dataAlteracao: group.dataAlteracao,
+    records: group.records,
+  });
+}
+
+function getGroupCodigo(group: JornadaPdfGroup) {
+  return getRecordsCodigo(group.records);
+}
+
+function getGroupDuracao(group: JornadaPdfGroup) {
+  return joinUnique(group.records.map((record) => record.duracaoCalculada));
+}
+
+function getGroupPeriodo(group: JornadaPdfGroup) {
+  return getEntryPeriodo({
+    nome: "",
+    matricula: "",
+    dataAlteracao: group.dataAlteracao,
+    records: group.records,
+  });
+}
+
+function getGroupHeight(group: JornadaPdfGroup) {
+  return 128 + Math.max(1, group.people.length) * 18;
+}
+
+function drawGroup(
+  doc: PDFKit.PDFDocument,
+  group: JornadaPdfGroup,
+  index: number,
+  y: number,
+) {
   const margin = doc.page.margins.left;
   const width = doc.page.width - margin * 2;
-  const rowHeight = 126;
-  const horario = getEntryHorarios(entry);
-  const codigo = getEntryCodigo(entry);
+  const rowHeight = getGroupHeight(group);
+  const horario = getGroupHorarios(group);
+  const codigo = getGroupCodigo(group);
 
   doc
     .roundedRect(margin, y, width, rowHeight, 12)
@@ -193,29 +284,26 @@ function drawEntry(doc: PDFKit.PDFDocument, entry: JornadaPdfEntry, index: numbe
     .fillColor("#0f172a")
     .font("Helvetica-Bold")
     .fontSize(11)
-    .text(`${index + 1}. ${entry.nome || "Nome: ______________________________"}`, margin + 16, y + 15, {
-      width: 255,
+    .text(`Grupo ${index + 1}`, margin + 16, y + 14, {
+      width: 120,
     });
   doc
     .font("Helvetica")
     .fontSize(9)
     .fillColor("#334155")
-    .text(`Matrícula: ${entry.matricula || "________________"}`, margin + 16, y + 36, {
-      width: 180,
-    })
-    .text(`Data de alteração: ${formatInputDate(entry.dataAlteracao)}`, margin + 220, y + 36, {
-      width: 180,
+    .text(`Data de alteração: ${formatInputDate(group.dataAlteracao)}`, margin + 100, y + 16, {
+      width: 190,
     });
 
   doc
-    .roundedRect(margin + width - 132, y + 15, 116, 30, 10)
+    .roundedRect(margin + width - 220, y + 12, 204, 32, 10)
     .fill("#ecfccb");
   doc
     .fillColor("#3f6212")
     .font("Helvetica-Bold")
-    .fontSize(9)
-    .text(`Código: ${codigo}`, margin + width - 124, y + 25, {
-      width: 100,
+    .fontSize(8.5)
+    .text(`Código: ${codigo}`, margin + width - 212, y + 21, {
+      width: 188,
       align: "center",
       ellipsis: true,
     });
@@ -224,12 +312,12 @@ function drawEntry(doc: PDFKit.PDFDocument, entry: JornadaPdfEntry, index: numbe
     .fillColor("#64748b")
     .font("Helvetica-Bold")
     .fontSize(8)
-    .text("HORÁRIO VALIDADO", margin + 16, y + 64);
+    .text("HORÁRIO VALIDADO", margin + 16, y + 58);
   doc
     .fillColor("#0f172a")
     .font("Helvetica-Bold")
     .fontSize(13)
-    .text(horario, margin + 16, y + 78, {
+    .text(horario, margin + 16, y + 72, {
       width: width - 32,
       height: 32,
       ellipsis: true,
@@ -240,11 +328,37 @@ function drawEntry(doc: PDFKit.PDFDocument, entry: JornadaPdfEntry, index: numbe
     .font("Helvetica")
     .fontSize(8.5)
     .text(
-      `Duração: ${getEntryDuracao(entry)}   |   Validação: ${getEntryPeriodo(entry)}`,
+      `Duração: ${getGroupDuracao(group)}   |   Validação: ${getGroupPeriodo(group)}`,
       margin + 16,
-      y + 106,
+      y + 100,
       { width: width - 32 },
     );
+
+  const peopleY = y + 124;
+  doc
+    .fillColor("#64748b")
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .text("COLABORADORES", margin + 16, peopleY - 13);
+
+  group.people.forEach((person, personIndex) => {
+    const rowY = peopleY + personIndex * 18;
+    const rowText = `${personIndex + 1}. ${person.nome}`;
+    doc
+      .fillColor("#0f172a")
+      .font("Helvetica")
+      .fontSize(9.2)
+      .text(rowText, margin + 16, rowY, { width: width - 190, ellipsis: true });
+    doc
+      .fillColor("#475569")
+      .fontSize(8.8)
+      .text(
+        person.matricula ? `Matrícula: ${person.matricula}` : "Matrícula: -",
+        margin + width - 170,
+        rowY,
+        { width: 154, align: "right", ellipsis: true },
+      );
+  });
 }
 
 function drawSignature(doc: PDFKit.PDFDocument, y: number) {
@@ -309,17 +423,19 @@ export function generateJornadaHistoryPdf(entries: JornadaPdfEntry[]) {
     doc.on("error", reject);
     doc.on("end", () => resolve(Buffer.concat(chunks)));
 
-    drawHeader(doc, entries);
+    const groups = groupEntries(entries);
+    drawHeader(doc, groups, entries.length);
 
     let y = 248;
-    entries.forEach((entry, index) => {
-      if (y > 640) {
+    groups.forEach((group, index) => {
+      const groupHeight = getGroupHeight(group);
+      if (y + groupHeight > 730) {
         doc.addPage();
         y = 54;
       }
 
-      drawEntry(doc, entry, index, y);
-      y += 140;
+      drawGroup(doc, group, index, y);
+      y += groupHeight + 14;
     });
 
     if (y > 690) {

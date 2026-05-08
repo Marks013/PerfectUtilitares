@@ -21,13 +21,11 @@ const requestSchema = z.object({
     .array(
       z.object({
         ids: z.array(z.string().cuid()).min(1).max(4),
-        nome: z.string().trim().max(120).optional().default(""),
+        nome: z.string().trim().min(1).max(120),
         matricula: z.string().trim().max(60).optional().default(""),
         dataAlteracao: z
           .string()
-          .regex(/^\d{4}-\d{2}-\d{2}$/)
-          .optional()
-          .default(""),
+          .regex(/^\d{4}-\d{2}-\d{2}$/),
       }),
     )
     .min(1)

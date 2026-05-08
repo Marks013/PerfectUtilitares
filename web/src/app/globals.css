@@ -619,6 +619,257 @@ table {
   background: var(--app-danger);
 }
 
+.photo-studio {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(19rem, 0.36fr);
+  gap: 1.25rem;
+}
+
+.photo-workbench,
+.photo-controls-panel {
+  border: 1px solid color-mix(in srgb, var(--app-fg) 12%, transparent);
+  border-radius: 2rem;
+  background: color-mix(in srgb, var(--app-card) 84%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    var(--app-shadow);
+}
+
+.photo-workbench {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: clamp(1rem, 2.2vw, 1.45rem);
+}
+
+.photo-workbench::before {
+  content: "";
+  position: absolute;
+  inset: auto -10% -34% 24%;
+  z-index: -1;
+  height: 55%;
+  background:
+    linear-gradient(104deg, transparent 0 32%, rgb(255 255 255 / 0.13) 32% 39%, transparent 39%),
+    linear-gradient(90deg, color-mix(in srgb, var(--app-teal) 54%, transparent), color-mix(in srgb, var(--app-coral) 48%, transparent));
+  opacity: 0.7;
+  transform: skewY(-7deg);
+}
+
+.photo-controls-panel {
+  align-self: start;
+  padding: clamp(1rem, 2vw, 1.3rem);
+}
+
+.photo-workbench__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.photo-workbench__kicker {
+  margin: 0 0 0.45rem;
+  color: var(--app-gold);
+  font-size: 0.74rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.photo-workbench__header h1 {
+  margin: 0;
+  color: var(--app-fg);
+  font-size: clamp(2.25rem, 4.6vw, 4.8rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.94;
+}
+
+.photo-size-pill {
+  border: 1px solid color-mix(in srgb, var(--app-teal) 42%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-teal) 14%, var(--app-card));
+  padding: 0.55rem 0.78rem;
+  color: var(--app-fg);
+  font-size: 0.78rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.photo-upload-zone {
+  display: flex;
+  min-height: 5.4rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  border: 1px dashed color-mix(in srgb, var(--app-teal) 42%, var(--app-border));
+  border-radius: 1.35rem;
+  background: color-mix(in srgb, var(--app-surface) 70%, transparent);
+  color: var(--app-fg);
+  font-size: 0.95rem;
+  font-weight: 850;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.photo-upload-zone:hover {
+  border-color: color-mix(in srgb, var(--app-teal) 70%, transparent);
+  background: color-mix(in srgb, var(--app-teal) 12%, var(--app-surface));
+  transform: translateY(-1px);
+}
+
+.photo-current-file,
+.photo-editor-toolbar,
+.photo-actions,
+.photo-file-list__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.photo-current-file {
+  justify-content: space-between;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
+  border-radius: 1.2rem;
+  background: color-mix(in srgb, var(--app-surface) 72%, transparent);
+  padding: 0.85rem;
+}
+
+.photo-icon-button,
+.photo-mini-button,
+.photo-mode-button,
+.photo-primary-button,
+.photo-secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.95rem;
+  font-weight: 850;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.photo-icon-button {
+  width: 2.35rem;
+  height: 2.35rem;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 14%, transparent);
+  background: color-mix(in srgb, var(--app-card) 72%, transparent);
+  color: var(--app-fg);
+}
+
+.photo-mode-button,
+.photo-secondary-button,
+.photo-mini-button {
+  border: 1px solid color-mix(in srgb, var(--app-fg) 14%, transparent);
+  background: color-mix(in srgb, var(--app-card) 66%, transparent);
+  color: var(--app-fg);
+}
+
+.photo-mode-button {
+  min-height: 2.55rem;
+  padding: 0 0.9rem;
+  font-size: 0.86rem;
+}
+
+.photo-mode-button--active,
+.photo-primary-button {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--app-teal), color-mix(in srgb, var(--app-gold) 35%, var(--app-teal)));
+  color: var(--app-action-text);
+}
+
+.photo-preview-stage {
+  position: relative;
+  height: min(560px, 64dvh);
+  min-height: 340px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 12%, transparent);
+  border-radius: 1.45rem;
+  background:
+    radial-gradient(circle at 50% 16%, color-mix(in srgb, var(--app-teal) 12%, transparent), transparent 36%),
+    var(--app-canvas);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+.photo-file-list {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
+  border-radius: 1.2rem;
+  background: color-mix(in srgb, var(--app-canvas) 20%, transparent);
+}
+
+.photo-file-list__header {
+  justify-content: space-between;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-fg) 9%, transparent);
+  background: color-mix(in srgb, var(--app-surface) 62%, transparent);
+  padding: 0.85rem 1rem;
+}
+
+.photo-mini-button {
+  min-height: 2rem;
+  padding: 0 0.6rem;
+  font-size: 0.75rem;
+}
+
+.photo-file-row {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-fg) 8%, transparent);
+  padding: 0.85rem 1rem;
+  color: var(--app-muted);
+  text-align: left;
+}
+
+.photo-file-row:last-child {
+  border-bottom: 0;
+}
+
+.photo-file-row:hover {
+  background: color-mix(in srgb, var(--app-fg) 5%, transparent);
+}
+
+.photo-file-row--active {
+  border-color: color-mix(in srgb, var(--app-teal) 52%, transparent);
+  background: color-mix(in srgb, var(--app-teal) 16%, var(--app-card));
+  color: var(--app-fg);
+}
+
+.photo-primary-button,
+.photo-secondary-button {
+  min-height: 2.85rem;
+  padding: 0 1rem;
+  white-space: nowrap;
+}
+
+.photo-primary-button:hover,
+.photo-secondary-button:hover,
+.photo-mode-button:hover,
+.photo-icon-button:hover,
+.photo-mini-button:hover {
+  transform: translateY(-1px);
+}
+
+.photo-primary-button:disabled,
+.photo-secondary-button:disabled,
+.photo-mode-button:disabled {
+  opacity: 0.58;
+  transform: none;
+}
+
+.photo-controls-panel h2 {
+  color: var(--app-fg);
+}
+
 .jornada-studio {
   display: grid;
   gap: 1.35rem;
@@ -627,8 +878,8 @@ table {
 .jornada-command {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(17rem, 0.66fr) minmax(19rem, 0.88fr) minmax(22rem, 1.18fr);
-  gap: 1rem;
+  grid-template-columns: minmax(13rem, 0.52fr) minmax(20rem, 0.9fr) minmax(23rem, 1.18fr);
+  gap: clamp(1rem, 2vw, 1.35rem);
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
   border-radius: 2rem;
@@ -661,7 +912,9 @@ table {
   display: grid;
   align-content: center;
   gap: 0.75rem;
+  min-width: 0;
   min-height: 25rem;
+  overflow: hidden;
   padding: clamp(0.75rem, 2vw, 1.35rem);
 }
 
@@ -682,8 +935,8 @@ table {
 }
 
 .jornada-command__intro h1 {
-  max-width: 11ch;
-  font-size: clamp(2.15rem, 4.4vw, 4.6rem);
+  max-width: 9ch;
+  font-size: clamp(2.1rem, 3.6vw, 3.85rem);
   font-weight: 950;
   line-height: 0.96;
   text-wrap: balance;
@@ -911,7 +1164,15 @@ table {
   border-color: color-mix(in srgb, var(--app-danger) 46%, transparent);
   background: color-mix(in srgb, var(--app-danger-soft) 72%, transparent);
   color: var(--app-danger);
+  min-width: 12rem;
   padding: 0 1rem;
+  white-space: nowrap;
+}
+
+.jornada-secondary-button svg,
+.jornada-danger-button svg,
+.jornada-ghost-button svg {
+  flex: 0 0 auto;
 }
 
 .jornada-ghost-button {
@@ -952,7 +1213,8 @@ table {
 }
 
 .jornada-status,
-.jornada-history-summary span {
+.jornada-history-summary span,
+.jornada-history-summary button {
   border: 1px solid color-mix(in srgb, var(--app-fg) 13%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--app-surface) 72%, transparent);
@@ -962,6 +1224,15 @@ table {
   font-weight: 900;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.jornada-history-summary button {
+  color: var(--app-danger);
+}
+
+.jornada-history-summary button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--app-teal) 42%, transparent);
+  color: var(--app-teal);
 }
 
 .jornada-status--valid {
@@ -1123,6 +1394,8 @@ table {
 .jornada-pdf-editor {
   display: grid;
   gap: 0.8rem;
+  max-height: 35rem;
+  overflow-y: auto;
   border: 1px solid color-mix(in srgb, var(--app-teal) 28%, var(--app-border));
   border-radius: 1.25rem;
   background: color-mix(in srgb, var(--app-teal) 9%, var(--app-surface));
@@ -1370,6 +1643,10 @@ table {
     min-height: 28rem;
   }
 
+  .photo-studio {
+    grid-template-columns: 1fr;
+  }
+
   .jornada-command {
     grid-template-columns: 1fr;
   }
@@ -1417,6 +1694,15 @@ table {
   .module-card__topline {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .photo-workbench,
+  .photo-controls-panel {
+    border-radius: 1.35rem;
+  }
+
+  .photo-workbench__header h1 {
+    font-size: 2.55rem;
   }
 
   .jornada-command,
