@@ -791,6 +791,9 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                     crop={selectedEditor.crop}
                     zoom={selectedEditor.zoom}
                     aspect={PHOTO_ASPECT}
+                    initialCroppedAreaPixels={
+                      selectedEditor.croppedArea ?? undefined
+                    }
                     onCropChange={(nextCrop) =>
                       setSelectedEditorState({ crop: nextCrop })
                     }
