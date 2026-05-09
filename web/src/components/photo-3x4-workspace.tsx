@@ -56,9 +56,29 @@ type EditorState = {
   contrast: number;
   brightness: number;
 };
+type FaceDetectionResult = {
+  detections: Array<{
+    boundingBox: {
+      xCenter: number;
+      yCenter: number;
+      width: number;
+      height: number;
+    };
+  }>;
+  imageWidth: number;
+  imageHeight: number;
+};
+type FaceDetectionFrameMessage = {
+  type?: string;
+  requestId?: string;
+  ok?: boolean;
+  result?: FaceDetectionResult;
+  error?: string;
+};
 
 const PHOTO_SETTINGS_STORAGE_KEY = "photo-3x4:settings:v2";
 const PHOTO_ASPECT = PHOTO_DEFAULTS.width / PHOTO_DEFAULTS.height;
+const FACE_DETECTION_FRAME_SRC = "/mediapipe/face-detection-frame.html";
 const DEFAULT_EDITOR_STATE: EditorState = {
   crop: { x: 0, y: 0 },
   zoom: 1,
@@ -127,6 +147,95 @@ function downloadResult(result: ResultFile) {
 
 function getFileKey(file: File) {
   return file.name;
+}
+
+function createRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+}
+
+function detectFaceInFrame(file: File, timeoutMs: number) {
+  return new Promise<FaceDetectionResult>((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    const requestId = createRequestId();
+    let settled = false;
+    let timeout = 0;
+
+    function cleanup() {
+      window.removeEventListener("message", handleMessage);
+      iframe.remove();
+    }
+
+    function finish() {
+      if (settled) {
+        return false;
+      }
+
+      settled = true;
+      window.clearTimeout(timeout);
+      cleanup();
+      return true;
+    }
+
+    function finishSuccess(result: FaceDetectionResult) {
+      if (finish()) {
+        resolve(result);
+      }
+    }
+
+    function finishError(error: Error) {
+      if (finish()) {
+        reject(error);
+      }
+    }
+
+    function handleMessage(event: MessageEvent<FaceDetectionFrameMessage>) {
+      if (
+        event.origin !== window.location.origin ||
+        event.source !== iframe.contentWindow ||
+        event.data?.type !== "photo-3x4:face-detection-result" ||
+        event.data.requestId !== requestId
+      ) {
+        return;
+      }
+
+      if (event.data.ok && event.data.result) {
+        finishSuccess(event.data.result);
+        return;
+      }
+
+      finishError(
+        new Error(event.data.error ?? "Falha ao detectar rosto automaticamente."),
+      );
+    }
+
+    timeout = window.setTimeout(() => {
+      finishError(
+        new Error("Detecção demorou demais. Tente novamente ou use o recorte manual."),
+      );
+    }, timeoutMs);
+
+    iframe.onload = () => {
+      iframe.contentWindow?.postMessage(
+        {
+          type: "photo-3x4:detect-face",
+          requestId,
+          file,
+        },
+        window.location.origin,
+      );
+    };
+    iframe.onerror = () => {
+      finishError(new Error("Não foi possível carregar a detecção de rosto."));
+    };
+    iframe.src = FACE_DETECTION_FRAME_SRC;
+    iframe.title = "Detecção de rosto";
+    iframe.tabIndex = -1;
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.display = "none";
+
+    window.addEventListener("message", handleMessage);
+    document.body.appendChild(iframe);
+  });
 }
 
 function getEditorState(
@@ -499,20 +608,8 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     });
   }
 
-  function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
-    return Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        window.setTimeout(
-          () => reject(new Error("Detecção demorou demais. Tente novamente ou use o recorte manual.")),
-          timeoutMs,
-        );
-      }),
-    ]);
-  }
-
   async function detectFace() {
-    if (!previewUrl) {
+    if (!previewUrl || !selectedFile) {
       setFaceStatus("Selecione uma foto primeiro.");
       return;
     }
@@ -524,53 +621,9 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     setFaceStatus("Detectando rosto...");
     await waitForPaint();
 
-    let detector:
-      | {
-          setOptions: (options: {
-            model: "short";
-            minDetectionConfidence: number;
-          }) => void;
-          onResults: (listener: (results: {
-            detections: Array<{
-              boundingBox: {
-                xCenter: number;
-                yCenter: number;
-                width: number;
-                height: number;
-              };
-            }>;
-          }) => void) => void;
-          send: (input: { image: HTMLImageElement }) => Promise<void>;
-          close: () => Promise<void>;
-        }
-      | null = null;
     try {
       const image = await loadImage(previewUrl);
-      const { FaceDetection } = await import("@mediapipe/face_detection");
-      detector = new FaceDetection({
-        locateFile: (file) => `/mediapipe/face_detection/${file}`,
-      });
-      detector.setOptions({
-        model: "short",
-        minDetectionConfidence: 0.55,
-      });
-
-      const results = await withTimeout(
-        new Promise<{
-          detections: Array<{
-            boundingBox: {
-              xCenter: number;
-              yCenter: number;
-              width: number;
-              height: number;
-            };
-          }>;
-        }>((resolve, reject) => {
-          detector?.onResults((nextResults) => resolve(nextResults));
-          detector?.send({ image }).catch(reject);
-        }),
-        12_000,
-      );
+      const results = await detectFaceInFrame(selectedFile, 12_000);
 
       const detection = results.detections[0];
       if (!detection) {
@@ -581,8 +634,8 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
       const area = createFaceCropArea(
         detection.boundingBox,
-        image.naturalWidth,
-        image.naturalHeight,
+        results.imageWidth || image.naturalWidth,
+        results.imageHeight || image.naturalHeight,
         PHOTO_ASPECT,
       );
       setSelectedEditorState({ cropMode: "manual", croppedArea: area });
@@ -612,7 +665,6 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
           : "Falha ao detectar rosto automaticamente.",
       );
     } finally {
-      await detector?.close().catch(() => {});
       setIsDetectingFace(false);
     }
   }

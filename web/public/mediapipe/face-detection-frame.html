@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Deteccao de rosto</title>
+  </head>
+  <body>
+    <script src="/mediapipe/face_detection/face_detection.js"></script>
+    <script>
+      const FACE_DETECTION_ASSET_PATH = "/mediapipe/face_detection/";
+
+      function postResult(source, origin, requestId, payload) {
+        source.postMessage(
+          {
+            type: "photo-3x4:face-detection-result",
+            requestId,
+            ...payload,
+          },
+          origin,
+        );
+      }
+
+      function normalizeDetections(detections) {
+        return (detections || []).map((detection) => ({
+          boundingBox: {
+            xCenter: detection.boundingBox.xCenter,
+            yCenter: detection.boundingBox.yCenter,
+            width: detection.boundingBox.width,
+            height: detection.boundingBox.height,
+          },
+        }));
+      }
+
+      async function drawFileToCanvas(file) {
+        const bitmap = await loadImageBitmap(file);
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          bitmap.close();
+          throw new Error("Nao foi possivel preparar a imagem para deteccao.");
+        }
+
+        if (typeof bitmap.draw === "function") {
+          bitmap.draw(context);
+        } else {
+          context.drawImage(bitmap, 0, 0);
+        }
+        bitmap.close();
+        return canvas;
+      }
+
+      async function loadImageBitmap(file) {
+        if ("createImageBitmap" in window) {
+          return createImageBitmap(file);
+        }
+
+        const url = URL.createObjectURL(file);
+        try {
+          const image = await new Promise((resolve, reject) => {
+            const element = new Image();
+            element.onload = () => resolve(element);
+            element.onerror = () =>
+              reject(new Error("Nao foi possivel ler a imagem para deteccao."));
+            element.src = url;
+          });
+
+          return {
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+            close() {},
+            draw(context) {
+              context.drawImage(image, 0, 0);
+            },
+          };
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      async function detectFace(file) {
+        const canvas = await drawFileToCanvas(file);
+        const detector = new FaceDetection({
+          locateFile: (asset) => `${FACE_DETECTION_ASSET_PATH}${asset}`,
+        });
+
+        detector.setOptions({
+          model: "short",
+          minDetectionConfidence: 0.55,
+        });
+
+        try {
+          const results = await new Promise((resolve, reject) => {
+            const timeout = window.setTimeout(
+              () => reject(new Error("Deteccao demorou demais. Tente novamente ou use o recorte manual.")),
+              12000,
+            );
+
+            detector.onResults((nextResults) => {
+              window.clearTimeout(timeout);
+              resolve(nextResults);
+            });
+
+            detector.send({ image: canvas }).catch((error) => {
+              window.clearTimeout(timeout);
+              reject(error);
+            });
+          });
+
+          return {
+            detections: normalizeDetections(results.detections),
+            imageWidth: canvas.width,
+            imageHeight: canvas.height,
+          };
+        } finally {
+          await detector.close().catch(() => {});
+        }
+      }
+
+      window.addEventListener("message", async (event) => {
+        if (event.origin !== window.location.origin) {
+          return;
+        }
+
+        const message = event.data;
+        if (!message || message.type !== "photo-3x4:detect-face") {
+          return;
+        }
+        if (!event.source) {
+          return;
+        }
+
+        try {
+          const result = await detectFace(message.file);
+          postResult(event.source, event.origin, message.requestId, {
+            ok: true,
+            result,
+          });
+        } catch (error) {
+          postResult(event.source, event.origin, message.requestId, {
+            ok: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Falha ao detectar rosto automaticamente.",
+          });
+        }
+      });
+    </script>
+  </body>
+</html>
