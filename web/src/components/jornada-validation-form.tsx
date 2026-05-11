@@ -523,15 +523,39 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const selectedValidCount = historico.filter(
     (item) => item.valido && selectedSet.has(item.key),
   ).length;
+  const selectedErrorCount = selectedItemCount - selectedValidCount;
+  const selectionMode =
+    selectedItemCount === 0
+      ? null
+      : selectedValidCount === selectedItemCount
+      ? "valid"
+      : "invalid";
+  const bulkSelectionMode =
+    selectionMode ??
+    (visibleHistorico.length > 0 && visibleHistorico.every((item) => item.valido)
+      ? "valid"
+      : visibleHistorico.length > 0 &&
+        visibleHistorico.every((item) => !item.valido)
+      ? "invalid"
+      : null);
   const selectedHistoryIds = useMemo(() => {
     const ids = historico
       .filter((item) => selectedSet.has(item.key))
       .flatMap((item) => item.ids);
     return [...new Set(ids)];
   }, [historico, selectedSet]);
+  const selectableVisibleHistorico = useMemo(() => {
+    if (bulkSelectionMode === "valid") {
+      return visibleHistorico.filter((item) => item.valido);
+    }
+    if (bulkSelectionMode === "invalid") {
+      return visibleHistorico.filter((item) => !item.valido);
+    }
+    return [];
+  }, [bulkSelectionMode, visibleHistorico]);
   const allVisibleSelected =
-    visibleHistorico.length > 0 &&
-    visibleHistorico.every((item) => selectedSet.has(item.key));
+    selectableVisibleHistorico.length > 0 &&
+    selectableVisibleHistorico.every((item) => selectedSet.has(item.key));
   const totalValidCount = historico.filter((item) => item.valido).length;
   const totalErrorCount = historico.length - totalValidCount;
 
@@ -552,8 +576,12 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   }
 
   function toggleAllVisible() {
+    if (!bulkSelectionMode) return;
+
     if (allVisibleSelected) {
-      const visibleKeys = new Set(visibleHistorico.map((item) => item.key));
+      const visibleKeys = new Set(
+        selectableVisibleHistorico.map((item) => item.key),
+      );
       setSelectedKeys((current) =>
         current.filter((key) => !visibleKeys.has(key)),
       );
@@ -568,11 +596,14 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     }
 
     setSelectedKeys((current) => [
-      ...new Set([...current, ...visibleHistorico.map((item) => item.key)]),
+      ...new Set([
+        ...current,
+        ...selectableVisibleHistorico.map((item) => item.key),
+      ]),
     ]);
     setPdfPeopleByKey((current) => {
       const next = { ...current };
-      visibleHistorico.forEach((item) => {
+      selectableVisibleHistorico.forEach((item) => {
         if (item.valido) {
           next[item.key] = next[item.key] ?? [createPdfPerson()];
         }
@@ -582,6 +613,17 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   }
 
   function toggleOne(item: HistoryItem) {
+    if (
+      selectionMode === "valid" && !item.valido && !selectedSet.has(item.key)
+    ) {
+      return;
+    }
+    if (
+      selectionMode === "invalid" && item.valido && !selectedSet.has(item.key)
+    ) {
+      return;
+    }
+
     setSelectedKeys((current) => {
       const selected = current.includes(item.key);
       if (selected) {
@@ -1138,13 +1180,19 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
           <div className="jornada-alert jornada-alert--danger">
             As validações selecionadas têm erro. Elas podem ser excluídas pelo
             botão Excluir selecionados, mas não geram PDF. Para gerar o PDF,
-            selecione ao menos uma jornada válida.
+            desmarque os erros e selecione uma jornada válida.
           </div>
         ) : null}
-        {selectedItemCount > selectedValidCount && selectedValidCount > 0 ? (
+        {selectionMode === "valid" ? (
           <div className="jornada-alert jornada-alert--success">
-            O PDF será gerado apenas com as jornadas válidas selecionadas. As
-            jornadas com erro continuam selecionadas somente para exclusão.
+            Seleção em modo válido: somente outras jornadas válidas podem ser
+            adicionadas até a seleção atual ser limpa.
+          </div>
+        ) : null}
+        {selectionMode === "invalid" && selectedErrorCount > 0 ? (
+          <div className="jornada-alert jornada-alert--danger">
+            Seleção em modo erro: somente outras jornadas com erro podem ser
+            adicionadas até a seleção atual ser limpa.
           </div>
         ) : null}
         {clearHistoryMutation.isError ? (
@@ -1282,14 +1330,25 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                 type="checkbox"
                 checked={allVisibleSelected}
                 onChange={toggleAllVisible}
-                disabled={visibleHistorico.length === 0}
+                disabled={selectableVisibleHistorico.length === 0}
               />
-              Selecionar validações exibidas
+              {selectionMode === "valid"
+                ? "Selecionar válidas exibidas"
+                : selectionMode === "invalid"
+                ? "Selecionar erros exibidos"
+                : bulkSelectionMode === "valid"
+                ? "Selecionar válidas exibidas"
+                : bulkSelectionMode === "invalid"
+                ? "Selecionar erros exibidos"
+                : "Selecione um item para definir o tipo"}
             </label>
             {visibleHistorico.map((item) => {
               const Icon = item.valido ? CheckCircle2 : AlertTriangle;
               const primaryMessage = getPrimaryMessage(item.mensagem);
               const secondaryMessages = getSecondaryMessages(item.mensagem);
+              const blockedBySelection =
+                (selectionMode === "valid" && !item.valido) ||
+                (selectionMode === "invalid" && item.valido);
               return (
                 <div
                   key={item.key}
@@ -1300,6 +1359,12 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                     type="checkbox"
                     checked={selectedSet.has(item.key)}
                     onChange={() => toggleOne(item)}
+                    disabled={blockedBySelection && !selectedSet.has(item.key)}
+                    title={
+                      blockedBySelection && !selectedSet.has(item.key)
+                        ? "Desmarque a seleção atual para alternar entre jornadas válidas e jornadas com erro."
+                        : undefined
+                    }
                     aria-label={`Selecionar jornada ${item.horarios}`}
                   />
                   <span className="jornada-history-item__body">
@@ -1323,7 +1388,8 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                     ) : null}
                     {!item.valido ? (
                       <span className="jornada-history-item__note">
-                        Jornadas com erro podem ser excluídas, mas não entram no PDF.
+                        Jornadas com erro podem ser excluídas em seleção separada,
+                        mas não entram no PDF.
                       </span>
                     ) : null}
                   </span>
