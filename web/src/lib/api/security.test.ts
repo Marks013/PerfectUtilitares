@@ -1,11 +1,30 @@
-import { describe, expect, it, vi } from "vitest";
-import { requireSameOrigin } from "@/lib/api/security";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  requireContentType,
+  requireMaxContentLength,
+  requireSameOrigin,
+} from "@/lib/api/security";
 
 vi.mock("@/auth", () => ({
   auth: vi.fn(),
 }));
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("api security", () => {
+  it("allows configured application origins", () => {
+    vi.stubEnv("APP_URL", "https://app.example.com");
+
+    const request = new Request("http://internal:3000/api/test", {
+      method: "POST",
+      headers: { origin: "https://app.example.com" },
+    });
+
+    expect(requireSameOrigin(request)).toBeNull();
+  });
+
   it("allows same-origin unsafe requests", () => {
     const request = new Request("http://localhost:3000/api/test", {
       method: "POST",
@@ -33,6 +52,8 @@ describe("api security", () => {
   });
 
   it("allows forwarded origin behind a proxy", () => {
+    vi.stubEnv("APP_URL", "https://app.example.com");
+
     const request = new Request("http://internal:3000/api/test", {
       method: "POST",
       headers: {
@@ -43,5 +64,45 @@ describe("api security", () => {
     });
 
     expect(requireSameOrigin(request)).toBeNull();
+  });
+
+  it("rejects unconfigured forwarded origins when an app origin is configured", () => {
+    vi.stubEnv("APP_URL", "https://app.example.com");
+
+    const request = new Request("http://internal:3000/api/test", {
+      method: "POST",
+      headers: {
+        origin: "https://evil.example",
+        "x-forwarded-host": "evil.example",
+        "x-forwarded-proto": "https",
+      },
+    });
+
+    expect(requireSameOrigin(request)?.status).toBe(403);
+  });
+
+  it("matches content type by media type instead of substring", () => {
+    const validRequest = new Request("http://localhost/api/test", {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+    const invalidRequest = new Request("http://localhost/api/test", {
+      method: "POST",
+      headers: { "content-type": "text/application/json" },
+    });
+
+    expect(requireContentType(validRequest, ["application/json"])).toBeNull();
+    expect(requireContentType(invalidRequest, ["application/json"])?.status).toBe(
+      415,
+    );
+  });
+
+  it("rejects malformed content-length headers", () => {
+    const request = new Request("http://localhost/api/test", {
+      method: "POST",
+      headers: { "content-length": "NaN" },
+    });
+
+    expect(requireMaxContentLength(request, 1024)?.status).toBe(400);
   });
 });

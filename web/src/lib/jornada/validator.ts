@@ -317,7 +317,7 @@ export function validarJornadaManual(
     const periodoTotalMinutos = duracaoMinutos + intervaloMinutos;
     if (!validarLimiteDiario(periodoTotalMinutos, JORNADA_CONFIG.periodoMaximoHoras)) {
       erros.push(
-        `Período total (${formatarDuracaoLegivel(periodoTotalMinutos)}) excede o limite de ${JORNADA_CONFIG.periodoMaximoHoras}h entre a entrada e a saída final, incluindo o intervalo.`,
+        `Tempo total dentro da mesma jornada (${formatarDuracaoLegivel(periodoTotalMinutos)}) excede o limite de ${JORNADA_CONFIG.periodoMaximoHoras}h entre a entrada e a saída final, incluindo o intervalo. A interjornada entre dois dias é avaliada somente quando o checkbox de interjornada está ativo.`,
       );
     }
   }

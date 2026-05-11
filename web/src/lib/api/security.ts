@@ -60,20 +60,44 @@ function parseOrigin(value: string | null) {
   }
 }
 
-function getAllowedOrigins(request: Request) {
-  const requestUrl = new URL(request.url);
-  const forwardedHost = request.headers.get("x-forwarded-host");
-  const forwardedProto =
-    request.headers.get("x-forwarded-proto") ?? requestUrl.protocol.replace(":", "");
-  const envOrigin = parseOrigin(process.env.AUTH_URL ?? null);
-  const origins = new Set<string>([requestUrl.origin]);
+function getConfiguredOrigins() {
+  return [process.env.APP_URL, process.env.AUTH_URL, process.env.NEXTAUTH_URL]
+    .map((value) => parseOrigin(value ?? null))
+    .filter((origin): origin is string => Boolean(origin));
+}
 
-  if (forwardedHost) {
-    origins.add(`${forwardedProto}://${forwardedHost}`);
+function getForwardedOrigin(request: Request) {
+  const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const proto =
+    request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ??
+    new URL(request.url).protocol.replace(":", "");
+
+  if (!host || !["http", "https"].includes(proto)) {
+    return null;
   }
 
-  if (envOrigin) {
-    origins.add(envOrigin);
+  try {
+    return new URL(`${proto}://${host}`).origin;
+  } catch {
+    return null;
+  }
+}
+
+function getAllowedOrigins(request: Request) {
+  const requestUrl = new URL(request.url);
+  const configuredOrigins = getConfiguredOrigins();
+  const forwardedOrigin = getForwardedOrigin(request);
+  const origins = new Set<string>([requestUrl.origin]);
+
+  configuredOrigins.forEach((origin) => origins.add(origin));
+
+  if (
+    forwardedOrigin &&
+    (configuredOrigins.length === 0
+      ? process.env.NODE_ENV !== "production"
+      : configuredOrigins.includes(forwardedOrigin))
+  ) {
+    origins.add(forwardedOrigin);
   }
 
   return origins;
@@ -187,7 +211,8 @@ export function requireContentType(
   allowed: string[],
 ): NextResponse | null {
   const contentType = request.headers.get("content-type") ?? "";
-  const valid = allowed.some((item) => contentType.includes(item));
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
+  const valid = allowed.some((item) => mediaType === item.toLowerCase());
 
   if (!valid) {
     return jsonError(
@@ -204,9 +229,22 @@ export function requireMaxContentLength(
   request: Request,
   maxBytes: number,
 ): NextResponse | null {
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  const rawContentLength = request.headers.get("content-length");
+  if (!rawContentLength) {
+    return null;
+  }
 
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+  const contentLength = Number(rawContentLength);
+
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    return jsonError(
+      400,
+      "INVALID_CONTENT_LENGTH",
+      "O tamanho informado da requisição é inválido.",
+    );
+  }
+
+  if (contentLength > maxBytes) {
     return jsonError(
       413,
       "PAYLOAD_TOO_LARGE",

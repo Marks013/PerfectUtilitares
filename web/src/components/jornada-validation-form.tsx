@@ -8,6 +8,7 @@ import {
   Clock3,
   Download,
   History,
+  Info,
   Loader2,
   RotateCcw,
   Trash2,
@@ -22,6 +23,8 @@ import {
 
 const AUTO_FORMAT_KEY = "jornada:auto-formatar";
 const HISTORY_PAGE_SIZE = 10;
+const INTERJORNADA_HELP_TEXT =
+  "O intervalo interjornada é o período mínimo de descanso de 11 horas entre o fim de uma jornada de trabalho e o início da seguinte, garantindo saúde, segurança e bem-estar do trabalhador.";
 
 function getAutoFormatStorageKey(userId: string) {
   return `${AUTO_FORMAT_KEY}:${userId}`;
@@ -30,11 +33,26 @@ function getAutoFormatStorageKey(userId: string) {
 const schema = z
   .object({
     horarios: z.string().min(1, "Digite os horarios"),
+    segundaJornadaHorarios: z.string().optional(),
     sabadoHorarios: z.string().optional(),
     autoFormatar: z.boolean(),
+    interjornadaAtiva: z.boolean(),
   })
   .superRefine((value, ctx) => {
-    if (isPrincipalEightHours(value.horarios) && !value.sabadoHorarios?.trim()) {
+    if (value.interjornadaAtiva && !value.segundaJornadaHorarios?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["segundaJornadaHorarios"],
+        message: "Digite a segunda jornada para validar a interjornada.",
+      });
+      return;
+    }
+
+    if (
+      !value.interjornadaAtiva &&
+      isPrincipalEightHours(value.horarios) &&
+      !value.sabadoHorarios?.trim()
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["sabadoHorarios"],
@@ -359,19 +377,27 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     resolver: zodResolver(schema),
     defaultValues: {
       horarios: "",
+      segundaJornadaHorarios: "",
       sabadoHorarios: "",
       autoFormatar: true,
+      interjornadaAtiva: false,
     },
   });
   const horarios = form.watch("horarios");
+  const segundaJornadaHorarios = form.watch("segundaJornadaHorarios");
   const autoFormatar = form.watch("autoFormatar");
+  const interjornadaAtiva = form.watch("interjornadaAtiva");
   const duracaoPrincipal = useMemo(
     () => calcularDuracaoEntrada(horarios),
     [horarios],
   );
+  const duracaoSegundaJornada = useMemo(
+    () => calcularDuracaoEntrada(segundaJornadaHorarios ?? ""),
+    [segundaJornadaHorarios],
+  );
   const canShowSabado = useMemo(
-    () => isPrincipalEightHours(horarios),
-    [horarios],
+    () => !interjornadaAtiva && isPrincipalEightHours(horarios),
+    [horarios, interjornadaAtiva],
   );
   const autoFormatStorageKey = getAutoFormatStorageKey(userId);
 
@@ -393,6 +419,12 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       form.setValue("sabadoHorarios", "");
     }
   }, [canShowSabado, form]);
+
+  useEffect(() => {
+    if (!interjornadaAtiva) {
+      form.setValue("segundaJornadaHorarios", "");
+    }
+  }, [interjornadaAtiva, form]);
 
   const historicoQuery = useQuery({
     queryKey: ["jornada", "historico"],
@@ -438,7 +470,9 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     }
   }, [historyPage, historyPageCount]);
 
-  function formatField(field: "horarios" | "sabadoHorarios") {
+  function formatField(
+    field: "horarios" | "segundaJornadaHorarios" | "sabadoHorarios",
+  ) {
     if (!form.getValues("autoFormatar")) return;
     form.setValue(field, formatarHorariosEntrada(form.getValues(field) ?? ""), {
       shouldDirty: true,
@@ -560,7 +594,16 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
       const horariosFormatados = formatarHorariosEntrada(values.horarios);
-      const payload = isPrincipalEightHours(horariosFormatados)
+      const payload = values.interjornadaAtiva
+        ? {
+            modo: "interjornada",
+            horarios: horariosFormatados,
+            horarios2: formatarHorariosEntrada(
+              values.segundaJornadaHorarios ?? "",
+            ),
+            validarInterjornada: true,
+          }
+        : isPrincipalEightHours(horariosFormatados)
         ? {
             modo: "sabado-combinado",
             horarios: horariosFormatados,
@@ -601,6 +644,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   });
 
   const horariosField = form.register("horarios");
+  const segundaJornadaField = form.register("segundaJornadaHorarios");
   const sabadoField = form.register("sabadoHorarios");
 
   return (
@@ -624,13 +668,41 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               <Clock3 className="size-5" aria-hidden="true" />
             </span>
             <div>
-              <h2>Horários de segunda a sexta</h2>
-              <p>Use 2 ou 4 marcações, com ou sem dois-pontos.</p>
+              <h2>
+                {interjornadaAtiva
+                  ? "Validar duas jornadas com interjornada"
+                  : "Horários de segunda a sexta"}
+              </h2>
+              <p>
+                {interjornadaAtiva
+                  ? "Informe a primeira e a segunda jornada para conferir o descanso mínimo de 11 horas."
+                  : "Use 2 ou 4 marcações, com ou sem dois-pontos."}
+              </p>
             </div>
           </div>
 
+          <label className="jornada-toggle" title={INTERJORNADA_HELP_TEXT}>
+            <input type="checkbox" {...form.register("interjornadaAtiva")} />
+            <span>
+              <strong>
+                Ativar interjornada
+                <span
+                  className="jornada-help-icon"
+                  aria-label={INTERJORNADA_HELP_TEXT}
+                  title={INTERJORNADA_HELP_TEXT}
+                >
+                  <Info className="size-full" aria-hidden="true" />
+                </span>
+              </strong>
+              <small>
+                Abre dois campos de jornada e compara o descanso entre a saída
+                final da primeira e a entrada da segunda.
+              </small>
+            </span>
+          </label>
+
           <label className="jornada-field">
-            <span>Jornada principal</span>
+            <span>{interjornadaAtiva ? "Primeira jornada" : "Jornada principal"}</span>
             <input
               {...horariosField}
               onBlur={(event) => {
@@ -652,6 +724,34 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               ? `Duração detectada: ${duracaoPrincipal.duracaoFormatada}`
               : "Digite 2 ou 4 horários separados por espaço"}
           </p>
+
+          {interjornadaAtiva ? (
+            <>
+              <label className="jornada-field">
+                <span>Segunda jornada</span>
+                <input
+                  {...segundaJornadaField}
+                  onBlur={(event) => {
+                    segundaJornadaField.onBlur(event);
+                    formatField("segundaJornadaHorarios");
+                  }}
+                  className="jornada-time-input"
+                  placeholder="0800 1200 1300 1700"
+                />
+              </label>
+              {form.formState.errors.segundaJornadaHorarios ? (
+                <p className="jornada-field-error">
+                  {form.formState.errors.segundaJornadaHorarios.message}
+                </p>
+              ) : null}
+              <p className="jornada-field-hint">
+                <Clock3 className="size-3.5" aria-hidden="true" />
+                {duracaoSegundaJornada
+                  ? `Duração detectada: ${duracaoSegundaJornada.duracaoFormatada}`
+                  : "Digite a jornada seguinte para calcular a interjornada"}
+              </p>
+            </>
+          ) : null}
 
           {canShowSabado ? (
             <>
@@ -753,11 +853,19 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                   }}
                 />
                 <ResultCard
-                  title="Segunda a sexta"
+                  title={
+                    mutation.data.modo === "interjornada"
+                      ? "Primeira jornada"
+                      : "Segunda a sexta"
+                  }
                   result={mutation.data.jornada1}
                 />
                 <ResultCard
-                  title="Sábado"
+                  title={
+                    mutation.data.modo === "interjornada"
+                      ? "Segunda jornada"
+                      : "Sábado"
+                  }
                   result={mutation.data.jornada2}
                 />
               </div>

@@ -1198,6 +1198,9 @@ table {
 }
 
 .jornada-toggle strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.88rem;
 }
 
@@ -1205,6 +1208,15 @@ table {
   color: var(--app-muted);
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+.jornada-help-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--app-teal);
+  cursor: help;
 }
 
 .jornada-primary-button,

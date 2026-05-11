@@ -224,6 +224,14 @@ export async function DELETE(request: Request, context: RouteContext) {
     );
   }
 
+  if (id === guard.session.user.id) {
+    return jsonError(
+      400,
+      "SELF_DELETE_BLOCKED",
+      "Não é permitido excluir seu próprio usuário administrativo.",
+    );
+  }
+
   const limited = enforceRateLimit(request, {
     keyPrefix: "admin-users-delete",
     limit: 20,
@@ -238,6 +246,20 @@ export async function DELETE(request: Request, context: RouteContext) {
       where: { id },
       select: userSelect,
     });
+
+    if (user.role === "ADMIN" && user.isActive) {
+      const activeAdminCount = await prisma.user.count({
+        where: { role: "ADMIN", isActive: true },
+      });
+
+      if (activeAdminCount <= 1) {
+        return jsonError(
+          400,
+          "LAST_ADMIN_DELETE_BLOCKED",
+          "Não é permitido excluir o último administrador ativo do sistema.",
+        );
+      }
+    }
 
     await prisma.auditLog.create({
       data: {

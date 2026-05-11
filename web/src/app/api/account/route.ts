@@ -200,6 +200,20 @@ export async function DELETE(request: Request) {
     return jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado");
   }
 
+  if (user.role === "ADMIN") {
+    const activeAdminCount = await prisma.user.count({
+      where: { role: "ADMIN", isActive: true },
+    });
+
+    if (activeAdminCount <= 1) {
+      return jsonError(
+        400,
+        "LAST_ADMIN_DELETE_BLOCKED",
+        "Não é possível excluir a conta porque ela é o último administrador ativo do sistema.",
+      );
+    }
+  }
+
   await prisma.auditLog.create({
     data: {
       userId,

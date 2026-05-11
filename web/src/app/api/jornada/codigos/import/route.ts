@@ -15,12 +15,34 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
+const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
+const ACCEPTED_IMPORT_EXTENSIONS = [".xlsx", ".csv", ".json"] as const;
+
+function hasAcceptedExtension(fileName: string) {
+  const lowerName = fileName.toLowerCase();
+  return ACCEPTED_IMPORT_EXTENSIONS.some((extension) =>
+    lowerName.endsWith(extension),
+  );
+}
+
 async function parseMultipartRequest(request: Request) {
   const formData = await request.formData();
   const file = formData.get("file");
 
   if (!(file instanceof File)) {
-    throw new Error("Envie um arquivo no campo 'file'");
+    throw new Error("Envie um arquivo .xlsx, .csv ou .json no campo 'file'.");
+  }
+
+  if (!hasAcceptedExtension(file.name)) {
+    throw new Error("Formato não suportado. Use .xlsx, .csv ou .json.");
+  }
+
+  if (file.size === 0) {
+    throw new Error("O arquivo enviado está vazio.");
+  }
+
+  if (file.size > MAX_IMPORT_BYTES) {
+    throw new Error("O arquivo ultrapassa o limite de 8MB.");
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -43,16 +65,16 @@ export function GET() {
 export async function POST(request: Request) {
   try {
     const guard = await requireAdmin();
-  if (!guard.ok) {
-    return guard.response;
-  }
+    if (!guard.ok) {
+      return guard.response;
+    }
 
-  const originError = requireSameOrigin(request);
-  if (originError) {
-    return originError;
-  }
+    const originError = requireSameOrigin(request);
+    if (originError) {
+      return originError;
+    }
 
-  const limited = enforceRateLimit(request, {
+    const limited = enforceRateLimit(request, {
       keyPrefix: "codigos-import",
       limit: 12,
       windowMs: 60_000,
@@ -61,7 +83,7 @@ export async function POST(request: Request) {
       return limited;
     }
 
-    const tooLarge = requireMaxContentLength(request, 8 * 1024 * 1024);
+    const tooLarge = requireMaxContentLength(request, MAX_IMPORT_BYTES);
     if (tooLarge) {
       return tooLarge;
     }

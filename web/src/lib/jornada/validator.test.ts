@@ -247,7 +247,7 @@ describe("validarJornadaComInterjornada", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Período total");
+    expect(result.mensagem).toContain("Tempo total dentro da mesma jornada");
     expect(result.mensagem).toContain("Intervalo excessivo");
     expect(result.mensagem).toContain("Primeiro período trabalhado: 4h");
     expect(result.mensagem).toContain("Segundo período trabalhado: 3h20");

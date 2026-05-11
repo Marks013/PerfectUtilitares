@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import {
   enforceRateLimit,
+  jsonError,
   methodNotAllowed,
   requireAdmin,
   requireSameOrigin,
@@ -14,6 +15,13 @@ export function GET() {
 }
 
 export async function POST(request: Request) {
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.SENTRY_TEST_ENABLED !== "true"
+  ) {
+    return jsonError(404, "NOT_FOUND", "Recurso não encontrado.");
+  }
+
   const guard = await requireAdmin();
   if (!guard.ok) {
     return guard.response;
