@@ -20,6 +20,7 @@ import {
   calcularDuracaoEntrada,
   formatarHorariosEntrada,
 } from "@/lib/jornada/input-format";
+import { validarJornadaManual } from "@/lib/jornada/validator";
 
 const AUTO_FORMAT_KEY = "jornada:auto-formatar";
 const HISTORY_PAGE_SIZE = 10;
@@ -50,7 +51,7 @@ const schema = z
 
     if (
       !value.interjornadaAtiva &&
-      isPrincipalEightHours(value.horarios) &&
+      isValidPrincipalEightHours(value.horarios) &&
       !value.sabadoHorarios?.trim()
     ) {
       ctx.addIssue({
@@ -144,6 +145,40 @@ function joinCodigos(...codigos: Array<string | undefined>) {
   return values.length > 0 ? values.join(" + ") : undefined;
 }
 
+function parseDurationMinutes(value?: string) {
+  const match = value?.match(/^(\d{1,3}):(\d{2})$/);
+  if (!match) return null;
+
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function formatDurationMinutes(minutes: number) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(
+    minutes % 60,
+  ).padStart(2, "0")}`;
+}
+
+function sumDurations(...values: Array<string | undefined>) {
+  const minutes = values.map(parseDurationMinutes);
+  if (minutes.some((value) => value == null)) return undefined;
+
+  return formatDurationMinutes(
+    minutes.reduce<number>((total, value) => total + (value ?? 0), 0),
+  );
+}
+
+function getCombinedWeeklyHours(result: CombinedResponse) {
+  return result.modo === "sabado-combinado"
+    ? result.jornada2.horasSemanais
+    : undefined;
+}
+
+function getCombinedMonthlyHours(result: CombinedResponse) {
+  return result.modo === "sabado-combinado"
+    ? result.jornada2.horasMensais
+    : undefined;
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
@@ -166,9 +201,13 @@ function getSecondaryMessages(value: string) {
   return splitMessage(value).slice(1);
 }
 
-function isPrincipalEightHours(value: string) {
-  const duracao = calcularDuracaoEntrada(value);
-  return duracao?.duracaoMinutos === 480;
+function isValidPrincipalEightHours(value: string) {
+  const result = validarJornadaManual({
+    horarios: formatarHorariosEntrada(value),
+    tipoDia: "util",
+  });
+
+  return result.valido && result.duracaoCalculada === "08:00";
 }
 
 function isEightHourWeekday(record: HistoryRecord) {
@@ -238,11 +277,17 @@ function groupHistory(records: HistoryRecord[]): HistoryItem[] {
   return grouped;
 }
 
-function ResultDetails({ result }: { result: JornadaResult }) {
+function ResultDetails({
+  result,
+  intervalLabel = "Intervalo",
+}: {
+  result: JornadaResult;
+  intervalLabel?: string;
+}) {
   const details = [
     ["Duração", result.duracaoCalculada ?? "-"],
     ["Código", result.codigo ?? "-"],
-    ["Intervalo", result.intervalo ?? "-"],
+    [intervalLabel, result.intervalo ?? "-"],
     ["Horas semanais", result.horasSemanais ?? "-"],
     ["Horas mensais", result.horasMensais ?? "-"],
   ];
@@ -262,9 +307,11 @@ function ResultDetails({ result }: { result: JornadaResult }) {
 function ResultCard({
   title,
   result,
+  intervalLabel,
 }: {
   title: string;
   result: JornadaResult;
+  intervalLabel?: string;
 }) {
   const Icon = result.valido ? CheckCircle2 : AlertTriangle;
   const messages = splitMessage(result.mensagem);
@@ -289,7 +336,7 @@ function ResultCard({
           </ul>
         ) : null}
       </div>
-      <ResultDetails result={result} />
+      <ResultDetails result={result} intervalLabel={intervalLabel} />
     </div>
   );
 }
@@ -396,7 +443,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     [segundaJornadaHorarios],
   );
   const canShowSabado = useMemo(
-    () => !interjornadaAtiva && isPrincipalEightHours(horarios),
+    () => !interjornadaAtiva && isValidPrincipalEightHours(horarios),
     [horarios, interjornadaAtiva],
   );
   const autoFormatStorageKey = getAutoFormatStorageKey(userId);
@@ -603,7 +650,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             ),
             validarInterjornada: true,
           }
-        : isPrincipalEightHours(horariosFormatados)
+        : isValidPrincipalEightHours(horariosFormatados)
         ? {
             modo: "sabado-combinado",
             horarios: horariosFormatados,
@@ -840,10 +887,16 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                   result={{
                     valido: mutation.data.valido,
                     mensagem: mutation.data.mensagemInterjornada,
+                    duracaoCalculada: sumDurations(
+                      mutation.data.jornada1.duracaoCalculada,
+                      mutation.data.jornada2.duracaoCalculada,
+                    ),
                     codigo: joinCodigos(
                       mutation.data.jornada1.codigo,
                       mutation.data.jornada2.codigo,
                     ),
+                    horasSemanais: getCombinedWeeklyHours(mutation.data),
+                    horasMensais: getCombinedMonthlyHours(mutation.data),
                     intervalo:
                       mutation.data.interjornadaMinutos == null
                         ? undefined
@@ -851,6 +904,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                             mutation.data.interjornadaMinutos % 60,
                           ).padStart(2, "0")}`,
                   }}
+                  intervalLabel="Interjornada"
                 />
                 <ResultCard
                   title={
