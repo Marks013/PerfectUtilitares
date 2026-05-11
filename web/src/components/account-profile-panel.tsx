@@ -8,7 +8,12 @@ import { z } from "zod";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 
 const profileSchema = z.object({
-  name: z.string().trim().min(2, "Informe pelo menos 2 caracteres").max(80),
+  name: z
+    .string()
+    .trim()
+    .min(1, "Informe seu nome.")
+    .min(2, "O nome deve ter pelo menos 2 caracteres.")
+    .max(80, "O nome deve ter no máximo 80 caracteres."),
 });
 
 const passwordSchema = z
@@ -16,13 +21,14 @@ const passwordSchema = z
     currentPassword: z.string().min(1, "Digite a senha atual"),
     newPassword: z
       .string()
-      .min(8, "A nova senha deve ter pelo menos 8 caracteres")
+      .min(1, "Digite a nova senha.")
+      .min(8, "A nova senha deve ter pelo menos 8 caracteres.")
       .max(BCRYPT_PASSWORD_MAX_LENGTH, "A senha deve ter no máximo 72 caracteres"),
-    confirmPassword: z.string().min(1, "Confirme a nova senha"),
+    confirmPassword: z.string().min(1, "Confirme a nova senha."),
   })
   .refine((value) => value.newPassword === value.confirmPassword, {
     path: ["confirmPassword"],
-    message: "As senhas não conferem",
+    message: "As senhas não conferem. Digite a mesma senha nos dois campos.",
   });
 
 type ProfileValues = z.infer<typeof profileSchema>;
@@ -36,9 +42,12 @@ async function getErrorMessage(response: Response) {
   try {
     const data = (await response.json()) as ApiErrorBody;
     if (typeof data.error === "string") return data.error;
-    return data.error?.message ?? "Falha ao atualizar conta";
+    return (
+      data.error?.message ??
+      "Não foi possível atualizar sua conta. Revise os dados e tente novamente."
+    );
   } catch {
-    return "Falha ao atualizar conta";
+    return "Não foi possível atualizar sua conta. Tente novamente em instantes.";
   }
 }
 

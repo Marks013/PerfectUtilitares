@@ -27,7 +27,7 @@ export function methodNotAllowed(allowed: string[]) {
   const response = jsonError(
     405,
     "METHOD_NOT_ALLOWED",
-    `Métodos permitidos: ${allowed.join(", ")}`,
+    `Esta ação não aceita esse método. Métodos permitidos: ${allowed.join(", ")}.`,
   );
   response.headers.set("Allow", allowed.join(", "));
   return response;
@@ -39,7 +39,11 @@ export async function readJsonBody(request: Request): Promise<JsonBodyOk | JsonB
   } catch {
     return {
       ok: false,
-      response: jsonError(400, "INVALID_JSON", "JSON inválido"),
+      response: jsonError(
+        400,
+        "INVALID_JSON",
+        "Não foi possível ler os dados enviados. Envie um JSON válido.",
+      ),
     };
   }
 }
@@ -85,12 +89,16 @@ export function requireSameOrigin(request: Request): NextResponse | null {
     return jsonError(
       403,
       "ORIGIN_REQUIRED",
-      "Origem da requisição obrigatória",
+      "Não foi possível confirmar a origem da requisição. Recarregue a página e tente novamente.",
     );
   }
 
   if (!allowedOrigins.has(suppliedOrigin)) {
-    return jsonError(403, "ORIGIN_NOT_ALLOWED", "Origem não permitida");
+    return jsonError(
+      403,
+      "ORIGIN_NOT_ALLOWED",
+      "A requisição veio de uma origem não permitida. Recarregue o sistema e tente novamente.",
+    );
   }
 
   return null;
@@ -101,14 +109,22 @@ export async function requireSession(): Promise<GuardOk | GuardFail> {
   if (!session) {
     return {
       ok: false,
-      response: jsonError(401, "UNAUTHENTICATED", "Não autenticado"),
+      response: jsonError(
+        401,
+        "UNAUTHENTICATED",
+        "Sua sessão expirou ou você ainda não entrou. Faça login novamente.",
+      ),
     };
   }
 
   if (session.user.isActive === false) {
     return {
       ok: false,
-      response: jsonError(403, "USER_INACTIVE", "Usuário inativo"),
+      response: jsonError(
+        403,
+        "USER_INACTIVE",
+        "Seu usuário está inativo. Solicite a reativação a um administrador.",
+      ),
     };
   }
 
@@ -124,7 +140,11 @@ export async function requireAdmin(): Promise<GuardOk | GuardFail> {
   if (guard.session.user.role !== "ADMIN") {
     return {
       ok: false,
-      response: jsonError(403, "FORBIDDEN", "Sem permissão"),
+      response: jsonError(
+        403,
+        "FORBIDDEN",
+        "Você não tem permissão para realizar esta ação.",
+      ),
     };
   }
 
@@ -151,7 +171,11 @@ export async function requireModuleAccess(
   if (!allowed) {
     return {
       ok: false,
-      response: jsonError(403, "MODULE_FORBIDDEN", "Módulo indisponível"),
+      response: jsonError(
+        403,
+        "MODULE_FORBIDDEN",
+        "Você não tem acesso a este módulo. Solicite liberação a um administrador.",
+      ),
     };
   }
 
@@ -169,7 +193,7 @@ export function requireContentType(
     return jsonError(
       415,
       "UNSUPPORTED_MEDIA_TYPE",
-      `Content-Type permitido: ${allowed.join(", ")}`,
+      `Formato da requisição inválido. Envie os dados como: ${allowed.join(", ")}.`,
     );
   }
 
@@ -186,7 +210,7 @@ export function requireMaxContentLength(
     return jsonError(
       413,
       "PAYLOAD_TOO_LARGE",
-      `Arquivo acima do limite de ${Math.floor(maxBytes / 1024 / 1024)}MB`,
+      `Os dados enviados ultrapassam o limite de ${Math.floor(maxBytes / 1024 / 1024)}MB.`,
     );
   }
 
@@ -201,7 +225,11 @@ export function enforceRateLimit(
   const result = checkRateLimit(key, options);
 
   if (result.limited) {
-    return jsonError(429, "RATE_LIMITED", "Muitas requisições");
+    return jsonError(
+      429,
+      "RATE_LIMITED",
+      "Muitas tentativas em pouco tempo. Aguarde um momento e tente novamente.",
+    );
   }
 
   return null;

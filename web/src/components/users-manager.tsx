@@ -91,31 +91,49 @@ const moduleAccessShape = {
   canAccessFotos: booleanishSchema,
 };
 
+const tenantIdField = z.string().min(1, "Selecione uma empresa.");
+const emailField = z
+  .string()
+  .trim()
+  .min(1, "Informe o e-mail.")
+  .email("Informe um e-mail válido, como nome@empresa.com.")
+  .max(254, "O e-mail deve ter no máximo 254 caracteres.")
+  .transform((value) => value.toLowerCase());
+const nameField = z
+  .string()
+  .trim()
+  .min(2, "Informe o nome com pelo menos 2 caracteres.")
+  .max(120, "O nome deve ter no máximo 120 caracteres.");
+
 const userEditSchema = z.object({
-  tenantId: z.string().min(1),
-  email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
-  name: z.string().trim().min(2).max(120),
+  tenantId: tenantIdField,
+  email: emailField,
+  name: nameField,
   role: z.enum(["ADMIN", "OPERATOR"]),
   isActive: booleanishSchema,
   ...moduleAccessShape,
 });
 
 const invitationFormSchema = z.object({
-  tenantId: z.string().min(1),
-  email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
-  name: z.string().trim().min(2).max(120),
+  tenantId: tenantIdField,
+  email: emailField,
+  name: nameField,
   role: z.enum(["ADMIN", "OPERATOR"]),
   ...moduleAccessShape,
 });
 
 const tenantFormSchema = z.object({
-  name: z.string().trim().min(2).max(120),
+  name: z
+    .string()
+    .trim()
+    .min(2, "Informe o nome da empresa com pelo menos 2 caracteres.")
+    .max(120, "O nome da empresa deve ter no máximo 120 caracteres."),
   slug: z
     .string()
     .trim()
-    .min(2)
-    .max(80)
-    .regex(/^[a-z0-9-]+$/),
+    .min(2, "Informe um apelido curto com pelo menos 2 caracteres.")
+    .max(80, "O apelido curto deve ter no máximo 80 caracteres.")
+    .regex(/^[a-z0-9-]+$/, "Use apenas letras minúsculas, números e hífen."),
 });
 
 type UserEditInput = z.input<typeof userEditSchema>;
@@ -177,6 +195,19 @@ async function getErrorMessage(response: Response, fallback = "Falha na operaç�
   } catch {
     return fallback;
   }
+}
+
+function getFormErrorMessages(errors: Record<string, unknown>) {
+  return Object.values(errors)
+    .map((error) => {
+      if (!error || typeof error !== "object" || !("message" in error)) {
+        return null;
+      }
+
+      const message = (error as { message?: unknown }).message;
+      return typeof message === "string" ? message : null;
+    })
+    .filter((message): message is string => Boolean(message));
 }
 
 function moduleLabel(user: Pick<ManagedUser, "role" | "canAccessJornada" | "canAccessFotos">) {
@@ -453,6 +484,18 @@ export function UsersManager({
             {inviteMutation.isPending ? "Gerando..." : "Gerar convite"}
           </button>
         </form>
+        {getFormErrorMessages(invitationForm.formState.errors).length ? (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <p className="font-medium">Revise os dados do convite:</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5">
+              {getFormErrorMessages(invitationForm.formState.errors).map(
+                (message) => (
+                  <li key={message}>{message}</li>
+                ),
+              )}
+            </ul>
+          </div>
+        ) : null}
 
         {inviteSent ? (
           <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
@@ -696,6 +739,18 @@ export function UsersManager({
                 <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
                   Para senha ou primeiro acesso, gere um convite para o e-mail do usuário.
                 </p>
+                {getFormErrorMessages(editForm.formState.errors).length ? (
+                  <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    <p className="font-medium">Revise o cadastro do usuário:</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-5">
+                      {getFormErrorMessages(editForm.formState.errors).map(
+                        (message) => (
+                          <li key={message}>{message}</li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+                ) : null}
                 {saveMutation.isError ? (
                   <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                     {saveMutation.error.message}
@@ -746,6 +801,18 @@ export function UsersManager({
                   className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
                 />
               </label>
+              {getFormErrorMessages(tenantForm.formState.errors).length ? (
+                <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <p className="font-medium">Revise os dados da empresa:</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    {getFormErrorMessages(tenantForm.formState.errors).map(
+                      (message) => (
+                        <li key={message}>{message}</li>
+                      ),
+                    )}
+                  </ul>
+                </div>
+              ) : null}
               {tenantMutation.isError ? (
                 <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                   {tenantMutation.error.message}

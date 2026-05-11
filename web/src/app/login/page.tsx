@@ -16,10 +16,18 @@ export default async function LoginPage({
   }
 
   const params = await searchParams;
-  const errorMessage =
-    params.error === "rate"
-      ? "Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente."
-      : "E-mail ou senha inválidos.";
+  const errorMessageByCode: Record<string, string> = {
+    missing: "Informe o e-mail e a senha para acessar o sistema.",
+    email: "Informe um e-mail válido, como nome@empresa.com.",
+    password: "Informe sua senha.",
+    rate:
+      "Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.",
+    credentials:
+      "E-mail ou senha não conferem. Revise os dados ou use a recuperação de senha.",
+  };
+  const errorMessage = params.error
+    ? errorMessageByCode[params.error] ?? errorMessageByCode.credentials
+    : null;
 
   return (
     <main className="login-gateway min-h-dvh px-4 py-8">
@@ -58,7 +66,7 @@ export default async function LoginPage({
           Use seu e-mail e senha para acessar o sistema.
         </p>
 
-        {params.error ? (
+        {errorMessage ? (
           <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {errorMessage}
           </div>
@@ -73,7 +81,7 @@ export default async function LoginPage({
             maxLength={254}
             required
             className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
-            placeholder="Digite seu E-mail"
+            placeholder="nome@empresa.com"
           />
         </label>
 

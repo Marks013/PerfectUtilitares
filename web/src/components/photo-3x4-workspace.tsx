@@ -99,9 +99,12 @@ async function getErrorMessage(response: Response) {
       return data.error;
     }
 
-    return data.error?.message ?? "Falha ao processar imagem";
+    return (
+      data.error?.message ??
+      "Não foi possível processar a imagem. Revise a foto e tente novamente."
+    );
   } catch {
-    return "Falha ao processar imagem";
+    return "Não foi possível processar a imagem. Revise a foto e tente novamente.";
   }
 }
 
@@ -127,7 +130,12 @@ function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Não foi possível ler a imagem"));
+    image.onerror = () =>
+      reject(
+        new Error(
+          "Não foi possível pré-visualizar a foto. Verifique se o arquivo é JPG, PNG ou WEBP.",
+        ),
+      );
     image.src = url;
   });
 }
@@ -247,6 +255,23 @@ function getEditorState(
 
 function isSameFileName(a: string, b: string) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function getPhotoFormErrorMessages(errors: Record<string, unknown>) {
+  const messages = Object.values(errors)
+    .map((error) => {
+      if (!error || typeof error !== "object" || !("message" in error)) {
+        return null;
+      }
+
+      const message = (error as { message?: unknown }).message;
+      return typeof message === "string" ? message : null;
+    })
+    .filter((message): message is string => Boolean(message));
+
+  return messages.length
+    ? messages
+    : ["Revise formato, qualidade e borda antes de processar."];
 }
 
 export function Photo3x4Workspace({ userId }: { userId: string }) {
@@ -526,7 +551,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   const looseMutation = useMutation({
     mutationFn: async (values: PhotoSettings) => {
       if (!hasFiles) {
-        throw new Error("Selecione ao menos uma foto");
+        throw new Error("Selecione ao menos uma foto JPG, PNG ou WEBP.");
       }
 
       const nextResults: ResultFile[] = [];
@@ -559,7 +584,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   const zipMutation = useMutation({
     mutationFn: async (values: PhotoSettings) => {
       if (!hasFiles) {
-        throw new Error("Selecione ao menos uma foto");
+        throw new Error("Selecione ao menos uma foto JPG, PNG ou WEBP.");
       }
 
       const processed: ResultFile[] = [];
@@ -610,7 +635,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
   async function detectFace() {
     if (!previewUrl || !selectedFile) {
-      setFaceStatus("Selecione uma foto primeiro.");
+      setFaceStatus("Selecione uma foto primeiro para usar a detecção de rosto.");
       return;
     }
     if (isDetectingFace) {
@@ -627,7 +652,9 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
       const detection = results.detections[0];
       if (!detection) {
-        setFaceStatus("Nenhum rosto detectado. Ajuste manualmente.");
+        setFaceStatus(
+          "Nenhum rosto foi detectado nesta foto. Use o recorte manual ou escolha uma imagem com o rosto mais centralizado e visível.",
+        );
         setSelectedEditorState({ cropMode: "manual" });
         return;
       }
@@ -657,7 +684,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
         });
       }
 
-      setFaceStatus("Auto-crop ajustado pelo rosto.");
+      setFaceStatus("Rosto detectado. O recorte foi ajustado automaticamente.");
     } catch (error) {
       setFaceStatus(
         error instanceof Error
@@ -1126,7 +1153,12 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
         {Object.values(form.formState.errors).length ? (
           <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            Revise formato e qualidade.
+            <p className="font-medium">Revise as configurações da foto:</p>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {getPhotoFormErrorMessages(form.formState.errors).map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
           </div>
         ) : null}
 

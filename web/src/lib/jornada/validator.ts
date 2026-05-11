@@ -64,18 +64,22 @@ function extractFirstAndLast(horariosNormalizado: string) {
   };
 }
 
+function formatarJornadasAceitas() {
+  return JORNADA_CONFIG.jornadasUtilAceitasMinutos.map(formatarDuracao).join(", ");
+}
+
 function createInterjornadaMessage(intervaloMinutos: number, prefix = "Interjornada") {
   const minimoHoras = JORNADA_CONFIG.interjornadaMinimaMinutos / 60;
 
   if (intervaloMinutos >= JORNADA_CONFIG.interjornadaMinimaMinutos) {
-    return `${prefix}: ${formatarDuracaoLegivel(intervaloMinutos)}`;
+    return `${prefix} válida: ${formatarDuracaoLegivel(intervaloMinutos)} entre a saída da primeira jornada e a entrada da próxima.`;
   }
 
-  return `${prefix} insuficiente: ${formatarDuracaoLegivel(intervaloMinutos)} (minimo ${minimoHoras}h)`;
+  return `${prefix} insuficiente: ${formatarDuracaoLegivel(intervaloMinutos)} entre uma jornada e outra. O mínimo exigido é ${minimoHoras}h.`;
 }
 
 function createPeriodosMessage(periodo1: number, periodo2: number): string {
-  return `Primeiro periodo: ${formatarDuracaoLegivel(periodo1)}\nSegundo periodo: ${formatarDuracaoLegivel(periodo2)}`;
+  return `Primeiro período trabalhado: ${formatarDuracaoLegivel(periodo1)}\nSegundo período trabalhado: ${formatarDuracaoLegivel(periodo2)}`;
 }
 
 function createFormatoDetalhadoMessage(horariosNormalizado: string, mensagem: string) {
@@ -88,10 +92,10 @@ function createFormatoDetalhadoMessage(horariosNormalizado: string, mensagem: st
     const fim1 = parseHorario(pontos[1]);
     detalhes.push(
       inicio1 != null && fim1 != null && inicio1 < fim1
-        ? `Primeiro periodo: ${formatarDuracaoLegivel(
+        ? `Primeiro período trabalhado: ${formatarDuracaoLegivel(
             calcularDuracaoMinutos(inicio1, fim1),
           )}`
-        : "Primeiro periodo: nao calculado",
+        : "Primeiro período: não calculado",
     );
   }
 
@@ -100,17 +104,17 @@ function createFormatoDetalhadoMessage(horariosNormalizado: string, mensagem: st
     const fim2 = parseHorario(pontos[3]);
     detalhes.push(
       inicio2 != null && fim2 != null && inicio2 < fim2
-        ? `Segundo periodo: ${formatarDuracaoLegivel(
+        ? `Segundo período trabalhado: ${formatarDuracaoLegivel(
             calcularDuracaoMinutos(inicio2, fim2),
           )}`
-        : "Segundo periodo: nao calculado",
+        : "Segundo período: não calculado",
     );
   }
 
   const motivo = invalido
-    ? `Horario incompleto ou invalido: ${invalido}. Use HH:MM entre 00:00 e 23:59.`
+    ? `Horário incompleto ou inválido: ${invalido}. Use o formato HH:MM, entre 00:00 e 23:59.`
     : pontos.length !== 2 && pontos.length !== 4
-      ? `Quantidade incompleta: informe 2 horarios (entrada e saida) ou 4 horarios (entrada, saida, retorno e saida final). Horarios recebidos: ${pontos.length}.`
+      ? `Quantidade de horários inválida: informe 2 horários (entrada e saída) ou 4 horários (entrada, saída para intervalo, retorno e saída final). Horários recebidos: ${pontos.length}.`
       : mensagem;
 
   return [motivo, ...detalhes].join("\n");
@@ -205,7 +209,7 @@ export function validarJornadaManual(
 
   if (parsed.some((value) => value == null)) {
     return createError(
-      "Formato inválido. Use HH:MM",
+      "Formato de horário inválido. Use HH:MM, por exemplo 08:00 ou 17:30.",
       tipoDia,
       horariosNormalizado,
     );
@@ -221,7 +225,7 @@ export function validarJornadaManual(
   if (times.length === 2) {
     if (times[0] >= times[1]) {
       return createError(
-        "Horário inicial deve ser antes do final",
+        `Horário inicial inválido: a entrada (${horarios[0]}) deve ser antes da saída (${horarios[1]}).`,
         tipoDia,
         horariosNormalizado,
       );
@@ -234,7 +238,7 @@ export function validarJornadaManual(
       tipoDia !== "sabado"
     ) {
       return createError(
-        "Esta jornada requer intervalo. Digite 4 horários",
+        `Esta jornada soma ${formatarDuracao(duracaoMinutos)} e requer intervalo. Informe 4 horários: entrada, saída para intervalo, retorno e saída final.`,
         tipoDia,
         horariosNormalizado,
       );
@@ -244,7 +248,7 @@ export function validarJornadaManual(
 
     if (inicio1 >= fim1) {
       return createError(
-        "Primeiro período deve iniciar antes do final",
+        `Primeiro período inválido: a entrada (${horarios[0]}) deve ser antes da saída para intervalo (${horarios[1]}).`,
         tipoDia,
         horariosNormalizado,
       );
@@ -252,7 +256,7 @@ export function validarJornadaManual(
 
     if (inicio2 >= fim2) {
       return createError(
-        "Segundo período deve iniciar antes do final",
+        `Segundo período inválido: o retorno (${horarios[2]}) deve ser antes da saída final (${horarios[3]}).`,
         tipoDia,
         horariosNormalizado,
       );
@@ -260,7 +264,7 @@ export function validarJornadaManual(
 
     if (fim1 > inicio2) {
       return createError(
-        "Intervalo entre periodos invalido. Segundo periodo deve iniciar depois do primeiro",
+        `Intervalo entre períodos inválido: o retorno (${horarios[2]}) deve ser depois da saída para intervalo (${horarios[1]}).`,
         tipoDia,
         horariosNormalizado,
       );
@@ -274,17 +278,17 @@ export function validarJornadaManual(
 
     if (periodo1Minutos > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos) {
       erros.push(
-        `Primeiro periodo (${formatarDuracaoLegivel(periodo1Minutos)}) excede ${formatarDuracaoLegivel(
+        `Primeiro período (${formatarDuracaoLegivel(periodo1Minutos)}) excede ${formatarDuracaoLegivel(
           JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos,
-        )}`,
+        )}. Cada período de trabalho deve ter no máximo 04:00 antes de iniciar ou retornar do intervalo.`,
       );
     }
 
     if (periodo2Minutos > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos) {
       erros.push(
-        `Segundo periodo (${formatarDuracaoLegivel(periodo2Minutos)}) excede ${formatarDuracaoLegivel(
+        `Segundo período (${formatarDuracaoLegivel(periodo2Minutos)}) excede ${formatarDuracaoLegivel(
           JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos,
-        )}`,
+        )}. Cada período de trabalho deve ter no máximo 04:00 antes de iniciar ou retornar do intervalo.`,
       );
     }
 
@@ -293,24 +297,27 @@ export function validarJornadaManual(
       intervaloMinutos < JORNADA_CONFIG.intervaloAlmocoMinimoMinutos
     ) {
       erros.push(
-        `Intervalo insuficiente (${formatarDuracaoLegivel(intervaloMinutos)}). Minimo: ${formatarDuracaoLegivel(
+        `Intervalo insuficiente (${formatarDuracaoLegivel(intervaloMinutos)}). Mínimo: ${formatarDuracaoLegivel(
           JORNADA_CONFIG.intervaloAlmocoMinimoMinutos,
-        )}`,
+        )} para jornadas de 07:20 ou 08:00.`,
       );
     }
 
-    if (intervaloMinutos > JORNADA_CONFIG.intervaloAlmocoMaximoMinutos) {
+    if (
+      !hasLunchException(duracaoMinutos) &&
+      intervaloMinutos > JORNADA_CONFIG.intervaloAlmocoMaximoMinutos
+    ) {
       erros.push(
-        `Intervalo excessivo (${formatarDuracaoLegivel(intervaloMinutos)}). Maximo: ${formatarDuracaoLegivel(
+        `Intervalo excessivo (${formatarDuracaoLegivel(intervaloMinutos)}). Máximo: ${formatarDuracaoLegivel(
           JORNADA_CONFIG.intervaloAlmocoMaximoMinutos,
-        )}`,
+        )}.`,
       );
     }
 
     const periodoTotalMinutos = duracaoMinutos + intervaloMinutos;
     if (!validarLimiteDiario(periodoTotalMinutos, JORNADA_CONFIG.periodoMaximoHoras)) {
       erros.push(
-        `Periodo total (${formatarDuracaoLegivel(periodoTotalMinutos)}) excede limite de ${JORNADA_CONFIG.periodoMaximoHoras}h`,
+        `Período total (${formatarDuracaoLegivel(periodoTotalMinutos)}) excede o limite de ${JORNADA_CONFIG.periodoMaximoHoras}h entre a entrada e a saída final, incluindo o intervalo.`,
       );
     }
   }
@@ -336,7 +343,7 @@ export function validarJornadaManual(
     !validarLimiteDiario(duracaoMinutos, JORNADA_CONFIG.periodoMaximoHoras)
   ) {
     erros.push(
-      `Periodo total (${formatarDuracaoLegivel(duracaoMinutos)}) excede limite de ${JORNADA_CONFIG.periodoMaximoHoras}h`,
+      `Período total (${formatarDuracaoLegivel(duracaoMinutos)}) excede o limite diário de ${JORNADA_CONFIG.periodoMaximoHoras}h.`,
     );
   }
 
@@ -345,7 +352,7 @@ export function validarJornadaManual(
     times.length !== 2
   ) {
     erros.push(
-      "Jornada de 04:00 não tem intervalo. Digite apenas entrada e saída",
+      "Jornada de 04:00 não deve ter intervalo. Informe apenas 2 horários: entrada e saída.",
     );
   }
 
@@ -357,7 +364,7 @@ export function validarJornadaManual(
     erros.push(
       `Total informado: ${formatarDuracao(
         duracaoMinutos,
-      )}. Jornadas aceitas: 04:00, 05:50, 07:20 ou 08:00`,
+      )}. Para dia útil, as jornadas aceitas são: ${formatarJornadasAceitas()}.`,
     );
   }
 
@@ -369,41 +376,47 @@ export function validarJornadaManual(
     erros.push(
       `Sábado deve ter exatamente ${formatarDuracao(
         JORNADA_CONFIG.complementoSabadoMinutos,
-      )} para completar 44h semanais. Duração informada: ${formatarDuracao(
+      )}, sem intervalo, para completar 44h semanais. Duração informada: ${formatarDuracao(
         duracaoMinutos,
-      )}`,
+      )}.`,
     );
   }
 
   const rule = getRule(rules, duracaoMinutos, tipoDia);
   if (!rule && !duracaoInvalidaParaDia) {
     erros.push(
-      `Não existe regra ativa para jornada de ${formatarDuracao(duracaoMinutos)}`,
+      `Não existe regra ativa para jornada de ${formatarDuracao(duracaoMinutos)} neste tipo de dia. Verifique as regras cadastradas ou autorize uma exceção.`,
     );
   }
 
   if (rule && rule.intervaloMin > 0) {
     if (intervaloMinutos == null) {
       return createError(
-        "Esta jornada requer intervalo. Digite 4 horários",
+        `A regra "${rule.nome}" requer intervalo. Informe 4 horários: entrada, saída para intervalo, retorno e saída final.`,
         tipoDia,
         horariosNormalizado,
       );
     }
 
-    if (intervaloMinutos < rule.intervaloMin) {
+    if (
+      intervaloMinutos < rule.intervaloMin &&
+      !erros.some((erro) => erro.startsWith("Intervalo insuficiente"))
+    ) {
       erros.push(
-        `Intervalo insuficiente (${formatarDuracaoLegivel(intervaloMinutos)}). Minimo: ${formatarDuracaoLegivel(
+        `Intervalo insuficiente (${formatarDuracaoLegivel(intervaloMinutos)}) para ${rule.nome}. Mínimo exigido: ${formatarDuracaoLegivel(
           rule.intervaloMin,
-        )}`,
+        )}.`,
       );
     }
 
-    if (intervaloMinutos > rule.intervaloMax) {
+    if (
+      intervaloMinutos > rule.intervaloMax &&
+      !erros.some((erro) => erro.startsWith("Intervalo excessivo"))
+    ) {
       erros.push(
-        `Intervalo excessivo (${formatarDuracaoLegivel(intervaloMinutos)}). Maximo: ${formatarDuracaoLegivel(
+        `Intervalo excessivo (${formatarDuracaoLegivel(intervaloMinutos)}) para ${rule.nome}. Máximo permitido: ${formatarDuracaoLegivel(
           rule.intervaloMax,
-        )}`,
+        )}.`,
       );
     }
   }
@@ -476,7 +489,8 @@ export function validarJornadaComInterjornada(
         jornada2: {
           ...jornada2,
           valido: false,
-          mensagem: "Jornada principal deve ser 8h válida para abrir sábado",
+          mensagem:
+            "Jornada principal deve ser uma jornada válida de 08:00 para liberar o complemento de sábado.",
         },
         mensagemInterjornada: "",
         interjornadaMinutos,
@@ -492,7 +506,7 @@ export function validarJornadaComInterjornada(
           ...jornada2,
           valido: false,
           mensagem: jornada2.valido
-            ? "Sabado deve ter exatamente 4 horas"
+            ? "Sábado deve ter exatamente 04:00, sem intervalo, para completar a jornada semanal."
             : jornada2.mensagem,
         },
         mensagemInterjornada: "",
@@ -509,7 +523,7 @@ export function validarJornadaComInterjornada(
       jornada2,
       mensagemInterjornada:
         interjornadaMinutos == null
-          ? "Interjornada nao calculada"
+          ? "Interjornada não calculada. Verifique se as duas jornadas possuem horários válidos."
           : createInterjornadaMessage(interjornadaMinutos),
       interjornadaMinutos,
     };
@@ -520,7 +534,7 @@ export function validarJornadaComInterjornada(
     interjornadaMinutos >= JORNADA_CONFIG.interjornadaMinimaMinutos;
   const mensagemInterjornada = validarInterjornada
     ? createInterjornadaMessage(interjornadaMinutos)
-    : `Interjornada nao avaliada: ${formatarDuracaoLegivel(interjornadaMinutos)}`;
+    : `Interjornada não avaliada por configuração: ${formatarDuracaoLegivel(interjornadaMinutos)}.`;
 
   if (input.modo === "sabado-combinado") {
     const horasSemanais = 44;
@@ -529,8 +543,8 @@ export function validarJornadaComInterjornada(
       ...jornada2,
       valido: interjornadaValida,
       mensagem: interjornadaValida
-        ? "Jornada Sabado - 4h (Complemento 44h semanais)"
-        : "Jornada Sabado - Interjornada insuficiente",
+        ? "Jornada Sábado - 04:00 (complemento para 44h semanais)"
+        : "Jornada Sábado - Interjornada insuficiente",
       horasSemanais,
       horasMensais,
     };
@@ -541,17 +555,17 @@ export function validarJornadaComInterjornada(
       jornada1,
       jornada2: jornada2Combinada,
       mensagemInterjornada: interjornadaValida
-        ? `Jornada Completa: 40h (Seg-Sex) + 4h (Sab) = ${horasSemanais}h semanais / ${horasMensais}h mensais\n${
+        ? `Jornada completa: 40h (Seg-Sex) + 4h (Sáb) = ${horasSemanais}h semanais / ${horasMensais}h mensais\n${
             validarInterjornada
               ? createInterjornadaMessage(
                   interjornadaMinutos,
-                  "Interjornada Sexta a Sabado",
+                  "Interjornada Sexta a Sábado",
                 )
-              : "Interjornada nao avaliada"
+              : "Interjornada não avaliada por configuração"
           }`
-        : `Jornada: 40h (Seg-Sex) + 4h (Sab) = ${horasSemanais}h semanais / ${horasMensais}h mensais\n${createInterjornadaMessage(
+        : `Jornada: 40h (Seg-Sex) + 4h (Sáb) = ${horasSemanais}h semanais / ${horasMensais}h mensais\n${createInterjornadaMessage(
             interjornadaMinutos,
-            "Interjornada Sexta a Sabado",
+            "Interjornada Sexta a Sábado",
           )}`,
       interjornadaMinutos,
     };

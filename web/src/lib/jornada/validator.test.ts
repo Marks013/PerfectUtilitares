@@ -20,7 +20,8 @@ describe("validarJornadaManual", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("04:00 não tem intervalo");
+    expect(result.mensagem).toContain("04:00 não deve ter intervalo");
+    expect(result.mensagem).toContain("Informe apenas 2 horários");
   });
 
   it("rejeita jornada de 6 horas como segunda a sexta", () => {
@@ -76,7 +77,8 @@ describe("validarJornadaManual", () => {
     const result = validarJornadaManual({ horarios: "08:00 25:00" });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Horario incompleto ou invalido: 25:00");
+    expect(result.mensagem).toContain("Horário incompleto ou inválido: 25:00");
+    expect(result.mensagem).toContain("Use o formato HH:MM");
   });
 
   it("detalha quando falta horario para fechar os pares", () => {
@@ -85,8 +87,8 @@ describe("validarJornadaManual", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Horarios recebidos: 3");
-    expect(result.mensagem).toContain("Primeiro periodo: 4h");
+    expect(result.mensagem).toContain("Horários recebidos: 3");
+    expect(result.mensagem).toContain("Primeiro período trabalhado: 4h");
   });
 
   it("detalha horario incompleto ou com digitos a mais", () => {
@@ -118,8 +120,9 @@ describe("validarJornadaManual", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Primeiro periodo");
+    expect(result.mensagem).toContain("Primeiro período");
     expect(result.mensagem).toContain("excede 4h");
+    expect(result.mensagem).toContain("no máximo 04:00");
   });
 
   it("aceita jornada fora da regra quando existe exceção autorizada", () => {
@@ -151,7 +154,8 @@ describe("validarJornadaManual", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("excede limite");
+    expect(result.mensagem).toContain("excede o limite");
+    expect(result.mensagem).toContain("incluindo o intervalo");
   });
 });
 
@@ -232,7 +236,7 @@ describe("validarJornadaComInterjornada", () => {
     });
 
     expect(result.valido).toBe(true);
-    expect(result.mensagemInterjornada).toContain("Interjornada nao avaliada");
+    expect(result.mensagemInterjornada).toContain("Interjornada não avaliada");
     expect(result.jornada2.horasSemanais).toBe(44);
     expect(result.jornada2.horasMensais).toBe(220);
   });
@@ -243,10 +247,10 @@ describe("validarJornadaComInterjornada", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Periodo total");
+    expect(result.mensagem).toContain("Período total");
     expect(result.mensagem).toContain("Intervalo excessivo");
-    expect(result.mensagem).toContain("Primeiro periodo: 4h");
-    expect(result.mensagem).toContain("Segundo periodo: 3h20");
+    expect(result.mensagem).toContain("Primeiro período trabalhado: 4h");
+    expect(result.mensagem).toContain("Segundo período trabalhado: 3h20");
   });
 
   it("rejeita sabado combinado sem jornada principal de 8h", () => {
@@ -258,6 +262,6 @@ describe("validarJornadaComInterjornada", () => {
 
     expect(result.jornada1.valido).toBe(true);
     expect(result.jornada2.valido).toBe(false);
-    expect(result.jornada2.mensagem).toContain("deve ser 8h");
+    expect(result.jornada2.mensagem).toContain("jornada válida de 08:00");
   });
 });

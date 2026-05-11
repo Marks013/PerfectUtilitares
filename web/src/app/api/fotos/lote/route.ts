@@ -37,7 +37,7 @@ function batchErrorResponse(error: unknown) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Configurações inválidas",
+      "Revise as configurações do lote de fotos.",
       zodIssues(error),
     );
   }
@@ -47,7 +47,11 @@ function batchErrorResponse(error: unknown) {
   }
 
   Sentry.captureException(error);
-  return jsonError(500, "PHOTO_BATCH_FAILED", "Falha ao processar lote");
+  return jsonError(
+    500,
+    "PHOTO_BATCH_FAILED",
+    "Não foi possível processar o lote de fotos. Tente novamente em instantes.",
+  );
 }
 
 export function GET() {
@@ -89,14 +93,18 @@ export async function POST(request: Request) {
     const files = formData.getAll("files").filter(isUploadedFile);
 
     if (files.length === 0) {
-      return jsonError(400, "PHOTOS_REQUIRED", "Envie ao menos uma foto");
+      return jsonError(
+        400,
+        "PHOTOS_REQUIRED",
+        "Selecione ao menos uma foto JPG, PNG ou WEBP.",
+      );
     }
 
     if (files.length > MAX_BATCH_FILES) {
       return jsonError(
         400,
         "TOO_MANY_FILES",
-        `Envie no máximo ${MAX_BATCH_FILES} fotos por lote`,
+        `Selecione no máximo ${MAX_BATCH_FILES} fotos por lote.`,
       );
     }
 
@@ -105,7 +113,9 @@ export async function POST(request: Request) {
       return jsonError(
         413,
         "BATCH_TOO_LARGE",
-        `Lote acima do limite de ${Math.floor(MAX_BATCH_BYTES / 1024 / 1024)}MB`,
+        `O lote ultrapassa o limite de ${Math.floor(
+          MAX_BATCH_BYTES / 1024 / 1024,
+        )}MB. Remova algumas fotos ou reduza os arquivos.`,
       );
     }
 
@@ -124,7 +134,7 @@ export async function POST(request: Request) {
           message:
             error instanceof Error
               ? error.message
-              : "Falha desconhecida ao processar imagem",
+              : "Não foi possível processar esta imagem.",
         });
       }
     }
@@ -133,7 +143,7 @@ export async function POST(request: Request) {
       return jsonError(
         400,
         "NO_VALID_PHOTOS",
-        "Nenhuma foto válida foi processada",
+        "Nenhuma foto válida foi processada. Verifique o formato e o tamanho dos arquivos.",
         errors,
       );
     }

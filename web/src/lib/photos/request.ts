@@ -49,7 +49,10 @@ export function parseCropArea(formData: FormData): CropArea | undefined {
   try {
     return cropAreaSchema.parse(JSON.parse(rawCrop));
   } catch {
-    throw new PhotoProcessingError("INVALID_CROP", "Área de corte inválida");
+    throw new PhotoProcessingError(
+      "INVALID_CROP",
+      "Área de corte inválida. Ajuste o recorte da foto e tente novamente.",
+    );
   }
 }
 

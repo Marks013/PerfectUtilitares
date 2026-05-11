@@ -77,7 +77,7 @@ export async function POST(request: Request) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Dados inválidos",
+      "Revise os dados da empresa.",
       zodIssueDetails(parsed.error),
     );
   }
@@ -101,7 +101,11 @@ export async function POST(request: Request) {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      return jsonError(409, "TENANT_SLUG_EXISTS", "Tenant já cadastrado");
+      return jsonError(
+        409,
+        "TENANT_SLUG_EXISTS",
+        "Já existe uma empresa com este identificador. Escolha outro identificador.",
+      );
     }
 
     throw error;

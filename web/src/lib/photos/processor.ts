@@ -74,7 +74,7 @@ function resolvePhotoOutput(input: PhotoInput, settings: PhotoSettings) {
     if (!format) {
       throw new PhotoProcessingError(
         "INVALID_IMAGE_TYPE",
-        "Envie imagens JPG, PNG ou WEBP",
+        "Formato de imagem não aceito. Envie uma foto em JPG, PNG ou WEBP.",
       );
     }
 
@@ -111,18 +111,23 @@ function validateInput(input: PhotoInput) {
   if (!isAcceptedImageType(input.type)) {
     throw new PhotoProcessingError(
       "INVALID_IMAGE_TYPE",
-      "Envie imagens JPG, PNG ou WEBP",
+      "Formato de imagem não aceito. Envie uma foto em JPG, PNG ou WEBP.",
     );
   }
 
   if (input.buffer.byteLength === 0) {
-    throw new PhotoProcessingError("EMPTY_IMAGE", "Arquivo vazio");
+    throw new PhotoProcessingError(
+      "EMPTY_IMAGE",
+      "O arquivo enviado está vazio. Selecione uma foto válida.",
+    );
   }
 
   if (input.buffer.byteLength > MAX_IMAGE_BYTES) {
     throw new PhotoProcessingError(
       "IMAGE_TOO_LARGE",
-      `Imagem acima do limite de ${Math.floor(MAX_IMAGE_BYTES / 1024 / 1024)}MB`,
+      `A imagem ultrapassa o limite de ${Math.floor(
+        MAX_IMAGE_BYTES / 1024 / 1024,
+      )}MB. Reduza o arquivo ou selecione outra foto.`,
     );
   }
 }
@@ -154,7 +159,7 @@ async function normalizeInput(input: PhotoInput) {
   } catch {
     throw new PhotoProcessingError(
       "INVALID_IMAGE",
-      "Não foi possível ler a imagem enviada",
+      "Não foi possível ler a imagem. Verifique se o arquivo não está corrompido e está em JPG, PNG ou WEBP.",
     );
   }
 }

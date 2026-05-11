@@ -19,16 +19,25 @@ export const runtime = "nodejs";
 
 const accountPatchSchema = z
   .object({
-    name: z.string().trim().min(2).max(80).optional(),
+    name: z
+      .string()
+      .trim()
+      .min(2, "O nome deve ter pelo menos 2 caracteres.")
+      .max(80, "O nome deve ter no máximo 80 caracteres.")
+      .optional(),
     currentPassword: z.string().min(1).optional(),
-    newPassword: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH).optional(),
+    newPassword: z
+      .string()
+      .min(8, "A nova senha deve ter pelo menos 8 caracteres.")
+      .max(BCRYPT_PASSWORD_MAX_LENGTH, "A nova senha deve ter no máximo 72 caracteres.")
+      .optional(),
   })
   .superRefine((value, ctx) => {
     if (value.newPassword && !value.currentPassword) {
       ctx.addIssue({
         code: "custom",
         path: ["currentPassword"],
-        message: "Informe a senha atual",
+        message: "Informe a senha atual para confirmar a troca.",
       });
     }
 
@@ -36,7 +45,7 @@ const accountPatchSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["newPassword"],
-        message: "Informe a nova senha",
+        message: "Informe a nova senha.",
       });
     }
   });
@@ -85,13 +94,17 @@ export async function PATCH(request: Request) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Dados inválidos",
+      "Revise os dados da conta.",
       parsed.error.issues,
     );
   }
 
   if (!parsed.data.name && !parsed.data.newPassword) {
-    return jsonError(400, "EMPTY_UPDATE", "Informe o que deseja alterar");
+    return jsonError(
+      400,
+      "EMPTY_UPDATE",
+      "Informe um novo nome ou uma nova senha antes de salvar.",
+    );
   }
 
   const userId = guard.session.user.id;
@@ -101,7 +114,11 @@ export async function PATCH(request: Request) {
   });
 
   if (!user) {
-    return jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado");
+    return jsonError(
+      404,
+      "USER_NOT_FOUND",
+      "Usuário não encontrado. Entre novamente e tente outra vez.",
+    );
   }
 
   const data: { name?: string; passwordHash?: string } = {};
@@ -119,7 +136,11 @@ export async function PATCH(request: Request) {
     );
 
     if (!validPassword) {
-      return jsonError(403, "INVALID_PASSWORD", "Senha atual incorreta");
+      return jsonError(
+        403,
+        "INVALID_PASSWORD",
+        "A senha atual não confere. Digite a senha usada para entrar no sistema.",
+      );
     }
 
     data.passwordHash = await hash(parsed.data.newPassword, 12);

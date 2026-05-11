@@ -98,7 +98,7 @@ export async function POST(request: Request) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Dados inválidos",
+      "Revise os dados do convite.",
       zodIssueDetails(parsed.error),
     );
   }
@@ -108,7 +108,11 @@ export async function POST(request: Request) {
   });
 
   if (!tenant) {
-    return jsonError(404, "TENANT_NOT_FOUND", "Tenant não encontrado");
+    return jsonError(
+      404,
+      "TENANT_NOT_FOUND",
+      "Empresa não encontrada. Selecione uma empresa cadastrada.",
+    );
   }
 
   const token = randomBytes(32).toString("base64url");

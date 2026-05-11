@@ -30,7 +30,7 @@ function processingErrorResponse(error: unknown) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Configurações inválidas",
+      "Revise as configurações da foto.",
       zodIssues(error),
     );
   }
@@ -40,7 +40,11 @@ function processingErrorResponse(error: unknown) {
   }
 
   Sentry.captureException(error);
-  return jsonError(500, "PHOTO_PROCESSING_FAILED", "Falha ao processar foto");
+  return jsonError(
+    500,
+    "PHOTO_PROCESSING_FAILED",
+    "Não foi possível processar a foto. Tente novamente em instantes.",
+  );
 }
 
 export function GET() {
@@ -82,7 +86,11 @@ export async function POST(request: Request) {
     const file = formData.get("file");
 
     if (!isUploadedFile(file)) {
-      return jsonError(400, "PHOTO_REQUIRED", "Envie uma foto");
+      return jsonError(
+        400,
+        "PHOTO_REQUIRED",
+        "Selecione uma foto JPG, PNG ou WEBP para processar.",
+      );
     }
 
     const settings = parsePhotoSettings(formData);

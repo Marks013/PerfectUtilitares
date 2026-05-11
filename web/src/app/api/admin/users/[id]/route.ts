@@ -40,11 +40,19 @@ function validateUserId(id: string) {
 function prismaErrorResponse(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2025") {
-      return jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado");
+      return jsonError(
+        404,
+        "USER_NOT_FOUND",
+        "Usuário não encontrado. Atualize a lista e tente novamente.",
+      );
     }
 
     if (error.code === "P2002") {
-      return jsonError(409, "USER_EMAIL_EXISTS", "Email já cadastrado");
+      return jsonError(
+        409,
+        "USER_EMAIL_EXISTS",
+        "Este e-mail já está cadastrado em outro usuário.",
+      );
     }
   }
 
@@ -52,7 +60,11 @@ function prismaErrorResponse(error: unknown) {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2003"
   ) {
-    return jsonError(404, "TENANT_NOT_FOUND", "Empresa não encontrada");
+    return jsonError(
+      404,
+      "TENANT_NOT_FOUND",
+      "Empresa não encontrada. Selecione uma empresa cadastrada.",
+    );
   }
 
   throw error;
@@ -66,12 +78,20 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   if (!validateUserId(id)) {
-    return jsonError(400, "INVALID_USER_ID", "Identificador inválido");
+    return jsonError(
+      400,
+      "INVALID_USER_ID",
+      "Usuário inválido. Atualize a lista e selecione o usuário novamente.",
+    );
   }
 
   const user = await prisma.user.findUnique({ where: { id }, select: userSelect });
   if (!user) {
-    return jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado");
+    return jsonError(
+      404,
+      "USER_NOT_FOUND",
+      "Usuário não encontrado. Atualize a lista e tente novamente.",
+    );
   }
 
   return NextResponse.json(user);
@@ -94,14 +114,18 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   if (!validateUserId(id)) {
-    return jsonError(400, "INVALID_USER_ID", "Identificador inválido");
+    return jsonError(
+      400,
+      "INVALID_USER_ID",
+      "Usuário inválido. Atualize a lista e selecione o usuário novamente.",
+    );
   }
 
   if (id === guard.session.user.id) {
     return jsonError(
       400,
       "SELF_DELETE_BLOCKED",
-      "Não é permitido excluir seu próprio usuário administrativo",
+      "Não é permitido alterar seu próprio usuário administrativo por esta tela.",
     );
   }
 
@@ -134,7 +158,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Dados inválidos",
+      "Revise os dados do usuário.",
       zodIssueDetails(parsed.error),
     );
   }
@@ -146,7 +170,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(
       400,
       "SELF_LOCKOUT_BLOCKED",
-      "Não é permitido remover seu próprio acesso administrativo",
+      "Não é permitido remover seu próprio acesso administrativo.",
     );
   }
 
@@ -193,7 +217,11 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   if (!validateUserId(id)) {
-    return jsonError(400, "INVALID_USER_ID", "Identificador inválido");
+    return jsonError(
+      400,
+      "INVALID_USER_ID",
+      "Usuário inválido. Atualize a lista e selecione o usuário novamente.",
+    );
   }
 
   const limited = enforceRateLimit(request, {

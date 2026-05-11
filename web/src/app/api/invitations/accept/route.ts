@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Dados inválidos",
+      "Revise a senha do convite.",
       zodIssueDetails(parsed.error),
     );
   }
@@ -69,11 +69,19 @@ export async function POST(request: Request) {
   });
 
   if (!invitation || invitation.acceptedAt) {
-    return jsonError(404, "INVITATION_NOT_FOUND", "Convite inválido");
+    return jsonError(
+      404,
+      "INVITATION_NOT_FOUND",
+      "Convite inválido ou já utilizado. Solicite um novo convite ao administrador.",
+    );
   }
 
   if (invitation.expiresAt < new Date()) {
-    return jsonError(410, "INVITATION_EXPIRED", "Convite expirado");
+    return jsonError(
+      410,
+      "INVITATION_EXPIRED",
+      "Convite expirado. Solicite um novo convite ao administrador.",
+    );
   }
 
   try {
@@ -151,7 +159,11 @@ export async function POST(request: Request) {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      return jsonError(409, "USER_EMAIL_EXISTS", "Email já cadastrado");
+      return jsonError(
+        409,
+        "USER_EMAIL_EXISTS",
+        "Este e-mail já está cadastrado. Use a recuperação de senha ou solicite apoio do administrador.",
+      );
     }
 
     throw error;

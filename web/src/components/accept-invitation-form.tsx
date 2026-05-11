@@ -15,12 +15,20 @@ type ApiErrorBody = {
 
 const acceptFormSchema = z
   .object({
-    password: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH),
-    confirmPassword: z.string().min(8).max(BCRYPT_PASSWORD_MAX_LENGTH),
+    password: z
+      .string()
+      .min(1, "Informe a senha.")
+      .min(8, "A senha deve ter pelo menos 8 caracteres.")
+      .max(BCRYPT_PASSWORD_MAX_LENGTH, "A senha deve ter no máximo 72 caracteres."),
+    confirmPassword: z
+      .string()
+      .min(1, "Confirme a senha.")
+      .min(8, "A confirmação deve ter pelo menos 8 caracteres.")
+      .max(BCRYPT_PASSWORD_MAX_LENGTH, "A senha deve ter no máximo 72 caracteres."),
   })
   .refine((value) => value.password === value.confirmPassword, {
     path: ["confirmPassword"],
-    message: "As senhas precisam ser iguais",
+    message: "As senhas não conferem. Digite a mesma senha nos dois campos.",
   });
 
 type AcceptFormInput = z.input<typeof acceptFormSchema>;
@@ -30,9 +38,12 @@ async function getErrorMessage(response: Response) {
   try {
     const data = (await response.json()) as ApiErrorBody;
     if (typeof data.error === "string") return data.error;
-    return data.error?.message ?? "Falha ao aceitar convite";
+    return (
+      data.error?.message ??
+      "Não foi possível definir a senha. Verifique os dados e tente novamente."
+    );
   } catch {
-    return "Falha ao aceitar convite";
+    return "Não foi possível definir a senha. Tente novamente em instantes.";
   }
 }
 
@@ -85,8 +96,14 @@ export function AcceptInvitationForm({ token }: { token: string }) {
           maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
           {...form.register("password")}
           className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+          placeholder="Mínimo de 8 caracteres"
         />
       </label>
+      {form.formState.errors.password ? (
+        <p className="mt-1 text-xs text-red-700">
+          {form.formState.errors.password.message}
+        </p>
+      ) : null}
 
       <label className="mt-4 block text-sm font-medium text-neutral-800">
         Confirmar senha
@@ -96,12 +113,12 @@ export function AcceptInvitationForm({ token }: { token: string }) {
           maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
           {...form.register("confirmPassword")}
           className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+          placeholder="Repita a senha"
         />
       </label>
-
-      {Object.values(form.formState.errors).length ? (
-        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          Informe uma senha valida e confirme corretamente.
+      {form.formState.errors.confirmPassword ? (
+        <p className="mt-1 text-xs text-red-700">
+          {form.formState.errors.confirmPassword.message}
         </p>
       ) : null}
 

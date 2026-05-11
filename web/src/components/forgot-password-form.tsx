@@ -8,7 +8,11 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 const schema = z.object({
-  email: z.string().email("Informe um e-mail válido"),
+  email: z
+    .string()
+    .trim()
+    .min(1, "Informe o e-mail cadastrado.")
+    .email("Informe um e-mail válido, como nome@empresa.com."),
 });
 
 type FormInput = z.input<typeof schema>;
@@ -52,7 +56,7 @@ export function ForgotPasswordForm() {
           maxLength={254}
           {...form.register("email")}
           className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
-          placeholder="Digite seu E-mail"
+          placeholder="nome@empresa.com"
         />
       </label>
       {form.formState.errors.email ? (
@@ -64,7 +68,7 @@ export function ForgotPasswordForm() {
       {mutation.isSuccess ? (
         <p className="mt-4 flex items-center gap-2 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
           <CheckCircle2 className="size-4" aria-hidden="true" />
-          Se o e-mail existir, enviaremos as instruções.
+          Se o e-mail estiver cadastrado e ativo, enviaremos um link para redefinir a senha.
         </p>
       ) : null}
 

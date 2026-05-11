@@ -10,6 +10,19 @@ import { checkRateLimit, getClientIp } from "@/lib/api/rate-limit";
 export async function loginAction(formData: FormData) {
   const email = normalizeEmail(formData.get("email"));
   const password = String(formData.get("password") ?? "");
+
+  if (!email && !password) {
+    redirect("/login?error=missing");
+  }
+
+  if (!email || !email.includes("@")) {
+    redirect("/login?error=email");
+  }
+
+  if (!password) {
+    redirect("/login?error=password");
+  }
+
   const headerStore = await headers();
   const clientIp = getClientIp(headerStore);
   const loginLimit = checkRateLimit(`login:${clientIp}:${email || "empty"}`, {
