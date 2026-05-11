@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
   enforceRateLimit,
   jsonError,
   methodNotAllowed,
+  readJsonBody,
+  requireContentType,
+  requireMaxContentLength,
   requireAdmin,
   requireModuleAccess,
   requireSameOrigin,
@@ -12,6 +16,12 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 const HISTORY_RETENTION_DAYS = 30;
+const selectedDeleteSchema = z.object({
+  ids: z
+    .array(z.string().min(8).max(64))
+    .min(1, "Selecione ao menos uma validação para excluir.")
+    .max(100, "Selecione no máximo 100 validações por exclusão."),
+});
 
 export async function GET(request: Request) {
   const guard = await requireModuleAccess("jornada");
@@ -93,6 +103,49 @@ export async function DELETE(request: Request) {
   const scope = url.searchParams.get("scope") ?? "mine";
   const userId = sessionGuard.session.user.id;
 
+  if (scope === "selected") {
+    const contentTypeError = requireContentType(request, ["application/json"]);
+    if (contentTypeError) {
+      return contentTypeError;
+    }
+
+    const contentLengthError = requireMaxContentLength(request, 8 * 1024);
+    if (contentLengthError) {
+      return contentLengthError;
+    }
+
+    const json = await readJsonBody(request);
+    if (!json.ok) {
+      return json.response;
+    }
+
+    const parsed = selectedDeleteSchema.safeParse(json.data);
+    if (!parsed.success) {
+      return jsonError(
+        400,
+        "VALIDATION_ERROR",
+        "Seleção inválida para exclusão.",
+        parsed.error.issues,
+      );
+    }
+
+    const ids = [...new Set(parsed.data.ids)];
+    const result = await prisma.jornadaValidation.deleteMany({
+      where: { userId, id: { in: ids } },
+    });
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        action: "DELETE_SELECTED",
+        entity: "JornadaValidation",
+        entityId: userId,
+        metadata: { requestedCount: ids.length, deletedCount: result.count },
+      },
+    });
+
+    return NextResponse.json({ ok: true, deletedCount: result.count });
+  }
+
   if (scope === "all") {
     const adminGuard = await requireAdmin();
     if (!adminGuard.ok) {
@@ -117,7 +170,7 @@ export async function DELETE(request: Request) {
     return jsonError(
       400,
       "INVALID_SCOPE",
-      "Escopo permitido: mine ou all",
+      "Escopo permitido: mine, selected ou all",
     );
   }
 

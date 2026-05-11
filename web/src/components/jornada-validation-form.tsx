@@ -98,6 +98,8 @@ type HistoryRecord = JornadaResult & {
   user?: { name?: string | null; email?: string | null } | null;
 };
 
+const historyQueryKey = ["jornada", "historico"] as const;
+
 type HistoryItem = {
   key: string;
   ids: string[];
@@ -412,6 +414,20 @@ async function clearOwnHistory() {
   return (await response.json()) as { deletedCount: number };
 }
 
+async function deleteSelectedHistory(ids: string[]) {
+  const response = await fetch("/api/jornada/historico?scope=selected", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return (await response.json()) as { deletedCount: number };
+}
+
 export function JornadaValidationForm({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
@@ -474,7 +490,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   }, [interjornadaAtiva, form]);
 
   const historicoQuery = useQuery({
-    queryKey: ["jornada", "historico"],
+    queryKey: historyQueryKey,
     queryFn: fetchHistory,
   });
   const historico = useMemo(
@@ -500,14 +516,22 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       ),
     [filteredHistorico, historyPage],
   );
-  const exportable = useMemo(
-    () => visibleHistorico.filter((item) => item.valido),
-    [visibleHistorico],
-  );
   const selectedSet = useMemo(() => new Set(selectedKeys), [selectedKeys]);
-  const allExportableSelected =
-    exportable.length > 0 &&
-    exportable.every((item) => selectedSet.has(item.key));
+  const selectedItemCount = historico.filter((item) =>
+    selectedSet.has(item.key),
+  ).length;
+  const selectedValidCount = historico.filter(
+    (item) => item.valido && selectedSet.has(item.key),
+  ).length;
+  const selectedHistoryIds = useMemo(() => {
+    const ids = historico
+      .filter((item) => selectedSet.has(item.key))
+      .flatMap((item) => item.ids);
+    return [...new Set(ids)];
+  }, [historico, selectedSet]);
+  const allVisibleSelected =
+    visibleHistorico.length > 0 &&
+    visibleHistorico.every((item) => selectedSet.has(item.key));
   const totalValidCount = historico.filter((item) => item.valido).length;
   const totalErrorCount = historico.length - totalValidCount;
 
@@ -527,26 +551,37 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     });
   }
 
-  function toggleAllExportable() {
-    if (allExportableSelected) {
-      setSelectedKeys([]);
-      setPdfPeopleByKey({});
+  function toggleAllVisible() {
+    if (allVisibleSelected) {
+      const visibleKeys = new Set(visibleHistorico.map((item) => item.key));
+      setSelectedKeys((current) =>
+        current.filter((key) => !visibleKeys.has(key)),
+      );
+      setPdfPeopleByKey((current) => {
+        const next = { ...current };
+        visibleKeys.forEach((key) => {
+          delete next[key];
+        });
+        return next;
+      });
       return;
     }
 
-    setSelectedKeys(exportable.map((item) => item.key));
+    setSelectedKeys((current) => [
+      ...new Set([...current, ...visibleHistorico.map((item) => item.key)]),
+    ]);
     setPdfPeopleByKey((current) => {
       const next = { ...current };
-      exportable.forEach((item) => {
-        next[item.key] = next[item.key] ?? [createPdfPerson()];
+      visibleHistorico.forEach((item) => {
+        if (item.valido) {
+          next[item.key] = next[item.key] ?? [createPdfPerson()];
+        }
       });
       return next;
     });
   }
 
   function toggleOne(item: HistoryItem) {
-    if (!item.valido) return;
-
     setSelectedKeys((current) => {
       const selected = current.includes(item.key);
       if (selected) {
@@ -558,10 +593,12 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
         return current.filter((key) => key !== item.key);
       }
 
-      setPdfPeopleByKey((people) => ({
-        ...people,
-        [item.key]: people[item.key] ?? [createPdfPerson()],
-      }));
+      if (item.valido) {
+        setPdfPeopleByKey((people) => ({
+          ...people,
+          [item.key]: people[item.key] ?? [createPdfPerson()],
+        }));
+      }
       return [...current, item.key];
     });
   }
@@ -675,18 +712,70 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       return (await response.json()) as ValidationResponse;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["jornada", "historico"] });
+      queryClient.invalidateQueries({ queryKey: historyQueryKey });
       setSelectedKeys([]);
       setPdfPeopleByKey({});
     },
   });
   const clearHistoryMutation = useMutation({
     mutationFn: clearOwnHistory,
-    onSuccess: () => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: historyQueryKey });
+      const previousHistory =
+        queryClient.getQueryData<HistoryRecord[]>(historyQueryKey);
+
+      queryClient.setQueryData<HistoryRecord[]>(historyQueryKey, []);
       setSelectedKeys([]);
       setPdfPeopleByKey({});
       setHistoryPage(1);
-      queryClient.invalidateQueries({ queryKey: ["jornada", "historico"] });
+
+      return { previousHistory };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousHistory) {
+        queryClient.setQueryData(historyQueryKey, context.previousHistory);
+      }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: historyQueryKey });
+    },
+  });
+  const selectedDeleteMutation = useMutation({
+    mutationFn: deleteSelectedHistory,
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey: historyQueryKey });
+      const previousHistory =
+        queryClient.getQueryData<HistoryRecord[]>(historyQueryKey);
+      const idSet = new Set(ids);
+      const keysToRemove = new Set(
+        historico
+          .filter((item) => item.ids.some((id) => idSet.has(id)))
+          .map((item) => item.key),
+      );
+
+      queryClient.setQueryData<HistoryRecord[]>(historyQueryKey, (current) =>
+        (current ?? []).filter((record) => !idSet.has(record.id)),
+      );
+      setSelectedKeys((current) =>
+        current.filter((key) => !keysToRemove.has(key)),
+      );
+      setPdfPeopleByKey((current) => {
+        const next = { ...current };
+        keysToRemove.forEach((key) => {
+          delete next[key];
+        });
+        return next;
+      });
+
+      return { previousHistory };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousHistory) {
+        queryClient.setQueryData(historyQueryKey, context.previousHistory);
+      }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: historyQueryKey });
     },
   });
 
@@ -976,7 +1065,18 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
           <button
             type="button"
             onClick={exportSelected}
-            disabled={selectedKeys.length === 0 || isExporting}
+            title={
+              selectedItemCount === 0
+                ? "Selecione ao menos uma jornada válida para gerar o PDF."
+                : selectedValidCount === 0
+                ? "As jornadas selecionadas têm erro e não podem gerar PDF."
+                : "Gerar PDF somente com as jornadas válidas selecionadas."
+            }
+            disabled={
+              selectedValidCount === 0 ||
+              isExporting ||
+              selectedDeleteMutation.isPending
+            }
             className="jornada-secondary-button"
           >
             {isExporting ? (
@@ -989,6 +1089,19 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
           <button
             type="button"
             onClick={() => {
+              if (selectedHistoryIds.length > 0) {
+                if (
+                  window.confirm(
+                    selectedHistoryIds.length === 1
+                      ? "Excluir 1 validação selecionada? Esta ação não pode ser desfeita."
+                      : `Excluir ${selectedHistoryIds.length} validações selecionadas? Esta ação não pode ser desfeita.`,
+                  )
+                ) {
+                  selectedDeleteMutation.mutate(selectedHistoryIds);
+                }
+                return;
+              }
+
               if (
                 window.confirm(
                   "Limpar todo o seu histórico de validações? Esta ação não pode ser desfeita.",
@@ -997,15 +1110,23 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                 clearHistoryMutation.mutate();
               }
             }}
-            disabled={historico.length === 0 || clearHistoryMutation.isPending}
+            disabled={
+              (historico.length === 0 && selectedHistoryIds.length === 0) ||
+              clearHistoryMutation.isPending ||
+              selectedDeleteMutation.isPending ||
+              mutation.isPending ||
+              isExporting
+            }
             className="jornada-danger-button"
           >
-            {clearHistoryMutation.isPending ? (
+            {clearHistoryMutation.isPending || selectedDeleteMutation.isPending ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : (
               <Trash2 className="size-4" aria-hidden="true" />
             )}
-            Limpar meu histórico
+            {selectedHistoryIds.length > 0
+              ? "Excluir selecionados"
+              : "Limpar meu histórico"}
           </button>
         </div>
         {exportError ? (
@@ -1013,9 +1134,27 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             {exportError}
           </div>
         ) : null}
+        {selectedItemCount > 0 && selectedValidCount === 0 ? (
+          <div className="jornada-alert jornada-alert--danger">
+            As validações selecionadas têm erro. Elas podem ser excluídas pelo
+            botão Excluir selecionados, mas não geram PDF. Para gerar o PDF,
+            selecione ao menos uma jornada válida.
+          </div>
+        ) : null}
+        {selectedItemCount > selectedValidCount && selectedValidCount > 0 ? (
+          <div className="jornada-alert jornada-alert--success">
+            O PDF será gerado apenas com as jornadas válidas selecionadas. As
+            jornadas com erro continuam selecionadas somente para exclusão.
+          </div>
+        ) : null}
         {clearHistoryMutation.isError ? (
           <div className="jornada-alert jornada-alert--danger">
             {clearHistoryMutation.error.message}
+          </div>
+        ) : null}
+        {selectedDeleteMutation.isError ? (
+          <div className="jornada-alert jornada-alert--danger">
+            {selectedDeleteMutation.error.message}
           </div>
         ) : null}
         {clearHistoryMutation.isSuccess ? (
@@ -1024,7 +1163,13 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             {clearHistoryMutation.data.deletedCount}.
           </div>
         ) : null}
-        {selectedKeys.length > 0 ? (
+        {selectedDeleteMutation.isSuccess ? (
+          <div className="jornada-alert jornada-alert--success">
+            Registros selecionados removidos:{" "}
+            {selectedDeleteMutation.data.deletedCount}.
+          </div>
+        ) : null}
+        {selectedValidCount > 0 ? (
           <div className="jornada-pdf-editor">
             <div>
               <h3>
@@ -1135,11 +1280,11 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             <label className="jornada-history-select-all">
               <input
                 type="checkbox"
-                checked={allExportableSelected}
-                onChange={toggleAllExportable}
-                disabled={exportable.length === 0}
+                checked={allVisibleSelected}
+                onChange={toggleAllVisible}
+                disabled={visibleHistorico.length === 0}
               />
-              Selecionar validações válidas exibidas
+              Selecionar validações exibidas
             </label>
             {visibleHistorico.map((item) => {
               const Icon = item.valido ? CheckCircle2 : AlertTriangle;
@@ -1150,13 +1295,11 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                   key={item.key}
                   className="jornada-history-item"
                   data-valid={item.valido}
-                  aria-disabled={!item.valido}
                 >
                   <input
                     type="checkbox"
                     checked={selectedSet.has(item.key)}
                     onChange={() => toggleOne(item)}
-                    disabled={!item.valido}
                     aria-label={`Selecionar jornada ${item.horarios}`}
                   />
                   <span className="jornada-history-item__body">
@@ -1180,7 +1323,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                     ) : null}
                     {!item.valido ? (
                       <span className="jornada-history-item__note">
-                        Jornadas com erro não podem ser selecionadas para PDF.
+                        Jornadas com erro podem ser excluídas, mas não entram no PDF.
                       </span>
                     ) : null}
                   </span>
