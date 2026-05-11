@@ -148,14 +148,17 @@ describe("validarJornadaManual", () => {
     expect(result.mensagem).toContain("exceção autorizada");
   });
 
-  it("rejeita duração acima do limite diário", () => {
+  it("rejeita periodos e duracao trabalhada fora das jornadas aceitas", () => {
     const result = validarJornadaManual({
       horarios: "06:00 12:00 13:00 19:30",
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("excede o limite");
-    expect(result.mensagem).toContain("incluindo o intervalo");
+    expect(result.mensagem).toContain("Primeiro período (6h) excede 4h");
+    expect(result.mensagem).toContain("Segundo período (6h30) excede 4h");
+    expect(result.mensagem).toContain("Total informado: 12:30");
+    expect(result.mensagem).not.toContain("Tempo total dentro da mesma jornada");
+    expect(result.mensagem).not.toContain("interjornada");
   });
 });
 
@@ -247,11 +250,24 @@ describe("validarJornadaComInterjornada", () => {
     });
 
     expect(result.valido).toBe(false);
-    expect(result.mensagem).toContain("Tempo total dentro da mesma jornada");
+    expect(result.mensagem).not.toContain("Tempo total dentro da mesma jornada");
     expect(result.mensagem).not.toContain("interjornada");
     expect(result.mensagem).toContain("Intervalo excessivo");
     expect(result.mensagem).toContain("Primeiro período trabalhado: 4h");
     expect(result.mensagem).toContain("Segundo período trabalhado: 3h20");
+  });
+
+  it("nao mistura limite de interjornada na validacao de uma unica jornada", () => {
+    const result = validarJornadaManual({
+      horarios: "10:40 14:00 16:00 21:00",
+    });
+
+    expect(result.valido).toBe(false);
+    expect(result.mensagem).toContain("Segundo período (5h) excede 4h");
+    expect(result.mensagem).toContain("Total informado: 08:20");
+    expect(result.mensagem).not.toContain("Tempo total dentro da mesma jornada");
+    expect(result.mensagem).not.toContain("interjornada");
+    expect(result.mensagem).not.toContain("10h20");
   });
 
   it("rejeita sabado combinado sem jornada principal de 8h", () => {

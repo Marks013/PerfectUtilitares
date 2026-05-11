@@ -314,12 +314,6 @@ export function validarJornadaManual(
       );
     }
 
-    const periodoTotalMinutos = duracaoMinutos + intervaloMinutos;
-    if (!validarLimiteDiario(periodoTotalMinutos, JORNADA_CONFIG.periodoMaximoHoras)) {
-      erros.push(
-        `Tempo total dentro da mesma jornada (${formatarDuracaoLegivel(periodoTotalMinutos)}) excede o limite de ${JORNADA_CONFIG.periodoMaximoHoras}h entre a entrada e a saída final, incluindo o intervalo.`,
-      );
-    }
   }
 
   const authorizedException = findAuthorizedException(
