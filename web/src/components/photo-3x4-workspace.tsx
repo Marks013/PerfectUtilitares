@@ -1090,6 +1090,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                     image={previewUrl}
                     crop={selectedEditor.crop}
                     zoom={selectedEditor.zoom}
+                    zoomWithScroll={false}
                     aspect={PHOTO_ASPECT}
                     initialCroppedAreaPixels={
                       selectedEditor.croppedArea ?? undefined
