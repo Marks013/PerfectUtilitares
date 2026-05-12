@@ -708,7 +708,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
   async function createLooseResultsFromZip(zipBlob: Blob) {
     const { default: JSZip } = await import("jszip");
-    const zip = await JSZip.loadAsync(zipBlob);
+    const zip = await JSZip.loadAsync(await zipBlob.arrayBuffer());
     const entries = Object.values(zip.files).filter((entry) => !entry.dir);
     const results: ResultFile[] = [];
 
