@@ -83,7 +83,7 @@ function resolvePhotoOutput(input: PhotoInput, settings: PhotoSettings) {
 
   return {
     format: settings.format,
-    extension: OUTPUT_EXTENSIONS[settings.format],
+    extension: getOriginalExtension(input.name, settings.format),
   };
 }
 
@@ -96,8 +96,9 @@ export function sanitizePhotoFileName(
     .replace(/\.[^.]+$/, "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/[^a-zA-Z0-9 ._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
     .slice(0, 80);
   const safeBase = base || "foto";
   const safeExtension = extension.replace(/^\./, "");

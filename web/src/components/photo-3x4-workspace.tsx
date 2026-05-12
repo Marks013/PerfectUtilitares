@@ -766,7 +766,9 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
       };
     },
     onSuccess(result) {
-      clearResults();
+      if (zipResult) {
+        URL.revokeObjectURL(zipResult.url);
+      }
       setWorkPreview(null);
       setZipResult(result);
       setWorkProgress({
@@ -1319,7 +1321,13 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
               ) : (
                 <Scissors className="size-4" aria-hidden="true" />
               )}
-              {isBatch ? "Processar lote" : "Processar foto"}
+              {looseMutation.isPending
+                ? isBatch
+                  ? "Gerando soltas..."
+                  : "Processando..."
+                : isBatch
+                  ? "Gerar fotos soltas"
+                  : "Processar foto"}
             </button>
 
             {isBatch ? (

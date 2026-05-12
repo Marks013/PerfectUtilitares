@@ -49,7 +49,7 @@ describe("photo processor", () => {
 
     const metadata = await sharp(photo.buffer).metadata();
 
-    expect(photo.fileName).toBe("Jose-teste_editado.png");
+    expect(photo.fileName).toBe("Jose teste_editado.png");
     expect(photo.contentType).toBe("image/png");
     expect(metadata.width).toBe(354);
     expect(metadata.height).toBe(472);
@@ -99,6 +99,24 @@ describe("photo processor", () => {
     );
 
     expect(photo.fileName).toBe("foto.jpg");
+    expect(photo.contentType).toBe("image/jpeg");
+  });
+
+  it("preserves safe spaces, hyphens and compatible extension when replacing the original name", async () => {
+    const photo = await processPhoto(
+      {
+        name: "ARILIG - HIPER.jpeg",
+        type: "image/jpeg",
+        buffer: await makeImageBuffer(),
+      },
+      {
+        ...settings,
+        format: "jpeg",
+        replaceOriginal: true,
+      },
+    );
+
+    expect(photo.fileName).toBe("ARILIG - HIPER.jpeg");
     expect(photo.contentType).toBe("image/jpeg");
   });
 
