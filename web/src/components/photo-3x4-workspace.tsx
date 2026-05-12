@@ -142,6 +142,24 @@ function appendSettings(formData: FormData, values: PhotoSettings) {
   formData.set("convertToJpg", "false");
 }
 
+function appendBatchCrops(
+  formData: FormData,
+  files: File[],
+  editorStates: Record<string, EditorState>,
+) {
+  const crops = files.reduce<Record<string, Area>>((current, file) => {
+    const crop = getEditorState(editorStates, getFileKey(file)).croppedArea;
+    if (crop) {
+      current[file.name] = crop;
+    }
+    return current;
+  }, {});
+
+  if (Object.keys(crops).length > 0) {
+    formData.set("crops", JSON.stringify(crops));
+  }
+}
+
 function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -665,10 +683,65 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     };
   }
 
+  async function processBatchZip(values: PhotoSettings) {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+    appendSettings(formData, values);
+    appendBatchCrops(formData, files, editorStates);
+
+    const response = await fetch("/api/fotos/lote", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response));
+    }
+
+    const blob = await response.blob();
+    return {
+      blob,
+      fileName: getDownloadFileName(response, "fotos-3x4.zip"),
+      label: `${files.length} foto${files.length > 1 ? "s" : ""} processada${files.length > 1 ? "s" : ""}`,
+    };
+  }
+
+  async function createLooseResultsFromZip(zipBlob: Blob) {
+    const { default: JSZip } = await import("jszip");
+    const zip = await JSZip.loadAsync(zipBlob);
+    const entries = Object.values(zip.files).filter((entry) => !entry.dir);
+    const results: ResultFile[] = [];
+
+    for (const entry of entries) {
+      const blob = await entry.async("blob");
+      results.push({
+        url: URL.createObjectURL(blob),
+        blob,
+        fileName: entry.name,
+        label: entry.name,
+      });
+    }
+
+    return results;
+  }
+
   const looseMutation = useMutation({
     mutationFn: async (values: PhotoSettings) => {
       if (!hasFiles) {
         throw new Error("Selecione ao menos uma foto JPG, PNG ou WEBP.");
+      }
+
+      if (files.length > 1) {
+        setWorkPreview(getPreviewForFile(files[0]));
+        setWorkProgress({
+          kind: "process",
+          current: 1,
+          total: 1,
+          label: "Gerando fotos soltas",
+          detail: `${files.length} foto${files.length > 1 ? "s" : ""}`,
+        });
+        const zip = await processBatchZip(values);
+        return createLooseResultsFromZip(zip.blob);
       }
 
       const nextResults: ResultFile[] = [];
@@ -725,44 +798,21 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
         throw new Error("Selecione ao menos uma foto JPG, PNG ou WEBP.");
       }
 
-      const processed: ResultFile[] = [];
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index];
-        setWorkPreview(getPreviewForFile(file));
-        setWorkProgress({
-          kind: "zip",
-          current: index + 1,
-          total: files.length,
-          label: "Preparando ZIP",
-          detail: file.name,
-        });
-        const state = getEditorState(editorStates, getFileKey(file));
-        processed.push(
-          await processOne(
-            file,
-            {
-              ...values,
-              contrast: state.contrast,
-              brightness: state.brightness,
-            },
-            state.croppedArea,
-          ),
-        );
-      }
-
-      const { default: JSZip } = await import("jszip");
-      const zip = new JSZip();
-      for (const result of processed) {
-        zip.file(result.fileName, result.blob);
-      }
-      const blob = await zip.generateAsync({ type: "blob" });
-      revokeResultUrls(processed);
+      setWorkPreview(getPreviewForFile(files[0]));
+      setWorkProgress({
+        kind: "zip",
+        current: 1,
+        total: 1,
+        label: "Preparando ZIP",
+        detail: `${files.length} foto${files.length > 1 ? "s" : ""}`,
+      });
+      const zip = await processBatchZip(values);
 
       return {
-        url: URL.createObjectURL(blob),
-        blob,
-        fileName: "fotos-3x4.zip",
-        label: `${processed.length} foto${processed.length > 1 ? "s" : ""} processada${processed.length > 1 ? "s" : ""}`,
+        url: URL.createObjectURL(zip.blob),
+        blob: zip.blob,
+        fileName: zip.fileName,
+        label: zip.label,
       };
     },
     onSuccess(result) {

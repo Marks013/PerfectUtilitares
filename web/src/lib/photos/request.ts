@@ -56,6 +56,23 @@ export function parseCropArea(formData: FormData): CropArea | undefined {
   }
 }
 
+export function parseBatchCropAreas(formData: FormData): Record<string, CropArea> {
+  const rawCrops = formData.get("crops");
+
+  if (typeof rawCrops !== "string" || rawCrops.trim().length === 0) {
+    return {};
+  }
+
+  try {
+    return z.record(z.string(), cropAreaSchema).parse(JSON.parse(rawCrops));
+  } catch {
+    throw new PhotoProcessingError(
+      "INVALID_CROP",
+      "Uma ou mais áreas de corte do lote são inválidas. Ajuste o recorte das fotos e tente novamente.",
+    );
+  }
+}
+
 export async function readPhotoInput(file: File): Promise<PhotoInput> {
   return {
     name: file.name,

@@ -20,6 +20,7 @@ import {
 } from "@/lib/photos/processor";
 import {
   isUploadedFile,
+  parseBatchCropAreas,
   parsePhotoSettings,
   readPhotoInput,
   zodIssues,
@@ -120,13 +121,18 @@ export async function POST(request: Request) {
     }
 
     const settings = parsePhotoSettings(formData);
+    const cropAreas = parseBatchCropAreas(formData);
     const processed: ProcessedPhoto[] = [];
     const errors: BatchError[] = [];
 
     for (const file of files) {
       try {
         processed.push(
-          await processPhoto(await readPhotoInput(file), settings, undefined),
+          await processPhoto(
+            await readPhotoInput(file),
+            settings,
+            cropAreas[file.name],
+          ),
         );
       } catch (error) {
         errors.push({
