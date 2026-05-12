@@ -883,6 +883,88 @@ table {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
 }
 
+.photo-work-progress {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--app-teal) 28%, transparent);
+  border-radius: 1.1rem;
+  background: color-mix(in srgb, var(--app-teal) 9%, var(--app-surface));
+  padding: 0.85rem 1rem;
+}
+
+.photo-work-progress__head,
+.photo-work-progress__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.photo-work-progress__head {
+  color: var(--app-fg);
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.photo-work-progress__head strong {
+  color: var(--app-teal);
+}
+
+.photo-work-progress__bar {
+  height: 0.55rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-fg) 10%, transparent);
+}
+
+.photo-work-progress__bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--app-teal), var(--app-gold));
+  transition: width 220ms ease;
+}
+
+.photo-work-progress__meta {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.photo-work-progress__meta span:last-child {
+  min-width: 0;
+  max-width: min(34rem, 76%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.photo-preview-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  gap: 0.55rem;
+  background: color-mix(in srgb, var(--app-canvas) 78%, transparent);
+  color: var(--app-fg);
+  text-align: center;
+}
+
+.photo-preview-overlay span {
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.photo-preview-overlay small {
+  max-width: min(32rem, 82vw);
+  overflow: hidden;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .photo-file-list {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);

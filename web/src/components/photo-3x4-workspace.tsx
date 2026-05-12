@@ -56,6 +56,13 @@ type EditorState = {
   contrast: number;
   brightness: number;
 };
+type WorkProgress = {
+  kind: "detect" | "process" | "zip";
+  current: number;
+  total: number;
+  label: string;
+  detail?: string;
+} | null;
 type CropGeometry = {
   key: string | null;
   mediaSize: MediaSize | null;
@@ -292,6 +299,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   const [faceStatus, setFaceStatus] = useState<string | null>(null);
   const [isDetectingFace, setIsDetectingFace] = useState(false);
   const [isDetectingBatchFaces, setIsDetectingBatchFaces] = useState(false);
+  const [workProgress, setWorkProgress] = useState<WorkProgress>(null);
   const [looseResults, setLooseResults] = useState<ResultFile[]>([]);
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
@@ -341,6 +349,9 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     selectedEditor.cropMode === "manual"
       ? "Recorte manual permite arrastar e aproximar a foto antes de processar."
       : "Auto-crop enquadra automaticamente a imagem em 3x4. Auto detectar rosto procura o rosto e ajusta o recorte.";
+  const progressPercent = workProgress
+    ? Math.round((workProgress.current / Math.max(1, workProgress.total)) * 100)
+    : 0;
 
   useEffect(() => {
     try {
@@ -432,6 +443,43 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     };
   }, [looseResults, zipResult]);
 
+  useEffect(() => {
+    if (
+      !selectedKey ||
+      selectedEditor.cropMode !== "manual" ||
+      !selectedEditor.croppedArea ||
+      selectedEditor.zoom !== DEFAULT_EDITOR_STATE.zoom ||
+      selectedEditor.crop.x !== DEFAULT_EDITOR_STATE.crop.x ||
+      selectedEditor.crop.y !== DEFAULT_EDITOR_STATE.crop.y ||
+      cropGeometry.key !== selectedKey ||
+      !cropGeometry.mediaSize ||
+      !cropGeometry.cropSize
+    ) {
+      return;
+    }
+
+    const initialCrop = getInitialCropFromCroppedAreaPixels(
+      selectedEditor.croppedArea,
+      cropGeometry.mediaSize,
+      0,
+      cropGeometry.cropSize,
+      1,
+      3,
+    );
+    setEditorStateForKey(selectedKey, {
+      crop: initialCrop.crop,
+      zoom: initialCrop.zoom,
+    });
+  }, [
+    cropGeometry,
+    selectedEditor.crop.x,
+    selectedEditor.crop.y,
+    selectedEditor.cropMode,
+    selectedEditor.croppedArea,
+    selectedEditor.zoom,
+    selectedKey,
+  ]);
+
   function clearResults() {
     revokeResultUrls(looseResults);
     setLooseResults([]);
@@ -443,6 +491,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
   function updateFiles(nextFiles: File[]) {
     clearResults();
+    setWorkProgress(null);
     setFiles((current) => {
       const merged = [...current];
       for (const file of nextFiles) {
@@ -475,6 +524,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
   function clearFiles() {
     clearResults();
+    setWorkProgress(null);
     setFiles([]);
     setEditorStates({});
     setSelectedIndex(0);
@@ -487,6 +537,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     }
 
     clearResults();
+    setWorkProgress(null);
     setEditorStateForKey(selectedKey, nextState);
   }
 
@@ -522,6 +573,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     setFaceStatus(null);
     setIsDetectingFace(false);
     setIsDetectingBatchFaces(false);
+    setWorkProgress(null);
     setCropGeometry({ key: null, mediaSize: null, cropSize: null });
 
     if (selectedKey) {
@@ -574,7 +626,15 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
       }
 
       const nextResults: ResultFile[] = [];
-      for (const file of files) {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        setWorkProgress({
+          kind: "process",
+          current: index + 1,
+          total: files.length,
+          label: isBatch ? "Processando lote" : "Processando foto",
+          detail: file.name,
+        });
         const state = getEditorState(editorStates, getFileKey(file));
         nextResults.push(
           await processOne(
@@ -594,9 +654,19 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     onSuccess(results) {
       clearResults();
       setLooseResults(results);
+      setWorkProgress({
+        kind: "process",
+        current: results.length,
+        total: results.length,
+        label: "Processamento concluído",
+        detail: `${results.length} foto${results.length > 1 ? "s" : ""} pronta${results.length > 1 ? "s" : ""}`,
+      });
       if (results.length === 1) {
         downloadResult(results[0]);
       }
+    },
+    onError() {
+      setWorkProgress(null);
     },
   });
 
@@ -607,7 +677,15 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
       }
 
       const processed: ResultFile[] = [];
-      for (const file of files) {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        setWorkProgress({
+          kind: "zip",
+          current: index + 1,
+          total: files.length,
+          label: "Preparando ZIP",
+          detail: file.name,
+        });
         const state = getEditorState(editorStates, getFileKey(file));
         processed.push(
           await processOne(
@@ -639,7 +717,17 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     onSuccess(result) {
       clearResults();
       setZipResult(result);
+      setWorkProgress({
+        kind: "zip",
+        current: files.length,
+        total: files.length,
+        label: "ZIP concluído",
+        detail: result.label,
+      });
       downloadResult(result);
+    },
+    onError() {
+      setWorkProgress(null);
     },
   });
 
@@ -717,6 +805,13 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     }
 
     setIsDetectingFace(true);
+    setWorkProgress({
+      kind: "detect",
+      current: 1,
+      total: 1,
+      label: "Detectando rosto",
+      detail: selectedFile.name,
+    });
     setFaceStatus("Detectando rosto...");
     const detectionKey = selectedKey;
     const detectionFile = selectedFile;
@@ -730,8 +825,16 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
       );
       clearResults();
       setEditorStateForKey(detectionKey, createDetectedEditorState(detectionKey, area));
+      setWorkProgress({
+        kind: "detect",
+        current: 1,
+        total: 1,
+        label: "Rosto detectado",
+        detail: detectionFile.name,
+      });
       setFaceStatus("Rosto detectado. O recorte foi ajustado automaticamente.");
     } catch (error) {
+      setWorkProgress(null);
       setFaceStatus(
         error instanceof Error
           ? error.message
@@ -753,7 +856,15 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
     clearResults();
     setIsDetectingBatchFaces(true);
+    const nextEditorStates: Record<string, EditorState> = { ...editorStates };
     setFaceStatus(`Detectando rostos em lote: 0/${files.length}`);
+    setWorkProgress({
+      kind: "detect",
+      current: 0,
+      total: files.length,
+      label: "Auto-detecção em lote",
+      detail: "Preparando fotos",
+    });
     await waitForPaint();
 
     let detectedCount = 0;
@@ -764,24 +875,42 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
         const file = files[index];
         const key = getFileKey(file);
         const previewForFile = filePreviews.find((preview) => preview.key === key);
+        setWorkProgress({
+          kind: "detect",
+          current: index + 1,
+          total: files.length,
+          label: "Auto-detecção em lote",
+          detail: file.name,
+        });
         setFaceStatus(
           `Detectando rostos em lote: ${index + 1}/${files.length} - ${file.name}`,
         );
 
         try {
           const area = await createFaceDetectionCrop(file, previewForFile?.url);
-          setEditorStateForKey(key, createDetectedEditorState(key, area));
+          nextEditorStates[key] = {
+            ...getEditorState(nextEditorStates, key),
+            ...createDetectedEditorState(key, area),
+          };
           detectedCount += 1;
         } catch {
           failedNames.push(file.name);
         }
       }
 
+      setEditorStates(nextEditorStates);
       setFaceStatus(
         failedNames.length
           ? `Auto-detecção em lote concluída: ${detectedCount}/${files.length} foto(s) ajustada(s). Sem rosto detectado em: ${failedNames.join(", ")}.`
           : `Auto-detecção em lote concluída: ${detectedCount}/${files.length} foto(s) ajustada(s). Revise a pré-visualização antes de processar.`,
       );
+      setWorkProgress({
+        kind: "detect",
+        current: files.length,
+        total: files.length,
+        label: "Auto-detecção concluída",
+        detail: `${detectedCount}/${files.length} foto${files.length > 1 ? "s" : ""} ajustada${detectedCount !== 1 ? "s" : ""}`,
+      });
     } finally {
       setIsDetectingBatchFaces(false);
     }
@@ -921,7 +1050,40 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 {cropModeDescription}
               </p>
 
+              {workProgress ? (
+                <div className="photo-work-progress" aria-live="polite">
+                  <div className="photo-work-progress__head">
+                    <span>{workProgress.label}</span>
+                    <strong>{progressPercent}%</strong>
+                  </div>
+                  <div className="photo-work-progress__bar">
+                    <span style={{ width: `${progressPercent}%` }} />
+                  </div>
+                  <div className="photo-work-progress__meta">
+                    <span>
+                      {workProgress.current}/{workProgress.total}
+                    </span>
+                    {workProgress.detail ? (
+                      <span title={workProgress.detail}>
+                        {workProgress.detail}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="photo-preview-stage">
+                {workProgress &&
+                (isDetectingFace ||
+                  isDetectingBatchFaces ||
+                  looseMutation.isPending ||
+                  zipMutation.isPending) ? (
+                  <div className="photo-preview-overlay" aria-hidden="true">
+                    <Loader2 className="size-8 animate-spin" />
+                    <span>{workProgress.label}</span>
+                    {workProgress.detail ? <small>{workProgress.detail}</small> : null}
+                  </div>
+                ) : null}
                 {previewUrl && selectedEditor.cropMode === "manual" ? (
                   <Cropper
                     key={selectedKey}
