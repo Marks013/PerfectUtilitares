@@ -181,6 +181,10 @@ function buildExceptionResult({
   };
 }
 
+function createMissingSaturdayComplementMessage(exceptionName: string) {
+  return `Esta exceção autorizada exige complemento de sábado. Informe também a jornada de sábado cadastrada para fechar 44h semanais. Exceção: ${exceptionName}.`;
+}
+
 export function validarJornadaManual(
   input: JornadaValidationInput,
   rules: JornadaRuleInput[] = DEFAULT_JORNADA_RULES,
@@ -322,6 +326,21 @@ export function validarJornadaManual(
     horariosNormalizado,
   );
   if (authorizedException) {
+    if (
+      input.exigirSabadoComplementar &&
+      tipoDia === "util" &&
+      duracaoMinutos === 480 &&
+      authorizedException.sabadoNormalizado
+    ) {
+      return createError(
+        createMissingSaturdayComplementMessage(
+          authorizedException.nome?.trim() || "exceção autorizada",
+        ),
+        tipoDia,
+        horariosNormalizado,
+      );
+    }
+
     return buildExceptionResult({
       exception: authorizedException,
       tipoDia,

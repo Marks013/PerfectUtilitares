@@ -148,6 +148,30 @@ describe("validarJornadaManual", () => {
     expect(result.mensagem).toContain("exceção autorizada");
   });
 
+  it("rejeita exceção de 08:00 com sábado quando validada sem complemento", () => {
+    const result = validarJornadaManual(
+      {
+        horarios: "08:00 11:30 13:30 18:00",
+        exigirSabadoComplementar: true,
+      },
+      undefined,
+      undefined,
+      [
+        {
+          id: "exc_001",
+          nome: "Acordo gerência",
+          horariosNormalizado: "08:00 11:30 13:30 18:00",
+          sabadoNormalizado: "08:00 12:00",
+          active: true,
+        },
+      ],
+    );
+
+    expect(result.valido).toBe(false);
+    expect(result.mensagem).toContain("exige complemento de sábado");
+    expect(result.mensagem).toContain("44h semanais");
+  });
+
   it("rejeita periodos e duracao trabalhada fora das jornadas aceitas", () => {
     const result = validarJornadaManual({
       horarios: "06:00 12:00 13:00 19:30",

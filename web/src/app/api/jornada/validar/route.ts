@@ -162,6 +162,7 @@ export async function POST(request: Request) {
     {
       horarios: parsed.data.horarios,
       tipoDia: "util",
+      exigirSabadoComplementar: true,
     },
     rules as JornadaRuleInput[],
     buscarCodigo,

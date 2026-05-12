@@ -56,6 +56,11 @@ type EditorState = {
   contrast: number;
   brightness: number;
 };
+type CropGeometry = {
+  key: string | null;
+  mediaSize: MediaSize | null;
+  cropSize: Size | null;
+};
 type FaceDetectionResult = {
   detections: Array<{
     boundingBox: {
@@ -279,10 +284,14 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [editorStates, setEditorStates] = useState<Record<string, EditorState>>({});
-  const [mediaSize, setMediaSize] = useState<MediaSize | null>(null);
-  const [cropSize, setCropSize] = useState<Size | null>(null);
+  const [cropGeometry, setCropGeometry] = useState<CropGeometry>({
+    key: null,
+    mediaSize: null,
+    cropSize: null,
+  });
   const [faceStatus, setFaceStatus] = useState<string | null>(null);
   const [isDetectingFace, setIsDetectingFace] = useState(false);
+  const [isDetectingBatchFaces, setIsDetectingBatchFaces] = useState(false);
   const [looseResults, setLooseResults] = useState<ResultFile[]>([]);
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
@@ -410,6 +419,11 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   }, [files.length, selectedIndex]);
 
   useEffect(() => {
+    setFaceStatus(null);
+    setCropGeometry({ key: selectedKey, mediaSize: null, cropSize: null });
+  }, [selectedKey]);
+
+  useEffect(() => {
     return () => {
       revokeResultUrls(looseResults);
       if (zipResult) {
@@ -464,6 +478,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     setFiles([]);
     setEditorStates({});
     setSelectedIndex(0);
+    setCropGeometry({ key: null, mediaSize: null, cropSize: null });
   }
 
   function setSelectedEditorState(nextState: Partial<EditorState>) {
@@ -472,10 +487,14 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     }
 
     clearResults();
+    setEditorStateForKey(selectedKey, nextState);
+  }
+
+  function setEditorStateForKey(key: string, nextState: Partial<EditorState>) {
     setEditorStates((current) => ({
       ...current,
-      [selectedKey]: {
-        ...getEditorState(current, selectedKey),
+      [key]: {
+        ...getEditorState(current, key),
         ...nextState,
       },
     }));
@@ -502,8 +521,8 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     clearResults();
     setFaceStatus(null);
     setIsDetectingFace(false);
-    setMediaSize(null);
-    setCropSize(null);
+    setIsDetectingBatchFaces(false);
+    setCropGeometry({ key: null, mediaSize: null, cropSize: null });
 
     if (selectedKey) {
       setEditorStates((current) => {
@@ -633,8 +652,63 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     });
   }
 
+  async function createFaceDetectionCrop(file: File, previewUrlForFile?: string) {
+    const results = await detectFaceInFrame(file, 12_000);
+    const detection = results.detections[0];
+    if (!detection) {
+      throw new Error(
+        "Nenhum rosto foi detectado nesta foto. Use o recorte manual ou escolha uma imagem com o rosto mais centralizado e visível.",
+      );
+    }
+
+    let imageWidth = results.imageWidth;
+    let imageHeight = results.imageHeight;
+    if ((!imageWidth || !imageHeight) && previewUrlForFile) {
+      const image = await loadImage(previewUrlForFile);
+      imageWidth = image.naturalWidth;
+      imageHeight = image.naturalHeight;
+    }
+
+    if (!imageWidth || !imageHeight) {
+      throw new Error("Não foi possível calcular o tamanho da foto detectada.");
+    }
+
+    return createFaceCropArea(
+      detection.boundingBox,
+      imageWidth,
+      imageHeight,
+      PHOTO_ASPECT,
+    );
+  }
+
+  function createDetectedEditorState(key: string, area: Area): Partial<EditorState> {
+    const nextState: Partial<EditorState> = {
+      cropMode: "manual",
+      croppedArea: area,
+    };
+
+    if (
+      cropGeometry.key === key &&
+      cropGeometry.mediaSize &&
+      cropGeometry.cropSize
+    ) {
+      const initialCrop = getInitialCropFromCroppedAreaPixels(
+        area,
+        cropGeometry.mediaSize,
+        0,
+        cropGeometry.cropSize,
+        1,
+        3,
+      );
+      nextState.crop = initialCrop.crop;
+      nextState.zoom = initialCrop.zoom;
+    }
+
+    return nextState;
+  }
+
   async function detectFace() {
-    if (!previewUrl || !selectedFile) {
+    if (!previewUrl || !selectedFile || !selectedKey) {
       setFaceStatus("Selecione uma foto primeiro para usar a detecção de rosto.");
       return;
     }
@@ -644,46 +718,18 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
     setIsDetectingFace(true);
     setFaceStatus("Detectando rosto...");
+    const detectionKey = selectedKey;
+    const detectionFile = selectedFile;
+    const detectionPreviewUrl = previewUrl;
     await waitForPaint();
 
     try {
-      const image = await loadImage(previewUrl);
-      const results = await detectFaceInFrame(selectedFile, 12_000);
-
-      const detection = results.detections[0];
-      if (!detection) {
-        setFaceStatus(
-          "Nenhum rosto foi detectado nesta foto. Use o recorte manual ou escolha uma imagem com o rosto mais centralizado e visível.",
-        );
-        setSelectedEditorState({ cropMode: "manual" });
-        return;
-      }
-
-      const area = createFaceCropArea(
-        detection.boundingBox,
-        results.imageWidth || image.naturalWidth,
-        results.imageHeight || image.naturalHeight,
-        PHOTO_ASPECT,
+      const area = await createFaceDetectionCrop(
+        detectionFile,
+        detectionPreviewUrl,
       );
-      setSelectedEditorState({ cropMode: "manual", croppedArea: area });
-
-      if (mediaSize && cropSize) {
-        const initialCrop = getInitialCropFromCroppedAreaPixels(
-          area,
-          mediaSize,
-          0,
-          cropSize,
-          1,
-          3,
-        );
-        setSelectedEditorState({
-          crop: initialCrop.crop,
-          zoom: initialCrop.zoom,
-          croppedArea: area,
-          cropMode: "manual",
-        });
-      }
-
+      clearResults();
+      setEditorStateForKey(detectionKey, createDetectedEditorState(detectionKey, area));
       setFaceStatus("Rosto detectado. O recorte foi ajustado automaticamente.");
     } catch (error) {
       setFaceStatus(
@@ -696,7 +742,56 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     }
   }
 
-  const isBusy = looseMutation.isPending || zipMutation.isPending || isDetectingFace;
+  async function detectFacesInBatch() {
+    if (!hasFiles) {
+      setFaceStatus("Selecione fotos primeiro para usar a detecção em lote.");
+      return;
+    }
+    if (isDetectingBatchFaces) {
+      return;
+    }
+
+    clearResults();
+    setIsDetectingBatchFaces(true);
+    setFaceStatus(`Detectando rostos em lote: 0/${files.length}`);
+    await waitForPaint();
+
+    let detectedCount = 0;
+    const failedNames: string[] = [];
+
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const key = getFileKey(file);
+        const previewForFile = filePreviews.find((preview) => preview.key === key);
+        setFaceStatus(
+          `Detectando rostos em lote: ${index + 1}/${files.length} - ${file.name}`,
+        );
+
+        try {
+          const area = await createFaceDetectionCrop(file, previewForFile?.url);
+          setEditorStateForKey(key, createDetectedEditorState(key, area));
+          detectedCount += 1;
+        } catch {
+          failedNames.push(file.name);
+        }
+      }
+
+      setFaceStatus(
+        failedNames.length
+          ? `Auto-detecção em lote concluída: ${detectedCount}/${files.length} foto(s) ajustada(s). Sem rosto detectado em: ${failedNames.join(", ")}.`
+          : `Auto-detecção em lote concluída: ${detectedCount}/${files.length} foto(s) ajustada(s). Revise a pré-visualização antes de processar.`,
+      );
+    } finally {
+      setIsDetectingBatchFaces(false);
+    }
+  }
+
+  const isBusy =
+    looseMutation.isPending ||
+    zipMutation.isPending ||
+    isDetectingFace ||
+    isDetectingBatchFaces;
 
   return (
     <div className="photo-studio">
@@ -806,6 +901,21 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                   )}
                   {isDetectingFace ? "Detectando..." : "Auto detectar rosto"}
                 </button>
+                {isBatch ? (
+                  <button
+                    type="button"
+                    onClick={detectFacesInBatch}
+                    disabled={!hasFiles || isBusy}
+                    className="photo-mode-button"
+                  >
+                    {isDetectingBatchFaces ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ScanFace className="size-4" aria-hidden="true" />
+                    )}
+                    {isDetectingBatchFaces ? "Detectando lote..." : "Auto detectar lote"}
+                  </button>
+                ) : null}
               </div>
               <p className="text-xs text-neutral-500">
                 {cropModeDescription}
@@ -814,6 +924,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
               <div className="photo-preview-stage">
                 {previewUrl && selectedEditor.cropMode === "manual" ? (
                   <Cropper
+                    key={selectedKey}
                     image={previewUrl}
                     crop={selectedEditor.crop}
                     zoom={selectedEditor.zoom}
@@ -827,8 +938,24 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                     onCropComplete={(_, areaPixels) =>
                       setSelectedEditorState({ croppedArea: areaPixels })
                     }
-                    onCropSizeChange={setCropSize}
-                    onMediaLoaded={setMediaSize}
+                    onCropSizeChange={(nextCropSize) => {
+                      if (!selectedKey) return;
+                      setCropGeometry((current) => ({
+                        key: selectedKey,
+                        mediaSize:
+                          current.key === selectedKey ? current.mediaSize : null,
+                        cropSize: nextCropSize,
+                      }));
+                    }}
+                    onMediaLoaded={(nextMediaSize) => {
+                      if (!selectedKey) return;
+                      setCropGeometry((current) => ({
+                        key: selectedKey,
+                        mediaSize: nextMediaSize,
+                        cropSize:
+                          current.key === selectedKey ? current.cropSize : null,
+                      }));
+                    }}
                     onZoomChange={(nextZoom) =>
                       setSelectedEditorState({ zoom: nextZoom })
                     }

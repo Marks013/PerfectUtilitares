@@ -5,6 +5,7 @@ import {
   methodNotAllowed,
   readJsonBody,
   requireAdmin,
+  requireModuleAccess,
   requireContentType,
   requireMaxContentLength,
   requireSameOrigin,
@@ -31,7 +32,41 @@ const exceptionSelect = {
   updatedAt: true,
 } as const;
 
-export async function GET() {
+const ownExceptionSelect = {
+  id: true,
+  horariosNormalizado: true,
+  sabadoNormalizado: true,
+  active: true,
+} as const;
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const scope = url.searchParams.get("scope") ?? "all";
+
+  if (scope === "mine") {
+    const guard = await requireModuleAccess("jornada");
+    if (!guard.ok) {
+      return guard.response;
+    }
+
+    const exceptions = await prisma.jornadaException.findMany({
+      where: { userId: guard.session.user.id, active: true },
+      select: ownExceptionSelect,
+      orderBy: { updatedAt: "desc" },
+      take: 100,
+    });
+
+    return NextResponse.json(exceptions);
+  }
+
+  if (scope !== "all") {
+    return jsonError(
+      400,
+      "INVALID_SCOPE",
+      "Escopo permitido: mine ou all",
+    );
+  }
+
   const guard = await requireAdmin();
   if (!guard.ok) {
     return guard.response;
@@ -154,4 +189,3 @@ export async function POST(request: Request) {
 
   return NextResponse.json(exception, { status: 201 });
 }
-

@@ -23,6 +23,7 @@ export type JornadaExceptionInput = {
 export type JornadaValidationInput = {
   horarios: string;
   tipoDia?: DiaValido;
+  exigirSabadoComplementar?: boolean;
 };
 
 export type JornadaValidationMode = "simples" | "interjornada" | "sabado-combinado";

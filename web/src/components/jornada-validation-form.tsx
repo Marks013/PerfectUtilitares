@@ -46,19 +46,6 @@ const schema = z
         path: ["segundaJornadaHorarios"],
         message: "Digite a segunda jornada para validar a interjornada.",
       });
-      return;
-    }
-
-    if (
-      !value.interjornadaAtiva &&
-      isValidPrincipalEightHours(value.horarios) &&
-      !value.sabadoHorarios?.trim()
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["sabadoHorarios"],
-        message: "Digite a jornada de sábado com exatamente 04:00",
-      });
     }
   });
 
@@ -88,6 +75,13 @@ type CombinedResponse = {
 };
 
 type ValidationResponse = SimpleResponse | CombinedResponse;
+
+type AuthorizedJornadaException = {
+  id: string;
+  horariosNormalizado: string;
+  sabadoNormalizado: string | null;
+  active: boolean;
+};
 
 type HistoryRecord = JornadaResult & {
   id: string;
@@ -351,6 +345,14 @@ async function fetchHistory() {
   return (await response.json()) as HistoryRecord[];
 }
 
+async function fetchOwnJornadaExceptions() {
+  const response = await fetch("/api/jornada/excecoes?scope=mine");
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return (await response.json()) as AuthorizedJornadaException[];
+}
+
 function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -458,9 +460,27 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
     () => calcularDuracaoEntrada(segundaJornadaHorarios ?? ""),
     [segundaJornadaHorarios],
   );
+  const ownExceptionsQuery = useQuery({
+    queryKey: ["jornada", "excecoes", "mine"],
+    queryFn: fetchOwnJornadaExceptions,
+  });
+  const hasAuthorizedSaturdayException = (value: string) => {
+    const normalized = calcularDuracaoEntrada(value)?.horariosNormalizado;
+    return Boolean(
+      normalized &&
+        (ownExceptionsQuery.data ?? []).some(
+          (exception) =>
+            exception.active !== false &&
+            exception.horariosNormalizado === normalized &&
+            exception.sabadoNormalizado,
+        ),
+    );
+  };
+  const shouldValidateWithSaturday = (value: string) =>
+    isValidPrincipalEightHours(value) || hasAuthorizedSaturdayException(value);
   const canShowSabado = useMemo(
-    () => !interjornadaAtiva && isValidPrincipalEightHours(horarios),
-    [horarios, interjornadaAtiva],
+    () => !interjornadaAtiva && shouldValidateWithSaturday(horarios),
+    [horarios, interjornadaAtiva, ownExceptionsQuery.data],
   );
   const autoFormatStorageKey = getAutoFormatStorageKey(userId);
 
@@ -729,7 +749,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             ),
             validarInterjornada: true,
           }
-        : isValidPrincipalEightHours(horariosFormatados)
+        : shouldValidateWithSaturday(horariosFormatados)
         ? {
             modo: "sabado-combinado",
             horarios: horariosFormatados,
@@ -759,6 +779,21 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       setPdfPeopleByKey({});
     },
   });
+  function submitValidation(values: FormValues) {
+    if (
+      !values.interjornadaAtiva &&
+      shouldValidateWithSaturday(values.horarios) &&
+      !values.sabadoHorarios?.trim()
+    ) {
+      form.setError("sabadoHorarios", {
+        type: "manual",
+        message: "Digite a jornada de sábado com exatamente 04:00.",
+      });
+      return;
+    }
+
+    mutation.mutate(values);
+  }
   const clearHistoryMutation = useMutation({
     mutationFn: clearOwnHistory,
     onMutate: async () => {
@@ -838,7 +873,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
         </div>
 
         <form
-          onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
+          onSubmit={form.handleSubmit(submitValidation)}
           className="jornada-validator-panel"
         >
           <div className="jornada-panel-heading">
