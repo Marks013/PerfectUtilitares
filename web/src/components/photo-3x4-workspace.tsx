@@ -18,12 +18,12 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Cropper, {
-  getInitialCropFromCroppedAreaPixels,
   type Area,
   type MediaSize,
   type Size,
 } from "react-easy-crop";
 import { useForm } from "react-hook-form";
+import { getPendingFaceCropInitialization } from "@/lib/photos/editor-crop";
 import { createFaceCropArea } from "@/lib/photos/face-crop";
 import {
   PHOTO_DEFAULTS,
@@ -52,6 +52,7 @@ type EditorState = {
   crop: { x: number; y: number };
   zoom: number;
   croppedArea: Area | null;
+  pendingFaceArea: Area | null;
   cropMode: CropMode;
   contrast: number;
   brightness: number;
@@ -95,6 +96,7 @@ const DEFAULT_EDITOR_STATE: EditorState = {
   crop: { x: 0, y: 0 },
   zoom: 1,
   croppedArea: null,
+  pendingFaceArea: null,
   cropMode: "auto",
   contrast: PHOTO_DEFAULTS.contrast,
   brightness: PHOTO_DEFAULTS.brightness,
@@ -447,10 +449,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     if (
       !selectedKey ||
       selectedEditor.cropMode !== "manual" ||
-      !selectedEditor.croppedArea ||
-      selectedEditor.zoom !== DEFAULT_EDITOR_STATE.zoom ||
-      selectedEditor.crop.x !== DEFAULT_EDITOR_STATE.crop.x ||
-      selectedEditor.crop.y !== DEFAULT_EDITOR_STATE.crop.y ||
+      !selectedEditor.pendingFaceArea ||
       cropGeometry.key !== selectedKey ||
       !cropGeometry.mediaSize ||
       !cropGeometry.cropSize
@@ -458,25 +457,24 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
       return;
     }
 
-    const initialCrop = getInitialCropFromCroppedAreaPixels(
-      selectedEditor.croppedArea,
-      cropGeometry.mediaSize,
-      0,
-      cropGeometry.cropSize,
-      1,
-      3,
-    );
+    const initialCrop = getPendingFaceCropInitialization({
+      selectedKey,
+      cropMode: selectedEditor.cropMode,
+      pendingFaceArea: selectedEditor.pendingFaceArea,
+      geometry: cropGeometry,
+    });
+    if (!initialCrop) return;
+
     setEditorStateForKey(selectedKey, {
       crop: initialCrop.crop,
       zoom: initialCrop.zoom,
+      croppedArea: selectedEditor.pendingFaceArea,
+      pendingFaceArea: null,
     });
   }, [
     cropGeometry,
-    selectedEditor.crop.x,
-    selectedEditor.crop.y,
     selectedEditor.cropMode,
-    selectedEditor.croppedArea,
-    selectedEditor.zoom,
+    selectedEditor.pendingFaceArea,
     selectedKey,
   ]);
 
@@ -773,6 +771,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     const nextState: Partial<EditorState> = {
       cropMode: "manual",
       croppedArea: area,
+      pendingFaceArea: area,
     };
 
     if (
@@ -780,16 +779,17 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
       cropGeometry.mediaSize &&
       cropGeometry.cropSize
     ) {
-      const initialCrop = getInitialCropFromCroppedAreaPixels(
-        area,
-        cropGeometry.mediaSize,
-        0,
-        cropGeometry.cropSize,
-        1,
-        3,
-      );
+      const initialCrop = getPendingFaceCropInitialization({
+        selectedKey: key,
+        cropMode: "manual",
+        pendingFaceArea: area,
+        geometry: cropGeometry,
+      });
+      if (!initialCrop) return nextState;
+
       nextState.crop = initialCrop.crop;
       nextState.zoom = initialCrop.zoom;
+      nextState.pendingFaceArea = null;
     }
 
     return nextState;
@@ -1094,12 +1094,14 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                     initialCroppedAreaPixels={
                       selectedEditor.croppedArea ?? undefined
                     }
-                    onCropChange={(nextCrop) =>
-                      setSelectedEditorState({ crop: nextCrop })
-                    }
-                    onCropComplete={(_, areaPixels) =>
-                      setSelectedEditorState({ croppedArea: areaPixels })
-                    }
+                    onCropChange={(nextCrop) => {
+                      if (selectedEditor.pendingFaceArea) return;
+                      setSelectedEditorState({ crop: nextCrop });
+                    }}
+                    onCropComplete={(_, areaPixels) => {
+                      if (selectedEditor.pendingFaceArea) return;
+                      setSelectedEditorState({ croppedArea: areaPixels });
+                    }}
                     onCropSizeChange={(nextCropSize) => {
                       if (!selectedKey) return;
                       setCropGeometry((current) => ({
@@ -1118,9 +1120,10 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                           current.key === selectedKey ? current.cropSize : null,
                       }));
                     }}
-                    onZoomChange={(nextZoom) =>
-                      setSelectedEditorState({ zoom: nextZoom })
-                    }
+                    onZoomChange={(nextZoom) => {
+                      if (selectedEditor.pendingFaceArea) return;
+                      setSelectedEditorState({ zoom: nextZoom });
+                    }}
                     style={{
                       mediaStyle: {
                         filter: previewFilter,
@@ -1192,35 +1195,43 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                   </button>
                 </div>
                 <div className="max-h-52 overflow-auto">
-                  {files.map((file, index) => (
-                    <button
-                      type="button"
-                      key={`${file.name}-${file.size}-${file.lastModified}`}
-                      onClick={() => setSelectedIndex(index)}
-                      className={
-                        index === selectedIndex
-                          ? "photo-file-row photo-file-row--active"
-                          : "photo-file-row"
-                      }
-                    >
-                      <span
+                  {files.map((file, index) => {
+                    const fileState = getEditorState(editorStates, getFileKey(file));
+                    const hasFaceCrop =
+                      fileState.cropMode === "manual" && Boolean(fileState.croppedArea);
+                    return (
+                      <button
+                        type="button"
+                        key={`${file.name}-${file.size}-${file.lastModified}`}
+                        onClick={() => setSelectedIndex(index)}
                         className={
                           index === selectedIndex
-                            ? "truncate font-medium text-white"
-                            : "truncate font-medium text-neutral-900"
+                            ? "photo-file-row photo-file-row--active"
+                            : "photo-file-row"
                         }
                       >
-                        {file.name}
-                      </span>
-                      <span
-                        className={
-                          index === selectedIndex ? "text-neutral-200" : "text-neutral-500"
-                        }
-                      >
-                        {(file.size / 1024 / 1024).toFixed(2)} MB
-                      </span>
-                    </button>
-                  ))}
+                        <span
+                          className={
+                            index === selectedIndex
+                              ? "truncate font-medium text-white"
+                              : "truncate font-medium text-neutral-900"
+                          }
+                        >
+                          {file.name}
+                        </span>
+                        <span
+                          className={
+                            index === selectedIndex
+                              ? "photo-file-row__meta text-neutral-200"
+                              : "photo-file-row__meta text-neutral-500"
+                          }
+                        >
+                          {hasFaceCrop ? <small>Rosto detectado</small> : null}
+                          {(file.size / 1024 / 1024).toFixed(2)} MB
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>

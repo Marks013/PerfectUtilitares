@@ -1010,6 +1010,23 @@ table {
   color: var(--app-fg);
 }
 
+.photo-file-row__meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.photo-file-row__meta small {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-teal) 22%, transparent);
+  color: inherit;
+  padding: 0.16rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
 .photo-primary-button,
 .photo-secondary-button {
   min-height: 2.85rem;
