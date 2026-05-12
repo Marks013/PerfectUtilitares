@@ -988,12 +988,12 @@ table {
 .photo-file-row {
   display: grid;
   width: 100%;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
   gap: 0.75rem;
   border-bottom: 1px solid color-mix(in srgb, var(--app-fg) 8%, transparent);
   padding: 0.85rem 1rem;
   color: var(--app-muted);
-  text-align: left;
 }
 
 .photo-file-row:last-child {
@@ -1007,6 +1007,24 @@ table {
 .photo-file-row--active {
   border-color: color-mix(in srgb, var(--app-teal) 52%, transparent);
   background: color-mix(in srgb, var(--app-teal) 16%, var(--app-card));
+  color: var(--app-fg);
+}
+
+.photo-file-row__select {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--app-fg) 95%, transparent);
+  font: inherit;
+  font-weight: 800;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.photo-file-row--active .photo-file-row__select {
   color: var(--app-fg);
 }
 
@@ -1025,6 +1043,29 @@ table {
   padding: 0.16rem 0.45rem;
   font-size: 0.68rem;
   font-weight: 900;
+}
+
+.photo-file-row__download {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 14%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--app-surface) 74%, transparent);
+  color: var(--app-fg);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.photo-file-row__download:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--app-teal) 58%, transparent);
+  background: color-mix(in srgb, var(--app-teal) 14%, var(--app-card));
+}
+
+.photo-file-row__download:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .photo-primary-button,

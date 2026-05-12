@@ -174,10 +174,6 @@ function loadImage(url: string) {
   });
 }
 
-function revokeResultUrls(results: ResultFile[]) {
-  results.forEach((result) => URL.revokeObjectURL(result.url));
-}
-
 function downloadResult(result: ResultFile) {
   const link = document.createElement("a");
   link.href = result.url;
@@ -185,12 +181,6 @@ function downloadResult(result: ResultFile) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-}
-
-function wait(ms: number) {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
 }
 
 function getFileKey(file: File) {
@@ -329,9 +319,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   const [isDetectingBatchFaces, setIsDetectingBatchFaces] = useState(false);
   const [workProgress, setWorkProgress] = useState<WorkProgress>(null);
   const [workPreview, setWorkPreview] = useState<WorkPreview>(null);
-  const [isDownloadingLooseResults, setIsDownloadingLooseResults] = useState(false);
-  const [looseDownloadStatus, setLooseDownloadStatus] = useState<string | null>(null);
-  const [looseResults, setLooseResults] = useState<ResultFile[]>([]);
+  const [processingFileKey, setProcessingFileKey] = useState<string | null>(null);
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
   const photoSettingsStorageKey = getPhotoSettingsStorageKey(userId);
@@ -363,14 +351,6 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   const watchedAddBorder = form.watch("addBorder");
   const watchedBorderWidth = form.watch("borderWidth");
   const watchedBorderColor = form.watch("borderColor");
-  const outputWidth = PHOTO_DEFAULTS.width;
-  const outputHeight = PHOTO_DEFAULTS.height;
-  const previewWidth = watchedAddBorder
-    ? outputWidth + Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth) * 2
-    : outputWidth;
-  const previewHeight = watchedAddBorder
-    ? outputHeight + Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth) * 2
-    : outputHeight;
   const previewFilter = `brightness(${Number(visibleEditor.brightness || PHOTO_DEFAULTS.brightness)}) contrast(${Number(visibleEditor.contrast || PHOTO_DEFAULTS.contrast)})`;
   const previewBorderWidth = watchedAddBorder
     ? Math.max(1, Number(watchedBorderWidth || PHOTO_DEFAULTS.borderWidth))
@@ -470,12 +450,11 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
   useEffect(() => {
     return () => {
-      revokeResultUrls(looseResults);
       if (zipResult) {
         URL.revokeObjectURL(zipResult.url);
       }
     };
-  }, [looseResults, zipResult]);
+  }, [zipResult]);
 
   useEffect(() => {
     if (
@@ -511,10 +490,6 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   ]);
 
   function clearResults() {
-    revokeResultUrls(looseResults);
-    setLooseResults([]);
-    setLooseDownloadStatus(null);
-    setIsDownloadingLooseResults(false);
     if (zipResult) {
       URL.revokeObjectURL(zipResult.url);
       setZipResult(null);
@@ -579,29 +554,6 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   function getPreviewForFile(file: File) {
     const key = getFileKey(file);
     return filePreviews.find((preview) => preview.key === key) ?? null;
-  }
-
-  async function downloadLooseResults() {
-    if (isDownloadingLooseResults || looseResults.length === 0) {
-      return;
-    }
-
-    setIsDownloadingLooseResults(true);
-    try {
-      for (let index = 0; index < looseResults.length; index += 1) {
-        const result = looseResults[index];
-        setLooseDownloadStatus(
-          `Enviando download ${index + 1}/${looseResults.length}: ${result.fileName}`,
-        );
-        downloadResult(result);
-        await wait(450);
-      }
-      setLooseDownloadStatus(
-        `Solicitação enviada para ${looseResults.length} foto(s). Se o navegador bloquear downloads múltiplos, permita os downloads do site ou use os links individuais abaixo.`,
-      );
-    } finally {
-      setIsDownloadingLooseResults(false);
-    }
   }
 
   function setEditorStateForKey(key: string, nextState: Partial<EditorState>) {
@@ -706,89 +658,51 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     };
   }
 
-  async function createLooseResultsFromZip(zipBlob: Blob) {
-    const { default: JSZip } = await import("jszip");
-    const zip = await JSZip.loadAsync(await zipBlob.arrayBuffer());
-    const entries = Object.values(zip.files).filter((entry) => !entry.dir);
-    const results: ResultFile[] = [];
-
-    for (const entry of entries) {
-      const blob = await entry.async("blob");
-      results.push({
-        url: URL.createObjectURL(blob),
-        blob,
-        fileName: entry.name,
-        label: entry.name,
-      });
-    }
-
-    return results;
-  }
-
-  const looseMutation = useMutation({
-    mutationFn: async (values: PhotoSettings) => {
-      if (!hasFiles) {
-        throw new Error("Selecione ao menos uma foto JPG, PNG ou WEBP.");
-      }
-
-      if (files.length > 1) {
-        setWorkPreview(getPreviewForFile(files[0]));
-        setWorkProgress({
-          kind: "process",
-          current: 1,
-          total: 1,
-          label: "Gerando fotos soltas",
-          detail: `${files.length} foto${files.length > 1 ? "s" : ""}`,
-        });
-        const zip = await processBatchZip(values);
-        return createLooseResultsFromZip(zip.blob);
-      }
-
-      const nextResults: ResultFile[] = [];
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index];
-        setWorkPreview(getPreviewForFile(file));
-        setWorkProgress({
-          kind: "process",
-          current: index + 1,
-          total: files.length,
-          label: isBatch ? "Processando lote" : "Processando foto",
-          detail: file.name,
-        });
-        const state = getEditorState(editorStates, getFileKey(file));
-        nextResults.push(
-          await processOne(
-            file,
-            {
-              ...values,
-              contrast: state.contrast,
-              brightness: state.brightness,
-            },
-            state.croppedArea,
-          ),
-        );
-      }
-
-      return nextResults;
-    },
-    onSuccess(results) {
-      clearResults();
-      setWorkPreview(null);
-      setLooseResults(results);
+  const singlePhotoMutation = useMutation({
+    mutationFn: async ({
+      file,
+      values,
+    }: {
+      file: File;
+      values: PhotoSettings;
+    }) => {
+      setWorkPreview(getPreviewForFile(file));
       setWorkProgress({
         kind: "process",
-        current: results.length,
-        total: results.length,
-        label: "Processamento concluído",
-        detail: `${results.length} foto${results.length > 1 ? "s" : ""} pronta${results.length > 1 ? "s" : ""}`,
+        current: 1,
+        total: 1,
+        label: "Processando foto",
+        detail: file.name,
       });
-      if (results.length === 1) {
-        downloadResult(results[0]);
-      }
+      const state = getEditorState(editorStates, getFileKey(file));
+      return processOne(
+        file,
+        {
+          ...values,
+          contrast: state.contrast,
+          brightness: state.brightness,
+        },
+        state.croppedArea,
+      );
+    },
+    onSuccess(result) {
+      setWorkPreview(null);
+      setWorkProgress({
+        kind: "process",
+        current: 1,
+        total: 1,
+        label: "Foto concluída",
+        detail: result.fileName,
+      });
+      downloadResult(result);
+      window.setTimeout(() => URL.revokeObjectURL(result.url), 30_000);
     },
     onError() {
       setWorkProgress(null);
       setWorkPreview(null);
+    },
+    onSettled() {
+      setProcessingFileKey(null);
     },
   });
 
@@ -836,8 +750,18 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     },
   });
 
-  const processLoose = form.handleSubmit((values) => looseMutation.mutate(values));
   const processZip = form.handleSubmit((values) => zipMutation.mutate(values));
+
+  function processPhotoFile(file: File | null) {
+    if (!file || singlePhotoMutation.isPending) {
+      return;
+    }
+
+    void form.handleSubmit((values) => {
+      setProcessingFileKey(getFileKey(file));
+      singlePhotoMutation.mutate({ file, values });
+    })();
+  }
 
   function waitForPaint() {
     return new Promise<void>((resolve) => {
@@ -1029,7 +953,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
   }
 
   const isBusy =
-    looseMutation.isPending ||
+    singlePhotoMutation.isPending ||
     zipMutation.isPending ||
     isDetectingFace ||
     isDetectingBatchFaces;
@@ -1188,7 +1112,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 {workProgress &&
                 (isDetectingFace ||
                   isDetectingBatchFaces ||
-                  looseMutation.isPending ||
+                  singlePhotoMutation.isPending ||
                   zipMutation.isPending) ? (
                   <div className="photo-preview-overlay" aria-hidden="true">
                     <Loader2 className="size-8 animate-spin" />
@@ -1318,29 +1242,28 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 </div>
                 <div className="max-h-52 overflow-auto">
                   {files.map((file, index) => {
-                    const fileState = getEditorState(editorStates, getFileKey(file));
+                    const fileKey = getFileKey(file);
+                    const fileState = getEditorState(editorStates, fileKey);
                     const hasFaceCrop =
                       fileState.cropMode === "manual" && Boolean(fileState.croppedArea);
+                    const isProcessingThisFile =
+                      singlePhotoMutation.isPending && processingFileKey === fileKey;
                     return (
-                      <button
-                        type="button"
+                      <div
                         key={`${file.name}-${file.size}-${file.lastModified}`}
-                        onClick={() => setSelectedIndex(index)}
                         className={
                           index === selectedIndex
                             ? "photo-file-row photo-file-row--active"
                             : "photo-file-row"
                         }
                       >
-                        <span
-                          className={
-                            index === selectedIndex
-                              ? "truncate font-medium text-white"
-                              : "truncate font-medium text-neutral-900"
-                          }
+                        <button
+                          type="button"
+                          onClick={() => setSelectedIndex(index)}
+                          className="photo-file-row__select"
                         >
                           {file.name}
-                        </span>
+                        </button>
                         <span
                           className={
                             index === selectedIndex
@@ -1351,7 +1274,21 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                           {hasFaceCrop ? <small>Rosto detectado</small> : null}
                           {(file.size / 1024 / 1024).toFixed(2)} MB
                         </span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => processPhotoFile(file)}
+                          disabled={isBusy}
+                          className="photo-file-row__download"
+                          title={`Baixar ${file.name}`}
+                          aria-label={`Baixar ${file.name}`}
+                        >
+                          {isProcessingThisFile ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Download className="size-4" aria-hidden="true" />
+                          )}
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1362,22 +1299,16 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
           <div className="photo-actions">
             <button
               type="button"
-              onClick={processLoose}
+              onClick={() => processPhotoFile(selectedFile)}
               disabled={!hasFiles || isBusy}
               className="photo-primary-button"
             >
-              {looseMutation.isPending ? (
+              {singlePhotoMutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
               ) : (
                 <Scissors className="size-4" aria-hidden="true" />
               )}
-              {looseMutation.isPending
-                ? isBatch
-                  ? "Gerando soltas..."
-                  : "Processando..."
-                : isBatch
-                  ? "Gerar fotos soltas"
-                  : "Processar foto"}
+              {singlePhotoMutation.isPending ? "Processando..." : "Baixar foto atual"}
             </button>
 
             {isBatch ? (
@@ -1396,22 +1327,6 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
               </button>
             ) : null}
 
-            {looseResults.length > 1 ? (
-              <button
-                type="button"
-                onClick={downloadLooseResults}
-                disabled={isDownloadingLooseResults}
-                className="photo-secondary-button"
-              >
-                {isDownloadingLooseResults ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Download className="size-4" aria-hidden="true" />
-                )}
-                Baixar todas soltas ({looseResults.length})
-              </button>
-            ) : null}
-
             {zipResult ? (
               <a
                 href={zipResult.url}
@@ -1424,42 +1339,15 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
             ) : null}
           </div>
 
-          {looseDownloadStatus ? (
-            <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
-              {looseDownloadStatus}
-            </p>
-          ) : null}
-
-          {looseResults.length > 1 ? (
-            <div className="overflow-hidden rounded-md border border-neutral-200">
-              <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-3 text-sm font-semibold text-neutral-900">
-                {looseResults.length} foto(s) processada(s) para download individual
-              </div>
-              {looseResults.map((result) => (
-                <a
-                  key={result.url}
-                  href={result.url}
-                  download={result.fileName}
-                  className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3 text-sm last:border-b-0 hover:bg-neutral-50"
-                >
-                  <span className="truncate font-medium text-neutral-900">
-                    {result.fileName}
-                  </span>
-                  <Download className="size-4 text-neutral-500" aria-hidden="true" />
-                </a>
-              ))}
-            </div>
-          ) : null}
-
           {faceStatus ? (
             <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
               {faceStatus}
             </p>
           ) : null}
 
-          {looseMutation.isError ? (
+          {singlePhotoMutation.isError ? (
             <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              {looseMutation.error.message}
+              {singlePhotoMutation.error.message}
             </p>
           ) : null}
 
@@ -1604,25 +1492,6 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
           </div>
         ) : null}
 
-        {looseResults.length === 1 ? (
-          <div className="mt-5 overflow-hidden rounded-md border border-neutral-200 bg-neutral-50 p-3">
-            <img
-              src={looseResults[0].url}
-              alt={looseResults[0].label}
-              width={previewWidth}
-              height={previewHeight}
-              className="mx-auto max-h-[320px] object-contain"
-            />
-            <a
-              href={looseResults[0].url}
-              download={looseResults[0].fileName}
-              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-white"
-            >
-              <Download className="size-4" aria-hidden="true" />
-              Baixar foto
-            </a>
-          </div>
-        ) : null}
       </aside>
     </div>
   );
