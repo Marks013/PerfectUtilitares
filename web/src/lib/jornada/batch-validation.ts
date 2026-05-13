@@ -26,6 +26,8 @@ export type JornadaBatchLine = {
   horarios: string[];
   horariosOriginais: string;
   jornadaCompleta: string;
+  linhaSabado?: boolean;
+  jornadaReferenciaMinutos?: number | null;
   resultado?: JornadaBatchValidationResult;
 };
 
@@ -71,7 +73,7 @@ const TEXT_HOUR_PATTERN = /\b(\d{1,2}):?(\d{2})\b/g;
 const COMPACT_HOUR_PATTERN = /\b(\d{3,4})\b/g;
 const INDIVIDUAL_HOUR_COLUMNS = [8, 10, 11, 13];
 const XLSX_TIME_ROUNDING_TOLERANCE_SECONDS = 1;
-export const NON_SUBORDINATE_SCHEDULE_LABEL = "Não subordinado a horário";
+export const NON_SUBORDINATE_SCHEDULE_LABEL = "NÃO SUBORNIDADO Á HORÁRIO";
 
 function decodeXml(value: string) {
   return value
@@ -363,7 +365,7 @@ function isTitleRow(nome: string, cargo: string) {
     upper.includes("LTDA") ||
     upper.includes("S/A") ||
     upper.includes("S.A.") ||
-    upper.includes("ME") ||
+    /\bME\b/.test(upper) ||
     upper.includes("EIRELI") ||
     upper.includes("PLANALTO") ||
     upper.includes("PLANEJAMENTO") ||
@@ -401,11 +403,45 @@ function readGroupedHours(row: unknown[], config: JornadaBatchConfig) {
   };
 }
 
+function isSaturdayRow(row: unknown[]) {
+  const marker = getCellText(row, 7);
+  return /s[áa]bado/i.test(marker);
+}
+
+function calculateScheduleDuration(horarios: string[]) {
+  const validHours = horarios.filter((item) => item && item !== "00:00");
+  const parsed = validHours.map(parseHorario);
+  if (parsed.some((value) => value == null)) return null;
+
+  const times = parsed as number[];
+  if (times.length === 2 && times[0] < times[1]) {
+    return calcularDuracaoMinutos(times[0], times[1]);
+  }
+
+  if (
+    times.length === 4 &&
+    times[0] < times[1] &&
+    times[1] <= times[2] &&
+    times[2] < times[3]
+  ) {
+    return (
+      calcularDuracaoMinutos(times[0], times[1]) +
+      calcularDuracaoMinutos(times[2], times[3])
+    );
+  }
+
+  return null;
+}
+
 export function lerLinhasParaValidacao(
   rows: unknown[][],
   config: JornadaBatchConfig,
 ): JornadaBatchLine[] {
   const linhas: JornadaBatchLine[] = [];
+  let lastMatricula = "";
+  let lastNome = "";
+  let lastCargo = "";
+  let lastDuration: number | null = null;
 
   rows.forEach((row, index) => {
     const numeroLinha = index + 1;
@@ -426,6 +462,28 @@ export function lerLinhasParaValidacao(
       horariosOriginais: grouped ? grouped.text : horarios.join(" "),
       jornadaCompleta: horarios.join(" - "),
     };
+
+    if (!config.usarHorariosAgrupados) {
+      const hasRegularName =
+        Boolean(linha.nome) &&
+        !isHeaderText(linha.nome) &&
+        !isTitleRow(linha.nome, linha.cargo);
+
+      if (hasRegularName) {
+        lastMatricula = linha.matricula;
+        lastNome = linha.nome;
+        lastCargo = linha.cargo;
+        lastDuration = calculateScheduleDuration(linha.horarios);
+      }
+
+      if (!linha.nome && isSaturdayRow(row)) {
+        linha.linhaSabado = true;
+        linha.matricula = lastMatricula;
+        linha.nome = lastNome;
+        linha.cargo = lastCargo ? `${lastCargo} - Sábado` : "Sábado";
+        linha.jornadaReferenciaMinutos = lastDuration;
+      }
+    }
 
     if (config.usarHorariosAgrupados) {
       if (!linha.matricula || isHeaderText(linha.matricula)) return;
@@ -507,11 +565,33 @@ function getRule(rules: JornadaRuleInput[], durationMinutes: number) {
   );
 }
 
+function getExpectedSaturdayDuration(referenceMinutes?: number | null) {
+  if (referenceMinutes == null) return null;
+  return referenceMinutes === 480
+    ? JORNADA_CONFIG.complementoSabadoMinutos
+    : referenceMinutes;
+}
+
+function validateSaturdayDuration(
+  durationMinutes: number,
+  referenceMinutes?: number | null,
+) {
+  const expected = getExpectedSaturdayDuration(referenceMinutes);
+  if (expected == null || durationMinutes === expected) return null;
+
+  return `Sábado deve ter jornada de ${formatarDuracao(
+    expected,
+  )} quando a jornada principal é ${formatarDuracao(
+    referenceMinutes ?? 0,
+  )}. Encontrado: ${formatarDuracao(durationMinutes)}`;
+}
+
 export function validarHorariosLote(
   horariosArray: string[],
   config: JornadaBatchConfig,
   rules: JornadaRuleInput[],
   codigoByHorario = new Map<string, string>(),
+  context: { linhaSabado?: boolean; jornadaReferenciaMinutos?: number | null } = {},
 ): JornadaBatchValidationResult {
   if (
     horariosArray.length > 0 &&
@@ -534,6 +614,14 @@ export function validarHorariosLote(
     if (times[0] >= times[1]) return createError("Horário inicial ≥ final");
 
     const duration = calcularDuracaoMinutos(times[0], times[1]);
+    if (context.linhaSabado) {
+      const saturdayError = validateSaturdayDuration(
+        duration,
+        context.jornadaReferenciaMinutos,
+      );
+      if (saturdayError) return createError(saturdayError);
+    }
+
     if (config.validarJornada) {
       if (!validarLimiteDiario(duration, JORNADA_CONFIG.periodoMaximoHoras)) {
         return createError(`Duração excede 10h: ${formatarDuracao(duration)}`);
@@ -564,6 +652,13 @@ export function validarHorariosLote(
   const duration2 = calcularDuracaoMinutos(start2, end2);
   const totalDuration = duration1 + duration2;
   const errors: string[] = [];
+  if (context.linhaSabado) {
+    const saturdayError = validateSaturdayDuration(
+      totalDuration,
+      context.jornadaReferenciaMinutos,
+    );
+    if (saturdayError) errors.push(saturdayError);
+  }
 
   if (config.validarPeriodos) {
     if (duration1 > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos) {
@@ -619,6 +714,25 @@ export function validarHorariosLote(
   return createSuccess(rule, totalDuration, interval, horarios.join(" "), codigoByHorario);
 }
 
+function errorDedupeKey(line: JornadaBatchLine) {
+  return [
+    line.matricula.trim().toUpperCase(),
+    line.nome.trim().toUpperCase(),
+    line.jornadaCompleta.trim(),
+    line.resultado?.mensagem.trim() ?? "",
+  ].join("|");
+}
+
+function dedupeErrorLines(lines: JornadaBatchLine[]) {
+  const seen = new Set<string>();
+  return lines.filter((line) => {
+    const key = errorDedupeKey(line);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export async function validarJornadaBatchXlsx({
   buffer,
   fileName,
@@ -639,6 +753,10 @@ export async function validarJornadaBatchXlsx({
       config,
       rules,
       codigoByHorario,
+      {
+        linhaSabado: line.linhaSabado,
+        jornadaReferenciaMinutos: line.jornadaReferenciaMinutos,
+      },
     );
     const isNonSubordinate =
       line.horarios.length > 0 &&
@@ -665,7 +783,9 @@ export async function validarJornadaBatchXlsx({
   });
 
   const validos = linhas.filter((line) => line.resultado?.valido).length;
-  const linhasComErro = linhas.filter((line) => line.resultado?.valido === false);
+  const linhasComErro = dedupeErrorLines(
+    linhas.filter((line) => line.resultado?.valido === false),
+  );
 
   return {
     arquivoOrigem: fileName,
