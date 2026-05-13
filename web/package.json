@@ -9,6 +9,7 @@
     "sync:mediapipe": "node scripts/sync-mediapipe.mjs",
     "clean:optional-wasm": "node scripts/clean-optional-wasm.mjs",
     "cleanup:artifacts": "node scripts/cleanup-artifacts.mjs",
+    "cleanup:deploy": "npm run cleanup:artifacts && node scripts/cleanup-deploy.mjs",
     "prebuild": "npm run setup:env && npm run sync:mediapipe && npm run prisma:generate",
     "build": "next build --turbopack",
     "postbuild": "npm run clean:optional-wasm && npm run cleanup:artifacts",

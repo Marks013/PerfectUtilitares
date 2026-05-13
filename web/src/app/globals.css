@@ -1756,7 +1756,8 @@ table {
   gap: 0.45rem;
 }
 
-.jornada-batch-repeated span {
+.jornada-batch-repeated span,
+.jornada-batch-repeated strong {
   border: 1px solid color-mix(in srgb, var(--app-teal) 30%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--app-teal) 10%, transparent);
@@ -1764,6 +1765,11 @@ table {
   padding: 0.4rem 0.62rem;
   font-size: 0.74rem;
   font-weight: 850;
+}
+
+.jornada-batch-repeated strong {
+  border-color: color-mix(in srgb, var(--app-lime) 35%, transparent);
+  background: color-mix(in srgb, var(--app-lime) 12%, transparent);
 }
 
 .jornada-history-panel__header {

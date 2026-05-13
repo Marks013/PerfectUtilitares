@@ -71,6 +71,7 @@ const TEXT_HOUR_PATTERN = /\b(\d{1,2}):?(\d{2})\b/g;
 const COMPACT_HOUR_PATTERN = /\b(\d{3,4})\b/g;
 const INDIVIDUAL_HOUR_COLUMNS = [8, 10, 11, 13];
 const XLSX_TIME_ROUNDING_TOLERANCE_SECONDS = 1;
+export const NON_SUBORDINATE_SCHEDULE_LABEL = "Não subordinado a horário";
 
 function decodeXml(value: string) {
   return value
@@ -378,8 +379,18 @@ function isTitleRow(nome: string, cargo: string) {
 }
 
 function readIndividualHours(row: unknown[]) {
-  return INDIVIDUAL_HOUR_COLUMNS.map((column) => normalizarHorarioLote(row[column]))
-    .filter((horario) => horario && horario !== "00:00");
+  const horarios = INDIVIDUAL_HOUR_COLUMNS.map((column) =>
+    normalizarHorarioLote(row[column]),
+  );
+
+  if (
+    horarios.length === INDIVIDUAL_HOUR_COLUMNS.length &&
+    horarios.every((horario) => horario === "00:00")
+  ) {
+    return horarios;
+  }
+
+  return horarios.filter((horario) => horario && horario !== "00:00");
 }
 
 function readGroupedHours(row: unknown[], config: JornadaBatchConfig) {
@@ -440,6 +451,17 @@ function createError(message: string): JornadaBatchValidationResult {
   };
 }
 
+function createNonSubordinateSchedule(): JornadaBatchValidationResult {
+  return {
+    valido: true,
+    mensagem: NON_SUBORDINATE_SCHEDULE_LABEL,
+    duracaoCalculada: "00:00",
+    tipoDia: NON_SUBORDINATE_SCHEDULE_LABEL,
+    horasSemanais: 0,
+    horasMensais: 0,
+  };
+}
+
 function determineDayType(durationMinutes: number) {
   switch (durationMinutes) {
     case 240:
@@ -491,6 +513,13 @@ export function validarHorariosLote(
   rules: JornadaRuleInput[],
   codigoByHorario = new Map<string, string>(),
 ): JornadaBatchValidationResult {
+  if (
+    horariosArray.length > 0 &&
+    horariosArray.every((item) => item.trim() === "00:00")
+  ) {
+    return createNonSubordinateSchedule();
+  }
+
   const horarios = horariosArray.filter((item) => item.trim() && item !== "00:00");
   if (horarios.length === 0) return createError("Nenhum horário válido");
   if (horarios.length !== 2 && horarios.length !== 4) {
@@ -611,7 +640,20 @@ export async function validarJornadaBatchXlsx({
       rules,
       codigoByHorario,
     );
-    return { ...line, resultado };
+    const isNonSubordinate =
+      line.horarios.length > 0 &&
+      line.horarios.every((horario) => horario === "00:00");
+
+    return {
+      ...line,
+      resultado,
+      horariosOriginais: isNonSubordinate
+        ? NON_SUBORDINATE_SCHEDULE_LABEL
+        : line.horariosOriginais,
+      jornadaCompleta: isNonSubordinate
+        ? NON_SUBORDINATE_SCHEDULE_LABEL
+        : line.jornadaCompleta,
+    };
   });
   const jornadasRepetidas: Record<string, number> = {};
 

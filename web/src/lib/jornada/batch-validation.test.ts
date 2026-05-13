@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_JORNADA_RULES } from "./default-rules";
 import {
   DEFAULT_JORNADA_BATCH_CONFIG,
+  NON_SUBORDINATE_SCHEDULE_LABEL,
   normalizarHorarioLote,
   validarJornadaBatchXlsx,
 } from "./batch-validation";
@@ -53,6 +54,41 @@ describe("validarJornadaBatchXlsx", () => {
     expect(report.erros).toBe(0);
     expect(report.linhas[0]?.horariosOriginais).toBe("13:35 17:00 18:15 22:10");
     expect(report.linhas[0]?.resultado?.duracaoCalculada).toBe("07:20");
+  });
+
+  it("contabiliza jornada 00:00 como não subordinada a horário", async () => {
+    const buffer = await createWorkbook(`<?xml version="1.0" encoding="UTF-8"?>
+      <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+          <row r="3">
+            <c r="A3"><v>9001</v></c>
+            <c r="C3" t="inlineStr"><is><t>COLABORADOR SEM ESCALA</t></is></c>
+            <c r="E3" t="inlineStr"><is><t>OPERADOR</t></is></c>
+            <c r="I3"><v>0</v></c>
+            <c r="K3"><v>0</v></c>
+            <c r="L3"><v>0</v></c>
+            <c r="N3"><v>0</v></c>
+          </row>
+        </sheetData>
+      </worksheet>`);
+
+    const report = await validarJornadaBatchXlsx({
+      buffer,
+      fileName: "FPRE110.xlsx",
+      config: DEFAULT_JORNADA_BATCH_CONFIG,
+      rules: DEFAULT_JORNADA_RULES,
+    });
+
+    expect(report.totalLinhas).toBe(1);
+    expect(report.validos).toBe(1);
+    expect(report.erros).toBe(0);
+    expect(report.linhas[0]?.jornadaCompleta).toBe(
+      NON_SUBORDINATE_SCHEDULE_LABEL,
+    );
+    expect(report.linhas[0]?.resultado?.mensagem).toBe(
+      NON_SUBORDINATE_SCHEDULE_LABEL,
+    );
+    expect(report.jornadasRepetidas[NON_SUBORDINATE_SCHEDULE_LABEL]).toBe(1);
   });
 
   it("lê formato agrupado com código na coluna A e jornada na coluna B", async () => {

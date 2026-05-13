@@ -1452,7 +1452,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                 <dd>{batchMutation.data.erros}</dd>
               </div>
               <div>
-                <dt>Total lido</dt>
+                <dt>Total de validações</dt>
                 <dd>{batchMutation.data.totalLinhas}</dd>
               </div>
             </div>
@@ -1490,9 +1490,12 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               <div className="jornada-batch-repeated">
                 {batchRepeated.map(([jornada, count]) => (
                   <span key={jornada}>
-                    {jornada} · {count}
+                    {jornada} - {count}
                   </span>
                 ))}
+                <strong>
+                  Total de validações - {batchMutation.data.totalLinhas}
+                </strong>
               </div>
             ) : null}
           </div>
