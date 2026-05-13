@@ -1389,7 +1389,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
               {...form.register("format")}
               className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
             >
-              <option value="jpeg">JPEG</option>
+              <option value="jpeg">JPG</option>
               <option value="png">PNG</option>
               <option value="webp">WEBP</option>
             </select>

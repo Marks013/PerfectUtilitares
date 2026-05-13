@@ -944,6 +944,7 @@ table {
   inset: 0;
   z-index: 5;
   display: grid;
+  justify-items: center;
   place-content: center;
   gap: 0.55rem;
   background: color-mix(in srgb, var(--app-canvas) 78%, transparent);
