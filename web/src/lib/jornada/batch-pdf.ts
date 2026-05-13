@@ -1,6 +1,10 @@
 import PDFDocument from "pdfkit";
 import type { JornadaBatchLine, JornadaBatchReport } from "./batch-validation";
 
+export type JornadaBatchPdfOptions = {
+  detalhado?: boolean;
+};
+
 function formatDateTime(date: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
@@ -161,8 +165,73 @@ function drawTableHeader(
   });
 }
 
-function lineLabel(line: JornadaBatchLine) {
-  return line.nome || line.matricula || "-";
+export function formatBatchLineLabel(line: Pick<JornadaBatchLine, "matricula" | "nome">) {
+  const matricula = line.matricula.trim();
+  const nome = line.nome.trim();
+
+  if (matricula && nome) return `${matricula} - ${nome}`;
+  return nome || matricula || "-";
+}
+
+function batchLinePersonKey(line: Pick<JornadaBatchLine, "matricula" | "nome">) {
+  return `${line.matricula.trim().toUpperCase()}|${line.nome.trim().toUpperCase()}`;
+}
+
+export function getBatchDetailedScheduleGroups(report: JornadaBatchReport) {
+  const byPerson = new Map<
+    string,
+    { principal?: JornadaBatchLine; sabado?: JornadaBatchLine }
+  >();
+
+  report.linhas
+    .filter((line) => line.jornadaCompleta && line.horarios.length >= 2)
+    .forEach((line) => {
+      const key = batchLinePersonKey(line);
+      const current = byPerson.get(key) ?? {};
+
+      if (line.linhaSabado) {
+        current.sabado ??= line;
+      } else {
+        current.principal ??= line;
+      }
+
+      byPerson.set(key, current);
+    });
+
+  const collaborators = [...byPerson.values()].map((entry) => {
+    const principal = entry.principal ?? entry.sabado;
+    const sabado = entry.sabado;
+
+    return {
+      identificacao: principal ? formatBatchLineLabel(principal) : "-",
+      nome: principal?.nome ?? "",
+      matricula: principal?.matricula ?? "",
+      horarioPrincipal: principal?.jornadaCompleta ?? "-",
+      horarioSabado: sabado?.jornadaCompleta ?? "",
+    };
+  });
+
+  const groups = new Map<string, typeof collaborators>();
+  collaborators.forEach((collaborator) => {
+    const list = groups.get(collaborator.horarioPrincipal) ?? [];
+    list.push(collaborator);
+    groups.set(collaborator.horarioPrincipal, list);
+  });
+
+  return [...groups.entries()]
+    .map(([horarioPrincipal, colaboradores]) => ({
+      horarioPrincipal,
+      colaboradores: colaboradores.sort(
+        (a, b) =>
+          a.nome.localeCompare(b.nome, "pt-BR") ||
+          a.matricula.localeCompare(b.matricula, "pt-BR"),
+      ),
+    }))
+    .sort(
+      (a, b) =>
+        b.colaboradores.length - a.colaboradores.length ||
+        a.horarioPrincipal.localeCompare(b.horarioPrincipal, "pt-BR"),
+    );
 }
 
 function drawErrors(doc: PDFKit.PDFDocument, report: JornadaBatchReport, y: number) {
@@ -177,7 +246,7 @@ function drawErrors(doc: PDFKit.PDFDocument, report: JornadaBatchReport, y: numb
   const scheduleWidth = 134;
   const errorWidth = doc.page.width - margin * 2 - nameWidth - scheduleWidth - 30;
   const columns = [
-    { label: "Nome/Codigo", x: margin + 10, width: nameWidth },
+    { label: "Matrícula / Nome", x: margin + 10, width: nameWidth },
     { label: "Jornada", x: margin + 20 + nameWidth, width: scheduleWidth },
     {
       label: "Erro",
@@ -204,7 +273,7 @@ function drawErrors(doc: PDFKit.PDFDocument, report: JornadaBatchReport, y: numb
     }
 
     doc.fillColor("#0f172a").font("Helvetica").fontSize(8);
-    drawTextCell(doc, lineLabel(line), columns[0].x, currentY, columns[0].width);
+    drawTextCell(doc, formatBatchLineLabel(line), columns[0].x, currentY, columns[0].width);
     drawTextCell(
       doc,
       line.jornadaCompleta,
@@ -293,6 +362,100 @@ function drawFrequentSchedules(
   return currentY;
 }
 
+function drawDetailedSchedules(
+  doc: PDFKit.PDFDocument,
+  report: JornadaBatchReport,
+  y: number,
+) {
+  const groups = getBatchDetailedScheduleGroups(report);
+  if (groups.length === 0) {
+    return y;
+  }
+
+  let currentY = ensureSpace(doc, y, 70);
+  const margin = doc.page.margins.left;
+  const personWidth = 168;
+  const firstWidth = 128;
+  const secondWidth = doc.page.width - margin * 2 - personWidth - firstWidth - 40;
+  const columns = [
+    { label: "Matrícula / Nome", x: margin + 10, width: personWidth },
+    { label: "Horário 1", x: margin + 20 + personWidth, width: firstWidth },
+    {
+      label: "Horário 2 (Sábado)",
+      x: margin + 30 + personWidth + firstWidth,
+      width: secondWidth,
+    },
+  ];
+
+  doc
+    .fillColor("#0f172a")
+    .font("Helvetica-Bold")
+    .fontSize(12)
+    .text("Relação detalhada de horários", margin, currentY);
+  currentY += 24;
+
+  groups.forEach((group) => {
+    currentY = ensureSpace(doc, currentY, 62);
+    doc
+      .fillColor("#1e3a8a")
+      .font("Helvetica-Bold")
+      .fontSize(9.5)
+      .text(
+        `${group.horarioPrincipal} - ${group.colaboradores.length}`,
+        margin,
+        currentY,
+        { width: doc.page.width - margin * 2 },
+      );
+    currentY += 18;
+    drawTableHeader(doc, currentY, columns);
+    currentY += 24;
+
+    group.colaboradores.forEach((collaborator, index) => {
+      currentY = ensureSpace(doc, currentY, 24);
+      if (index % 2 === 0) {
+        doc
+          .roundedRect(margin, currentY - 4, doc.page.width - margin * 2, 20, 5)
+          .fill("#f8fafc");
+      }
+
+      doc.fillColor("#0f172a").font("Helvetica").fontSize(7.8);
+      drawTextCell(
+        doc,
+        collaborator.identificacao,
+        columns[0].x,
+        currentY,
+        columns[0].width,
+      );
+      drawTextCell(
+        doc,
+        collaborator.horarioPrincipal,
+        columns[1].x,
+        currentY,
+        columns[1].width,
+      );
+      drawTextCell(
+        doc,
+        collaborator.horarioSabado || "-",
+        columns[2].x,
+        currentY,
+        columns[2].width,
+      );
+      currentY += 22;
+    });
+
+    currentY += 8;
+  });
+
+  currentY = ensureSpace(doc, currentY, 18);
+  doc
+    .fillColor("#0f172a")
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .text(`Total de validações - ${report.totalLinhas}`, margin, currentY);
+
+  return currentY + 20;
+}
+
 function drawNoErrors(doc: PDFKit.PDFDocument, y: number) {
   const margin = doc.page.margins.left;
   const width = doc.page.width - margin * 2;
@@ -334,7 +497,10 @@ function drawFooter(doc: PDFKit.PDFDocument) {
   }
 }
 
-export function generateJornadaBatchReportPdf(report: JornadaBatchReport) {
+export function generateJornadaBatchReportPdf(
+  report: JornadaBatchReport,
+  options: JornadaBatchPdfOptions = {},
+) {
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
@@ -359,7 +525,11 @@ export function generateJornadaBatchReportPdf(report: JornadaBatchReport) {
       report.linhasComErro.length > 0
         ? drawErrors(doc, report, y)
         : drawNoErrors(doc, y);
-    drawFrequentSchedules(doc, report, y + 10);
+    if (options.detalhado) {
+      drawDetailedSchedules(doc, report, y + 10);
+    } else {
+      drawFrequentSchedules(doc, report, y + 10);
+    }
     drawFooter(doc);
 
     doc.end();

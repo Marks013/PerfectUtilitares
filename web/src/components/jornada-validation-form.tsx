@@ -520,12 +520,14 @@ async function downloadBatchReportPdf({
   validarJornada,
   validarIntervalos,
   usarHorariosAgrupados,
+  pdfDetalhado = false,
 }: {
   file: File;
   validarPeriodos: boolean;
   validarJornada: boolean;
   validarIntervalos: boolean;
   usarHorariosAgrupados: boolean;
+  pdfDetalhado?: boolean;
 }) {
   const formData = createBatchFormData({
     file,
@@ -535,6 +537,7 @@ async function downloadBatchReportPdf({
     usarHorariosAgrupados,
   });
   formData.set("formato", "pdf");
+  formData.set("pdfDetalhado", String(pdfDetalhado));
 
   const response = await fetch("/api/jornada/validar-lote", {
     method: "POST",
@@ -570,6 +573,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const [batchValidarIntervalos, setBatchValidarIntervalos] = useState(true);
   const [batchUsarHorariosAgrupados, setBatchUsarHorariosAgrupados] =
     useState(false);
+  const [batchPdfDetalhado, setBatchPdfDetalhado] = useState(false);
   const [batchPdfError, setBatchPdfError] = useState<string | null>(null);
   const [isBatchPdfExporting, setIsBatchPdfExporting] = useState(false);
   const form = useForm<FormValues>({
@@ -943,6 +947,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
         validarJornada: batchValidarJornada,
         validarIntervalos: batchValidarIntervalos,
         usarHorariosAgrupados: batchUsarHorariosAgrupados,
+        pdfDetalhado: batchPdfDetalhado,
       });
     } catch (exception) {
       setBatchPdfError(
@@ -1375,6 +1380,22 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                   <small>
                     Use para planilhas com código na coluna A e a jornada completa
                     em uma única célula.
+                  </small>
+                </span>
+              </label>
+              <label className="jornada-toggle">
+                <input
+                  type="checkbox"
+                  checked={batchPdfDetalhado}
+                  onChange={(event) =>
+                    setBatchPdfDetalhado(event.target.checked)
+                  }
+                />
+                <span>
+                  <strong>PDF Detalhado</strong>
+                  <small>
+                    Lista cada colaborador com matrícula, horário principal e
+                    horário de sábado quando existir.
                   </small>
                 </span>
               </label>

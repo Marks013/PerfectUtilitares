@@ -140,7 +140,9 @@ export async function POST(request: Request) {
     });
 
     if (shouldReturnPdf(formData)) {
-      const pdf = await generateJornadaBatchReportPdf(report);
+      const pdf = await generateJornadaBatchReportPdf(report, {
+        detalhado: parseBoolean(formData.get("pdfDetalhado"), false),
+      });
       const timestamp = new Date()
         .toISOString()
         .replace(/\D/g, "")
