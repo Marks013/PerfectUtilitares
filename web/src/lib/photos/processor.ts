@@ -53,11 +53,13 @@ export function isAcceptedImageType(type: string) {
 }
 
 function getOriginalExtension(name: string, format: PhotoOutputFormat) {
-  const extension = name.match(/\.([a-zA-Z0-9]+)$/)?.[1]?.toLowerCase();
-  const compatibleExtensions =
-    format === "jpeg" ? ["jpg", "jpeg"] : [OUTPUT_EXTENSIONS[format]];
+  if (format === "jpeg") {
+    return OUTPUT_EXTENSIONS.jpeg;
+  }
 
-  if (extension && compatibleExtensions.includes(extension)) {
+  const extension = name.match(/\.([a-zA-Z0-9]+)$/)?.[1]?.toLowerCase();
+
+  if (extension === OUTPUT_EXTENSIONS[format]) {
     return extension;
   }
 

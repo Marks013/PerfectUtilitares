@@ -102,7 +102,7 @@ describe("photo processor", () => {
     expect(photo.contentType).toBe("image/jpeg");
   });
 
-  it("preserves safe spaces, hyphens and compatible extension when replacing the original name", async () => {
+  it("preserves safe spaces and hyphens while normalizing JPEG output to .jpg", async () => {
     const photo = await processPhoto(
       {
         name: "ARILIG - HIPER.jpeg",
@@ -116,7 +116,7 @@ describe("photo processor", () => {
       },
     );
 
-    expect(photo.fileName).toBe("ARILIG - HIPER.jpeg");
+    expect(photo.fileName).toBe("ARILIG - HIPER.jpg");
     expect(photo.contentType).toBe("image/jpeg");
   });
 
