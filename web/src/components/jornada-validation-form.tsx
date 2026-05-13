@@ -7,11 +7,14 @@ import {
   CheckCircle2,
   Clock3,
   Download,
+  FileSpreadsheet,
   History,
   Info,
   Loader2,
   RotateCcw,
+  TableProperties,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -90,6 +93,32 @@ type HistoryRecord = JornadaResult & {
   tipoDia: "util" | "sabado" | "domingo" | "feriado";
   createdAt: string;
   user?: { name?: string | null; email?: string | null } | null;
+};
+
+type BatchLine = {
+  numeroLinha: number;
+  matricula: string;
+  nome: string;
+  cargo: string;
+  horariosOriginais: string;
+  jornadaCompleta: string;
+  resultado?: JornadaResult & {
+    tipoDia?: string;
+    horasSemanais: number;
+    horasMensais: number;
+  };
+};
+
+type BatchReport = {
+  arquivoOrigem: string;
+  nomePlanilha: string;
+  totalLinhas: number;
+  validos: number;
+  erros: number;
+  avisos: number;
+  linhas: BatchLine[];
+  linhasComErro: BatchLine[];
+  jornadasRepetidas: Record<string, number>;
 };
 
 const historyQueryKey = ["jornada", "historico"] as const;
@@ -430,6 +459,38 @@ async function deleteSelectedHistory(ids: string[]) {
   return (await response.json()) as { deletedCount: number };
 }
 
+async function validateBatchSpreadsheet({
+  file,
+  validarPeriodos,
+  validarJornada,
+  validarIntervalos,
+  usarHorariosAgrupados,
+}: {
+  file: File;
+  validarPeriodos: boolean;
+  validarJornada: boolean;
+  validarIntervalos: boolean;
+  usarHorariosAgrupados: boolean;
+}) {
+  const formData = new FormData();
+  formData.set("file", file);
+  formData.set("validarPeriodos", String(validarPeriodos));
+  formData.set("validarJornada", String(validarJornada));
+  formData.set("validarIntervalos", String(validarIntervalos));
+  formData.set("usarHorariosAgrupados", String(usarHorariosAgrupados));
+
+  const response = await fetch("/api/jornada/validar-lote", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return (await response.json()) as BatchReport;
+}
+
 export function JornadaValidationForm({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
@@ -438,6 +499,12 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const [exportError, setExportError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [hideInvalidHistory, setHideInvalidHistory] = useState(false);
+  const [batchFile, setBatchFile] = useState<File | null>(null);
+  const [batchValidarPeriodos, setBatchValidarPeriodos] = useState(true);
+  const [batchValidarJornada, setBatchValidarJornada] = useState(true);
+  const [batchValidarIntervalos, setBatchValidarIntervalos] = useState(true);
+  const [batchUsarHorariosAgrupados, setBatchUsarHorariosAgrupados] =
+    useState(false);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -779,6 +846,23 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       setPdfPeopleByKey({});
     },
   });
+
+  const batchMutation = useMutation({
+    mutationFn: validateBatchSpreadsheet,
+  });
+
+  function submitBatchValidation() {
+    if (!batchFile) return;
+
+    batchMutation.mutate({
+      file: batchFile,
+      validarPeriodos: batchValidarPeriodos,
+      validarJornada: batchValidarJornada,
+      validarIntervalos: batchValidarIntervalos,
+      usarHorariosAgrupados: batchUsarHorariosAgrupados,
+    });
+  }
+
   function submitValidation(values: FormValues) {
     if (
       !values.interjornadaAtiva &&
@@ -859,6 +943,10 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const horariosField = form.register("horarios");
   const segundaJornadaField = form.register("segundaJornadaHorarios");
   const sabadoField = form.register("sabadoHorarios");
+  const batchTopErrors = batchMutation.data?.linhasComErro.slice(0, 12) ?? [];
+  const batchRepeated = Object.entries(batchMutation.data?.jornadasRepetidas ?? {})
+    .sort(([, left], [, right]) => right - left)
+    .slice(0, 6);
 
   return (
     <div className="jornada-studio">
@@ -1107,6 +1195,213 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             </div>
           )}
         </section>
+      </section>
+
+      <section className="jornada-batch-panel">
+        <div className="jornada-history-panel__header">
+          <div>
+            <div className="jornada-history-title">
+              <FileSpreadsheet className="size-4" aria-hidden="true" />
+              <h2>Validação por planilha</h2>
+            </div>
+            <p>
+              Importe uma planilha .xlsx do relatório 110 ou uma relação com
+              horários agrupados para validar todas as jornadas de uma vez.
+            </p>
+          </div>
+          <span className="jornada-status">
+            {batchMutation.data ? `${batchMutation.data.totalLinhas} linhas` : "XLSX"}
+          </span>
+        </div>
+
+        <div className="jornada-batch-grid">
+          <div className="jornada-batch-import">
+            <label className="jornada-field">
+              <span>Arquivo .xlsx</span>
+              <input
+                type="file"
+                accept=".xlsx"
+                className="jornada-compact-input"
+                onChange={(event) => {
+                  setBatchFile(event.target.files?.[0] ?? null);
+                  batchMutation.reset();
+                }}
+              />
+            </label>
+
+            <div className="jornada-batch-options">
+              <label className="jornada-toggle">
+                <input
+                  type="checkbox"
+                  checked={batchValidarPeriodos}
+                  onChange={(event) =>
+                    setBatchValidarPeriodos(event.target.checked)
+                  }
+                />
+                <span>
+                  <strong>Validar períodos</strong>
+                  <small>Cada período antes/depois do intervalo deve respeitar 04:00.</small>
+                </span>
+              </label>
+              <label className="jornada-toggle">
+                <input
+                  type="checkbox"
+                  checked={batchValidarJornada}
+                  onChange={(event) =>
+                    setBatchValidarJornada(event.target.checked)
+                  }
+                />
+                <span>
+                  <strong>Validar duração da jornada</strong>
+                  <small>Compara o total trabalhado com as regras ativas.</small>
+                </span>
+              </label>
+              <label className="jornada-toggle">
+                <input
+                  type="checkbox"
+                  checked={batchValidarIntervalos}
+                  onChange={(event) =>
+                    setBatchValidarIntervalos(event.target.checked)
+                  }
+                />
+                <span>
+                  <strong>Validar intervalos</strong>
+                  <small>Confere mínimo e máximo conforme a jornada encontrada.</small>
+                </span>
+              </label>
+              <label className="jornada-toggle">
+                <input
+                  type="checkbox"
+                  checked={batchUsarHorariosAgrupados}
+                  onChange={(event) =>
+                    setBatchUsarHorariosAgrupados(event.target.checked)
+                  }
+                />
+                <span>
+                  <strong>Horários agrupados na coluna B</strong>
+                  <small>
+                    Use para planilhas com código na coluna A e a jornada completa
+                    em uma única célula.
+                  </small>
+                </span>
+              </label>
+            </div>
+
+            <button
+              type="button"
+              className="jornada-primary-button"
+              disabled={!batchFile || batchMutation.isPending}
+              onClick={submitBatchValidation}
+            >
+              {batchMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Upload className="size-4" aria-hidden="true" />
+              )}
+              {batchMutation.isPending ? "Validando planilha..." : "Validar planilha"}
+            </button>
+
+            {batchMutation.isError ? (
+              <div className="jornada-alert jornada-alert--danger">
+                {batchMutation.error.message}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="jornada-batch-help">
+            <div className="jornada-result-card" data-valid="true">
+              <div className="jornada-result-card__heading">
+                <span className="jornada-result-card__icon">
+                  <TableProperties className="size-4" aria-hidden="true" />
+                </span>
+                <span>Relatório 110</span>
+              </div>
+              <div className="jornada-batch-instructions">
+                <p>Layout padrão do sistema Senior.</p>
+                <ul>
+                  <li>Matrícula na coluna A, nome na C e cargo na E.</li>
+                  <li>Horários nas colunas I, K, L e N.</li>
+                  <li>A leitura começa na linha 3 e ignora cabeçalhos.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="jornada-result-card">
+              <div className="jornada-result-card__heading">
+                <span className="jornada-result-card__icon">
+                  <Clock3 className="size-4" aria-hidden="true" />
+                </span>
+                <span>Normalização</span>
+              </div>
+              <div className="jornada-batch-instructions">
+                <p>Os horários aceitam HH:MM, HHMM e frações do Excel.</p>
+                <ul>
+                  <li>Valores como 13:34:59.998 são tratados como 13:35.</li>
+                  <li>Horários já fechados, como 13:59, são preservados.</li>
+                  <li>Valores fora da tolerância de 1 segundo não são arredondados.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {batchMutation.data ? (
+          <div className="jornada-batch-results">
+            <div className="jornada-batch-stats">
+              <div>
+                <dt>Válidas</dt>
+                <dd>{batchMutation.data.validos}</dd>
+              </div>
+              <div>
+                <dt>Com erro</dt>
+                <dd>{batchMutation.data.erros}</dd>
+              </div>
+              <div>
+                <dt>Total lido</dt>
+                <dd>{batchMutation.data.totalLinhas}</dd>
+              </div>
+            </div>
+
+            {batchTopErrors.length > 0 ? (
+              <div className="jornada-batch-table-wrap">
+                <table className="jornada-batch-table">
+                  <thead>
+                    <tr>
+                      <th>Linha</th>
+                      <th>Nome/Código</th>
+                      <th>Jornada</th>
+                      <th>Erro</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchTopErrors.map((line) => (
+                      <tr key={`${line.numeroLinha}:${line.jornadaCompleta}`}>
+                        <td>{line.numeroLinha}</td>
+                        <td>{line.nome || line.matricula || "-"}</td>
+                        <td>{line.jornadaCompleta}</td>
+                        <td>{line.resultado?.mensagem ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="jornada-alert jornada-alert--success">
+                Nenhum erro encontrado na planilha importada.
+              </div>
+            )}
+
+            {batchRepeated.length > 0 ? (
+              <div className="jornada-batch-repeated">
+                {batchRepeated.map(([jornada, count]) => (
+                  <span key={jornada}>
+                    {jornada} · {count}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="jornada-history-panel">
