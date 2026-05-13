@@ -472,12 +472,13 @@ async function validateBatchSpreadsheet({
   validarIntervalos: boolean;
   usarHorariosAgrupados: boolean;
 }) {
-  const formData = new FormData();
-  formData.set("file", file);
-  formData.set("validarPeriodos", String(validarPeriodos));
-  formData.set("validarJornada", String(validarJornada));
-  formData.set("validarIntervalos", String(validarIntervalos));
-  formData.set("usarHorariosAgrupados", String(usarHorariosAgrupados));
+  const formData = createBatchFormData({
+    file,
+    validarPeriodos,
+    validarJornada,
+    validarIntervalos,
+    usarHorariosAgrupados,
+  });
 
   const response = await fetch("/api/jornada/validar-lote", {
     method: "POST",
@@ -489,6 +490,70 @@ async function validateBatchSpreadsheet({
   }
 
   return (await response.json()) as BatchReport;
+}
+
+function createBatchFormData({
+  file,
+  validarPeriodos,
+  validarJornada,
+  validarIntervalos,
+  usarHorariosAgrupados,
+}: {
+  file: File;
+  validarPeriodos: boolean;
+  validarJornada: boolean;
+  validarIntervalos: boolean;
+  usarHorariosAgrupados: boolean;
+}) {
+  const formData = new FormData();
+  formData.set("file", file);
+  formData.set("validarPeriodos", String(validarPeriodos));
+  formData.set("validarJornada", String(validarJornada));
+  formData.set("validarIntervalos", String(validarIntervalos));
+  formData.set("usarHorariosAgrupados", String(usarHorariosAgrupados));
+  return formData;
+}
+
+async function downloadBatchReportPdf({
+  file,
+  validarPeriodos,
+  validarJornada,
+  validarIntervalos,
+  usarHorariosAgrupados,
+}: {
+  file: File;
+  validarPeriodos: boolean;
+  validarJornada: boolean;
+  validarIntervalos: boolean;
+  usarHorariosAgrupados: boolean;
+}) {
+  const formData = createBatchFormData({
+    file,
+    validarPeriodos,
+    validarJornada,
+    validarIntervalos,
+    usarHorariosAgrupados,
+  });
+  formData.set("formato", "pdf");
+
+  const response = await fetch("/api/jornada/validar-lote", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "relatorio-validacao-jornada.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function JornadaValidationForm({ userId }: { userId: string }) {
@@ -505,6 +570,8 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const [batchValidarIntervalos, setBatchValidarIntervalos] = useState(true);
   const [batchUsarHorariosAgrupados, setBatchUsarHorariosAgrupados] =
     useState(false);
+  const [batchPdfError, setBatchPdfError] = useState<string | null>(null);
+  const [isBatchPdfExporting, setIsBatchPdfExporting] = useState(false);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -854,6 +921,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   function submitBatchValidation() {
     if (!batchFile) return;
 
+    setBatchPdfError(null);
     batchMutation.mutate({
       file: batchFile,
       validarPeriodos: batchValidarPeriodos,
@@ -861,6 +929,30 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
       validarIntervalos: batchValidarIntervalos,
       usarHorariosAgrupados: batchUsarHorariosAgrupados,
     });
+  }
+
+  async function submitBatchPdfExport() {
+    if (!batchFile) return;
+
+    setBatchPdfError(null);
+    setIsBatchPdfExporting(true);
+    try {
+      await downloadBatchReportPdf({
+        file: batchFile,
+        validarPeriodos: batchValidarPeriodos,
+        validarJornada: batchValidarJornada,
+        validarIntervalos: batchValidarIntervalos,
+        usarHorariosAgrupados: batchUsarHorariosAgrupados,
+      });
+    } catch (exception) {
+      setBatchPdfError(
+        exception instanceof Error
+          ? exception.message
+          : "Falha ao gerar relatório PDF",
+      );
+    } finally {
+      setIsBatchPdfExporting(false);
+    }
   }
 
   function submitValidation(values: FormValues) {
@@ -1197,22 +1289,22 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
         </section>
       </section>
 
-      <section className="jornada-batch-panel">
-        <div className="jornada-history-panel__header">
+      <details className="jornada-batch-panel">
+        <summary className="jornada-batch-summary">
           <div>
             <div className="jornada-history-title">
               <FileSpreadsheet className="size-4" aria-hidden="true" />
               <h2>Validação por planilha</h2>
             </div>
             <p>
-              Importe uma planilha .xlsx do relatório 110 ou uma relação com
-              horários agrupados para validar todas as jornadas de uma vez.
+              Importação XLSX em lote. Clique para abrir as opções, validar e
+              gerar relatório PDF.
             </p>
           </div>
           <span className="jornada-status">
             {batchMutation.data ? `${batchMutation.data.totalLinhas} linhas` : "XLSX"}
           </span>
-        </div>
+        </summary>
 
         <div className="jornada-batch-grid">
           <div className="jornada-batch-import">
@@ -1225,6 +1317,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                 onChange={(event) => {
                   setBatchFile(event.target.files?.[0] ?? null);
                   batchMutation.reset();
+                  setBatchPdfError(null);
                 }}
               />
             </label>
@@ -1301,9 +1394,28 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               {batchMutation.isPending ? "Validando planilha..." : "Validar planilha"}
             </button>
 
+            <button
+              type="button"
+              className="jornada-secondary-button"
+              disabled={!batchFile || isBatchPdfExporting}
+              onClick={submitBatchPdfExport}
+            >
+              {isBatchPdfExporting ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Download className="size-4" aria-hidden="true" />
+              )}
+              {isBatchPdfExporting ? "Gerando relatório..." : "Gerar relatório PDF"}
+            </button>
+
             {batchMutation.isError ? (
               <div className="jornada-alert jornada-alert--danger">
                 {batchMutation.error.message}
+              </div>
+            ) : null}
+            {batchPdfError ? (
+              <div className="jornada-alert jornada-alert--danger">
+                {batchPdfError}
               </div>
             ) : null}
           </div>
@@ -1322,23 +1434,6 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                   <li>Matrícula na coluna A, nome na C e cargo na E.</li>
                   <li>Horários nas colunas I, K, L e N.</li>
                   <li>A leitura começa na linha 3 e ignora cabeçalhos.</li>
-                </ul>
-              </div>
-            </div>
-
-            <div className="jornada-result-card">
-              <div className="jornada-result-card__heading">
-                <span className="jornada-result-card__icon">
-                  <Clock3 className="size-4" aria-hidden="true" />
-                </span>
-                <span>Normalização</span>
-              </div>
-              <div className="jornada-batch-instructions">
-                <p>Os horários aceitam HH:MM, HHMM e frações do Excel.</p>
-                <ul>
-                  <li>Valores como 13:34:59.998 são tratados como 13:35.</li>
-                  <li>Horários já fechados, como 13:59, são preservados.</li>
-                  <li>Valores fora da tolerância de 1 segundo não são arredondados.</li>
                 </ul>
               </div>
             </div>
@@ -1402,7 +1497,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             ) : null}
           </div>
         ) : null}
-      </section>
+      </details>
 
       <section className="jornada-history-panel">
         <div className="jornada-history-panel__header">

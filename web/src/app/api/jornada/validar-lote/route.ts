@@ -8,7 +8,11 @@ import {
   requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
-import { DEFAULT_JORNADA_BATCH_CONFIG, validarJornadaBatchXlsx } from "@/lib/jornada/batch-validation";
+import {
+  DEFAULT_JORNADA_BATCH_CONFIG,
+  validarJornadaBatchXlsx,
+} from "@/lib/jornada/batch-validation";
+import { generateJornadaBatchReportPdf } from "@/lib/jornada/batch-pdf";
 import type { JornadaBatchConfig } from "@/lib/jornada/batch-validation";
 import { prisma } from "@/lib/prisma";
 
@@ -53,6 +57,11 @@ function getConfig(formData: FormData): JornadaBatchConfig {
       DEFAULT_JORNADA_BATCH_CONFIG.colunaHorariosAgrupados,
     ),
   };
+}
+
+function shouldReturnPdf(formData: FormData) {
+  const format = String(formData.get("formato") ?? "").toLowerCase();
+  return format === "pdf" || format === "relatorio-pdf";
 }
 
 function getUploadedFile(formData: FormData) {
@@ -129,6 +138,25 @@ export async function POST(request: Request) {
       rules,
       codigoByHorario,
     });
+
+    if (shouldReturnPdf(formData)) {
+      const pdf = await generateJornadaBatchReportPdf(report);
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/\D/g, "")
+        .slice(0, 14);
+
+      return new NextResponse(new Uint8Array(pdf), {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store",
+          "Content-Disposition": `attachment; filename="Relatorio_Validacao_${timestamp}.pdf"`,
+          "Content-Length": String(pdf.byteLength),
+          "Content-Type": "application/pdf",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
 
     return NextResponse.json(report);
   } catch (error) {

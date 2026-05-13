@@ -1197,6 +1197,7 @@ table {
 .jornada-panel-heading,
 .jornada-result-panel__header,
 .jornada-history-panel__header,
+.jornada-batch-summary,
 .jornada-history-title,
 .jornada-history-summary,
 .jornada-result-card__heading,
@@ -1618,6 +1619,44 @@ table {
   display: grid;
   gap: 1rem;
   padding: clamp(1rem, 2.2vw, 1.4rem);
+}
+
+.jornada-batch-panel:not([open]) {
+  gap: 0;
+  padding: 0.95rem clamp(1rem, 2.2vw, 1.25rem);
+}
+
+.jornada-batch-summary {
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.jornada-batch-summary::-webkit-details-marker {
+  display: none;
+}
+
+.jornada-batch-summary p {
+  margin: 0.2rem 0 0;
+  color: var(--app-muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.jornada-batch-panel[open] .jornada-batch-summary {
+  padding-bottom: 0.2rem;
+}
+
+.jornada-batch-summary .jornada-status::after {
+  content: " abrir";
+  color: var(--app-subtle);
+  font-weight: 800;
+}
+
+.jornada-batch-panel[open] .jornada-batch-summary .jornada-status::after {
+  content: " aberto";
 }
 
 .jornada-batch-grid {
