@@ -214,15 +214,17 @@ export async function processPdfJob(jobId: string) {
         const output = await compressPdfFile({
           inputStorageKey: input.storageKey,
           jobId: job.id,
+          onProgress: (progress) =>
+            updateProgress(
+              job.id,
+              5 +
+                ((index + progress / 100) / inputArtifacts.length) * 85,
+            ),
+          options,
           outputName: `${baseName || "documento"}-comprimido.pdf`,
-          quality: options.quality,
         });
         outputs.push(output);
         writtenStorageKeys.push(output.storageKey);
-        await updateProgress(
-          job.id,
-          5 + ((index + 1) / inputArtifacts.length) * 85,
-        );
       }
 
       const totalBytes = outputs.reduce(

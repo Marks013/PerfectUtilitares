@@ -24,9 +24,51 @@ export const pdfJobCreateSchema = z.object({
   options: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const pdfCompressionOptionsSchema = z.object({
-  quality: z.enum(["SCREEN", "BALANCED", "PRINT"]).default("BALANCED"),
-});
+const pdfCompressionPresets = {
+  SCREEN: {
+    method: "RASTER",
+    dpi: 96,
+    colorMode: "COLOR",
+    imageQuality: 55,
+    monochromeThreshold: 160,
+  },
+  BALANCED: {
+    method: "AUTO",
+    dpi: 150,
+    colorMode: "COLOR",
+    imageQuality: 72,
+    monochromeThreshold: 160,
+  },
+  PRINT: {
+    method: "AUTO",
+    dpi: 220,
+    colorMode: "COLOR",
+    imageQuality: 86,
+    monochromeThreshold: 160,
+  },
+} as const;
+
+export const pdfCompressionOptionsSchema = z
+  .object({
+    quality: z.enum(["SCREEN", "BALANCED", "PRINT"]).default("BALANCED"),
+    method: z.enum(["AUTO", "LOSSLESS", "RASTER"]).optional(),
+    dpi: z.number().int().min(72).max(300).optional(),
+    colorMode: z.enum(["COLOR", "GRAYSCALE", "MONOCHROME"]).optional(),
+    imageQuality: z.number().int().min(35).max(95).optional(),
+    monochromeThreshold: z.number().int().min(64).max(224).optional(),
+  })
+  .transform((options) => {
+    const preset = pdfCompressionPresets[options.quality];
+    return {
+      quality: options.quality,
+      method: options.method ?? preset.method,
+      dpi: options.dpi ?? preset.dpi,
+      colorMode: options.colorMode ?? preset.colorMode,
+      imageQuality: options.imageQuality ?? preset.imageQuality,
+      monochromeThreshold:
+        options.monochromeThreshold ?? preset.monochromeThreshold,
+    };
+  });
 
 export const pdfToJpgOptionsSchema = z.object({
   dpi: z.number().int().min(96).max(300).default(150),

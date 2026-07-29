@@ -129,7 +129,7 @@ export async function POST(request: Request, context: RouteContext) {
     return jsonError(
       400,
       "PDF_COMPRESSION_OPTIONS_INVALID",
-      "Revise a qualidade selecionada para compressão.",
+      "Revise as opções selecionadas para compactação.",
     );
   }
 

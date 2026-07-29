@@ -2784,6 +2784,175 @@ a.pdf-tool-item:hover {
   opacity: 0.55;
 }
 
+.pdf-compress-settings > .pdf-compress-settings__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pdf-compress-settings__heading > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.pdf-compress-settings__heading > span {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--app-teal) 50%, var(--app-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-teal) 10%, transparent);
+  padding: 0.28rem 0.55rem;
+  color: var(--app-teal);
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.pdf-compression-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  border-top: 1px solid var(--app-border);
+  padding-top: 0.85rem;
+}
+
+.pdf-compression-option {
+  display: grid;
+  min-width: 0;
+  gap: 0.55rem;
+  margin: 0;
+  border: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--app-canvas) 56%, transparent);
+  padding: 0.75rem;
+}
+
+.pdf-compression-option--wide {
+  grid-column: 1 / -1;
+}
+
+.pdf-compression-option:disabled {
+  opacity: 0.48;
+}
+
+.pdf-compression-option legend,
+.pdf-compression-option > span {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--app-fg);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.pdf-compression-option > span b {
+  margin-left: auto;
+  color: var(--app-teal);
+  font-size: 0.7rem;
+}
+
+.pdf-compression-methods,
+.pdf-color-mode-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.pdf-compression-methods button,
+.pdf-color-mode-control button {
+  display: grid;
+  min-width: 0;
+  gap: 0.16rem;
+  align-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  background: var(--app-card);
+  padding: 0.6rem;
+  text-align: left;
+}
+
+.pdf-compression-methods button[data-active="true"],
+.pdf-color-mode-control button[data-active="true"] {
+  border-color: var(--app-teal);
+  background: color-mix(in srgb, var(--app-teal) 11%, var(--app-card));
+  box-shadow: inset 0 0 0 1px var(--app-teal);
+}
+
+.pdf-color-mode-control button {
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.pdf-color-mode-control button > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.pdf-color-swatch {
+  width: 1.45rem;
+  height: 1.45rem;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 24%, transparent);
+  border-radius: 5px;
+}
+
+.pdf-color-swatch[data-color="color"] {
+  background: conic-gradient(
+    from 40deg,
+    #ef4444,
+    #eab308,
+    #22c55e,
+    #0ea5e9,
+    #8b5cf6,
+    #ef4444
+  );
+}
+
+.pdf-color-swatch[data-color="grayscale"] {
+  background: linear-gradient(135deg, #101010, #f0f0f0);
+}
+
+.pdf-color-swatch[data-color="monochrome"] {
+  background: linear-gradient(135deg, #050505 50%, #fff 50%);
+}
+
+.pdf-compression-option select {
+  width: 100%;
+  min-height: 2.35rem;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-card);
+  padding: 0 0.65rem;
+  color: var(--app-fg);
+  font-size: 0.74rem;
+  font-weight: 750;
+  outline: none;
+}
+
+.pdf-compression-option select:focus {
+  border-color: var(--app-teal);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-teal) 18%, transparent);
+}
+
+.pdf-compression-option input[type="range"] {
+  width: 100%;
+  accent-color: var(--app-teal);
+}
+
+.pdf-compression-summary {
+  display: grid;
+  gap: 0.2rem;
+  border-left: 3px solid var(--app-teal);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--app-teal) 8%, transparent);
+  padding: 0.65rem 0.75rem;
+}
+
+.pdf-compression-summary[data-method="LOSSLESS"] {
+  border-left-color: var(--app-action-blue);
+  background: color-mix(in srgb, var(--app-action-blue) 8%, transparent);
+}
+
 .pdf-dropzone--large {
   min-height: 7rem;
 }
@@ -3128,6 +3297,23 @@ a.pdf-tool-item:hover {
   }
 
   .pdf-quality-control {
+    grid-template-columns: 1fr;
+  }
+
+  .pdf-compress-settings > .pdf-compress-settings__heading {
+    align-items: flex-start;
+  }
+
+  .pdf-compression-options {
+    grid-template-columns: 1fr;
+  }
+
+  .pdf-compression-option--wide {
+    grid-column: auto;
+  }
+
+  .pdf-compression-methods,
+  .pdf-color-mode-control {
     grid-template-columns: 1fr;
   }
 

@@ -6,8 +6,11 @@ import {
   Check,
   Download,
   FileText,
+  Gauge,
   Loader2,
   Minimize2,
+  Palette,
+  ScanLine,
   Upload,
   X,
 } from "lucide-react";
@@ -16,6 +19,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useDropzone } from "react-dropzone";
 
 type CompressionQuality = "SCREEN" | "BALANCED" | "PRINT";
+type CompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
+type CompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
+
+type CompressionSettings = {
+  preset: CompressionQuality | null;
+  method: CompressionMethod;
+  dpi: number;
+  colorMode: CompressionColorMode;
+  imageQuality: number;
+  monochromeThreshold: number;
+};
 
 type ApiError = {
   error?: { message?: string };
@@ -41,6 +55,33 @@ type WorkState = {
   detail: string;
 };
 
+const COMPRESSION_PRESETS: Record<
+  CompressionQuality,
+  Omit<CompressionSettings, "preset">
+> = {
+  SCREEN: {
+    method: "RASTER",
+    dpi: 96,
+    colorMode: "COLOR",
+    imageQuality: 55,
+    monochromeThreshold: 160,
+  },
+  BALANCED: {
+    method: "AUTO",
+    dpi: 150,
+    colorMode: "COLOR",
+    imageQuality: 72,
+    monochromeThreshold: 160,
+  },
+  PRINT: {
+    method: "AUTO",
+    dpi: 220,
+    colorMode: "COLOR",
+    imageQuality: 86,
+    monochromeThreshold: 160,
+  },
+};
+
 const QUALITY_OPTIONS: Array<{
   value: CompressionQuality;
   label: string;
@@ -49,19 +90,120 @@ const QUALITY_OPTIONS: Array<{
   {
     value: "SCREEN",
     label: "Compacto",
-    description: "Menor arquivo para tela e envio",
+    description: "96 DPI e recompressão forte",
   },
   {
     value: "BALANCED",
     label: "Equilibrado",
-    description: "Boa leitura com tamanho reduzido",
+    description: "150 DPI com escolha automática",
   },
   {
     value: "PRINT",
     label: "Impressão",
-    description: "Mais detalhes e arquivo maior",
+    description: "220 DPI e maior fidelidade",
   },
 ];
+
+const METHOD_OPTIONS: Array<{
+  value: CompressionMethod;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "AUTO",
+    label: "Automática",
+    description: "Compara e mantém o menor resultado",
+  },
+  {
+    value: "LOSSLESS",
+    label: "Sem perdas",
+    description: "Preserva texto, vetores e imagens",
+  },
+  {
+    value: "RASTER",
+    label: "Recompressão visual",
+    description: "Achata páginas para reduzir de verdade",
+  },
+];
+
+const COLOR_OPTIONS: Array<{
+  value: CompressionColorMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "COLOR",
+    label: "Colorido",
+    description: "24 bits",
+  },
+  {
+    value: "GRAYSCALE",
+    label: "Tons de cinza",
+    description: "8 bits",
+  },
+  {
+    value: "MONOCHROME",
+    label: "Preto e branco",
+    description: "1 bit",
+  },
+];
+
+const DEFAULT_SETTINGS: CompressionSettings = {
+  preset: "BALANCED",
+  ...COMPRESSION_PRESETS.BALANCED,
+};
+
+function isCompressionMethod(value: unknown): value is CompressionMethod {
+  return value === "AUTO" || value === "LOSSLESS" || value === "RASTER";
+}
+
+function isCompressionColorMode(
+  value: unknown,
+): value is CompressionColorMode {
+  return (
+    value === "COLOR" || value === "GRAYSCALE" || value === "MONOCHROME"
+  );
+}
+
+function readSavedSettings(value: string | null): CompressionSettings | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<CompressionSettings>;
+    if (
+      !isCompressionMethod(parsed.method) ||
+      !isCompressionColorMode(parsed.colorMode) ||
+      typeof parsed.dpi !== "number" ||
+      !Number.isInteger(parsed.dpi) ||
+      parsed.dpi < 72 ||
+      parsed.dpi > 300 ||
+      typeof parsed.imageQuality !== "number" ||
+      !Number.isInteger(parsed.imageQuality) ||
+      parsed.imageQuality < 35 ||
+      parsed.imageQuality > 95 ||
+      typeof parsed.monochromeThreshold !== "number" ||
+      !Number.isInteger(parsed.monochromeThreshold) ||
+      parsed.monochromeThreshold < 64 ||
+      parsed.monochromeThreshold > 224
+    ) {
+      return null;
+    }
+    return {
+      preset:
+        parsed.preset === "SCREEN" ||
+        parsed.preset === "BALANCED" ||
+        parsed.preset === "PRINT"
+          ? parsed.preset
+          : null,
+      method: parsed.method,
+      dpi: parsed.dpi,
+      colorMode: parsed.colorMode,
+      imageQuality: parsed.imageQuality,
+      monochromeThreshold: parsed.monochromeThreshold,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function readApiError(value: unknown, fallback: string) {
   return (value as ApiError | null)?.error?.message ?? fallback;
@@ -127,8 +269,9 @@ function uploadPdf(
 
 export function PdfCompressWorkspace() {
   const [files, setFiles] = useState<File[]>([]);
-  const [quality, setQuality] =
-    useState<CompressionQuality>("BALANCED");
+  const [settings, setSettings] =
+    useState<CompressionSettings>(DEFAULT_SETTINGS);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<PdfOutput[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -143,15 +286,51 @@ export function PdfCompressWorkspace() {
     work.phase === "RUNNING";
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("pdf-compression-quality");
-    if (saved === "SCREEN" || saved === "BALANCED" || saved === "PRINT") {
-      setQuality(saved);
+    const saved = readSavedSettings(
+      window.localStorage.getItem("pdf-compression-settings-v2"),
+    );
+    if (saved) {
+      setSettings(saved);
+    } else {
+      const legacy = window.localStorage.getItem("pdf-compression-quality");
+      if (
+        legacy === "SCREEN" ||
+        legacy === "BALANCED" ||
+        legacy === "PRINT"
+      ) {
+        setSettings({
+          preset: legacy,
+          ...COMPRESSION_PRESETS[legacy],
+        });
+      }
     }
+    setSettingsReady(true);
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("pdf-compression-quality", quality);
-  }, [quality]);
+    if (!settingsReady) return;
+    window.localStorage.setItem(
+      "pdf-compression-settings-v2",
+      JSON.stringify(settings),
+    );
+  }, [settings, settingsReady]);
+
+  function applyPreset(preset: CompressionQuality) {
+    setSettings({
+      preset,
+      ...COMPRESSION_PRESETS[preset],
+    });
+  }
+
+  function updateSettings(
+    next: Partial<Omit<CompressionSettings, "preset">>,
+  ) {
+    setSettings((current) => ({
+      ...current,
+      ...next,
+      preset: null,
+    }));
+  }
 
   const onDrop = (acceptedFiles: File[]) => {
     setError(null);
@@ -197,7 +376,7 @@ export function PdfCompressWorkspace() {
   );
   const savedPercent =
     inputBytes > 0
-      ? Math.max(0, Math.round((1 - outputBytes / inputBytes) * 100))
+      ? Math.round((1 - outputBytes / inputBytes) * 100)
       : 0;
 
   async function processFiles() {
@@ -212,7 +391,14 @@ export function PdfCompressWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           operation: "COMPRESS",
-          options: { quality },
+          options: {
+            quality: settings.preset ?? "BALANCED",
+            method: settings.method,
+            dpi: settings.dpi,
+            colorMode: settings.colorMode,
+            imageQuality: settings.imageQuality,
+            monochromeThreshold: settings.monochromeThreshold,
+          },
         }),
       });
       const createBody = (await createResponse.json()) as
@@ -310,7 +496,7 @@ export function PdfCompressWorkspace() {
           progress: body.job.progress,
           detail:
             body.job.status === "RUNNING"
-              ? "Comprimindo documentos"
+              ? "Recomprimindo páginas e comparando resultados"
               : "Aguardando processamento",
         });
       }
@@ -342,9 +528,18 @@ export function PdfCompressWorkspace() {
       </header>
 
       <section className="pdf-compress-settings">
-        <div>
-          <strong>Qualidade da saída</strong>
-          <small>A escolha fica salva neste dispositivo.</small>
+        <div className="pdf-compress-settings__heading">
+          <div>
+            <strong>Perfil de compactação</strong>
+            <small>As escolhas ficam salvas neste dispositivo.</small>
+          </div>
+          <span>
+            {settings.preset
+              ? QUALITY_OPTIONS.find(
+                  (option) => option.value === settings.preset,
+                )?.label
+              : "Personalizado"}
+          </span>
         </div>
         <div className="pdf-quality-control" role="radiogroup">
           {QUALITY_OPTIONS.map((option) => (
@@ -352,15 +547,160 @@ export function PdfCompressWorkspace() {
               key={option.value}
               type="button"
               role="radio"
-              aria-checked={quality === option.value}
-              data-active={quality === option.value}
+              aria-checked={settings.preset === option.value}
+              data-active={settings.preset === option.value}
               disabled={busy}
-              onClick={() => setQuality(option.value)}
+              onClick={() => applyPreset(option.value)}
             >
               <strong>{option.label}</strong>
               <small>{option.description}</small>
             </button>
           ))}
+        </div>
+
+        <div className="pdf-compression-options">
+          <fieldset className="pdf-compression-option pdf-compression-option--wide">
+            <legend>
+              <Minimize2 className="size-4" aria-hidden="true" />
+              Tipo de compactação
+            </legend>
+            <div className="pdf-compression-methods" role="radiogroup">
+              {METHOD_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.method === option.value}
+                  data-active={settings.method === option.value}
+                  disabled={busy}
+                  onClick={() => updateSettings({ method: option.value })}
+                >
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <fieldset
+            className="pdf-compression-option pdf-compression-option--wide"
+            disabled={busy || settings.method === "LOSSLESS"}
+          >
+            <legend>
+              <Palette className="size-4" aria-hidden="true" />
+              Tratamento de cor
+            </legend>
+            <div className="pdf-color-mode-control" role="radiogroup">
+              {COLOR_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.colorMode === option.value}
+                  data-active={settings.colorMode === option.value}
+                  onClick={() => updateSettings({ colorMode: option.value })}
+                >
+                  <span
+                    className="pdf-color-swatch"
+                    data-color={option.value.toLowerCase()}
+                    aria-hidden="true"
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <label className="pdf-compression-option">
+            <span>
+              <ScanLine className="size-4" aria-hidden="true" />
+              Resolução
+            </span>
+            <select
+              value={settings.dpi}
+              disabled={busy || settings.method === "LOSSLESS"}
+              onChange={(event) =>
+                updateSettings({ dpi: Number(event.target.value) })
+              }
+            >
+              {[72, 96, 120, 150, 200, 220, 300].map((dpi) => (
+                <option key={dpi} value={dpi}>
+                  {dpi} DPI
+                </option>
+              ))}
+            </select>
+            <small>Menos DPI reduz mais; 150 DPI mantém boa leitura.</small>
+          </label>
+
+          {settings.colorMode === "MONOCHROME" ? (
+            <label className="pdf-compression-option">
+              <span>
+                <Gauge className="size-4" aria-hidden="true" />
+                Corte do preto
+                <b>{settings.monochromeThreshold}</b>
+              </span>
+              <input
+                type="range"
+                min={64}
+                max={224}
+                step={4}
+                value={settings.monochromeThreshold}
+                disabled={busy || settings.method === "LOSSLESS"}
+                onChange={(event) =>
+                  updateSettings({
+                    monochromeThreshold: Number(event.target.value),
+                  })
+                }
+              />
+              <small>Valores maiores deixam mais áreas em preto.</small>
+            </label>
+          ) : (
+            <label className="pdf-compression-option">
+              <span>
+                <Gauge className="size-4" aria-hidden="true" />
+                Qualidade JPEG
+                <b>{settings.imageQuality}%</b>
+              </span>
+              <input
+                type="range"
+                min={35}
+                max={95}
+                step={1}
+                value={settings.imageQuality}
+                disabled={busy || settings.method === "LOSSLESS"}
+                onChange={(event) =>
+                  updateSettings({ imageQuality: Number(event.target.value) })
+                }
+              />
+              <small>Entre 65% e 80% costuma equilibrar tamanho e nitidez.</small>
+            </label>
+          )}
+        </div>
+
+        <div className="pdf-compression-summary" data-method={settings.method}>
+          <strong>
+            {settings.method === "LOSSLESS"
+              ? "Conteúdo original preservado"
+              : settings.method === "AUTO"
+                ? "O menor resultado vence"
+                : "Configuração aplicada integralmente"}
+          </strong>
+          <small>
+            {settings.method === "LOSSLESS"
+              ? "Mantém texto selecionável, vetores e imagens sem rasterizar."
+              : `${settings.dpi} DPI · ${
+                  COLOR_OPTIONS.find(
+                    (option) => option.value === settings.colorMode,
+                  )?.label
+                } · ${
+                  settings.colorMode === "MONOCHROME"
+                    ? "PNG binário"
+                    : `JPEG ${settings.imageQuality}%`
+                }. A recompressão visual achata as páginas para reduzir imagens já compactadas.`}
+          </small>
         </div>
       </section>
 
@@ -466,24 +806,38 @@ export function PdfCompressWorkspace() {
               <small>
                 {savedPercent > 0
                   ? `${savedPercent}% menor · ${formatBytes(outputBytes)}`
-                  : `Melhor tamanho preservado · ${formatBytes(outputBytes)}`}
+                  : savedPercent < 0
+                    ? `${Math.abs(savedPercent)}% maior · ${formatBytes(outputBytes)}`
+                    : `Tamanho original preservado · ${formatBytes(outputBytes)}`}
               </small>
             </div>
           </div>
           <div className="pdf-output-list">
-            {outputs.map((output) => (
-              <a
-                key={output.id}
-                href={`/api/pdf/jobs/${jobId}/outputs/${output.id}`}
-                className="pdf-output-row"
-              >
-                <span>
-                  <strong>{output.originalName}</strong>
-                  <small>{formatBytes(Number(output.sizeBytes))}</small>
-                </span>
-                <Download className="size-4" aria-hidden="true" />
-              </a>
-            ))}
+            {outputs.map((output, index) => {
+              const originalSize = files[index]?.size;
+              const outputSize = Number(output.sizeBytes);
+              const reduction =
+                originalSize && originalSize > 0
+                  ? Math.round((1 - outputSize / originalSize) * 100)
+                  : 0;
+              return (
+                <a
+                  key={output.id}
+                  href={`/api/pdf/jobs/${jobId}/outputs/${output.id}`}
+                  className="pdf-output-row"
+                >
+                  <span>
+                    <strong>{output.originalName}</strong>
+                    <small>
+                      {originalSize ? `${formatBytes(originalSize)} → ` : ""}
+                      {formatBytes(outputSize)}
+                      {reduction > 0 ? ` · ${reduction}% menor` : ""}
+                    </small>
+                  </span>
+                  <Download className="size-4" aria-hidden="true" />
+                </a>
+              );
+            })}
           </div>
           {outputs.length > 1 ? (
             <a

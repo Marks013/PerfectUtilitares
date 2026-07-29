@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  pdfCompressionOptionsSchema,
   pdfJobCreateSchema,
   pdfJobUpdateSchema,
   pdfManifestSchema,
@@ -86,6 +87,48 @@ describe("pdf schemas", () => {
     ).toBe(false);
     expect(
       pdfManifestSchema.safeParse({ version: 1, pages: [] }).success,
+    ).toBe(false);
+  });
+
+  it("expands compact compression defaults", () => {
+    expect(
+      pdfCompressionOptionsSchema.parse({ quality: "SCREEN" }),
+    ).toEqual({
+      quality: "SCREEN",
+      method: "RASTER",
+      dpi: 96,
+      colorMode: "COLOR",
+      imageQuality: 55,
+      monochromeThreshold: 160,
+    });
+  });
+
+  it("accepts advanced compression settings", () => {
+    expect(
+      pdfCompressionOptionsSchema.parse({
+        quality: "BALANCED",
+        method: "RASTER",
+        dpi: 120,
+        colorMode: "MONOCHROME",
+        imageQuality: 68,
+        monochromeThreshold: 176,
+      }),
+    ).toMatchObject({
+      method: "RASTER",
+      dpi: 120,
+      colorMode: "MONOCHROME",
+      monochromeThreshold: 176,
+    });
+  });
+
+  it("rejects unsafe compression limits", () => {
+    expect(
+      pdfCompressionOptionsSchema.safeParse({
+        method: "RASTER",
+        dpi: 600,
+        colorMode: "COLOR",
+        imageQuality: 10,
+      }).success,
     ).toBe(false);
   });
 });
