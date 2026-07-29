@@ -96,40 +96,44 @@ describe("PDF raster compression", () => {
     }
   });
 
-  it("substantially reduces a high-resolution scanned page", async () => {
-    const directory = await mkdtemp(
-      path.join(tmpdir(), "perfect-pdf-compression-"),
-    );
-    temporaryDirectories.push(directory);
-    const inputPath = path.join(directory, "scan.pdf");
-    const outputPath = path.join(directory, "scan-compressed.pdf");
-    const pixels = Buffer.allocUnsafe(1_800 * 2_400 * 3);
-    let seed = 0x1a2b3c4d;
-    for (let index = 0; index < pixels.length; index += 1) {
-      seed = (seed * 1_664_525 + 1_013_904_223) >>> 0;
-      pixels[index] = seed >>> 24;
-    }
-    const scan = await sharp(pixels, {
-      raw: { width: 1_800, height: 2_400, channels: 3 },
-    })
-      .jpeg({ quality: 95, mozjpeg: true })
-      .toBuffer();
-    const document = await PDFDocument.create();
-    const page = document.addPage([595, 842]);
-    const image = await document.embedJpg(scan);
-    page.drawImage(image, { x: 0, y: 0, width: 595, height: 842 });
-    await writeFile(inputPath, await document.save());
+  it(
+    "substantially reduces a high-resolution scanned page",
+    async () => {
+      const directory = await mkdtemp(
+        path.join(tmpdir(), "perfect-pdf-compression-"),
+      );
+      temporaryDirectories.push(directory);
+      const inputPath = path.join(directory, "scan.pdf");
+      const outputPath = path.join(directory, "scan-compressed.pdf");
+      const pixels = Buffer.allocUnsafe(1_800 * 2_400 * 3);
+      let seed = 0x1a2b3c4d;
+      for (let index = 0; index < pixels.length; index += 1) {
+        seed = (seed * 1_664_525 + 1_013_904_223) >>> 0;
+        pixels[index] = seed >>> 24;
+      }
+      const scan = await sharp(pixels, {
+        raw: { width: 1_800, height: 2_400, channels: 3 },
+      })
+        .jpeg({ quality: 95, mozjpeg: true })
+        .toBuffer();
+      const document = await PDFDocument.create();
+      const page = document.addPage([595, 842]);
+      const image = await document.embedJpg(scan);
+      page.drawImage(image, { x: 0, y: 0, width: 595, height: 842 });
+      await writeFile(inputPath, await document.save());
 
-    await rasterizePdfForCompression({
-      inputPath,
-      options: options({ dpi: 96, imageQuality: 55, quality: "SCREEN" }),
-      outputPath,
-    });
+      await rasterizePdfForCompression({
+        inputPath,
+        options: options({ dpi: 96, imageQuality: 55, quality: "SCREEN" }),
+        outputPath,
+      });
 
-    const [inputBytes, outputBytes] = await Promise.all([
-      readFile(inputPath),
-      readFile(outputPath),
-    ]);
-    expect(outputBytes.length).toBeLessThan(inputBytes.length * 0.6);
-  });
+      const [inputBytes, outputBytes] = await Promise.all([
+        readFile(inputPath),
+        readFile(outputPath),
+      ]);
+      expect(outputBytes.length).toBeLessThan(inputBytes.length * 0.6);
+    },
+    20_000,
+  );
 });

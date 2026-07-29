@@ -142,9 +142,6 @@ model PdfJob {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  @@index([tenantId, createdAt])
-  @@index([userId, createdAt])
-  @@index([status, createdAt])
   @@index([expiresAt])
 }
 

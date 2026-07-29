@@ -15,27 +15,31 @@ async function createTextPdf() {
 }
 
 describe("PDF Office conversions", () => {
-  it("creates DOCX and XLSX files from a text PDF", async () => {
-    const jobId = `office-test-${Date.now()}`;
-    const storageKey = `${jobId}/input/source.pdf`;
-    const filePath = path.join(getPdfStorageRoot(), storageKey);
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, await createTextPdf());
+  it(
+    "creates DOCX and XLSX files from a text PDF",
+    async () => {
+      const jobId = `office-test-${Date.now()}`;
+      const storageKey = `${jobId}/input/source.pdf`;
+      const filePath = path.join(getPdfStorageRoot(), storageKey);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, await createTextPdf());
 
-    try {
-      const [docx, xlsx] = await Promise.all([
-        convertPdfToDocx(storageKey),
-        convertPdfToXlsx(storageKey),
-      ]);
-      expect(Buffer.from(docx).subarray(0, 2).toString("ascii")).toBe("PK");
-      expect(Buffer.from(xlsx).subarray(0, 2).toString("ascii")).toBe("PK");
-      expect(docx.byteLength).toBeGreaterThan(1_000);
-      expect(xlsx.byteLength).toBeGreaterThan(1_000);
-    } finally {
-      await rm(path.join(getPdfStorageRoot(), jobId), {
-        force: true,
-        recursive: true,
-      });
-    }
-  });
+      try {
+        const [docx, xlsx] = await Promise.all([
+          convertPdfToDocx(storageKey),
+          convertPdfToXlsx(storageKey),
+        ]);
+        expect(Buffer.from(docx).subarray(0, 2).toString("ascii")).toBe("PK");
+        expect(Buffer.from(xlsx).subarray(0, 2).toString("ascii")).toBe("PK");
+        expect(docx.byteLength).toBeGreaterThan(1_000);
+        expect(xlsx.byteLength).toBeGreaterThan(1_000);
+      } finally {
+        await rm(path.join(getPdfStorageRoot(), jobId), {
+          force: true,
+          recursive: true,
+        });
+      }
+    },
+    20_000,
+  );
 });

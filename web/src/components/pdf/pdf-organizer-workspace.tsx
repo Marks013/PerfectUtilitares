@@ -1198,7 +1198,7 @@ export function PdfOrganizerWorkspace({
                   ? "PDF pronto"
                   : `${processing.outputs.length} PDFs prontos`}
               </strong>
-              <small>Downloads disponíveis durante 24 horas.</small>
+              <small>Downloads disponíveis durante 30 minutos.</small>
             </div>
           </div>
 

@@ -1,7 +1,6 @@
 import {
   Combine,
   Crop,
-  FileClock,
   FileImage,
   FileOutput,
   FilePenLine,
@@ -179,10 +178,6 @@ export default async function PdfPage() {
             Escolha uma ação e trabalhe em uma área visual, mantendo sempre o
             arquivo original preservado.
           </p>
-          <Link href="/pdf/historico" className="pdf-history-link">
-            <FileClock className="size-4" aria-hidden="true" />
-            Ver histórico
-          </Link>
         </div>
       </header>
 

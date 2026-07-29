@@ -10,8 +10,7 @@ import {
   requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
-import { pdfJobAccessWhere } from "@/lib/pdf/access";
-import { PDF_JOB_RETENTION_HOURS } from "@/lib/pdf/constants";
+import { getPdfJobExpiry } from "@/lib/pdf/constants";
 import { pdfJobCreateSchema } from "@/lib/pdf/schema";
 import { serializePdfJob } from "@/lib/pdf/serialization";
 import { prisma } from "@/lib/prisma";
@@ -19,22 +18,8 @@ import { zodIssueDetails } from "@/lib/users/schema";
 
 export const runtime = "nodejs";
 
-export async function GET() {
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
-
-  const jobs = await prisma.pdfJob.findMany({
-    where: pdfJobAccessWhere(guard.session),
-    include: {
-      artifacts: {
-        orderBy: { createdAt: "asc" },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
-
-  return NextResponse.json({ jobs: jobs.map(serializePdfJob) });
+export function GET() {
+  return methodNotAllowed(["POST"]);
 }
 
 export async function POST(request: Request) {
@@ -84,9 +69,7 @@ export async function POST(request: Request) {
       userId: guard.session.user.id,
       operation: parsed.data.operation,
       options: parsed.data.options as Prisma.InputJsonValue | undefined,
-      expiresAt: new Date(
-        Date.now() + PDF_JOB_RETENTION_HOURS * 60 * 60 * 1000,
-      ),
+      expiresAt: getPdfJobExpiry(),
     },
   });
 
@@ -94,13 +77,13 @@ export async function POST(request: Request) {
 }
 
 export function PUT() {
-  return methodNotAllowed(["GET", "POST"]);
+  return methodNotAllowed(["POST"]);
 }
 
 export function PATCH() {
-  return methodNotAllowed(["GET", "POST"]);
+  return methodNotAllowed(["POST"]);
 }
 
 export function DELETE() {
-  return methodNotAllowed(["GET", "POST"]);
+  return methodNotAllowed(["POST"]);
 }

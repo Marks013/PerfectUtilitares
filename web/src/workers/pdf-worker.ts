@@ -6,7 +6,11 @@ import {
   PDF_PROCESSING_QUEUE,
   stopPdfQueue,
 } from "@/lib/pdf/queue";
-import { cleanupExpiredPdfJobs } from "@/lib/pdf/retention";
+import { getPdfJobExpiry } from "@/lib/pdf/constants";
+import {
+  cleanupCompletedPdfJobInputs,
+  cleanupExpiredPdfJobs,
+} from "@/lib/pdf/retention";
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
@@ -56,6 +60,21 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
       await Sentry.flush(2_000);
       throw error;
     }
+
+    try {
+      await prisma.pdfJob.updateMany({
+        where: { id: job.data.jobId, status: "SUCCEEDED" },
+        data: { expiresAt: getPdfJobExpiry() },
+      });
+      await cleanupCompletedPdfJobInputs(job.data.jobId);
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: {
+          pdfInputCleanup: true,
+          pdfJobId: job.data.jobId,
+        },
+      });
+    }
   },
 );
 
@@ -77,7 +96,7 @@ function runRetentionCleanup() {
 void runRetentionCleanup();
 const retentionTimer = setInterval(
   () => void runRetentionCleanup(),
-  15 * 60 * 1_000,
+  5 * 60 * 1_000,
 );
 retentionTimer.unref();
 
