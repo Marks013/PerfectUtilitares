@@ -3639,7 +3639,11 @@ a.pdf-tool-item:hover {
   }
 
   .pdf-dropzone small {
+    flex-basis: auto;
+    max-width: 100%;
+    overflow-wrap: anywhere;
     text-align: left;
+    white-space: normal;
   }
 }
 
