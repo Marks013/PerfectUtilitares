@@ -7,7 +7,7 @@ type GuardFail = { ok: false; response: NextResponse };
 type JsonBodyOk = { ok: true; data: unknown };
 type JsonBodyFail = { ok: false; response: NextResponse };
 
-export type AppModule = "jornada" | "fotos";
+export type AppModule = "jornada" | "fotos" | "pdf";
 
 export function jsonError(
   status: number,
@@ -187,10 +187,12 @@ export async function requireModuleAccess(
     return guard;
   }
 
-  const allowed =
-    module === "jornada"
-      ? guard.session.user.canAccessJornada
-      : guard.session.user.canAccessFotos;
+  const moduleAccess = {
+    jornada: guard.session.user.canAccessJornada,
+    fotos: guard.session.user.canAccessFotos,
+    pdf: guard.session.user.canAccessPdf,
+  } satisfies Record<AppModule, boolean>;
+  const allowed = moduleAccess[module];
 
   if (!allowed) {
     return {

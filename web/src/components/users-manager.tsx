@@ -50,6 +50,7 @@ type ManagedUser = {
   isActive: boolean;
   canAccessJornada: boolean;
   canAccessFotos: boolean;
+  canAccessPdf: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;
 };
@@ -63,6 +64,7 @@ type Invitation = {
   role: Role;
   canAccessJornada: boolean;
   canAccessFotos: boolean;
+  canAccessPdf: boolean;
   expiresAt: string | Date;
   acceptedAt: string | Date | null;
   createdAt: string | Date;
@@ -89,6 +91,7 @@ const booleanishSchema = z.preprocess((value) => {
 const moduleAccessShape = {
   canAccessJornada: booleanishSchema,
   canAccessFotos: booleanishSchema,
+  canAccessPdf: booleanishSchema,
 };
 
 const tenantIdField = z.string().min(1, "Selecione uma empresa.");
@@ -152,6 +155,7 @@ function userEditDefaults(user: ManagedUser, tenantId = ""): UserEditInput {
     isActive: user.isActive,
     canAccessJornada: user.canAccessJornada,
     canAccessFotos: user.canAccessFotos,
+    canAccessPdf: user.canAccessPdf,
   };
 }
 
@@ -163,6 +167,7 @@ function invitationDefaults(tenantId = ""): InvitationFormInput {
     role: "OPERATOR",
     canAccessJornada: true,
     canAccessFotos: true,
+    canAccessPdf: true,
   };
 }
 
@@ -210,11 +215,17 @@ function getFormErrorMessages(errors: Record<string, unknown>) {
     .filter((message): message is string => Boolean(message));
 }
 
-function moduleLabel(user: Pick<ManagedUser, "role" | "canAccessJornada" | "canAccessFotos">) {
+function moduleLabel(
+  user: Pick<
+    ManagedUser,
+    "role" | "canAccessJornada" | "canAccessFotos" | "canAccessPdf"
+  >,
+) {
   if (user.role === "ADMIN") return "Todos";
   const enabled = [
     user.canAccessJornada ? "Jornada" : null,
     user.canAccessFotos ? "Fotos" : null,
+    user.canAccessPdf ? "PDF" : null,
   ].filter(Boolean);
   return enabled.length ? enabled.join(" / ") : "Nenhum";
 }
@@ -473,6 +484,14 @@ export function UsersManager({
                 className="size-4 rounded border-neutral-300"
               />
               Fotos 3x4
+            </label>
+            <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
+              <input
+                type="checkbox"
+                {...invitationForm.register("canAccessPdf")}
+                className="size-4 rounded border-neutral-300"
+              />
+              Ferramentas PDF
             </label>
           </div>
           <button
@@ -734,6 +753,14 @@ export function UsersManager({
                       className="size-4 rounded border-neutral-300"
                     />
                     Fotos 3x4
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
+                    <input
+                      type="checkbox"
+                      {...editForm.register("canAccessPdf")}
+                      className="size-4 rounded border-neutral-300"
+                    />
+                    Ferramentas PDF
                   </label>
                 </div>
                 <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">

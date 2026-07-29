@@ -2,6 +2,8 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
+  Files,
+  Grip,
   ScanFace,
   Scissors,
   ShieldCheck,
@@ -24,6 +26,21 @@ const moduleCards = [
     details: [
       { icon: Scissors, label: "Recorte guiado" },
       { icon: Sparkles, label: "Ajustes visuais" },
+    ],
+  },
+  {
+    href: "/pdf",
+    accessKey: "canAccessPdf",
+    eyebrow: "Ferramentas PDF",
+    title: "Organize documentos com precisão",
+    description:
+      "Reordene páginas, combine arquivos e prepare documentos em uma área de trabalho visual.",
+    cta: "Abrir ferramentas",
+    tone: "pdf",
+    icon: Files,
+    details: [
+      { icon: Grip, label: "Organização visual" },
+      { icon: ShieldCheck, label: "Processamento protegido" },
     ],
   },
   {
@@ -61,7 +78,7 @@ export default async function DashboardPage() {
         </div>
         <p>
           A antiga visao operacional saiu de cena. Agora a entrada principal
-          prioriza as duas tarefas que realmente importam no dia a dia.
+          reúne as ferramentas liberadas para o seu trabalho diário.
         </p>
       </section>
 
@@ -113,8 +130,7 @@ export default async function DashboardPage() {
         <section className="empty-access-panel">
           <h2>Nenhum modulo liberado ainda</h2>
           <p>
-            Sua conta esta ativa, mas ainda nao possui acesso ao Editor de
-            Fotos ou ao Validador de jornada.
+            Sua conta está ativa, mas ainda não possui acesso a nenhum módulo.
           </p>
         </section>
       ) : null}

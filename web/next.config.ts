@@ -68,7 +68,7 @@ const faceDetectionFrameHeaders = createSecurityHeaders({
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  serverExternalPackages: ["read-excel-file"],
+  serverExternalPackages: ["archiver", "pg-boss", "read-excel-file"],
   outputFileTracingIncludes: {
     "/*": ["./node_modules/pdfkit/js/data/**/*"],
   },

@@ -102,6 +102,7 @@ export async function POST(request: Request) {
               isActive: true,
               canAccessJornada: invitation.canAccessJornada,
               canAccessFotos: invitation.canAccessFotos,
+              canAccessPdf: invitation.canAccessPdf,
             },
             select: {
               id: true,
@@ -121,6 +122,7 @@ export async function POST(request: Request) {
               isActive: true,
               canAccessJornada: invitation.canAccessJornada,
               canAccessFotos: invitation.canAccessFotos,
+              canAccessPdf: invitation.canAccessPdf,
             },
         select: {
           id: true,

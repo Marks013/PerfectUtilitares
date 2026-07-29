@@ -76,6 +76,10 @@ services:
       SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE: ${SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE:-1.0}
       SENTRY_REPLAYS_SESSION_SAMPLE_RATE: ${SENTRY_REPLAYS_SESSION_SAMPLE_RATE:-0.0}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+      PDF_STORAGE_DIR: /data/pdf-jobs
+    user: "${APP_UID:-1001}:${APP_GID:-1001}"
+    volumes:
+      - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
     ports:
       - "${APP_PORT:-3002}:3000"
     healthcheck:
@@ -84,3 +88,25 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  pdf-worker:
+    build:
+      context: .
+      target: pdf-worker
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-perfectutilitares}?schema=public"
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      PDF_STORAGE_DIR: /data/pdf-jobs
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+    user: "${APP_UID:-1001}:${APP_GID:-1001}"
+    volumes:
+      - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
+    cpus: 2.0
+    mem_limit: 4g

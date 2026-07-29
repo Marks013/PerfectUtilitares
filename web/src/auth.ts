@@ -19,6 +19,7 @@ export type AppSession = {
     isActive: boolean;
     canAccessJornada: boolean;
     canAccessFotos: boolean;
+    canAccessPdf: boolean;
   };
   expires: string;
 };
@@ -32,6 +33,7 @@ declare module "next-auth" {
       isActive: boolean;
       canAccessJornada: boolean;
       canAccessFotos: boolean;
+      canAccessPdf: boolean;
     } & DefaultSession["user"];
   }
 
@@ -41,6 +43,7 @@ declare module "next-auth" {
     isActive: boolean;
     canAccessJornada: boolean;
     canAccessFotos: boolean;
+    canAccessPdf: boolean;
   }
 }
 
@@ -101,6 +104,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           isActive: user.isActive,
           canAccessJornada: user.canAccessJornada,
           canAccessFotos: user.canAccessFotos,
+          canAccessPdf: user.canAccessPdf,
         };
       },
     }),
@@ -138,6 +142,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.isActive = user.isActive;
         token.canAccessJornada = user.canAccessJornada;
         token.canAccessFotos = user.canAccessFotos;
+        token.canAccessPdf = user.canAccessPdf;
       } else if (token.id) {
         const currentUser = await prisma.user.findUnique({
           where: { id: String(token.id) },
@@ -149,6 +154,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             isActive: true,
             canAccessJornada: true,
             canAccessFotos: true,
+            canAccessPdf: true,
           },
         });
 
@@ -160,6 +166,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.isActive = currentUser.isActive;
           token.canAccessJornada = currentUser.canAccessJornada;
           token.canAccessFotos = currentUser.canAccessFotos;
+          token.canAccessPdf = currentUser.canAccessPdf;
         } else {
           token.isActive = false;
         }
@@ -175,6 +182,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         isActive?: boolean;
         canAccessJornada?: boolean;
         canAccessFotos?: boolean;
+        canAccessPdf?: boolean;
         email?: string | null;
         name?: string | null;
       };
@@ -188,6 +196,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.isActive = tokenWithUser.isActive ?? true;
         session.user.canAccessJornada = tokenWithUser.canAccessJornada ?? true;
         session.user.canAccessFotos = tokenWithUser.canAccessFotos ?? true;
+        session.user.canAccessPdf = tokenWithUser.canAccessPdf ?? true;
       }
 
       return session;

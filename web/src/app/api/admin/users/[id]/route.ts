@@ -29,6 +29,7 @@ const userSelect = {
   isActive: true,
   canAccessJornada: true,
   canAccessFotos: true,
+  canAccessPdf: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -194,6 +195,7 @@ export async function PATCH(request: Request, context: RouteContext) {
           isActive: user.isActive,
           canAccessJornada: user.canAccessJornada,
           canAccessFotos: user.canAccessFotos,
+          canAccessPdf: user.canAccessPdf,
         },
       },
     });

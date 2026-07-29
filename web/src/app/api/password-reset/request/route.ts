@@ -72,6 +72,7 @@ export async function POST(request: Request) {
       isActive: true,
       canAccessJornada: true,
       canAccessFotos: true,
+      canAccessPdf: true,
     },
   });
 
@@ -89,6 +90,7 @@ export async function POST(request: Request) {
       role: user.role,
       canAccessJornada: user.canAccessJornada,
       canAccessFotos: user.canAccessFotos,
+      canAccessPdf: user.canAccessPdf,
       tokenHash: hashToken(token),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     },

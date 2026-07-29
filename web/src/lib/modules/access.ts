@@ -7,9 +7,11 @@ export function canAccessModule(session: AppSession, module: AppModule) {
     return true;
   }
 
-  return module === "jornada"
-    ? session.user.canAccessJornada
-    : session.user.canAccessFotos;
+  return {
+    jornada: session.user.canAccessJornada,
+    fotos: session.user.canAccessFotos,
+    pdf: session.user.canAccessPdf,
+  }[module];
 }
 
 export async function requirePageModuleAccess(module: AppModule) {

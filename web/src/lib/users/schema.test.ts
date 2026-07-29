@@ -17,6 +17,7 @@ describe("user schemas", () => {
       isActive: "false",
       canAccessJornada: "true",
       canAccessFotos: "false",
+      canAccessPdf: "true",
     });
 
     expect(parsed).toMatchObject({
@@ -26,6 +27,7 @@ describe("user schemas", () => {
       isActive: false,
       canAccessJornada: true,
       canAccessFotos: false,
+      canAccessPdf: true,
     });
   });
 
@@ -37,12 +39,14 @@ describe("user schemas", () => {
       role: "OPERATOR",
       canAccessJornada: "false",
       canAccessFotos: "true",
+      canAccessPdf: "false",
     });
 
     expect(parsed).toMatchObject({
       email: "operador@local.test",
       canAccessJornada: false,
       canAccessFotos: true,
+      canAccessPdf: false,
     });
   });
 

@@ -19,6 +19,7 @@ const fieldLabels: Record<string, string> = {
   isActive: "Status",
   canAccessJornada: "Módulo Jornada",
   canAccessFotos: "Módulo Fotos 3x4",
+  canAccessPdf: "Módulo PDF",
   slug: "Apelido curto",
 };
 
@@ -54,6 +55,7 @@ export const userCreateSchema = z.object({
   isActive: booleanishSchema.default(true),
   canAccessJornada: booleanishSchema.default(true),
   canAccessFotos: booleanishSchema.default(true),
+  canAccessPdf: booleanishSchema.default(true),
 });
 
 export const userPatchSchema = z
@@ -65,6 +67,7 @@ export const userPatchSchema = z
     isActive: booleanishSchema.optional(),
     canAccessJornada: booleanishSchema.optional(),
     canAccessFotos: booleanishSchema.optional(),
+    canAccessPdf: booleanishSchema.optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Informe ao menos um campo para atualizar.",
@@ -91,6 +94,7 @@ export const invitationCreateSchema = z.object({
   role: userRoleSchema.default("OPERATOR"),
   canAccessJornada: booleanishSchema.default(true),
   canAccessFotos: booleanishSchema.default(true),
+  canAccessPdf: booleanishSchema.default(true),
 });
 
 export const invitationAcceptSchema = z.object({

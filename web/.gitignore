@@ -1,9 +1,11 @@
 node_modules
 .next
 dist
+public/vendor/pdfjs
 coverage
 .env
 .env.*
 !.env.example
 tsconfig.tsbuildinfo
 src/generated/prisma
+storage

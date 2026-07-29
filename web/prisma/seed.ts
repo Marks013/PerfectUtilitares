@@ -46,6 +46,7 @@ async function main() {
       role: "ADMIN",
       canAccessJornada: true,
       canAccessFotos: true,
+      canAccessPdf: true,
     },
     update: {
       name: "Administrador",
@@ -55,6 +56,7 @@ async function main() {
       isActive: true,
       canAccessJornada: true,
       canAccessFotos: true,
+      canAccessPdf: true,
     },
   });
 

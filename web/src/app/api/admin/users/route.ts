@@ -17,6 +17,7 @@ const userSelect = {
   isActive: true,
   canAccessJornada: true,
   canAccessFotos: true,
+  canAccessPdf: true,
   createdAt: true,
   updatedAt: true,
 } as const;

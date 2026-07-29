@@ -30,6 +30,9 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
     ...(canUseAllModules || session.user.canAccessFotos
       ? [{ href: "/fotos", label: "Fotos 3x4" }]
       : []),
+    ...(canUseAllModules || session.user.canAccessPdf
+      ? [{ href: "/pdf", label: "PDF" }]
+      : []),
     ...(session.user.role === "ADMIN"
       ? [
           { href: "/jornada/regras", label: "Regras" },

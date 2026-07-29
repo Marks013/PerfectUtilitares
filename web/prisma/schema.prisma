@@ -19,6 +19,41 @@ enum UserRole {
   OPERATOR
 }
 
+enum PdfJobStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum PdfOperation {
+  COMPRESS
+  MERGE
+  SPLIT
+  ROTATE
+  DELETE_PAGES
+  EXTRACT_PAGES
+  ORGANIZE
+  EDIT
+  ANNOTATE
+  CROP
+  PDF_TO_JPG
+  JPG_TO_PDF
+  PDF_TO_WORD
+  PDF_TO_EXCEL
+  WORD_TO_PDF
+  EXCEL_TO_PDF
+}
+
+enum PdfArtifactKind {
+  INPUT
+  OUTPUT
+  PREVIEW
+}
+
 model CodigoJornada {
   id                  String       @id @default(cuid())
   codigo              String
@@ -31,22 +66,24 @@ model CodigoJornada {
 }
 
 model User {
-  id               String              @id @default(cuid())
-  tenantId         String?
-  tenant           Tenant?             @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  email            String              @unique
-  name             String
-  passwordHash     String
-  role             UserRole            @default(OPERATOR)
-  isActive         Boolean             @default(true)
-  canAccessJornada Boolean             @default(true)
-  canAccessFotos   Boolean             @default(true)
-  validations      JornadaValidation[]
+  id                String              @id @default(cuid())
+  tenantId          String?
+  tenant            Tenant?             @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  email             String              @unique
+  name              String
+  passwordHash      String
+  role              UserRole            @default(OPERATOR)
+  isActive          Boolean             @default(true)
+  canAccessJornada  Boolean             @default(true)
+  canAccessFotos    Boolean             @default(true)
+  canAccessPdf      Boolean             @default(true)
+  validations       JornadaValidation[]
   jornadaExceptions JornadaException[]
-  auditLogs        AuditLog[]
-  invitations      UserInvitation[]    @relation("InvitedBy")
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  pdfJobs           PdfJob[]
+  auditLogs         AuditLog[]
+  invitations       UserInvitation[]    @relation("InvitedBy")
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   @@index([tenantId])
 }
@@ -57,6 +94,7 @@ model Tenant {
   slug        String           @unique
   users       User[]
   invitations UserInvitation[]
+  pdfJobs     PdfJob[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 }
@@ -72,6 +110,7 @@ model UserInvitation {
   role             UserRole  @default(OPERATOR)
   canAccessJornada Boolean   @default(true)
   canAccessFotos   Boolean   @default(true)
+  canAccessPdf     Boolean   @default(true)
   tokenHash        String    @unique
   expiresAt        DateTime
   acceptedAt       DateTime?
@@ -80,6 +119,49 @@ model UserInvitation {
   @@index([tenantId])
   @@index([email])
   @@index([expiresAt])
+}
+
+model PdfJob {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  operation    PdfOperation
+  status       PdfJobStatus  @default(DRAFT)
+  progress     Int           @default(0)
+  options      Json?
+  errorCode    String?
+  errorMessage String?
+  inputBytes   BigInt        @default(0)
+  outputBytes  BigInt        @default(0)
+  startedAt    DateTime?
+  completedAt  DateTime?
+  expiresAt    DateTime
+  artifacts    PdfArtifact[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([tenantId, createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([expiresAt])
+}
+
+model PdfArtifact {
+  id           String          @id @default(cuid())
+  jobId        String
+  job          PdfJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  kind         PdfArtifactKind
+  storageKey   String          @unique
+  originalName String
+  mimeType     String
+  sizeBytes    BigInt
+  sha256       String
+  pageCount    Int?
+  createdAt    DateTime        @default(now())
+
+  @@index([jobId, kind])
 }
 
 model JornadaRule {
@@ -97,18 +179,18 @@ model JornadaRule {
 }
 
 model JornadaException {
-  id                   String   @id @default(cuid())
-  userId               String
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  nome                 String?
-  horariosOriginal     String
-  horariosNormalizado  String
-  sabadoOriginal       String?
-  sabadoNormalizado    String?
-  active               Boolean  @default(true)
-  createdById          String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nome                String?
+  horariosOriginal    String
+  horariosNormalizado String
+  sabadoOriginal      String?
+  sabadoNormalizado   String?
+  active              Boolean  @default(true)
+  createdById         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   @@index([userId])
   @@index([active])

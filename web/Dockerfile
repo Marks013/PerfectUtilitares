@@ -32,6 +32,27 @@ COPY src/lib/jornada ./src/lib/jornada
 RUN npm run prisma:generate
 CMD ["sh", "-c", "npm run db:deploy"]
 
+FROM deps AS pdf-worker-builder
+COPY prisma.config.ts tsconfig.json ./
+COPY prisma ./prisma
+COPY src ./src
+RUN npm run prisma:generate
+RUN npm run build:pdf-worker
+RUN npm prune --omit=dev --ignore-scripts
+
+FROM base AS pdf-worker
+ENV NODE_ENV=production
+RUN apk add --no-cache \
+    font-dejavu \
+    font-liberation \
+    libreoffice-calc \
+    libreoffice-writer \
+    qpdf
+COPY --from=pdf-worker-builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=pdf-worker-builder --chown=node:node /app/dist ./dist
+USER node
+CMD ["node", "dist/pdf-worker.mjs"]
+
 FROM base AS runner
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
