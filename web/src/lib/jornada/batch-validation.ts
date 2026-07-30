@@ -31,7 +31,7 @@ export type JornadaBatchLine = {
   resultado?: JornadaBatchValidationResult;
 };
 
-export type JornadaBatchValidationResult = {
+type JornadaBatchValidationResult = {
   valido: boolean;
   mensagem: string;
   duracaoCalculada: string;
@@ -183,7 +183,7 @@ function parseSheetXml(xml: string, sharedStrings: string[]): unknown[][] {
   return rows;
 }
 
-export async function parseJornadaBatchXlsx(buffer: Buffer): Promise<ParsedSheet> {
+async function parseJornadaBatchXlsx(buffer: Buffer): Promise<ParsedSheet> {
   const zip = await JSZip.loadAsync(buffer);
   const sheetEntry = findZipEntry(zip, [
     "xl/worksheets/sheet1.xml",
@@ -312,7 +312,7 @@ function cleanHorarioText(value: string) {
     .trim();
 }
 
-export function extrairHorariosDoTexto(value: string) {
+function extrairHorariosDoTexto(value: string) {
   const horarios: string[] = [];
   const texto = cleanHorarioText(value);
   let match: RegExpExecArray | null;
@@ -433,7 +433,7 @@ function calculateScheduleDuration(horarios: string[]) {
   return null;
 }
 
-export function lerLinhasParaValidacao(
+function lerLinhasParaValidacao(
   rows: unknown[][],
   config: JornadaBatchConfig,
 ): JornadaBatchLine[] {
@@ -586,7 +586,7 @@ function validateSaturdayDuration(
   )}. Encontrado: ${formatarDuracao(durationMinutes)}`;
 }
 
-export function validarHorariosLote(
+function validarHorariosLote(
   horariosArray: string[],
   config: JornadaBatchConfig,
   rules: JornadaRuleInput[],

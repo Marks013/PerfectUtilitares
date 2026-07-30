@@ -1,12 +1,11 @@
 import { access } from "node:fs/promises";
 import { Readable } from "node:stream";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
   jsonError,
   methodNotAllowed,
-  requireModuleAccess,
 } from "@/lib/api/security";
-import { pdfJobAccessWhere } from "@/lib/pdf/access";
+import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
 import { createAttachmentHeader } from "@/lib/pdf/downloads";
 import {
   createPdfStorageReadStream,
@@ -21,21 +20,20 @@ type RouteContext = {
 };
 
 export async function GET(request: Request, context: RouteContext) {
-  const rateLimitError = enforceRateLimit(request, {
+  const owner = await getPdfOwnerContext();
+  const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 60,
     windowMs: 60_000,
     keyPrefix: "pdf-output-download",
+    authenticated: Boolean(owner.session),
   });
   if (rateLimitError) return rateLimitError;
-
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
 
   const { artifactId, id } = await context.params;
   const artifact = await prisma.pdfArtifact.findFirst({
     where: {
       id: artifactId,
-      job: { id, ...pdfJobAccessWhere(guard.session) },
+      job: { id, ...pdfJobAccessWhere(owner) },
       kind: "OUTPUT",
     },
   });

@@ -3,10 +3,15 @@ import { auth } from "@/auth";
 import { AccountDeletePanel } from "@/components/account-delete-panel";
 import { AccountProfilePanel } from "@/components/account-profile-panel";
 
+export const metadata = {
+  robots: { index: false, follow: false },
+  title: "Minha conta",
+};
+
 export default async function ContaPage() {
   const session = await auth();
 
-  if (!session || session.user.isActive === false) {
+  if (!session || session.user.status !== "ACTIVE") {
     redirect("/login");
   }
 

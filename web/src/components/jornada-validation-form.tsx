@@ -16,6 +16,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -561,6 +562,7 @@ async function downloadBatchReportPdf({
 
 export function JornadaValidationForm({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
+  const hasAccount = userId !== "public";
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [pdfPeopleByKey, setPdfPeopleByKey] = useState<Record<string, PdfPerson[]>>({});
   const [historyPage, setHistoryPage] = useState(1);
@@ -601,6 +603,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const ownExceptionsQuery = useQuery({
     queryKey: ["jornada", "excecoes", "mine"],
     queryFn: fetchOwnJornadaExceptions,
+    enabled: hasAccount,
   });
   const hasAuthorizedSaturdayException = (value: string) => {
     const normalized = calcularDuracaoEntrada(value)?.horariosNormalizado;
@@ -650,6 +653,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   const historicoQuery = useQuery({
     queryKey: historyQueryKey,
     queryFn: fetchHistory,
+    enabled: hasAccount,
   });
   const historico = useMemo(
     () => groupHistory(historicoQuery.data ?? []),
@@ -1531,11 +1535,12 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               <h2>Últimas validações</h2>
             </div>
             <p>
-              Página com 10 registros. Selecione somente jornadas válidas para
-              montar o PDF.
+              {hasAccount
+                ? "Página com 10 registros. Selecione somente jornadas válidas para montar o PDF."
+                : "Entre na sua conta para salvar, consultar e exportar suas validações."}
             </p>
           </div>
-          <div className="jornada-history-summary">
+          <div className="jornada-history-summary" hidden={!hasAccount}>
             <span>{totalValidCount} válidas</span>
             <button
               type="button"
@@ -1554,6 +1559,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             </button>
           </div>
           <button
+            hidden={!hasAccount}
             type="button"
             onClick={exportSelected}
             title={
@@ -1578,6 +1584,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
             Gerar PDF
           </button>
           <button
+            hidden={!hasAccount}
             type="button"
             onClick={() => {
               if (selectedHistoryIds.length > 0) {
@@ -1620,6 +1627,14 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
               : "Limpar meu histórico"}
           </button>
         </div>
+        {!hasAccount ? (
+          <div className="jornada-alert jornada-alert--success">
+            <span>As validações públicas não são armazenadas.</span>{" "}
+            <Link href="/login?callbackUrl=/jornada/validar">
+              Entrar para ativar o histórico
+            </Link>
+          </div>
+        ) : null}
         {exportError ? (
           <div className="jornada-alert jornada-alert--danger">
             {exportError}
@@ -1877,7 +1892,9 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
           <p className="jornada-history-empty">
             {hideInvalidHistory
               ? "Nenhuma validação válida nesta visualização."
-              : "Nenhuma validação registrada ainda."}
+              : hasAccount
+                ? "Nenhuma validação registrada ainda."
+                : "Seu resultado atual aparece acima e não fica salvo."}
           </p>
         )}
       </section>

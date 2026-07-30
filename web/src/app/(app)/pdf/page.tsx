@@ -16,7 +16,6 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { requirePageModuleAccess } from "@/lib/modules/access";
 
 const toolGroups = [
   {
@@ -163,9 +162,7 @@ const toolGroups = [
   },
 ] as const;
 
-export default async function PdfPage() {
-  await requirePageModuleAccess("pdf");
-
+export default function PdfPage() {
   return (
     <div className="pdf-hub">
       <header className="pdf-hub__header">

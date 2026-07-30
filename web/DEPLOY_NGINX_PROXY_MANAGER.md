@@ -1,7 +1,9 @@
 # Deploy com Nginx Proxy Manager
 
-Este projeto publica o container internamente na porta `3000`, mas no host usa `APP_PORT`.
-O padrao e `3002` para evitar conflito com outros projetos em `3000` e `3001`.
+Este projeto publica o container internamente na porta `3000`. No host, a
+porta definida por `APP_PORT` fica vinculada somente a `127.0.0.1` por
+seguranca. O padrao e `3002` para evitar conflito com outros projetos em
+`3000` e `3001`.
 
 ## `.env`
 
@@ -9,6 +11,7 @@ Para usar um dominio real no Nginx Proxy Manager:
 
 ```env
 APP_PORT="3002"
+APP_BIND_ADDRESS="127.0.0.1"
 AUTH_URL="https://seudominio.com.br"
 APP_URL="https://seudominio.com.br"
 AUTH_TRUST_HOST="true"
@@ -22,15 +25,18 @@ APP_PORT="3003"
 
 ## Nginx Proxy Manager
 
-Crie um Proxy Host apontando para:
+Se o Nginx Proxy Manager estiver instalado diretamente no mesmo servidor,
+crie um Proxy Host apontando para:
 
-- Forward Hostname/IP: IP do servidor ou nome do servico Docker acessivel pelo NPM
+- Forward Hostname/IP: `127.0.0.1`
 - Forward Port: valor de `APP_PORT`, por padrao `3002`
 - Scheme: `http`
 - Websockets Support: ativo
 - SSL: emitir certificado Let's Encrypt para o dominio
 
 O container continua usando `PORT=3000` internamente; nao altere isso no Compose.
+Nao publique `APP_BIND_ADDRESS=0.0.0.0` na internet: o limite de uso por IP
+pressupoe que somente o proxy reverso consiga acessar o app.
 
 ## Nginx Proxy Manager em Docker
 

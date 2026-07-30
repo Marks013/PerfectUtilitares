@@ -6,9 +6,9 @@ import {
   validarHorariosNormalizados,
 } from "./horario-normalizer";
 
-export type CodigoImportOrigem = "XLSX" | "CSV" | "JSON";
+type CodigoImportOrigem = "XLSX" | "CSV" | "JSON";
 
-export type CodigoImportRow = {
+type CodigoImportRow = {
   codigo: string;
   horariosOriginal: string;
   horariosNormalizado: string;
@@ -16,7 +16,7 @@ export type CodigoImportRow = {
   linha: number;
 };
 
-export type CodigoImportLineError = {
+type CodigoImportLineError = {
   linha: number;
   mensagem: string;
   valor?: unknown;
@@ -164,7 +164,7 @@ export function parseCodigoCsvBuffer(buffer: Buffer): CodigoImportParseResult {
   return collectRows(records, "CSV");
 }
 
-export function parseCodigoJsonBuffer(buffer: Buffer): CodigoImportParseResult {
+function parseCodigoJsonBuffer(buffer: Buffer): CodigoImportParseResult {
   return parseCodigoJson(JSON.parse(buffer.toString("utf8")));
 }
 

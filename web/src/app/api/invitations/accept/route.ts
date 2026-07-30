@@ -99,10 +99,7 @@ export async function POST(request: Request) {
               name: invitation.name,
               passwordHash,
               role: invitation.role,
-              isActive: true,
-              canAccessJornada: invitation.canAccessJornada,
-              canAccessFotos: invitation.canAccessFotos,
-              canAccessPdf: invitation.canAccessPdf,
+              status: "ACTIVE",
             },
             select: {
               id: true,
@@ -119,10 +116,7 @@ export async function POST(request: Request) {
               name: invitation.name,
               passwordHash,
               role: invitation.role,
-              isActive: true,
-              canAccessJornada: invitation.canAccessJornada,
-              canAccessFotos: invitation.canAccessFotos,
-              canAccessPdf: invitation.canAccessPdf,
+              status: "ACTIVE",
             },
         select: {
           id: true,

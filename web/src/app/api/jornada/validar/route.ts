@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
+  getOptionalSession,
   jsonError,
   methodNotAllowed,
   readJsonBody,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
 import { prisma } from "@/lib/prisma";
+import { recordUserUsage } from "@/lib/usage/record";
 import {
   validarJornadaComInterjornada,
   validarJornadaManual,
@@ -38,20 +39,18 @@ export function GET() {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireModuleAccess("jornada");
-  if (!guard.ok) {
-    return guard.response;
-  }
-
   const originError = requireSameOrigin(request);
   if (originError) {
     return originError;
   }
 
-  const limited = enforceRateLimit(request, {
+  const session = await getOptionalSession();
+  const limited = await enforceSharedRateLimit(request, {
     keyPrefix: "jornada-validar",
-    limit: 60,
+    limit: 30,
     windowMs: 60_000,
+    dailyLimit: 120,
+    authenticated: Boolean(session),
   });
   if (limited) {
     return limited;
@@ -82,20 +81,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const userId = guard.session.user.id;
+  const userId = session?.user.id;
   const [rules, codigos, exceptions] = await Promise.all([
     prisma.jornadaRule.findMany({ where: { active: true } }),
     prisma.codigoJornada.findMany(),
-    prisma.jornadaException.findMany({
-      where: { userId, active: true },
-      select: {
-        id: true,
-        nome: true,
-        horariosNormalizado: true,
-        sabadoNormalizado: true,
-        active: true,
-      },
-    }),
+    userId
+      ? prisma.jornadaException.findMany({
+          where: { userId, active: true },
+          select: {
+            id: true,
+            nome: true,
+            horariosNormalizado: true,
+            sabadoNormalizado: true,
+            active: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const codigoByHorario = new Map(
@@ -109,6 +110,10 @@ export async function POST(request: Request) {
     result: JornadaValidationResult,
     horariosOriginal: string,
   ) {
+    if (!userId) {
+      return null;
+    }
+
     return prisma.jornadaValidation.create({
       data: {
         userId,
@@ -151,10 +156,20 @@ export async function POST(request: Request) {
       saveValidation(result.jornada1, parsed.data.horarios),
       saveValidation(result.jornada2, parsed.data.horarios2),
     ]);
+    await recordUserUsage({
+      userId,
+      module: "JORNADA",
+      operation: parsed.data.modo,
+      inputBytes: Buffer.byteLength(
+        `${parsed.data.horarios} ${parsed.data.horarios2}`,
+        "utf8",
+      ),
+    });
 
     return NextResponse.json({
       ...result,
-      ids: [saved1.id, saved2.id],
+      ids: [saved1?.id, saved2?.id].filter(Boolean),
+      savedToHistory: Boolean(userId),
     });
   }
 
@@ -170,6 +185,16 @@ export async function POST(request: Request) {
   );
 
   const saved = await saveValidation(result, parsed.data.horarios);
+  await recordUserUsage({
+    userId,
+    module: "JORNADA",
+    operation: "VALIDAR_MANUAL",
+    inputBytes: Buffer.byteLength(parsed.data.horarios, "utf8"),
+  });
 
-  return NextResponse.json({ ...result, id: saved.id });
+  return NextResponse.json({
+    ...result,
+    id: saved?.id,
+    savedToHistory: Boolean(userId),
+  });
 }

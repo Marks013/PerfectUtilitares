@@ -84,7 +84,7 @@ function groupTextItems(items: PositionedText[]) {
   });
 }
 
-export async function extractPdfTextPages(storageKey: string) {
+async function extractPdfTextPages(storageKey: string) {
   ensureServerLocalStorage();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({

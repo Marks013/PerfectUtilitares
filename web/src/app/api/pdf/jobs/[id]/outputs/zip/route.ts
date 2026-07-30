@@ -2,12 +2,11 @@ import { ZipArchive } from "archiver";
 import { access } from "node:fs/promises";
 import { PassThrough, Readable } from "node:stream";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
   jsonError,
   methodNotAllowed,
-  requireModuleAccess,
 } from "@/lib/api/security";
-import { pdfJobAccessWhere } from "@/lib/pdf/access";
+import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
 import {
   createAttachmentHeader,
   uniqueDownloadName,
@@ -25,19 +24,18 @@ type RouteContext = {
 };
 
 export async function GET(request: Request, context: RouteContext) {
-  const rateLimitError = enforceRateLimit(request, {
+  const owner = await getPdfOwnerContext();
+  const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 20,
     windowMs: 60_000,
     keyPrefix: "pdf-output-zip",
+    authenticated: Boolean(owner.session),
   });
   if (rateLimitError) return rateLimitError;
 
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
-
   const { id } = await context.params;
   const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(guard.session) },
+    where: { id, ...pdfJobAccessWhere(owner) },
     select: {
       id: true,
       status: true,

@@ -64,9 +64,11 @@ const processEnvKeys = [
   "POSTGRES_DATA_DIR",
   "AUTH_SECRET",
   "APP_PORT",
+  "APP_BIND_ADDRESS",
   "AUTH_URL",
   "NEXTAUTH_URL",
   "APP_URL",
+  "APP_TIME_ZONE",
   "AUTH_TRUST_HOST",
   "ADMIN_EMAIL",
   "ADMIN_PASSWORD",
@@ -104,6 +106,7 @@ track(
 if (!values.get("POSTGRES_USER")) values.set("POSTGRES_USER", "postgres");
 if (!values.get("POSTGRES_DB")) values.set("POSTGRES_DB", "perfectutilitares");
 if (!values.get("APP_PORT")) values.set("APP_PORT", "3002");
+if (!values.get("APP_BIND_ADDRESS")) values.set("APP_BIND_ADDRESS", "127.0.0.1");
 track(
   "AUTH_URL",
   setIfMissingOrDefault(values, "AUTH_URL", ["http://localhost:3000"], () =>
@@ -126,9 +129,13 @@ track(
   ),
 );
 if (!values.get("AUTH_TRUST_HOST")) values.set("AUTH_TRUST_HOST", "true");
+if (!values.get("APP_TIME_ZONE")) values.set("APP_TIME_ZONE", "America/Sao_Paulo");
 if (!values.get("ADMIN_EMAIL")) values.set("ADMIN_EMAIL", "admin@local.test");
 if (!values.get("DEFAULT_TENANT_NAME")) values.set("DEFAULT_TENANT_NAME", "Principal");
 if (!values.get("DEFAULT_TENANT_SLUG")) values.set("DEFAULT_TENANT_SLUG", "principal");
+if (!values.get("PDF_ANONYMOUS_SESSION_TTL_MINUTES")) {
+  values.set("PDF_ANONYMOUS_SESSION_TTL_MINUTES", "120");
+}
 
 const currentDatabaseUrl = values.get("DATABASE_URL") ?? "";
 if (!currentDatabaseUrl || currentDatabaseUrl.includes("postgres:postgres@")) {
@@ -149,14 +156,17 @@ const orderedKeys = [
   "DATABASE_URL",
   "AUTH_SECRET",
   "APP_PORT",
+  "APP_BIND_ADDRESS",
   "AUTH_URL",
   "NEXTAUTH_URL",
   "APP_URL",
+  "APP_TIME_ZONE",
   "AUTH_TRUST_HOST",
   "ADMIN_EMAIL",
   "ADMIN_PASSWORD",
   "DEFAULT_TENANT_NAME",
   "DEFAULT_TENANT_SLUG",
+  "PDF_ANONYMOUS_SESSION_TTL_MINUTES",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
   "NEXT_PUBLIC_SENTRY_DSN",

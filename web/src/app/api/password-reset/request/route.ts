@@ -69,14 +69,11 @@ export async function POST(request: Request) {
       email: true,
       name: true,
       role: true,
-      isActive: true,
-      canAccessJornada: true,
-      canAccessFotos: true,
-      canAccessPdf: true,
+      status: true,
     },
   });
 
-  if (!user || !user.isActive || !user.tenantId) {
+  if (!user || user.status !== "ACTIVE" || !user.tenantId) {
     return NextResponse.json({ ok: true });
   }
 
@@ -88,9 +85,6 @@ export async function POST(request: Request) {
       email: user.email,
       name: user.name,
       role: user.role,
-      canAccessJornada: user.canAccessJornada,
-      canAccessFotos: user.canAccessFotos,
-      canAccessPdf: user.canAccessPdf,
       tokenHash: hashToken(token),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     },

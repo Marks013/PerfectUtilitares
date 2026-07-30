@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const diaValidoSchema = z.enum(["util", "sabado", "domingo", "feriado"]);
+const diaValidoSchema = z.enum(["util", "sabado", "domingo", "feriado"]);
 
 const booleanishSchema = z.preprocess((value) => {
   if (value === "true") return true;

@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { auth, type AppSession } from "@/auth";
-import { checkRateLimit, getClientIp } from "@/lib/api/rate-limit";
+import {
+  checkRateLimit,
+  checkSharedRateLimit,
+  getRateLimitKey,
+} from "@/lib/api/rate-limit";
 
 type GuardOk = { ok: true; session: AppSession };
 type GuardFail = { ok: false; response: NextResponse };
 type JsonBodyOk = { ok: true; data: unknown };
 type JsonBodyFail = { ok: false; response: NextResponse };
-
-export type AppModule = "jornada" | "fotos" | "pdf";
+const requestBodyLimits = new WeakMap<Request, number>();
 
 export function jsonError(
   status: number,
@@ -33,9 +36,46 @@ export function methodNotAllowed(allowed: string[]) {
   return response;
 }
 
-export async function readJsonBody(request: Request): Promise<JsonBodyOk | JsonBodyFail> {
+export async function readJsonBody(
+  request: Request,
+): Promise<JsonBodyOk | JsonBodyFail> {
+  const maxBytes = requestBodyLimits.get(request) ?? 1024 * 1024;
+
   try {
-    return { ok: true, data: await request.json() };
+    if (!request.body) {
+      throw new SyntaxError("Empty body");
+    }
+
+    const reader = request.body.getReader();
+    const decoder = new TextDecoder();
+    let totalBytes = 0;
+    let text = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        return {
+          ok: false,
+          response: jsonError(
+            413,
+            "PAYLOAD_TOO_LARGE",
+            `Os dados enviados ultrapassam o limite de ${Math.max(
+              1,
+              Math.ceil(maxBytes / 1024),
+            )}KB.`,
+          ),
+        };
+      }
+
+      text += decoder.decode(value, { stream: true });
+    }
+
+    text += decoder.decode();
+    return { ok: true, data: JSON.parse(text) };
   } catch {
     return {
       ok: false,
@@ -141,18 +181,26 @@ export async function requireSession(): Promise<GuardOk | GuardFail> {
     };
   }
 
-  if (session.user.isActive === false) {
+  if (session.user.status !== "ACTIVE") {
+    const banned = session.user.status === "BANNED";
     return {
       ok: false,
       response: jsonError(
         403,
-        "USER_INACTIVE",
-        "Seu usuário está inativo. Solicite a reativação a um administrador.",
+        banned ? "USER_BANNED" : "USER_BLOCKED",
+        banned
+          ? "Esta conta foi banida e não pode acessar recursos pessoais. Fale com o administrador se precisar revisar a situação."
+          : "Esta conta está bloqueada temporariamente. Fale com o administrador para recuperar o acesso.",
       ),
     };
   }
 
   return { ok: true, session };
+}
+
+export async function getOptionalSession(): Promise<AppSession | null> {
+  const session = (await auth()) as AppSession | null;
+  return session?.user.status !== "ACTIVE" ? null : session;
 }
 
 export async function requireAdmin(): Promise<GuardOk | GuardFail> {
@@ -168,39 +216,6 @@ export async function requireAdmin(): Promise<GuardOk | GuardFail> {
         403,
         "FORBIDDEN",
         "Você não tem permissão para realizar esta ação.",
-      ),
-    };
-  }
-
-  return guard;
-}
-
-export async function requireModuleAccess(
-  module: AppModule,
-): Promise<GuardOk | GuardFail> {
-  const guard = await requireSession();
-  if (!guard.ok) {
-    return guard;
-  }
-
-  if (guard.session.user.role === "ADMIN") {
-    return guard;
-  }
-
-  const moduleAccess = {
-    jornada: guard.session.user.canAccessJornada,
-    fotos: guard.session.user.canAccessFotos,
-    pdf: guard.session.user.canAccessPdf,
-  } satisfies Record<AppModule, boolean>;
-  const allowed = moduleAccess[module];
-
-  if (!allowed) {
-    return {
-      ok: false,
-      response: jsonError(
-        403,
-        "MODULE_FORBIDDEN",
-        "Você não tem acesso a este módulo. Solicite liberação a um administrador.",
       ),
     };
   }
@@ -231,6 +246,7 @@ export function requireMaxContentLength(
   request: Request,
   maxBytes: number,
 ): NextResponse | null {
+  requestBodyLimits.set(request, maxBytes);
   const rawContentLength = request.headers.get("content-length");
   if (!rawContentLength) {
     return null;
@@ -261,7 +277,7 @@ export function enforceRateLimit(
   request: Request,
   options: { limit: number; windowMs: number; keyPrefix: string },
 ): NextResponse | null {
-  const key = `${options.keyPrefix}:${getClientIp(request.headers)}`;
+  const key = getRateLimitKey(options.keyPrefix, request.headers);
   const result = checkRateLimit(key, options);
 
   if (result.limited) {
@@ -270,6 +286,78 @@ export function enforceRateLimit(
       "RATE_LIMITED",
       "Muitas tentativas em pouco tempo. Aguarde um momento e tente novamente.",
     );
+  }
+
+  return null;
+}
+
+export async function enforceSharedRateLimit(
+  request: Request,
+  options: {
+    limit: number;
+    windowMs: number;
+    keyPrefix: string;
+    dailyLimit?: number;
+    authenticated?: boolean;
+  },
+): Promise<NextResponse | null> {
+  const authenticated =
+    options.authenticated ?? Boolean(await getOptionalSession());
+  if (authenticated) {
+    return null;
+  }
+
+  const ipKey = getRateLimitKey("ip", request.headers);
+  const checks = [
+    {
+      key: `${options.keyPrefix}:burst:${ipKey}`,
+      limit: options.limit,
+      windowMs: options.windowMs,
+      scope: "burst",
+    },
+    ...(options.dailyLimit
+      ? [
+          {
+            key: `${options.keyPrefix}:daily:${ipKey}`,
+            limit: options.dailyLimit,
+            windowMs: 24 * 60 * 60 * 1_000,
+            scope: "daily",
+          },
+        ]
+      : []),
+  ];
+
+  for (const check of checks) {
+    const result = await checkSharedRateLimit(check.key, check);
+    if (!result.limited) continue;
+
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((result.resetAt - Date.now()) / 1_000),
+    );
+    const response = jsonError(
+      429,
+      "PUBLIC_LIMIT_REACHED",
+      check.scope === "daily"
+        ? "Você aproveitou toda a franquia pública deste período. Ela se renova automaticamente em até 24 horas. Para continuar agora sem limite de frequência, entre na sua conta ou solicite um convite ao administrador."
+        : "Você fez várias operações em sequência e atingiu uma pausa rápida de segurança. Respire um pouquinho e tente novamente em instantes, ou entre na sua conta para continuar sem limite de frequência.",
+      {
+        action: {
+          href: "/login",
+          label: "Entrar na conta",
+        },
+        retryAfterSeconds,
+        scope: check.scope,
+      },
+    );
+    response.headers.set("Retry-After", String(retryAfterSeconds));
+    response.headers.set("X-RateLimit-Limit", String(check.limit));
+    response.headers.set("X-RateLimit-Remaining", "0");
+    response.headers.set(
+      "X-RateLimit-Reset",
+      String(Math.ceil(result.resetAt / 1_000)),
+    );
+    return response;
   }
 
   return null;

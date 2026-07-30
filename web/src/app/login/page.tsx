@@ -5,17 +5,26 @@ import { auth } from "@/auth";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 import { loginAction } from "./actions";
 
+export const metadata = {
+  robots: { index: false, follow: false },
+  title: "Entrar",
+};
+
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; error?: string }>;
 }) {
   const session = await auth();
-  if (session && session.user.isActive !== false) {
+  if (session?.user.status === "ACTIVE") {
     redirect("/dashboard");
   }
 
   const params = await searchParams;
+  const callbackUrl =
+    params.callbackUrl?.startsWith("/") && !params.callbackUrl.startsWith("//")
+      ? params.callbackUrl
+      : "/dashboard";
   const errorMessageByCode: Record<string, string> = {
     missing: "Informe o e-mail e a senha para acessar o sistema.",
     email: "Informe um e-mail válido, como nome@empresa.com.",
@@ -34,10 +43,10 @@ export default async function LoginPage({
       <section className="login-gateway__intro">
         <div className="login-gateway__brand">PU</div>
         <p className="dashboard-kicker">PerfectUtilitares</p>
-        <h1>Seu painel de jornadas e fotos, pronto para operar.</h1>
+        <h1>Use as ferramentas livremente. Entre quando quiser guardar seu trabalho.</h1>
         <p>
-          Entre para validar horários, gerar relatórios e preparar fotos 3x4 em
-          uma área de trabalho organizada.
+          Jornada, Fotos 3x4 e PDF são públicos. A conta mantém seu histórico
+          de validações e dá acesso aos recursos pessoais.
         </p>
         <div className="login-gateway__features">
           <span>
@@ -63,8 +72,9 @@ export default async function LoginPage({
           <h2 className="text-xl font-semibold text-neutral-950">Entrar</h2>
         </div>
         <p className="mt-1 text-sm text-neutral-600">
-          Use seu e-mail e senha para acessar o sistema.
+          Use seu e-mail e senha para acessar seu histórico.
         </p>
+        <input type="hidden" name="callbackUrl" value={callbackUrl} />
 
         {errorMessage ? (
           <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -109,6 +119,12 @@ export default async function LoginPage({
           className="mt-3 inline-flex w-full justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
         >
           Esqueci minha senha
+        </Link>
+        <Link
+          href="/dashboard"
+          className="mt-3 inline-flex w-full justify-center rounded-md border border-emerald-300 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+        >
+          Continuar sem entrar
         </Link>
       </form>
     </main>

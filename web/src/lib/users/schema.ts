@@ -1,13 +1,8 @@
 import { z } from "zod";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 
-const booleanishSchema = z.preprocess((value) => {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  return value;
-}, z.boolean());
-
-export const userRoleSchema = z.enum(["ADMIN", "OPERATOR"]);
+const userRoleSchema = z.enum(["ADMIN", "OPERATOR"]);
+const userStatusSchema = z.enum(["ACTIVE", "BLOCKED", "BANNED"]);
 
 const fieldLabels: Record<string, string> = {
   tenantId: "Empresa",
@@ -16,10 +11,7 @@ const fieldLabels: Record<string, string> = {
   password: "Senha",
   role: "Perfil",
   token: "Convite",
-  isActive: "Status",
-  canAccessJornada: "Módulo Jornada",
-  canAccessFotos: "Módulo Fotos 3x4",
-  canAccessPdf: "Módulo PDF",
+  status: "Status",
   slug: "Apelido curto",
 };
 
@@ -52,10 +44,7 @@ export const userCreateSchema = z.object({
   name: nameSchema,
   password: passwordSchema,
   role: userRoleSchema.default("OPERATOR"),
-  isActive: booleanishSchema.default(true),
-  canAccessJornada: booleanishSchema.default(true),
-  canAccessFotos: booleanishSchema.default(true),
-  canAccessPdf: booleanishSchema.default(true),
+  status: userStatusSchema.default("ACTIVE"),
 });
 
 export const userPatchSchema = z
@@ -64,10 +53,7 @@ export const userPatchSchema = z
     tenantId: tenantIdSchema.optional(),
     name: nameSchema.optional(),
     role: userRoleSchema.optional(),
-    isActive: booleanishSchema.optional(),
-    canAccessJornada: booleanishSchema.optional(),
-    canAccessFotos: booleanishSchema.optional(),
-    canAccessPdf: booleanishSchema.optional(),
+    status: userStatusSchema.optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Informe ao menos um campo para atualizar.",
@@ -92,9 +78,6 @@ export const invitationCreateSchema = z.object({
   email: emailSchema,
   name: nameSchema,
   role: userRoleSchema.default("OPERATOR"),
-  canAccessJornada: booleanishSchema.default(true),
-  canAccessFotos: booleanishSchema.default(true),
-  canAccessPdf: booleanishSchema.default(true),
 });
 
 export const invitationAcceptSchema = z.object({
@@ -105,12 +88,6 @@ export const invitationAcceptSchema = z.object({
   password: passwordSchema,
 });
 
-export type UserCreateInput = z.input<typeof userCreateSchema>;
-export type UserCreateValues = z.output<typeof userCreateSchema>;
-export type UserPatchInput = z.input<typeof userPatchSchema>;
-export type UserPatchValues = z.output<typeof userPatchSchema>;
-export type InvitationCreateInput = z.input<typeof invitationCreateSchema>;
-export type InvitationCreateValues = z.output<typeof invitationCreateSchema>;
 
 export function zodIssueDetails(error: z.ZodError) {
   return error.issues.map((issue) => ({

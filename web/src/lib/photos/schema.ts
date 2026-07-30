@@ -14,9 +14,9 @@ export const PHOTO_DEFAULTS = {
   convertToJpg: false,
 } as const;
 
-export const photoOutputFormatSchema = z.enum(["jpeg", "png", "webp"]);
-export const photoFormatSchema = z.enum(["original", "jpeg", "png", "webp"]);
-export const photoBorderColorSchema = z.enum(["black", "white"]);
+const photoOutputFormatSchema = z.enum(["jpeg", "png", "webp"]);
+const photoFormatSchema = z.enum(["original", "jpeg", "png", "webp"]);
+const photoBorderColorSchema = z.enum(["black", "white"]);
 
 const booleanishSchema = z.preprocess((value) => {
   if (value === "true") return true;
@@ -85,7 +85,7 @@ export const cropAreaSchema = z.object({
     .positive("A altura do recorte deve ser maior que zero."),
 });
 
-export type PhotoFormat = z.infer<typeof photoFormatSchema>;
+type PhotoFormat = z.infer<typeof photoFormatSchema>;
 export type PhotoOutputFormat = z.infer<typeof photoOutputFormatSchema>;
 export type PhotoSettingsInput = z.input<typeof photoSettingsSchema>;
 export type PhotoSettings = z.infer<typeof photoSettingsSchema>;

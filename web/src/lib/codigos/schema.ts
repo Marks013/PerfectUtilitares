@@ -29,8 +29,6 @@ export const codigoJornadaSchema = z
     };
   });
 
-export const codigoJornadaPatchSchema = codigoJornadaSchema;
-
 export type CodigoJornadaFormInput = z.input<typeof codigoJornadaSchema>;
 export type CodigoJornadaFormValues = z.output<typeof codigoJornadaSchema>;
 

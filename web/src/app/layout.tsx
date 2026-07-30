@@ -4,8 +4,13 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "PerfectUtilitares",
-  description: "Sistema web para jornadas e fotos 3x4",
+  metadataBase: new URL(process.env.APP_URL ?? "http://localhost:3002"),
+  title: {
+    default: "PerfectUtilitares",
+    template: "%s | PerfectUtilitares",
+  },
+  description:
+    "Ferramentas públicas para validar jornadas, preparar fotos 3x4 e trabalhar com PDFs.",
   icons: {
     icon: "/favicon.ico",
   },

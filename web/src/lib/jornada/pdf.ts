@@ -1,6 +1,6 @@
 import PDFDocument from "pdfkit";
 
-export type JornadaPdfRecord = {
+type JornadaPdfRecord = {
   id: string;
   createdAt: Date;
   horariosOriginal: string;
@@ -107,10 +107,6 @@ function getRecordsCodigo(records: JornadaPdfRecord[]) {
       return `${label}: ${record.codigo ?? "-"}`;
     })
     .join(" | ");
-}
-
-function getEntryDuracao(entry: JornadaPdfEntry) {
-  return joinUnique(entry.records.map((record) => record.duracaoCalculada));
 }
 
 function getEntryPeriodo(entry: JornadaPdfEntry) {

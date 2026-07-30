@@ -1,8 +1,8 @@
 import { JornadaValidationForm } from "@/components/jornada-validation-form";
-import { requirePageModuleAccess } from "@/lib/modules/access";
+import { getOptionalPageSession } from "@/lib/modules/access";
 
 export default async function ValidarJornadaPage() {
-  const session = await requirePageModuleAccess("jornada");
+  const session = await getOptionalPageSession();
 
-  return <JornadaValidationForm userId={session.user.id} />;
+  return <JornadaValidationForm userId={session?.user.id ?? "public"} />;
 }

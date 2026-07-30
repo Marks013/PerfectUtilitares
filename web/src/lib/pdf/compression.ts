@@ -1,12 +1,6 @@
 import { createCanvas } from "@napi-rs/canvas";
 import { spawn } from "node:child_process";
-import {
-  copyFile,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import { ensureServerLocalStorage } from "@/lib/pdf/server-runtime";
@@ -17,12 +11,14 @@ import {
   resolvePdfStorageKey,
 } from "@/lib/pdf/storage";
 
-export type PdfCompressionQuality = "SCREEN" | "BALANCED" | "PRINT";
-export type PdfCompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
-export type PdfCompressionColorMode =
-  | "COLOR"
-  | "GRAYSCALE"
-  | "MONOCHROME";
+type PdfCompressionQuality =
+  | "SOURCE"
+  | "CUSTOM"
+  | "SCREEN"
+  | "BALANCED"
+  | "PRINT";
+type PdfCompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
+type PdfCompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
 
 export type PdfCompressionOptions = {
   quality: PdfCompressionQuality;
@@ -33,7 +29,7 @@ export type PdfCompressionOptions = {
   monochromeThreshold: number;
 };
 
-export class PdfToolError extends Error {
+class PdfToolError extends Error {
   constructor(
     public readonly code: string,
     message: string,
@@ -159,8 +155,7 @@ async function encodeRenderedPage({
   return {
     bytes: await pipeline
       .jpeg({
-        chromaSubsampling:
-          colorMode === "GRAYSCALE" ? "4:4:4" : "4:2:0",
+        chromaSubsampling: colorMode === "GRAYSCALE" ? "4:4:4" : "4:2:0",
         force: true,
         mozjpeg: true,
         optimiseCoding: true,
@@ -300,11 +295,7 @@ export async function compressPdfFile({
   const structuralPath = `${reservation.temporaryPath}.structural.pdf`;
   const rasterPath = `${reservation.temporaryPath}.raster.pdf`;
   const optimizedRasterPath = `${reservation.temporaryPath}.raster-optimized.pdf`;
-  const temporaryCandidates = [
-    structuralPath,
-    rasterPath,
-    optimizedRasterPath,
-  ];
+  const temporaryCandidates = [structuralPath, rasterPath, optimizedRasterPath];
 
   try {
     if (options.method === "LOSSLESS" || options.method === "AUTO") {
@@ -319,9 +310,7 @@ export async function compressPdfFile({
         outputPath: rasterPath,
         onProgress: (progress) =>
           onProgress?.(
-            options.method === "AUTO"
-              ? 10 + progress * 0.8
-              : progress * 0.9,
+            options.method === "AUTO" ? 10 + progress * 0.8 : progress * 0.9,
           ),
       });
       await optimizePdfStructure(rasterPath, optimizedRasterPath);

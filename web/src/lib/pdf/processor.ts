@@ -52,7 +52,7 @@ const NON_STRUCTURAL_OPERATIONS = new Set([
   "EXCEL_TO_PDF",
 ]);
 
-export class PdfProcessingError extends Error {
+class PdfProcessingError extends Error {
   constructor(
     public readonly code: string,
     message: string,

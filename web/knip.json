@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreFiles": [
+    "public/global.js",
+    "public/mediapipe/face_detection/**"
+  ],
+  "ignoreDependencies": [
+    "@mediapipe/face_detection"
+  ],
+  "ignoreBinaries": [
+    "qpdf"
+  ]
+}

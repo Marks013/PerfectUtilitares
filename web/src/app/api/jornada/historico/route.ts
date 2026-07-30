@@ -8,7 +8,6 @@ import {
   requireContentType,
   requireMaxContentLength,
   requireAdmin,
-  requireModuleAccess,
   requireSameOrigin,
   requireSession,
 } from "@/lib/api/security";
@@ -24,7 +23,7 @@ const selectedDeleteSchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const guard = await requireModuleAccess("jornada");
+  const guard = await requireSession();
   if (!guard.ok) {
     return guard.response;
   }

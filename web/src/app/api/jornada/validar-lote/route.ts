@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
+  getOptionalSession,
   jsonError,
   methodNotAllowed,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
 import {
@@ -15,6 +15,7 @@ import {
 import { generateJornadaBatchReportPdf } from "@/lib/jornada/batch-pdf";
 import type { JornadaBatchConfig } from "@/lib/jornada/batch-validation";
 import { prisma } from "@/lib/prisma";
+import { recordUserUsage } from "@/lib/usage/record";
 
 export const runtime = "nodejs";
 
@@ -91,20 +92,18 @@ export function GET() {
 
 export async function POST(request: Request) {
   try {
-    const guard = await requireModuleAccess("jornada");
-    if (!guard.ok) {
-      return guard.response;
-    }
-
     const originError = requireSameOrigin(request);
     if (originError) {
       return originError;
     }
 
-    const limited = enforceRateLimit(request, {
+    const session = await getOptionalSession();
+    const limited = await enforceSharedRateLimit(request, {
       keyPrefix: "jornada-validar-lote",
-      limit: 12,
+      limit: 6,
       windowMs: 60_000,
+      dailyLimit: 12,
+      authenticated: Boolean(session),
     });
     if (limited) {
       return limited;
@@ -147,6 +146,13 @@ export async function POST(request: Request) {
         .toISOString()
         .replace(/\D/g, "")
         .slice(0, 14);
+      await recordUserUsage({
+        userId: session?.user.id,
+        module: "JORNADA",
+        operation: "VALIDAR_LOTE_PDF",
+        inputBytes: file.size,
+        outputBytes: pdf.byteLength,
+      });
 
       return new NextResponse(new Uint8Array(pdf), {
         status: 200,
@@ -159,6 +165,13 @@ export async function POST(request: Request) {
         },
       });
     }
+
+    await recordUserUsage({
+      userId: session?.user.id,
+      module: "JORNADA",
+      operation: "VALIDAR_LOTE",
+      inputBytes: file.size,
+    });
 
     return NextResponse.json(report);
   } catch (error) {

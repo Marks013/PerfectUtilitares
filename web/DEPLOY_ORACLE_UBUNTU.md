@@ -17,7 +17,7 @@ Revise o `.env` gerado antes de subir:
 ## Subir containers
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d --build
 docker compose logs -f app
 ```
 
@@ -37,4 +37,6 @@ docker compose exec app npm run prisma:validate
 docker compose exec app npm run typecheck
 ```
 
-Para producao, aponte o proxy HTTPS do servidor para `app:3000` ou para a porta publicada `3000`.
+No Nginx Proxy Manager em Docker, aponte o proxy HTTPS para
+`perfectutilitares:3000`. A porta `APP_PORT` fica restrita ao proprio host por
+padrao.

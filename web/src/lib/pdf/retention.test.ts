@@ -57,8 +57,18 @@ describe("PDF storage cleanup", () => {
   it("removes consumed inputs after a successful job", async () => {
     mocks.jobFindFirst.mockResolvedValue({
       artifacts: [
-        { id: "input-1", storageKey: "job/input/one.pdf" },
-        { id: "preview-1", storageKey: "job/preview/one.png" },
+        {
+          id: "input-1",
+          kind: "INPUT",
+          storageKey: "job/input/one.pdf",
+          sizeBytes: BigInt(1_000),
+        },
+        {
+          id: "preview-1",
+          kind: "PREVIEW",
+          storageKey: "job/preview/one.png",
+          sizeBytes: BigInt(200),
+        },
       ],
     });
 
@@ -77,6 +87,44 @@ describe("PDF storage cleanup", () => {
       where: { id: "job-1", status: "SUCCEEDED" },
       data: { inputBytes: BigInt(0) },
     });
+  });
+
+  it("keeps failed file metadata so retention can retry cleanup", async () => {
+    mocks.jobFindFirst.mockResolvedValue({
+      artifacts: [
+        {
+          id: "input-failed",
+          kind: "INPUT",
+          storageKey: "job/input/failed.pdf",
+          sizeBytes: BigInt(1_500),
+        },
+        {
+          id: "preview-removed",
+          kind: "PREVIEW",
+          storageKey: "job/preview/removed.png",
+          sizeBytes: BigInt(300),
+        },
+      ],
+    });
+    mocks.removeStorageKey
+      .mockRejectedValueOnce(new Error("disk busy"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(cleanupCompletedPdfJobInputs("job-1")).resolves.toEqual({
+      removed: 1,
+    });
+    expect(mocks.artifactDeleteMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["preview-removed"] },
+        jobId: "job-1",
+        kind: { in: ["INPUT", "PREVIEW"] },
+      },
+    });
+    expect(mocks.jobUpdateMany).toHaveBeenCalledWith({
+      where: { id: "job-1", status: "SUCCEEDED" },
+      data: { inputBytes: BigInt(1_500) },
+    });
+    expect(mocks.captureException).toHaveBeenCalledOnce();
   });
 
   it("deletes expired files and database records permanently", async () => {

@@ -1,7 +1,5 @@
 import { PdfOfficeConvertWorkspace } from "@/components/pdf/pdf-office-convert-workspace";
-import { requirePageModuleAccess } from "@/lib/modules/access";
 
-export default async function ExcelToPdfPage() {
-  await requirePageModuleAccess("pdf");
+export default function ExcelToPdfPage() {
   return <PdfOfficeConvertWorkspace operation="EXCEL_TO_PDF" />;
 }

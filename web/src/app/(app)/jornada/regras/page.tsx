@@ -5,6 +5,11 @@ import { JornadaRulesManager } from "@/components/jornada-rules-manager";
 import type { JornadaRuleFormValues } from "@/lib/jornada/rule-schema";
 import { prisma } from "@/lib/prisma";
 
+export const metadata = {
+  robots: { index: false, follow: false },
+  title: "Regras de Jornada",
+};
+
 const diasValidos = ["util", "sabado", "domingo", "feriado"] as const;
 
 function normalizeDiasValidos(dias: string[]) {
@@ -17,7 +22,10 @@ function normalizeDiasValidos(dias: string[]) {
 export default async function RegrasPage() {
   const session = await auth();
 
-  if (session?.user.role !== "ADMIN") {
+  if (
+    session?.user.status !== "ACTIVE" ||
+    session.user.role !== "ADMIN"
+  ) {
     redirect("/dashboard");
   }
 
@@ -26,7 +34,7 @@ export default async function RegrasPage() {
       orderBy: [{ active: "desc" }, { duracaoMinutos: "asc" }],
     }),
     prisma.user.findMany({
-      where: { isActive: true },
+      where: { status: "ACTIVE" },
       select: { id: true, name: true, email: true },
       orderBy: [{ name: "asc" }, { email: "asc" }],
       take: 200,

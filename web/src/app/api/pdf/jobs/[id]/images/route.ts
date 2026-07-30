@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import sharp, { type Metadata } from "sharp";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
   jsonError,
   methodNotAllowed,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
-import { pdfJobAccessWhere } from "@/lib/pdf/access";
+import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
 import {
   MAX_PDF_IMAGE_BYTES,
   MAX_PDF_JOB_BYTES,
@@ -44,19 +43,18 @@ export async function POST(request: Request, context: RouteContext) {
   const lengthError = requireMaxContentLength(request, MAX_PDF_IMAGE_BYTES);
   if (lengthError) return lengthError;
 
-  const rateLimitError = enforceRateLimit(request, {
+  const owner = await getPdfOwnerContext();
+  const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 30,
     windowMs: 60_000,
     keyPrefix: "pdf-image-upload",
+    authenticated: Boolean(owner.session),
   });
   if (rateLimitError) return rateLimitError;
 
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
-
   const { id } = await context.params;
   const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(guard.session) },
+    where: { id, ...pdfJobAccessWhere(owner) },
     include: { _count: { select: { artifacts: true } } },
   });
   if (!job) {

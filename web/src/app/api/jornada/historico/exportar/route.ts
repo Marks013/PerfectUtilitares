@@ -7,8 +7,8 @@ import {
   readJsonBody,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
+  requireSession,
 } from "@/lib/api/security";
 import { generateJornadaHistoryPdf } from "@/lib/jornada/pdf";
 import { prisma } from "@/lib/prisma";
@@ -36,7 +36,7 @@ export function GET() {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireModuleAccess("jornada");
+  const guard = await requireSession();
   if (!guard.ok) {
     return guard.response;
   }

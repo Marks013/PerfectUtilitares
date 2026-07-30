@@ -19,6 +19,18 @@ enum UserRole {
   OPERATOR
 }
 
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+  BANNED
+}
+
+enum UsageModule {
+  JORNADA
+  FOTOS
+  PDF
+}
+
 enum PdfJobStatus {
   DRAFT
   QUEUED
@@ -73,13 +85,11 @@ model User {
   name              String
   passwordHash      String
   role              UserRole            @default(OPERATOR)
-  isActive          Boolean             @default(true)
-  canAccessJornada  Boolean             @default(true)
-  canAccessFotos    Boolean             @default(true)
-  canAccessPdf      Boolean             @default(true)
+  status            UserStatus          @default(ACTIVE)
   validations       JornadaValidation[]
   jornadaExceptions JornadaException[]
   pdfJobs           PdfJob[]
+  usageDaily        UserUsageDaily[]
   auditLogs         AuditLog[]
   invitations       UserInvitation[]    @relation("InvitedBy")
   createdAt         DateTime            @default(now())
@@ -100,21 +110,18 @@ model Tenant {
 }
 
 model UserInvitation {
-  id               String    @id @default(cuid())
-  tenantId         String
-  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  invitedById      String?
-  invitedBy        User?     @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
-  email            String
-  name             String
-  role             UserRole  @default(OPERATOR)
-  canAccessJornada Boolean   @default(true)
-  canAccessFotos   Boolean   @default(true)
-  canAccessPdf     Boolean   @default(true)
-  tokenHash        String    @unique
-  expiresAt        DateTime
-  acceptedAt       DateTime?
-  createdAt        DateTime  @default(now())
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedById String?
+  invitedBy   User?     @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  email       String
+  name        String
+  role        UserRole  @default(OPERATOR)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([tenantId])
   @@index([email])
@@ -122,27 +129,30 @@ model UserInvitation {
 }
 
 model PdfJob {
-  id           String        @id @default(cuid())
-  tenantId     String
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId       String?
-  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
-  operation    PdfOperation
-  status       PdfJobStatus  @default(DRAFT)
-  progress     Int           @default(0)
-  options      Json?
-  errorCode    String?
-  errorMessage String?
-  inputBytes   BigInt        @default(0)
-  outputBytes  BigInt        @default(0)
-  startedAt    DateTime?
-  completedAt  DateTime?
-  expiresAt    DateTime
-  artifacts    PdfArtifact[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id               String        @id @default(cuid())
+  tenantId         String?
+  tenant           Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId           String?
+  user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ownerSessionHash String?
+  operation        PdfOperation
+  status           PdfJobStatus  @default(DRAFT)
+  progress         Int           @default(0)
+  options          Json?
+  errorCode        String?
+  errorMessage     String?
+  inputBytes       BigInt        @default(0)
+  outputBytes      BigInt        @default(0)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  expiresAt        DateTime
+  artifacts        PdfArtifact[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
   @@index([expiresAt])
+  @@index([ownerSessionHash, status, expiresAt])
+  @@index([userId, status, expiresAt])
 }
 
 model PdfArtifact {
@@ -159,6 +169,33 @@ model PdfArtifact {
   createdAt    DateTime        @default(now())
 
   @@index([jobId, kind])
+}
+
+model ApiRateLimitBucket {
+  key       String   @id
+  count     Int
+  resetAt   DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([resetAt])
+}
+
+model UserUsageDaily {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date        DateTime    @db.Date
+  module      UsageModule
+  operation   String
+  count       Int         @default(0)
+  inputBytes  BigInt      @default(0)
+  outputBytes BigInt      @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([userId, date, module, operation])
+  @@index([date])
+  @@index([userId, date])
 }
 
 model JornadaRule {

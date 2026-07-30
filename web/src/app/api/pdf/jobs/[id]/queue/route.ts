@@ -1,13 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
   jsonError,
   methodNotAllowed,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
-import { pdfJobAccessWhere } from "@/lib/pdf/access";
+import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
 import { enqueuePdfJob } from "@/lib/pdf/queue";
 import {
   jpgToPdfOptionsSchema,
@@ -16,6 +15,7 @@ import {
 } from "@/lib/pdf/schema";
 import { serializePdfJob } from "@/lib/pdf/serialization";
 import { prisma } from "@/lib/prisma";
+import { recordUserUsage } from "@/lib/usage/record";
 
 export const runtime = "nodejs";
 
@@ -51,19 +51,19 @@ export async function POST(request: Request, context: RouteContext) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
 
-  const rateLimitError = enforceRateLimit(request, {
+  const owner = await getPdfOwnerContext();
+  const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 10,
     windowMs: 60_000,
     keyPrefix: "pdf-job-queue",
+    dailyLimit: 15,
+    authenticated: Boolean(owner.session),
   });
   if (rateLimitError) return rateLimitError;
 
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
-
   const { id } = await context.params;
   const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(guard.session) },
+    where: { id, ...pdfJobAccessWhere(owner) },
     include: {
       artifacts: {
         where: { kind: "INPUT" },
@@ -192,8 +192,14 @@ export async function POST(request: Request, context: RouteContext) {
         operation: job.operation,
         pages: manifest?.pages.length ?? 0,
       },
-      userId: guard.session.user.id,
+      userId: owner.session?.user.id ?? null,
     },
+  });
+  await recordUserUsage({
+    userId: owner.session?.user.id,
+    module: "PDF",
+    operation: job.operation,
+    inputBytes: job.inputBytes,
   });
 
   const queuedJob = await prisma.pdfJob.findUniqueOrThrow({

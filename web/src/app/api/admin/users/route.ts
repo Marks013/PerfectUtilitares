@@ -14,10 +14,7 @@ const userSelect = {
   email: true,
   name: true,
   role: true,
-  isActive: true,
-  canAccessJornada: true,
-  canAccessFotos: true,
-  canAccessPdf: true,
+  status: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -30,8 +27,7 @@ export async function GET() {
 
   const users = await prisma.user.findMany({
     select: userSelect,
-    orderBy: [{ isActive: "desc" }, { name: "asc" }],
-    take: 200,
+    orderBy: [{ status: "asc" }, { name: "asc" }],
   });
 
   return NextResponse.json(users);

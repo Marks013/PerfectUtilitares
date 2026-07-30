@@ -1,8 +1,8 @@
 import { Photo3x4Workspace } from "@/components/photo-3x4-workspace";
-import { requirePageModuleAccess } from "@/lib/modules/access";
+import { getOptionalPageSession } from "@/lib/modules/access";
 
 export default async function FotosPage() {
-  const session = await requirePageModuleAccess("fotos");
+  const session = await getOptionalPageSession();
 
-  return <Photo3x4Workspace userId={session.user.id} />;
+  return <Photo3x4Workspace userId={session?.user.id ?? "public"} />;
 }

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 export const AlertDialog = AlertDialogPrimitive.Root;
 export const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
-export const AlertDialogPortal = AlertDialogPrimitive.Portal;
+const AlertDialogPortal = AlertDialogPrimitive.Portal;
 export const AlertDialogCancel = AlertDialogPrimitive.Cancel;
 export const AlertDialogAction = AlertDialogPrimitive.Action;
 

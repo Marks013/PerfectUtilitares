@@ -14,39 +14,27 @@ describe("user schemas", () => {
       name: "Administrador",
       password: "admin123",
       role: "ADMIN",
-      isActive: "false",
-      canAccessJornada: "true",
-      canAccessFotos: "false",
-      canAccessPdf: "true",
+      status: "BLOCKED",
     });
 
     expect(parsed).toMatchObject({
       tenantId: "cltenant001",
       email: "admin@local.test",
       role: "ADMIN",
-      isActive: false,
-      canAccessJornada: true,
-      canAccessFotos: false,
-      canAccessPdf: true,
+      status: "BLOCKED",
     });
   });
 
-  it("normalizes invitation email and module flags", () => {
+  it("normalizes invitation email", () => {
     const parsed = invitationCreateSchema.parse({
       tenantId: "cltenant001",
       email: " Operador@Local.Test ",
       name: "Operador",
       role: "OPERATOR",
-      canAccessJornada: "false",
-      canAccessFotos: "true",
-      canAccessPdf: "false",
     });
 
     expect(parsed).toMatchObject({
       email: "operador@local.test",
-      canAccessJornada: false,
-      canAccessFotos: true,
-      canAccessPdf: false,
     });
   });
 

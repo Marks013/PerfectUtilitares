@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Check,
   Download,
+  FileSearch,
   FileText,
   Gauge,
   Loader2,
@@ -15,12 +16,17 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
+import {
+  analyzePdfForCompression,
+  deriveCompressionRecommendation,
+  type CompressionColorMode,
+  type CompressionMethod,
+  type PdfCompressionAnalysis,
+} from "@/lib/pdf/client-compression-analysis";
 
-type CompressionQuality = "SCREEN" | "BALANCED" | "PRINT";
-type CompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
-type CompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
+type CompressionQuality = "SOURCE" | "SCREEN" | "BALANCED" | "PRINT";
 
 type CompressionSettings = {
   preset: CompressionQuality | null;
@@ -56,7 +62,7 @@ type WorkState = {
 };
 
 const COMPRESSION_PRESETS: Record<
-  CompressionQuality,
+  Exclude<CompressionQuality, "SOURCE">,
   Omit<CompressionSettings, "preset">
 > = {
   SCREEN: {
@@ -83,7 +89,7 @@ const COMPRESSION_PRESETS: Record<
 };
 
 const QUALITY_OPTIONS: Array<{
-  value: CompressionQuality;
+  value: Exclude<CompressionQuality, "SOURCE">;
   label: string;
   description: string;
 }> = [
@@ -148,63 +154,6 @@ const COLOR_OPTIONS: Array<{
   },
 ];
 
-const DEFAULT_SETTINGS: CompressionSettings = {
-  preset: "BALANCED",
-  ...COMPRESSION_PRESETS.BALANCED,
-};
-
-function isCompressionMethod(value: unknown): value is CompressionMethod {
-  return value === "AUTO" || value === "LOSSLESS" || value === "RASTER";
-}
-
-function isCompressionColorMode(
-  value: unknown,
-): value is CompressionColorMode {
-  return (
-    value === "COLOR" || value === "GRAYSCALE" || value === "MONOCHROME"
-  );
-}
-
-function readSavedSettings(value: string | null): CompressionSettings | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as Partial<CompressionSettings>;
-    if (
-      !isCompressionMethod(parsed.method) ||
-      !isCompressionColorMode(parsed.colorMode) ||
-      typeof parsed.dpi !== "number" ||
-      !Number.isInteger(parsed.dpi) ||
-      parsed.dpi < 72 ||
-      parsed.dpi > 300 ||
-      typeof parsed.imageQuality !== "number" ||
-      !Number.isInteger(parsed.imageQuality) ||
-      parsed.imageQuality < 35 ||
-      parsed.imageQuality > 95 ||
-      typeof parsed.monochromeThreshold !== "number" ||
-      !Number.isInteger(parsed.monochromeThreshold) ||
-      parsed.monochromeThreshold < 64 ||
-      parsed.monochromeThreshold > 224
-    ) {
-      return null;
-    }
-    return {
-      preset:
-        parsed.preset === "SCREEN" ||
-        parsed.preset === "BALANCED" ||
-        parsed.preset === "PRINT"
-          ? parsed.preset
-          : null,
-      method: parsed.method,
-      dpi: parsed.dpi,
-      colorMode: parsed.colorMode,
-      imageQuality: parsed.imageQuality,
-      monochromeThreshold: parsed.monochromeThreshold,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function readApiError(value: unknown, fallback: string) {
   return (value as ApiError | null)?.error?.message ?? fallback;
 }
@@ -216,6 +165,28 @@ function getFileKey(file: File) {
 function formatBytes(value: number) {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function getContentKindLabel(analysis: PdfCompressionAnalysis) {
+  if (analysis.contentKind === "VECTOR") return "Texto e vetores";
+  if (analysis.contentKind === "MIXED") return "Conteúdo misto";
+  return "Documento digitalizado";
+}
+
+function getColorModeLabel(colorMode: CompressionColorMode) {
+  return COLOR_OPTIONS.find((option) => option.value === colorMode)?.label;
+}
+
+function getDetectedDpiLabel(analysis: PdfCompressionAnalysis) {
+  if (analysis.sourceDpi === null) return "Não se aplica";
+  if (
+    analysis.minimumDpi !== null &&
+    analysis.maximumDpi !== null &&
+    analysis.maximumDpi - analysis.minimumDpi >= 20
+  ) {
+    return `${analysis.minimumDpi}–${analysis.maximumDpi} DPI`;
+  }
+  return `${analysis.sourceDpi} DPI`;
 }
 
 function triggerDownload(url: string) {
@@ -255,9 +226,7 @@ function uploadPdf(
       if (request.status >= 200 && request.status < 300) {
         resolve();
       } else {
-        reject(
-          new Error(readApiError(body, `Falha ao enviar ${file.name}.`)),
-        );
+        reject(new Error(readApiError(body, `Falha ao enviar ${file.name}.`)));
       }
     });
     request.addEventListener("error", () => {
@@ -269,9 +238,14 @@ function uploadPdf(
 
 export function PdfCompressWorkspace() {
   const [files, setFiles] = useState<File[]>([]);
-  const [settings, setSettings] =
-    useState<CompressionSettings>(DEFAULT_SETTINGS);
-  const [settingsReady, setSettingsReady] = useState(false);
+  const [settings, setSettings] = useState<CompressionSettings | null>(null);
+  const [analyses, setAnalyses] = useState<PdfCompressionAnalysis[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState({
+    completed: 0,
+    total: 0,
+  });
+  const analysisRunRef = useRef(0);
   const [jobId, setJobId] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<PdfOutput[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -285,51 +259,73 @@ export function PdfCompressWorkspace() {
     work.phase === "QUEUED" ||
     work.phase === "RUNNING";
 
-  useEffect(() => {
-    const saved = readSavedSettings(
-      window.localStorage.getItem("pdf-compression-settings-v2"),
-    );
-    if (saved) {
-      setSettings(saved);
-    } else {
-      const legacy = window.localStorage.getItem("pdf-compression-quality");
-      if (
-        legacy === "SCREEN" ||
-        legacy === "BALANCED" ||
-        legacy === "PRINT"
-      ) {
-        setSettings({
-          preset: legacy,
-          ...COMPRESSION_PRESETS[legacy],
-        });
-      }
-    }
-    setSettingsReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!settingsReady) return;
-    window.localStorage.setItem(
-      "pdf-compression-settings-v2",
-      JSON.stringify(settings),
-    );
-  }, [settings, settingsReady]);
-
-  function applyPreset(preset: CompressionQuality) {
+  function applyPreset(preset: Exclude<CompressionQuality, "SOURCE">) {
     setSettings({
       preset,
       ...COMPRESSION_PRESETS[preset],
     });
   }
 
-  function updateSettings(
-    next: Partial<Omit<CompressionSettings, "preset">>,
+  function applyDocumentRecommendation(
+    currentAnalyses: PdfCompressionAnalysis[],
   ) {
-    setSettings((current) => ({
-      ...current,
-      ...next,
-      preset: null,
-    }));
+    if (!currentAnalyses.length) return;
+    setSettings({
+      preset: "SOURCE",
+      ...deriveCompressionRecommendation(currentAnalyses),
+    });
+  }
+
+  function updateSettings(next: Partial<Omit<CompressionSettings, "preset">>) {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            ...next,
+            preset: null,
+          }
+        : current,
+    );
+  }
+
+  async function analyzeFiles(nextFiles: File[]) {
+    const runId = ++analysisRunRef.current;
+    setAnalyses([]);
+    setSettings(null);
+    setAnalysisProgress({ completed: 0, total: nextFiles.length });
+
+    if (!nextFiles.length) {
+      setAnalyzing(false);
+      return;
+    }
+
+    setAnalyzing(true);
+    const nextAnalyses: PdfCompressionAnalysis[] = [];
+
+    try {
+      for (const [index, file] of nextFiles.entries()) {
+        const analysis = await analyzePdfForCompression(file, getFileKey(file));
+        if (analysisRunRef.current !== runId) return;
+        nextAnalyses.push(analysis);
+        setAnalyses([...nextAnalyses]);
+        setAnalysisProgress({
+          completed: index + 1,
+          total: nextFiles.length,
+        });
+      }
+      applyDocumentRecommendation(nextAnalyses);
+    } catch {
+      if (analysisRunRef.current !== runId) return;
+      setAnalyses([]);
+      setSettings(null);
+      setError(
+        "Não foi possível analisar este PDF. Remova o arquivo e tente novamente.",
+      );
+    } finally {
+      if (analysisRunRef.current === runId) {
+        setAnalyzing(false);
+      }
+    }
   }
 
   const onDrop = (acceptedFiles: File[]) => {
@@ -337,17 +333,27 @@ export function PdfCompressWorkspace() {
     setOutputs([]);
     setJobId(null);
     setWork({ phase: "IDLE", progress: 0, detail: "" });
-    setFiles((current) => {
-      const next = new Map(current.map((file) => [getFileKey(file), file]));
-      acceptedFiles.forEach((file) => next.set(getFileKey(file), file));
-      return [...next.values()].slice(0, 20);
-    });
+    const next = new Map(files.map((file) => [getFileKey(file), file]));
+    acceptedFiles.forEach((file) => next.set(getFileKey(file), file));
+    const nextFiles = [...next.values()].slice(0, 20);
+    setFiles(nextFiles);
+    void analyzeFiles(nextFiles);
   };
+
+  function removeFile(fileKey: string) {
+    const nextFiles = files.filter((file) => getFileKey(file) !== fileKey);
+    setError(null);
+    setOutputs([]);
+    setJobId(null);
+    setWork({ phase: "IDLE", progress: 0, detail: "" });
+    setFiles(nextFiles);
+    void analyzeFiles(nextFiles);
+  }
 
   const { fileRejections, getInputProps, getRootProps, isDragActive } =
     useDropzone({
       accept: { "application/pdf": [".pdf"] },
-      disabled: busy,
+      disabled: busy || analyzing,
       maxFiles: 20,
       maxSize: 100 * 1024 * 1024,
       onDrop,
@@ -368,19 +374,55 @@ export function PdfCompressWorkspace() {
   );
   const outputBytes = useMemo(
     () =>
-      outputs.reduce(
-        (total, output) => total + Number(output.sizeBytes),
-        0,
-      ),
+      outputs.reduce((total, output) => total + Number(output.sizeBytes), 0),
     [outputs],
   );
   const savedPercent =
-    inputBytes > 0
-      ? Math.round((1 - outputBytes / inputBytes) * 100)
-      : 0;
+    inputBytes > 0 ? Math.round((1 - outputBytes / inputBytes) * 100) : 0;
+  const analysisSummary = useMemo(() => {
+    if (!analyses.length) return null;
+    const sourceDpis = analyses
+      .map((analysis) => analysis.sourceDpi)
+      .filter((dpi): dpi is number => dpi !== null)
+      .sort((left, right) => left - right);
+    const middle = Math.floor(sourceDpis.length / 2);
+    const sourceDpi = sourceDpis.length
+      ? sourceDpis.length % 2
+        ? sourceDpis[middle]!
+        : Math.round((sourceDpis[middle - 1]! + sourceDpis[middle]!) / 2)
+      : null;
+    const contentKind = analyses.some(
+      (analysis) => analysis.contentKind === "SCANNED",
+    )
+      ? "Documento digitalizado"
+      : analyses.some((analysis) => analysis.contentKind === "MIXED")
+        ? "Conteúdo misto"
+        : "Texto e vetores";
+    const colorMode: CompressionColorMode = analyses.some(
+      (analysis) => analysis.colorMode === "COLOR",
+    )
+      ? "COLOR"
+      : analyses.some((analysis) => analysis.colorMode === "GRAYSCALE")
+        ? "GRAYSCALE"
+        : "MONOCHROME";
+
+    return {
+      pageCount: analyses.reduce(
+        (total, analysis) => total + analysis.pageCount,
+        0,
+      ),
+      sampledPages: analyses.reduce(
+        (total, analysis) => total + analysis.sampledPages,
+        0,
+      ),
+      sourceDpi,
+      contentKind,
+      colorMode,
+    };
+  }, [analyses]);
 
   async function processFiles() {
-    if (!files.length || busy) return;
+    if (!files.length || busy || analyzing || !settings) return;
 
     setError(null);
     setOutputs([]);
@@ -392,7 +434,7 @@ export function PdfCompressWorkspace() {
         body: JSON.stringify({
           operation: "COMPRESS",
           options: {
-            quality: settings.preset ?? "BALANCED",
+            quality: settings.preset ?? "CUSTOM",
             method: settings.method,
             dpi: settings.dpi,
             colorMode: settings.colorMode,
@@ -430,10 +472,9 @@ export function PdfCompressWorkspace() {
         });
       }
 
-      const queueResponse = await fetch(
-        `/api/pdf/jobs/${currentJobId}/queue`,
-        { method: "POST" },
-      );
+      const queueResponse = await fetch(`/api/pdf/jobs/${currentJobId}/queue`, {
+        method: "POST",
+      });
       const queueBody = (await queueResponse.json()) as
         | { job: PdfJob }
         | ApiError;
@@ -454,9 +495,7 @@ export function PdfCompressWorkspace() {
         const response = await fetch(`/api/pdf/jobs/${currentJobId}`, {
           cache: "no-store",
         });
-        const body = (await response.json()) as
-          | { job: PdfJob }
-          | ApiError;
+        const body = (await response.json()) as { job: PdfJob } | ApiError;
         if (!response.ok || !("job" in body)) {
           throw new Error(
             readApiError(body, "Não foi possível acompanhar a compressão."),
@@ -530,26 +569,105 @@ export function PdfCompressWorkspace() {
       <section className="pdf-compress-settings">
         <div className="pdf-compress-settings__heading">
           <div>
-            <strong>Perfil de compactação</strong>
-            <small>As escolhas ficam salvas neste dispositivo.</small>
+            <strong>Configuração da compactação</strong>
+            <small>
+              {analyzing
+                ? `Analisando ${analysisProgress.completed} de ${analysisProgress.total}`
+                : analyses.length
+                  ? "Ajuste inicial calculado conforme o conteúdo enviado."
+                  : "Envie um PDF para detectar suas características."}
+            </small>
           </div>
           <span>
-            {settings.preset
-              ? QUALITY_OPTIONS.find(
-                  (option) => option.value === settings.preset,
-                )?.label
-              : "Personalizado"}
+            {analyzing
+              ? "Analisando"
+              : settings?.preset === "SOURCE"
+                ? "Baseada no documento"
+                : settings?.preset
+                  ? QUALITY_OPTIONS.find(
+                      (option) => option.value === settings.preset,
+                    )?.label
+                  : settings
+                    ? "Personalizado"
+                    : "Aguardando PDF"}
           </span>
         </div>
+
+        {analysisSummary ? (
+          <div className="pdf-compression-detected" aria-live="polite">
+            <div className="pdf-compression-detected__heading">
+              <FileSearch className="size-5" aria-hidden="true" />
+              <span>
+                <strong>Detectado nos arquivos</strong>
+                <small>
+                  Amostra de {analysisSummary.sampledPages} de{" "}
+                  {analysisSummary.pageCount} página
+                  {analysisSummary.pageCount === 1 ? "" : "s"}
+                </small>
+              </span>
+            </div>
+            <dl>
+              <div>
+                <dt>Conteúdo</dt>
+                <dd>{analysisSummary.contentKind}</dd>
+              </div>
+              <div>
+                <dt>Tonalidade</dt>
+                <dd>{getColorModeLabel(analysisSummary.colorMode)}</dd>
+              </div>
+              <div>
+                <dt>Resolução estimada</dt>
+                <dd>
+                  {analysisSummary.sourceDpi === null
+                    ? "Não se aplica a vetores"
+                    : `${analysisSummary.sourceDpi} DPI`}
+                </dd>
+              </div>
+            </dl>
+          </div>
+        ) : analyzing ? (
+          <div className="pdf-compression-empty" aria-live="polite">
+            <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+            <span>
+              <strong>Lendo o conteúdo dos PDFs</strong>
+              <small>
+                Detectando páginas, imagens, tonalidade e resolução.
+              </small>
+            </span>
+          </div>
+        ) : (
+          <div className="pdf-compression-empty">
+            <FileSearch className="size-5" aria-hidden="true" />
+            <span>
+              <strong>Nenhuma configuração aplicada</strong>
+              <small>
+                Os controles serão preenchidos somente após a análise do
+                documento.
+              </small>
+            </span>
+          </div>
+        )}
+
         <div className="pdf-quality-control" role="radiogroup">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={settings?.preset === "SOURCE"}
+            data-active={settings?.preset === "SOURCE"}
+            disabled={busy || analyzing || !analyses.length}
+            onClick={() => applyDocumentRecommendation(analyses)}
+          >
+            <strong>Do documento</strong>
+            <small>Usa a análise como ponto de partida</small>
+          </button>
           {QUALITY_OPTIONS.map((option) => (
             <button
               key={option.value}
               type="button"
               role="radio"
-              aria-checked={settings.preset === option.value}
-              data-active={settings.preset === option.value}
-              disabled={busy}
+              aria-checked={settings?.preset === option.value}
+              data-active={settings?.preset === option.value}
+              disabled={busy || analyzing || !files.length}
               onClick={() => applyPreset(option.value)}
             >
               <strong>{option.label}</strong>
@@ -558,150 +676,163 @@ export function PdfCompressWorkspace() {
           ))}
         </div>
 
-        <div className="pdf-compression-options">
-          <fieldset className="pdf-compression-option pdf-compression-option--wide">
-            <legend>
-              <Minimize2 className="size-4" aria-hidden="true" />
-              Tipo de compactação
-            </legend>
-            <div className="pdf-compression-methods" role="radiogroup">
-              {METHOD_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.method === option.value}
-                  data-active={settings.method === option.value}
-                  disabled={busy}
-                  onClick={() => updateSettings({ method: option.value })}
-                >
-                  <strong>{option.label}</strong>
-                  <small>{option.description}</small>
-                </button>
-              ))}
-            </div>
-          </fieldset>
+        {settings ? (
+          <>
+            <div className="pdf-compression-options">
+              <fieldset className="pdf-compression-option pdf-compression-option--wide">
+                <legend>
+                  <Minimize2 className="size-4" aria-hidden="true" />
+                  Tipo de compactação
+                </legend>
+                <div className="pdf-compression-methods" role="radiogroup">
+                  {METHOD_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.method === option.value}
+                      data-active={settings.method === option.value}
+                      disabled={busy}
+                      onClick={() => updateSettings({ method: option.value })}
+                    >
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
 
-          <fieldset
-            className="pdf-compression-option pdf-compression-option--wide"
-            disabled={busy || settings.method === "LOSSLESS"}
-          >
-            <legend>
-              <Palette className="size-4" aria-hidden="true" />
-              Tratamento de cor
-            </legend>
-            <div className="pdf-color-mode-control" role="radiogroup">
-              {COLOR_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.colorMode === option.value}
-                  data-active={settings.colorMode === option.value}
-                  onClick={() => updateSettings({ colorMode: option.value })}
+              <fieldset
+                className="pdf-compression-option pdf-compression-option--wide"
+                disabled={busy || settings.method === "LOSSLESS"}
+              >
+                <legend>
+                  <Palette className="size-4" aria-hidden="true" />
+                  Tratamento de cor
+                </legend>
+                <div className="pdf-color-mode-control" role="radiogroup">
+                  {COLOR_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.colorMode === option.value}
+                      data-active={settings.colorMode === option.value}
+                      onClick={() =>
+                        updateSettings({ colorMode: option.value })
+                      }
+                    >
+                      <span
+                        className="pdf-color-swatch"
+                        data-color={option.value.toLowerCase()}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.description}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+
+              <label className="pdf-compression-option">
+                <span>
+                  <ScanLine className="size-4" aria-hidden="true" />
+                  Resolução
+                </span>
+                <select
+                  value={settings.dpi}
+                  disabled={busy || settings.method === "LOSSLESS"}
+                  onChange={(event) =>
+                    updateSettings({ dpi: Number(event.target.value) })
+                  }
                 >
-                  <span
-                    className="pdf-color-swatch"
-                    data-color={option.value.toLowerCase()}
-                    aria-hidden="true"
-                  />
+                  {[72, 96, 120, 150, 200, 220, 300].map((dpi) => (
+                    <option key={dpi} value={dpi}>
+                      {dpi} DPI
+                    </option>
+                  ))}
+                </select>
+                <small>Menos DPI reduz mais; 150 DPI mantém boa leitura.</small>
+              </label>
+
+              {settings.colorMode === "MONOCHROME" ? (
+                <label className="pdf-compression-option">
                   <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
+                    <Gauge className="size-4" aria-hidden="true" />
+                    Corte do preto
+                    <b>{settings.monochromeThreshold}</b>
                   </span>
-                </button>
-              ))}
+                  <input
+                    type="range"
+                    min={64}
+                    max={224}
+                    step={4}
+                    value={settings.monochromeThreshold}
+                    disabled={busy || settings.method === "LOSSLESS"}
+                    onChange={(event) =>
+                      updateSettings({
+                        monochromeThreshold: Number(event.target.value),
+                      })
+                    }
+                  />
+                  <small>Valores maiores deixam mais áreas em preto.</small>
+                </label>
+              ) : (
+                <label className="pdf-compression-option">
+                  <span>
+                    <Gauge className="size-4" aria-hidden="true" />
+                    Qualidade JPEG
+                    <b>{settings.imageQuality}%</b>
+                  </span>
+                  <input
+                    type="range"
+                    min={35}
+                    max={95}
+                    step={1}
+                    value={settings.imageQuality}
+                    disabled={busy || settings.method === "LOSSLESS"}
+                    onChange={(event) =>
+                      updateSettings({
+                        imageQuality: Number(event.target.value),
+                      })
+                    }
+                  />
+                  <small>
+                    Entre 65% e 80% costuma equilibrar tamanho e nitidez.
+                  </small>
+                </label>
+              )}
             </div>
-          </fieldset>
 
-          <label className="pdf-compression-option">
-            <span>
-              <ScanLine className="size-4" aria-hidden="true" />
-              Resolução
-            </span>
-            <select
-              value={settings.dpi}
-              disabled={busy || settings.method === "LOSSLESS"}
-              onChange={(event) =>
-                updateSettings({ dpi: Number(event.target.value) })
-              }
+            <div
+              className="pdf-compression-summary"
+              data-method={settings.method}
             >
-              {[72, 96, 120, 150, 200, 220, 300].map((dpi) => (
-                <option key={dpi} value={dpi}>
-                  {dpi} DPI
-                </option>
-              ))}
-            </select>
-            <small>Menos DPI reduz mais; 150 DPI mantém boa leitura.</small>
-          </label>
-
-          {settings.colorMode === "MONOCHROME" ? (
-            <label className="pdf-compression-option">
-              <span>
-                <Gauge className="size-4" aria-hidden="true" />
-                Corte do preto
-                <b>{settings.monochromeThreshold}</b>
-              </span>
-              <input
-                type="range"
-                min={64}
-                max={224}
-                step={4}
-                value={settings.monochromeThreshold}
-                disabled={busy || settings.method === "LOSSLESS"}
-                onChange={(event) =>
-                  updateSettings({
-                    monochromeThreshold: Number(event.target.value),
-                  })
-                }
-              />
-              <small>Valores maiores deixam mais áreas em preto.</small>
-            </label>
-          ) : (
-            <label className="pdf-compression-option">
-              <span>
-                <Gauge className="size-4" aria-hidden="true" />
-                Qualidade JPEG
-                <b>{settings.imageQuality}%</b>
-              </span>
-              <input
-                type="range"
-                min={35}
-                max={95}
-                step={1}
-                value={settings.imageQuality}
-                disabled={busy || settings.method === "LOSSLESS"}
-                onChange={(event) =>
-                  updateSettings({ imageQuality: Number(event.target.value) })
-                }
-              />
-              <small>Entre 65% e 80% costuma equilibrar tamanho e nitidez.</small>
-            </label>
-          )}
-        </div>
-
-        <div className="pdf-compression-summary" data-method={settings.method}>
-          <strong>
-            {settings.method === "LOSSLESS"
-              ? "Conteúdo original preservado"
-              : settings.method === "AUTO"
-                ? "O menor resultado vence"
-                : "Configuração aplicada integralmente"}
-          </strong>
-          <small>
-            {settings.method === "LOSSLESS"
-              ? "Mantém texto selecionável, vetores e imagens sem rasterizar."
-              : `${settings.dpi} DPI · ${
-                  COLOR_OPTIONS.find(
-                    (option) => option.value === settings.colorMode,
-                  )?.label
-                } · ${
-                  settings.colorMode === "MONOCHROME"
-                    ? "PNG binário"
-                    : `JPEG ${settings.imageQuality}%`
-                }. A recompressão visual achata as páginas para reduzir imagens já compactadas.`}
-          </small>
-        </div>
+              <strong>
+                {settings.method === "LOSSLESS"
+                  ? "Conteúdo original preservado"
+                  : settings.method === "AUTO"
+                    ? "O menor resultado vence"
+                    : "Configuração aplicada integralmente"}
+              </strong>
+              <small>
+                {settings.method === "LOSSLESS"
+                  ? "Mantém texto selecionável, vetores e imagens sem rasterizar."
+                  : `${settings.dpi} DPI · ${
+                      COLOR_OPTIONS.find(
+                        (option) => option.value === settings.colorMode,
+                      )?.label
+                    } · ${
+                      settings.colorMode === "MONOCHROME"
+                        ? "PNG binário"
+                        : `JPEG ${settings.imageQuality}%`
+                    }. A recompressão visual achata as páginas para reduzir imagens já compactadas.`}
+              </small>
+            </div>
+          </>
+        ) : null}
       </section>
 
       <div
@@ -739,15 +870,21 @@ export function PdfCompressWorkspace() {
             <button
               type="button"
               className="pdf-primary-button"
-              disabled={busy || work.phase === "SUCCEEDED"}
+              disabled={
+                busy || analyzing || !settings || work.phase === "SUCCEEDED"
+              }
               onClick={() => void processFiles()}
             >
-              {busy ? (
+              {busy || analyzing ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
               ) : (
                 <Minimize2 className="size-4" aria-hidden="true" />
               )}
-              {busy ? "Processando" : "Comprimir arquivos"}
+              {analyzing
+                ? "Analisando"
+                : busy
+                  ? "Processando"
+                  : "Comprimir arquivos"}
             </button>
           </header>
 
@@ -757,19 +894,26 @@ export function PdfCompressWorkspace() {
                 <FileText className="size-5" aria-hidden="true" />
                 <span>
                   <strong>{file.name}</strong>
-                  <small>{formatBytes(file.size)}</small>
+                  <small>
+                    {formatBytes(file.size)}
+                    {(() => {
+                      const analysis = analyses.find(
+                        (item) => item.fileKey === getFileKey(file),
+                      );
+                      if (!analysis) return "";
+                      return ` · ${analysis.pageCount} página${
+                        analysis.pageCount === 1 ? "" : "s"
+                      } · ${getContentKindLabel(analysis)} · ${getColorModeLabel(
+                        analysis.colorMode,
+                      )} · ${getDetectedDpiLabel(analysis)}`;
+                    })()}
+                  </small>
                 </span>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || analyzing}
                   title={`Remover ${file.name}`}
-                  onClick={() =>
-                    setFiles((current) =>
-                      current.filter(
-                        (item) => getFileKey(item) !== getFileKey(file),
-                      ),
-                    )
-                  }
+                  onClick={() => removeFile(getFileKey(file))}
                 >
                   <X className="size-4" aria-hidden="true" />
                 </button>

@@ -13,7 +13,9 @@ import {
   requireSession,
 } from "@/lib/api/security";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
+import { removePdfJobFiles } from "@/lib/pdf/storage";
 import { prisma } from "@/lib/prisma";
+import { deleteAccountWithAdminInvariant } from "@/lib/users/account-mutations";
 
 export const runtime = "nodejs";
 
@@ -191,44 +193,25 @@ export async function DELETE(request: Request) {
   }
 
   const userId = guard.session.user.id;
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, email: true, tenantId: true, role: true },
+  const result = await deleteAccountWithAdminInvariant({
+    targetUserId: userId,
+    actorUserId: userId,
+    action: "SELF_DELETE",
   });
 
-  if (!user) {
-    return jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado");
+  if (!result.ok) {
+    return result.reason === "USER_NOT_FOUND"
+      ? jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado")
+      : jsonError(
+          400,
+          "LAST_ADMIN_DELETE_BLOCKED",
+          "Não é possível excluir a conta porque ela é o último administrador ativo do sistema.",
+        );
   }
 
-  if (user.role === "ADMIN") {
-    const activeAdminCount = await prisma.user.count({
-      where: { role: "ADMIN", isActive: true },
-    });
-
-    if (activeAdminCount <= 1) {
-      return jsonError(
-        400,
-        "LAST_ADMIN_DELETE_BLOCKED",
-        "Não é possível excluir a conta porque ela é o último administrador ativo do sistema.",
-      );
-    }
-  }
-
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: "SELF_DELETE",
-      entity: "User",
-      entityId: user.id,
-      metadata: {
-        email: user.email,
-        tenantId: user.tenantId,
-        role: user.role,
-      },
-    },
-  });
-
-  await prisma.user.delete({ where: { id: userId } });
+  await Promise.allSettled(
+    result.pdfJobIds.map((jobId) => removePdfJobFiles(jobId)),
+  );
 
   return NextResponse.json({ ok: true });
 }

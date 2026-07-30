@@ -5,7 +5,7 @@ import {
   type Size,
 } from "react-easy-crop";
 
-export type PhotoCropGeometry = {
+type PhotoCropGeometry = {
   key: string | null;
   mediaSize: MediaSize | null;
   cropSize: Size | null;

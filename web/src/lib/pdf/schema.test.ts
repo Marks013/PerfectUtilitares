@@ -15,9 +15,9 @@ describe("pdf schemas", () => {
   };
 
   it("accepts a supported operation", () => {
-    expect(
-      pdfJobCreateSchema.parse({ operation: "ORGANIZE" }),
-    ).toMatchObject({ operation: "ORGANIZE" });
+    expect(pdfJobCreateSchema.parse({ operation: "ORGANIZE" })).toMatchObject({
+      operation: "ORGANIZE",
+    });
   });
 
   it("rejects unknown operations", () => {
@@ -85,15 +85,13 @@ describe("pdf schemas", () => {
         pages: [{ ...page, rotation: 45 }],
       }).success,
     ).toBe(false);
-    expect(
-      pdfManifestSchema.safeParse({ version: 1, pages: [] }).success,
-    ).toBe(false);
+    expect(pdfManifestSchema.safeParse({ version: 1, pages: [] }).success).toBe(
+      false,
+    );
   });
 
   it("expands compact compression defaults", () => {
-    expect(
-      pdfCompressionOptionsSchema.parse({ quality: "SCREEN" }),
-    ).toEqual({
+    expect(pdfCompressionOptionsSchema.parse({ quality: "SCREEN" })).toEqual({
       quality: "SCREEN",
       method: "RASTER",
       dpi: 96,
@@ -119,6 +117,45 @@ describe("pdf schemas", () => {
       colorMode: "MONOCHROME",
       monochromeThreshold: 176,
     });
+  });
+
+  it("preserves settings detected from the source document", () => {
+    expect(
+      pdfCompressionOptionsSchema.parse({
+        quality: "SOURCE",
+        method: "AUTO",
+        dpi: 220,
+        colorMode: "GRAYSCALE",
+        imageQuality: 84,
+        monochromeThreshold: 160,
+      }),
+    ).toEqual({
+      quality: "SOURCE",
+      method: "AUTO",
+      dpi: 220,
+      colorMode: "GRAYSCALE",
+      imageQuality: 84,
+      monochromeThreshold: 160,
+    });
+  });
+
+  it("requires every setting for source and custom configurations", () => {
+    expect(
+      pdfCompressionOptionsSchema.safeParse({
+        quality: "SOURCE",
+        method: "AUTO",
+      }).success,
+    ).toBe(false);
+    expect(
+      pdfCompressionOptionsSchema.safeParse({
+        quality: "CUSTOM",
+        method: "RASTER",
+        dpi: 150,
+        colorMode: "COLOR",
+        imageQuality: 72,
+        monochromeThreshold: 160,
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects unsafe compression limits", () => {

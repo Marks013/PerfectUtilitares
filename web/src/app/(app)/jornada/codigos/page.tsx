@@ -3,10 +3,18 @@ import { auth } from "@/auth";
 import { CodigoJornadaManager } from "@/components/codigo-jornada-manager";
 import { prisma } from "@/lib/prisma";
 
+export const metadata = {
+  robots: { index: false, follow: false },
+  title: "Códigos de Jornada",
+};
+
 export default async function CodigosPage() {
   const session = await auth();
 
-  if (session?.user.role !== "ADMIN") {
+  if (
+    session?.user.status !== "ACTIVE" ||
+    session.user.role !== "ADMIN"
+  ) {
     redirect("/dashboard");
   }
 

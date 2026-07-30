@@ -15,7 +15,6 @@ import { auth } from "@/auth";
 const moduleCards = [
   {
     href: "/fotos",
-    accessKey: "canAccessFotos",
     eyebrow: "Editor de Fotos",
     title: "Fotos 3x4 prontas para usar",
     description:
@@ -30,7 +29,6 @@ const moduleCards = [
   },
   {
     href: "/pdf",
-    accessKey: "canAccessPdf",
     eyebrow: "Ferramentas PDF",
     title: "Organize documentos com precisão",
     description:
@@ -45,7 +43,6 @@ const moduleCards = [
   },
   {
     href: "/jornada/validar",
-    accessKey: "canAccessJornada",
     eyebrow: "Validador de jornada",
     title: "Valide horarios sem rodeio",
     description:
@@ -62,12 +59,7 @@ const moduleCards = [
 
 export default async function DashboardPage() {
   const session = await auth();
-  const canUseAllModules = session?.user.role === "ADMIN";
-
-  const visibleCards = moduleCards.filter((card) => {
-    if (canUseAllModules) return true;
-    return Boolean(session?.user[card.accessKey]);
-  });
+  const activeSession = session?.user.status !== "ACTIVE" ? null : session;
 
   return (
     <div className="dashboard-home">
@@ -77,13 +69,13 @@ export default async function DashboardPage() {
           <h1>Escolha o modulo e va direto ao trabalho.</h1>
         </div>
         <p>
-          A antiga visao operacional saiu de cena. Agora a entrada principal
-          reúne as ferramentas liberadas para o seu trabalho diário.
+          Jornada, Fotos 3x4 e PDF estão disponíveis sem cadastro. Entre apenas
+          quando quiser manter seu histórico de validações.
         </p>
       </section>
 
       <section className="module-grid" aria-label="Modulos principais">
-        {visibleCards.map((card) => {
+        {moduleCards.map((card) => {
           const Icon = card.icon;
 
           return (
@@ -126,12 +118,16 @@ export default async function DashboardPage() {
         })}
       </section>
 
-      {visibleCards.length === 0 ? (
+      {!activeSession ? (
         <section className="empty-access-panel">
-          <h2>Nenhum modulo liberado ainda</h2>
+          <h2>Quer guardar suas validações?</h2>
           <p>
-            Sua conta está ativa, mas ainda não possui acesso a nenhum módulo.
+            Entre na sua conta para consultar e exportar o histórico de
+            Jornadas. As ferramentas continuam públicas mesmo sem login.
           </p>
+          <Link href="/login" className="empty-access-panel__action">
+            Entrar na conta
+          </Link>
         </section>
       ) : null}
     </div>

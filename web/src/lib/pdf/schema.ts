@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const pdfOperationSchema = z.enum([
+const pdfOperationSchema = z.enum([
   "COMPRESS",
   "MERGE",
   "SPLIT",
@@ -50,15 +50,42 @@ const pdfCompressionPresets = {
 
 export const pdfCompressionOptionsSchema = z
   .object({
-    quality: z.enum(["SCREEN", "BALANCED", "PRINT"]).default("BALANCED"),
+    quality: z
+      .enum(["SOURCE", "CUSTOM", "SCREEN", "BALANCED", "PRINT"])
+      .default("BALANCED"),
     method: z.enum(["AUTO", "LOSSLESS", "RASTER"]).optional(),
     dpi: z.number().int().min(72).max(300).optional(),
     colorMode: z.enum(["COLOR", "GRAYSCALE", "MONOCHROME"]).optional(),
     imageQuality: z.number().int().min(35).max(95).optional(),
     monochromeThreshold: z.number().int().min(64).max(224).optional(),
   })
+  .superRefine((options, context) => {
+    if (options.quality !== "SOURCE" && options.quality !== "CUSTOM") return;
+
+    const requiredFields = [
+      "method",
+      "dpi",
+      "colorMode",
+      "imageQuality",
+      "monochromeThreshold",
+    ] as const;
+    for (const field of requiredFields) {
+      if (options[field] === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "Informe a configuração calculada para o documento.",
+        });
+      }
+    }
+  })
   .transform((options) => {
-    const preset = pdfCompressionPresets[options.quality];
+    const preset =
+      options.quality === "SCREEN" ||
+      options.quality === "BALANCED" ||
+      options.quality === "PRINT"
+        ? pdfCompressionPresets[options.quality]
+        : pdfCompressionPresets.BALANCED;
     return {
       quality: options.quality,
       method: options.method ?? preset.method,
@@ -80,14 +107,14 @@ export const jpgToPdfOptionsSchema = z.object({
   pageSize: z.enum(["A4", "IMAGE"]).default("A4"),
 });
 
-export const pdfCropSchema = z.object({
+const pdfCropSchema = z.object({
   x: z.number().min(0),
   y: z.number().min(0),
   width: z.number().positive(),
   height: z.number().positive(),
 });
 
-export const pdfPageInstructionSchema = z.object({
+const pdfPageInstructionSchema = z.object({
   id: z.string().min(1).max(100),
   artifactId: z.string().min(8).max(64),
   sourcePage: z.number().int().min(1).max(10_000),
@@ -116,7 +143,7 @@ const pdfAnnotationBaseSchema = z.object({
   color: annotationColorSchema,
 });
 
-export const pdfTextAnnotationSchema = pdfAnnotationBaseSchema.extend({
+const pdfTextAnnotationSchema = pdfAnnotationBaseSchema.extend({
   type: z.literal("TEXT"),
   x: normalizedCoordinateSchema,
   y: normalizedCoordinateSchema,
@@ -124,7 +151,7 @@ export const pdfTextAnnotationSchema = pdfAnnotationBaseSchema.extend({
   fontSize: z.number().min(8).max(96),
 });
 
-export const pdfAreaAnnotationSchema = pdfAnnotationBaseSchema
+const pdfAreaAnnotationSchema = pdfAnnotationBaseSchema
   .extend({
     type: z.enum(["HIGHLIGHT", "RECTANGLE"]),
     x: normalizedCoordinateSchema,
@@ -142,7 +169,7 @@ export const pdfAreaAnnotationSchema = pdfAnnotationBaseSchema
     path: ["height"],
   });
 
-export const pdfDrawAnnotationSchema = pdfAnnotationBaseSchema.extend({
+const pdfDrawAnnotationSchema = pdfAnnotationBaseSchema.extend({
   type: z.literal("DRAW"),
   points: z
     .array(
@@ -157,7 +184,7 @@ export const pdfDrawAnnotationSchema = pdfAnnotationBaseSchema.extend({
   opacity: z.number().min(0.05).max(1),
 });
 
-export const pdfAnnotationSchema = z.union([
+const pdfAnnotationSchema = z.union([
   pdfTextAnnotationSchema,
   pdfAreaAnnotationSchema,
   pdfDrawAnnotationSchema,
@@ -170,6 +197,6 @@ export const pdfJobUpdateSchema = z.object({
   annotations: pdfAnnotationsSchema.default([]),
 });
 
-export type PdfOperationValue = z.infer<typeof pdfOperationSchema>;
+type PdfOperationValue = z.infer<typeof pdfOperationSchema>;
 export type PdfManifest = z.infer<typeof pdfManifestSchema>;
 export type PdfAnnotation = z.infer<typeof pdfAnnotationSchema>;

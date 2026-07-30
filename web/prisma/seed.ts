@@ -44,19 +44,13 @@ async function main() {
       name: "Administrador",
       passwordHash: await hash(adminPassword, 12),
       role: "ADMIN",
-      canAccessJornada: true,
-      canAccessFotos: true,
-      canAccessPdf: true,
     },
     update: {
       name: "Administrador",
       tenantId: tenant.id,
       passwordHash: await hash(adminPassword, 12),
       role: "ADMIN",
-      isActive: true,
-      canAccessJornada: true,
-      canAccessFotos: true,
-      canAccessPdf: true,
+      status: "ACTIVE",
     },
   });
 

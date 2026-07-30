@@ -4,6 +4,11 @@ import { auth } from "@/auth";
 import { JornadaHistoryTable } from "@/components/jornada-history-table";
 import { prisma } from "@/lib/prisma";
 
+export const metadata = {
+  robots: { index: false, follow: false },
+  title: "Histórico de Jornadas",
+};
+
 type HistoricoPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
@@ -21,15 +26,18 @@ export default async function HistoricoPage({
 }: HistoricoPageProps) {
   const session = await auth();
 
-  if (session?.user.role !== "ADMIN") {
-    redirect("/dashboard");
+  if (!session || session.user.status !== "ACTIVE") {
+    redirect("/login");
   }
 
+  const isAdmin = session.user.role === "ADMIN";
   const params = await searchParams;
   const status = getParam(params, "status") ?? "todos";
   const busca = (getParam(params, "q") ?? "").trim();
 
-  const where: Prisma.JornadaValidationWhereInput = {};
+  const where: Prisma.JornadaValidationWhereInput = isAdmin
+    ? {}
+    : { userId: session.user.id };
 
   if (status === "validas") {
     where.valido = true;
@@ -61,7 +69,9 @@ export default async function HistoricoPage({
       <div>
         <h1 className="text-2xl font-semibold text-neutral-950">Histórico</h1>
         <p className="mt-1 text-sm text-neutral-600">
-          Histórico global de validações. Apenas administradores podem acessar.
+          {isAdmin
+            ? "Histórico global de validações."
+            : "Suas validações ficam disponíveis por 30 dias."}
         </p>
       </div>
 

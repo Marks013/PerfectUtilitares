@@ -1,5 +1,10 @@
+import { createHmac } from "node:crypto";
+import { isIP } from "node:net";
+import { prisma } from "@/lib/prisma";
+
 const buckets = new Map<string, { count: number; resetAt: number }>();
 const MAX_BUCKETS = 10_000;
+let sharedChecks = 0;
 
 export type RateLimitOptions = {
   limit: number;
@@ -7,11 +12,28 @@ export type RateLimitOptions = {
 };
 
 export function getClientIp(headers: Headers) {
-  return (
-    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    headers.get("x-real-ip") ??
-    "local"
-  );
+  const realIp = headers.get("x-real-ip")?.trim();
+  if (realIp && isIP(realIp)) {
+    return realIp;
+  }
+
+  const forwarded = headers
+    .get("x-forwarded-for")
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const forwardedIp = forwarded?.at(-1);
+  return forwardedIp && isIP(forwardedIp) ? forwardedIp : "local";
+}
+
+export function getRateLimitKey(prefix: string, headers: Headers) {
+  const ipHash = createHmac(
+    "sha256",
+    process.env.AUTH_SECRET || "perfectutilitares-local-rate-limit",
+  )
+    .update(getClientIp(headers))
+    .digest("hex");
+  return `${prefix}:${ipHash}`;
 }
 
 export function checkRateLimit(key: string, options: RateLimitOptions) {
@@ -31,6 +53,53 @@ export function checkRateLimit(key: string, options: RateLimitOptions) {
     remaining: Math.max(0, options.limit - bucket.count),
     resetAt: bucket.resetAt,
   };
+}
+
+export async function checkSharedRateLimit(
+  key: string,
+  options: RateLimitOptions,
+) {
+  const now = new Date();
+  const nextReset = new Date(now.getTime() + options.windowMs);
+
+  try {
+    const [bucket] = await prisma.$queryRaw<
+      Array<{ count: number; resetAt: Date }>
+    >`
+      INSERT INTO "ApiRateLimitBucket" ("key", "count", "resetAt", "updatedAt")
+      VALUES (${key}, 1, ${nextReset}, ${now})
+      ON CONFLICT ("key") DO UPDATE SET
+        "count" = CASE
+          WHEN "ApiRateLimitBucket"."resetAt" <= ${now} THEN 1
+          ELSE "ApiRateLimitBucket"."count" + 1
+        END,
+        "resetAt" = CASE
+          WHEN "ApiRateLimitBucket"."resetAt" <= ${now} THEN ${nextReset}
+          ELSE "ApiRateLimitBucket"."resetAt"
+        END,
+        "updatedAt" = ${now}
+      RETURNING "count", "resetAt"
+    `;
+
+    sharedChecks += 1;
+    if (sharedChecks % 500 === 0) {
+      await prisma.apiRateLimitBucket.deleteMany({
+        where: { resetAt: { lt: now } },
+      });
+    }
+
+    if (!bucket) {
+      return checkRateLimit(key, options);
+    }
+
+    return {
+      limited: bucket.count > options.limit,
+      remaining: Math.max(0, options.limit - bucket.count),
+      resetAt: bucket.resetAt.getTime(),
+    };
+  } catch {
+    return checkRateLimit(key, options);
+  }
 }
 
 function pruneBuckets(now: number) {

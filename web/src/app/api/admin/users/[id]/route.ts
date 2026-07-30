@@ -10,29 +10,20 @@ import {
   requireMaxContentLength,
   requireSameOrigin,
 } from "@/lib/api/security";
-import { userPatchSchema, zodIssueDetails } from "@/lib/users/schema";
+import { removePdfJobFiles } from "@/lib/pdf/storage";
 import { prisma } from "@/lib/prisma";
+import {
+  adminUserSelect as userSelect,
+  deleteAccountWithAdminInvariant,
+  updateUserWithAdminInvariant,
+} from "@/lib/users/account-mutations";
+import { userPatchSchema, zodIssueDetails } from "@/lib/users/schema";
 
 export const runtime = "nodejs";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
 };
-
-const userSelect = {
-  id: true,
-  tenantId: true,
-  tenant: { select: { id: true, name: true, slug: true } },
-  email: true,
-  name: true,
-  role: true,
-  isActive: true,
-  canAccessJornada: true,
-  canAccessFotos: true,
-  canAccessPdf: true,
-  createdAt: true,
-  updatedAt: true,
-} as const;
 
 function validateUserId(id: string) {
   return id.length >= 8 && id.length <= 64;
@@ -125,7 +116,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (id === guard.session.user.id) {
     return jsonError(
       400,
-      "SELF_DELETE_BLOCKED",
+      "SELF_UPDATE_BLOCKED",
       "Não é permitido alterar seu próprio usuário administrativo por esta tela.",
     );
   }
@@ -164,43 +155,24 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 
-  if (
-    id === guard.session.user.id &&
-    (parsed.data.isActive === false || parsed.data.role === "OPERATOR")
-  ) {
-    return jsonError(
-      400,
-      "SELF_LOCKOUT_BLOCKED",
-      "Não é permitido remover seu próprio acesso administrativo.",
-    );
-  }
-
   try {
-    const user = await prisma.user.update({
-      where: { id },
+    const result = await updateUserWithAdminInvariant({
+      targetUserId: id,
+      actorUserId: guard.session.user.id,
       data: parsed.data,
-      select: userSelect,
     });
 
-    await prisma.auditLog.create({
-      data: {
-        userId: guard.session.user.id,
-        action: "UPDATE",
-        entity: "User",
-        entityId: user.id,
-        metadata: {
-          email: user.email,
-          tenantId: user.tenantId,
-          role: user.role,
-          isActive: user.isActive,
-          canAccessJornada: user.canAccessJornada,
-          canAccessFotos: user.canAccessFotos,
-          canAccessPdf: user.canAccessPdf,
-        },
-      },
-    });
+    if (!result.ok) {
+      return result.reason === "USER_NOT_FOUND"
+        ? jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado")
+        : jsonError(
+            400,
+            "LAST_ADMIN_UPDATE_BLOCKED",
+            "Não é permitido bloquear ou rebaixar o último administrador ativo do sistema.",
+          );
+    }
 
-    return NextResponse.json(user);
+    return NextResponse.json(result.user);
   } catch (error) {
     return prismaErrorResponse(error);
   }
@@ -244,40 +216,25 @@ export async function DELETE(request: Request, context: RouteContext) {
   }
 
   try {
-    const user = await prisma.user.findUniqueOrThrow({
-      where: { id },
-      select: userSelect,
+    const result = await deleteAccountWithAdminInvariant({
+      targetUserId: id,
+      actorUserId: guard.session.user.id,
+      action: "DELETE",
     });
 
-    if (user.role === "ADMIN" && user.isActive) {
-      const activeAdminCount = await prisma.user.count({
-        where: { role: "ADMIN", isActive: true },
-      });
-
-      if (activeAdminCount <= 1) {
-        return jsonError(
-          400,
-          "LAST_ADMIN_DELETE_BLOCKED",
-          "Não é permitido excluir o último administrador ativo do sistema.",
-        );
-      }
+    if (!result.ok) {
+      return result.reason === "USER_NOT_FOUND"
+        ? jsonError(404, "USER_NOT_FOUND", "Usuário não encontrado")
+        : jsonError(
+            400,
+            "LAST_ADMIN_DELETE_BLOCKED",
+            "Não é permitido excluir o último administrador ativo do sistema.",
+          );
     }
 
-    await prisma.auditLog.create({
-      data: {
-        userId: guard.session.user.id,
-        action: "DELETE",
-        entity: "User",
-        entityId: user.id,
-        metadata: {
-          email: user.email,
-          tenantId: user.tenantId,
-          role: user.role,
-        },
-      },
-    });
-
-    await prisma.user.delete({ where: { id } });
+    await Promise.allSettled(
+      result.pdfJobIds.map((jobId) => removePdfJobFiles(jobId)),
+    );
 
     return NextResponse.json({ id });
   } catch (error) {

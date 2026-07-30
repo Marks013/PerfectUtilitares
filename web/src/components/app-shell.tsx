@@ -1,49 +1,40 @@
-import { LogOut } from "lucide-react";
+import { LogIn, LogOut } from "lucide-react";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { logoutAction } from "@/app/login/actions";
 import { auth } from "@/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 
-const jornadaNavItems = [
-  { href: "/jornada/validar", label: "Validar" },
-];
-
-const baseNavItems = [
+const publicNavItems = [
   { href: "/dashboard", label: "Início" },
-  { href: "/conta", label: "Conta" },
+  { href: "/jornada/validar", label: "Validar" },
+  { href: "/fotos", label: "Fotos 3x4" },
+  { href: "/pdf", label: "PDF" },
 ];
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
   const session = await auth();
-
-  if (!session || session.user.isActive === false) {
-    redirect("/login");
-  }
-
-  const canUseAllModules = session.user.role === "ADMIN";
+  const activeSession = session?.user.status !== "ACTIVE" ? null : session;
   const navItems = [
-    ...baseNavItems,
-    ...(canUseAllModules || session.user.canAccessJornada
-      ? jornadaNavItems
+    ...publicNavItems,
+    ...(activeSession
+      ? [
+          { href: "/jornada/historico", label: "Meu histórico" },
+          { href: "/conta", label: "Conta" },
+        ]
       : []),
-    ...(canUseAllModules || session.user.canAccessFotos
-      ? [{ href: "/fotos", label: "Fotos 3x4" }]
-      : []),
-    ...(canUseAllModules || session.user.canAccessPdf
-      ? [{ href: "/pdf", label: "PDF" }]
-      : []),
-    ...(session.user.role === "ADMIN"
+    ...(activeSession?.user.role === "ADMIN"
       ? [
           { href: "/jornada/regras", label: "Regras" },
           { href: "/jornada/codigos", label: "Códigos" },
-          { href: "/jornada/historico", label: "Histórico" },
           { href: "/admin/usuarios", label: "Usuários" },
         ]
       : []),
   ];
 
-  const userLabel = session.user.name ?? session.user.email ?? "Usuário";
+  const userLabel =
+    activeSession?.user.name ??
+    activeSession?.user.email ??
+    "Acesso público";
 
   return (
     <div className="app-frame min-h-dvh">
@@ -74,12 +65,23 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <form action={logoutAction}>
-              <button className="app-icon-button app-logout-button" title="Sair">
-                <LogOut className="size-4" aria-hidden="true" />
-                <span className="sr-only">Sair</span>
-              </button>
-            </form>
+            {activeSession ? (
+              <form action={logoutAction}>
+                <button className="app-icon-button app-logout-button" title="Sair">
+                  <LogOut className="size-4" aria-hidden="true" />
+                  <span className="sr-only">Sair</span>
+                </button>
+              </form>
+            ) : (
+              <Link
+                href="/login"
+                className="app-icon-button"
+                title="Entrar"
+                aria-label="Entrar"
+              >
+                <LogIn className="size-4" aria-hidden="true" />
+              </Link>
+            )}
           </div>
         </div>
       </header>

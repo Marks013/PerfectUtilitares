@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
-import { pdfJobAccessWhere } from "@/lib/pdf/access";
+import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
 import { pdfJobUpdateSchema } from "@/lib/pdf/schema";
 import { serializePdfJob } from "@/lib/pdf/serialization";
 import { removePdfJobFiles } from "@/lib/pdf/storage";
@@ -27,8 +26,7 @@ function validJobId(id: string) {
 }
 
 export async function GET(_request: Request, context: RouteContext) {
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
+  const owner = await getPdfOwnerContext();
 
   const { id } = await context.params;
   if (!validJobId(id)) {
@@ -36,7 +34,7 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(guard.session) },
+    where: { id, ...pdfJobAccessWhere(owner) },
     include: { artifacts: { orderBy: { createdAt: "asc" } } },
   });
 
@@ -51,15 +49,14 @@ export async function DELETE(request: Request, context: RouteContext) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
 
-  const rateLimitError = enforceRateLimit(request, {
+  const owner = await getPdfOwnerContext();
+  const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 20,
     windowMs: 60_000,
     keyPrefix: "pdf-job-delete",
+    authenticated: Boolean(owner.session),
   });
   if (rateLimitError) return rateLimitError;
-
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
 
   const { id } = await context.params;
   if (!validJobId(id)) {
@@ -67,7 +64,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   }
 
   const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(guard.session) },
+    where: { id, ...pdfJobAccessWhere(owner) },
     select: { id: true, status: true },
   });
 
@@ -99,15 +96,14 @@ export async function PATCH(request: Request, context: RouteContext) {
   const lengthError = requireMaxContentLength(request, 2 * 1024 * 1024);
   if (lengthError) return lengthError;
 
-  const rateLimitError = enforceRateLimit(request, {
+  const owner = await getPdfOwnerContext();
+  const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 60,
     windowMs: 60_000,
     keyPrefix: "pdf-job-update",
+    authenticated: Boolean(owner.session),
   });
   if (rateLimitError) return rateLimitError;
-
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
 
   const { id } = await context.params;
   if (!validJobId(id)) {
@@ -128,7 +124,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   const currentJob = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(guard.session) },
+    where: { id, ...pdfJobAccessWhere(owner) },
     select: {
       id: true,
       status: true,

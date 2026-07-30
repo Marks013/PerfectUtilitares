@@ -5,10 +5,10 @@ import {
   methodNotAllowed,
   readJsonBody,
   requireAdmin,
-  requireModuleAccess,
   requireContentType,
   requireMaxContentLength,
   requireSameOrigin,
+  requireSession,
 } from "@/lib/api/security";
 import {
   jornadaExceptionSchema,
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
   const scope = url.searchParams.get("scope") ?? "all";
 
   if (scope === "mine") {
-    const guard = await requireModuleAccess("jornada");
+    const guard = await requireSession();
     if (!guard.ok) {
       return guard.response;
     }
@@ -136,9 +136,9 @@ export async function POST(request: Request) {
 
   const user = await prisma.user.findUnique({
     where: { id: parsed.data.userId },
-    select: { id: true, isActive: true },
+    select: { id: true, status: true },
   });
-  if (!user || !user.isActive) {
+  if (!user || user.status !== "ACTIVE") {
     return jsonError(404, "USER_NOT_FOUND", "Usuário ativo não encontrado");
   }
 

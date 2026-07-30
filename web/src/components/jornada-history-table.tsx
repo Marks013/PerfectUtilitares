@@ -4,7 +4,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-export type JornadaHistoryItem = {
+type JornadaHistoryItem = {
   id: string;
   createdAt: string;
   horariosNormalizado: string;

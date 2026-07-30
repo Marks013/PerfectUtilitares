@@ -1,12 +1,21 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { UsersManager } from "@/components/users-manager";
+import { UserUsagePanel } from "@/components/user-usage-panel";
 import { prisma } from "@/lib/prisma";
+
+export const metadata = {
+  robots: { index: false, follow: false },
+  title: "Usuários",
+};
 
 export default async function UsuariosPage() {
   const session = await auth();
 
-  if (session?.user.role !== "ADMIN") {
+  if (
+    session?.user.status !== "ACTIVE" ||
+    session.user.role !== "ADMIN"
+  ) {
     redirect("/dashboard");
   }
 
@@ -19,15 +28,11 @@ export default async function UsuariosPage() {
         email: true,
         name: true,
         role: true,
-        isActive: true,
-        canAccessJornada: true,
-        canAccessFotos: true,
-        canAccessPdf: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
       },
-      orderBy: [{ isActive: "desc" }, { name: "asc" }],
-      take: 200,
+      orderBy: [{ status: "asc" }, { name: "asc" }],
     }),
     prisma.tenant.findMany({
       orderBy: { name: "asc" },
@@ -41,9 +46,6 @@ export default async function UsuariosPage() {
         email: true,
         name: true,
         role: true,
-        canAccessJornada: true,
-        canAccessFotos: true,
-        canAccessPdf: true,
         expiresAt: true,
         acceptedAt: true,
         createdAt: true,
@@ -61,6 +63,8 @@ export default async function UsuariosPage() {
           Administração de acesso ao sistema.
         </p>
       </div>
+
+      <UserUsagePanel />
 
       <UsersManager
         currentUserId={session.user.id}

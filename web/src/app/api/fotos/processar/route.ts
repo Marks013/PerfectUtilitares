@@ -1,12 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
+  getOptionalSession,
   jsonError,
   methodNotAllowed,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
 import { prisma } from "@/lib/prisma";
@@ -22,6 +22,7 @@ import {
   readPhotoInput,
   zodIssues,
 } from "@/lib/photos/request";
+import { recordUserUsage } from "@/lib/usage/record";
 
 export const runtime = "nodejs";
 
@@ -52,20 +53,18 @@ export function GET() {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireModuleAccess("fotos");
-  if (!guard.ok) {
-    return guard.response;
-  }
-
   const originError = requireSameOrigin(request);
   if (originError) {
     return originError;
   }
 
-  const rateLimit = enforceRateLimit(request, {
+  const session = await getOptionalSession();
+  const rateLimit = await enforceSharedRateLimit(request, {
     keyPrefix: "photos:single",
-    limit: 30,
+    limit: 15,
     windowMs: 60_000,
+    dailyLimit: 60,
+    authenticated: Boolean(session),
   });
   if (rateLimit) {
     return rateLimit;
@@ -97,24 +96,32 @@ export async function POST(request: Request) {
     const crop = parseCropArea(formData);
     const photo = await processPhoto(await readPhotoInput(file), settings, crop);
 
-    await prisma.auditLog.create({
-      data: {
-        userId: guard.session.user.id,
-        action: "PHOTO_3X4_PROCESSED",
-        entity: "Foto3x4",
-        metadata: {
-          fileName: file.name,
-          output: photo.fileName,
-          width: photo.width,
-          height: photo.height,
-          format: settings.format,
-          contrast: settings.contrast,
-          brightness: settings.brightness,
-          addBorder: settings.addBorder,
-          replaceOriginal: settings.replaceOriginal,
-          convertToJpg: settings.convertToJpg,
+    if (session) {
+      await prisma.auditLog.create({
+        data: {
+          userId: session.user.id,
+          action: "PHOTO_3X4_PROCESSED",
+          entity: "Foto3x4",
+          metadata: {
+            output: photo.fileName,
+            width: photo.width,
+            height: photo.height,
+            format: settings.format,
+            contrast: settings.contrast,
+            brightness: settings.brightness,
+            addBorder: settings.addBorder,
+            replaceOriginal: settings.replaceOriginal,
+            convertToJpg: settings.convertToJpg,
+          },
         },
-      },
+      });
+    }
+    await recordUserUsage({
+      userId: session?.user.id,
+      module: "FOTOS",
+      operation: "PROCESSAR_INDIVIDUAL",
+      inputBytes: file.size,
+      outputBytes: photo.buffer.byteLength,
     });
 
     return new Response(new Uint8Array(photo.buffer), {

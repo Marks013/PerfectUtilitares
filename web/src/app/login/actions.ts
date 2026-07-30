@@ -7,20 +7,36 @@ import { signIn, signOut } from "@/auth";
 import { normalizeEmail } from "@/lib/auth/email";
 import { checkRateLimit, getClientIp } from "@/lib/api/rate-limit";
 
+function getSafeCallbackUrl(value: FormDataEntryValue | null) {
+  const callbackUrl = String(value ?? "");
+  return callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
+    ? callbackUrl
+    : "/dashboard";
+}
+
+function loginErrorUrl(code: string, callbackUrl: string) {
+  const params = new URLSearchParams({ error: code });
+  if (callbackUrl !== "/dashboard") {
+    params.set("callbackUrl", callbackUrl);
+  }
+  return `/login?${params.toString()}`;
+}
+
 export async function loginAction(formData: FormData) {
   const email = normalizeEmail(formData.get("email"));
   const password = String(formData.get("password") ?? "");
+  const callbackUrl = getSafeCallbackUrl(formData.get("callbackUrl"));
 
   if (!email && !password) {
-    redirect("/login?error=missing");
+    redirect(loginErrorUrl("missing", callbackUrl));
   }
 
   if (!email || !email.includes("@")) {
-    redirect("/login?error=email");
+    redirect(loginErrorUrl("email", callbackUrl));
   }
 
   if (!password) {
-    redirect("/login?error=password");
+    redirect(loginErrorUrl("password", callbackUrl));
   }
 
   const headerStore = await headers();
@@ -31,7 +47,7 @@ export async function loginAction(formData: FormData) {
   });
 
   if (loginLimit.limited) {
-    redirect("/login?error=rate");
+    redirect(loginErrorUrl("rate", callbackUrl));
   }
 
   try {
@@ -40,10 +56,10 @@ export async function loginAction(formData: FormData) {
       password,
       redirect: false,
     });
-    redirect("/dashboard");
+    redirect(callbackUrl);
   } catch (error) {
     if (error instanceof AuthError) {
-      redirect("/login?error=credentials");
+      redirect(loginErrorUrl("credentials", callbackUrl));
     }
 
     throw error;
@@ -51,5 +67,5 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function logoutAction() {
-  await signOut({ redirectTo: "/login" });
+  await signOut({ redirectTo: "/dashboard" });
 }

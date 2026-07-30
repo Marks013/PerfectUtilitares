@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import {
-  enforceRateLimit,
+  enforceSharedRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
   requireContentType,
   requireMaxContentLength,
-  requireModuleAccess,
   requireSameOrigin,
 } from "@/lib/api/security";
 import { getPdfJobExpiry } from "@/lib/pdf/constants";
+import { getPdfOwnerContext } from "@/lib/pdf/access";
 import { pdfJobCreateSchema } from "@/lib/pdf/schema";
 import { serializePdfJob } from "@/lib/pdf/serialization";
 import { prisma } from "@/lib/prisma";
@@ -32,23 +32,15 @@ export async function POST(request: Request) {
   const lengthError = requireMaxContentLength(request, 32 * 1024);
   if (lengthError) return lengthError;
 
-  const rateLimitError = enforceRateLimit(request, {
+  const owner = await getPdfOwnerContext({ createAnonymous: true });
+  const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 30,
     windowMs: 60_000,
     keyPrefix: "pdf-job-create",
+    dailyLimit: 20,
+    authenticated: Boolean(owner.session),
   });
   if (rateLimitError) return rateLimitError;
-
-  const guard = await requireModuleAccess("pdf");
-  if (!guard.ok) return guard.response;
-
-  if (!guard.session.user.tenantId) {
-    return jsonError(
-      409,
-      "TENANT_REQUIRED",
-      "Sua conta precisa estar vinculada a uma empresa para usar este módulo.",
-    );
-  }
 
   const body = await readJsonBody(request);
   if (!body.ok) return body.response;
@@ -63,10 +55,35 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!owner.session) {
+    const activeJobLimit = 3;
+    const activeJobs = await prisma.pdfJob.count({
+      where: {
+        ownerSessionHash: owner.ownerSessionHash,
+        expiresAt: { gt: new Date() },
+        status: { in: ["DRAFT", "QUEUED", "RUNNING"] },
+      },
+    });
+    if (activeJobs >= activeJobLimit) {
+      return jsonError(
+        429,
+        "PDF_ACTIVE_JOB_LIMIT",
+        "Você já tem três trabalhos PDF em andamento. Finalize um deles ou aguarde um pouquinho. Com uma conta, essa franquia de uso público deixa de se aplicar.",
+        {
+          action: {
+            href: "/login",
+            label: "Entrar na conta",
+          },
+        },
+      );
+    }
+  }
+
   const job = await prisma.pdfJob.create({
     data: {
-      tenantId: guard.session.user.tenantId,
-      userId: guard.session.user.id,
+      tenantId: owner.session?.user.tenantId ?? null,
+      userId: owner.session?.user.id ?? null,
+      ownerSessionHash: owner.session ? null : owner.ownerSessionHash,
       operation: parsed.data.operation,
       options: parsed.data.options as Prisma.InputJsonValue | undefined,
       expiresAt: getPdfJobExpiry(),

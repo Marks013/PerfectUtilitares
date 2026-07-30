@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   CheckCircle2,
@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 type Role = "ADMIN" | "OPERATOR";
+type UserStatus = "ACTIVE" | "BLOCKED" | "BANNED";
 
 type Tenant = {
   id: string;
@@ -47,10 +48,7 @@ type ManagedUser = {
   email: string;
   name: string;
   role: Role;
-  isActive: boolean;
-  canAccessJornada: boolean;
-  canAccessFotos: boolean;
-  canAccessPdf: boolean;
+  status: UserStatus;
   createdAt: string | Date;
   updatedAt: string | Date;
 };
@@ -62,9 +60,6 @@ type Invitation = {
   email: string;
   name: string;
   role: Role;
-  canAccessJornada: boolean;
-  canAccessFotos: boolean;
-  canAccessPdf: boolean;
   expiresAt: string | Date;
   acceptedAt: string | Date | null;
   createdAt: string | Date;
@@ -80,18 +75,6 @@ type UsersManagerProps = {
   initialTenants: Tenant[];
   initialInvitations: Invitation[];
   currentUserId: string;
-};
-
-const booleanishSchema = z.preprocess((value) => {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  return value;
-}, z.boolean());
-
-const moduleAccessShape = {
-  canAccessJornada: booleanishSchema,
-  canAccessFotos: booleanishSchema,
-  canAccessPdf: booleanishSchema,
 };
 
 const tenantIdField = z.string().min(1, "Selecione uma empresa.");
@@ -113,8 +96,7 @@ const userEditSchema = z.object({
   email: emailField,
   name: nameField,
   role: z.enum(["ADMIN", "OPERATOR"]),
-  isActive: booleanishSchema,
-  ...moduleAccessShape,
+  status: z.enum(["ACTIVE", "BLOCKED", "BANNED"]),
 });
 
 const invitationFormSchema = z.object({
@@ -122,7 +104,6 @@ const invitationFormSchema = z.object({
   email: emailField,
   name: nameField,
   role: z.enum(["ADMIN", "OPERATOR"]),
-  ...moduleAccessShape,
 });
 
 const tenantFormSchema = z.object({
@@ -152,10 +133,7 @@ function userEditDefaults(user: ManagedUser, tenantId = ""): UserEditInput {
     email: user.email,
     name: user.name,
     role: user.role,
-    isActive: user.isActive,
-    canAccessJornada: user.canAccessJornada,
-    canAccessFotos: user.canAccessFotos,
-    canAccessPdf: user.canAccessPdf,
+    status: user.status,
   };
 }
 
@@ -165,17 +143,36 @@ function invitationDefaults(tenantId = ""): InvitationFormInput {
     email: "",
     name: "",
     role: "OPERATOR",
-    canAccessJornada: true,
-    canAccessFotos: true,
-    canAccessPdf: true,
   };
 }
 
 function sortUsers(users: ManagedUser[]) {
+  const statusOrder: Record<UserStatus, number> = {
+    ACTIVE: 0,
+    BLOCKED: 1,
+    BANNED: 2,
+  };
+
   return [...users].sort((a, b) => {
-    if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+    if (a.status !== b.status) return statusOrder[a.status] - statusOrder[b.status];
     return a.name.localeCompare(b.name);
   });
+}
+
+function userStatusLabel(status: UserStatus) {
+  return {
+    ACTIVE: "Ativo",
+    BLOCKED: "Bloqueado",
+    BANNED: "Banido",
+  }[status];
+}
+
+function userStatusClass(status: UserStatus) {
+  return {
+    ACTIVE: "border-green-200 bg-green-50 text-green-700",
+    BLOCKED: "border-amber-200 bg-amber-50 text-amber-800",
+    BANNED: "border-red-200 bg-red-50 text-red-700",
+  }[status];
 }
 
 function sortTenants(tenants: Tenant[]) {
@@ -215,21 +212,6 @@ function getFormErrorMessages(errors: Record<string, unknown>) {
     .filter((message): message is string => Boolean(message));
 }
 
-function moduleLabel(
-  user: Pick<
-    ManagedUser,
-    "role" | "canAccessJornada" | "canAccessFotos" | "canAccessPdf"
-  >,
-) {
-  if (user.role === "ADMIN") return "Todos";
-  const enabled = [
-    user.canAccessJornada ? "Jornada" : null,
-    user.canAccessFotos ? "Fotos" : null,
-    user.canAccessPdf ? "PDF" : null,
-  ].filter(Boolean);
-  return enabled.length ? enabled.join(" / ") : "Nenhum";
-}
-
 function formatDate(value: string | Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
@@ -243,6 +225,7 @@ export function UsersManager({
   initialInvitations,
   currentUserId,
 }: UsersManagerProps) {
+  const queryClient = useQueryClient();
   const [users, setUsers] = useState(() => sortUsers(initialUsers));
   const [tenants, setTenants] = useState(() => sortTenants(initialTenants));
   const [invitations, setInvitations] = useState(initialInvitations);
@@ -294,6 +277,7 @@ export function UsersManager({
       );
       setEditingUser(user);
       editForm.reset(userEditDefaults(user, firstTenantId));
+      void queryClient.invalidateQueries({ queryKey: ["admin", "usage"] });
     },
   });
 
@@ -316,6 +300,7 @@ export function UsersManager({
       }
 
       setUsers((current) => current.filter((item) => item.id !== user.id));
+      void queryClient.invalidateQueries({ queryKey: ["admin", "usage"] });
       if (editingUser?.id === user.id) {
         setEditingUser(null);
       }
@@ -468,32 +453,6 @@ export function UsersManager({
               <option value="ADMIN">Administrador</option>
             </select>
           </label>
-          <div className="flex flex-wrap items-center gap-4 lg:col-span-5">
-            <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-              <input
-                type="checkbox"
-                {...invitationForm.register("canAccessJornada")}
-                className="size-4 rounded border-neutral-300"
-              />
-              Jornada
-            </label>
-            <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-              <input
-                type="checkbox"
-                {...invitationForm.register("canAccessFotos")}
-                className="size-4 rounded border-neutral-300"
-              />
-              Fotos 3x4
-            </label>
-            <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-              <input
-                type="checkbox"
-                {...invitationForm.register("canAccessPdf")}
-                className="size-4 rounded border-neutral-300"
-              />
-              Ferramentas PDF
-            </label>
-          </div>
           <button
             type="submit"
             disabled={inviteMutation.isPending || !tenantOptions.length}
@@ -561,7 +520,7 @@ export function UsersManager({
             <div>
               <h2 className="text-base font-semibold text-neutral-950">Usuários</h2>
               <p className="mt-1 text-sm text-neutral-600">
-                Edite cadastro, status e permissões. Senha fica com o usuário.
+                Edite cadastro, empresa e status. Senha fica com o usuário.
               </p>
             </div>
             <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-700">
@@ -574,7 +533,6 @@ export function UsersManager({
                 <tr>
                   <th className="px-4 py-3">Usuário</th>
                   <th className="px-4 py-3">Empresa</th>
-                  <th className="px-4 py-3">Módulos</th>
                   <th className="px-4 py-3">Perfil</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Ações</th>
@@ -595,13 +553,16 @@ export function UsersManager({
                       </div>
                     </td>
                     <td className="px-4 py-3">{user.tenant?.name ?? "Sem empresa"}</td>
-                    <td className="px-4 py-3">{moduleLabel(user)}</td>
                     <td className="px-4 py-3">
                       {user.role === "ADMIN" ? "Administrador" : "Operador"}
                     </td>
                     <td className="px-4 py-3">
-                      {user.isActive ? "Ativo" : "Inativo"}
-                      {user.id === currentUserId ? " atual" : ""}
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${userStatusClass(user.status)}`}
+                      >
+                        {userStatusLabel(user.status)}
+                        {user.id === currentUserId ? " · atual" : ""}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
@@ -668,7 +629,7 @@ export function UsersManager({
                 </h2>
                 <p className="mt-1 text-sm text-neutral-600">
                   {editingUser
-                    ? "Ajuste dados e permissões."
+                    ? "Ajuste os dados e o status da conta."
                     : "Selecione um usuário na tabela."}
                 </p>
               </div>
@@ -729,42 +690,21 @@ export function UsersManager({
                   <label className="block text-sm font-medium text-neutral-800">
                     Status
                     <select
-                      {...editForm.register("isActive")}
+                      {...editForm.register("status")}
                       className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
                     >
-                      <option value="true">Ativo</option>
-                      <option value="false">Inativo</option>
+                      <option value="ACTIVE">Ativo</option>
+                      <option value="BLOCKED">Bloqueado temporariamente</option>
+                      <option value="BANNED">Banido</option>
                     </select>
-                  </label>
-                </div>
-                <div className="grid gap-2 rounded-md border border-neutral-200 p-3">
-                  <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-                    <input
-                      type="checkbox"
-                      {...editForm.register("canAccessJornada")}
-                      className="size-4 rounded border-neutral-300"
-                    />
-                    Jornada
-                  </label>
-                  <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-                    <input
-                      type="checkbox"
-                      {...editForm.register("canAccessFotos")}
-                      className="size-4 rounded border-neutral-300"
-                    />
-                    Fotos 3x4
-                  </label>
-                  <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-                    <input
-                      type="checkbox"
-                      {...editForm.register("canAccessPdf")}
-                      className="size-4 rounded border-neutral-300"
-                    />
-                    Ferramentas PDF
                   </label>
                 </div>
                 <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
                   Para senha ou primeiro acesso, gere um convite para o e-mail do usuário.
+                </p>
+                <p className="text-xs text-neutral-600">
+                  Bloquear suspende o acesso temporariamente. Banir impede novos acessos até
+                  que um administrador altere o status.
                 </p>
                 {getFormErrorMessages(editForm.formState.errors).length ? (
                   <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">

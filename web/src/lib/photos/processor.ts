@@ -48,7 +48,7 @@ export class PhotoProcessingError extends Error {
   }
 }
 
-export function isAcceptedImageType(type: string) {
+function isAcceptedImageType(type: string) {
   return ACCEPTED_IMAGE_TYPES.has(type);
 }
 
@@ -89,7 +89,7 @@ function resolvePhotoOutput(input: PhotoInput, settings: PhotoSettings) {
   };
 }
 
-export function sanitizePhotoFileName(
+function sanitizePhotoFileName(
   name: string,
   extension: string,
   replaceOriginal = false,

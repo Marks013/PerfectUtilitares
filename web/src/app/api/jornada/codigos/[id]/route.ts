@@ -11,7 +11,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/security";
 import {
-  codigoJornadaPatchSchema,
+  codigoJornadaSchema,
   zodIssueDetails,
 } from "@/lib/codigos/schema";
 import { prisma } from "@/lib/prisma";
@@ -107,7 +107,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return json.response;
   }
 
-  const parsed = codigoJornadaPatchSchema.safeParse(json.data);
+  const parsed = codigoJornadaSchema.safeParse(json.data);
   if (!parsed.success) {
     return jsonError(
       400,

@@ -6,7 +6,8 @@ import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/auth/email";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 
-export type AppRole = "ADMIN" | "OPERATOR";
+type AppRole = "ADMIN" | "OPERATOR";
+type AppUserStatus = "ACTIVE" | "BLOCKED" | "BANNED";
 
 export type AppSession = {
   user: {
@@ -16,10 +17,7 @@ export type AppSession = {
     name?: string | null;
     image?: string | null;
     role: AppRole;
-    isActive: boolean;
-    canAccessJornada: boolean;
-    canAccessFotos: boolean;
-    canAccessPdf: boolean;
+    status: AppUserStatus;
   };
   expires: string;
 };
@@ -30,20 +28,14 @@ declare module "next-auth" {
       id: string;
       tenantId?: string | null;
       role: AppRole;
-      isActive: boolean;
-      canAccessJornada: boolean;
-      canAccessFotos: boolean;
-      canAccessPdf: boolean;
+      status: AppUserStatus;
     } & DefaultSession["user"];
   }
 
   interface User {
     tenantId?: string | null;
     role: AppRole;
-    isActive: boolean;
-    canAccessJornada: boolean;
-    canAccessFotos: boolean;
-    canAccessPdf: boolean;
+    status: AppUserStatus;
   }
 }
 
@@ -82,7 +74,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           where: { email: normalizeEmail(parsed.data.email) },
         });
 
-        if (!user || !user.isActive) {
+        if (!user || user.status !== "ACTIVE") {
           return null;
         }
 
@@ -101,10 +93,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: user.email,
           name: user.name,
           role: user.role,
-          isActive: user.isActive,
-          canAccessJornada: user.canAccessJornada,
-          canAccessFotos: user.canAccessFotos,
-          canAccessPdf: user.canAccessPdf,
+          status: user.status,
         };
       },
     }),
@@ -139,10 +128,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.id = user.id;
         token.tenantId = user.tenantId;
         token.role = user.role;
-        token.isActive = user.isActive;
-        token.canAccessJornada = user.canAccessJornada;
-        token.canAccessFotos = user.canAccessFotos;
-        token.canAccessPdf = user.canAccessPdf;
+        token.status = user.status;
       } else if (token.id) {
         const currentUser = await prisma.user.findUnique({
           where: { id: String(token.id) },
@@ -151,10 +137,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             name: true,
             role: true,
             tenantId: true,
-            isActive: true,
-            canAccessJornada: true,
-            canAccessFotos: true,
-            canAccessPdf: true,
+            status: true,
           },
         });
 
@@ -163,12 +146,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.name = currentUser.name;
           token.role = currentUser.role;
           token.tenantId = currentUser.tenantId;
-          token.isActive = currentUser.isActive;
-          token.canAccessJornada = currentUser.canAccessJornada;
-          token.canAccessFotos = currentUser.canAccessFotos;
-          token.canAccessPdf = currentUser.canAccessPdf;
+          token.status = currentUser.status;
         } else {
-          token.isActive = false;
+          token.status = "BANNED";
         }
       }
 
@@ -179,10 +159,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         id?: string;
         tenantId?: string | null;
         role?: AppRole;
-        isActive?: boolean;
-        canAccessJornada?: boolean;
-        canAccessFotos?: boolean;
-        canAccessPdf?: boolean;
+        status?: AppUserStatus;
         email?: string | null;
         name?: string | null;
       };
@@ -193,10 +170,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.name = tokenWithUser.name ?? session.user.name;
         session.user.tenantId = tokenWithUser.tenantId ?? null;
         session.user.role = tokenWithUser.role;
-        session.user.isActive = tokenWithUser.isActive ?? true;
-        session.user.canAccessJornada = tokenWithUser.canAccessJornada ?? true;
-        session.user.canAccessFotos = tokenWithUser.canAccessFotos ?? true;
-        session.user.canAccessPdf = tokenWithUser.canAccessPdf ?? true;
+        session.user.status = tokenWithUser.status ?? "ACTIVE";
       }
 
       return session;

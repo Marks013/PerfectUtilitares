@@ -1,7 +1,5 @@
 import { PdfEditorWorkspace } from "@/components/pdf/pdf-editor-workspace";
-import { requirePageModuleAccess } from "@/lib/modules/access";
 
-export default async function AnotarPdfPage() {
-  await requirePageModuleAccess("pdf");
+export default function AnotarPdfPage() {
   return <PdfEditorWorkspace operation="ANNOTATE" />;
 }

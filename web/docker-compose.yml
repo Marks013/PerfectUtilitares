@@ -61,6 +61,7 @@ services:
       AUTH_URL: ${AUTH_URL:-http://localhost:3002}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3002}
       APP_URL: ${APP_URL:-http://localhost:3002}
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-America/Sao_Paulo}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local.test}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?execute npm run setup:env antes do docker compose}
       DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Principal}
@@ -76,14 +77,15 @@ services:
       SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE: ${SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE:-1.0}
       SENTRY_REPLAYS_SESSION_SAMPLE_RATE: ${SENTRY_REPLAYS_SESSION_SAMPLE_RATE:-0.0}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+      PDF_ANONYMOUS_SESSION_TTL_MINUTES: ${PDF_ANONYMOUS_SESSION_TTL_MINUTES:-120}
       PDF_STORAGE_DIR: /data/pdf-jobs
     user: "${APP_UID:-1001}:${APP_GID:-1001}"
     volumes:
       - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
     ports:
-      - "${APP_PORT:-3002}:3000"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3002}:3000"
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/dashboard').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 5

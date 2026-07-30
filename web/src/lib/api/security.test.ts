@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  readJsonBody,
   requireContentType,
   requireMaxContentLength,
   requireSameOrigin,
@@ -104,5 +105,33 @@ describe("api security", () => {
     });
 
     expect(requireMaxContentLength(request, 1024)?.status).toBe(400);
+  });
+
+  it("enforces the real JSON body size when content-length is absent", async () => {
+    const request = new Request("http://localhost/api/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: "1234567890" }),
+    });
+    request.headers.delete("content-length");
+
+    expect(requireMaxContentLength(request, 8)).toBeNull();
+    const result = await readJsonBody(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(413);
+  });
+
+  it("parses JSON while enforcing its configured limit", async () => {
+    const request = new Request("http://localhost/api/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: "ok" }),
+    });
+
+    expect(requireMaxContentLength(request, 1024)).toBeNull();
+    const result = await readJsonBody(request);
+
+    expect(result).toEqual({ ok: true, data: { value: "ok" } });
   });
 });
