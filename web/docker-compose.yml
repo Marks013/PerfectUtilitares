@@ -23,6 +23,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    cpus: "${DB_CPU_LIMIT:-1.0}"
+    mem_limit: ${DB_MEMORY_LIMIT:-1536m}
+    mem_reservation: ${DB_MEMORY_RESERVATION:-512m}
+    pids_limit: 256
 
   migrate:
     build:
@@ -79,9 +83,14 @@ services:
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
       PDF_ANONYMOUS_SESSION_TTL_MINUTES: ${PDF_ANONYMOUS_SESSION_TTL_MINUTES:-120}
       PDF_STORAGE_DIR: /data/pdf-jobs
+      PDF_MAX_ACTIVE_JOBS: ${PDF_MAX_ACTIVE_JOBS:-12}
+      PDF_MAX_ACTIVE_INPUT_BYTES: ${PDF_MAX_ACTIVE_INPUT_BYTES:-4294967296}
+      STORAGE_BLOCK_USED_PERCENT: ${STORAGE_BLOCK_USED_PERCENT:-80}
+      STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}
     user: "${APP_UID:-1001}:${APP_GID:-1001}"
     volumes:
       - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
+      - /var/lib/server-resource-guard:/run/server-resource-guard:ro
     ports:
       - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3002}:3000"
     healthcheck:
@@ -90,6 +99,10 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    cpus: "${APP_CPU_LIMIT:-1.5}"
+    mem_limit: ${APP_MEMORY_LIMIT:-2g}
+    mem_reservation: ${APP_MEMORY_RESERVATION:-512m}
+    pids_limit: 384
 
   pdf-worker:
     build:
@@ -106,9 +119,14 @@ services:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-perfectutilitares}?schema=public"
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
       PDF_STORAGE_DIR: /data/pdf-jobs
+      STORAGE_BLOCK_USED_PERCENT: ${STORAGE_BLOCK_USED_PERCENT:-80}
+      STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
     user: "${APP_UID:-1001}:${APP_GID:-1001}"
     volumes:
       - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
-    cpus: 2.0
-    mem_limit: 4g
+      - /var/lib/server-resource-guard:/run/server-resource-guard:ro
+    cpus: "${PDF_WORKER_CPU_LIMIT:-2.0}"
+    mem_limit: ${PDF_WORKER_MEMORY_LIMIT:-4g}
+    mem_reservation: ${PDF_WORKER_MEMORY_RESERVATION:-1g}
+    pids_limit: 512

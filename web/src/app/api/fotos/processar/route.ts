@@ -9,6 +9,7 @@ import {
   requireMaxContentLength,
   requireSameOrigin,
 } from "@/lib/api/security";
+import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import { prisma } from "@/lib/prisma";
 import {
   MAX_IMAGE_BYTES,
@@ -23,6 +24,7 @@ import {
   zodIssues,
 } from "@/lib/photos/request";
 import { recordUserUsage } from "@/lib/usage/record";
+import { getRequestContentLength } from "@/lib/system/resource-capacity";
 
 export const runtime = "nodejs";
 
@@ -79,6 +81,12 @@ export async function POST(request: Request) {
   if (contentLength) {
     return contentLength;
   }
+
+  const capacityError = await requireResourceCapacity({
+    inputBytes: getRequestContentLength(request),
+    multiplier: 4,
+  });
+  if (capacityError) return capacityError;
 
   try {
     const formData = await request.formData();

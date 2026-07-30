@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+REPOSITORY=/home/ubuntu/PerfectUtilitares/web
+LOCK_FILE=/run/lock/perfectutilitares-maintenance.lock
+
+exec 9>"$LOCK_FILE"
+flock -n 9 || exit 0
+
+if [ ! -d "$REPOSITORY/scripts" ]; then
+  logger -t perfectutilitares-maintenance "diretorio do projeto nao encontrado"
+  exit 1
+fi
+
+before=$(df -P -h / | awk 'NR == 2 {print $3 " usados, " $4 " livres"}')
+logger -t perfectutilitares-maintenance "inicio: $before"
+
+cd "$REPOSITORY"
+runuser -u ubuntu -- /usr/bin/node scripts/cleanup-artifacts.mjs
+/usr/bin/node scripts/cleanup-deploy.mjs
+/usr/local/sbin/server-resource-guard
+
+after=$(df -P -h / | awk 'NR == 2 {print $3 " usados, " $4 " livres"}')
+logger -t perfectutilitares-maintenance "fim: $after"

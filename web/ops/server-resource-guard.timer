@@ -1,0 +1,12 @@
+[Unit]
+Description=Check host resources every two minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Persistent=true
+Unit=server-resource-guard.service
+
+[Install]
+WantedBy=timers.target

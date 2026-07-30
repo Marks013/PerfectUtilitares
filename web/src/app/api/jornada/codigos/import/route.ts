@@ -11,7 +11,9 @@ import {
   requireAdmin,
   requireSameOrigin,
 } from "@/lib/api/security";
+import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import { prisma } from "@/lib/prisma";
+import { getRequestContentLength } from "@/lib/system/resource-capacity";
 
 export const runtime = "nodejs";
 
@@ -96,6 +98,12 @@ export async function POST(request: Request) {
     if (contentTypeError) {
       return contentTypeError;
     }
+
+    const capacityError = await requireResourceCapacity({
+      inputBytes: getRequestContentLength(request),
+      multiplier: 2,
+    });
+    if (capacityError) return capacityError;
 
     const parsed = contentType.includes("application/json")
       ? await parseJsonRequest(request)

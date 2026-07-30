@@ -1,0 +1,206 @@
+#!/bin/sh
+set -eu
+
+CONFIG_FILE=${RESOURCE_GUARD_CONFIG:-/etc/server-resource-guard.conf}
+STATE_DIR=/var/lib/server-resource-guard
+STATUS_FILE="$STATE_DIR/status.json"
+LAST_SEVERITY_FILE="$STATE_DIR/last-severity"
+TEST_ALERT=0
+
+if [ "${1:-}" = "--test-alert" ]; then
+  TEST_ALERT=1
+fi
+
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+fi
+
+DISK_WARN_PERCENT=${DISK_WARN_PERCENT:-70}
+DISK_BLOCK_PERCENT=${DISK_BLOCK_PERCENT:-80}
+DISK_CRITICAL_PERCENT=${DISK_CRITICAL_PERCENT:-90}
+DISK_BLOCK_FREE_GIB=${DISK_BLOCK_FREE_GIB:-30}
+DISK_CRITICAL_FREE_GIB=${DISK_CRITICAL_FREE_GIB:-15}
+INODE_WARN_PERCENT=${INODE_WARN_PERCENT:-70}
+MEMORY_WARN_MIB=${MEMORY_WARN_MIB:-4096}
+MEMORY_BLOCK_MIB=${MEMORY_BLOCK_MIB:-3072}
+MEMORY_CRITICAL_MIB=${MEMORY_CRITICAL_MIB:-1536}
+ALERT_CONFIG=${ALERT_CONFIG:-/etc/reboot-required-email-notifier/config}
+
+mkdir -p "$STATE_DIR"
+chmod 755 "$STATE_DIR"
+
+set -- $(df -P -B1 / | awk 'NR == 2 {print $2, $4, $5}')
+disk_total_bytes=$1
+disk_available_bytes=$2
+disk_used_percent=${3%%%}
+inode_used_percent=$(df -Pi / | awk 'NR == 2 {gsub(/%/, "", $5); print $5}')
+memory_available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+memory_available_mib=$((memory_available_kib / 1024))
+swap_total_kib=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
+swap_free_kib=$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)
+swap_total_bytes=$((swap_total_kib * 1024))
+swap_used_bytes=$(((swap_total_kib - swap_free_kib) * 1024))
+disk_available_gib=$((disk_available_bytes / 1024 / 1024 / 1024))
+unhealthy_containers=$(docker ps --filter health=unhealthy --format '{{.Names}}' 2>/dev/null || true)
+
+severity=ok
+accepting_heavy_jobs=true
+reasons=""
+
+add_reason() {
+  if [ -n "$reasons" ]; then
+    reasons="${reasons}
+$1"
+  else
+    reasons=$1
+  fi
+}
+
+if [ "$disk_used_percent" -ge "$DISK_CRITICAL_PERCENT" ] ||
+  [ "$disk_available_gib" -le "$DISK_CRITICAL_FREE_GIB" ]; then
+  severity=critical
+  accepting_heavy_jobs=false
+  add_reason "Disco raiz em nivel critico: ${disk_used_percent}% usado, ${disk_available_gib} GiB livres."
+elif [ "$disk_used_percent" -ge "$DISK_BLOCK_PERCENT" ] ||
+  [ "$disk_available_gib" -le "$DISK_BLOCK_FREE_GIB" ]; then
+  severity=blocked
+  accepting_heavy_jobs=false
+  add_reason "Novos trabalhos pesados bloqueados: ${disk_used_percent}% do disco usado, ${disk_available_gib} GiB livres."
+elif [ "$disk_used_percent" -ge "$DISK_WARN_PERCENT" ]; then
+  severity=warning
+  add_reason "Uso de disco em alerta: ${disk_used_percent}%."
+fi
+
+if [ "$memory_available_mib" -le "$MEMORY_CRITICAL_MIB" ]; then
+  severity=critical
+  accepting_heavy_jobs=false
+  add_reason "Memoria disponivel critica: ${memory_available_mib} MiB."
+elif [ "$memory_available_mib" -le "$MEMORY_BLOCK_MIB" ]; then
+  if [ "$severity" != "critical" ]; then severity=blocked; fi
+  accepting_heavy_jobs=false
+  add_reason "Novos trabalhos pesados bloqueados por memoria: ${memory_available_mib} MiB disponiveis."
+elif [ "$memory_available_mib" -le "$MEMORY_WARN_MIB" ]; then
+  if [ "$severity" = "ok" ]; then severity=warning; fi
+  add_reason "Memoria disponivel em alerta: ${memory_available_mib} MiB."
+fi
+
+if [ "$inode_used_percent" -ge "$INODE_WARN_PERCENT" ]; then
+  if [ "$severity" = "ok" ]; then severity=warning; fi
+  add_reason "Uso de inodes em alerta: ${inode_used_percent}%."
+fi
+
+if [ -n "$unhealthy_containers" ]; then
+  if [ "$severity" = "ok" ]; then severity=warning; fi
+  add_reason "Containers sem saude: $(printf '%s' "$unhealthy_containers" | tr '\n' ' ')."
+fi
+
+generated_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+reasons_json=$(printf '%s\n' "$reasons" | jq -Rsc 'split("\n") | map(select(length > 0))')
+unhealthy_json=$(printf '%s\n' "$unhealthy_containers" | jq -Rsc 'split("\n") | map(select(length > 0))')
+status_tmp=$(mktemp "$STATE_DIR/status.XXXXXX")
+jq -n \
+  --arg generatedAt "$generated_at" \
+  --arg severity "$severity" \
+  --argjson acceptingHeavyJobs "$accepting_heavy_jobs" \
+  --argjson diskTotalBytes "$disk_total_bytes" \
+  --argjson diskAvailableBytes "$disk_available_bytes" \
+  --argjson diskUsedPercent "$disk_used_percent" \
+  --argjson inodeUsedPercent "$inode_used_percent" \
+  --argjson memoryAvailableBytes "$((memory_available_kib * 1024))" \
+  --argjson swapTotalBytes "$swap_total_bytes" \
+  --argjson swapUsedBytes "$swap_used_bytes" \
+  --argjson reasons "$reasons_json" \
+  --argjson unhealthyContainers "$unhealthy_json" \
+  '{
+    generatedAt: $generatedAt,
+    severity: $severity,
+    acceptingHeavyJobs: $acceptingHeavyJobs,
+    disk: {
+      mount: "/",
+      totalBytes: $diskTotalBytes,
+      availableBytes: $diskAvailableBytes,
+      usedPercent: $diskUsedPercent
+    },
+    inodes: {usedPercent: $inodeUsedPercent},
+    memory: {availableBytes: $memoryAvailableBytes},
+    swap: {totalBytes: $swapTotalBytes, usedBytes: $swapUsedBytes},
+    unhealthyContainers: $unhealthyContainers,
+    reasons: $reasons
+  }' > "$status_tmp"
+chmod 644 "$status_tmp"
+mv "$status_tmp" "$STATUS_FILE"
+
+last_severity=$(cat "$LAST_SEVERITY_FILE" 2>/dev/null || printf 'unknown')
+printf '%s\n' "$severity" > "$LAST_SEVERITY_FILE"
+chmod 640 "$LAST_SEVERITY_FILE"
+
+send_alert() {
+  [ -f "$ALERT_CONFIG" ] || return 0
+  # shellcheck disable=SC1090
+  . "$ALERT_CONFIG"
+
+  ENV_FILE=${ENV_FILE:-/home/ubuntu/Nerdlingolab/.env}
+  TO_EMAIL=${TO_EMAIL:-}
+  FROM_EMAIL=${FROM_EMAIL:-}
+  SERVER_NAME=${SERVER_NAME:-$(hostname)}
+  [ -n "$TO_EMAIL" ] && [ -n "$FROM_EMAIL" ] || return 0
+
+  resend_api_key=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null |
+    tail -n 1 | cut -d= -f2- |
+    sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true)
+  if [ -z "$resend_api_key" ]; then
+    logger -t server-resource-guard "RESEND_API_KEY nao encontrado em $ENV_FILE"
+    return 0
+  fi
+
+  if [ "$TEST_ALERT" -eq 1 ]; then
+    subject="Teste do monitor de recursos - ${SERVER_NAME}"
+    headline="O monitor de disco, memoria, swap e containers esta ativo."
+  elif [ "$severity" = "ok" ]; then
+    subject="Recursos normalizados - ${SERVER_NAME}"
+    headline="O servidor voltou ao estado normal e liberou novos trabalhos pesados."
+  else
+    subject="Alerta de recursos ${severity} - ${SERVER_NAME}"
+    headline="O servidor mudou para o estado ${severity}."
+  fi
+
+  body=$(cat <<BODY
+${headline}
+
+Data: ${generated_at}
+Disco: ${disk_used_percent}% usado, ${disk_available_gib} GiB livres
+Inodes: ${inode_used_percent}% usados
+Memoria disponivel: ${memory_available_mib} MiB
+Swap em uso: $((swap_used_bytes / 1024 / 1024)) MiB de $((swap_total_bytes / 1024 / 1024)) MiB
+Aceitando trabalhos pesados: ${accepting_heavy_jobs}
+
+Motivos:
+${reasons:-Nenhum alerta ativo.}
+BODY
+)
+  payload=$(jq -n \
+    --arg from "$FROM_EMAIL" \
+    --arg to "$TO_EMAIL" \
+    --arg subject "$subject" \
+    --arg text "$body" \
+    '{from:$from,to:[$to],subject:$subject,text:$text}')
+  if response=$(curl -fsS -X POST 'https://api.resend.com/emails' \
+    -H "Authorization: Bearer ${resend_api_key}" \
+    -H 'Content-Type: application/json' \
+    --data "$payload"); then
+    printf '%s\n' "$response" > "$STATE_DIR/last-alert-response.json"
+    chmod 640 "$STATE_DIR/last-alert-response.json"
+    logger -t server-resource-guard "alerta ${severity} enviado para ${TO_EMAIL}"
+  else
+    logger -t server-resource-guard "falha ao enviar alerta ${severity}"
+  fi
+}
+
+if [ "$TEST_ALERT" -eq 1 ] ||
+  { [ "$last_severity" != "unknown" ] && [ "$severity" != "$last_severity" ]; }; then
+  send_alert
+fi
+
+logger -t server-resource-guard \
+  "severity=${severity} disk=${disk_used_percent}% free=${disk_available_gib}GiB memory=${memory_available_mib}MiB accepting=${accepting_heavy_jobs}"

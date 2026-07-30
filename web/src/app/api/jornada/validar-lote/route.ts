@@ -8,6 +8,7 @@ import {
   requireMaxContentLength,
   requireSameOrigin,
 } from "@/lib/api/security";
+import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import {
   DEFAULT_JORNADA_BATCH_CONFIG,
   validarJornadaBatchXlsx,
@@ -16,6 +17,7 @@ import { generateJornadaBatchReportPdf } from "@/lib/jornada/batch-pdf";
 import type { JornadaBatchConfig } from "@/lib/jornada/batch-validation";
 import { prisma } from "@/lib/prisma";
 import { recordUserUsage } from "@/lib/usage/record";
+import { getRequestContentLength } from "@/lib/system/resource-capacity";
 
 export const runtime = "nodejs";
 
@@ -118,6 +120,12 @@ export async function POST(request: Request) {
     if (contentTypeError) {
       return contentTypeError;
     }
+
+    const capacityError = await requireResourceCapacity({
+      inputBytes: getRequestContentLength(request),
+      multiplier: 3,
+    });
+    if (capacityError) return capacityError;
 
     const formData = await request.formData();
     const file = getUploadedFile(formData);

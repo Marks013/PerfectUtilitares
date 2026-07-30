@@ -1,0 +1,11 @@
+[Unit]
+Description=Run weekly PerfectUtilitares maintenance
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=perfectutilitares-maintenance.service
+
+[Install]
+WantedBy=timers.target

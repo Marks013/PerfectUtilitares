@@ -6,7 +6,9 @@ import {
   methodNotAllowed,
   requireSameOrigin,
 } from "@/lib/api/security";
+import { resourceCapacityErrorResponse } from "@/lib/api/resource-capacity";
 import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
+import { assertPdfQueueCapacity } from "@/lib/pdf/capacity";
 import { enqueuePdfJob } from "@/lib/pdf/queue";
 import {
   jpgToPdfOptionsSchema,
@@ -142,6 +144,14 @@ export async function POST(request: Request, context: RouteContext) {
       "JPG_TO_PDF_OPTIONS_INVALID",
       "Revise as opções selecionadas para criar o PDF.",
     );
+  }
+
+  try {
+    await assertPdfQueueCapacity(job);
+  } catch (error) {
+    const response = resourceCapacityErrorResponse(error);
+    if (response) return response;
+    throw error;
   }
 
   const claimed = await prisma.pdfJob.updateMany({

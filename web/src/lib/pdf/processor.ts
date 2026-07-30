@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { applyPdfAnnotations } from "@/lib/pdf/annotations";
+import { getPdfWorkingSetMultiplier } from "@/lib/pdf/capacity";
 import { compressPdfFile } from "@/lib/pdf/compression";
 import { buildPdfFromImages } from "@/lib/pdf/images-to-pdf";
 import {
@@ -29,6 +30,7 @@ import {
   splitStructuralPdf,
 } from "@/lib/pdf/structural";
 import { prisma } from "@/lib/prisma";
+import { assertResourceCapacity } from "@/lib/system/resource-capacity";
 
 const STRUCTURAL_OPERATIONS = new Set([
   "MERGE",
@@ -175,6 +177,11 @@ export async function processPdfJob(jobId: string) {
       "Uma página referencia um arquivo que não pertence ao trabalho.",
     );
   }
+
+  await assertResourceCapacity({
+    inputBytes: Number(job.inputBytes),
+    multiplier: getPdfWorkingSetMultiplier(job.operation),
+  });
 
   await prisma.pdfJob.update({
     where: { id: job.id },

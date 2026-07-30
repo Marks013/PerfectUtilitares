@@ -1,0 +1,14 @@
+[Unit]
+Description=Run conservative PerfectUtilitares and Docker cleanup
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/perfectutilitares-maintenance
+User=root
+Group=root
+Nice=10
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+TimeoutStartSec=45min

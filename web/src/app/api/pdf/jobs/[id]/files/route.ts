@@ -7,6 +7,7 @@ import {
   requireMaxContentLength,
   requireSameOrigin,
 } from "@/lib/api/security";
+import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
 import {
   MAX_PDF_FILE_BYTES,
@@ -21,6 +22,7 @@ import {
   writePdfUpload,
 } from "@/lib/pdf/storage";
 import { prisma } from "@/lib/prisma";
+import { getRequestContentLength } from "@/lib/system/resource-capacity";
 
 export const runtime = "nodejs";
 
@@ -53,6 +55,12 @@ export async function POST(request: Request, context: RouteContext) {
 
   const lengthError = requireMaxContentLength(request, MAX_PDF_FILE_BYTES);
   if (lengthError) return lengthError;
+
+  const capacityError = await requireResourceCapacity({
+    inputBytes: getRequestContentLength(request),
+    multiplier: 3,
+  });
+  if (capacityError) return capacityError;
 
   const owner = await getPdfOwnerContext();
   const rateLimitError = await enforceSharedRateLimit(request, {
