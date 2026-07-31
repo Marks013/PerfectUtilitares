@@ -135,7 +135,7 @@ model PdfJob {
   userId           String?
   user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
   ownerSessionHash String?
-  principalKey     String
+  principalKey     String        @default(dbgenerated("('legacy:rollback:'::text || (gen_random_uuid())::text)"))
   operation        PdfOperation
   status           PdfJobStatus  @default(DRAFT)
   progress         Int           @default(0)
