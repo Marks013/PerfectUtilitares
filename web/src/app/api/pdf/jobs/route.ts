@@ -9,11 +9,14 @@ import {
   requireMaxContentLength,
   requireSameOrigin,
 } from "@/lib/api/security";
+import { getPdfOwnerContext, getPdfPrincipal } from "@/lib/pdf/access";
+import {
+  createPdfDraftWithCapacity,
+  PdfPublicCapacityError,
+} from "@/lib/pdf/capacity";
 import { getPdfJobExpiry } from "@/lib/pdf/constants";
-import { getPdfOwnerContext } from "@/lib/pdf/access";
 import { pdfJobCreateSchema } from "@/lib/pdf/schema";
 import { serializePdfJob } from "@/lib/pdf/serialization";
-import { prisma } from "@/lib/prisma";
 import { zodIssueDetails } from "@/lib/users/schema";
 
 export const runtime = "nodejs";
@@ -33,6 +36,7 @@ export async function POST(request: Request) {
   if (lengthError) return lengthError;
 
   const owner = await getPdfOwnerContext({ createAnonymous: true });
+  const principal = getPdfPrincipal(owner, request.headers);
   const rateLimitError = await enforceSharedRateLimit(request, {
     limit: 30,
     windowMs: 60_000,
@@ -55,42 +59,30 @@ export async function POST(request: Request) {
     );
   }
 
-  if (!owner.session) {
-    const activeJobLimit = 3;
-    const activeJobs = await prisma.pdfJob.count({
-      where: {
-        ownerSessionHash: owner.ownerSessionHash,
-        expiresAt: { gt: new Date() },
-        status: { in: ["DRAFT", "QUEUED", "RUNNING"] },
-      },
-    });
-    if (activeJobs >= activeJobLimit) {
-      return jsonError(
-        429,
-        "PDF_ACTIVE_JOB_LIMIT",
-        "Você já tem três trabalhos PDF em andamento. Finalize um deles ou aguarde um pouquinho. Com uma conta, essa franquia de uso público deixa de se aplicar.",
-        {
-          action: {
-            href: "/login",
-            label: "Entrar na conta",
-          },
-        },
-      );
-    }
-  }
-
-  const job = await prisma.pdfJob.create({
-    data: {
+  try {
+    const job = await createPdfDraftWithCapacity({
       tenantId: owner.session?.user.tenantId ?? null,
       userId: owner.session?.user.id ?? null,
       ownerSessionHash: owner.session ? null : owner.ownerSessionHash,
+      principalKey: principal.key,
+      isAuthenticated: principal.tier === "authenticated",
       operation: parsed.data.operation,
       options: parsed.data.options as Prisma.InputJsonValue | undefined,
       expiresAt: getPdfJobExpiry(),
-    },
-  });
+    });
 
-  return NextResponse.json({ job: serializePdfJob(job) }, { status: 201 });
+    return NextResponse.json({ job: serializePdfJob(job) }, { status: 201 });
+  } catch (error) {
+    if (error instanceof PdfPublicCapacityError) {
+      return jsonError(429, error.code, error.message, {
+        action: {
+          href: "/login",
+          label: "Entrar na conta",
+        },
+      });
+    }
+    throw error;
+  }
 }
 
 export function PUT() {

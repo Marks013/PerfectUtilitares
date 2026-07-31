@@ -11,6 +11,13 @@ export type RateLimitOptions = {
   windowMs: number;
 };
 
+export class SharedRateLimitUnavailableError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super("The shared rate-limit store is unavailable", options);
+    this.name = "SharedRateLimitUnavailableError";
+  }
+}
+
 export function getClientIp(headers: Headers) {
   const realIp = headers.get("x-real-ip")?.trim();
   if (realIp && isIP(realIp)) {
@@ -97,8 +104,8 @@ export async function checkSharedRateLimit(
       remaining: Math.max(0, options.limit - bucket.count),
       resetAt: bucket.resetAt.getTime(),
     };
-  } catch {
-    return checkRateLimit(key, options);
+  } catch (error) {
+    throw new SharedRateLimitUnavailableError({ cause: error });
   }
 }
 

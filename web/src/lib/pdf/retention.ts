@@ -5,6 +5,8 @@ import {
 } from "@/lib/pdf/storage";
 import { prisma } from "@/lib/prisma";
 
+const PDF_STALE_RUNNING_JOB_HOURS = 6;
+
 export async function cleanupCompletedPdfJobInputs(jobId: string) {
   const job = await prisma.pdfJob.findFirst({
     where: { id: jobId, status: "SUCCEEDED" },
@@ -64,10 +66,22 @@ export async function cleanupCompletedPdfJobInputs(jobId: string) {
 }
 
 export async function cleanupExpiredPdfJobs(now = new Date()) {
+  const staleRunningBefore = new Date(
+    now.getTime() - PDF_STALE_RUNNING_JOB_HOURS * 60 * 60 * 1_000,
+  );
   const expiredJobs = await prisma.pdfJob.findMany({
     where: {
-      expiresAt: { lte: now },
-      status: { not: "RUNNING" },
+      OR: [
+        {
+          expiresAt: { lte: now },
+          status: { not: "RUNNING" },
+        },
+        {
+          startedAt: { lte: staleRunningBefore },
+          status: "RUNNING",
+          updatedAt: { lte: staleRunningBefore },
+        },
+      ],
     },
     orderBy: { expiresAt: "asc" },
     select: { id: true, status: true },
@@ -76,7 +90,23 @@ export async function cleanupExpiredPdfJobs(now = new Date()) {
   let cleaned = 0;
 
   for (const job of expiredJobs) {
-    if (job.status !== "EXPIRED") {
+    if (job.status === "RUNNING") {
+      const claimed = await prisma.pdfJob.updateMany({
+        where: {
+          id: job.id,
+          startedAt: { lte: staleRunningBefore },
+          status: "RUNNING",
+          updatedAt: { lte: staleRunningBefore },
+        },
+        data: {
+          completedAt: now,
+          errorCode: "PDF_JOB_STALE",
+          errorMessage: "O processamento foi interrompido e os arquivos expiraram.",
+          status: "EXPIRED",
+        },
+      });
+      if (!claimed.count) continue;
+    } else if (job.status !== "EXPIRED") {
       const claimed = await prisma.pdfJob.updateMany({
         where: {
           expiresAt: { lte: now },

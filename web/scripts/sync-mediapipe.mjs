@@ -1,4 +1,11 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,32 +21,81 @@ const legacyCascade = join(
   "haarcascade_frontalface_default.xml",
 );
 const legacyTarget = join(root, "public", "legacy", "haarcascade_frontalface_default.xml");
+const mode = process.argv[2] ?? "check";
+
+if (!new Set(["check", "update"]).has(mode)) {
+  throw new Error(`Modo invalido: ${mode}. Use check ou update.`);
+}
 
 if (!existsSync(source)) {
   throw new Error("@mediapipe/face_detection nao instalado");
 }
 
-mkdirSync(dirname(target), { recursive: true });
-if (existsSync(target)) {
-  rmSync(target, { recursive: true, force: true });
-}
-mkdirSync(target, { recursive: true });
+const assetNames = readdirSync(source)
+  .filter(
+    (file) =>
+      file.endsWith(".js") ||
+      file.endsWith(".wasm") ||
+      file.endsWith(".data") ||
+      file.endsWith(".binarypb") ||
+      file.endsWith(".tflite"),
+  )
+  .sort();
 
-for (const file of readdirSync(source)) {
-  if (
-    file.endsWith(".js") ||
-    file.endsWith(".wasm") ||
-    file.endsWith(".data") ||
-    file.endsWith(".binarypb") ||
-    file.endsWith(".tflite")
-  ) {
+function filesMatch(left, right) {
+  return existsSync(right) && readFileSync(left).equals(readFileSync(right));
+}
+
+function updateAssets() {
+  mkdirSync(dirname(target), { recursive: true });
+  if (existsSync(target)) {
+    rmSync(target, { recursive: true, force: true });
+  }
+  mkdirSync(target, { recursive: true });
+
+  for (const file of assetNames) {
     cpSync(join(source, file), join(target, file));
   }
+
+  if (existsSync(legacyCascade)) {
+    mkdirSync(dirname(legacyTarget), { recursive: true });
+    cpSync(legacyCascade, legacyTarget);
+  }
+
+  console.log("Ativos do MediaPipe atualizados.");
 }
 
-if (existsSync(legacyCascade)) {
-  mkdirSync(dirname(legacyTarget), { recursive: true });
-  cpSync(legacyCascade, legacyTarget);
+function checkAssets() {
+  const problems = [];
+  const targetNames = existsSync(target) ? readdirSync(target).sort() : [];
+
+  for (const file of assetNames) {
+    if (!filesMatch(join(source, file), join(target, file))) {
+      problems.push(`ausente ou desatualizado: ${file}`);
+    }
+  }
+
+  for (const file of targetNames) {
+    if (!assetNames.includes(file)) {
+      problems.push(`arquivo inesperado: ${file}`);
+    }
+  }
+
+  if (existsSync(legacyCascade) && !filesMatch(legacyCascade, legacyTarget)) {
+    problems.push("haarcascade legado ausente ou desatualizado");
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `Ativos do MediaPipe fora de sincronia:\n- ${problems.join("\n- ")}\nExecute npm run sync:update.`,
+    );
+  }
+
+  console.log(`Ativos do MediaPipe verificados (${assetNames.length} arquivos).`);
 }
 
-console.log("MediaPipe face detection assets synced");
+if (mode === "update") {
+  updateAssets();
+} else {
+  checkAssets();
+}

@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import type { Prisma } from "@prisma/client";
 import { auth, type AppSession } from "@/auth";
+import { getRateLimitKey } from "@/lib/api/rate-limit";
 
 const PDF_OWNER_COOKIE = "perfectutilitares.pdf-owner";
 const DEFAULT_OWNER_TTL_MINUTES = 120;
@@ -9,6 +10,11 @@ const DEFAULT_OWNER_TTL_MINUTES = 120;
 export type PdfOwnerContext = {
   session: AppSession | null;
   ownerSessionHash: string | null;
+};
+
+export type PdfPrincipal = {
+  key: string;
+  tier: "authenticated" | "public";
 };
 
 function getOwnerTtlMinutes() {
@@ -72,4 +78,21 @@ export function pdfJobAccessWhere(
   return ownership.length > 0
     ? { OR: ownership }
     : { ownerSessionHash: "__missing_owner__" };
+}
+
+export function getPdfPrincipal(
+  owner: PdfOwnerContext,
+  headers: Headers,
+): PdfPrincipal {
+  if (owner.session) {
+    return {
+      key: `user:${hashOwnerToken(owner.session.user.id)}`,
+      tier: "authenticated",
+    };
+  }
+
+  return {
+    key: getRateLimitKey("ip", headers),
+    tier: "public",
+  };
 }

@@ -8,7 +8,10 @@ import {
 } from "@/lib/api/security";
 import { resourceCapacityErrorResponse } from "@/lib/api/resource-capacity";
 import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
-import { assertPdfQueueCapacity } from "@/lib/pdf/capacity";
+import {
+  PdfPublicCapacityError,
+  reservePdfJobForQueue,
+} from "@/lib/pdf/capacity";
 import { enqueuePdfJob } from "@/lib/pdf/queue";
 import {
   jpgToPdfOptionsSchema,
@@ -146,26 +149,25 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  let claimed = false;
   try {
-    await assertPdfQueueCapacity(job);
+    claimed = await reservePdfJobForQueue({
+      isAuthenticated: Boolean(owner.session),
+      jobId: job.id,
+      principalKey: job.principalKey,
+    });
   } catch (error) {
+    if (error instanceof PdfPublicCapacityError) {
+      return jsonError(429, error.code, error.message, {
+        action: { href: "/login", label: "Entrar na conta" },
+      });
+    }
     const response = resourceCapacityErrorResponse(error);
     if (response) return response;
     throw error;
   }
 
-  const claimed = await prisma.pdfJob.updateMany({
-    where: { id: job.id, status: "DRAFT" },
-    data: {
-      completedAt: null,
-      errorCode: null,
-      errorMessage: null,
-      progress: 0,
-      status: "QUEUED",
-    },
-  });
-
-  if (claimed.count !== 1) {
+  if (!claimed) {
     return jsonError(
       409,
       "PDF_JOB_ALREADY_QUEUED",
@@ -174,7 +176,10 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    await enqueuePdfJob(job.id);
+    await enqueuePdfJob(job.id, {
+      key: job.principalKey,
+      tier: owner.session ? "authenticated" : "public",
+    });
   } catch (error) {
     await prisma.pdfJob.updateMany({
       where: { id: job.id, status: "QUEUED" },

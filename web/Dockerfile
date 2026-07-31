@@ -13,13 +13,21 @@ FROM base AS builder
 ARG AUTH_URL=http://localhost:3002
 ARG NEXTAUTH_URL=http://localhost:3002
 ARG APP_URL=http://localhost:3002
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
 ENV AUTH_URL=$AUTH_URL
 ENV NEXTAUTH_URL=$NEXTAUTH_URL
 ENV APP_URL=$APP_URL
+ENV SENTRY_ORG=$SENTRY_ORG
+ENV SENTRY_PROJECT=$SENTRY_PROJECT
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run prisma:generate
-RUN npm run build
+RUN --mount=type=cache,id=perfectutilitares-next-cache,target=/app/.next/cache,sharing=locked \
+    --mount=type=secret,id=sentry_auth_token,required=false \
+    if [ -f /run/secrets/sentry_auth_token ]; then \
+      export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; \
+    fi; \
+    npm run build
 
 FROM base AS migrator
 ENV NODE_ENV=production

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import {
   enforceSharedRateLimit,
@@ -80,8 +81,42 @@ export async function DELETE(request: Request, context: RouteContext) {
     );
   }
 
-  await prisma.pdfJob.delete({ where: { id: job.id } });
-  await removePdfJobFiles(job.id).catch(() => undefined);
+  const expired = await prisma.pdfJob.updateMany({
+    where: {
+      id: job.id,
+      status: { not: "RUNNING" },
+      ...pdfJobAccessWhere(owner),
+    },
+    data: {
+      completedAt: new Date(),
+      status: "EXPIRED",
+    },
+  });
+
+  if (!expired.count) {
+    return jsonError(
+      409,
+      "PDF_JOB_RUNNING",
+      "Aguarde o processamento terminar antes de excluir este trabalho.",
+    );
+  }
+
+  try {
+    await removePdfJobFiles(job.id);
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: { pdfJobDeleteCleanup: true, pdfJobId: job.id },
+    });
+    return jsonError(
+      503,
+      "PDF_STORAGE_CLEANUP_FAILED",
+      "Não foi possível remover os arquivos agora. Tente novamente em instantes.",
+    );
+  }
+
+  await prisma.pdfJob.deleteMany({
+    where: { id: job.id, status: "EXPIRED" },
+  });
 
   return new NextResponse(null, { status: 204 });
 }

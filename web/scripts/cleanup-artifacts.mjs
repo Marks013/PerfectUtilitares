@@ -6,7 +6,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const keepLimit = Number(process.env.ARTIFACT_KEEP_LIMIT ?? "5");
 
 const removableDirs = [
-  ".next/cache",
   ".turbo",
   ".cache",
   ".tmp",

@@ -1,4 +1,5 @@
 import { PgBoss } from "pg-boss";
+import type { PdfPrincipal } from "@/lib/pdf/access";
 
 export const PDF_PROCESSING_QUEUE = "perfect-pdf-processing";
 
@@ -28,6 +29,7 @@ async function startPdfQueue() {
     await boss.createQueue(PDF_PROCESSING_QUEUE, {
       deleteAfterSeconds: 24 * 60 * 60,
       expireInSeconds: 20 * 60,
+      heartbeatSeconds: 60,
       notify: true,
       retentionSeconds: 24 * 60 * 60,
       retryBackoff: true,
@@ -51,12 +53,13 @@ export function getPdfQueue() {
   return globalForPdfQueue.pdfQueuePromise;
 }
 
-export async function enqueuePdfJob(jobId: string) {
+export async function enqueuePdfJob(jobId: string, principal: PdfPrincipal) {
   const boss = await getPdfQueue();
   return boss.send(
     PDF_PROCESSING_QUEUE,
     { jobId },
     {
+      group: { id: principal.key, tier: principal.tier },
       singletonKey: jobId,
     },
   );

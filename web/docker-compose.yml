@@ -43,15 +43,22 @@ services:
       DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Principal}
       DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-principal}
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-perfectutilitares}?schema=public"
+    cpus: "${MIGRATE_CPU_LIMIT:-0.5}"
+    mem_limit: ${MIGRATE_MEMORY_LIMIT:-512m}
+    pids_limit: 128
 
   app:
     build:
       context: .
       target: runner
+      secrets:
+        - sentry_auth_token
       args:
         AUTH_URL: ${AUTH_URL:-http://localhost:3002}
         NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3002}
         APP_URL: ${APP_URL:-http://localhost:3002}
+        SENTRY_ORG: ${SENTRY_ORG:-}
+        SENTRY_PROJECT: ${SENTRY_PROJECT:-}
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -74,7 +81,6 @@ services:
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-Sistema Web <onboarding@resend.dev>}"
-      SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
       SENTRY_ORG: ${SENTRY_ORG:-}
       SENTRY_PROJECT: ${SENTRY_PROJECT:-}
       SENTRY_PROFILES_SAMPLE_RATE: ${SENTRY_PROFILES_SAMPLE_RATE:-0.1}
@@ -85,6 +91,7 @@ services:
       PDF_STORAGE_DIR: /data/pdf-jobs
       PDF_MAX_ACTIVE_JOBS: ${PDF_MAX_ACTIVE_JOBS:-12}
       PDF_MAX_ACTIVE_INPUT_BYTES: ${PDF_MAX_ACTIVE_INPUT_BYTES:-4294967296}
+      PDF_MAX_PUBLIC_ACTIVE_JOBS: ${PDF_MAX_PUBLIC_ACTIVE_JOBS:-2}
       STORAGE_BLOCK_USED_PERCENT: ${STORAGE_BLOCK_USED_PERCENT:-80}
       STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}
     user: "${APP_UID:-1001}:${APP_GID:-1001}"
@@ -119,6 +126,9 @@ services:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-perfectutilitares}?schema=public"
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
       PDF_STORAGE_DIR: /data/pdf-jobs
+      PDF_WORKER_AUTHENTICATED_GROUP_CONCURRENCY: ${PDF_WORKER_AUTHENTICATED_GROUP_CONCURRENCY:-2}
+      PDF_WORKER_CONCURRENCY: ${PDF_WORKER_CONCURRENCY:-2}
+      PDF_WORKER_HEARTBEAT_PATH: /tmp/perfect-pdf-worker-heartbeat
       STORAGE_BLOCK_USED_PERCENT: ${STORAGE_BLOCK_USED_PERCENT:-80}
       STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
@@ -126,7 +136,22 @@ services:
     volumes:
       - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
       - /var/lib/server-resource-guard:/run/server-resource-guard:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const fs=require('node:fs');const age=Date.now()-fs.statSync('/tmp/perfect-pdf-worker-heartbeat').mtimeMs;process.exit(age<=75000?0:1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    stop_grace_period: 45s
     cpus: "${PDF_WORKER_CPU_LIMIT:-2.0}"
     mem_limit: ${PDF_WORKER_MEMORY_LIMIT:-4g}
     mem_reservation: ${PDF_WORKER_MEMORY_RESERVATION:-1g}
     pids_limit: 512
+
+secrets:
+  sentry_auth_token:
+    environment: SENTRY_AUTH_TOKEN

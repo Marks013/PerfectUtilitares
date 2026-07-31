@@ -140,4 +140,65 @@ describe("PDF storage cleanup", () => {
       where: { id: "job-expired", status: "EXPIRED" },
     });
   });
+
+  it("keeps an expired record when filesystem cleanup fails", async () => {
+    mocks.jobFindMany.mockResolvedValue([
+      { id: "job-retry", status: "EXPIRED" },
+    ]);
+    mocks.removeJobFiles.mockRejectedValueOnce(new Error("disk busy"));
+
+    await expect(
+      cleanupExpiredPdfJobs(new Date("2026-07-29T12:00:00.000Z")),
+    ).resolves.toEqual({ cleaned: 0, scanned: 1 });
+
+    expect(mocks.jobDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.captureException).toHaveBeenCalledOnce();
+  });
+
+  it("reconciles only running jobs without activity for six hours", async () => {
+    mocks.jobFindMany.mockResolvedValue([
+      { id: "job-stale", status: "RUNNING" },
+    ]);
+    const now = new Date("2026-07-29T12:00:00.000Z");
+    const staleBefore = new Date("2026-07-29T06:00:00.000Z");
+
+    await expect(cleanupExpiredPdfJobs(now)).resolves.toEqual({
+      cleaned: 1,
+      scanned: 1,
+    });
+
+    expect(mocks.jobFindMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          {
+            expiresAt: { lte: now },
+            status: { not: "RUNNING" },
+          },
+          {
+            startedAt: { lte: staleBefore },
+            status: "RUNNING",
+            updatedAt: { lte: staleBefore },
+          },
+        ],
+      },
+      orderBy: { expiresAt: "asc" },
+      select: { id: true, status: true },
+      take: 100,
+    });
+    expect(mocks.jobUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "job-stale",
+        startedAt: { lte: staleBefore },
+        status: "RUNNING",
+        updatedAt: { lte: staleBefore },
+      },
+      data: {
+        completedAt: now,
+        errorCode: "PDF_JOB_STALE",
+        errorMessage: "O processamento foi interrompido e os arquivos expiraram.",
+        status: "EXPIRED",
+      },
+    });
+    expect(mocks.removeJobFiles).toHaveBeenCalledWith("job-stale");
+  });
 });

@@ -1,5 +1,21 @@
-import { describe, expect, it } from "vitest";
-import { getClientIp, getRateLimitKey } from "@/lib/api/rate-limit";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  checkSharedRateLimit,
+  getClientIp,
+  getRateLimitKey,
+  SharedRateLimitUnavailableError,
+} from "@/lib/api/rate-limit";
+
+const prisma = vi.hoisted(() => ({
+  $queryRaw: vi.fn(),
+  apiRateLimitBucket: { deleteMany: vi.fn() },
+}));
+
+vi.mock("@/lib/prisma", () => ({ prisma }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("getClientIp", () => {
   it("prefers the IP set by the trusted reverse proxy", () => {
@@ -38,5 +54,15 @@ describe("getClientIp", () => {
 
     expect(key).toMatch(/^photos:[a-f0-9]{64}$/);
     expect(key).not.toContain("203.0.113.15");
+  });
+});
+
+describe("checkSharedRateLimit", () => {
+  it("fails closed when the shared PostgreSQL bucket is unavailable", async () => {
+    prisma.$queryRaw.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      checkSharedRateLimit("pdf:test", { limit: 2, windowMs: 60_000 }),
+    ).rejects.toBeInstanceOf(SharedRateLimitUnavailableError);
   });
 });

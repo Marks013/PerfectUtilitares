@@ -1,4 +1,6 @@
 import * as Sentry from "@sentry/node";
+import { constants as fsConstants } from "node:fs";
+import { access, rename, writeFile } from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { processPdfJob } from "@/lib/pdf/processor";
 import {
@@ -20,9 +22,27 @@ Sentry.init({
 });
 
 const boss = await getPdfQueue();
+const readWorkerLimit = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 8
+    ? parsed
+    : fallback;
+};
 const workOptions = {
   batchSize: 1,
+  groupConcurrency: {
+    default: 1,
+    tiers: {
+      authenticated: readWorkerLimit(
+        process.env.PDF_WORKER_AUTHENTICATED_GROUP_CONCURRENCY,
+        2,
+      ),
+      public: 1,
+    },
+  },
+  heartbeatRefreshSeconds: 20,
   includeMetadata: true,
+  localConcurrency: readWorkerLimit(process.env.PDF_WORKER_CONCURRENCY, 2),
   pollingIntervalSeconds: 2,
 } as const;
 
@@ -79,6 +99,36 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
 );
 
 let cleanupPromise: Promise<unknown> | null = null;
+const heartbeatPath =
+  process.env.PDF_WORKER_HEARTBEAT_PATH ??
+  "/tmp/perfect-pdf-worker-heartbeat";
+let heartbeatPromise: Promise<void> | null = null;
+
+function refreshWorkerHeartbeat() {
+  if (heartbeatPromise) return heartbeatPromise;
+  heartbeatPromise = (async () => {
+    await prisma.$queryRaw`SELECT 1`;
+    await access(
+      process.env.PDF_STORAGE_DIR ?? "/data/pdf-jobs",
+      fsConstants.R_OK | fsConstants.W_OK,
+    );
+    const temporaryPath = `${heartbeatPath}.${process.pid}.tmp`;
+    await writeFile(
+      temporaryPath,
+      JSON.stringify({ pid: process.pid, updatedAt: new Date().toISOString() }),
+      "utf8",
+    );
+    await rename(temporaryPath, heartbeatPath);
+  })()
+    .catch((error) => {
+      Sentry.captureException(error, { tags: { pdfWorkerHeartbeat: true } });
+    })
+    .finally(() => {
+      heartbeatPromise = null;
+    });
+  return heartbeatPromise;
+}
+
 function runRetentionCleanup() {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = cleanupExpiredPdfJobs()
@@ -94,6 +144,12 @@ function runRetentionCleanup() {
 }
 
 void runRetentionCleanup();
+await refreshWorkerHeartbeat();
+const heartbeatTimer = setInterval(
+  () => void refreshWorkerHeartbeat(),
+  15_000,
+);
+heartbeatTimer.unref();
 const retentionTimer = setInterval(
   () => void runRetentionCleanup(),
   5 * 60 * 1_000,
@@ -102,7 +158,9 @@ retentionTimer.unref();
 
 async function shutdown(signal: string) {
   console.info(`[pdf-worker] encerrando por ${signal}`);
+  clearInterval(heartbeatTimer);
   clearInterval(retentionTimer);
+  await heartbeatPromise;
   await cleanupPromise;
   await stopPdfQueue();
   await prisma.$disconnect();

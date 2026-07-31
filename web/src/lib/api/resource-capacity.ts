@@ -10,7 +10,11 @@ export function resourceCapacityErrorResponse(error: unknown) {
     return null;
   }
 
-  return jsonError(507, error.code, error.message);
+  return jsonError(
+    error.code === "PDF_QUEUE_CAPACITY_REACHED" ? 503 : 507,
+    error.code,
+    error.message,
+  );
 }
 
 export async function requireResourceCapacity(

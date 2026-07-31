@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { auth, type AppSession } from "@/auth";
 import {
   checkRateLimit,
   checkSharedRateLimit,
   getRateLimitKey,
+  SharedRateLimitUnavailableError,
 } from "@/lib/api/rate-limit";
 
 type GuardOk = { ok: true; session: AppSession };
@@ -328,7 +330,22 @@ export async function enforceSharedRateLimit(
   ];
 
   for (const check of checks) {
-    const result = await checkSharedRateLimit(check.key, check);
+    let result;
+    try {
+      result = await checkSharedRateLimit(check.key, check);
+    } catch (error) {
+      if (!(error instanceof SharedRateLimitUnavailableError)) throw error;
+      Sentry.captureException(error, {
+        tags: { rateLimitScope: check.scope, sharedRateLimit: true },
+      });
+      const response = jsonError(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "Estamos reorganizando a fila por alguns instantes. Seus arquivos continuam no seu dispositivo; tente novamente em meio minuto.",
+      );
+      response.headers.set("Retry-After", "30");
+      return response;
+    }
     if (!result.limited) continue;
 
     const retryAfterSeconds = Math.max(

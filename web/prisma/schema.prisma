@@ -135,6 +135,7 @@ model PdfJob {
   userId           String?
   user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
   ownerSessionHash String?
+  principalKey     String
   operation        PdfOperation
   status           PdfJobStatus  @default(DRAFT)
   progress         Int           @default(0)
@@ -152,6 +153,7 @@ model PdfJob {
 
   @@index([expiresAt])
   @@index([ownerSessionHash, status, expiresAt])
+  @@index([principalKey, status, expiresAt])
   @@index([userId, status, expiresAt])
 }
 
