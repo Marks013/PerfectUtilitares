@@ -49,7 +49,7 @@ async function acquireAdmissionLock(
   key: string,
 ) {
   await tx.$queryRaw`
-    SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))
+    SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text AS "lock"
   `;
 }
 
