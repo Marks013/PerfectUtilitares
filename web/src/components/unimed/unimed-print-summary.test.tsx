@@ -59,8 +59,14 @@ function printData(
       usedDays: 31,
       usedProrata: "100.00",
       cutoffApplied: true,
+      currentCompetency: "2026-08",
+      nextCompetency: "2026-09",
+      nextCompetencyDays: 30,
+      totalRefundDays: 30,
       currentCompetencyRefund: "0.00",
       nextCompetencyRefund: "100.00",
+      nextCompetencyInvoiceTotal: "100.00",
+      nextCompetencyPayrollCharge: "61.26",
       invoiceRefund: "100.00",
       refundDays: 0,
       payrollCharge: "61.26",
@@ -76,6 +82,7 @@ function printData(
       emailHasAttachment: false,
       display: {
         invoiceTotal: "100.00",
+        nextCompetencyInvoiceTotal: "100.00",
         usedProrata: "100.00",
         invoiceRefund: "0.00",
         payrollCharge: "61.26",
@@ -108,8 +115,8 @@ describe("Unimed printable payroll loans", () => {
     expect(content).toContain("001 - Banco Um");
     expect(content).toContain("341 - Banco Dois");
     expect(markup).toContain("<td>MA</td>");
-    expect(markup).toContain("<td>07/2026</td><td>31/08/2026</td>");
-    expect(content).toContain("Total de valores estornados");
+    expect(markup).toContain("<td>08/2026</td><td>31/08/2026</td>");
+    expect(content).toContain("Total estornado em fatura");
   });
 
   it("omits payroll loans when the remembered preference is disabled", () => {
