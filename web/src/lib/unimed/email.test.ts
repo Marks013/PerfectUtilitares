@@ -25,6 +25,18 @@ describe("Unimed email", () => {
     expect(html).not.toContain("attachment");
   });
 
+  it("keeps the email valid when the signature asset is unavailable", () => {
+    const html = buildUnimedEmailHtml(
+      "Pessoa Titular",
+      "52998224725",
+      new Date("2026-07-31T11:00:00.000Z"),
+      false,
+    );
+    expect(html).not.toContain("cid:planalto-signature");
+    expect(html).not.toContain("height: 60px");
+    expect(html).toContain("Supermercado Planalto - Matriz");
+  });
+
   it("varies the fixed subject without Gmail grouping", () => {
     expect(buildUnimedEmailSubject(1)).toBe("Solicitação de Coparticipação");
     expect(buildUnimedEmailSubject(2)).toBe("Solicitação de Coparticipação.");

@@ -85,6 +85,7 @@ export function buildUnimedEmailHtml(
   name: string,
   cpf: string,
   now = new Date(),
+  includeSignature = true,
 ) {
   return `
     <html>
@@ -98,7 +99,11 @@ export function buildUnimedEmailHtml(
       <br /><br />
       <p><strong>Att.</strong><br />
       <strong>Departamento Pessoal</strong></p>
-      <img src="cid:planalto-signature" alt="Supermercado Planalto" style="height: 60px;" /><br />
+      ${
+        includeSignature
+          ? '<img src="cid:planalto-signature" alt="Supermercado Planalto" style="height: 60px;" /><br />'
+          : ""
+      }
       <p><strong>Supermercado Planalto - Matriz</strong><br />
       Av. Paraná, Nº 5080, Centro, Cep : 87.502-000<br />
       Umuarama - Paraná.<br />
@@ -132,12 +137,54 @@ function publicFailureCode(error: unknown) {
     "UNIMED_EMAIL_DISABLED",
     "UNIMED_BENEFICIARY_NOT_FOUND",
     "RESEND_NOT_CONFIGURED",
+    "RESEND_VALIDATION_ERROR",
+    "RESEND_AUTH_ERROR",
+    "RESEND_LIMIT_ERROR",
   ].includes(code)
     ? code
     : "UNIMED_EMAIL_DELIVERY_FAILED";
 }
-
+function resendFailureCode(name: string | undefined) {
+  if (
+    [
+      "validation_error",
+      "invalid_from_address",
+      "invalid_attachment",
+      "invalid_parameter",
+      "invalid_region",
+      "invalid_idempotency_key",
+      "invalid_idempotent_request",
+      "concurrent_idempotent_requests",
+      "missing_required_field",
+    ].includes(name ?? "")
+  ) {
+    return "RESEND_VALIDATION_ERROR";
+  }
+  if (
+    [
+      "missing_api_key",
+      "invalid_api_key",
+      "restricted_api_key",
+      "invalid_access",
+    ].includes(
+      name ?? "",
+    )
+  ) {
+    return "RESEND_AUTH_ERROR";
+  }
+  if (
+    [
+      "daily_quota_exceeded",
+      "monthly_quota_exceeded",
+      "rate_limit_exceeded",
+    ].includes(name ?? "")
+  ) {
+    return "RESEND_LIMIT_ERROR";
+  }
+  return "UNIMED_EMAIL_DELIVERY_FAILED";
+}
 async function reserveEmailEvent(input: SendUnimedEmailInput) {
+
   try {
     return {
       state: "RESERVED" as const,
@@ -229,7 +276,7 @@ export async function sendUnimedExclusionEmail(input: SendUnimedEmailInput) {
         where: {
           id: beneficiaryId,
           tenantId,
-          competency: { status: "ACTIVE" },
+          competency: { status: { in: ["ACTIVE", "PREVIOUS"] } },
         },
         select: { fullName: true, cpf: true },
       }),
@@ -256,37 +303,58 @@ export async function sendUnimedExclusionEmail(input: SendUnimedEmailInput) {
       });
     }
     const subject = buildUnimedEmailSubject(sequence);
-    const signatureLogo = await readFile(
-      path.join(
-        process.cwd(),
-        "public",
-        "assets",
-        "unimed-email-signature.jpg",
-      ),
+    const signaturePath = path.join(
+      process.cwd(),
+      "public",
+      "assets",
+      "unimed-email-signature.jpg",
     );
+    const signatureLogo = await readFile(signaturePath).catch((error) => {
+      console.warn("UNIMED_EMAIL_SIGNATURE_NOT_FOUND", {
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      return null;
+    });
     resendClient ??= new Resend(apiKey);
-    await resendClient.emails.send(
+    const { data, error } = await resendClient.emails.send(
       {
         from,
         to: setting.recipients,
         subject,
-        html: buildUnimedEmailHtml(beneficiary.fullName, beneficiary.cpf),
-        attachments: [
-          {
-            content: signatureLogo,
-            contentId: "planalto-signature",
-            filename: "assinatura-planalto.jpg",
-          },
-        ],
+        html: buildUnimedEmailHtml(
+          beneficiary.fullName,
+          beneficiary.cpf,
+          new Date(),
+          Boolean(signatureLogo),
+        ),
+        ...(signatureLogo
+          ? {
+              attachments: [
+                {
+                  content: signatureLogo,
+                  contentId: "planalto-signature",
+                  filename: "assinatura-planalto.jpg",
+                },
+              ],
+            }
+          : {}),
       },
-      {
+            {
         idempotencyKey: createHash("sha256")
           .update(`${tenantId}:${input.idempotencyKey}`)
           .digest("hex"),
       },
     );
-
+    if (error || !data?.id) {
+      console.error("UNIMED_EMAIL_RESEND_REJECTED", {
+        name: error?.name ?? "missing_response_id",
+        message:
+          error?.message ?? "Resend não retornou o identificador do envio.",
+      });
+      throw new Error(resendFailureCode(error?.name));
+    }
     await prisma.$transaction([
+
       prisma.unimedEmailEvent.update({
         where: { id: reservation.event.id },
         data: {

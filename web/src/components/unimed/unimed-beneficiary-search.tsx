@@ -222,8 +222,8 @@ export function UnimedBeneficiarySearch({
         Pesquisar beneficiário
       </label>
       <p className="mt-1 text-xs leading-5 text-[color:var(--app-muted)]">
-        Use nome, CPF ou matrícula. Selecione o cadastro correto antes de enviar
-        e-mail.
+        A busca consulta primeiro a competência mais recente e, sem resultado, a
+        imediatamente anterior. Use nome, CPF ou matrícula.
       </p>
 
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">

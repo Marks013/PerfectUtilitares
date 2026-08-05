@@ -74,10 +74,53 @@ export async function POST(request: Request) {
         "Este envio já está em processamento.",
       );
     }
+    const code = error instanceof Error ? error.message : "";
+    if (code === "UNIMED_EMAIL_DISABLED") {
+      return jsonError(
+        422,
+        "UNIMED_EMAIL_DISABLED",
+        "O envio de e-mail está desabilitado ou não há destinatários configurados no módulo Unimed.",
+      );
+    }
+    if (code === "UNIMED_BENEFICIARY_NOT_FOUND") {
+      return jsonError(
+        422,
+        "UNIMED_BENEFICIARY_NOT_FOUND",
+        "O beneficiário não possui CPF válido ou não pertence às duas competências disponíveis.",
+      );
+    }
+    if (code === "RESEND_NOT_CONFIGURED") {
+      return jsonError(
+        503,
+        "RESEND_NOT_CONFIGURED",
+        "O serviço de e-mail ainda não foi configurado no servidor.",
+      );
+    }
+    if (code === "RESEND_VALIDATION_ERROR") {
+      return jsonError(
+        502,
+        "RESEND_VALIDATION_ERROR",
+        "O provedor recusou o remetente ou um destinatário. Confira o domínio verificado e os endereços configurados.",
+      );
+    }
+    if (code === "RESEND_AUTH_ERROR") {
+      return jsonError(
+        503,
+        "RESEND_AUTH_ERROR",
+        "A chave de acesso do serviço de e-mail foi recusada. Atualize a RESEND_API_KEY no servidor.",
+      );
+    }
+    if (code === "RESEND_LIMIT_ERROR") {
+      return jsonError(
+        429,
+        "RESEND_LIMIT_ERROR",
+        "O limite de envio do provedor foi atingido. Aguarde ou revise a cota da conta.",
+      );
+    }
     return jsonError(
       503,
       "UNIMED_EMAIL_FAILED",
-      "Não foi possível enviar o e-mail. Confira as configurações e tente novamente.",
+      "O provedor não confirmou o envio. Consulte o registro do servidor e tente novamente.",
     );
   }
 }

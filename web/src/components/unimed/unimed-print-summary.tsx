@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import {
+  formatUnimedBranchForPdf,
+  formatUnimedCompetency,
+  nextUnimedCompetency,
+} from "@/lib/unimed/print-format";
 import type { UnimedCalculationResult } from "@/lib/unimed/types";
 
 type PrintPerson = {
@@ -36,6 +41,7 @@ export type UnimedPrintSummaryData = {
   cpf: string;
   registration?: string | null;
   reason: string;
+  competency: string;
   exclusionDate: string;
   planEnrollmentDate: string;
   billingClosure: "OPEN" | "AUTOMATIC_DAY_25";
@@ -74,14 +80,7 @@ function date(value: string | null | undefined) {
 }
 
 function competence(value: string) {
-  const [year, month] = value.split("-");
-  return year && month ? `${month}/${year}` : value;
-}
-
-function monthDays(value: string) {
-  const [year, month] = value.split("-").map(Number);
-  if (!year || !month) return 0;
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return formatUnimedCompetency(value);
 }
 
 function documentName(kind: UnimedCalculationResult["documentKind"]) {
@@ -97,10 +96,11 @@ export function UnimedPrintCopy({
   copy: number;
   data: UnimedPrintSummaryData;
 }) {
-  const daysInMonth = monthDays(data.exclusionDate);
-  const usedDays = Math.max(0, daysInMonth - data.result.refundDays);
-  const afterCutoff =
-    data.billingClosure === "AUTOMATIC_DAY_25" && usedDays >= 25;
+  const daysInMonth = data.result.daysInMonth;
+  const usedDays = data.result.usedDays;
+  const afterCutoff = data.result.cutoffApplied;
+  const competencyLabel = competence(data.competency);
+  const calculationCompetency = data.exclusionDate.slice(0, 7);
   const rows = [data.holder, ...data.dependents];
   const loanCount = data.payrollLoans?.contracts.length ?? 0;
   const loanDensity =
@@ -153,12 +153,12 @@ export function UnimedPrintCopy({
           {rows.map((person, index) => (
             <tr key={`${person.name}-${index}`}>
               <td>{index === 0 ? person.registration || "—" : "Dep"}</td>
-              <td>{data.branchCode || "—"}</td>
+              <td>{formatUnimedBranchForPdf(data.branchCode)}</td>
               <td className="name-cell">{person.name || "—"}</td>
               <td>{index === 0 ? data.reason : "—"}</td>
               <td>{date(person.birthDate)}</td>
               <td>{person.hasFuneral ? "02" : "01"}</td>
-              <td>{date(data.exclusionDate)}</td>
+              <td>{competencyLabel}</td>
               <td>{date(data.exclusionDate)}</td>
               <td>{person.age ?? "—"}</td>
               <td>{money(person.invoicePlanAmount)}</td>
@@ -180,9 +180,18 @@ export function UnimedPrintCopy({
             Informações complementares
           </strong>
           <p>
-            Movimento após fechamento da fatura?{" "}
+            Competência da base: <strong>{competencyLabel}</strong>
+          </p>
+          <p>
+            Fechamento do dia 25 aplicado?{" "}
             <strong>{afterCutoff ? "SIM" : "NÃO"}</strong>
           </p>
+          {afterCutoff ? (
+            <p>
+              Competência integral adicional:{" "}
+              <strong>{nextUnimedCompetency(calculationCompetency)}</strong>
+            </p>
+          ) : null}
           <p>
             Tipo de rescisão: <strong>{data.reason || "—"}</strong>
           </p>
@@ -247,23 +256,35 @@ export function UnimedPrintCopy({
 
         <dl className="unimed-print-totals">
           <div>
-            <dt>Total pago em fatura</dt>
+            <dt>Valor mensal da fatura</dt>
             <dd>{money(data.result.invoiceTotal)}</dd>
           </div>
           <div>
-            <dt>Valor utilizado</dt>
+            <dt>Utilizado na competência ({usedDays} dias)</dt>
             <dd>{money(data.result.usedProrata)}</dd>
           </div>
           <div>
-            <dt>Devolução funcionário</dt>
+            <dt>Estorno proporcional ({data.result.refundDays} dias)</dt>
+            <dd>{money(data.result.currentCompetencyRefund)}</dd>
+          </div>
+          {afterCutoff ? (
+            <div>
+              <dt>
+                Estorno integral de {nextUnimedCompetency(calculationCompetency)}
+              </dt>
+              <dd>{money(data.result.nextCompetencyRefund)}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>Estorno ao funcionário</dt>
             <dd>{money(data.result.employeeFullRefund)}</dd>
           </div>
           <div>
-            <dt>Devolução empresa</dt>
+            <dt>Estorno à empresa</dt>
             <dd>{money(data.result.companyFullRefund)}</dd>
           </div>
           <div className="total-refund">
-            <dt>Total a devolver em fatura</dt>
+            <dt>Total de valores estornados</dt>
             <dd>{money(data.result.invoiceRefund)}</dd>
           </div>
         </dl>
@@ -273,6 +294,11 @@ export function UnimedPrintCopy({
         <span>Mês com {daysInMonth} dias</span>
         <span>{usedDays} dias utilizados</span>
         <span>{data.result.refundDays} dias de estorno</span>
+        <span>
+          {afterCutoff
+            ? "Inclui a competência seguinte já fechada"
+            : "Sem competência seguinte adicional"}
+        </span>
         <span>
           Acessório Funeral identificado automaticamente por beneficiário
         </span>
@@ -432,7 +458,7 @@ export function UnimedPrintSummary({
             padding-top: .25mm;
           }
           .unimed-print-loan-empty { color: #4b5563; font-style: italic; }
-          .unimed-print-totals { margin: 0; }
+          .unimed-print-totals { margin: 0; font-size: 6.4pt; }
           .unimed-print-totals div {
             display: grid;
             grid-template-columns: 1fr auto;

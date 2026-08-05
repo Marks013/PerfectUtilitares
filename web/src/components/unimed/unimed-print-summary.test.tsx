@@ -13,10 +13,11 @@ function printData(
     cpf: "529.982.247-25",
     registration: "101",
     reason: "8. Inativo",
+    competency: "2026-07",
     exclusionDate: "2026-08-31",
     planEnrollmentDate: "2022-01-01",
     billingClosure: "AUTOMATIC_DAY_25",
-    branchCode: "001",
+    branchCode: "MULTI ATACADO",
     holder: {
       registration: "101",
       name: "Pessoa Titular",
@@ -54,12 +55,21 @@ function printData(
     },
     result: {
       invoiceTotal: "100.00",
+      daysInMonth: 31,
+      usedDays: 31,
       usedProrata: "100.00",
-      invoiceRefund: "0.00",
+      cutoffApplied: true,
+      currentCompetencyRefund: "0.00",
+      nextCompetencyRefund: "100.00",
+      invoiceRefund: "100.00",
       refundDays: 0,
       payrollCharge: "61.26",
-      employeeFullRefund: "0.00",
-      companyFullRefund: "0.00",
+      employeeCurrentRefund: "0.00",
+      employeeNextRefund: "61.26",
+      employeeFullRefund: "61.26",
+      companyCurrentRefund: "0.00",
+      companyNextRefund: "38.74",
+      companyFullRefund: "38.74",
       enrollmentMonths: 55,
       contributionMonths: 55,
       documentKind: "INACTIVE_TERM",
@@ -97,6 +107,9 @@ describe("Unimed printable payroll loans", () => {
     expect(content).toContain("07/2027");
     expect(content).toContain("001 - Banco Um");
     expect(content).toContain("341 - Banco Dois");
+    expect(markup).toContain("<td>MA</td>");
+    expect(markup).toContain("<td>07/2026</td><td>31/08/2026</td>");
+    expect(content).toContain("Total de valores estornados");
   });
 
   it("omits payroll loans when the remembered preference is disabled", () => {

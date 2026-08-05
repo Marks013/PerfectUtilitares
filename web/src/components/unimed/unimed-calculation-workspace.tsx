@@ -453,6 +453,8 @@ export function UnimedCalculationWorkspace({
   const [isCalculating, setIsCalculating] = useState(false);
   const [selectedBeneficiary, setSelectedBeneficiary] =
     useState<UnimedBeneficiary | null>(null);
+  const [dataCompetency, setDataCompetency] =
+    useState<UnimedPricingContext["dataCompetency"]>(null);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [emailConfirmed, setEmailConfirmed] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -625,6 +627,7 @@ export function UnimedCalculationWorkspace({
     if (field === "employeeName" || field === "cpf") {
       invalidatePricingRefresh();
       setSelectedBeneficiary(null);
+      setDataCompetency(null);
       setPricingWarnings([]);
     }
     if (field in errors) {
@@ -688,6 +691,7 @@ export function UnimedCalculationWorkspace({
     setResult(null);
     setApiError(null);
     setSelectedBeneficiary(null);
+    setDataCompetency(null);
     setEmailConfirmed(false);
     setEmailError(null);
     invalidateDocument();
@@ -763,6 +767,7 @@ export function UnimedCalculationWorkspace({
       });
 
     setSelectedBeneficiary(beneficiary);
+    setDataCompetency(pricingContext.dataCompetency ?? null);
     setForm((current) => ({
       ...current,
       employeeName: beneficiary.fullName,
@@ -857,9 +862,17 @@ export function UnimedCalculationWorkspace({
         pricingContext?: UnimedPricingContext;
       };
       if (pricingRequestSequence.current !== requestSequence) return;
-      const refreshed = body.beneficiaries?.find(
-        (beneficiary) => beneficiary.id === selectedBeneficiary.id,
-      );
+      const selectedCpf = selectedBeneficiary.cpf?.replace(/\D/g, "");
+      const selectedRegistration = selectedBeneficiary.registration?.trim();
+      const refreshed = body.beneficiaries?.find((beneficiary) => {
+        if (selectedCpf) {
+          return beneficiary.cpf?.replace(/\D/g, "") === selectedCpf;
+        }
+        if (selectedRegistration) {
+          return beneficiary.registration?.trim() === selectedRegistration;
+        }
+        return beneficiary.id === selectedBeneficiary.id;
+      });
       if (!refreshed || !body.pricingContext) {
         throw new Error(
           "Cadastro mantido, mas os preços não foram encontrados para a nova data.",
@@ -890,6 +903,7 @@ export function UnimedCalculationWorkspace({
     invalidateCalculation();
     invalidatePricingRefresh();
     setSelectedBeneficiary(null);
+    setDataCompetency(null);
     setEmailConfirmed(false);
     setEmailError(null);
     invalidateDocument();
@@ -1735,31 +1749,48 @@ export function UnimedCalculationWorkspace({
                 <div>
                   <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                     <ResultMetric
-                      label="Total da fatura"
+                      label="Valor mensal da fatura"
                       value={formatMoneyResult(result.invoiceTotal)}
                     />
                     <ResultMetric
-                      label="Valor utilizado"
+                      label={`Valor utilizado (${result.usedDays} dias)`}
                       value={formatMoneyResult(result.usedProrata)}
                     />
                     <ResultMetric
-                      label="Devolução total"
+                      label={`Estorno proporcional (${result.refundDays} dias)`}
+                      value={formatMoneyResult(
+                        result.currentCompetencyRefund,
+                      )}
+                    />
+                    {result.cutoffApplied ? (
+                      <ResultMetric
+                        label="Estorno integral da próxima competência"
+                        value={formatMoneyResult(result.nextCompetencyRefund)}
+                      />
+                    ) : null}
+                    <ResultMetric
+                      label="Total de valores estornados"
                       value={formatMoneyResult(result.invoiceRefund)}
                       emphasis
                     />
                     <ResultMetric
-                      label="Base paga pelo funcionário"
+                      label="Desconto mensal do funcionário"
                       value={formatMoneyResult(result.payrollCharge)}
                     />
                     <ResultMetric
-                      label="Devolução funcionário"
+                      label="Estorno ao funcionário"
                       value={formatMoneyResult(result.employeeFullRefund)}
                     />
                     <ResultMetric
-                      label="Devolução empresa"
+                      label="Estorno à empresa"
                       value={formatMoneyResult(result.companyFullRefund)}
                     />
                   </dl>
+                  <p className="mt-3 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3 text-xs leading-5 text-[color:var(--app-muted)]">
+                    {result.cutoffApplied
+                      ? "Fechamento do dia 25 aplicado: o total estornado soma o proporcional dos dias não utilizados na competência atual e uma mensalidade integral da competência seguinte, que já estava fechada."
+                      : "Sem competência adicional: o total estornado corresponde somente aos dias não utilizados na competência atual."}
+                  </p>
                   <div className="mt-4 grid grid-cols-2 gap-3 text-center">
                     <div className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
                       <span className="block text-xl font-black text-[color:var(--app-fg)]">
@@ -2072,10 +2103,18 @@ export function UnimedCalculationWorkspace({
                 reason: selectedReason
                   ? `${selectedReason.code}. ${selectedReason.label}`
                   : "",
+                competency: dataCompetency
+                  ? `${dataCompetency.year}-${String(
+                      dataCompetency.month,
+                    ).padStart(2, "0")}`
+                  : form.exclusionDate.slice(0, 7),
                 exclusionDate: form.exclusionDate,
                 planEnrollmentDate: form.planEnrollmentDate,
                 billingClosure: form.billingClosure,
-                branchCode: selectedBeneficiary?.branch?.code ?? null,
+                branchCode:
+                  selectedBeneficiary?.branch?.name ??
+                  selectedBeneficiary?.branch?.code ??
+                  null,
                 holder: {
                   registration: selectedBeneficiary?.registration ?? null,
                   name: form.employeeName,

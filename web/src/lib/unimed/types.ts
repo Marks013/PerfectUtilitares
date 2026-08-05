@@ -42,11 +42,20 @@ export type UnimedCalculationInput = {
 
 export type UnimedCalculationResult = {
   invoiceTotal: string;
+  daysInMonth: number;
+  usedDays: number;
   usedProrata: string;
+  cutoffApplied: boolean;
+  currentCompetencyRefund: string;
+  nextCompetencyRefund: string;
   invoiceRefund: string;
   refundDays: number;
   payrollCharge: string;
+  employeeCurrentRefund: string;
+  employeeNextRefund: string;
   employeeFullRefund: string;
+  companyCurrentRefund: string;
+  companyNextRefund: string;
   companyFullRefund: string;
   enrollmentMonths: number;
   contributionMonths: number;
