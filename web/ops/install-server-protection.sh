@@ -43,11 +43,28 @@ install -m 0644 "$SCRIPT_DIR/server-resource-guard.timer" /etc/systemd/system/se
 install -m 0755 "$SCRIPT_DIR/perfectutilitares-maintenance" /usr/local/sbin/perfectutilitares-maintenance
 install -m 0644 "$SCRIPT_DIR/perfectutilitares-maintenance.service" /etc/systemd/system/perfectutilitares-maintenance.service
 install -m 0644 "$SCRIPT_DIR/perfectutilitares-maintenance.timer" /etc/systemd/system/perfectutilitares-maintenance.timer
+install -m 0755 "$SCRIPT_DIR/perfectutilitares-backup" /usr/local/sbin/perfectutilitares-backup
+install -m 0755 "$SCRIPT_DIR/perfectutilitares-backup-verify" /usr/local/sbin/perfectutilitares-backup-verify
+install -m 0755 "$SCRIPT_DIR/perfectutilitares-restore" /usr/local/sbin/perfectutilitares-restore
+install -m 0755 "$SCRIPT_DIR/validate-observability-env.mjs" /usr/local/sbin/validate-perfectutilitares-observability
+install -m 0644 "$SCRIPT_DIR/perfectutilitares-backup.service" /etc/systemd/system/perfectutilitares-backup.service
+install -m 0644 "$SCRIPT_DIR/perfectutilitares-backup.timer" /etc/systemd/system/perfectutilitares-backup.timer
+install -m 0644 "$SCRIPT_DIR/perfectutilitares-backup-verify.service" /etc/systemd/system/perfectutilitares-backup-verify.service
+install -m 0644 "$SCRIPT_DIR/perfectutilitares-backup-verify.timer" /etc/systemd/system/perfectutilitares-backup-verify.timer
+if [ ! -f /etc/perfectutilitares-backup.conf ]; then
+  install -m 0600 "$SCRIPT_DIR/perfectutilitares-backup.conf.example" /etc/perfectutilitares-backup.conf
+fi
 
 mkdir -p /var/lib/server-resource-guard
 chmod 755 /var/lib/server-resource-guard
+mkdir -p /home/ubuntu/perfectutilitares-backups
+chmod 700 /home/ubuntu/perfectutilitares-backups
 systemctl daemon-reload
-systemctl enable --now server-resource-guard.timer perfectutilitares-maintenance.timer
+systemctl enable --now \
+  server-resource-guard.timer \
+  perfectutilitares-maintenance.timer \
+  perfectutilitares-backup.timer \
+  perfectutilitares-backup-verify.timer
 systemctl start server-resource-guard.service
 
 printf '%s\n' "Protecao de recursos instalada."

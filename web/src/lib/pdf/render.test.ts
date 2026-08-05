@@ -3,14 +3,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { renderPdfPagesToJpeg } from "@/lib/pdf/render";
 
 const originalStorageDirectory = process.env.PDF_STORAGE_DIR;
+const originalPdfRenderer = process.env.PDF_RENDERER;
 let temporaryDirectory: string | null = null;
 
 afterEach(async () => {
   process.env.PDF_STORAGE_DIR = originalStorageDirectory;
+  process.env.PDF_RENDERER = originalPdfRenderer;
   if (temporaryDirectory) {
     await rm(temporaryDirectory, { force: true, recursive: true });
     temporaryDirectory = null;
@@ -18,6 +20,14 @@ afterEach(async () => {
 });
 
 describe("PDF page rendering", () => {
+  beforeEach(() => {
+    if (process.env.PDF_POPPLER_PATH) {
+      delete process.env.PDF_RENDERER;
+    } else {
+      process.env.PDF_RENDERER = "pdfjs";
+    }
+  });
+
   it("renders a rotated page as JPEG", async () => {
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
     process.env.PDF_STORAGE_DIR = temporaryDirectory;

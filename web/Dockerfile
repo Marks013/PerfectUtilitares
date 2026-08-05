@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-alpine AS base
-RUN apk add --no-cache libc6-compat openssl
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS base
+RUN apk add --no-cache libc6-compat openssl vips
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -13,11 +13,13 @@ FROM base AS builder
 ARG AUTH_URL=http://localhost:3002
 ARG NEXTAUTH_URL=http://localhost:3002
 ARG APP_URL=http://localhost:3002
+ARG NEXT_PUBLIC_SENTRY_DSN
 ARG SENTRY_ORG
 ARG SENTRY_PROJECT
 ENV AUTH_URL=$AUTH_URL
 ENV NEXTAUTH_URL=$NEXTAUTH_URL
 ENV APP_URL=$APP_URL
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 ENV SENTRY_ORG=$SENTRY_ORG
 ENV SENTRY_PROJECT=$SENTRY_PROJECT
 COPY --from=deps /app/node_modules ./node_modules
@@ -37,7 +39,9 @@ COPY prisma.config.ts ./
 COPY prisma ./prisma
 COPY scripts ./scripts
 COPY src/lib/jornada ./src/lib/jornada
+COPY src/lib/unimed/defaults.ts ./src/lib/unimed/defaults.ts
 RUN npm run prisma:generate
+USER node
 CMD ["sh", "-c", "npm run db:deploy"]
 
 FROM deps AS pdf-worker-builder
@@ -55,22 +59,35 @@ RUN apk add --no-cache \
     font-liberation \
     libreoffice-calc \
     libreoffice-writer \
+    poppler-utils \
+    postgresql-client \
     qpdf
 COPY --from=pdf-worker-builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=pdf-worker-builder --chown=node:node /app/dist ./dist
+COPY ops/container-health/pdf-worker-healthcheck /usr/local/bin/pdf-worker-healthcheck
+RUN chmod 0555 /usr/local/bin/pdf-worker-healthcheck
 USER node
+HEALTHCHECK --interval=60s --timeout=10s --start-period=45s --retries=3 CMD ["/usr/local/bin/pdf-worker-healthcheck"]
 CMD ["node", "dist/pdf-worker.mjs"]
 
 FROM base AS runner
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
+RUN apk add --no-cache postgresql-client
 COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/node_modules/@img/sharp-libvips-linuxmusl-arm64 ./node_modules/@img/sharp-libvips-linuxmusl-arm64
+COPY --from=builder --chown=node:node /app/node_modules/@img/sharp-linuxmusl-arm64 ./node_modules/@img/sharp-linuxmusl-arm64
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/node_modules/pdfkit/js/data ./node_modules/pdfkit/js/data
 COPY --from=builder --chown=node:node /app/node_modules/pdfkit/js/data /ROOT/node_modules/pdfkit/js/data
+COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/cmaps ./node_modules/pdfjs-dist/cmaps
+COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/standard_fonts ./node_modules/pdfjs-dist/standard_fonts
+COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/wasm ./node_modules/pdfjs-dist/wasm
+COPY ops/container-health/app-readiness /usr/local/bin/app-readiness
+RUN chmod 0555 /usr/local/bin/app-readiness
 USER node
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=10s --retries=5 CMD node -e "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 CMD ["/usr/local/bin/app-readiness"]
 CMD ["node", "server.js"]

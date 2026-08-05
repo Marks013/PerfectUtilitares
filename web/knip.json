@@ -1,7 +1,10 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreFiles": [
+    "ops/validate-observability-env.mjs",
     "public/global.js",
+    "public/mediapipe/face-detection-console-filter.js",
+    "public/mediapipe/face-detection-frame.js",
     "public/mediapipe/face_detection/**"
   ],
   "ignoreDependencies": [

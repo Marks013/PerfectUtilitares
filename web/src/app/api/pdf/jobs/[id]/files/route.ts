@@ -9,6 +9,7 @@ import {
 } from "@/lib/api/security";
 import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
+import { acquirePdfJobLock } from "@/lib/pdf/capacity";
 import {
   MAX_PDF_FILE_BYTES,
   MAX_PDF_JOB_BYTES,
@@ -72,81 +73,132 @@ export async function POST(request: Request, context: RouteContext) {
   if (rateLimitError) return rateLimitError;
 
   const { id } = await context.params;
-  const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(owner) },
-    include: {
-      _count: { select: { artifacts: true } },
-    },
-  });
-
-  if (!job) {
-    return jsonError(404, "PDF_JOB_NOT_FOUND", "Trabalho PDF não encontrado.");
-  }
-
-  if (job.status !== "DRAFT" || !PDF_INPUT_OPERATIONS.has(job.operation)) {
-    return jsonError(
-      409,
-      "PDF_JOB_LOCKED",
-      "Este trabalho não aceita novos arquivos PDF.",
-    );
-  }
-
-  if (job._count.artifacts >= MAX_PDF_JOB_FILES) {
-    return jsonError(
-      409,
-      "PDF_FILE_LIMIT",
-      `Este trabalho aceita até ${MAX_PDF_JOB_FILES} arquivos.`,
-    );
-  }
-
   let uploadedStorageKey: string | null = null;
 
   try {
-    const originalName = sanitizePdfFileName(
-      request.headers.get("x-file-name"),
-    );
-    const upload = await writePdfUpload(request.body, job.id);
-    uploadedStorageKey = upload.storageKey;
-    const nextInputBytes = job.inputBytes + upload.sizeBytes;
+    const initialJob = await prisma.pdfJob.findFirst({
+      where: { id, ...pdfJobAccessWhere(owner) },
+      include: { _count: { select: { artifacts: true } } },
+    });
 
-    if (nextInputBytes > BigInt(MAX_PDF_JOB_BYTES)) {
-      await removePdfStorageKey(upload.storageKey);
+    if (!initialJob) {
       return jsonError(
-        413,
-        "PDF_JOB_TOO_LARGE",
-        "O conjunto de arquivos ultrapassa o limite de 500 MB.",
+        404,
+        "PDF_JOB_NOT_FOUND",
+        "Trabalho PDF não encontrado.",
+      );
+    }
+    if (
+      initialJob.status !== "DRAFT" ||
+      !PDF_INPUT_OPERATIONS.has(initialJob.operation)
+    ) {
+      return jsonError(
+        409,
+        "PDF_JOB_LOCKED",
+        "Este trabalho não aceita novos arquivos PDF.",
+      );
+    }
+    if (initialJob._count.artifacts >= MAX_PDF_JOB_FILES) {
+      return jsonError(
+        409,
+        "PDF_FILE_LIMIT",
+        `Este trabalho aceita até ${MAX_PDF_JOB_FILES} arquivos.`,
       );
     }
 
-    const updatedJob = await prisma.pdfJob.update({
-      where: { id: job.id },
-      data: {
-        inputBytes: nextInputBytes,
-        artifacts: {
-          create: {
-            id: upload.artifactId,
-            kind: "INPUT",
-            storageKey: upload.storageKey,
-            originalName,
-            mimeType: "application/pdf",
-            sizeBytes: upload.sizeBytes,
-            sha256: upload.sha256,
-          },
-        },
-      },
-      include: { artifacts: { orderBy: { createdAt: "asc" } } },
-    });
-
-    return NextResponse.json(
-      {
-        job: serializePdfJob(updatedJob),
-        artifactId: upload.artifactId,
-      },
-      { status: 201 },
+    const originalName = sanitizePdfFileName(
+      request.headers.get("x-file-name"),
     );
+    const upload = await writePdfUpload(request.body, initialJob.id);
+    uploadedStorageKey = upload.storageKey;
+
+    const response = await prisma.$transaction(
+      async (tx) => {
+        await acquirePdfJobLock(tx, id);
+        const job = await tx.pdfJob.findFirst({
+          where: { id, ...pdfJobAccessWhere(owner) },
+          include: { _count: { select: { artifacts: true } } },
+        });
+
+        if (!job) {
+          return jsonError(
+            404,
+            "PDF_JOB_NOT_FOUND",
+            "Trabalho PDF não encontrado.",
+          );
+        }
+        if (
+          job.status !== "DRAFT" ||
+          !PDF_INPUT_OPERATIONS.has(job.operation)
+        ) {
+          return jsonError(
+            409,
+            "PDF_JOB_LOCKED",
+            "Este trabalho não aceita novos arquivos PDF.",
+          );
+        }
+        if (job._count.artifacts >= MAX_PDF_JOB_FILES) {
+          return jsonError(
+            409,
+            "PDF_FILE_LIMIT",
+            `Este trabalho aceita até ${MAX_PDF_JOB_FILES} arquivos.`,
+          );
+        }
+
+        const nextInputBytes = job.inputBytes + upload.sizeBytes;
+
+        if (nextInputBytes > BigInt(MAX_PDF_JOB_BYTES)) {
+          return jsonError(
+            413,
+            "PDF_JOB_TOO_LARGE",
+            "O conjunto de arquivos ultrapassa o limite de 500 MB.",
+          );
+        }
+
+        const updatedJob = await tx.pdfJob.update({
+          where: { id: job.id },
+          data: {
+            inputBytes: nextInputBytes,
+            artifacts: {
+              create: {
+                id: upload.artifactId,
+                kind: "INPUT",
+                storageKey: upload.storageKey,
+                originalName,
+                mimeType: "application/pdf",
+                sizeBytes: upload.sizeBytes,
+                sha256: upload.sha256,
+              },
+            },
+          },
+          include: { artifacts: { orderBy: { createdAt: "asc" } } },
+        });
+
+        return NextResponse.json(
+          {
+            job: serializePdfJob(updatedJob),
+            artifactId: upload.artifactId,
+          },
+          { status: 201 },
+        );
+      },
+      { maxWait: 5_000, timeout: 15_000 },
+    );
+
+    if (!response.ok) {
+      await removePdfStorageKey(upload.storageKey).catch(() => undefined);
+    } else {
+      uploadedStorageKey = null;
+    }
+    return response;
   } catch (error) {
     if (error instanceof PdfStorageError) {
-      const status = error.code === "FILE_TOO_LARGE" ? 413 : 400;
+      const status =
+        error.code === "FILE_TOO_LARGE"
+          ? 413
+          : error.code === "UPLOAD_FAILED"
+            ? 503
+            : 400;
       return jsonError(status, error.code, error.message);
     }
 

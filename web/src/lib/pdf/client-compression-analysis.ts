@@ -1,3 +1,8 @@
+import {
+  configurePdfJsClient,
+  pdfJsClientDocumentOptions,
+} from "@/lib/pdf/pdfjs-client";
+
 export type CompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
 export type CompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
 type CompressionContentKind = "VECTOR" | "MIXED" | "SCANNED";
@@ -166,9 +171,11 @@ export async function analyzePdfForCompression(
   fileKey: string,
 ): Promise<PdfCompressionAnalysis> {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
+  configurePdfJsClient(pdfjs);
   const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(await file.arrayBuffer()),
+    ...pdfJsClientDocumentOptions(
+      new Uint8Array(await file.arrayBuffer()),
+    ),
     stopAtErrors: false,
   });
   const document = await loadingTask.promise;

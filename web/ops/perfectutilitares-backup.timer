@@ -1,0 +1,11 @@
+[Unit]
+Description=Run daily PerfectUtilitares backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=20min
+Persistent=true
+Unit=perfectutilitares-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -2,6 +2,7 @@
 
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useEffect, useRef, useState } from "react";
+import { combinePageRotation } from "@/lib/pdf/geometry";
 
 type PdfPageThumbnailProps = {
   document: PDFDocumentProxy | undefined;
@@ -57,9 +58,13 @@ export function PdfPageThumbnail({
         const page = await document!.getPage(pageNumber);
         if (cancelled || !canvasRef.current) return;
 
-        const baseViewport = page.getViewport({ scale: 1, rotation });
+        const displayRotation = combinePageRotation(page.rotate, rotation);
+        const baseViewport = page.getViewport({
+          scale: 1,
+          rotation: displayRotation,
+        });
         const scale = Math.min(1, 280 / baseViewport.width);
-        const viewport = page.getViewport({ scale, rotation });
+        const viewport = page.getViewport({ scale, rotation: displayRotation });
         const canvas = canvasRef.current;
         const context = canvas.getContext("2d", { alpha: false });
         if (!context) return;

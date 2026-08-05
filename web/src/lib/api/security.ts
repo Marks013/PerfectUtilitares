@@ -293,6 +293,40 @@ export function enforceRateLimit(
   return null;
 }
 
+export async function enforcePersistentRateLimit(
+  request: Request,
+  options: { limit: number; windowMs: number; keyPrefix: string },
+): Promise<NextResponse | null> {
+  const key = getRateLimitKey(options.keyPrefix, request.headers);
+  try {
+    const result = await checkSharedRateLimit(key, options);
+    if (!result.limited) return null;
+
+    const response = jsonError(
+      429,
+      "RATE_LIMITED",
+      "Muitas tentativas em pouco tempo. Aguarde um momento e tente novamente.",
+    );
+    response.headers.set(
+      "Retry-After",
+      String(Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1_000))),
+    );
+    return response;
+  } catch (error) {
+    if (!(error instanceof SharedRateLimitUnavailableError)) throw error;
+    Sentry.captureException(error, {
+      tags: { rateLimitPrefix: options.keyPrefix, sharedRateLimit: true },
+    });
+    const response = jsonError(
+      503,
+      "RATE_LIMIT_UNAVAILABLE",
+      "O controle de tentativas está temporariamente indisponível. Tente novamente em instantes.",
+    );
+    response.headers.set("Retry-After", "30");
+    return response;
+  }
+}
+
 export async function enforceSharedRateLimit(
   request: Request,
   options: {

@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+: "${DATABASE_URL:?DATABASE_URL ausente}"
+heartbeat=${PDF_WORKER_HEARTBEAT_PATH:-/tmp/perfect-pdf-worker-heartbeat}
+max_age=${PDF_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-90}
+
+[ -f "$heartbeat" ]
+age=$(( $(date +%s) - $(stat -c %Y "$heartbeat") ))
+[ "$age" -ge 0 ]
+[ "$age" -le "$max_age" ]
+
+for dependency in node libreoffice qpdf pdfinfo pdftoppm psql; do
+  command -v "$dependency" >/dev/null 2>&1
+done
+
+psql_url=$(node -e "const url=new URL(process.env.DATABASE_URL);url.searchParams.delete('schema');process.stdout.write(url.toString())")
+result=$(psql "$psql_url" --no-psqlrc --tuples-only --no-align --command 'SELECT 1' 2>/dev/null)
+[ "$result" = "1" ]

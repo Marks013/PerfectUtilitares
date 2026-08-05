@@ -50,7 +50,11 @@ export function checkRateLimit(key: string, options: RateLimitOptions) {
 
   if (!bucket || bucket.resetAt <= now) {
     buckets.set(key, { count: 1, resetAt: now + options.windowMs });
-    return { limited: false, remaining: options.limit - 1, resetAt: now + options.windowMs };
+    return {
+      limited: false,
+      remaining: options.limit - 1,
+      resetAt: now + options.windowMs,
+    };
   }
 
   bucket.count += 1;
@@ -90,9 +94,16 @@ export async function checkSharedRateLimit(
 
     sharedChecks += 1;
     if (sharedChecks % 500 === 0) {
-      await prisma.apiRateLimitBucket.deleteMany({
-        where: { resetAt: { lt: now } },
-      });
+      await prisma.$executeRaw`
+        DELETE FROM "ApiRateLimitBucket"
+        WHERE "key" IN (
+          SELECT "key"
+          FROM "ApiRateLimitBucket"
+          WHERE "resetAt" < ${now}
+          ORDER BY "resetAt" ASC
+          LIMIT 500
+        )
+      `;
     }
 
     if (!bucket) {

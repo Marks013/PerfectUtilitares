@@ -57,18 +57,15 @@ export async function GET(request: Request, context: RouteContext) {
   }
 
   const stream = createPdfStorageReadStream(artifact.storageKey);
-  return new Response(
-    Readable.toWeb(stream) as ReadableStream<Uint8Array>,
-    {
-      headers: {
-        "Cache-Control": "private, no-store",
-        "Content-Disposition": createAttachmentHeader(artifact.originalName),
-        "Content-Length": artifact.sizeBytes.toString(),
-        "Content-Type": artifact.mimeType,
-        "X-Content-Type-Options": "nosniff",
-      },
+  return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
+    headers: {
+      "Cache-Control": "private, no-store",
+      "Content-Disposition": createAttachmentHeader(artifact.originalName),
+      "Content-Length": artifact.sizeBytes.toString(),
+      "Content-Type": artifact.mimeType,
+      "X-Content-Type-Options": "nosniff",
     },
-  );
+  });
 }
 
 export function POST() {

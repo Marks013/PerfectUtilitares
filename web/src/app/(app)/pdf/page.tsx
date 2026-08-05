@@ -4,7 +4,6 @@ import {
   FileImage,
   FileOutput,
   FilePenLine,
-  FileSpreadsheet,
   FileText,
   ImagePlus,
   Layers3,
@@ -110,20 +109,6 @@ const toolGroups = [
     title: "Converter PDF",
     tone: "export",
     tools: [
-      {
-        label: "PDF para Word",
-        description: "Transforme o conteúdo em documento editável.",
-        href: "/pdf/para-word",
-        icon: FileText,
-        available: true,
-      },
-      {
-        label: "PDF para Excel",
-        description: "Extraia tabelas para uma planilha.",
-        href: "/pdf/para-excel",
-        icon: FileSpreadsheet,
-        available: true,
-      },
       {
         label: "PDF para JPG",
         description: "Exporte páginas como imagens.",

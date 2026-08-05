@@ -9,6 +9,7 @@ import {
 } from "@/lib/api/security";
 import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
+import { acquirePdfJobLock } from "@/lib/pdf/capacity";
 import {
   MAX_PDF_FILE_BYTES,
   MAX_PDF_JOB_BYTES,
@@ -65,85 +66,96 @@ export async function POST(request: Request, context: RouteContext) {
     ?.split(";", 1)[0]
     ?.trim() as keyof typeof OFFICE_FORMATS;
   const { id } = await context.params;
-  const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(owner) },
-    include: { _count: { select: { artifacts: true } } },
-  });
-
-  if (!job) {
-    return jsonError(404, "PDF_JOB_NOT_FOUND", "Trabalho PDF não encontrado.");
-  }
-  if (job.status !== "DRAFT") {
-    return jsonError(
-      409,
-      "PDF_JOB_LOCKED",
-      "Este trabalho já foi enviado para processamento.",
-    );
-  }
-  const expectedMimeType =
-    job.operation === "WORD_TO_PDF"
-      ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      : job.operation === "EXCEL_TO_PDF"
-        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        : null;
-  if (!expectedMimeType || mimeType !== expectedMimeType) {
-    return jsonError(
-      400,
-      "OFFICE_FORMAT_NOT_ALLOWED",
-      "O formato enviado não corresponde à ferramenta selecionada.",
-    );
-  }
-  if (job._count.artifacts >= MAX_PDF_JOB_FILES) {
-    return jsonError(
-      409,
-      "PDF_FILE_LIMIT",
-      `Este trabalho aceita até ${MAX_PDF_JOB_FILES} arquivos.`,
-    );
-  }
-
   let uploadedStorageKey: string | null = null;
   try {
-    const originalName = sanitizeOfficeFileName(
-      request.headers.get("x-file-name"),
-      mimeType,
-    );
-    const upload = await writeOfficeUpload(request.body, job.id, mimeType);
-    uploadedStorageKey = upload.storageKey;
-    const nextInputBytes = job.inputBytes + upload.sizeBytes;
-    if (nextInputBytes > BigInt(MAX_PDF_JOB_BYTES)) {
-      await removePdfStorageKey(upload.storageKey);
-      return jsonError(
-        413,
-        "PDF_JOB_TOO_LARGE",
-        "O conjunto de arquivos ultrapassa o limite de 500 MB.",
-      );
-    }
+    return await prisma.$transaction(
+      async (tx) => {
+        await acquirePdfJobLock(tx, id);
+        const job = await tx.pdfJob.findFirst({
+          where: { id, ...pdfJobAccessWhere(owner) },
+          include: { _count: { select: { artifacts: true } } },
+        });
 
-    const updatedJob = await prisma.pdfJob.update({
-      where: { id: job.id },
-      data: {
-        inputBytes: nextInputBytes,
-        artifacts: {
-          create: {
-            id: upload.artifactId,
-            kind: "INPUT",
-            mimeType,
-            originalName,
-            sha256: upload.sha256,
-            sizeBytes: upload.sizeBytes,
-            storageKey: upload.storageKey,
+        if (!job) {
+          return jsonError(
+            404,
+            "PDF_JOB_NOT_FOUND",
+            "Trabalho PDF não encontrado.",
+          );
+        }
+        if (job.status !== "DRAFT") {
+          return jsonError(
+            409,
+            "PDF_JOB_LOCKED",
+            "Este trabalho já foi enviado para processamento.",
+          );
+        }
+        const expectedMimeType =
+          job.operation === "WORD_TO_PDF"
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : job.operation === "EXCEL_TO_PDF"
+              ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              : null;
+        if (!expectedMimeType || mimeType !== expectedMimeType) {
+          return jsonError(
+            400,
+            "OFFICE_FORMAT_NOT_ALLOWED",
+            "O formato enviado não corresponde à ferramenta selecionada.",
+          );
+        }
+        if (job._count.artifacts >= MAX_PDF_JOB_FILES) {
+          return jsonError(
+            409,
+            "PDF_FILE_LIMIT",
+            `Este trabalho aceita até ${MAX_PDF_JOB_FILES} arquivos.`,
+          );
+        }
+
+        const originalName = sanitizeOfficeFileName(
+          request.headers.get("x-file-name"),
+          mimeType,
+        );
+        const upload = await writeOfficeUpload(request.body, job.id, mimeType);
+        uploadedStorageKey = upload.storageKey;
+        const nextInputBytes = job.inputBytes + upload.sizeBytes;
+        if (nextInputBytes > BigInt(MAX_PDF_JOB_BYTES)) {
+          await removePdfStorageKey(upload.storageKey);
+          uploadedStorageKey = null;
+          return jsonError(
+            413,
+            "PDF_JOB_TOO_LARGE",
+            "O conjunto de arquivos ultrapassa o limite de 500 MB.",
+          );
+        }
+
+        const updatedJob = await tx.pdfJob.update({
+          where: { id: job.id },
+          data: {
+            inputBytes: nextInputBytes,
+            artifacts: {
+              create: {
+                id: upload.artifactId,
+                kind: "INPUT",
+                mimeType,
+                originalName,
+                sha256: upload.sha256,
+                sizeBytes: upload.sizeBytes,
+                storageKey: upload.storageKey,
+              },
+            },
           },
-        },
-      },
-      include: { artifacts: { orderBy: { createdAt: "asc" } } },
-    });
+          include: { artifacts: { orderBy: { createdAt: "asc" } } },
+        });
 
-    return NextResponse.json(
-      {
-        artifactId: upload.artifactId,
-        job: serializePdfJob(updatedJob),
+        return NextResponse.json(
+          {
+            artifactId: upload.artifactId,
+            job: serializePdfJob(updatedJob),
+          },
+          { status: 201 },
+        );
       },
-      { status: 201 },
+      { maxWait: 5_000, timeout: 10 * 60_000 },
     );
   } catch (error) {
     if (error instanceof PdfStorageError) {

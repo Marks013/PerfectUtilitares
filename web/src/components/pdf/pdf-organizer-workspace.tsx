@@ -50,6 +50,17 @@ import {
 } from "react";
 import { useDropzone } from "react-dropzone";
 import { PdfPageThumbnail } from "@/components/pdf/pdf-page-thumbnail";
+import { isAbortError, pollPdfJob } from "@/components/pdf/pdf-job-polling";
+import { PdfVisualCropEditor } from "@/components/pdf/pdf-visual-crop-editor";
+import {
+  combinePageRotation,
+  displayMarginsToSource,
+  sourceMarginsToDisplay,
+} from "@/lib/pdf/geometry";
+import {
+  configurePdfJsClient,
+  pdfJsClientUrlOptions,
+} from "@/lib/pdf/pdfjs-client";
 
 type PageRotation = 0 | 90 | 180 | 270;
 
@@ -164,8 +175,7 @@ const WORKSPACE_COPY: Record<
     eyebrow: "Girar PDF",
     title: "Corrija a orientação das páginas",
     emptyTitle: "Adicione o PDF que será girado",
-    emptyDescription:
-      "Selecione uma ou várias páginas e ajuste a orientação.",
+    emptyDescription: "Selecione uma ou várias páginas e ajuste a orientação.",
     finishLabel: "Salvar PDF girado",
   },
   DELETE_PAGES: {
@@ -223,19 +233,13 @@ function triggerDownload(url: string) {
   link.remove();
 }
 
-function wait(milliseconds: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
 async function createOrganizerJob(operation: StructuralPdfOperation) {
   const response = await fetch("/api/pdf/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ operation }),
   });
-  const body = (await response.json()) as
-    | { job: { id: string } }
-    | ApiError;
+  const body = (await response.json()) as { job: { id: string } } | ApiError;
 
   if (!response.ok || !("job" in body)) {
     throw new Error(readApiError(body, "Não foi possível iniciar o trabalho."));
@@ -297,46 +301,16 @@ function uploadPdf(
   });
 }
 
-async function loadPdfDocument(file: File) {
+async function loadPdfDocument(jobId: string, artifactId: string) {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  return pdfjs.getDocument({ data: bytes }).promise;
+  configurePdfJsClient(pdfjs);
+  return pdfjs.getDocument(
+    pdfJsClientUrlOptions(`/api/pdf/jobs/${jobId}/inputs/${artifactId}`),
+  ).promise;
 }
 
 function nextRotation(rotation: PageRotation): PageRotation {
   return ((rotation + 90) % 360) as PageRotation;
-}
-
-function mapCropMarginsToSource(
-  rotation: PageRotation,
-  margins: { bottom: number; left: number; right: number; top: number },
-) {
-  if (rotation === 90) {
-    return {
-      bottom: margins.left,
-      left: margins.top,
-      right: margins.bottom,
-      top: margins.right,
-    };
-  }
-  if (rotation === 180) {
-    return {
-      bottom: margins.top,
-      left: margins.right,
-      right: margins.left,
-      top: margins.bottom,
-    };
-  }
-  if (rotation === 270) {
-    return {
-      bottom: margins.right,
-      left: margins.bottom,
-      right: margins.top,
-      top: margins.left,
-    };
-  }
-  return margins;
 }
 
 type SortablePageProps = {
@@ -469,6 +443,7 @@ export function PdfOrganizerWorkspace({
   const copy = WORKSPACE_COPY[operation];
   const documents = useRef(new Map<string, PDFDocumentProxy>());
   const recoveryStarted = useRef(false);
+  const processingAbort = useRef<AbortController | null>(null);
   const past = useRef<WorkspacePage[][]>([]);
   const future = useRef<WorkspacePage[][]>([]);
   const lastSelectedIndex = useRef<number | null>(null);
@@ -509,6 +484,13 @@ export function PdfOrganizerWorkspace({
     }),
   );
 
+  useEffect(
+    () => () => {
+      processingAbort.current?.abort();
+    },
+    [],
+  );
+
   const commitPages = useCallback(
     (update: (current: WorkspacePage[]) => WorkspacePage[]) => {
       setPages((current) => {
@@ -539,8 +521,7 @@ export function PdfOrganizerWorkspace({
           cache: "no-store",
         });
         const body = (await response.json()) as
-          | { job: RecoverableJob }
-          | ApiError;
+          { job: RecoverableJob } | ApiError;
         if (!response.ok || !("job" in body)) {
           throw new Error(
             readApiError(body, "Não foi possível recuperar o rascunho."),
@@ -555,9 +536,7 @@ export function PdfOrganizerWorkspace({
             ? (body.job.options as {
                 manifest?: {
                   version: 1;
-                  pages: Array<
-                    Omit<WorkspacePage, "cropMargins" | "fileName">
-                  >;
+                  pages: Array<Omit<WorkspacePage, "cropMargins" | "fileName">>;
                 };
               })
             : {};
@@ -577,27 +556,45 @@ export function PdfOrganizerWorkspace({
             fileName: input.originalName,
             progress: Math.round((index / inputs.length) * 100),
           });
-          const inputResponse = await fetch(
-            `/api/pdf/jobs/${body.job.id}/inputs/${input.id}`,
-            { cache: "no-store" },
+          documents.current.set(
+            input.id,
+            await loadPdfDocument(body.job.id, input.id),
           );
-          if (!inputResponse.ok) {
-            throw new Error(
-              `Arquivo original “${input.originalName}” não está disponível.`,
-            );
-          }
-          const file = new File(
-            [await inputResponse.blob()],
-            input.originalName,
-            { type: input.mimeType },
-          );
-          documents.current.set(input.id, await loadPdfDocument(file));
         }
 
-        const recoveredPages = savedPages.map((page) => ({
-          ...page,
-          fileName: inputNames.get(page.artifactId) ?? "documento.pdf",
-        }));
+        const recoveredPages = await Promise.all(
+          savedPages.map(async (page) => {
+            const document = documents.current.get(page.artifactId);
+            const sourcePage = document
+              ? await document.getPage(page.sourcePage)
+              : null;
+            let cropMargins: WorkspacePage["cropMargins"];
+            if (page.crop && sourcePage) {
+              const sourceWidth = sourcePage.view[2] - sourcePage.view[0];
+              const sourceHeight = sourcePage.view[3] - sourcePage.view[1];
+              cropMargins = sourceMarginsToDisplay(
+                combinePageRotation(sourcePage.rotate, page.rotation),
+                {
+                  left: (page.crop.x / sourceWidth) * 100,
+                  right:
+                    ((sourceWidth - page.crop.x - page.crop.width) /
+                      sourceWidth) *
+                    100,
+                  bottom: (page.crop.y / sourceHeight) * 100,
+                  top:
+                    ((sourceHeight - page.crop.y - page.crop.height) /
+                      sourceHeight) *
+                    100,
+                },
+              );
+            }
+            return {
+              ...page,
+              cropMargins,
+              fileName: inputNames.get(page.artifactId) ?? "documento.pdf",
+            };
+          }),
+        );
         setJobId(body.job.id);
         setPages(recoveredPages);
         setSelectedIds(new Set());
@@ -631,12 +628,10 @@ export function PdfOrganizerWorkspace({
 
         for (const file of acceptedFiles) {
           setUpload({ fileName: file.name, progress: 0 });
-          const artifactId = await uploadPdf(
-            currentJobId,
-            file,
-            (progress) => setUpload({ fileName: file.name, progress }),
+          const artifactId = await uploadPdf(currentJobId, file, (progress) =>
+            setUpload({ fileName: file.name, progress }),
           );
-          const document = await loadPdfDocument(file);
+          const document = await loadPdfDocument(currentJobId, artifactId);
           documents.current.set(artifactId, document);
 
           const importedPages = Array.from(
@@ -751,6 +746,11 @@ export function PdfOrganizerWorkspace({
 
     lastSelectedIndex.current = index;
     setMenuPageId(null);
+    if (operation === "CROP") {
+      setCropMargins(
+        pages[index]?.cropMargins ?? { bottom: 0, left: 0, right: 0, top: 0 },
+      );
+    }
   }
 
   function rotate(ids: Set<string>) {
@@ -793,41 +793,63 @@ export function PdfOrganizerWorkspace({
       return;
     }
 
-    const crops = new Map<string, WorkspacePage["crop"]>();
-    for (const page of pages) {
-      if (!ids.has(page.id)) continue;
-      const document = documents.current.get(page.artifactId);
-      if (!document) continue;
-      const sourcePage = await document.getPage(page.sourcePage);
-      const viewport = sourcePage.getViewport({ scale: 1 });
-      const sourceMargins = mapCropMarginsToSource(
-        page.rotation,
-        cropMargins,
-      );
-      crops.set(page.id, {
-        x: viewport.width * (sourceMargins.left / 100),
-        y: viewport.height * (sourceMargins.bottom / 100),
-        width:
-          viewport.width *
-          (1 - (sourceMargins.left + sourceMargins.right) / 100),
-        height:
-          viewport.height *
-          (1 - (sourceMargins.top + sourceMargins.bottom) / 100),
-      });
-    }
+    try {
+      const crops = new Map<string, NonNullable<WorkspacePage["crop"]>>();
+      for (const page of pages) {
+        if (!ids.has(page.id)) continue;
+        const document = documents.current.get(page.artifactId);
+        if (!document) {
+          throw new Error(
+            `A página de “${page.fileName}” não está disponível.`,
+          );
+        }
+        const sourcePage = await document.getPage(page.sourcePage);
+        const sourceRotation = combinePageRotation(
+          sourcePage.rotate,
+          page.rotation,
+        );
+        const sourceMargins = displayMarginsToSource(
+          sourceRotation,
+          cropMargins,
+        );
+        const sourceWidth = sourcePage.view[2] - sourcePage.view[0];
+        const sourceHeight = sourcePage.view[3] - sourcePage.view[1];
+        const width =
+          sourceWidth * (1 - (sourceMargins.left + sourceMargins.right) / 100);
+        const height =
+          sourceHeight * (1 - (sourceMargins.top + sourceMargins.bottom) / 100);
+        if (width <= 0 || height <= 0) {
+          throw new Error(
+            "A área mantida precisa ter largura e altura maiores que zero.",
+          );
+        }
+        crops.set(page.id, {
+          x: sourceWidth * (sourceMargins.left / 100),
+          y: sourceHeight * (sourceMargins.bottom / 100),
+          width,
+          height,
+        });
+      }
 
-    commitPages((current) =>
-      current.map((page) =>
-        ids.has(page.id)
-          ? {
-              ...page,
-              crop: crops.get(page.id),
-              cropMargins: { ...cropMargins },
-            }
-          : page,
-      ),
-    );
-    setError(null);
+      commitPages((current) =>
+        current.map((page) =>
+          ids.has(page.id)
+            ? {
+                ...page,
+                crop: crops.get(page.id),
+                cropMargins: { ...cropMargins },
+              }
+            : page,
+        ),
+      );
+      setError(null);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Não foi possível aplicar o recorte. Tente novamente.",
+      );
+    }
   }
 
   function undo() {
@@ -872,6 +894,9 @@ export function PdfOrganizerWorkspace({
   async function finalizePdf() {
     if (!jobId || !pages.length || processingLocked || upload) return;
 
+    processingAbort.current?.abort();
+    const controller = new AbortController();
+    processingAbort.current = controller;
     setError(null);
     setProcessing({ status: "QUEUED", progress: 0, outputs: [] });
 
@@ -879,10 +904,10 @@ export function PdfOrganizerWorkspace({
       await persistManifest();
       const queueResponse = await fetch(`/api/pdf/jobs/${jobId}/queue`, {
         method: "POST",
+        signal: controller.signal,
       });
       const queueBody = (await queueResponse.json()) as
-        | { job: PdfJobResult }
-        | ApiError;
+        { job: PdfJobResult } | ApiError;
 
       if (!queueResponse.ok || !("job" in queueBody)) {
         throw new Error(
@@ -891,63 +916,46 @@ export function PdfOrganizerWorkspace({
       }
 
       setProcessing({
-        status: queueBody.job.status,
+        status:
+          queueBody.job.status === "SUCCEEDED"
+            ? "RUNNING"
+            : queueBody.job.status,
         progress: queueBody.job.progress,
         outputs: [],
       });
 
-      for (let attempt = 0; attempt < 600; attempt += 1) {
-        await wait(1_000);
-        const response = await fetch(`/api/pdf/jobs/${jobId}`, {
-          cache: "no-store",
-        });
-        const body = (await response.json()) as
-          | { job: PdfJobResult }
-          | ApiError;
-
-        if (!response.ok || !("job" in body)) {
-          throw new Error(
-            readApiError(body, "Não foi possível acompanhar o processamento."),
+      const outputs = await pollPdfJob<
+        PdfJobResult["artifacts"][number],
+        PdfOutput
+      >({
+        jobId,
+        signal: controller.signal,
+        isOutput: (artifact): artifact is PdfOutput =>
+          artifact.kind === "OUTPUT",
+        onConnectionIssue(message) {
+          setError(
+            (current) =>
+              message ??
+              (current?.startsWith("Conexão com o servidor interrompida")
+                ? null
+                : current),
           );
-        }
-
-        const outputs = body.job.artifacts.filter(
-          (artifact): artifact is PdfOutput => artifact.kind === "OUTPUT",
-        );
-        setProcessing({
-          status: body.job.status,
-          progress: body.job.progress,
-          outputs,
-        });
-
-        if (body.job.status === "SUCCEEDED") {
-          const downloadUrl =
-            outputs.length > 1
-              ? `/api/pdf/jobs/${jobId}/outputs/zip`
-              : outputs[0]
-                ? `/api/pdf/jobs/${jobId}/outputs/${outputs[0].id}`
-                : null;
-
-          if (downloadUrl) triggerDownload(downloadUrl);
-          return;
-        }
-
-        if (
-          body.job.status === "FAILED" ||
-          body.job.status === "CANCELLED" ||
-          body.job.status === "EXPIRED"
-        ) {
-          throw new Error(
-            body.job.errorMessage ??
-              "O processamento não pôde ser concluído.",
-          );
-        }
-      }
-
-      throw new Error(
-        "O processamento demorou além do esperado. Consulte este trabalho novamente.",
-      );
+        },
+        onUpdate(job, validOutputs) {
+          setProcessing({
+            status: job.status,
+            progress: job.progress,
+            outputs: validOutputs,
+          });
+        },
+      });
+      const downloadUrl =
+        outputs.length > 1
+          ? `/api/pdf/jobs/${jobId}/outputs/zip`
+          : `/api/pdf/jobs/${jobId}/outputs/${outputs[0]!.id}`;
+      triggerDownload(downloadUrl);
     } catch (caught) {
+      if (isAbortError(caught)) return;
       setProcessing((current) => ({
         ...current,
         status: "FAILED",
@@ -957,6 +965,10 @@ export function PdfOrganizerWorkspace({
           ? caught.message
           : "Não foi possível concluir o PDF.",
       );
+    } finally {
+      if (processingAbort.current === controller) {
+        processingAbort.current = null;
+      }
     }
   }
 
@@ -965,6 +977,7 @@ export function PdfOrganizerWorkspace({
     [pages, selectedIds],
   );
   const activePage = pages.find((page) => page.id === activeId);
+  const cropPreviewPage = selected[0] ?? pages[0];
 
   return (
     <div className="pdf-workspace">
@@ -1072,8 +1085,7 @@ export function PdfOrganizerWorkspace({
           disabled={!pages.length || Boolean(upload) || processingLocked}
           onClick={() => void finalizePdf()}
         >
-          {processing.status === "QUEUED" ||
-          processing.status === "RUNNING" ? (
+          {processing.status === "QUEUED" || processing.status === "RUNNING" ? (
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           ) : (
             <Download className="size-4" aria-hidden="true" />
@@ -1092,8 +1104,11 @@ export function PdfOrganizerWorkspace({
         <section className="pdf-crop-controls">
           <header>
             <div>
-              <strong>Margens do recorte</strong>
-              <small>A área clara será mantida no PDF final.</small>
+              <strong>Área que será mantida</strong>
+              <small>
+                Ajuste com o mouse, toque, teclado ou campos numéricos. A área
+                escura será removida.
+              </small>
             </div>
             <div>
               <button
@@ -1115,36 +1130,16 @@ export function PdfOrganizerWorkspace({
               </button>
             </div>
           </header>
-          <div className="pdf-crop-sliders">
-            {(
-              [
-                ["top", "Superior"],
-                ["right", "Direita"],
-                ["bottom", "Inferior"],
-                ["left", "Esquerda"],
-              ] as const
-            ).map(([side, label]) => (
-              <label key={side}>
-                <span>
-                  {label} <b>{cropMargins[side]}%</b>
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={40}
-                  step={1}
-                  value={cropMargins[side]}
-                  disabled={processingLocked}
-                  onChange={(event) =>
-                    setCropMargins((current) => ({
-                      ...current,
-                      [side]: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-            ))}
-          </div>
+          {cropPreviewPage ? (
+            <PdfVisualCropEditor
+              disabled={processingLocked}
+              document={documents.current.get(cropPreviewPage.artifactId)}
+              margins={cropMargins}
+              onChange={setCropMargins}
+              pageNumber={cropPreviewPage.sourcePage}
+              rotation={cropPreviewPage.rotation}
+            />
+          ) : null}
         </section>
       ) : null}
 
@@ -1157,8 +1152,7 @@ export function PdfOrganizerWorkspace({
         </div>
       ) : null}
 
-      {processing.status === "QUEUED" ||
-      processing.status === "RUNNING" ? (
+      {processing.status === "QUEUED" || processing.status === "RUNNING" ? (
         <section className="pdf-processing-panel" aria-live="polite">
           <div>
             <Loader2 className="size-5 animate-spin" aria-hidden="true" />
@@ -1168,7 +1162,9 @@ export function PdfOrganizerWorkspace({
                   ? "Aguardando processamento"
                   : "Preparando documento"}
               </strong>
-              <small>Você pode acompanhar o avanço sem recarregar a página.</small>
+              <small>
+                Você pode acompanhar o avanço sem recarregar a página.
+              </small>
             </span>
           </div>
           <div
@@ -1185,8 +1181,7 @@ export function PdfOrganizerWorkspace({
         </section>
       ) : null}
 
-      {processing.status === "SUCCEEDED" &&
-      processing.outputs.length ? (
+      {processing.status === "SUCCEEDED" && processing.outputs.length ? (
         <section className="pdf-output-panel" aria-live="polite">
           <div className="pdf-output-panel__heading">
             <span>
@@ -1274,7 +1269,10 @@ export function PdfOrganizerWorkspace({
             items={pages.map((page) => page.id)}
             strategy={rectSortingStrategy}
           >
-            <section className="pdf-page-grid" aria-label="Páginas do documento">
+            <section
+              className="pdf-page-grid"
+              aria-label="Páginas do documento"
+            >
               {pages.map((page, index) => (
                 <SortablePage
                   key={page.id}

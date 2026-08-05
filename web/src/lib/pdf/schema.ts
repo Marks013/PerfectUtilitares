@@ -13,8 +13,6 @@ const pdfOperationSchema = z.enum([
   "CROP",
   "PDF_TO_JPG",
   "JPG_TO_PDF",
-  "PDF_TO_WORD",
-  "PDF_TO_EXCEL",
   "WORD_TO_PDF",
   "EXCEL_TO_PDF",
 ]);

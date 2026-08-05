@@ -52,6 +52,45 @@ function readManifest(options: unknown) {
   return parsed.success ? parsed.data : null;
 }
 
+async function currentJobResponse(jobId: string, status = 202) {
+  const current = await prisma.pdfJob.findUnique({
+    where: { id: jobId },
+    include: { artifacts: { orderBy: { createdAt: "asc" } } },
+  });
+  return current
+    ? NextResponse.json({ job: serializePdfJob(current) }, { status })
+    : jsonError(404, "PDF_JOB_NOT_FOUND", "Trabalho PDF não encontrado.");
+}
+
+async function ensurePdfJobPublished(
+  job: { id: string; principalKey: string },
+  tier: "authenticated" | "public",
+) {
+  try {
+    await enqueuePdfJob(job.id, { key: job.principalKey, tier });
+    await prisma.pdfJob.updateMany({
+      where: { id: job.id, status: "QUEUED" },
+      data: { errorCode: null, errorMessage: null },
+    });
+    return null;
+  } catch (error) {
+    await prisma.pdfJob.updateMany({
+      where: { id: job.id, status: "QUEUED" },
+      data: {
+        errorCode: "QUEUE_UNAVAILABLE",
+        errorMessage:
+          "O processamento está temporariamente indisponível. Tente novamente.",
+      },
+    });
+    Sentry.captureException(error, { tags: { pdfJobId: job.id } });
+    return jsonError(
+      503,
+      "PDF_QUEUE_UNAVAILABLE",
+      "O processamento está temporariamente indisponível. Tente novamente.",
+    );
+  }
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
@@ -79,6 +118,17 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!job) {
     return jsonError(404, "PDF_JOB_NOT_FOUND", "Trabalho PDF não encontrado.");
+  }
+
+  if (["QUEUED", "RUNNING", "SUCCEEDED"].includes(job.status)) {
+    if (job.status === "QUEUED") {
+      const publishError = await ensurePdfJobPublished(
+        job,
+        owner.session ? "authenticated" : "public",
+      );
+      if (publishError) return publishError;
+    }
+    return currentJobResponse(job.id, job.status === "SUCCEEDED" ? 200 : 202);
   }
 
   if (job.status !== "DRAFT") {
@@ -168,6 +218,26 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   if (!claimed) {
+    const current = await prisma.pdfJob.findUnique({
+      where: { id: job.id },
+      select: { status: true },
+    });
+    if (
+      current &&
+      ["QUEUED", "RUNNING", "SUCCEEDED"].includes(current.status)
+    ) {
+      if (current.status === "QUEUED") {
+        const publishError = await ensurePdfJobPublished(
+          job,
+          owner.session ? "authenticated" : "public",
+        );
+        if (publishError) return publishError;
+      }
+      return currentJobResponse(
+        job.id,
+        current.status === "SUCCEEDED" ? 200 : 202,
+      );
+    }
     return jsonError(
       409,
       "PDF_JOB_ALREADY_QUEUED",
@@ -175,46 +245,40 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  try {
-    await enqueuePdfJob(job.id, {
-      key: job.principalKey,
-      tier: owner.session ? "authenticated" : "public",
-    });
-  } catch (error) {
-    await prisma.pdfJob.updateMany({
-      where: { id: job.id, status: "QUEUED" },
-      data: {
-        errorCode: "QUEUE_UNAVAILABLE",
-        errorMessage:
-          "O processamento está temporariamente indisponível. Tente novamente.",
-        status: "DRAFT",
-      },
-    });
-    Sentry.captureException(error, { tags: { pdfJobId: job.id } });
-    return jsonError(
-      503,
-      "PDF_QUEUE_UNAVAILABLE",
-      "O processamento está temporariamente indisponível. Tente novamente.",
-    );
-  }
+  const publishError = await ensurePdfJobPublished(
+    job,
+    owner.session ? "authenticated" : "public",
+  );
+  if (publishError) return publishError;
 
-  await prisma.auditLog.create({
-    data: {
-      action: "PDF_JOB_QUEUED",
-      entity: "PdfJob",
-      entityId: job.id,
-      metadata: {
-        operation: job.operation,
-        pages: manifest?.pages.length ?? 0,
+  const sideEffects = await Promise.allSettled([
+    prisma.auditLog.create({
+      data: {
+        action: "PDF_JOB_QUEUED",
+        entity: "PdfJob",
+        entityId: job.id,
+        metadata: {
+          operation: job.operation,
+          pages: manifest?.pages.length ?? 0,
+        },
+        userId: owner.session?.user.id ?? null,
       },
-      userId: owner.session?.user.id ?? null,
-    },
-  });
-  await recordUserUsage({
-    userId: owner.session?.user.id,
-    module: "PDF",
-    operation: job.operation,
-    inputBytes: job.inputBytes,
+    }),
+    recordUserUsage({
+      userId: owner.session?.user.id,
+      module: "PDF",
+      operation: job.operation,
+      inputBytes: job.inputBytes,
+    }),
+  ]);
+  sideEffects.forEach((result, index) => {
+    if (result.status !== "rejected") return;
+    Sentry.captureException(result.reason, {
+      tags: {
+        pdfJobId: job.id,
+        pdfQueueSideEffect: index === 0 ? "audit" : "usage",
+      },
+    });
   });
 
   const queuedJob = await prisma.pdfJob.findUniqueOrThrow({

@@ -1,8 +1,5 @@
 import * as Sentry from "@sentry/node";
-import {
-  removePdfJobFiles,
-  removePdfStorageKey,
-} from "@/lib/pdf/storage";
+import { removePdfJobFiles, removePdfStorageKey } from "@/lib/pdf/storage";
 import { prisma } from "@/lib/prisma";
 
 const PDF_STALE_RUNNING_JOB_HOURS = 6;
@@ -20,9 +17,7 @@ export async function cleanupCompletedPdfJobInputs(jobId: string) {
   if (!job) return { removed: 0 };
 
   const removals = await Promise.allSettled(
-    job.artifacts.map((artifact) =>
-      removePdfStorageKey(artifact.storageKey),
-    ),
+    job.artifacts.map((artifact) => removePdfStorageKey(artifact.storageKey)),
   );
   const removedArtifactIds: string[] = [];
   let remainingInputBytes = BigInt(0);
@@ -74,7 +69,7 @@ export async function cleanupExpiredPdfJobs(now = new Date()) {
       OR: [
         {
           expiresAt: { lte: now },
-          status: { not: "RUNNING" },
+          status: { notIn: ["QUEUED", "RUNNING"] },
         },
         {
           startedAt: { lte: staleRunningBefore },
@@ -101,7 +96,8 @@ export async function cleanupExpiredPdfJobs(now = new Date()) {
         data: {
           completedAt: now,
           errorCode: "PDF_JOB_STALE",
-          errorMessage: "O processamento foi interrompido e os arquivos expiraram.",
+          errorMessage:
+            "O processamento foi interrompido e os arquivos expiraram.",
           status: "EXPIRED",
         },
       });
@@ -111,7 +107,7 @@ export async function cleanupExpiredPdfJobs(now = new Date()) {
         where: {
           expiresAt: { lte: now },
           id: job.id,
-          status: { notIn: ["RUNNING", "EXPIRED"] },
+          status: { notIn: ["QUEUED", "RUNNING", "EXPIRED"] },
         },
         data: {
           completedAt: now,

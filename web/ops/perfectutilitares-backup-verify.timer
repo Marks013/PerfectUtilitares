@@ -1,0 +1,11 @@
+[Unit]
+Description=Run quarterly PerfectUtilitares backup verification
+
+[Timer]
+OnCalendar=*-01,04,07,10-01 05:30:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=perfectutilitares-backup-verify.service
+
+[Install]
+WantedBy=timers.target

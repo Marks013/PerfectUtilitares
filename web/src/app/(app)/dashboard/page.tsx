@@ -4,6 +4,7 @@ import {
   Clock3,
   Files,
   Grip,
+  HeartPulse,
   ScanFace,
   Scissors,
   ShieldCheck,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
 
 const moduleCards = [
   {
@@ -57,9 +59,40 @@ const moduleCards = [
   },
 ] as const;
 
+const unimedCard = {
+  href: "/unimed",
+  eyebrow: "Gestão Unimed",
+  title: "Calcule exclusões sem depender do Excel",
+  description:
+    "Consulte beneficiários, calcule valores e prepare documentos com regras centralizadas.",
+  cta: "Abrir Unimed",
+  tone: "journey",
+  icon: HeartPulse,
+  details: [
+    { icon: CheckCircle2, label: "Cálculo em centavos" },
+    { icon: ShieldCheck, label: "Acesso controlado" },
+  ],
+} as const;
+
 export default async function DashboardPage() {
   const session = await auth();
   const activeSession = session?.user.status !== "ACTIVE" ? null : session;
+  const unimedGrant =
+    activeSession?.user.tenantId && activeSession.user.role !== "ADMIN"
+      ? await prisma.unimedUserAccess.findFirst({
+          where: {
+            userId: activeSession.user.id,
+            tenantId: activeSession.user.tenantId,
+            active: true,
+          },
+          select: { id: true },
+        })
+      : null;
+  const canSeeUnimed =
+    activeSession?.user.role === "ADMIN" || Boolean(unimedGrant);
+  const visibleModuleCards = canSeeUnimed
+    ? [...moduleCards, unimedCard]
+    : moduleCards;
 
   return (
     <div className="dashboard-home">
@@ -75,7 +108,7 @@ export default async function DashboardPage() {
       </section>
 
       <section className="module-grid" aria-label="Modulos principais">
-        {moduleCards.map((card) => {
+        {visibleModuleCards.map((card) => {
           const Icon = card.icon;
 
           return (

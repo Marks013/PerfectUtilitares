@@ -26,6 +26,13 @@ describe("pdf schemas", () => {
     ).toBe(false);
   });
 
+  it.each(["PDF_TO_WORD", "PDF_TO_EXCEL"])(
+    "rejects disabled lossy office export %s",
+    (operation) => {
+      expect(pdfJobCreateSchema.safeParse({ operation }).success).toBe(false);
+    },
+  );
+
   it("accepts a versioned page manifest", () => {
     const parsed = pdfJobUpdateSchema.parse({
       manifest: { version: 1, pages: [page] },

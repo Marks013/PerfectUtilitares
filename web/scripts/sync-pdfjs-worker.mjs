@@ -1,15 +1,13 @@
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, cp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(scriptDirectory, "..");
-const source = path.join(
+const packageDirectory = path.join(
   projectDirectory,
   "node_modules",
   "pdfjs-dist",
-  "build",
-  "pdf.worker.min.mjs",
 );
 const destinationDirectory = path.join(
   projectDirectory,
@@ -19,6 +17,18 @@ const destinationDirectory = path.join(
 );
 
 await mkdir(destinationDirectory, { recursive: true });
-await copyFile(source, path.join(destinationDirectory, "pdf.worker.min.mjs"));
+await copyFile(
+  path.join(packageDirectory, "build", "pdf.worker.min.mjs"),
+  path.join(destinationDirectory, "pdf.worker.min.mjs"),
+);
 
-console.log("PDF.js worker sincronizado.");
+for (const directory of ["cmaps", "standard_fonts", "wasm"]) {
+  const destination = path.join(destinationDirectory, directory);
+  await rm(destination, { force: true, recursive: true });
+  await cp(path.join(packageDirectory, directory), destination, {
+    force: true,
+    recursive: true,
+  });
+}
+
+console.log("PDF.js worker, CMaps, fontes padrão e WASM sincronizados.");

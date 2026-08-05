@@ -1,0 +1,4 @@
+BACKUP_ROOT=/home/ubuntu/perfectutilitares-backups
+BACKUP_KEEP_COUNT=14
+# Opcional. Configure antes um remote no rclone; nenhuma credencial fica aqui.
+BACKUP_RCLONE_REMOTE=

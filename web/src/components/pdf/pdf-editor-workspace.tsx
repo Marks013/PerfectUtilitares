@@ -29,6 +29,12 @@ import {
 } from "react";
 import { useDropzone } from "react-dropzone";
 import { PdfPageThumbnail } from "@/components/pdf/pdf-page-thumbnail";
+import { isAbortError, pollPdfJob } from "@/components/pdf/pdf-job-polling";
+import {
+  configurePdfJsClient,
+  pdfJsClientUrlOptions,
+} from "@/lib/pdf/pdfjs-client";
+import { combinePageRotation } from "@/lib/pdf/geometry";
 import type { PdfAnnotation, PdfManifest } from "@/lib/pdf/schema";
 
 type EditorOperation = "EDIT" | "ANNOTATE";
@@ -86,10 +92,6 @@ function readApiError(value: unknown, fallback: string) {
   return (value as ApiError | null)?.error?.message ?? fallback;
 }
 
-function wait(milliseconds: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
 function triggerDownload(url: string) {
   const link = document.createElement("a");
   link.href = url;
@@ -104,9 +106,7 @@ async function createJob(operation: EditorOperation) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ operation }),
   });
-  const body = (await response.json()) as
-    | { job: { id: string } }
-    | ApiError;
+  const body = (await response.json()) as { job: { id: string } } | ApiError;
   if (!response.ok || !("job" in body)) {
     throw new Error(readApiError(body, "Não foi possível iniciar a edição."));
   }
@@ -144,7 +144,10 @@ function uploadPdf(
       } else {
         reject(
           new Error(
-            readApiError(body, "Não foi possível enviar o arquivo selecionado."),
+            readApiError(
+              body,
+              "Não foi possível enviar o arquivo selecionado.",
+            ),
           ),
         );
       }
@@ -156,12 +159,12 @@ function uploadPdf(
   });
 }
 
-async function loadPdfDocument(file: File) {
+async function loadPdfDocument(jobId: string, artifactId: string) {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
-  return pdfjs.getDocument({
-    data: new Uint8Array(await file.arrayBuffer()),
-  }).promise;
+  configurePdfJsClient(pdfjs);
+  return pdfjs.getDocument(
+    pdfJsClientUrlOptions(`/api/pdf/jobs/${jobId}/inputs/${artifactId}`),
+  ).promise;
 }
 
 function clampPoint(point: Point): Point {
@@ -171,9 +174,7 @@ function clampPoint(point: Point): Point {
   };
 }
 
-function pointFromEvent(
-  event: ReactPointerEvent<HTMLDivElement>,
-): Point {
+function pointFromEvent(event: ReactPointerEvent<HTMLDivElement>): Point {
   const bounds = event.currentTarget.getBoundingClientRect();
   return clampPoint({
     x: (event.clientX - bounds.left) / bounds.width,
@@ -218,19 +219,24 @@ function EditorCanvas({
 
   useEffect(() => {
     let cancelled = false;
-    let renderTask:
-      | { cancel: () => void; promise: Promise<void> }
-      | undefined;
+    let renderTask: { cancel: () => void; promise: Promise<void> } | undefined;
 
     async function render() {
       const sourcePage = await document.getPage(page.sourcePage);
       if (cancelled || !canvasRef.current) return;
 
-      const base = sourcePage.getViewport({ scale: 1, rotation: page.rotation });
+      const displayRotation = combinePageRotation(
+        sourcePage.rotate,
+        page.rotation,
+      );
+      const base = sourcePage.getViewport({
+        scale: 1,
+        rotation: displayRotation,
+      });
       const scale = Math.min(2, 1_400 / base.width);
       const viewport = sourcePage.getViewport({
         scale,
-        rotation: page.rotation,
+        rotation: displayRotation,
       });
       const canvas = canvasRef.current;
       const context = canvas.getContext("2d", { alpha: false });
@@ -275,7 +281,11 @@ function EditorCanvas({
       }
       pointsRef.current = [];
       setDrawPreview([]);
-    } else if (areaPreview && areaPreview.width > 0.005 && areaPreview.height > 0.005) {
+    } else if (
+      areaPreview &&
+      areaPreview.width > 0.005 &&
+      areaPreview.height > 0.005
+    ) {
       onAdd({
         id: crypto.randomUUID(),
         pageId: page.id,
@@ -290,11 +300,7 @@ function EditorCanvas({
   }
 
   return (
-    <div
-      className="pdf-editor-canvas"
-      data-tool={tool}
-      style={{ aspectRatio }}
-    >
+    <div className="pdf-editor-canvas" data-tool={tool} style={{ aspectRatio }}>
       <canvas ref={canvasRef} aria-label={`Página ${page.sourcePage}`} />
       <div
         className="pdf-editor-canvas__overlay"
@@ -433,7 +439,9 @@ function EditorCanvas({
             <polyline
               fill="none"
               opacity={opacity}
-              points={drawPreview.map((point) => `${point.x},${point.y}`).join(" ")}
+              points={drawPreview
+                .map((point) => `${point.x},${point.y}`)
+                .join(" ")}
               stroke={color}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -452,6 +460,7 @@ export function PdfEditorWorkspace({
   operation: EditorOperation;
 }) {
   const recoveryStarted = useRef(false);
+  const processingAbort = useRef<AbortController | null>(null);
   const past = useRef<PdfAnnotation[][]>([]);
   const future = useRef<PdfAnnotation[][]>([]);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -492,9 +501,18 @@ export function PdfEditorWorkspace({
   const pageAnnotations = useMemo(
     () =>
       selectedPage
-        ? annotations.filter((annotation) => annotation.pageId === selectedPage.id)
+        ? annotations.filter(
+            (annotation) => annotation.pageId === selectedPage.id,
+          )
         : [],
     [annotations, selectedPage],
+  );
+
+  useEffect(
+    () => () => {
+      processingAbort.current?.abort();
+    },
+    [],
   );
 
   const commitAnnotations = useCallback(
@@ -527,8 +545,7 @@ export function PdfEditorWorkspace({
           cache: "no-store",
         });
         const body = (await response.json()) as
-          | { job: RecoverableJob }
-          | ApiError;
+          { job: RecoverableJob } | ApiError;
         if (!response.ok || !("job" in body)) {
           throw new Error(
             readApiError(body, "Não foi possível recuperar o rascunho."),
@@ -540,19 +557,10 @@ export function PdfEditorWorkspace({
         const input = body.job.artifacts.find(
           (artifact) => artifact.kind === "INPUT",
         );
-        if (!input) throw new Error("Arquivo original do rascunho não encontrado.");
+        if (!input)
+          throw new Error("Arquivo original do rascunho não encontrado.");
 
-        const inputResponse = await fetch(
-          `/api/pdf/jobs/${body.job.id}/inputs/${input.id}`,
-          { cache: "no-store" },
-        );
-        if (!inputResponse.ok) {
-          throw new Error("Arquivo original do rascunho não está disponível.");
-        }
-        const file = new File([await inputResponse.blob()], input.originalName, {
-          type: input.mimeType,
-        });
-        const loadedDocument = await loadPdfDocument(file);
+        const loadedDocument = await loadPdfDocument(body.job.id, input.id);
         const savedOptions =
           body.job.options && typeof body.job.options === "object"
             ? (body.job.options as {
@@ -612,7 +620,7 @@ export function PdfEditorWorkspace({
           file,
           setUploadProgress,
         );
-        const loadedDocument = await loadPdfDocument(file);
+        const loadedDocument = await loadPdfDocument(currentJobId, artifactId);
         const importedPages = Array.from(
           { length: loadedDocument.numPages },
           (_, index): EditorPage => ({
@@ -699,15 +707,18 @@ export function PdfEditorWorkspace({
 
   async function finish() {
     if (!jobId) return;
+    processingAbort.current?.abort();
+    const controller = new AbortController();
+    processingAbort.current = controller;
     setError(null);
     try {
       await persist();
       const queueResponse = await fetch(`/api/pdf/jobs/${jobId}/queue`, {
         method: "POST",
+        signal: controller.signal,
       });
       const queueBody = (await queueResponse.json()) as
-        | { job: PdfJobResult }
-        | ApiError;
+        { job: PdfJobResult } | ApiError;
       if (!queueResponse.ok || !("job" in queueBody)) {
         throw new Error(
           readApiError(queueBody, "Não foi possível iniciar o processamento."),
@@ -717,52 +728,50 @@ export function PdfEditorWorkspace({
       setProcessing({
         output: null,
         progress: queueBody.job.progress,
-        status: queueBody.job.status,
+        status:
+          queueBody.job.status === "SUCCEEDED"
+            ? "RUNNING"
+            : queueBody.job.status,
       });
 
-      for (let attempt = 0; attempt < 240; attempt += 1) {
-        await wait(1_000);
-        const response = await fetch(`/api/pdf/jobs/${jobId}`, {
-          cache: "no-store",
-        });
-        const body = (await response.json()) as
-          | { job: PdfJobResult }
-          | ApiError;
-        if (!response.ok || !("job" in body)) {
-          throw new Error(
-            readApiError(body, "Não foi possível acompanhar o processamento."),
+      const outputs = await pollPdfJob<
+        PdfJobResult["artifacts"][number],
+        OutputArtifact
+      >({
+        jobId,
+        signal: controller.signal,
+        isOutput: (artifact): artifact is OutputArtifact =>
+          artifact.kind === "OUTPUT",
+        onConnectionIssue(message) {
+          setError(
+            (current) =>
+              message ??
+              (current?.startsWith("Conexão com o servidor interrompida")
+                ? null
+                : current),
           );
-        }
-        const output = body.job.artifacts.find(
-          (artifact): artifact is OutputArtifact => artifact.kind === "OUTPUT",
-        );
-        setProcessing({
-          output: output ?? null,
-          progress: body.job.progress,
-          status: body.job.status,
-        });
-        if (body.job.status === "SUCCEEDED" && output) {
-          triggerDownload(`/api/pdf/jobs/${jobId}/outputs/${output.id}`);
-          return;
-        }
-        if (
-          body.job.status === "FAILED" ||
-          body.job.status === "CANCELLED" ||
-          body.job.status === "EXPIRED"
-        ) {
-          throw new Error(
-            body.job.errorMessage ?? "Não foi possível concluir o trabalho.",
-          );
-        }
-      }
-      throw new Error("O processamento demorou mais do que o esperado.");
+        },
+        onUpdate(job, validOutputs) {
+          setProcessing({
+            output: validOutputs[0] ?? null,
+            progress: job.progress,
+            status: job.status,
+          });
+        },
+      });
+      triggerDownload(`/api/pdf/jobs/${jobId}/outputs/${outputs[0]!.id}`);
     } catch (caught) {
+      if (isAbortError(caught)) return;
       setError(
         caught instanceof Error
           ? caught.message
           : "Não foi possível concluir o trabalho.",
       );
       setProcessing((current) => ({ ...current, status: "FAILED" }));
+    } finally {
+      if (processingAbort.current === controller) {
+        processingAbort.current = null;
+      }
     }
   }
 
@@ -1004,9 +1013,7 @@ export function PdfEditorWorkspace({
                     step="0.05"
                     value={opacity}
                     disabled={locked}
-                    onChange={(event) =>
-                      setOpacity(Number(event.target.value))
-                    }
+                    onChange={(event) => setOpacity(Number(event.target.value))}
                   />
                 </label>
               ) : null}

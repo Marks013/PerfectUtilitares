@@ -10,6 +10,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/security";
 import { getPdfOwnerContext, pdfJobAccessWhere } from "@/lib/pdf/access";
+import { acquirePdfJobLock } from "@/lib/pdf/capacity";
 import { pdfJobUpdateSchema } from "@/lib/pdf/schema";
 import { serializePdfJob } from "@/lib/pdf/serialization";
 import { removePdfJobFiles } from "@/lib/pdf/storage";
@@ -26,8 +27,15 @@ function validJobId(id: string) {
   return id.length >= 8 && id.length <= 64;
 }
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const owner = await getPdfOwnerContext();
+  const rateLimitError = await enforceSharedRateLimit(request, {
+    limit: 120,
+    windowMs: 60_000,
+    keyPrefix: "pdf-job-status",
+    authenticated: Boolean(owner.session),
+  });
+  if (rateLimitError) return rateLimitError;
 
   const { id } = await context.params;
   if (!validJobId(id)) {
@@ -64,48 +72,63 @@ export async function DELETE(request: Request, context: RouteContext) {
     return jsonError(400, "INVALID_JOB_ID", "Trabalho PDF inválido.");
   }
 
-  const job = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(owner) },
-    select: { id: true, status: true },
-  });
+  const claim = await prisma.$transaction(
+    async (tx) => {
+      await acquirePdfJobLock(tx, id);
+      const job = await tx.pdfJob.findFirst({
+        where: { id, ...pdfJobAccessWhere(owner) },
+        select: { id: true, status: true },
+      });
 
-  if (!job) {
-    return jsonError(404, "PDF_JOB_NOT_FOUND", "Trabalho PDF não encontrado.");
-  }
+      if (!job) {
+        return {
+          ok: false as const,
+          response: jsonError(
+            404,
+            "PDF_JOB_NOT_FOUND",
+            "Trabalho PDF não encontrado.",
+          ),
+        };
+      }
+      if (job.status === "RUNNING") {
+        return {
+          ok: false as const,
+          response: jsonError(
+            409,
+            "PDF_JOB_RUNNING",
+            "Aguarde o processamento terminar antes de excluir este trabalho.",
+          ),
+        };
+      }
 
-  if (job.status === "RUNNING") {
-    return jsonError(
-      409,
-      "PDF_JOB_RUNNING",
-      "Aguarde o processamento terminar antes de excluir este trabalho.",
-    );
-  }
-
-  const expired = await prisma.pdfJob.updateMany({
-    where: {
-      id: job.id,
-      status: { not: "RUNNING" },
-      ...pdfJobAccessWhere(owner),
+      const expired = await tx.pdfJob.updateMany({
+        where: {
+          id: job.id,
+          status: { not: "RUNNING" },
+          ...pdfJobAccessWhere(owner),
+        },
+        data: { completedAt: new Date(), status: "EXPIRED" },
+      });
+      return expired.count
+        ? { jobId: job.id, ok: true as const }
+        : {
+            ok: false as const,
+            response: jsonError(
+              409,
+              "PDF_JOB_RUNNING",
+              "Aguarde o processamento terminar antes de excluir este trabalho.",
+            ),
+          };
     },
-    data: {
-      completedAt: new Date(),
-      status: "EXPIRED",
-    },
-  });
-
-  if (!expired.count) {
-    return jsonError(
-      409,
-      "PDF_JOB_RUNNING",
-      "Aguarde o processamento terminar antes de excluir este trabalho.",
-    );
-  }
+    { maxWait: 5_000, timeout: 15_000 },
+  );
+  if (!claim.ok) return claim.response;
 
   try {
-    await removePdfJobFiles(job.id);
+    await removePdfJobFiles(claim.jobId);
   } catch (error) {
     Sentry.captureException(error, {
-      tags: { pdfJobDeleteCleanup: true, pdfJobId: job.id },
+      tags: { pdfJobDeleteCleanup: true, pdfJobId: claim.jobId },
     });
     return jsonError(
       503,
@@ -115,7 +138,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   }
 
   await prisma.pdfJob.deleteMany({
-    where: { id: job.id, status: "EXPIRED" },
+    where: { id: claim.jobId, status: "EXPIRED" },
   });
 
   return new NextResponse(null, { status: 204 });
@@ -158,65 +181,73 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 
-  const currentJob = await prisma.pdfJob.findFirst({
-    where: { id, ...pdfJobAccessWhere(owner) },
-    select: {
-      id: true,
-      status: true,
-      artifacts: {
-        where: { kind: "INPUT" },
-        select: { id: true },
-      },
+  return prisma.$transaction(
+    async (tx) => {
+      await acquirePdfJobLock(tx, id);
+      const currentJob = await tx.pdfJob.findFirst({
+        where: { id, ...pdfJobAccessWhere(owner) },
+        select: {
+          id: true,
+          status: true,
+          artifacts: {
+            where: { kind: "INPUT" },
+            select: { id: true },
+          },
+        },
+      });
+
+      if (!currentJob) {
+        return jsonError(
+          404,
+          "PDF_JOB_NOT_FOUND",
+          "Trabalho PDF não encontrado.",
+        );
+      }
+      if (currentJob.status !== "DRAFT") {
+        return jsonError(
+          409,
+          "PDF_JOB_LOCKED",
+          "Este trabalho já foi enviado para processamento.",
+        );
+      }
+
+      const artifactIds = new Set(
+        currentJob.artifacts.map((artifact) => artifact.id),
+      );
+      const referencesUnknownArtifact = parsed.data.manifest.pages.some(
+        (page) => !artifactIds.has(page.artifactId),
+      );
+      if (referencesUnknownArtifact) {
+        return jsonError(
+          400,
+          "INVALID_PDF_PAGE_SOURCE",
+          "Uma das páginas não pertence aos arquivos deste trabalho.",
+        );
+      }
+
+      const pageIds = new Set(
+        parsed.data.manifest.pages.map((page) => page.id),
+      );
+      const referencesUnknownPage = parsed.data.annotations.some(
+        (annotation) => !pageIds.has(annotation.pageId),
+      );
+      if (referencesUnknownPage) {
+        return jsonError(
+          400,
+          "INVALID_PDF_ANNOTATION_PAGE",
+          "Uma das marcações pertence a uma página que não está mais no documento.",
+        );
+      }
+
+      const job = await tx.pdfJob.update({
+        where: { id: currentJob.id },
+        data: { options: parsed.data },
+        include: { artifacts: { orderBy: { createdAt: "asc" } } },
+      });
+      return NextResponse.json({ job: serializePdfJob(job) });
     },
-  });
-
-  if (!currentJob) {
-    return jsonError(404, "PDF_JOB_NOT_FOUND", "Trabalho PDF não encontrado.");
-  }
-
-  if (currentJob.status !== "DRAFT") {
-    return jsonError(
-      409,
-      "PDF_JOB_LOCKED",
-      "Este trabalho já foi enviado para processamento.",
-    );
-  }
-
-  const artifactIds = new Set(
-    currentJob.artifacts.map((artifact) => artifact.id),
+    { maxWait: 5_000, timeout: 15_000 },
   );
-  const referencesUnknownArtifact = parsed.data.manifest.pages.some(
-    (page) => !artifactIds.has(page.artifactId),
-  );
-
-  if (referencesUnknownArtifact) {
-    return jsonError(
-      400,
-      "INVALID_PDF_PAGE_SOURCE",
-      "Uma das páginas não pertence aos arquivos deste trabalho.",
-    );
-  }
-
-  const pageIds = new Set(parsed.data.manifest.pages.map((page) => page.id));
-  const referencesUnknownPage = parsed.data.annotations.some(
-    (annotation) => !pageIds.has(annotation.pageId),
-  );
-
-  if (referencesUnknownPage) {
-    return jsonError(
-      400,
-      "INVALID_PDF_ANNOTATION_PAGE",
-      "Uma das marcações pertence a uma página que não está mais no documento.",
-    );
-  }
-
-  const job = await prisma.pdfJob.update({
-    where: { id: currentJob.id },
-    data: { options: parsed.data },
-    include: { artifacts: { orderBy: { createdAt: "asc" } } },
-  });
-
-  return NextResponse.json({ job: serializePdfJob(job) });
 }
 
 export function POST() {

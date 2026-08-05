@@ -17,15 +17,9 @@ function readPositiveInteger(value: string | undefined, fallback: number) {
 function getQueueLimits() {
   return {
     maxActiveInputBytes: BigInt(
-      readPositiveInteger(
-        process.env.PDF_MAX_ACTIVE_INPUT_BYTES,
-        4 * GIB,
-      ),
+      readPositiveInteger(process.env.PDF_MAX_ACTIVE_INPUT_BYTES, 4 * GIB),
     ),
-    maxActiveJobs: readPositiveInteger(
-      process.env.PDF_MAX_ACTIVE_JOBS,
-      12,
-    ),
+    maxActiveJobs: readPositiveInteger(process.env.PDF_MAX_ACTIVE_JOBS, 12),
     maxPublicActiveJobs: readPositiveInteger(
       process.env.PDF_MAX_PUBLIC_ACTIVE_JOBS,
       2,
@@ -44,13 +38,17 @@ export class PdfPublicCapacityError extends Error {
   }
 }
 
-async function acquireAdmissionLock(
-  tx: Prisma.TransactionClient,
-  key: string,
-) {
+async function acquireAdmissionLock(tx: Prisma.TransactionClient, key: string) {
   await tx.$queryRaw`
     SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text AS "lock"
   `;
+}
+
+export async function acquirePdfJobLock(
+  tx: Prisma.TransactionClient,
+  jobId: string,
+) {
+  await acquireAdmissionLock(tx, `pdf:job:${jobId}`);
 }
 
 export function getPdfWorkingSetMultiplier(operation: string) {
@@ -137,7 +135,7 @@ export async function reservePdfJobForQueue(request: {
     async (tx) => {
       await acquireAdmissionLock(tx, "pdf:admission:global");
       await acquireAdmissionLock(tx, `pdf:principal:${request.principalKey}`);
-      await acquireAdmissionLock(tx, `pdf:job:${request.jobId}`);
+      await acquirePdfJobLock(tx, request.jobId);
 
       const current = await tx.pdfJob.findUnique({
         where: { id: request.jobId },
@@ -163,7 +161,10 @@ export async function reservePdfJobForQueue(request: {
             }),
       ]);
 
-      if (!request.isAuthenticated && principalActiveJobs >= limits.maxPublicActiveJobs) {
+      if (
+        !request.isAuthenticated &&
+        principalActiveJobs >= limits.maxPublicActiveJobs
+      ) {
         throw new PdfPublicCapacityError(limits.maxPublicActiveJobs);
       }
 

@@ -1,9 +1,16 @@
 import * as Sentry from "@sentry/nextjs";
 import { nodeProfilingIntegration } from "@sentry/profiling-node";
-import { beforeSendScrubber, sentrySampleRate } from "./sentry.shared";
+import {
+  beforeSendScrubber,
+  sentrySampleRate,
+  validatedSentryDsn,
+} from "./sentry.shared";
+
+const dsn = validatedSentryDsn(process.env.NEXT_PUBLIC_SENTRY_DSN);
 
 Sentry.init({
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  dsn,
+  enabled: Boolean(dsn),
   sendDefaultPii: false,
   tracesSampleRate: sentrySampleRate(
     process.env.SENTRY_TRACES_SAMPLE_RATE,

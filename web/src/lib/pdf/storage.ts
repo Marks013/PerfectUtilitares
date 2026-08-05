@@ -10,12 +10,68 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { Unzip } from "fflate";
+import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
 import {
   MAX_PDF_FILE_BYTES,
   MAX_PDF_IMAGE_BYTES,
 } from "@/lib/pdf/constants";
 
 const PDF_SIGNATURE = Buffer.from("%PDF-", "ascii");
+
+async function validateGeneratedPdf(contents: Uint8Array) {
+  if (
+    contents.byteLength < PDF_SIGNATURE.length ||
+    !Buffer.from(contents.subarray(0, PDF_SIGNATURE.length)).equals(
+      PDF_SIGNATURE,
+    )
+  ) {
+    throw new PdfStorageError(
+      "INVALID_PDF",
+      "O processador não gerou um arquivo PDF válido.",
+    );
+  }
+
+  try {
+    const document = await PDFDocument.load(contents, {
+      ignoreEncryption: false,
+      updateMetadata: false,
+    });
+    if (document.getPageCount() < 1) {
+      throw new Error("PDF sem páginas");
+    }
+  } catch {
+    throw new PdfStorageError(
+      "INVALID_PDF",
+      "O resultado não pôde ser validado como PDF completo. Nenhum arquivo parcial foi disponibilizado.",
+    );
+  }
+}
+
+async function validateGeneratedImage(
+  contents: Uint8Array,
+  extension: "jpg" | "png",
+) {
+  try {
+    const metadata = await sharp(contents, {
+      failOn: "error",
+      limitInputPixels: 100_000_000,
+    }).metadata();
+    const expectedFormat = extension === "jpg" ? "jpeg" : "png";
+    if (
+      metadata.format !== expectedFormat ||
+      !metadata.width ||
+      !metadata.height
+    ) {
+      throw new Error("Imagem sem dimensões ou em formato inesperado");
+    }
+  } catch {
+    throw new PdfStorageError(
+      "INVALID_IMAGE",
+      "O resultado da conversão não pôde ser validado. Nenhuma imagem parcial foi disponibilizada.",
+    );
+  }
+}
 
 export class PdfStorageError extends Error {
   constructor(
@@ -34,7 +90,7 @@ export class PdfStorageError extends Error {
   }
 }
 
-export function getPdfStorageRoot() {
+function getPdfStorageRoot() {
   const configuredRoot = process.env.PDF_STORAGE_DIR;
 
   if (configuredRoot) {
@@ -481,6 +537,7 @@ export async function writePdfOutput(
   fileName: string,
   contents: Uint8Array,
 ) {
+  await validateGeneratedPdf(contents);
   const artifactId = randomUUID();
   const safeFileName = sanitizePdfFileName(fileName);
   const relativeKey = `${jobId}/output/${artifactId}.pdf`;
@@ -516,6 +573,7 @@ export async function writeBinaryOutput(
   extension: "jpg" | "png",
   contents: Uint8Array,
 ) {
+  await validateGeneratedImage(contents, extension);
   const artifactId = randomUUID();
   const decodedName = path
     .basename(fileName)
@@ -573,6 +631,7 @@ export async function writeOfficeOutput(
     await handle.writeFile(contents);
     await handle.sync();
     await handle.close();
+    await validateOfficeArchive(temporaryPath, extension);
     await rename(temporaryPath, finalPath);
     return {
       artifactId,
@@ -608,7 +667,7 @@ export async function reservePdfOutput(jobId: string, fileName: string) {
 export async function commitPdfOutput(
   reservation: Awaited<ReturnType<typeof reservePdfOutput>>,
 ) {
-  const handle = await open(reservation.temporaryPath, "r");
+  const handle = await open(reservation.temporaryPath, "r+");
   const signature = Buffer.alloc(PDF_SIGNATURE.length);
 
   try {

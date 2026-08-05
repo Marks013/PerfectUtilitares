@@ -1,0 +1,314 @@
+{
+  "source": {
+    "workbookSha256": "d2ff2d5002a7fbfbf3f8e37c7598af19a123f47809b0c13180782518dec32970",
+    "printArea": "ATUAL!A1:O17",
+    "capturedAt": "2026-07-30",
+    "referencePolicy": "GM-001 preserva a captura real do Excel; REF-* são casos derivados independentemente das fórmulas auditadas e da política monetária de duas casas."
+  },
+  "cases": [
+    {
+      "id": "GM-001",
+      "referenceKey": "20fa0bcc74ce3b21",
+      "inputs": {
+        "reasonCode": 8,
+        "exclusionDate": "2026-07-22",
+        "billingClosure": "AUTOMATIC_DAY_25",
+        "dependentCount": 1,
+        "hasAddon": false
+      },
+      "calculationInput": {
+        "reasonCode": 8,
+        "exclusionDate": "2026-07-22",
+        "planEnrollmentDate": "2022-01-08",
+        "billingClosure": "AUTOMATIC_DAY_25",
+        "holder": {
+          "invoicePlanAmount": 176.95,
+          "payrollPlanAmount": 61.26,
+          "addonAmount": 0
+        },
+        "dependents": [
+          {
+            "invoicePlanAmount": 116.02,
+            "addonAmount": 0
+          }
+        ]
+      },
+      "expected": {
+        "invoiceTotal": "292.97",
+        "usedProrata": "207.91",
+        "invoiceRefund": "85.06",
+        "refundDays": 9,
+        "payrollCharge": "177.28",
+        "employeeFullRefund": "51.47",
+        "companyFullRefund": "33.59",
+        "enrollmentMonths": 54,
+        "contributionMonths": 54,
+        "documentKind": "INACTIVE_TERM",
+        "emailHasAttachment": false
+      },
+      "legacyExcelSnapshot": {
+        "invoiceTotal": "292.96754256",
+        "usedProrata": "207.91244955870968",
+        "invoiceRefund": "85.05509300129035",
+        "payrollCharge": "177.27208576000004"
+      },
+      "display": {
+        "invoiceTotal": "292.97",
+        "usedProrata": "207.91",
+        "invoiceRefund": "85.06",
+        "payrollCharge": "177.28"
+      }
+    },
+    {
+      "id": "REF-001",
+      "basis": "FORMULA_DERIVED",
+      "coverage": [
+        "reason-1",
+        "month-28",
+        "cutoff-day-24",
+        "dependents-0",
+        "funeral-addon"
+      ],
+      "calculationInput": {
+        "reasonCode": 1,
+        "exclusionDate": "2026-02-24",
+        "planEnrollmentDate": "2025-03-25",
+        "billingClosure": "OPEN",
+        "holder": {
+          "invoicePlanAmount": 116.02,
+          "payrollPlanAmount": 61.26,
+          "addonAmount": 6.12
+        },
+        "dependents": []
+      },
+      "expected": {
+        "invoiceTotal": "122.14",
+        "usedProrata": "104.69",
+        "invoiceRefund": "17.45",
+        "refundDays": 4,
+        "payrollCharge": "67.38",
+        "employeeFullRefund": "9.63",
+        "companyFullRefund": "7.82",
+        "enrollmentMonths": 10,
+        "contributionMonths": 10,
+        "documentKind": "RN561",
+        "emailHasAttachment": false
+      }
+    },
+    {
+      "id": "REF-002",
+      "basis": "FORMULA_DERIVED",
+      "coverage": [
+        "reason-2",
+        "month-29",
+        "cutoff-day-25",
+        "dependents-1",
+        "funeral-addon"
+      ],
+      "calculationInput": {
+        "reasonCode": 2,
+        "exclusionDate": "2024-02-25",
+        "planEnrollmentDate": "2023-02-25",
+        "billingClosure": "AUTOMATIC_DAY_25",
+        "holder": {
+          "invoicePlanAmount": 102.67,
+          "payrollPlanAmount": 54.21,
+          "addonAmount": 5.42
+        },
+        "dependents": [{ "invoicePlanAmount": 125.03, "addonAmount": 5.42 }]
+      },
+      "expected": {
+        "invoiceTotal": "238.54",
+        "usedProrata": "205.64",
+        "invoiceRefund": "271.44",
+        "refundDays": 4,
+        "payrollCharge": "190.08",
+        "employeeFullRefund": "216.30",
+        "companyFullRefund": "55.14",
+        "enrollmentMonths": 12,
+        "contributionMonths": 12,
+        "documentKind": "RN561",
+        "emailHasAttachment": false
+      }
+    },
+    {
+      "id": "REF-003",
+      "basis": "FORMULA_DERIVED",
+      "coverage": ["reason-3", "month-30", "dependents-4", "funeral-addon"],
+      "calculationInput": {
+        "reasonCode": 3,
+        "exclusionDate": "2026-04-15",
+        "planEnrollmentDate": "2022-01-08",
+        "billingClosure": "OPEN",
+        "holder": {
+          "invoicePlanAmount": 116.02,
+          "payrollPlanAmount": 61.26,
+          "addonAmount": 0
+        },
+        "dependents": [
+          { "invoicePlanAmount": 116.02, "addonAmount": 0 },
+          { "invoicePlanAmount": 141.29, "addonAmount": 6.12 },
+          { "invoicePlanAmount": 176.95, "addonAmount": 0 },
+          { "invoicePlanAmount": 203.71, "addonAmount": 6.12 }
+        ]
+      },
+      "expected": {
+        "invoiceTotal": "766.23",
+        "usedProrata": "383.12",
+        "invoiceRefund": "383.12",
+        "refundDays": 15,
+        "payrollCharge": "711.47",
+        "employeeFullRefund": "355.74",
+        "companyFullRefund": "27.38",
+        "enrollmentMonths": 51,
+        "contributionMonths": 51,
+        "documentKind": "NONE",
+        "emailHasAttachment": false
+      }
+    },
+    {
+      "id": "REF-004",
+      "basis": "FORMULA_DERIVED",
+      "coverage": ["reason-4", "month-31", "dependents-6", "funeral-addon"],
+      "calculationInput": {
+        "reasonCode": 4,
+        "exclusionDate": "2026-01-31",
+        "planEnrollmentDate": "2022-01-31",
+        "billingClosure": "OPEN",
+        "holder": {
+          "invoicePlanAmount": 241.17,
+          "payrollPlanAmount": 61.26,
+          "addonAmount": 6.12
+        },
+        "dependents": [
+          { "invoicePlanAmount": 116.02, "addonAmount": 6.12 },
+          { "invoicePlanAmount": 141.29, "addonAmount": 6.12 },
+          { "invoicePlanAmount": 176.95, "addonAmount": 6.12 },
+          { "invoicePlanAmount": 203.71, "addonAmount": 6.12 },
+          { "invoicePlanAmount": 241.17, "addonAmount": 6.12 },
+          { "invoicePlanAmount": 269.89, "addonAmount": 6.12 }
+        ]
+      },
+      "expected": {
+        "invoiceTotal": "1433.04",
+        "usedProrata": "1433.04",
+        "invoiceRefund": "0.00",
+        "refundDays": 0,
+        "payrollCharge": "1253.13",
+        "employeeFullRefund": "0.00",
+        "companyFullRefund": "0.00",
+        "enrollmentMonths": 48,
+        "contributionMonths": 48,
+        "documentKind": "NONE",
+        "emailHasAttachment": false
+      }
+    },
+    {
+      "id": "REF-005",
+      "basis": "FORMULA_DERIVED",
+      "coverage": ["reason-5", "month-30", "cutoff-day-25", "dependents-5"],
+      "calculationInput": {
+        "reasonCode": 5,
+        "exclusionDate": "2026-06-25",
+        "planEnrollmentDate": "2024-07-26",
+        "billingClosure": "AUTOMATIC_DAY_25",
+        "holder": {
+          "invoicePlanAmount": 310.67,
+          "payrollPlanAmount": 61.26,
+          "addonAmount": 0
+        },
+        "dependents": [
+          { "invoicePlanAmount": 241.17, "addonAmount": 0 },
+          { "invoicePlanAmount": 269.89, "addonAmount": 0 },
+          { "invoicePlanAmount": 310.67, "addonAmount": 0 },
+          { "invoicePlanAmount": 383.65, "addonAmount": 0 },
+          { "invoicePlanAmount": 487.31, "addonAmount": 0 }
+        ]
+      },
+      "expected": {
+        "invoiceTotal": "2003.36",
+        "usedProrata": "1669.47",
+        "invoiceRefund": "2337.25",
+        "refundDays": 5,
+        "payrollCharge": "1753.95",
+        "employeeFullRefund": "2046.28",
+        "companyFullRefund": "290.97",
+        "enrollmentMonths": 22,
+        "contributionMonths": 22,
+        "documentKind": "NONE",
+        "emailHasAttachment": false
+      }
+    },
+    {
+      "id": "REF-006",
+      "basis": "FORMULA_DERIVED",
+      "coverage": [
+        "reason-6",
+        "month-30",
+        "cutoff-day-24",
+        "dependents-1",
+        "funeral-addon"
+      ],
+      "calculationInput": {
+        "reasonCode": 6,
+        "exclusionDate": "2026-09-24",
+        "planEnrollmentDate": "2025-09-24",
+        "billingClosure": "AUTOMATIC_DAY_25",
+        "holder": {
+          "invoicePlanAmount": 383.65,
+          "payrollPlanAmount": 61.26,
+          "addonAmount": 6.12
+        },
+        "dependents": [{ "invoicePlanAmount": 487.31, "addonAmount": 6.12 }]
+      },
+      "expected": {
+        "invoiceTotal": "883.20",
+        "usedProrata": "706.56",
+        "invoiceRefund": "176.64",
+        "refundDays": 6,
+        "payrollCharge": "560.81",
+        "employeeFullRefund": "112.16",
+        "companyFullRefund": "64.48",
+        "enrollmentMonths": 12,
+        "contributionMonths": 12,
+        "documentKind": "NONE",
+        "emailHasAttachment": false
+      }
+    },
+    {
+      "id": "REF-007",
+      "basis": "FORMULA_DERIVED",
+      "coverage": [
+        "reason-7",
+        "month-30",
+        "dependents-0",
+        "contribution-minimum"
+      ],
+      "calculationInput": {
+        "reasonCode": 7,
+        "exclusionDate": "2026-11-30",
+        "planEnrollmentDate": "2026-11-30",
+        "billingClosure": "OPEN",
+        "holder": {
+          "invoicePlanAmount": 692.76,
+          "payrollPlanAmount": 61.26,
+          "addonAmount": 0
+        },
+        "dependents": []
+      },
+      "expected": {
+        "invoiceTotal": "692.76",
+        "usedProrata": "692.76",
+        "invoiceRefund": "0.00",
+        "refundDays": 0,
+        "payrollCharge": "61.26",
+        "employeeFullRefund": "0.00",
+        "companyFullRefund": "0.00",
+        "enrollmentMonths": 0,
+        "contributionMonths": 1,
+        "documentKind": "NONE",
+        "emailHasAttachment": false
+      }
+    }
+  ]
+}

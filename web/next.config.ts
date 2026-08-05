@@ -2,33 +2,27 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 type SecurityHeaderOptions = {
-  allowUnsafeEval?: boolean;
-  frameAncestors?: string;
   xFrameOptions?: "DENY" | "SAMEORIGIN";
 };
 
-function createContentSecurityPolicy({
-  allowUnsafeEval = false,
-  frameAncestors = "'none'",
-}: SecurityHeaderOptions = {}) {
+function createFaceDetectionContentSecurityPolicy() {
   return [
     "default-src 'self'",
     "base-uri 'self'",
-    `frame-ancestors ${frameAncestors}`,
+    "frame-ancestors 'self'",
     "object-src 'none'",
     "form-action 'self'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
-    `script-src 'self' 'unsafe-inline'${allowUnsafeEval || process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : ""} blob:`,
+    "script-src 'self' 'unsafe-eval' blob:",
+    "script-src-attr 'none'",
     "worker-src 'self' blob:",
-    "connect-src 'self' https://*.sentry.io",
+    "connect-src 'self'",
   ].join("; ");
 }
 
 function createSecurityHeaders({
-  allowUnsafeEval = false,
-  frameAncestors = "'none'",
   xFrameOptions = "DENY",
 }: SecurityHeaderOptions = {}) {
   const headers = [
@@ -43,35 +37,30 @@ function createSecurityHeaders({
       key: "Permissions-Policy",
       value: "camera=(), microphone=(), geolocation=()",
     },
-    {
-      key: "Content-Security-Policy",
-      value: createContentSecurityPolicy({ allowUnsafeEval, frameAncestors }),
-    },
   ];
-
-  if (process.env.NODE_ENV === "production") {
-    headers.push({
-      key: "Strict-Transport-Security",
-      value: "max-age=31536000; includeSubDomains",
-    });
-  }
 
   return headers;
 }
 
 const securityHeaders = createSecurityHeaders();
-const faceDetectionFrameHeaders = createSecurityHeaders({
-  allowUnsafeEval: true,
-  frameAncestors: "'self'",
-  xFrameOptions: "SAMEORIGIN",
-});
+const faceDetectionFrameHeaders = [
+  ...createSecurityHeaders({
+    xFrameOptions: "SAMEORIGIN",
+  }),
+  {
+    key: "Content-Security-Policy",
+    value: createFaceDetectionContentSecurityPolicy(),
+  },
+];
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  serverExternalPackages: ["archiver", "pg-boss", "read-excel-file"],
-  outputFileTracingIncludes: {
-    "/*": ["./node_modules/pdfkit/js/data/**/*"],
-  },
+  serverExternalPackages: [
+    "archiver",
+    "pdfjs-dist",
+    "pg-boss",
+    "read-excel-file",
+  ],
   poweredByHeader: false,
   async headers() {
     return [
@@ -94,7 +83,9 @@ const nextConfig: NextConfig = {
 const sentryOrg = process.env.SENTRY_ORG?.trim();
 const sentryProject = process.env.SENTRY_PROJECT?.trim();
 const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN?.trim();
-const sentryUploadEnabled = Boolean(sentryOrg && sentryProject && sentryAuthToken);
+const sentryUploadEnabled = Boolean(
+  sentryOrg && sentryProject && sentryAuthToken,
+);
 
 const sentryConfig = withSentryConfig(nextConfig, {
   org: sentryOrg,

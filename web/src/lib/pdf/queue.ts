@@ -1,4 +1,5 @@
 import { PgBoss } from "pg-boss";
+import { createHash } from "node:crypto";
 import type { PdfPrincipal } from "@/lib/pdf/access";
 
 export const PDF_PROCESSING_QUEUE = "perfect-pdf-processing";
@@ -53,6 +54,17 @@ export function getPdfQueue() {
   return globalForPdfQueue.pdfQueuePromise;
 }
 
+export function getPdfQueueJobId(jobId: string) {
+  const hash = createHash("sha256").update(`pdf-job:${jobId}`).digest("hex");
+  return [
+    hash.slice(0, 8),
+    hash.slice(8, 12),
+    `5${hash.slice(13, 16)}`,
+    `8${hash.slice(17, 20)}`,
+    hash.slice(20, 32),
+  ].join("-");
+}
+
 export async function enqueuePdfJob(jobId: string, principal: PdfPrincipal) {
   const boss = await getPdfQueue();
   return boss.send(
@@ -60,7 +72,9 @@ export async function enqueuePdfJob(jobId: string, principal: PdfPrincipal) {
     { jobId },
     {
       group: { id: principal.key, tier: principal.tier },
+      id: getPdfQueueJobId(jobId),
       singletonKey: jobId,
+      singletonSeconds: 24 * 60 * 60,
     },
   );
 }

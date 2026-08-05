@@ -2,11 +2,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { strToU8, zipSync } from "fflate";
+import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PdfStorageError,
   readPdfStorageFile,
   sanitizePdfFileName,
+  writeBinaryOutput,
+  writeOfficeOutput,
   writeOfficeUpload,
   writePdfOutput,
   writePdfUpload,
@@ -72,7 +76,9 @@ describe("pdf storage", () => {
   it("writes output atomically with a safe name and digest", async () => {
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
     process.env.PDF_STORAGE_DIR = temporaryDirectory;
-    const bytes = new TextEncoder().encode("%PDF-1.7\noutput\n%%EOF");
+    const document = await PDFDocument.create();
+    document.addPage([200, 300]);
+    const bytes = await document.save();
 
     const output = await writePdfOutput(
       "job-output-123",
@@ -86,6 +92,54 @@ describe("pdf storage", () => {
     await expect(readPdfStorageFile(output.storageKey)).resolves.toEqual(
       Buffer.from(bytes),
     );
+  });
+
+  it("rejects generated outputs that cannot validate themselves", async () => {
+    temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
+    process.env.PDF_STORAGE_DIR = temporaryDirectory;
+
+    await expect(
+      writePdfOutput(
+        "job-invalid-output",
+        "resultado.pdf",
+        new TextEncoder().encode("%PDF-1.7\ntruncated"),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_PDF" });
+    await expect(
+      writeBinaryOutput(
+        "job-invalid-image",
+        "pagina.jpg",
+        "jpg",
+        new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_IMAGE" });
+    await expect(
+      writeOfficeOutput(
+        "job-invalid-office",
+        "documento.docx",
+        "docx",
+        zipSync({ "arquivo.txt": strToU8("incompleto") }),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_DOCUMENT" });
+  });
+
+  it("accepts a decoded generated image", async () => {
+    temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
+    process.env.PDF_STORAGE_DIR = temporaryDirectory;
+    const bytes = await sharp({
+      create: {
+        background: "white",
+        channels: 3,
+        height: 16,
+        width: 16,
+      },
+    })
+      .jpeg()
+      .toBuffer();
+
+    await expect(
+      writeBinaryOutput("job-image-output", "pagina.jpg", "jpg", bytes),
+    ).resolves.toMatchObject({ sizeBytes: BigInt(bytes.byteLength) });
   });
 
   it("accepts only Office ZIP containers with required document parts", async () => {

@@ -17,8 +17,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useDropzone } from "react-dropzone";
 
 type OfficeOperation =
-  | "PDF_TO_WORD"
-  | "PDF_TO_EXCEL"
   | "WORD_TO_PDF"
   | "EXCEL_TO_PDF";
 type ApiError = { error?: { message?: string } };
@@ -48,28 +46,6 @@ const CONVERTERS: Record<
     uploadRoute: "documents" | "files";
   }
 > = {
-  PDF_TO_WORD: {
-    accept: { "application/pdf": [".pdf"] },
-    description:
-      "Transforme textos e linhas do PDF em um documento Word editável.",
-    extension: ".pdf",
-    inputLabel: "PDF",
-    mimeType: "application/pdf",
-    outputLabel: "Word",
-    title: "PDF para Word",
-    uploadRoute: "files",
-  },
-  PDF_TO_EXCEL: {
-    accept: { "application/pdf": [".pdf"] },
-    description:
-      "Organize textos e tabelas identificadas em uma planilha por página.",
-    extension: ".pdf",
-    inputLabel: "PDF",
-    mimeType: "application/pdf",
-    outputLabel: "Excel",
-    title: "PDF para Excel",
-    uploadRoute: "files",
-  },
   WORD_TO_PDF: {
     accept: {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
@@ -360,10 +336,7 @@ export function PdfOfficeConvertWorkspace({
     setError(null);
   }
 
-  const InputIcon =
-    operation === "PDF_TO_EXCEL" || operation === "EXCEL_TO_PDF"
-      ? FileSpreadsheet
-      : FileText;
+  const InputIcon = operation === "EXCEL_TO_PDF" ? FileSpreadsheet : FileText;
 
   return (
     <div className="pdf-workspace pdf-convert-workspace">

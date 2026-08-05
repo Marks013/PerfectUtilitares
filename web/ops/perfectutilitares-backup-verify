@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+REPOSITORY=${REPOSITORY:-/home/ubuntu/PerfectUtilitares/web}
+BACKUP_ROOT=${BACKUP_ROOT:-/home/ubuntu/perfectutilitares-backups}
+requested=${1:-latest}
+BACKUP_ROOT=$(realpath -m -- "$BACKUP_ROOT")
+
+if [ "$requested" = latest ]; then
+  backup=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '20*' -printf '%T@ %p\n' |
+    sort -rn | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print; exit }')
+else
+  backup=$(realpath -m -- "$requested")
+fi
+
+[ -n "$backup" ] || { echo "Nenhum backup encontrado" >&2; exit 1; }
+[ "$(dirname -- "$backup")" = "$BACKUP_ROOT" ] || { echo "Backup fora de BACKUP_ROOT" >&2; exit 2; }
+[ -f "$backup/database.dump" ] && [ -f "$backup/SHA256SUMS" ] || { echo "Backup incompleto" >&2; exit 1; }
+
+(cd "$backup" && sha256sum --check --strict SHA256SUMS >/dev/null)
+cd "$REPOSITORY"
+docker compose exec -T db sh -c 'exec pg_restore --list' < "$backup/database.dump" >/dev/null
+
+if [ -f "$backup/host-files.tar.gz" ]; then
+  if tar -tzf "$backup/host-files.tar.gz" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    echo "Arquivo de host contem caminho inseguro" >&2
+    exit 1
+  fi
+fi
+
+logger -t perfectutilitares-backup "backup verificado: $backup"
+printf 'Backup valido: %s\n' "$backup"

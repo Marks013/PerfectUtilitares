@@ -1,12 +1,10 @@
 import * as Sentry from "@sentry/node";
 import { applyPdfAnnotations } from "@/lib/pdf/annotations";
 import { getPdfWorkingSetMultiplier } from "@/lib/pdf/capacity";
-import { compressPdfFile } from "@/lib/pdf/compression";
+import { compressPdfFile, PdfToolError } from "@/lib/pdf/compression";
 import { buildPdfFromImages } from "@/lib/pdf/images-to-pdf";
 import {
   convertOfficeToPdf,
-  convertPdfToDocx,
-  convertPdfToXlsx,
   PdfOfficeError,
 } from "@/lib/pdf/office";
 import {
@@ -20,10 +18,9 @@ import {
 import {
   removePdfStorageKey,
   writeBinaryOutput,
-  writeOfficeOutput,
   writePdfOutput,
 } from "@/lib/pdf/storage";
-import { renderPdfPagesToJpeg } from "@/lib/pdf/render";
+import { PdfRenderError, renderPdfPagesToJpeg } from "@/lib/pdf/render";
 import {
   buildStructuralPdf,
   PdfStructureError,
@@ -313,7 +310,15 @@ export async function processPdfJob(jobId: string) {
 
     if (
       job.operation === "PDF_TO_WORD" ||
-      job.operation === "PDF_TO_EXCEL" ||
+      job.operation === "PDF_TO_EXCEL"
+    ) {
+      throw new PdfProcessingError(
+        "PDF_OFFICE_EXPORT_DISABLED",
+        "PDF para Word/Excel foi desativado porque não preservava layout, imagens e tabelas com fidelidade.",
+      );
+    }
+
+    if (
       job.operation === "WORD_TO_PDF" ||
       job.operation === "EXCEL_TO_PDF"
     ) {
@@ -330,47 +335,17 @@ export async function processPdfJob(jobId: string) {
         const baseName =
           input.originalName.replace(/\.(?:pdf|docx|xlsx)$/i, "") ||
           "documento";
-        if (job.operation === "PDF_TO_WORD") {
-          const bytes = await convertPdfToDocx(input.storageKey);
-          const output = await writeOfficeOutput(
-            job.id,
-            `${baseName}.docx`,
-            "docx",
-            bytes,
-          );
-          outputs.push({
-            ...output,
-            mimeType:
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          });
-          writtenStorageKeys.push(output.storageKey);
-        } else if (job.operation === "PDF_TO_EXCEL") {
-          const bytes = await convertPdfToXlsx(input.storageKey);
-          const output = await writeOfficeOutput(
-            job.id,
-            `${baseName}.xlsx`,
-            "xlsx",
-            bytes,
-          );
-          outputs.push({
-            ...output,
-            mimeType:
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          });
-          writtenStorageKeys.push(output.storageKey);
-        } else {
-          const bytes = await convertOfficeToPdf({
-            jobId: job.id,
-            storageKey: input.storageKey,
-          });
-          const output = await writePdfOutput(
-            job.id,
-            `${baseName}.pdf`,
-            bytes,
-          );
-          outputs.push({ ...output, mimeType: "application/pdf" });
-          writtenStorageKeys.push(output.storageKey);
-        }
+        const bytes = await convertOfficeToPdf({
+          jobId: job.id,
+          storageKey: input.storageKey,
+        });
+        const output = await writePdfOutput(
+          job.id,
+          `${baseName}.pdf`,
+          bytes,
+        );
+        outputs.push({ ...output, mimeType: "application/pdf" });
+        writtenStorageKeys.push(output.storageKey);
         await updateProgress(
           job.id,
           5 + ((index + 1) / inputArtifacts.length) * 85,
@@ -575,7 +550,9 @@ export async function processPdfJob(jobId: string) {
     const code =
       error instanceof PdfProcessingError ||
       error instanceof PdfStructureError ||
-      error instanceof PdfOfficeError
+      error instanceof PdfOfficeError ||
+      error instanceof PdfToolError ||
+      error instanceof PdfRenderError
         ? error.code
         : "PDF_PROCESSING_FAILED";
     const message =

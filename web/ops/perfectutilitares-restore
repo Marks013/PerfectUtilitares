@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+REPOSITORY=${REPOSITORY:-/home/ubuntu/PerfectUtilitares/web}
+BACKUP_ROOT=${BACKUP_ROOT:-/home/ubuntu/perfectutilitares-backups}
+VERIFY_COMMAND=${VERIFY_COMMAND:-/usr/local/sbin/perfectutilitares-backup-verify}
+
+if [ "${1:-}" != "--confirm" ] || [ -z "${2:-}" ]; then
+  echo "Uso: perfectutilitares-restore --confirm DIRETORIO_DO_BACKUP [--include-host-files]" >&2
+  exit 2
+fi
+
+backup=$(realpath -m -- "$2")
+BACKUP_ROOT=$(realpath -m -- "$BACKUP_ROOT")
+[ "$(dirname -- "$backup")" = "$BACKUP_ROOT" ] || { echo "Backup fora de BACKUP_ROOT" >&2; exit 2; }
+include_files=false
+[ "${3:-}" != "--include-host-files" ] || include_files=true
+
+"$VERIFY_COMMAND" "$backup"
+cd "$REPOSITORY"
+
+docker compose stop app pdf-worker
+if ! docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" dropdb --username "$POSTGRES_USER" --force --if-exists "$POSTGRES_DB" && PGPASSWORD="$POSTGRES_PASSWORD" createdb --username "$POSTGRES_USER" --owner "$POSTGRES_USER" "$POSTGRES_DB"'; then
+  echo "Falha ao recriar banco; app e worker permaneceram parados" >&2
+  exit 1
+fi
+if ! docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_restore --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-owner --no-privileges --exit-on-error' < "$backup/database.dump"; then
+  echo "Falha na restauracao; app e worker permaneceram parados" >&2
+  exit 1
+fi
+
+if [ "$include_files" = true ] && [ -f "$backup/host-files.tar.gz" ]; then
+  tar -C / -xzf "$backup/host-files.tar.gz" --no-overwrite-dir
+fi
+
+docker compose up -d app pdf-worker
+logger -t perfectutilitares-backup "restauracao concluida: $backup"
+printf 'Restauracao concluida: %s\n' "$backup"

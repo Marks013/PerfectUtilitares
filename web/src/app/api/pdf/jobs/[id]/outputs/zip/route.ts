@@ -89,20 +89,17 @@ export async function GET(request: Request, context: RouteContext) {
 
   void archive.finalize();
 
-  return new Response(
-    Readable.toWeb(output) as ReadableStream<Uint8Array>,
-    {
-      headers: {
-        "Cache-Control": "private, no-store",
-        "Content-Disposition": createAttachmentHeader(
-          `documentos-${job.id.slice(-8)}.zip`,
-        ),
-        "Content-Type": "application/zip",
-        "X-Content-Type-Options": "nosniff",
-        "X-Output-Count": String(job.artifacts.length),
-      },
+  return new Response(Readable.toWeb(output) as ReadableStream<Uint8Array>, {
+    headers: {
+      "Cache-Control": "private, no-store",
+      "Content-Disposition": createAttachmentHeader(
+        `documentos-${job.id.slice(-8)}.zip`,
+      ),
+      "Content-Type": "application/zip",
+      "X-Content-Type-Options": "nosniff",
+      "X-Output-Count": String(job.artifacts.length),
     },
-  );
+  });
 }
 
 export function POST() {

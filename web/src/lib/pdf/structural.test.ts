@@ -224,4 +224,50 @@ describe("structural PDF processing", () => {
       y: 30,
     });
   });
+
+  it("applies a crop relative to an existing CropBox origin", async () => {
+    temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
+    process.env.PDF_STORAGE_DIR = temporaryDirectory;
+    const source = await PDFDocument.create();
+    const page = source.addPage([300, 400]);
+    page.setCropBox(20, 30, 240, 320);
+    const storageKey = "job/input/pre-cropped.pdf";
+    const filePath = path.join(temporaryDirectory, storageKey);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, await source.save());
+
+    const bytes = await buildStructuralPdf({
+      inputs: new Map([
+        [
+          "artifact-a",
+          {
+            id: "artifact-a",
+            originalName: "pre-cropped.pdf",
+            storageKey,
+          },
+        ],
+      ]),
+      manifest: {
+        version: 1,
+        pages: [
+          {
+            id: "cropped-again",
+            artifactId: "artifact-a",
+            sourcePage: 1,
+            rotation: 90,
+            crop: { x: 10, y: 15, width: 200, height: 280 },
+          },
+        ],
+      },
+    });
+    const result = await PDFDocument.load(bytes);
+
+    expect(result.getPage(0).getRotation().angle).toBe(90);
+    expect(result.getPage(0).getCropBox()).toEqual({
+      height: 280,
+      width: 200,
+      x: 30,
+      y: 45,
+    });
+  });
 });

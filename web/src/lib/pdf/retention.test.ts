@@ -172,7 +172,7 @@ describe("PDF storage cleanup", () => {
         OR: [
           {
             expiresAt: { lte: now },
-            status: { not: "RUNNING" },
+            status: { notIn: ["QUEUED", "RUNNING"] },
           },
           {
             startedAt: { lte: staleBefore },
@@ -195,7 +195,8 @@ describe("PDF storage cleanup", () => {
       data: {
         completedAt: now,
         errorCode: "PDF_JOB_STALE",
-        errorMessage: "O processamento foi interrompido e os arquivos expiraram.",
+        errorMessage:
+          "O processamento foi interrompido e os arquivos expiraram.",
         status: "EXPIRED",
       },
     });

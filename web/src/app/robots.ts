@@ -17,6 +17,7 @@ export default function robots(): MetadataRoute.Robots {
         "/jornada/historico",
         "/jornada/regras",
         "/login",
+        "/unimed",
       ],
     },
     sitemap: `${baseUrl}/sitemap.xml`,

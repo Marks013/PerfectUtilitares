@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { degrees, PDFDocument } from "pdf-lib";
 import { applyPdfAnnotations } from "@/lib/pdf/annotations";
 import type { PdfManifest } from "@/lib/pdf/schema";
 
@@ -66,6 +66,51 @@ describe("applyPdfAnnotations", () => {
     const result = await PDFDocument.load(bytes);
     expect(result.getPageCount()).toBe(1);
     expect(result.getPage(0).getSize()).toEqual({ height: 600, width: 400 });
+    expect(bytes.byteLength).toBeGreaterThan(500);
+  });
+
+  it("preserves a rotated page and draws relative to its existing CropBox", async () => {
+    const source = await PDFDocument.create();
+    const page = source.addPage([500, 700]);
+    page.setCropBox(30, 40, 420, 600);
+    page.setRotation(degrees(90));
+
+    const bytes = await applyPdfAnnotations({
+      manifest,
+      pdfBytes: await source.save(),
+      annotations: [
+        {
+          id: "rectangle-rotated",
+          pageId: "page-1",
+          type: "RECTANGLE",
+          color: "#123456",
+          height: 0.2,
+          opacity: 1,
+          width: 0.3,
+          x: 0.1,
+          y: 0.15,
+        },
+        {
+          id: "text-rotated",
+          pageId: "page-1",
+          type: "TEXT",
+          color: "#123456",
+          fontSize: 16,
+          text: "Texto girado",
+          x: 0.2,
+          y: 0.25,
+        },
+      ],
+    });
+    const result = await PDFDocument.load(bytes);
+
+    expect(result.getPage(0).getRotation().angle).toBe(90);
+    expect(result.getPage(0).getCropBox()).toEqual({
+      height: 600,
+      width: 420,
+      x: 30,
+      y: 40,
+    });
     expect(bytes.byteLength).toBeGreaterThan(500);
   });
 });

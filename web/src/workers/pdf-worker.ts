@@ -52,14 +52,56 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
   async ([job]) => {
     if (!job) return;
 
+    // Queue delivery is at-least-once. Claim the database row before touching
+    // inputs so a delayed or duplicated message cannot reprocess a finished job.
+    const claimed = await prisma.pdfJob.updateMany({
+      where: { id: job.data.jobId, status: "QUEUED" },
+      data: {
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null,
+        progress: 1,
+        startedAt: new Date(),
+        status: "RUNNING",
+      },
+    });
+    if (claimed.count !== 1) return;
+
+    let invalidCompletedOutput = false;
     try {
       await processPdfJob(job.data.jobId);
+      const completed = await prisma.pdfJob.findUnique({
+        where: { id: job.data.jobId },
+        select: {
+          status: true,
+          artifacts: {
+            where: { kind: "OUTPUT" },
+            select: { sha256: true, sizeBytes: true },
+          },
+        },
+      });
+      const hasInvalidOutput = completed?.artifacts.some(
+        (artifact) => artifact.sizeBytes <= 0n || !artifact.sha256,
+      );
+      if (
+        completed?.status === "SUCCEEDED" &&
+        (!completed.artifacts.length || hasInvalidOutput)
+      ) {
+        invalidCompletedOutput = true;
+        throw new Error(
+          "O processamento terminou sem gerar um arquivo válido. Tente novamente; se o problema persistir, use o PDF original e informe o suporte.",
+        );
+      }
     } catch (error) {
       const willRetry = job.retryCount < job.retryLimit;
       await prisma.pdfJob.updateMany({
         where: {
           id: job.data.jobId,
-          status: { notIn: ["CANCELLED", "EXPIRED", "SUCCEEDED"] },
+          status: {
+            in: invalidCompletedOutput
+              ? ["RUNNING", "FAILED", "SUCCEEDED"]
+              : ["RUNNING", "FAILED"],
+          },
         },
         data: {
           completedAt: willRetry ? null : new Date(),
@@ -100,8 +142,7 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
 
 let cleanupPromise: Promise<unknown> | null = null;
 const heartbeatPath =
-  process.env.PDF_WORKER_HEARTBEAT_PATH ??
-  "/tmp/perfect-pdf-worker-heartbeat";
+  process.env.PDF_WORKER_HEARTBEAT_PATH ?? "/tmp/perfect-pdf-worker-heartbeat";
 let heartbeatPromise: Promise<void> | null = null;
 
 function refreshWorkerHeartbeat() {
@@ -145,10 +186,7 @@ function runRetentionCleanup() {
 
 void runRetentionCleanup();
 await refreshWorkerHeartbeat();
-const heartbeatTimer = setInterval(
-  () => void refreshWorkerHeartbeat(),
-  15_000,
-);
+const heartbeatTimer = setInterval(() => void refreshWorkerHeartbeat(), 15_000);
 heartbeatTimer.unref();
 const retentionTimer = setInterval(
   () => void runRetentionCleanup(),

@@ -1,0 +1,15 @@
+[Unit]
+Description=Create and verify a rotated PerfectUtilitares backup
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/perfectutilitares-backup.conf
+ExecStart=/usr/local/sbin/perfectutilitares-backup
+User=root
+Group=root
+Nice=10
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+TimeoutStartSec=60min

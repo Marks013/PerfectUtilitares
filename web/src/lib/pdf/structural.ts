@@ -41,16 +41,24 @@ function applyPageChanges(
 
   if (!instruction.crop) return;
 
-  const { height, width } = page.getSize();
+  const visibleBox = page.getCropBox();
   const crop = instruction.crop;
-  if (crop.x + crop.width > width || crop.y + crop.height > height) {
+  if (
+    crop.x + crop.width > visibleBox.width + 0.001 ||
+    crop.y + crop.height > visibleBox.height + 0.001
+  ) {
     throw new PdfStructureError(
       "INVALID_CROP",
       "Uma área de recorte ultrapassa os limites da página.",
     );
   }
 
-  page.setCropBox(crop.x, crop.y, crop.width, crop.height);
+  page.setCropBox(
+    visibleBox.x + crop.x,
+    visibleBox.y + crop.y,
+    crop.width,
+    crop.height,
+  );
 }
 
 export async function buildStructuralPdf({

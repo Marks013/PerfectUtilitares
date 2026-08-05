@@ -1,8 +1,8 @@
-import { createCanvas } from "@napi-rs/canvas";
 import { spawn } from "node:child_process";
 import { copyFile, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { PDFDocument } from "pdf-lib";
+import { degrees, PDFDocument, type PDFPage } from "pdf-lib";
 import sharp from "sharp";
+import { renderPdfPageToPng } from "@/lib/pdf/render";
 import { ensureServerLocalStorage } from "@/lib/pdf/server-runtime";
 import {
   commitPdfOutput,
@@ -29,7 +29,7 @@ export type PdfCompressionOptions = {
   monochromeThreshold: number;
 };
 
-class PdfToolError extends Error {
+export class PdfToolError extends Error {
   constructor(
     public readonly code: string,
     message: string,
@@ -106,20 +106,194 @@ function runQpdf(args: string[], timeoutMs = 10 * 60 * 1000) {
 
 async function optimizePdfStructure(inputPath: string, outputPath: string) {
   await runQpdf([
-    "--warning-exit-0",
     "--object-streams=generate",
     "--compress-streams=y",
     "--decode-level=generalized",
     "--recompress-flate",
     "--compression-level=9",
-    "--optimize-images",
-    "--oi-min-width=0",
-    "--oi-min-height=0",
-    "--oi-min-area=0",
     "--",
     inputPath,
     outputPath,
   ]);
+}
+
+type PdfPageBox = ReturnType<PDFPage["getMediaBox"]>;
+
+type PdfPageGeometry = {
+  artBox: PdfPageBox;
+  bleedBox: PdfPageBox;
+  cropBox: PdfPageBox;
+  mediaBox: PdfPageBox;
+  rotation: number;
+  trimBox: PdfPageBox;
+};
+
+function readPageGeometry(page: PDFPage): PdfPageGeometry {
+  return {
+    artBox: page.getArtBox(),
+    bleedBox: page.getBleedBox(),
+    cropBox: page.getCropBox(),
+    mediaBox: page.getMediaBox(),
+    rotation: ((page.getRotation().angle % 360) + 360) % 360,
+    trimBox: page.getTrimBox(),
+  };
+}
+
+function setPageBox(
+  setter: (x: number, y: number, width: number, height: number) => void,
+  box: PdfPageBox,
+) {
+  setter(box.x, box.y, box.width, box.height);
+}
+
+function applyPageGeometry(page: PDFPage, geometry: PdfPageGeometry) {
+  setPageBox(page.setMediaBox.bind(page), geometry.mediaBox);
+  setPageBox(page.setCropBox.bind(page), geometry.cropBox);
+  setPageBox(page.setBleedBox.bind(page), geometry.bleedBox);
+  setPageBox(page.setTrimBox.bind(page), geometry.trimBox);
+  setPageBox(page.setArtBox.bind(page), geometry.artBox);
+  page.setRotation(degrees(geometry.rotation));
+}
+
+async function assertVisualCompleteness({
+  candidateBytes,
+  colorMode,
+  monochromeThreshold,
+  sourceBytes,
+}: Pick<PdfCompressionOptions, "colorMode" | "monochromeThreshold"> & {
+  candidateBytes: Buffer;
+  sourceBytes: Buffer;
+}) {
+  const normalize = (bytes: Buffer) =>
+    sharp(bytes, { failOn: "error" })
+      .flatten({ background: "#FFFFFF" })
+      .resize(256, 256, { fit: "fill" })
+      .removeAlpha()
+      .raw()
+      .toBuffer();
+  const [source, candidate] = await Promise.all([
+    normalize(sourceBytes),
+    normalize(candidateBytes),
+  ]);
+  const sourceContentThreshold =
+    colorMode === "MONOCHROME"
+      ? Math.max(64, 255 - monochromeThreshold + 16)
+      : 48;
+  const toleratedMissingRatio = colorMode === "MONOCHROME" ? 0.08 : 0.015;
+  let sourceContentPixels = 0;
+  let missingPixels = 0;
+
+  for (let index = 0; index < source.length; index += 3) {
+    const sourceDistance = Math.max(
+      255 - source[index]!,
+      255 - source[index + 1]!,
+      255 - source[index + 2]!,
+    );
+    if (sourceDistance < sourceContentThreshold) continue;
+    sourceContentPixels += 1;
+    const candidateDistance = Math.max(
+      255 - candidate[index]!,
+      255 - candidate[index + 1]!,
+      255 - candidate[index + 2]!,
+    );
+    if (candidateDistance < 8) missingPixels += 1;
+  }
+
+  if (
+    sourceContentPixels >= 64 &&
+    missingPixels / sourceContentPixels > toleratedMissingRatio
+  ) {
+    throw new PdfToolError(
+      "PDF_VISUAL_INTEGRITY_FAILED",
+      "A recompressão visual omitiu conteúdo da página e foi descartada.",
+    );
+  }
+}
+
+function samePageBox(left: PdfPageBox, right: PdfPageBox) {
+  return (["x", "y", "width", "height"] as const).every(
+    (key) => Math.abs(left[key] - right[key]) < 0.01,
+  );
+}
+
+async function assertVisualEquivalence(
+  sourceBytes: Buffer,
+  candidateBytes: Buffer,
+) {
+  const normalize = (bytes: Buffer) =>
+    sharp(bytes, { failOn: "error" })
+      .flatten({ background: "#FFFFFF" })
+      .resize(256, 256, { fit: "fill" })
+      .removeAlpha()
+      .raw()
+      .toBuffer();
+  const [source, candidate] = await Promise.all([
+    normalize(sourceBytes),
+    normalize(candidateBytes),
+  ]);
+  let absoluteError = 0;
+  let stronglyDifferent = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    const difference = Math.abs(source[index]! - candidate[index]!);
+    absoluteError += difference;
+    if (difference > 16) stronglyDifferent += 1;
+  }
+  const meanAbsoluteError = absoluteError / source.length;
+  const strongDifferenceRatio = stronglyDifferent / source.length;
+  if (meanAbsoluteError > 1.5 || strongDifferenceRatio > 0.005) {
+    throw new PdfToolError(
+      "PDF_STRUCTURAL_INTEGRITY_FAILED",
+      "A compactação sem perdas alterou o conteúdo visual e foi descartada.",
+    );
+  }
+}
+
+async function validateStructuralCandidate(
+  inputPath: string,
+  candidatePath: string,
+) {
+  const [source, candidate] = await Promise.all([
+    PDFDocument.load(await readFile(inputPath), { updateMetadata: false }),
+    PDFDocument.load(await readFile(candidatePath), { updateMetadata: false }),
+  ]);
+  if (source.getPageCount() !== candidate.getPageCount()) {
+    throw new PdfToolError(
+      "PDF_STRUCTURAL_INTEGRITY_FAILED",
+      "A compactação alterou a quantidade de páginas e foi descartada.",
+    );
+  }
+
+  for (let pageIndex = 0; pageIndex < source.getPageCount(); pageIndex += 1) {
+    const sourceGeometry = readPageGeometry(source.getPage(pageIndex));
+    const candidateGeometry = readPageGeometry(candidate.getPage(pageIndex));
+    const boxesMatch = (
+      ["mediaBox", "cropBox", "bleedBox", "trimBox", "artBox"] as const
+    ).every((box) =>
+      samePageBox(sourceGeometry[box], candidateGeometry[box]),
+    );
+    if (
+      !boxesMatch ||
+      sourceGeometry.rotation !== candidateGeometry.rotation
+    ) {
+      throw new PdfToolError(
+        "PDF_STRUCTURAL_INTEGRITY_FAILED",
+        "A compactação alterou a geometria das páginas e foi descartada.",
+      );
+    }
+    const [sourcePage, candidatePage] = await Promise.all([
+      renderPdfPageToPng({
+        dpi: 72,
+        inputPath,
+        pageNumber: pageIndex + 1,
+      }),
+      renderPdfPageToPng({
+        dpi: 72,
+        inputPath: candidatePath,
+        pageNumber: pageIndex + 1,
+      }),
+    ]);
+    await assertVisualEquivalence(sourcePage, candidatePage);
+  }
 }
 
 async function encodeRenderedPage({
@@ -178,68 +352,90 @@ export async function rasterizePdfForCompression({
   onProgress?: (progress: number) => Promise<void> | void;
 }) {
   ensureServerLocalStorage();
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const source = await pdfjs.getDocument({
-    data: new Uint8Array(await readFile(inputPath)),
-    useSystemFonts: true,
-  }).promise;
+  const source = await PDFDocument.load(await readFile(inputPath), {
+    updateMetadata: false,
+  });
   const output = await PDFDocument.create();
 
   try {
-    if (source.numPages > 1_000) {
+    if (source.getPageCount() > 1_000) {
       throw new PdfToolError(
         "PDF_PAGE_LIMIT_EXCEEDED",
         "O PDF ultrapassa o limite de 1.000 páginas para recompressão visual.",
       );
     }
 
-    for (let pageIndex = 1; pageIndex <= source.numPages; pageIndex += 1) {
-      const sourcePage = await source.getPage(pageIndex);
-      const pageViewport = sourcePage.getViewport({ scale: 1 });
-      const renderViewport = sourcePage.getViewport({
-        scale: options.dpi / 72,
-      });
-      const canvasWidth = Math.max(1, Math.ceil(renderViewport.width));
-      const canvasHeight = Math.max(1, Math.ceil(renderViewport.height));
+    for (let pageIndex = 1; pageIndex <= source.getPageCount(); pageIndex += 1) {
+      const sourcePage = source.getPage(pageIndex - 1);
+      const geometry = readPageGeometry(sourcePage);
+      const rotated = geometry.rotation === 90 || geometry.rotation === 270;
+      const canvasWidth = Math.max(
+        1,
+        Math.ceil(
+          (rotated ? geometry.mediaBox.height : geometry.mediaBox.width) *
+            (options.dpi / 72),
+        ),
+      );
+      const canvasHeight = Math.max(
+        1,
+        Math.ceil(
+          (rotated ? geometry.mediaBox.width : geometry.mediaBox.height) *
+            (options.dpi / 72),
+        ),
+      );
       if (canvasWidth * canvasHeight > 25_000_000) {
         throw new PdfToolError(
           "PDF_PAGE_RENDER_LIMIT_EXCEEDED",
           "Uma página ficou grande demais para o DPI escolhido. Reduza a resolução.",
         );
       }
-      const canvas = createCanvas(canvasWidth, canvasHeight);
-      const context = canvas.getContext("2d");
-
-      await sourcePage.render({
-        background: "#FFFFFF",
-        canvas: canvas as unknown as HTMLCanvasElement,
-        canvasContext: context as unknown as CanvasRenderingContext2D,
-        viewport: renderViewport,
-      }).promise;
+      const renderedPage = await renderPdfPageToPng({
+        dpi: options.dpi,
+        inputPath,
+        pageNumber: pageIndex,
+      });
+      const unrotatedPage = geometry.rotation
+        ? await sharp(renderedPage, { failOn: "error" })
+            .rotate((360 - geometry.rotation) % 360)
+            .png()
+            .toBuffer()
+        : renderedPage;
 
       const encoded = await encodeRenderedPage({
         colorMode: options.colorMode,
         imageQuality: options.imageQuality,
         monochromeThreshold: options.monochromeThreshold,
-        pngBytes: canvas.toBuffer("image/png"),
+        pngBytes: unrotatedPage,
+      });
+      const encodedVisual = geometry.rotation
+        ? await sharp(encoded.bytes, { failOn: "error" })
+            .rotate(geometry.rotation)
+            .png()
+            .toBuffer()
+        : encoded.bytes;
+      await assertVisualCompleteness({
+        candidateBytes: encodedVisual,
+        colorMode: options.colorMode,
+        monochromeThreshold: options.monochromeThreshold,
+        sourceBytes: renderedPage,
       });
       const image =
         encoded.format === "PNG"
           ? await output.embedPng(encoded.bytes)
           : await output.embedJpg(encoded.bytes);
       const outputPage = output.addPage([
-        pageViewport.width,
-        pageViewport.height,
+        geometry.mediaBox.width,
+        geometry.mediaBox.height,
       ]);
+      applyPageGeometry(outputPage, geometry);
       outputPage.drawImage(image, {
-        height: pageViewport.height,
-        width: pageViewport.width,
-        x: 0,
-        y: 0,
+        height: geometry.cropBox.height,
+        width: geometry.cropBox.width,
+        x: geometry.cropBox.x,
+        y: geometry.cropBox.y,
       });
 
-      sourcePage.cleanup();
-      await onProgress?.((pageIndex / source.numPages) * 100);
+      await onProgress?.((pageIndex / source.getPageCount()) * 100);
     }
 
     await writeFile(
@@ -258,15 +454,20 @@ export async function rasterizePdfForCompression({
           "Não foi possível recomprimir as páginas do PDF.",
           error instanceof Error ? error.message : String(error),
         );
-  } finally {
-    await source.cleanup();
   }
 }
 
 async function copySmallestCandidate(
   candidates: string[],
   destinationPath: string,
+  inputPath: string,
 ) {
+  if (!candidates.length) {
+    throw new PdfToolError(
+      "PDF_COMPRESSION_NO_VALID_CANDIDATE",
+      "Nenhuma estratégia produziu uma compactação íntegra.",
+    );
+  }
   const available = await Promise.all(
     candidates.map(async (candidate) => ({
       candidate,
@@ -274,6 +475,13 @@ async function copySmallestCandidate(
     })),
   );
   available.sort((left, right) => left.size - right.size);
+  const inputSize = (await stat(inputPath)).size;
+  if (available[0]!.size >= inputSize) {
+    throw new PdfToolError(
+      "PDF_COMPRESSION_NOT_EFFECTIVE",
+      "O arquivo já está otimizado; nenhuma compactação íntegra ficou menor que o original.",
+    );
+  }
   await copyFile(available[0]!.candidate, destinationPath);
 }
 
@@ -298,39 +506,60 @@ export async function compressPdfFile({
   const temporaryCandidates = [structuralPath, rasterPath, optimizedRasterPath];
 
   try {
+    const validCandidates: string[] = [];
     if (options.method === "LOSSLESS" || options.method === "AUTO") {
-      await optimizePdfStructure(inputPath, structuralPath);
+      try {
+        await optimizePdfStructure(inputPath, structuralPath);
+        await validateStructuralCandidate(inputPath, structuralPath);
+        validCandidates.push(structuralPath);
+      } catch {
+        // AUTO ainda pode usar candidato visual; LOSSLESS falhará sem candidato.
+      }
       await onProgress?.(options.method === "AUTO" ? 10 : 90);
     }
 
     if (options.method === "RASTER" || options.method === "AUTO") {
-      await rasterizePdfForCompression({
-        inputPath,
-        options,
-        outputPath: rasterPath,
-        onProgress: (progress) =>
-          onProgress?.(
-            options.method === "AUTO" ? 10 + progress * 0.8 : progress * 0.9,
-          ),
-      });
-      await optimizePdfStructure(rasterPath, optimizedRasterPath);
+      try {
+        await rasterizePdfForCompression({
+          inputPath,
+          options,
+          outputPath: rasterPath,
+          onProgress: (progress) =>
+            onProgress?.(
+              options.method === "AUTO" ? 10 + progress * 0.8 : progress * 0.9,
+            ),
+        });
+        validCandidates.push(rasterPath);
+        try {
+          await optimizePdfStructure(rasterPath, optimizedRasterPath);
+          await validateStructuralCandidate(rasterPath, optimizedRasterPath);
+          validCandidates.push(optimizedRasterPath);
+        } catch {
+          // Raster válido continua sendo candidato quando qpdf não otimiza.
+        }
+      } catch (error) {
+        if (options.method === "RASTER") throw error;
+      }
       await onProgress?.(95);
     }
 
     if (options.method === "LOSSLESS") {
       await copySmallestCandidate(
-        [inputPath, structuralPath],
+        validCandidates,
         reservation.temporaryPath,
+        inputPath,
       );
     } else if (options.method === "RASTER") {
       await copySmallestCandidate(
-        [rasterPath, optimizedRasterPath],
+        validCandidates,
         reservation.temporaryPath,
+        inputPath,
       );
     } else {
       await copySmallestCandidate(
-        [inputPath, structuralPath, rasterPath, optimizedRasterPath],
+        validCandidates,
         reservation.temporaryPath,
+        inputPath,
       );
     }
 

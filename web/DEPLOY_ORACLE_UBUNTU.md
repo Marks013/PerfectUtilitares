@@ -14,6 +14,19 @@ Revise o `.env` gerado antes de subir:
 - `RESEND_API_KEY` e `RESEND_FROM_EMAIL`: envio dos convites.
 - `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`: Sentry.
 
+## Sincronizar fonte
+
+Extraia a versão completa em staging. Depois sincronize. Arquivos antigos são
+removidos; `.env`, `node_modules`, `.git` e `storage` são preservados:
+
+```bash
+bash /home/ubuntu/perfectutilitares-deploy/REVISAO/web/scripts/deploy-source-sync.sh \
+  /home/ubuntu/perfectutilitares-deploy/REVISAO/web
+```
+
+O deploy exige `/home/ubuntu/perfectutilitares-config/unimed/access.env`
+com permissão `0600`.
+
 ## Subir containers
 
 ```bash

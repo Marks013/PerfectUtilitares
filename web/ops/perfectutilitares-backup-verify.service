@@ -1,0 +1,12 @@
+[Unit]
+Description=Verify the latest PerfectUtilitares backup
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/perfectutilitares-backup.conf
+ExecStart=/usr/local/sbin/perfectutilitares-backup-verify latest
+User=root
+Group=root
+TimeoutStartSec=30min

@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import fontkit from "@pdf-lib/fontkit";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { degrees, PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import {
+  displayPointToPdf,
+  displayRectToPdf,
+  displaySize,
+  normalizeQuarterTurn,
+} from "@/lib/pdf/geometry";
 import type { PdfAnnotation, PdfManifest } from "@/lib/pdf/schema";
 
 function parseColor(color: string) {
@@ -9,10 +15,6 @@ function parseColor(color: string) {
     Number.parseInt(color.slice(3, 5), 16) / 255,
     Number.parseInt(color.slice(5, 7), 16) / 255,
   );
-}
-
-function topToPdfY(pageHeight: number, normalizedY: number) {
-  return pageHeight * (1 - normalizedY);
 }
 
 export async function applyPdfAnnotations({
@@ -58,42 +60,58 @@ export async function applyPdfAnnotations({
     const page = pages[outputIndex];
     if (!page) continue;
 
-    const { height, width } = page.getSize();
+    const visibleBox = page.getCropBox();
+    const rotation = normalizeQuarterTurn(page.getRotation().angle);
+    const visibleSize = displaySize(visibleBox, rotation);
     const color = parseColor(annotation.color);
 
     if (annotation.type === "TEXT") {
+      const position = displayPointToPdf(
+        {
+          x: annotation.x,
+          y: Math.min(
+            1,
+            annotation.y + annotation.fontSize / visibleSize.height,
+          ),
+        },
+        visibleBox,
+        rotation,
+      );
       page.drawText(annotation.text, {
         color,
         font: annotationFont,
-        maxWidth: Math.max(1, width * (1 - annotation.x)),
+        maxWidth: Math.max(1, visibleSize.width * (1 - annotation.x)),
+        rotate: degrees((360 - rotation) % 360),
         size: annotation.fontSize,
-        x: annotation.x * width,
-        y: topToPdfY(height, annotation.y) - annotation.fontSize,
+        x: position.x,
+        y: position.y,
       });
       continue;
     }
 
     if (annotation.type === "HIGHLIGHT") {
+      const rectangle = displayRectToPdf(annotation, visibleBox, rotation);
       page.drawRectangle({
         color,
-        height: annotation.height * height,
+        height: rectangle.height,
         opacity: annotation.opacity,
-        width: annotation.width * width,
-        x: annotation.x * width,
-        y: topToPdfY(height, annotation.y + annotation.height),
+        width: rectangle.width,
+        x: rectangle.x,
+        y: rectangle.y,
       });
       continue;
     }
 
     if (annotation.type === "RECTANGLE") {
+      const rectangle = displayRectToPdf(annotation, visibleBox, rotation);
       page.drawRectangle({
         borderColor: color,
         borderOpacity: annotation.opacity,
         borderWidth: 2,
-        height: annotation.height * height,
-        width: annotation.width * width,
-        x: annotation.x * width,
-        y: topToPdfY(height, annotation.y + annotation.height),
+        height: rectangle.height,
+        width: rectangle.width,
+        x: rectangle.x,
+        y: rectangle.y,
       });
       continue;
     }
@@ -105,15 +123,9 @@ export async function applyPdfAnnotations({
       const end = annotation.points[index]!;
       page.drawLine({
         color,
-        end: {
-          x: end.x * width,
-          y: topToPdfY(height, end.y),
-        },
+        end: displayPointToPdf(end, visibleBox, rotation),
         opacity: annotation.opacity,
-        start: {
-          x: start.x * width,
-          y: topToPdfY(height, start.y),
-        },
+        start: displayPointToPdf(start, visibleBox, rotation),
         thickness: annotation.width,
       });
     }
