@@ -279,7 +279,7 @@ describe("Unimed DOCX documents", () => {
     });
   });
 
-  it("queries only beneficiary from tenant active competency", async () => {
+  it("queries beneficiary from the two retained competencies", async () => {
     mocks.findFirst.mockResolvedValue(null);
 
     await expect(
@@ -292,7 +292,7 @@ describe("Unimed DOCX documents", () => {
         where: {
           id: "beneficiary-test-123",
           tenantId: "tenant-test-123",
-          competency: { status: "ACTIVE" },
+          competency: { status: { in: ["ACTIVE", "PREVIOUS"] } },
         },
       }),
     );

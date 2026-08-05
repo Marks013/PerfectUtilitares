@@ -63,6 +63,7 @@ export function calculateUnimed(
       .plus(dependentsInvoice),
   );
 
+  const zero = new Prisma.Decimal(0);
   const closedAfterCutoff =
     input.billingClosure === "AUTOMATIC_DAY_25" && usedDays >= 25;
   const refundDays = daysInMonth - usedDays;
@@ -75,26 +76,43 @@ export function calculateUnimed(
   const employeeProratedRefund = money(
     payrollCharge.dividedBy(daysInMonth).times(refundDays),
   );
+  const nextCompetencyRefund = money(
+    closedAfterCutoff ? invoiceTotal : zero,
+  );
+  const employeeNextRefund = money(
+    closedAfterCutoff ? payrollCharge : zero,
+  );
   const invoiceRefund = money(
-    invoiceProratedRefund.plus(
-      closedAfterCutoff ? invoiceTotal : new Prisma.Decimal(0),
-    ),
+    invoiceProratedRefund.plus(nextCompetencyRefund),
   );
   const employeeFullRefund = money(
-    employeeProratedRefund.plus(
-      closedAfterCutoff ? payrollCharge : new Prisma.Decimal(0),
-    ),
+    employeeProratedRefund.plus(employeeNextRefund),
+  );
+  const companyCurrentRefund = money(
+    invoiceProratedRefund.minus(employeeProratedRefund),
+  );
+  const companyNextRefund = money(
+    nextCompetencyRefund.minus(employeeNextRefund),
   );
   const companyFullRefund = money(invoiceRefund.minus(employeeFullRefund));
   const enrollmentMonths = completeMonthsBetween(enrollmentDate, exclusionDate);
 
   return {
     invoiceTotal: serializeMoney(invoiceTotal),
+    daysInMonth,
+    usedDays,
     usedProrata: serializeMoney(usedProrata),
+    cutoffApplied: closedAfterCutoff,
+    currentCompetencyRefund: serializeMoney(invoiceProratedRefund),
+    nextCompetencyRefund: serializeMoney(nextCompetencyRefund),
     invoiceRefund: serializeMoney(invoiceRefund),
     refundDays,
     payrollCharge: serializeMoney(payrollCharge),
+    employeeCurrentRefund: serializeMoney(employeeProratedRefund),
+    employeeNextRefund: serializeMoney(employeeNextRefund),
     employeeFullRefund: serializeMoney(employeeFullRefund),
+    companyCurrentRefund: serializeMoney(companyCurrentRefund),
+    companyNextRefund: serializeMoney(companyNextRefund),
     companyFullRefund: serializeMoney(companyFullRefund),
     enrollmentMonths,
     contributionMonths: Math.max(1, enrollmentMonths),

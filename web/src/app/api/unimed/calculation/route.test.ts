@@ -253,7 +253,13 @@ describe("Unimed calculation API", () => {
       where: {
         id: "beneficiary-12345678",
         tenantId: "tenant-12345678",
-        competencyId: "competency-2026-07",
+        competency: {
+          status: { in: ["ACTIVE", "PREVIOUS"] },
+          OR: [
+            { year: { lt: 2026 } },
+            { year: 2026, month: { lte: 8 } },
+          ],
+        },
         category: "HOLDER",
       },
       select: {

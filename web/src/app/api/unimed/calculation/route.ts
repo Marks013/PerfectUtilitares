@@ -150,7 +150,13 @@ export async function POST(request: Request) {
       where: {
         id: parsed.data.beneficiaryId,
         tenantId: access.tenantId,
-        competencyId: competency.id,
+        competency: {
+          status: { in: ["ACTIVE", "PREVIOUS"] },
+          OR: [
+            { year: { lt: referenceYear } },
+            { year: referenceYear, month: { lte: referenceMonth } },
+          ],
+        },
         category: "HOLDER",
       },
       select: {
@@ -174,7 +180,7 @@ export async function POST(request: Request) {
       return jsonError(
         422,
         "UNIMED_BENEFICIARY_NOT_CURRENT",
-        "O titular não pertence à base vigente. Pesquise o colaborador novamente.",
+        "O titular não pertence às duas competências disponíveis. Pesquise o colaborador novamente.",
       );
     }
     if (beneficiary.dependents.length !== parsed.data.dependentIds.length) {

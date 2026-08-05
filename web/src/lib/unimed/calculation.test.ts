@@ -55,7 +55,14 @@ describe("Unimed calculation engine", () => {
 
     expect(result.invoiceTotal).toBe("292.97");
     expect(result.payrollCharge).toBe("177.28");
+    expect(result.daysInMonth).toBe(31);
+    expect(result.usedDays).toBe(3);
     expect(result.refundDays).toBe(28);
+    expect(result.cutoffApplied).toBe(false);
+    expect(result.currentCompetencyRefund).toBe("264.62");
+    expect(result.nextCompetencyRefund).toBe("0.00");
+    expect(result.employeeCurrentRefund).toBe("160.12");
+    expect(result.employeeNextRefund).toBe("0.00");
     expect(result.employeeFullRefund).toBe("160.12");
     expect(result.companyFullRefund).toBe("104.50");
     expect(result.invoiceRefund).toBe("264.62");
@@ -75,10 +82,34 @@ describe("Unimed calculation engine", () => {
       dependents: [{ invoicePlanAmount: 116.02, addonAmount: 0 }],
     });
 
+    expect(result.usedDays).toBe(30);
     expect(result.refundDays).toBe(1);
+    expect(result.cutoffApplied).toBe(true);
+    expect(result.currentCompetencyRefund).toBe("9.45");
+    expect(result.nextCompetencyRefund).toBe("292.97");
+    expect(result.employeeCurrentRefund).toBe("5.72");
+    expect(result.employeeNextRefund).toBe("177.28");
     expect(result.employeeFullRefund).toBe("183.00");
     expect(result.companyFullRefund).toBe("119.42");
     expect(result.invoiceRefund).toBe("302.42");
+  });
+
+  it("applies the audited cutoff starting on day 25", () => {
+    const calculateForDay = (day: number) =>
+      calculateUnimed({
+        reasonCode: 3,
+        exclusionDate: `2026-08-${String(day).padStart(2, "0")}`,
+        planEnrollmentDate: "2025-01-01",
+        billingClosure: "AUTOMATIC_DAY_25",
+        holder: {
+          invoicePlanAmount: 100,
+          payrollPlanAmount: 60,
+          addonAmount: 0,
+        },
+        dependents: [],
+      });
+    expect(calculateForDay(24).cutoffApplied).toBe(false);
+    expect(calculateForDay(25).cutoffApplied).toBe(true);
   });
 
   it("maps reasons 1, 2 and 8 to the documents used by the workbook", () => {

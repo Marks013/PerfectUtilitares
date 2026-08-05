@@ -7,6 +7,7 @@ import {
 } from "@/lib/api/security";
 import { prisma } from "@/lib/prisma";
 import { requireUnimedAccess } from "@/lib/unimed/access.server";
+import { findWithPreviousCompetencyFallback } from "@/lib/unimed/competency-fallback";
 import { getUnimedConfiguration } from "@/lib/unimed/configuration";
 import { resolveUnimedPlanPrice } from "@/lib/unimed/pricing";
 import { dateOnlySchema, zodIssueDetails } from "@/lib/unimed/schema";
@@ -75,7 +76,7 @@ export async function GET(request: Request) {
     : currentUtcDate();
   const referenceYear = referenceDate.getUTCFullYear();
   const referenceMonth = referenceDate.getUTCMonth() + 1;
-  const [competency, configuration] = await Promise.all([
+  const [initialCompetency, configuration] = await Promise.all([
     prisma.unimedCompetency.findFirst({
       where: {
         tenantId: access.tenantId,
@@ -91,11 +92,11 @@ export async function GET(request: Request) {
     }),
     getUnimedConfiguration(access.tenantId, referenceDate),
   ]);
-  const beneficiaries = competency
-    ? await prisma.unimedBeneficiary.findMany({
+  const findBeneficiaries = (competencyId: string) =>
+    prisma.unimedBeneficiary.findMany({
         where: {
           tenantId: access.tenantId,
-          competencyId: competency.id,
+          competencyId,
           category: "HOLDER",
           ...(search.mode === "CPF"
             ? {
@@ -172,12 +173,31 @@ export async function GET(request: Request) {
             },
           },
         },
-        orderBy: { fullName: "asc" },
+                orderBy: { fullName: "asc" },
         take: 20,
-      })
-    : [];
-
+      });
+  const { competency, items: beneficiaries } =
+    await findWithPreviousCompetencyFallback(
+      initialCompetency,
+      findBeneficiaries,
+      (currentCompetency) =>
+        prisma.unimedCompetency.findFirst({
+          where: {
+            tenantId: access.tenantId,
+            status: { in: ["ACTIVE", "PREVIOUS"] },
+            beneficiaries: { some: {} },
+            id: { not: currentCompetency.id },
+            OR: [
+              { year: { lt: referenceYear } },
+              { year: referenceYear, month: { lte: referenceMonth } },
+            ],
+          },
+          orderBy: [{ year: "desc" }, { month: "desc" }],
+          select: { id: true, year: true, month: true },
+        }),
+    );
   const ageBrackets = configuration.ageBrackets.map((bracket) => ({
+
     code: bracket.code,
     minAge: bracket.minAge,
     maxAge: bracket.maxAge,

@@ -160,6 +160,28 @@ describe("Unimed email API", () => {
     });
   });
 
+  it("explains when the Resend environment is not configured", async () => {
+    mocks.sendUnimedExclusionEmail.mockRejectedValue(
+      new Error("RESEND_NOT_CONFIGURED"),
+    );
+    const response = await POST(emailRequest(validInput));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "RESEND_NOT_CONFIGURED" },
+    });
+  });
+
+  it("explains when the provider rejects the sender or recipient", async () => {
+    mocks.sendUnimedExclusionEmail.mockRejectedValue(
+      new Error("RESEND_VALIDATION_ERROR"),
+    );
+    const response = await POST(emailRequest(validInput));
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "RESEND_VALIDATION_ERROR" },
+    });
+  });
+
   it("does not expose recipients, beneficiary data or service errors", async () => {
     mocks.sendUnimedExclusionEmail.mockRejectedValue(
       new Error(

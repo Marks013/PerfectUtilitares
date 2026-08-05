@@ -442,7 +442,7 @@ export async function generateUnimedDocument(
     where: {
       id: beneficiaryId,
       tenantId,
-      competency: { status: "ACTIVE" },
+      competency: { status: { in: ["ACTIVE", "PREVIOUS"] } },
     },
     select: {
       fullName: true,
