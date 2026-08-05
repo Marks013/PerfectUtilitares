@@ -50,16 +50,16 @@ WITH plan_codes(code) AS (
     ('10041')
 ), prices(valid_from, valid_to, employee_amount, bracket_code, company_amount) AS (
   VALUES
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '00-18', 102.67),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '19-23', 125.03),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '24-28', 156.59),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '29-33', 180.24),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '34-38', 213.39),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '39-43', 238.81),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '44-48', 274.89),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '49-53', 339.46),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '54-58', 431.18),
-    (DATE '2024-07-01', DATE '2025-07-31', 54.21, '59+', 612.96),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '00-18', 102.67),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '19-23', 125.03),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '24-28', 156.59),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '29-33', 180.24),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '34-38', 213.39),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '39-43', 238.81),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '44-48', 274.89),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '49-53', 339.46),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '54-58', 431.18),
+    (DATE '2024-07-01', DATE '2026-07-31', 54.21, '59+', 612.96),
     (DATE '2026-08-01', DATE '2027-07-31', 61.26, '00-18', 116.02),
     (DATE '2026-08-01', DATE '2027-07-31', 61.26, '19-23', 141.29),
     (DATE '2026-08-01', DATE '2027-07-31', 61.26, '24-28', 176.95),
@@ -98,7 +98,7 @@ INSERT INTO "UnimedAddonPriceVersion" (
 )
 VALUES
   ('unimed-addon-' || substr(md5(:'tenant_id' || 'FUNERAL' || '2024-07-01'), 1, 16),
-   :'tenant_id', 'FUNERAL', 'Aditivo funeral', 5.42, DATE '2024-07-01', DATE '2025-07-31', NOW(), NOW()),
+   :'tenant_id', 'FUNERAL', 'Aditivo funeral', 5.42, DATE '2024-07-01', DATE '2026-07-31', NOW(), NOW()),
   ('unimed-addon-' || substr(md5(:'tenant_id' || 'FUNERAL' || '2026-08-01'), 1, 16),
    :'tenant_id', 'FUNERAL', 'Aditivo funeral', 6.12, DATE '2026-08-01', DATE '2027-07-31', NOW(), NOW())
 ON CONFLICT ("tenantId", "code", "validFrom") DO UPDATE SET
@@ -113,7 +113,7 @@ INSERT INTO "UnimedBillingSetting" (
 )
 VALUES
   ('unimed-billing-' || substr(md5(:'tenant_id' || '2024-07-01'), 1, 16),
-   :'tenant_id', 'AUTOMATIC_DAY_25', 25, DATE '2024-07-01', DATE '2025-07-31', NOW(), NOW()),
+   :'tenant_id', 'AUTOMATIC_DAY_25', 25, DATE '2024-07-01', DATE '2026-07-31', NOW(), NOW()),
   ('unimed-billing-' || substr(md5(:'tenant_id' || '2026-08-01'), 1, 16),
    :'tenant_id', 'AUTOMATIC_DAY_25', 25, DATE '2026-08-01', DATE '2027-07-31', NOW(), NOW())
 ON CONFLICT ("tenantId", "validFrom") DO UPDATE SET

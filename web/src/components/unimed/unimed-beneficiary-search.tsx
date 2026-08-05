@@ -348,12 +348,16 @@ export function UnimedBeneficiarySearch({
                         : ""}
                     </span>
                     {beneficiary.dependents.length > 0 ? (
-                      <span className="mt-1 block truncate text-xs text-[color:var(--app-muted)]">
-                        Dependente(s):{" "}
-                        {beneficiary.dependents
-                          .map((dependent) => dependent.fullName)
-                          .join(", ")}
-                      </span>
+                      <ul className="mt-2 space-y-1 text-xs text-[color:var(--app-muted)]">
+                        {beneficiary.dependents.map((dependent) => (
+                          <li key={dependent.id} className="break-words">
+                            <span className="font-bold text-[color:var(--app-fg)]">
+                              Dependente:
+                            </span>{" "}
+                            {dependent.fullName}
+                          </li>
+                        ))}
+                      </ul>
                     ) : null}
                   </span>
                 </button>
