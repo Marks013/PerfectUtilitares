@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import fontkit from "@pdf-lib/fontkit";
-import { degrees, PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import {
+  degrees,
+  PDFDocument,
+  type PDFFont,
+  rgb,
+  StandardFonts,
+} from "pdf-lib";
 import {
   displayPointToPdf,
   displayRectToPdf,
@@ -36,7 +42,7 @@ export async function applyPdfAnnotations({
   const needsFont = annotations.some(
     (annotation) => annotation.type === "TEXT",
   );
-  let annotationFont;
+  let annotationFont: PDFFont | undefined;
   if (needsFont) {
     try {
       const fontPath =
