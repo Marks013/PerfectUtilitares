@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "predev": "npm run sync:pdfjs",
     "setup:env": "node scripts/ensure-env.mjs",
     "env:set": "node scripts/set-env-value.mjs",
@@ -25,7 +25,7 @@
     "cleanup:artifacts": "node scripts/cleanup-artifacts.mjs",
     "cleanup:deploy": "npm run cleanup:artifacts && node scripts/cleanup-deploy.mjs",
     "prebuild": "npm run setup:env && npm run sync:check && npm run sync:pdfjs && npm run prisma:generate",
-    "build": "next build --turbopack",
+    "build": "next build",
     "build:pdf-worker": "esbuild src/workers/pdf-worker.ts --bundle --platform=node --format=esm --target=node24 --packages=external --outfile=dist/pdf-worker.mjs",
     "postbuild": "npm run clean:optional-wasm && npm run cleanup:artifacts",
     "start": "node server.js",
@@ -66,23 +66,23 @@
     "fflate": "0.8.2",
     "jszip": "^3.10.1",
     "lucide-react": "1.14.0",
-    "next": "16.2.12",
+    "next": "16.3.0",
     "next-auth": "5.0.0-beta.32",
-    "nodemailer": "8.0.11",
+    "nodemailer": "9.0.4",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.2.108",
     "pdfkit": "^0.18.0",
     "pg-boss": "12.26.3",
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "react-dropzone": "19.1.1",
-    "react-easy-crop": "^5.5.7--canary.642.b63bd1a.0",
+    "react-easy-crop": "6.2.3",
     "react-hook-form": "7.75.0",
     "read-excel-file": "9.0.9",
     "resend": "^6.12.3",
     "sharp": "0.35.3",
-    "tailwind-merge": "3.5.0-dev.c719d45eb836accd1fd4b04c9d2e65e8f342a025",
-    "zod": "4.5.0-canary.20260504T180558"
+    "tailwind-merge": "3.6.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
@@ -94,13 +94,14 @@
     "prisma": "6.19.3",
     "tailwindcss": "4.3.3",
     "tsx": "4.21.0",
-    "typescript": "6.0.3",
-    "vitest": "5.0.0-beta.7"
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
   },
   "overrides": {
     "postcss": "8.5.25",
     "sharp": "$sharp",
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "nodemailer": "$nodemailer"
   },
   "allowScripts": {
     "@prisma/client@6.19.3": true,
@@ -109,5 +110,9 @@
     "@sentry/node-cpu-profiler@2.4.2": true,
     "esbuild@0.28.1": true,
     "prisma@6.19.3": true
+  },
+  "engines": {
+    "node": ">=24.19.0 <25",
+    "npm": ">=11 <13"
   }
 }

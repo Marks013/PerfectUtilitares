@@ -259,14 +259,6 @@ export function UnimedPrintCopy({
         </div>
 
         <dl className="unimed-print-totals">
-          <div className="refund-highlight">
-            <dt>Estorno ao funcionário</dt>
-            <dd>{money(data.result.employeeFullRefund)}</dd>
-          </div>
-          <div className="refund-highlight">
-            <dt>Estorno à empresa</dt>
-            <dd>{money(data.result.companyFullRefund)}</dd>
-          </div>
           <div>
             <dt>Proporcional de {currentCompetencyLabel} ({data.result.refundDays} dias)</dt>
             <dd>{money(data.result.currentCompetencyRefund)}</dd>
@@ -280,6 +272,14 @@ export function UnimedPrintCopy({
           <div className="calculation-total">
             <dt>Total estornado em fatura ({data.result.totalRefundDays} dias)</dt>
             <dd>{money(data.result.invoiceRefund)}</dd>
+          </div>
+          <div className="refund-highlight">
+            <dt>Estorno ao funcionário</dt>
+            <dd>{money(data.result.employeeFullRefund)}</dd>
+          </div>
+          <div className="refund-highlight">
+            <dt>Estorno à empresa</dt>
+            <dd>{money(data.result.companyFullRefund)}</dd>
           </div>
         </dl>
       </div>

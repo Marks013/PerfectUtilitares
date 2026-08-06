@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS base
+FROM node:24.19.0-alpine AS base
 RUN apk add --no-cache libc6-compat openssl vips
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -8,6 +8,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 FROM base AS deps
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
+
+FROM deps AS prisma-generated
+COPY prisma.config.ts ./
+COPY prisma ./prisma
+RUN npm run prisma:generate
 
 FROM base AS builder
 ARG AUTH_URL=http://localhost:3002
@@ -22,33 +27,31 @@ ENV APP_URL=$APP_URL
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 ENV SENTRY_ORG=$SENTRY_ORG
 ENV SENTRY_PROJECT=$SENTRY_PROJECT
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=prisma-generated /app/node_modules ./node_modules
 COPY . .
 RUN --mount=type=cache,id=perfectutilitares-next-cache,target=/app/.next/cache,sharing=locked \
     --mount=type=secret,id=sentry_auth_token,required=false \
     if [ -f /run/secrets/sentry_auth_token ]; then \
       export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; \
     fi; \
-    npm run build
+    npm run setup:env && npm run sync:check && npm run sync:pdfjs && npm exec -- next build && npm run postbuild
 
 FROM base AS migrator
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=prisma-generated /app/node_modules ./node_modules
 COPY package*.json ./
 COPY prisma.config.ts ./
 COPY prisma ./prisma
 COPY scripts ./scripts
 COPY src/lib/jornada ./src/lib/jornada
 COPY src/lib/unimed/defaults.ts ./src/lib/unimed/defaults.ts
-RUN npm run prisma:generate
 USER node
 CMD ["sh", "-c", "npm run db:deploy"]
 
-FROM deps AS pdf-worker-builder
+FROM prisma-generated AS pdf-worker-builder
 COPY prisma.config.ts tsconfig.json ./
 COPY prisma ./prisma
 COPY src ./src
-RUN npm run prisma:generate
 RUN npm run build:pdf-worker
 RUN npm prune --omit=dev --ignore-scripts
 

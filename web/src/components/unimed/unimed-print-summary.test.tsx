@@ -117,6 +117,17 @@ describe("Unimed printable payroll loans", () => {
     expect(markup).toContain("<td>MA</td>");
     expect(markup).toContain("<td>08/2026</td><td>31/08/2026</td>");
     expect(content).toContain("Total estornado em fatura");
+
+    const proportional = content.indexOf("Proporcional de 08/2026");
+    const nextMonthly = content.indexOf("Mensalidade de 09/2026");
+    const total = content.indexOf("Total estornado em fatura");
+    const employee = content.indexOf("Estorno ao funcionário");
+    const company = content.indexOf("Estorno à empresa");
+    expect(proportional).toBeGreaterThanOrEqual(0);
+    expect(proportional).toBeLessThan(nextMonthly);
+    expect(nextMonthly).toBeLessThan(total);
+    expect(total).toBeLessThan(employee);
+    expect(employee).toBeLessThan(company);
   });
 
   it("omits payroll loans when the remembered preference is disabled", () => {
