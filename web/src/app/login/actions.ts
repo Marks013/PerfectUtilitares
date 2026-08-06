@@ -31,7 +31,7 @@ export async function loginAction(formData: FormData) {
     redirect(loginErrorUrl("missing", callbackUrl));
   }
 
-  if (!email || !email.includes("@")) {
+  if (!email?.includes("@")) {
     redirect(loginErrorUrl("email", callbackUrl));
   }
 

@@ -74,7 +74,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           where: { email: normalizeEmail(parsed.data.email) },
         });
 
-        if (!user || user.status !== "ACTIVE") {
+        if (user?.status !== "ACTIVE") {
           return null;
         }
 

@@ -11,7 +11,7 @@ export const metadata = {
 export default async function ContaPage() {
   const session = await auth();
 
-  if (!session || session.user.status !== "ACTIVE") {
+  if (session?.user.status !== "ACTIVE") {
     redirect("/login");
   }
 

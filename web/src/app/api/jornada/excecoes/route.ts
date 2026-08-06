@@ -138,7 +138,7 @@ export async function POST(request: Request) {
     where: { id: parsed.data.userId },
     select: { id: true, status: true },
   });
-  if (!user || user.status !== "ACTIVE") {
+  if (user?.status !== "ACTIVE") {
     return jsonError(404, "USER_NOT_FOUND", "Usuário ativo não encontrado");
   }
 

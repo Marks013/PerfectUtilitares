@@ -141,7 +141,7 @@ export async function reservePdfJobForQueue(request: {
         where: { id: request.jobId },
         select: { inputBytes: true, status: true },
       });
-      if (!current || current.status !== "DRAFT") return false;
+      if (current?.status !== "DRAFT") return false;
 
       const [activeJobs, activeBytes, principalActiveJobs] = await Promise.all([
         tx.pdfJob.count({
