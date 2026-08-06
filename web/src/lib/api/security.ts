@@ -364,7 +364,9 @@ export async function enforceSharedRateLimit(
   ];
 
   for (const check of checks) {
-    let result;
+    let result: Awaited<
+      ReturnType<typeof checkSharedRateLimit>
+    >;
     try {
       result = await checkSharedRateLimit(check.key, check);
     } catch (error) {
