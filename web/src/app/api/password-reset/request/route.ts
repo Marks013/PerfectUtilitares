@@ -73,7 +73,7 @@ export async function POST(request: Request) {
     },
   });
 
-  if (!user || user.status !== "ACTIVE" || !user.tenantId) {
+  if (user?.status !== "ACTIVE" || !user.tenantId) {
     return NextResponse.json({ ok: true });
   }
 

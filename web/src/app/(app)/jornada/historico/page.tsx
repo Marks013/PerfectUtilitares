@@ -26,7 +26,7 @@ export default async function HistoricoPage({
 }: HistoricoPageProps) {
   const session = await auth();
 
-  if (!session || session.user.status !== "ACTIVE") {
+  if (session?.user.status !== "ACTIVE") {
     redirect("/login");
   }
 
