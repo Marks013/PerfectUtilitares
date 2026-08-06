@@ -369,6 +369,7 @@ describe("Unimed calculation API", () => {
     expect(mocks.findPayrollCompetence).toHaveBeenCalledWith({
       where: {
         tenantId: "tenant-12345678",
+        cpfNormalized: "52998224725",
         competence: { lte: "2026-08" },
       },
       orderBy: { competence: "desc" },
@@ -406,6 +407,37 @@ describe("Unimed calculation API", () => {
         ],
       },
     });
+  });
+
+  it("does not borrow another employee's newer payroll competence", async () => {
+    mocks.findPayrollCompetence.mockResolvedValue({ competence: "2026-07" });
+    mocks.findPayrollLoans.mockResolvedValue([]);
+
+    const response = await POST(
+      calculationRequest({
+        ...validInput,
+        exclusionDate: "2026-08-31",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.findPayrollCompetence).toHaveBeenCalledWith({
+      where: {
+        tenantId: "tenant-12345678",
+        cpfNormalized: "52998224725",
+        competence: { lte: "2026-08" },
+      },
+      orderBy: { competence: "desc" },
+      select: { competence: true },
+    });
+    expect(mocks.findPayrollLoans).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          cpfNormalized: "52998224725",
+          competence: "2026-07",
+        }),
+      }),
+    );
   });
 
   it("does not query loans when the selected beneficiary has no CPF", async () => {

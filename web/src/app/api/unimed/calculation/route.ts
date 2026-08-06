@@ -376,6 +376,7 @@ export async function POST(request: Request) {
       const availableCompetence = await prisma.unimedPayrollLoan.findFirst({
         where: {
           tenantId: access.tenantId,
+          cpfNormalized,
           competence: { lte: requestedCompetence },
         },
         orderBy: { competence: "desc" },

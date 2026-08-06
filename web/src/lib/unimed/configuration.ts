@@ -16,6 +16,14 @@ function previousDay(value: Date) {
   return new Date(value.getTime() - 24 * 60 * 60 * 1_000);
 }
 
+function validToBefore(nextValidFrom: Date | undefined) {
+  return nextValidFrom ? previousDay(nextValidFrom) : null;
+}
+
+function versionKey(...parts: string[]) {
+  return parts.join("\u0000");
+}
+
 export async function saveUnimedConfiguration(
   tenantId: string,
   actorIdentity: string | { moduleSessionId: string },
@@ -106,6 +114,43 @@ export async function saveUnimedConfiguration(
         data: { active: false },
       });
 
+      const [futurePlanPrices, futureAddonPrices, nextBilling, nextRules] =
+        await Promise.all([
+          tx.unimedPlanPriceVersion.findMany({
+            where: { tenantId, validFrom: { gt: validFrom } },
+            select: { ageBracketId: true, planCode: true, validFrom: true },
+            orderBy: { validFrom: "asc" },
+          }),
+          tx.unimedAddonPriceVersion.findMany({
+            where: { tenantId, validFrom: { gt: validFrom } },
+            select: { code: true, validFrom: true },
+            orderBy: { validFrom: "asc" },
+          }),
+          tx.unimedBillingSetting.findFirst({
+            where: { tenantId, validFrom: { gt: validFrom } },
+            select: { validFrom: true },
+            orderBy: { validFrom: "asc" },
+          }),
+          tx.unimedCalculationRuleVersion.findFirst({
+            where: { tenantId, validFrom: { gt: validFrom } },
+            select: { validFrom: true },
+            orderBy: { validFrom: "asc" },
+          }),
+        ]);
+      const nextPlanValidFrom = new Map<string, Date>();
+      for (const version of futurePlanPrices) {
+        const key = versionKey(version.ageBracketId, version.planCode);
+        if (!nextPlanValidFrom.has(key)) {
+          nextPlanValidFrom.set(key, version.validFrom);
+        }
+      }
+      const nextAddonValidFrom = new Map<string, Date>();
+      for (const version of futureAddonPrices) {
+        if (!nextAddonValidFrom.has(version.code)) {
+          nextAddonValidFrom.set(version.code, version.validFrom);
+        }
+      }
+
       await tx.unimedPlanPriceVersion.updateMany({
         where: {
           tenantId,
@@ -115,27 +160,32 @@ export async function saveUnimedConfiguration(
         data: { validTo },
       });
       for (const price of input.planPrices) {
+        const ageBracketId = bracketIds.get(price.ageBracketCode)!;
+        const priceValidTo = validToBefore(
+          nextPlanValidFrom.get(versionKey(ageBracketId, price.planCode)),
+        );
         await tx.unimedPlanPriceVersion.upsert({
           where: {
             tenantId_ageBracketId_planCode_validFrom: {
               tenantId,
-              ageBracketId: bracketIds.get(price.ageBracketCode)!,
+              ageBracketId,
               planCode: price.planCode,
               validFrom,
             },
           },
           create: {
             tenantId,
-            ageBracketId: bracketIds.get(price.ageBracketCode)!,
+            ageBracketId,
             planCode: price.planCode,
             companyAmount: price.companyAmount,
             employeeAmount: price.employeeAmount,
             validFrom,
+            validTo: priceValidTo,
           },
           update: {
             companyAmount: price.companyAmount,
             employeeAmount: price.employeeAmount,
-            validTo: null,
+            validTo: priceValidTo,
           },
         });
       }
@@ -149,6 +199,7 @@ export async function saveUnimedConfiguration(
         data: { validTo },
       });
       for (const addon of input.addonPrices) {
+        const addonValidTo = validToBefore(nextAddonValidFrom.get(addon.code));
         await tx.unimedAddonPriceVersion.upsert({
           where: {
             tenantId_code_validFrom: {
@@ -161,11 +212,12 @@ export async function saveUnimedConfiguration(
             tenantId,
             ...addon,
             validFrom,
+            validTo: addonValidTo,
           },
           update: {
             label: addon.label,
             amount: addon.amount,
-            validTo: null,
+            validTo: addonValidTo,
           },
         });
       }
@@ -185,11 +237,12 @@ export async function saveUnimedConfiguration(
           closure: input.billingClosure,
           closingDay: input.billingClosure === "AUTOMATIC_DAY_25" ? 25 : null,
           validFrom,
+          validTo: validToBefore(nextBilling?.validFrom),
         },
         update: {
           closure: input.billingClosure,
           closingDay: input.billingClosure === "AUTOMATIC_DAY_25" ? 25 : null,
-          validTo: null,
+          validTo: validToBefore(nextBilling?.validFrom),
         },
       });
 
@@ -208,11 +261,12 @@ export async function saveUnimedConfiguration(
           annualAdjustment: input.annualAdjustmentPercent / 100,
           difference: input.differencePercent / 100,
           validFrom,
+          validTo: validToBefore(nextRules?.validFrom),
         },
         update: {
           annualAdjustment: input.annualAdjustmentPercent / 100,
           difference: input.differencePercent / 100,
-          validTo: null,
+          validTo: validToBefore(nextRules?.validFrom),
         },
       });
 
