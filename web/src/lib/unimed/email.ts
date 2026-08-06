@@ -1,28 +1,13 @@
 import { Prisma } from "@/generated/prisma/client";
 import nodemailer, { type Transporter } from "nodemailer";
+import { applicationTimeZone, periodGreeting } from "@/lib/email/greeting";
+import { escapeHtml, formatCpf } from "@/lib/email/html";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_UNIMED_EMAIL_SUBJECT } from "@/lib/unimed/defaults";
 
 const DEFAULT_SIGNATURE_URL =
   "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEi0wOmIf_vL4iasN_lQEurWxAA2-ssiov-epwgZ2iprtRbPuxTypYvHIYlKkcEKS1QK2pLyENS4YOVFgsvp9E28ZJ5FpbLZORKS92b_ssQhkN5MFMBaQamVeV5aB2TdOgYNE083gvfXVBSDmJSx_aBkcAU5AqaWFraEyAD5vqnEOwUcwZfwdcTyjKXy/s320/45ed08d31e851604dcd0ba65ed259804.jpg";
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function formatCpf(value: string) {
-  const digits = value.replace(/\D/g, "");
-  return digits.length === 11
-    ? digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
-    : value;
-}
-
-const EMAIL_TIME_ZONE = "America/Sao_Paulo";
 const EMAIL_SEQUENCE_RETENTION_DAYS = 90;
 
 export function buildUnimedEmailSubject(sequence: number) {
@@ -33,22 +18,10 @@ export function buildUnimedEmailSubject(sequence: number) {
   return `${DEFAULT_UNIMED_EMAIL_SUBJECT} (${sequence})`;
 }
 
-function unimedEmailGreeting(now = new Date()) {
-  const hour = Number(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: process.env.APP_TIME_ZONE || EMAIL_TIME_ZONE,
-      hour: "2-digit",
-      hourCycle: "h23",
-    }).format(now),
-  );
-  if (hour < 12) return "Bom dia";
-  if (hour <= 17) return "Boa tarde";
-  return "Boa noite";
-}
 
 function businessDay(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: process.env.APP_TIME_ZONE || EMAIL_TIME_ZONE,
+    timeZone: applicationTimeZone(),
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -65,18 +38,19 @@ async function nextDailySequence(tenantId: string, now = new Date()) {
   const retentionBoundary = new Date(
     day.getTime() - EMAIL_SEQUENCE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
   );
-  return prisma.$transaction(async (transaction) => {
-    await transaction.unimedEmailDailySequence.deleteMany({
-      where: { tenantId, day: { lt: retentionBoundary } },
-    });
-    const sequence = await transaction.unimedEmailDailySequence.upsert({
-      where: { tenantId_day: { tenantId, day } },
-      create: { tenantId, day, count: 1 },
-      update: { count: { increment: 1 } },
-      select: { count: true },
-    });
-    return sequence.count;
+
+  await prisma.unimedEmailDailySequence.deleteMany({
+    where: { tenantId, day: { lt: retentionBoundary } },
   });
+
+  const sequence = await prisma.unimedEmailDailySequence.upsert({
+    where: { tenantId_day: { tenantId, day } },
+    create: { tenantId, day, count: 1 },
+    update: { count: { increment: 1 } },
+    select: { count: true },
+  });
+
+  return sequence.count;
 }
 
 export function buildUnimedEmailHtml(
@@ -90,7 +64,7 @@ export function buildUnimedEmailHtml(
   return `
     <html>
     <body style="font-family: Calibri, Arial, sans-serif; font-size: 12pt;">
-      <p>${unimedEmailGreeting(now)},</p>
+      <p>${periodGreeting(now)},</p>
       <p>Segue em anexo.</p>
       <p>
         <strong>Titular:</strong> ${escapeHtml(name)}<br />

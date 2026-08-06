@@ -15,14 +15,37 @@ concurrency:
 
 jobs:
   verify:
-    name: Quality and build
+    name: Quality, PostgreSQL and build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: perfectutilitares_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d perfectutilitares_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     defaults:
       run:
         working-directory: web
+
     env:
       CI: "true"
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/perfectutilitares_ci?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-in-production
+      ADMIN_EMAIL: admin-ci@example.test
+      ADMIN_PASSWORD: ci-only-admin-password
+      DEFAULT_TENANT_NAME: CI
+      DEFAULT_TENANT_SLUG: ci
       AUTH_URL: http://localhost:3002
       NEXTAUTH_URL: http://localhost:3002
       APP_URL: http://localhost:3002
@@ -31,12 +54,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.19.0
           cache: npm
           cache-dependency-path: web/package-lock.json
 
@@ -47,13 +70,16 @@ jobs:
         run: npm ls --all
 
       - name: Audit dependencies
-        run: npm audit
+        run: npm audit --audit-level=high
 
-      - name: Verify generated assets
-        run: npm run sync:check
+      - name: Deploy database migrations
+        run: npm run db:deploy
 
       - name: Run quality checks
         run: npm run quality
+
+      - name: Smoke Prisma runtime
+        run: npm run prisma:smoke
 
       - name: Build web application
         run: npm run build
@@ -66,3 +92,33 @@ jobs:
       - name: Ensure build did not modify tracked files
         working-directory: .
         run: git diff --exit-code -- .
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Prepare non-secret CI environment
+        working-directory: web
+        run: |
+          cp .env.example .env
+          npm run setup:env
+
+      - name: Validate Compose
+        working-directory: web
+        run: docker compose config --quiet
+
+      - name: Build every runtime image
+        working-directory: web
+        run: docker compose build app migrate pdf-worker

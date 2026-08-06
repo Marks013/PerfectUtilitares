@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 FROM deps AS prisma-generated
 COPY prisma.config.ts ./
 COPY prisma ./prisma
-RUN npm run prisma:generate
+RUN PRISMA_ALLOW_LOCAL_FALLBACK=true npm run prisma:generate
 
 FROM base AS builder
 ARG AUTH_URL=http://localhost:3002
@@ -83,8 +83,7 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 RUN apk add --no-cache postgresql-client
 COPY --from=builder --chown=node:node /app/.next/standalone ./
-COPY --from=builder --chown=node:node /app/node_modules/@img/sharp-libvips-linuxmusl-arm64 ./node_modules/@img/sharp-libvips-linuxmusl-arm64
-COPY --from=builder --chown=node:node /app/node_modules/@img/sharp-linuxmusl-arm64 ./node_modules/@img/sharp-linuxmusl-arm64
+COPY --from=builder --chown=node:node /app/node_modules/@img ./node_modules/@img
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/node_modules/pdfkit/js/data ./node_modules/pdfkit/js/data

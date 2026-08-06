@@ -1,46 +1,60 @@
-const BRANCH_ALIASES: Record<string, string> = {
-  M: "M",
-  MATRIZ: "M",
-  ICA: "ICA",
-  ICARAIMA: "ICA",
-  S: "S",
-  BIG: "S",
-  P: "P",
-  HIPER: "P",
-  T: "T",
-  TIRADENTES: "T",
-  A: "A",
-  ATACADO: "A",
-  C: "C",
-  CASTELO: "C",
-  MA: "MA",
-  "MULTI ATACADO": "MA",
-  AN: "AN",
-  ANCHIETA: "AN",
+type BranchRule = {
+  code: string;
+  aliases: readonly string[];
 };
+
+const BRANCH_RULES: readonly BranchRule[] = [
+  { code: "MA", aliases: ["MULTI ATACADO"] },
+  { code: "AN", aliases: ["ANCHIETA"] },
+  { code: "M", aliases: ["MATRIZ"] },
+  { code: "I", aliases: ["ICARAIMA"] },
+  { code: "S", aliases: ["BIG"] },
+  { code: "P", aliases: ["HIPER"] },
+  { code: "T", aliases: ["TIRADENTES"] },
+  { code: "A", aliases: ["ATACADO"] },
+  { code: "C", aliases: ["CASTELO BRANCO", "CASTELO"] },
+];
+
+const BRANCH_CODES = new Set(BRANCH_RULES.map((rule) => rule.code));
 
 function normalized(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toUpperCase();
+}
+
+function containsWholeAlias(value: string, alias: string) {
+  return (
+    value === alias ||
+    value.startsWith(`${alias} `) ||
+    value.endsWith(` ${alias}`) ||
+    value.includes(` ${alias} `)
+  );
 }
 
 export function formatUnimedBranchForPdf(
   value: string | null | undefined,
 ) {
   if (!value?.trim()) return "—";
-  const key = normalized(value);
-  const direct = BRANCH_ALIASES[key];
-  if (direct) return direct;
 
-  const parts = key.split(/\s*[-–—]\s*/).filter(Boolean);
-  for (const part of parts) {
-    const alias = BRANCH_ALIASES[part];
-    if (alias) return alias;
+  const key = normalized(value);
+  if (BRANCH_CODES.has(key)) return key;
+
+  const aliases = BRANCH_RULES.flatMap((rule) =>
+    rule.aliases.map((alias) => ({
+      alias: normalized(alias),
+      code: rule.code,
+    })),
+  ).sort((left, right) => right.alias.length - left.alias.length);
+
+  for (const entry of aliases) {
+    if (containsWholeAlias(key, entry.alias)) return entry.code;
   }
+
   return value.trim();
 }
 

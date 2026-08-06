@@ -219,39 +219,47 @@ export function UnimedPrintCopy({
           <span>01 - Unimed</span>
           <span>02 - Unimed + Acessório Funeral</span>
           <span>Documento: {documentName(data.result.documentKind)}</span>
-          {data.includePayrollLoans && data.payrollLoans ? (
+          {data.includePayrollLoans ? (
             <section className={`unimed-print-loans${loanDensity}`}>
-              <strong>Empréstimo Consignado</strong>
-              <span className="unimed-print-loan-total">
-                Empréstimo Consignado: {money(data.payrollLoans.totalAmount)}
-              </span>
-              {data.payrollLoans.contracts.length > 0 ? (
-                <div className="unimed-print-loan-list">
-                  {data.payrollLoans.contracts.map((contract, index) => (
-                    <div
-                      className="unimed-print-loan-contract"
-                      key={`${contract.bankCode}-${contract.contractNumber}-${index}`}
-                    >
-                      <span>
-                        Valor: <b>{money(contract.installmentAmount)}</b> ·
-                        Início: <b>{competence(contract.startCompetence)}</b> ·
-                        Fim: <b>{competence(contract.endCompetence)}</b>
-                      </span>
-                      <span>
-                        Contrato: <b>{contract.contractNumber || "—"}</b> ·
-                        Banco:{" "}
-                        <b>
-                          {contract.bankCode || "—"} -{" "}
-                          {contract.bankName || "—"}
-                        </b>
-                      </span>
+              <strong>Consignado digital</strong>
+              {data.payrollLoans ? (
+                <>
+                  <span className="unimed-print-loan-total">
+                    Empréstimo Consignado: {money(data.payrollLoans.totalAmount)}
+                  </span>
+                  {data.payrollLoans.contracts.length > 0 ? (
+                    <div className="unimed-print-loan-list">
+                      {data.payrollLoans.contracts.map((contract, index) => (
+                        <div
+                          className="unimed-print-loan-contract"
+                          key={`${contract.bankCode}-${contract.contractNumber}-${index}`}
+                        >
+                          <span>
+                            Valor: <b>{money(contract.installmentAmount)}</b> ·
+                            Início: <b>{competence(contract.startCompetence)}</b> ·
+                            Fim: <b>{competence(contract.endCompetence)}</b>
+                          </span>
+                          <span>
+                            Contrato: <b>{contract.contractNumber || "—"}</b> ·
+                            Banco:{" "}
+                            <b>
+                              {contract.bankCode || "—"} -{" "}
+                              {contract.bankName || "—"}
+                            </b>
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  ) : (
+                    <span className="unimed-print-loan-empty">
+                      Não há consignado digital na competência{" "}
+                      {competence(data.payrollLoans.competence)}.
+                    </span>
+                  )}
+                </>
               ) : (
                 <span className="unimed-print-loan-empty">
-                  Nenhum contrato na competência{" "}
-                  {competence(data.payrollLoans.competence)}.
+                  Não há consignado digital para o CPF consultado.
                 </span>
               )}
             </section>

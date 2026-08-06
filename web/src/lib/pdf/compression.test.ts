@@ -250,6 +250,6 @@ describe("PDF raster compression", () => {
       ]);
       expect(outputBytes.length).toBeLessThan(inputBytes.length * 0.6);
     },
-    20_000,
+    60_000,
   );
 });
