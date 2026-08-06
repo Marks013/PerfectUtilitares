@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "warningLines": 500,
+  "defaultMaxLines": 800,
+  "exceptions": {
+    "src/lib/unimed/importer.ts": {
+      "maxLines": 1072,
+      "reason": "Módulo legado de importação. Não pode crescer; deve ser reduzido gradualmente em refatoração dedicada."
+    },
+    "src/lib/jornada/batch-validation.ts": {
+      "maxLines": 802,
+      "reason": "Módulo legado de validação em lote. Não pode crescer; deve ser reduzido gradualmente em refatoração dedicada."
+    }
+  }
+}

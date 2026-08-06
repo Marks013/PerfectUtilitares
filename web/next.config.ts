@@ -5,6 +5,29 @@ type SecurityHeaderOptions = {
   xFrameOptions?: "DENY" | "SAMEORIGIN";
 };
 
+function createApplicationContentSecurityPolicy() {
+  const directives = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "form-action 'self'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline'",
+    "script-src-attr 'none'",
+    "worker-src 'self' blob:",
+    "connect-src 'self' https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
+  ];
+
+  if (process.env.NODE_ENV === "production") {
+    directives.push("upgrade-insecure-requests");
+  }
+
+  return directives.join("; ");
+}
+
 function createFaceDetectionContentSecurityPolicy() {
   return [
     "default-src 'self'",
@@ -25,7 +48,7 @@ function createFaceDetectionContentSecurityPolicy() {
 function createSecurityHeaders({
   xFrameOptions = "DENY",
 }: SecurityHeaderOptions = {}) {
-  const headers = [
+  return [
     { key: "X-Content-Type-Options", value: "nosniff" },
     { key: "X-Frame-Options", value: xFrameOptions },
     { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
@@ -37,16 +60,18 @@ function createSecurityHeaders({
       key: "Permissions-Policy",
       value: "camera=(), microphone=(), geolocation=()",
     },
+    {
+      key: "Content-Security-Policy-Report-Only",
+      value: createApplicationContentSecurityPolicy(),
+    },
   ];
-
-  return headers;
 }
 
 const securityHeaders = createSecurityHeaders();
 const faceDetectionFrameHeaders = [
   ...createSecurityHeaders({
     xFrameOptions: "SAMEORIGIN",
-  }),
+  }).filter((header) => header.key !== "Content-Security-Policy-Report-Only"),
   {
     key: "Content-Security-Policy",
     value: createFaceDetectionContentSecurityPolicy(),

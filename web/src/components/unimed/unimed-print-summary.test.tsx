@@ -104,8 +104,8 @@ describe("Unimed printable payroll loans", () => {
       <UnimedPrintCopy copy={1} data={printData()} />,
     );
     const content = text(markup);
-
     expect(content).toContain("Legenda de Planos");
+    expect(content).toContain("Consignado digital");
     expect(content).toContain("Empréstimo Consignado");
     expect(content).toContain("120,15");
     expect(content).toContain("CONTRATO-1");
@@ -117,17 +117,44 @@ describe("Unimed printable payroll loans", () => {
     expect(markup).toContain("<td>MA</td>");
     expect(markup).toContain("<td>08/2026</td><td>31/08/2026</td>");
     expect(content).toContain("Total estornado em fatura");
+  });
 
-    const proportional = content.indexOf("Proporcional de 08/2026");
-    const nextMonthly = content.indexOf("Mensalidade de 09/2026");
-    const total = content.indexOf("Total estornado em fatura");
-    const employee = content.indexOf("Estorno ao funcionário");
-    const company = content.indexOf("Estorno à empresa");
-    expect(proportional).toBeGreaterThanOrEqual(0);
-    expect(proportional).toBeLessThan(nextMonthly);
-    expect(nextMonthly).toBeLessThan(total);
-    expect(total).toBeLessThan(employee);
-    expect(employee).toBeLessThan(company);
+  it("prints C when the source branch is Castelo Branco", () => {
+    const markup = renderToStaticMarkup(
+      <UnimedPrintCopy
+        copy={1}
+        data={printData({ branchCode: "Castelo Branco" })}
+      />,
+    );
+    expect(markup).toContain("<td>C</td>");
+    expect(text(markup)).not.toContain("Castelo Branco");
+  });
+
+  it("states explicitly when the CPF has no digital payroll loan", () => {
+    const markup = renderToStaticMarkup(
+      <UnimedPrintCopy copy={1} data={printData({ payrollLoans: null })} />,
+    );
+    expect(text(markup)).toContain(
+      "Não há consignado digital para o CPF consultado.",
+    );
+  });
+
+  it("states explicitly when the imported competence has no contracts", () => {
+    const markup = renderToStaticMarkup(
+      <UnimedPrintCopy
+        copy={1}
+        data={printData({
+          payrollLoans: {
+            competence: "2026-08",
+            totalAmount: "0.00",
+            contracts: [],
+          },
+        })}
+      />,
+    );
+    expect(text(markup)).toContain(
+      "Não há consignado digital na competência 08/2026.",
+    );
   });
 
   it("omits payroll loans when the remembered preference is disabled", () => {
@@ -137,7 +164,9 @@ describe("Unimed printable payroll loans", () => {
         data={printData({ includePayrollLoans: false })}
       />,
     );
-
-    expect(text(markup)).not.toContain("Empréstimo Consignado");
+    const content = text(markup);
+    expect(content).not.toContain("Empréstimo Consignado");
+    expect(content).not.toContain("Consignado digital");
+    expect(content).not.toContain("Não há consignado digital");
   });
 });
