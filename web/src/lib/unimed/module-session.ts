@@ -5,7 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { cookies } from "next/headers";
-import type { UnimedAccessLevel } from "@prisma/client";
+import type { UnimedAccessLevel } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export const UNIMED_ACCESS_COOKIE = "perfectutilitares.unimed-access";

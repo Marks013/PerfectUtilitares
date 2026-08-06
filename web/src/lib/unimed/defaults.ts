@@ -1,4 +1,4 @@
-import type { UnimedDocumentKind } from "@prisma/client";
+import type { UnimedDocumentKind } from "@/generated/prisma/client";
 
 export const DEFAULT_UNIMED_EMAIL_SUBJECT = "Solicitação de Coparticipação";
 

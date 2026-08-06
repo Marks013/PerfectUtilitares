@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../src/generated/prisma/client.ts";
+import { createPrismaAdapter } from "../../src/lib/prisma-adapter.ts";
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({ adapter: createPrismaAdapter() });
 const baseUrl = process.env.UNIMED_SMOKE_BASE_URL ?? "http://127.0.0.1:3000";
 const outputPath = process.env.UNIMED_SMOKE_DOCUMENT_OUTPUT;
 const namesPath = process.env.UNIMED_SMOKE_NAMES_OUTPUT;

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { UnimedDocumentKind } from "@prisma/client";
+import type { UnimedDocumentKind } from "@/generated/prisma/client";
 import { PDFDocument } from "pdf-lib";
 import {
   createPdfDraftWithCapacity,

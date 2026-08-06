@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/test/unimed-route-rate-limit.mock";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 
 const mocks = vi.hoisted(() => ({
   requireUnimedAccess: vi.fn(),

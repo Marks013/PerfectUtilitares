@@ -1,4 +1,4 @@
-import type { PdfOperation, Prisma } from "@prisma/client";
+import type { PdfOperation, Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   assertResourceCapacity,

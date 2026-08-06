@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
 import { DEFAULT_UNIMED_EMAIL_SUBJECT } from "@/lib/unimed/defaults";
 

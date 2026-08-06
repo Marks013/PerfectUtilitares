@@ -1,4 +1,4 @@
-import type { UnimedAccessLevel } from "@prisma/client";
+import type { UnimedAccessLevel } from "@/generated/prisma/client";
 import type { NextResponse } from "next/server";
 import { jsonError } from "@/lib/api/security";
 import { canUseUnimed } from "@/lib/unimed/access";

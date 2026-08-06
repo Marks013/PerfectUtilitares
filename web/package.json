@@ -17,7 +17,7 @@
     "sync:update": "npm run sync:mediapipe:update && npm run sync:pdfjs",
     "unimed:build-rn561-template": "node scripts/unimed/build-rn561-template.mjs",
     "smoke:unimed-access": "node scripts/unimed/smoke-public-access.mjs",
-    "smoke:unimed-documents": "node scripts/unimed/smoke-documents.mjs",
+    "smoke:unimed-documents": "tsx scripts/unimed/smoke-documents.mjs",
     "verify:unimed-rendered-document": "node scripts/unimed/verify-rendered-document.mjs",
     "smoke:pdf-queue": "node scripts/smoke-pdf-queue.mjs",
     "validate:unimed-real-import": "tsx scripts/unimed/validate-real-import.ts",
@@ -40,7 +40,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
     "db:deploy": "prisma migrate deploy && npm run prisma:seed",
-    "build:deploy": "npm run build && npm run db:deploy"
+    "build:deploy": "npm run build && npm run db:deploy",
+    "prisma:smoke": "tsx scripts/prisma7-smoke.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",
@@ -50,7 +51,8 @@
     "@mediapipe/face_detection": "0.4.1646425229",
     "@napi-rs/canvas": "1.0.3",
     "@pdf-lib/fontkit": "1.1.1",
-    "@prisma/client": "6.19.3",
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@sentry/nextjs": "10.69.0",
     "@sentry/node": "10.69.0",
@@ -72,6 +74,7 @@
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.2.108",
     "pdfkit": "^0.18.0",
+    "pg": "8.22.0",
     "pg-boss": "12.26.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -87,11 +90,12 @@
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.1.2",
+    "@types/pg": "8.20.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "esbuild": "0.28.1",
     "knip": "6.29.0",
-    "prisma": "6.19.3",
+    "prisma": "7.9.1",
     "tailwindcss": "4.3.3",
     "tsx": "4.21.0",
     "typescript": "7.0.2",
@@ -104,12 +108,12 @@
     "nodemailer": "$nodemailer"
   },
   "allowScripts": {
-    "@prisma/client@6.19.3": true,
-    "@prisma/engines@6.19.3": true,
+    "@prisma/client@7.9.1": true,
+    "@prisma/engines@7.9.1": true,
     "@sentry/cli@2.58.6": true,
     "@sentry/node-cpu-profiler@2.4.2": true,
     "esbuild@0.28.1": true,
-    "prisma@6.19.3": true
+    "prisma@7.9.1": true
   },
   "engines": {
     "node": ">=24.19.0 <25",

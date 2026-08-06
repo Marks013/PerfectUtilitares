@@ -74,6 +74,11 @@ const processEnvKeys = [
   "ADMIN_PASSWORD",
   "DEFAULT_TENANT_NAME",
   "DEFAULT_TENANT_SLUG",
+  "APP_DATABASE_POOL_MAX",
+  "PDF_WORKER_DATABASE_POOL_MAX",
+  "MIGRATE_DATABASE_POOL_MAX",
+  "DATABASE_CONNECTION_TIMEOUT_MS",
+  "DATABASE_IDLE_TIMEOUT_MS",
 ];
 
 for (const key of processEnvKeys) {
@@ -136,6 +141,19 @@ if (!values.get("DEFAULT_TENANT_SLUG")) values.set("DEFAULT_TENANT_SLUG", "princ
 if (!values.get("PDF_ANONYMOUS_SESSION_TTL_MINUTES")) {
   values.set("PDF_ANONYMOUS_SESSION_TTL_MINUTES", "120");
 }
+if (!values.get("APP_DATABASE_POOL_MAX")) values.set("APP_DATABASE_POOL_MAX", "10");
+if (!values.get("PDF_WORKER_DATABASE_POOL_MAX")) {
+  values.set("PDF_WORKER_DATABASE_POOL_MAX", "5");
+}
+if (!values.get("MIGRATE_DATABASE_POOL_MAX")) {
+  values.set("MIGRATE_DATABASE_POOL_MAX", "2");
+}
+if (!values.get("DATABASE_CONNECTION_TIMEOUT_MS")) {
+  values.set("DATABASE_CONNECTION_TIMEOUT_MS", "5000");
+}
+if (!values.get("DATABASE_IDLE_TIMEOUT_MS")) {
+  values.set("DATABASE_IDLE_TIMEOUT_MS", "300000");
+}
 
 const currentDatabaseUrl = values.get("DATABASE_URL") ?? "";
 if (!currentDatabaseUrl || currentDatabaseUrl.includes("postgres:postgres@")) {
@@ -167,6 +185,11 @@ const orderedKeys = [
   "DEFAULT_TENANT_NAME",
   "DEFAULT_TENANT_SLUG",
   "PDF_ANONYMOUS_SESSION_TTL_MINUTES",
+  "APP_DATABASE_POOL_MAX",
+  "PDF_WORKER_DATABASE_POOL_MAX",
+  "MIGRATE_DATABASE_POOL_MAX",
+  "DATABASE_CONNECTION_TIMEOUT_MS",
+  "DATABASE_IDLE_TIMEOUT_MS",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
   "NEXT_PUBLIC_SENTRY_DSN",

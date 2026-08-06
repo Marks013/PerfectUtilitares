@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { JornadaHistoryTable } from "@/components/jornada-history-table";

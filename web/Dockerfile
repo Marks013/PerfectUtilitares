@@ -3,7 +3,8 @@
 FROM node:24.19.0-alpine AS base
 RUN apk add --no-cache libc6-compat openssl vips
 WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
 
 FROM base AS deps
 COPY package*.json ./
@@ -29,6 +30,7 @@ ENV SENTRY_ORG=$SENTRY_ORG
 ENV SENTRY_PROJECT=$SENTRY_PROJECT
 COPY --from=prisma-generated /app/node_modules ./node_modules
 COPY . .
+COPY --from=prisma-generated /app/src/generated/prisma ./src/generated/prisma
 RUN --mount=type=cache,id=perfectutilitares-next-cache,target=/app/.next/cache,sharing=locked \
     --mount=type=secret,id=sentry_auth_token,required=false \
     if [ -f /run/secrets/sentry_auth_token ]; then \
@@ -42,8 +44,10 @@ COPY --from=prisma-generated /app/node_modules ./node_modules
 COPY package*.json ./
 COPY prisma.config.ts ./
 COPY prisma ./prisma
+COPY --from=prisma-generated /app/src/generated/prisma ./src/generated/prisma
 COPY scripts ./scripts
 COPY src/lib/jornada ./src/lib/jornada
+COPY src/lib/prisma-adapter.ts ./src/lib/prisma-adapter.ts
 COPY src/lib/unimed/defaults.ts ./src/lib/unimed/defaults.ts
 USER node
 CMD ["sh", "-c", "npm run db:deploy"]

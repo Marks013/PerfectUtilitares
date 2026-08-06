@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { UnimedDocumentKind } from "@prisma/client";
+import type { UnimedDocumentKind } from "@/generated/prisma/client";
 import JSZip from "jszip";
 import { prisma } from "@/lib/prisma";
 

@@ -56,8 +56,10 @@ const faceDetectionFrameHeaders = [
 const nextConfig: NextConfig = {
   output: "standalone",
   serverExternalPackages: [
+    "@prisma/adapter-pg",
     "archiver",
     "pdfjs-dist",
+    "pg",
     "pg-boss",
     "read-excel-file",
   ],

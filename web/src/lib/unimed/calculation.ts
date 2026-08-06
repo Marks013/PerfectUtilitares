@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { documentKindForReason } from "@/lib/unimed/defaults";
 import { unimedCalculationInputSchema } from "@/lib/unimed/schema";
 import type {

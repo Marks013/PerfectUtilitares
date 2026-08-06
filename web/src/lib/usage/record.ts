@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import type { UsageModule } from "@prisma/client";
+import type { UsageModule } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getUsageDate } from "@/lib/usage/period";
 
@@ -63,4 +63,3 @@ export async function recordUserUsage({
     });
   }
 }
-

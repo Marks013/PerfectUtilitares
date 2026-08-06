@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 import { auth, type AppSession } from "@/auth";
 import { getRateLimitKey } from "@/lib/api/rate-limit";
 

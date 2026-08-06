@@ -1,4 +1,4 @@
-import type { PdfArtifact, PdfJob } from "@prisma/client";
+import type { PdfArtifact, PdfJob } from "@/generated/prisma/client";
 
 type JobWithArtifacts = PdfJob & { artifacts?: PdfArtifact[] };
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Prisma, type UnimedImportSource } from "@prisma/client";
+import { Prisma, type UnimedImportSource } from "@/generated/prisma/client";
 import type {
   ParsedAddress,
   ParsedBeneficiary,

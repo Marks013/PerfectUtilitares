@@ -1,10 +1,11 @@
 import "dotenv/config";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../src/generated/prisma/client";
+import { createPrismaAdapter } from "../src/lib/prisma-adapter";
 import { hash } from "bcryptjs";
 import { DEFAULT_JORNADA_RULES } from "../src/lib/jornada/default-rules";
 import { DEFAULT_UNIMED_EXCLUSION_REASONS } from "../src/lib/unimed/defaults";
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({ adapter: createPrismaAdapter() });
 const LEGACY_JORNADA_RULE_NAMES = [
   "Jornada Parcial 04:00",
   "Jornada de 04:20",
