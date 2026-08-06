@@ -73,7 +73,7 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: Deploy database migrations
-        run: npm run db:deploy
+        run: npm run prisma:generate && npm run db:deploy
 
       - name: Run quality checks
         run: npm run quality
