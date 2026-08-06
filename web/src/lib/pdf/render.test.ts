@@ -68,7 +68,12 @@ describe("PDF page rendering", () => {
     });
 
     expect(output).not.toBeNull();
-    const metadata = await sharp(output!).metadata();
+
+    if (!output) {
+      throw new Error("O renderizador não produziu a imagem esperada.");
+    }
+
+    const metadata = await sharp(output).metadata();
     expect(metadata.format).toBe("jpeg");
     expect(metadata.width).toBe(400);
     expect(metadata.height).toBe(200);

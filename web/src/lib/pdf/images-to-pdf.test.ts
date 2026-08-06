@@ -18,7 +18,11 @@ afterEach(async () => {
 });
 
 async function createImage(storageKey: string, width: number, height: number) {
-  const filePath = path.join(temporaryDirectory!, storageKey);
+  if (!temporaryDirectory) {
+    throw new Error("O diretório temporário do teste não foi inicializado.");
+  }
+
+  const filePath = path.join(temporaryDirectory, storageKey);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(
     filePath,

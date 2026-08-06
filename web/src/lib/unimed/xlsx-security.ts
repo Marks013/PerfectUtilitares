@@ -225,10 +225,15 @@ export function validateUnimedXlsxArchive(bytes: Buffer) {
   }
 
   spans.sort((left, right) => left.start - right.start);
-  for (let index = 1; index < spans.length; index += 1) {
-    if (spans[index]!.start < spans[index - 1]!.end) {
+
+  let previousSpan: (typeof spans)[number] | undefined;
+
+  for (const currentSpan of spans) {
+    if (previousSpan && currentSpan.start < previousSpan.end) {
       invalid("há regiões internas sobrepostas");
     }
+
+    previousSpan = currentSpan;
   }
 
   return {

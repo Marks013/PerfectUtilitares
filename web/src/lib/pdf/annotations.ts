@@ -124,9 +124,11 @@ export async function applyPdfAnnotations({
 
     if (annotation.type !== "DRAW") continue;
 
-    for (let index = 1; index < annotation.points.length; index += 1) {
-      const start = annotation.points[index - 1]!;
-      const end = annotation.points[index]!;
+    let start = annotation.points[0];
+
+    for (const end of annotation.points.slice(1)) {
+      if (!start) break;
+
       page.drawLine({
         color,
         end: displayPointToPdf(end, visibleBox, rotation),
@@ -134,6 +136,8 @@ export async function applyPdfAnnotations({
         start: displayPointToPdf(start, visibleBox, rotation),
         thickness: annotation.width,
       });
+
+      start = end;
     }
   }
 
