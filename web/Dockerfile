@@ -36,7 +36,9 @@ RUN --mount=type=cache,id=perfectutilitares-next-cache,target=/app/.next/cache,s
     if [ -f /run/secrets/sentry_auth_token ]; then \
       export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; \
     fi; \
-    npm run setup:env && npm run sync:check && npm run sync:pdfjs && npm exec -- next build && npm run postbuild
+    npm run setup:env && npm run sync:check && npm run sync:pdfjs && npm exec -- next build && npm run postbuild && \
+    find /app/.next/standalone -maxdepth 1 -type f \
+      \( -name '.env' -o -name '.env.*' \) -delete
 
 FROM base AS migrator
 ENV NODE_ENV=production
