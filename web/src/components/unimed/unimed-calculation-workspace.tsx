@@ -189,6 +189,12 @@ function formatMoneyResult(value: string) {
   return Number.isFinite(parsed) ? `R$ ${moneyFormatter.format(parsed)}` : "—";
 }
 
+function formatCompetencyResult(value: string | null) {
+  if (!value) return "—";
+  const [year, month] = value.split("-");
+  return year && month ? `${month}/${year}` : value;
+}
+
 function formatCpf(value: string) {
   const digits = value.replace(/\D/g, "").slice(0, 11);
   return digits
@@ -1747,57 +1753,58 @@ export function UnimedCalculationWorkspace({
                 </div>
               ) : result ? (
                 <div>
-                  <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                    <ResultMetric
-                      label="Valor mensal da fatura"
-                      value={formatMoneyResult(result.invoiceTotal)}
-                    />
-                    <ResultMetric
-                      label={`Valor utilizado (${result.usedDays} dias)`}
-                      value={formatMoneyResult(result.usedProrata)}
-                    />
-                    <ResultMetric
-                      label={`Estorno proporcional (${result.refundDays} dias)`}
-                      value={formatMoneyResult(
-                        result.currentCompetencyRefund,
-                      )}
-                    />
-                    {result.cutoffApplied ? (
-                      <ResultMetric
-                        label="Estorno integral da próxima competência"
-                        value={formatMoneyResult(result.nextCompetencyRefund)}
-                      />
-                    ) : null}
-                    <ResultMetric
-                      label="Total de valores estornados"
-                      value={formatMoneyResult(result.invoiceRefund)}
-                      emphasis
-                    />
-                    <ResultMetric
-                      label="Desconto mensal do funcionário"
-                      value={formatMoneyResult(result.payrollCharge)}
-                    />
+                  <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                     <ResultMetric
                       label="Estorno ao funcionário"
                       value={formatMoneyResult(result.employeeFullRefund)}
+                      emphasis
                     />
                     <ResultMetric
                       label="Estorno à empresa"
                       value={formatMoneyResult(result.companyFullRefund)}
+                      emphasis
                     />
                   </dl>
-                  <p className="mt-3 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3 text-xs leading-5 text-[color:var(--app-muted)]">
-                    {result.cutoffApplied
-                      ? "Fechamento do dia 25 aplicado: o total estornado soma o proporcional dos dias não utilizados na competência atual e uma mensalidade integral da competência seguinte, que já estava fechada."
-                      : "Sem competência adicional: o total estornado corresponde somente aos dias não utilizados na competência atual."}
-                  </p>
+                  <div className="mt-4 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-4">
+                    <p className="text-xs font-black tracking-wide text-[color:var(--app-muted)] uppercase">
+                      Memória do cálculo
+                    </p>
+                    <dl className="mt-3 space-y-2 text-sm">
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-[color:var(--app-muted)]">
+                          Proporcional de {formatCompetencyResult(result.currentCompetency)} ({result.refundDays} dias)
+                        </dt>
+                        <dd className="font-black text-[color:var(--app-fg)]">
+                          {formatMoneyResult(result.currentCompetencyRefund)}
+                        </dd>
+                      </div>
+                      {result.cutoffApplied && result.nextCompetency ? (
+                        <div className="flex justify-between gap-3">
+                          <dt className="text-[color:var(--app-muted)]">
+                            Mensalidade de {formatCompetencyResult(result.nextCompetency)} ({result.nextCompetencyDays} dias)
+                          </dt>
+                          <dd className="font-black text-[color:var(--app-fg)]">
+                            {formatMoneyResult(result.nextCompetencyRefund)}
+                          </dd>
+                        </div>
+                      ) : null}
+                      <div className="flex justify-between gap-3 border-t border-[color:var(--app-border)] pt-2">
+                        <dt className="font-black text-[color:var(--app-fg)]">
+                          Total estornado em fatura ({result.totalRefundDays} dias)
+                        </dt>
+                        <dd className="font-black text-[color:var(--app-fg)]">
+                          {formatMoneyResult(result.invoiceRefund)}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
                   <div className="mt-4 grid grid-cols-2 gap-3 text-center">
                     <div className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
                       <span className="block text-xl font-black text-[color:var(--app-fg)]">
-                        {result.refundDays}
+                        {result.totalRefundDays}
                       </span>
                       <span className="text-xs text-[color:var(--app-muted)]">
-                        dias de estorno
+                        dias devolvidos em fatura
                       </span>
                     </div>
                     <div className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">

@@ -1,0 +1,7 @@
+1. Revogue a senha de aplicativo do Gmail que foi publicada na conversa.
+2. Gere uma nova senha de aplicativo.
+3. Não coloque a senha no código, no Git ou em comandos visíveis.
+4. Use configurar_smtp.py, que solicita a senha de forma oculta.
+5. Faça backup do banco antes da migração.
+6. Não execute docker compose down -v.
+7. Node, npm e Prisma não serão atualizados por este pacote.
