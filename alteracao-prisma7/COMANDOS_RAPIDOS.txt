@@ -1,8 +1,0 @@
-cd /home/ubuntu/PerfectUtilitares
-
-git switch -c chore/prisma7-adapter-pg || git switch chore/prisma7-adapter-pg
-python3 alteracao-prisma7/aplicar_prisma7.py . --check
-python3 alteracao-prisma7/aplicar_prisma7.py . --apply
-bash alteracao-prisma7/atualizar_lock_prisma7.sh .
-bash alteracao-prisma7/validar_prisma7.sh . --build
-bash alteracao-prisma7/validar_runtime_prisma7.sh .
