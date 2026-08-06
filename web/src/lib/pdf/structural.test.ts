@@ -28,7 +28,11 @@ async function createInput(
   const document = await PDFDocument.create();
   sizes.forEach(([width, height]) => document.addPage([width, height]));
   const bytes = await document.save();
-  const filePath = path.join(temporaryDirectory!, storageKey);
+  if (!temporaryDirectory) {
+    throw new Error("O diretório temporário do teste não foi inicializado.");
+  }
+
+  const filePath = path.join(temporaryDirectory, storageKey);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, bytes);
 }
