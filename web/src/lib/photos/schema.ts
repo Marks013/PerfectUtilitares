@@ -85,7 +85,6 @@ export const cropAreaSchema = z.object({
     .positive("A altura do recorte deve ser maior que zero."),
 });
 
-type PhotoFormat = z.infer<typeof photoFormatSchema>;
 export type PhotoOutputFormat = z.infer<typeof photoOutputFormatSchema>;
 export type PhotoSettingsInput = z.input<typeof photoSettingsSchema>;
 export type PhotoSettings = z.infer<typeof photoSettingsSchema>;

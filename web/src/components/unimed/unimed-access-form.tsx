@@ -2,7 +2,7 @@
 
 import { LockKeyhole, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { type FormEvent, useState } from "react";
 
 type UnimedAccessFormProps = {
   nextPath: string;
