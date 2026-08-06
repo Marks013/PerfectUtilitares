@@ -195,6 +195,5 @@ export const pdfJobUpdateSchema = z.object({
   annotations: pdfAnnotationsSchema.default([]),
 });
 
-type PdfOperationValue = z.infer<typeof pdfOperationSchema>;
 export type PdfManifest = z.infer<typeof pdfManifestSchema>;
 export type PdfAnnotation = z.infer<typeof pdfAnnotationSchema>;

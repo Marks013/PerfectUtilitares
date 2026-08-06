@@ -754,7 +754,7 @@ export function parseAddressRows(
   };
   const rows: ParsedAddress[] = [];
   const diagnostics: UnimedImportDiagnostic[] = [];
-  let rejectedCount = 0;
+  const rejectedCount = 0;
   let skippedCount = 0;
 
   for (

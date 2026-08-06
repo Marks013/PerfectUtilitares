@@ -60,7 +60,7 @@ vi.mock("@/lib/unimed/documents", () => ({
 import {
   getUnimedDocumentPdf,
   queueUnimedDocumentPdf,
-  UnimedDocumentPdfError,
+  type UnimedDocumentPdfError,
 } from "@/lib/unimed/document-pdf";
 
 const tenantId = "tenant-test-123";
