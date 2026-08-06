@@ -68,7 +68,11 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             <ThemeToggle />
             {activeSession ? (
               <form action={logoutAction}>
-                <button className="app-icon-button app-logout-button" title="Sair">
+                <button
+                  type="submit"
+                  className="app-icon-button app-logout-button"
+                  title="Sair"
+                >
                   <LogOut className="size-4" aria-hidden="true" />
                   <span className="sr-only">Sair</span>
                 </button>

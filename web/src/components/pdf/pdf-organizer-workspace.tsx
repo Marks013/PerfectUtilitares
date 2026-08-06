@@ -402,8 +402,9 @@ function SortablePage({
       </footer>
 
       {selected ? (
-        <span className="pdf-page-card__selected" aria-label="Selecionada">
+        <span className="pdf-page-card__selected">
           <Check className="size-4" aria-hidden="true" />
+          <span className="sr-only">Selecionada</span>
         </span>
       ) : null}
 

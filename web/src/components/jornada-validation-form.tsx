@@ -1090,6 +1090,7 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
                 Ativar interjornada
                 <span
                   className="jornada-help-icon"
+                  role="img"
                   aria-label={INTERJORNADA_HELP_TEXT}
                   title={INTERJORNADA_HELP_TEXT}
                 >
