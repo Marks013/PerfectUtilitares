@@ -10,7 +10,6 @@ type UnimedAccessFormProps = {
 
 export function UnimedAccessForm({ nextPath }: UnimedAccessFormProps) {
   const router = useRouter();
-  const [operatorName, setOperatorName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -24,7 +23,7 @@ export function UnimedAccessForm({ nextPath }: UnimedAccessFormProps) {
       const response = await fetch("/api/unimed/access/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operatorName, password }),
+        body: JSON.stringify({ password }),
       });
       const payload = (await response.json()) as {
         error?: { message?: string };
@@ -55,32 +54,18 @@ export function UnimedAccessForm({ nextPath }: UnimedAccessFormProps) {
             Acesso Unimed
           </h1>
           <p className="mt-1 text-sm text-[color:var(--app-muted)]">
-            Digite a senha do módulo. O nível padrão ou administrador será
-            identificado automaticamente.
+            Digite a senha do módulo. O acesso será identificado e
+            registrado automaticamente.
           </p>
         </div>
       </div>
 
       <form onSubmit={unlock} className="space-y-4">
         <label className="block text-sm font-bold text-[color:var(--app-fg)]">
-          Seu nome
-          <input
-            autoComplete="name"
-            autoFocus
-            className="app-input mt-2 w-full"
-            maxLength={80}
-            minLength={2}
-            onChange={(event) => setOperatorName(event.target.value)}
-            placeholder="Nome do operador"
-            required
-            type="text"
-            value={operatorName}
-          />
-        </label>
-        <label className="block text-sm font-bold text-[color:var(--app-fg)]">
           Senha
           <input
             autoComplete="current-password"
+            autoFocus
             className="app-input mt-2 w-full"
             maxLength={72}
             onChange={(event) => setPassword(event.target.value)}

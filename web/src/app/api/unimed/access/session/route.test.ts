@@ -46,7 +46,7 @@ beforeEach(() => {
     value: "opaque.signed",
     expiresAt: new Date(Date.now() + 60_000),
     maxAgeSeconds: 60,
-    operatorName: "Operador Teste",
+    operatorName: "Administrador",
     role: "ADMIN",
   });
 });
@@ -61,7 +61,6 @@ describe("Unimed access session API", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          operatorName: "Operador Teste",
           password: "secret",
         }),
       }),
@@ -70,11 +69,40 @@ describe("Unimed access session API", () => {
     expect(response.status).toBe(200);
     expect(mocks.createSession).toHaveBeenCalledWith(
       "ADMIN",
-      "Operador Teste",
+      "Administrador",
     );
     expect(response.headers.get("set-cookie")).toMatch(/HttpOnly/i);
     expect(response.headers.get("set-cookie")).toMatch(/SameSite=strict/i);
     expect(response.headers.get("set-cookie")).toMatch(/Secure/i);
+  });
+
+  it("uses the fixed standard operator name for the standard password", async () => {
+    mocks.compare.mockImplementation(async (_password: string, hash: string) =>
+      hash.endsWith("s"),
+    );
+    mocks.createSession.mockResolvedValueOnce({
+      value: "opaque.standard",
+      expiresAt: new Date(Date.now() + 60_000),
+      maxAgeSeconds: 60,
+      operatorName: "Dp Planalto",
+      role: "STANDARD",
+    });
+
+    const response = await POST(
+      new Request("https://example.test/api/unimed/access/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: "standard-secret",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      "STANDARD",
+      "Dp Planalto",
+    );
   });
 
   it("rejects an incorrect password without creating a session", async () => {
@@ -84,7 +112,6 @@ describe("Unimed access session API", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          operatorName: "Operador Teste",
           password: "wrong",
         }),
       }),
