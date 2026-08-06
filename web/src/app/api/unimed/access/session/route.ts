@@ -17,14 +17,13 @@ import {
   unimedSessionCookieOptions,
 } from "@/lib/unimed/module-session";
 
+const OPERATOR_NAMES = {
+  STANDARD: "Dp Planalto",
+  ADMIN: "Administrador",
+} as const;
+
 const unlockSchema = z
   .object({
-    operatorName: z
-      .string()
-      .trim()
-      .min(2)
-      .max(80)
-      .regex(/^[\p{L}\p{M}][\p{L}\p{M}\s.'-]*$/u),
     password: z.string().min(1).max(72),
   })
   .strict();
@@ -87,7 +86,7 @@ export async function POST(request: Request) {
     return jsonError(
       400,
       "UNIMED_ACCESS_IDENTIFICATION_INVALID",
-      "Informe seu nome e a senha do módulo.",
+      "Informe a senha do módulo.",
     );
   }
   if (Buffer.byteLength(parsed.data.password, "utf8") > 72) {
@@ -120,10 +119,12 @@ export async function POST(request: Request) {
     );
   }
 
+  const operatorName = OPERATOR_NAMES[role];
+
   try {
     const session = await createUnimedModuleSession(
       role,
-      parsed.data.operatorName,
+      operatorName,
     );
     const response = NextResponse.json({
       access: {
