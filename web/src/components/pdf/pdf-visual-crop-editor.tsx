@@ -314,11 +314,9 @@ export function PdfVisualCropEditor({
               height: `${rect.height * 100}%`,
             }}
           />
-          <span
+          <fieldset
             className="pdf-visual-crop__selection"
-            role="group"
-            tabIndex={disabled ? -1 : 0}
-            aria-label="Área mantida. Arraste para mover; use as setas para ajustar."
+            disabled={disabled}
             style={{
               left: `${rect.x * 100}%`,
               top: `${rect.y * 100}%`,
@@ -329,8 +327,15 @@ export function PdfVisualCropEditor({
             onPointerMove={moveInteraction}
             onPointerUp={endInteraction}
             onPointerCancel={endInteraction}
-            onKeyDown={(event) => handleKeyboard(event, "move")}
           >
+            <legend className="sr-only">Área mantida</legend>
+            <button
+              type="button"
+              className="pdf-visual-crop__move"
+              disabled={disabled}
+              aria-label="Mover área mantida com as setas"
+              onKeyDown={(event) => handleKeyboard(event, "move")}
+            />
             {HANDLES.map((handle) => (
               <button
                 key={handle}
@@ -346,7 +351,7 @@ export function PdfVisualCropEditor({
                 onKeyDown={(event) => handleKeyboard(event, handle)}
               />
             ))}
-          </span>
+          </fieldset>
         </div>
         <small>Arraste sobre a página para criar a área; mova ou use as alças para ajustar.</small>
       </div>

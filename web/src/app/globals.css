@@ -3559,17 +3559,33 @@ a.pdf-tool-item:hover {
   position: absolute;
   z-index: 3;
   display: block;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
   outline: none;
   cursor: move;
   touch-action: none;
 }
 
-.pdf-visual-crop__selection:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-action-blue) 70%, white);
+.pdf-visual-crop__move {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: move;
+}
+
+.pdf-visual-crop__move:focus-visible {
+  outline: 3px solid var(--app-action-blue);
+  outline-offset: 1px;
 }
 
 .pdf-visual-crop__handle {
   position: absolute;
+  z-index: 2;
   width: 1.5rem;
   min-height: 1.5rem;
   height: 1.5rem;
@@ -3827,10 +3843,35 @@ a.pdf-tool-item:hover {
 }
 
 .pdf-page-card__toolbar {
+  position: relative;
+  z-index: 2;
   justify-content: space-between;
   color: var(--app-muted);
   font-size: 0.68rem;
   font-weight: 850;
+}
+
+.pdf-page-card__select {
+  position: absolute;
+  z-index: 1;
+  top: 2.6rem;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border: 0;
+  border-radius: 0 0 8px 8px;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.pdf-page-card__select:focus-visible {
+  outline: 3px solid var(--app-action-blue);
+  outline-offset: -3px;
+}
+
+.pdf-page-card__select:disabled {
+  cursor: default;
 }
 
 .pdf-page-card__drag,

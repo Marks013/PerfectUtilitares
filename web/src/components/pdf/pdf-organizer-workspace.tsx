@@ -359,7 +359,6 @@ function SortablePage({
         transform: CSS.Transform.toString(transform),
         transition,
       }}
-      onClick={(event) => onSelect(event, page.id)}
     >
       <div className="pdf-page-card__toolbar">
         <button
@@ -389,6 +388,14 @@ function SortablePage({
         </button>
       </div>
 
+      <button
+        type="button"
+        className="pdf-page-card__select"
+        aria-label={`Selecionar página ${index + 1}: ${page.fileName}`}
+        aria-pressed={selected}
+        disabled={locked}
+        onClick={(event) => onSelect(event, page.id)}
+      />
       <PdfPageThumbnail
         document={document}
         pageNumber={page.sourcePage}
@@ -412,7 +419,6 @@ function SortablePage({
         <div
           className="pdf-page-menu"
           role="menu"
-          onClick={(event) => event.stopPropagation()}
         >
           <button type="button" onClick={() => onRotate(page.id)}>
             <RotateCw className="size-4" aria-hidden="true" />
