@@ -2970,10 +2970,14 @@ a.pdf-tool-item:hover {
 .pdf-quality-control {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  min-inline-size: 0;
   gap: 0.45rem;
+  margin: 0;
+  border: 0;
+  padding: 0;
 }
 
-.pdf-quality-control button {
+.pdf-quality-control label {
   display: grid;
   min-width: 0;
   gap: 0.18rem;
@@ -2982,17 +2986,25 @@ a.pdf-tool-item:hover {
   background: var(--app-card);
   padding: 0.65rem 0.7rem;
   text-align: left;
+  cursor: pointer;
 }
 
-.pdf-quality-control button[data-active="true"] {
+.pdf-quality-control label[data-active="true"] {
   border-color: var(--app-teal);
   background: color-mix(in srgb, var(--app-teal) 11%, var(--app-card));
   box-shadow: inset 0 0 0 1px var(--app-teal);
 }
 
-.pdf-quality-control button:disabled {
+.pdf-quality-control label[data-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.pdf-quality-control label:focus-within,
+.pdf-compression-methods label:focus-within,
+.pdf-color-mode-control label:focus-within {
+  outline: 2px solid var(--app-action-blue);
+  outline-offset: 2px;
 }
 
 .pdf-compress-settings > .pdf-compress-settings__heading {
@@ -3126,8 +3138,8 @@ a.pdf-tool-item:hover {
   gap: 0.4rem;
 }
 
-.pdf-compression-methods button,
-.pdf-color-mode-control button {
+.pdf-compression-methods label,
+.pdf-color-mode-control label {
   display: grid;
   min-width: 0;
   gap: 0.16rem;
@@ -3137,21 +3149,22 @@ a.pdf-tool-item:hover {
   background: var(--app-card);
   padding: 0.6rem;
   text-align: left;
+  cursor: pointer;
 }
 
-.pdf-compression-methods button[data-active="true"],
-.pdf-color-mode-control button[data-active="true"] {
+.pdf-compression-methods label[data-active="true"],
+.pdf-color-mode-control label[data-active="true"] {
   border-color: var(--app-teal);
   background: color-mix(in srgb, var(--app-teal) 11%, var(--app-card));
   box-shadow: inset 0 0 0 1px var(--app-teal);
 }
 
-.pdf-color-mode-control button {
+.pdf-color-mode-control label {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.55rem;
 }
 
-.pdf-color-mode-control button > span:last-child {
+.pdf-color-mode-control label > span:last-child {
   display: grid;
   min-width: 0;
   gap: 0.1rem;
