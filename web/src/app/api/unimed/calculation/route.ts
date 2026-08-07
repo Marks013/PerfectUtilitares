@@ -274,9 +274,20 @@ export async function POST(request: Request) {
     const dependentById = new Map(
       beneficiary.dependents.map((dependent) => [dependent.id, dependent]),
     );
-    const selectedDependents = parsed.data.dependentIds.map(
-      (dependentId) => dependentById.get(dependentId)!,
+    const selectedDependents = parsed.data.dependentIds.flatMap(
+      (dependentId) => {
+        const dependent = dependentById.get(dependentId);
+        return dependent ? [dependent] : [];
+      },
     );
+
+    if (selectedDependents.length !== parsed.data.dependentIds.length) {
+      return jsonError(
+        422,
+        "UNIMED_DEPENDENT_NOT_LINKED",
+        "Um dos dependentes não pertence ao titular selecionado.",
+      );
+    }
     if (!beneficiary.inclusionDate) {
       return jsonError(
         422,

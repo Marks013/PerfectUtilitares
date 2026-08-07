@@ -117,7 +117,15 @@ export async function buildStructuralPdf({
     );
 
     pages.forEach((page, index) => {
-      const instruction = instructions[index]!;
+      const instruction = instructions[index];
+
+      if (!instruction) {
+        throw new PdfStructureError(
+          "PAGE_COPY_FAILED",
+          "Uma página copiada não possui instrução correspondente.",
+        );
+      }
+
       applyPageChanges(page, instruction);
       copiedPages.set(instruction.id, page);
     });
@@ -199,13 +207,30 @@ export async function splitStructuralPdf({
       const [page] = await outputDocument.copyPages(sourceDocument, [
         instruction.sourcePage - 1,
       ]);
-      applyPageChanges(page!, instruction);
-      outputDocument.addPage(page!);
+
+      if (!page) {
+        throw new PdfStructureError(
+          "PAGE_COPY_FAILED",
+          "Uma das páginas não pôde ser copiada para o documento dividido.",
+        );
+      }
+
+      applyPageChanges(page, instruction);
+      outputDocument.addPage(page);
       const bytes = await outputDocument.save({
         addDefaultPage: false,
         useObjectStreams: true,
       });
-      const outputIndex = outputIndexById.get(instruction.id)!;
+
+      const outputIndex = outputIndexById.get(instruction.id);
+
+      if (outputIndex === undefined) {
+        throw new PdfStructureError(
+          "PAGE_COPY_FAILED",
+          "Não foi possível determinar a ordem da página dividida.",
+        );
+      }
+
       await onOutput(instruction, bytes, outputIndex);
 
       completedPages += 1;

@@ -761,7 +761,13 @@ export function PdfEditorWorkspace({
           });
         },
       });
-      triggerDownload(`/api/pdf/jobs/${jobId}/outputs/${outputs[0]!.id}`);
+      const firstOutput = outputs[0];
+
+      if (!firstOutput) {
+        throw new Error("O processamento terminou sem gerar um arquivo.");
+      }
+
+      triggerDownload(`/api/pdf/jobs/${jobId}/outputs/${firstOutput.id}`);
     } catch (caught) {
       if (isAbortError(caught)) return;
       setError(
@@ -1117,11 +1123,14 @@ export function PdfEditorWorkspace({
               <button
                 type="button"
                 className="pdf-secondary-action"
-                onClick={() =>
+                onClick={() => {
+                  const output = processing.output;
+                  if (!output) return;
+
                   triggerDownload(
-                    `/api/pdf/jobs/${jobId}/outputs/${processing.output!.id}`,
-                  )
-                }
+                    `/api/pdf/jobs/${jobId}/outputs/${output.id}`,
+                  );
+                }}
               >
                 <Download className="size-4" aria-hidden="true" />
                 Baixar novamente

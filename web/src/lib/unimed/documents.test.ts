@@ -87,6 +87,16 @@ async function syntheticTemplate(fields = rn561Fields) {
   return zip.generateAsync({ type: "nodebuffer" });
 }
 
+function requireZipFile(zip: JSZip, fileName: string) {
+  const file = zip.file(fileName);
+
+  if (!file) {
+    throw new Error(`Arquivo esperado não encontrado no ZIP: ${fileName}`);
+  }
+
+  return file;
+}
+
 function beneficiary(
   overrides: Partial<Parameters<typeof buildUnimedDocumentValues>[0]> = {},
 ) {
@@ -133,7 +143,7 @@ describe("Unimed DOCX documents", () => {
       ),
     );
     const zip = await JSZip.loadAsync(template, { checkCRC32: true });
-    const documentXml = await zip.file("word/document.xml")!.async("string");
+    const documentXml = await requireZipFile(zip, "word/document.xml").async("string");
     const dateParagraph = [
       ...documentXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g),
     ].find((match) => match[0].includes("<w:t>DATA</w:t>"))?.[0];
@@ -248,12 +258,11 @@ describe("Unimed DOCX documents", () => {
 
     const output = await renderUnimedDocumentTemplate(input, "RN561", values);
     const zip = await JSZip.loadAsync(output, { checkCRC32: true });
-    const documentXml = await zip.file("word/document.xml")!.async("string");
-    const settingsXml = await zip.file("word/settings.xml")!.async("string");
-    const relationships = await zip
-      .file("word/_rels/settings.xml.rels")!
+    const documentXml = await requireZipFile(zip, "word/document.xml").async("string");
+    const settingsXml = await requireZipFile(zip, "word/settings.xml").async("string");
+    const relationships = await requireZipFile(zip, "word/_rels/settings.xml.rels")
       .async("string");
-    const image = await zip.file("word/media/image1.png")!.async("uint8array");
+    const image = await requireZipFile(zip, "word/media/image1.png").async("uint8array");
 
     expect(documentXml).not.toContain("OLD_");
     expect(documentXml).toContain("Pessoa &amp; Teste");
@@ -263,7 +272,7 @@ describe("Unimed DOCX documents", () => {
     expect(relationships).toContain("theme.xml");
     expect(relationships).not.toContain("mailMergeSource");
     expect([...image]).toEqual([1, 2, 3, 4, 5]);
-    expect(await zip.file("word/header1.xml")!.async("string")).toBe(
+    expect(await requireZipFile(zip, "word/header1.xml").async("string")).toBe(
       "<w:hdr>LAYOUT_HEADER</w:hdr>",
     );
   });
@@ -302,9 +311,13 @@ describe("Unimed DOCX documents", () => {
     "renders both verified real templates only in memory",
     async () => {
       const previousTemplateDir = process.env.UNIMED_TEMPLATE_DIR;
-      process.env.UNIMED_TEMPLATE_DIR = path.resolve(
-        process.env.UNIMED_REAL_TEMPLATE_DIR!,
-      );
+      const realTemplateDir = process.env.UNIMED_REAL_TEMPLATE_DIR;
+
+      if (!realTemplateDir) {
+        throw new Error("UNIMED_REAL_TEMPLATE_DIR não foi definido.");
+      }
+
+      process.env.UNIMED_TEMPLATE_DIR = path.resolve(realTemplateDir);
       mocks.findFirst.mockResolvedValue(beneficiary());
 
       try {
@@ -343,14 +356,11 @@ describe("Unimed DOCX documents", () => {
           const zip = await JSZip.loadAsync(generated.bytes, {
             checkCRC32: true,
           });
-          const sourceDocumentXml = await sourceZip
-            .file("word/document.xml")!
+          const sourceDocumentXml = await requireZipFile(sourceZip, "word/document.xml")
             .async("string");
-          const documentXml = await zip
-            .file("word/document.xml")!
+          const documentXml = await requireZipFile(zip, "word/document.xml")
             .async("string");
-          const settingsXml = await zip
-            .file("word/settings.xml")!
+          const settingsXml = await requireZipFile(zip, "word/settings.xml")
             .async("string");
           const cpfValues = [
             ...documentXml.matchAll(/\d{3}\.\d{3}\.\d{3}-\d{2}/g),
@@ -384,8 +394,8 @@ describe("Unimed DOCX documents", () => {
             ),
           ).toEqual(preservedParts);
           for (const partName of preservedParts) {
-            expect(await zip.file(partName)!.async("uint8array")).toEqual(
-              await sourceZip.file(partName)!.async("uint8array"),
+            expect(await requireZipFile(zip, partName).async("uint8array")).toEqual(
+              await requireZipFile(sourceZip, partName).async("uint8array"),
             );
           }
         }

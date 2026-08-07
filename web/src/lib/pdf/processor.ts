@@ -78,6 +78,32 @@ function parseManifest(options: unknown): PdfManifest {
   return parsed.data;
 }
 
+function requireFirstInput<T>(inputArtifacts: readonly T[]): T {
+  const firstInput = inputArtifacts[0];
+
+  if (firstInput === undefined) {
+    throw new PdfProcessingError(
+      "INPUT_REQUIRED",
+      "Adicione ao menos um PDF antes de processar.",
+    );
+  }
+
+  return firstInput;
+}
+
+function requireStructuralManifest(
+  manifest: PdfManifest | null,
+): PdfManifest {
+  if (!manifest) {
+    throw new PdfProcessingError(
+      "INVALID_MANIFEST",
+      "A organização salva não pôde ser processada.",
+    );
+  }
+
+  return manifest;
+}
+
 function parseAnnotations(options: unknown) {
   const annotations =
     options && typeof options === "object" && "annotations" in options
@@ -271,7 +297,7 @@ export async function processPdfJob(jobId: string) {
         pageSize: options.pageSize,
         onProgress: (progress) => updateProgress(job.id, progress),
       });
-      const firstInput = inputArtifacts[0]!;
+      const firstInput = requireFirstInput(inputArtifacts);
       const output = await writePdfOutput(
         job.id,
         `${firstInput.originalName.replace(/\.(?:jpe?g|png|webp)$/i, "") || "imagens"}.pdf`,
@@ -387,14 +413,14 @@ export async function processPdfJob(jobId: string) {
     if (job.operation === "PDF_TO_JPG") {
       const options = pdfToJpgOptionsSchema.parse(job.options ?? {});
       const outputs: Array<Awaited<ReturnType<typeof writeBinaryOutput>>> = [];
-      const firstInput = inputArtifacts[0]!;
+      const firstInput = requireFirstInput(inputArtifacts);
       const baseName =
         firstInput.originalName.replace(/\.pdf$/i, "") || "documento";
 
       await renderPdfPagesToJpeg({
         dpi: options.dpi,
         inputs: artifactsById,
-        manifest: manifest!,
+        manifest: requireStructuralManifest(manifest),
         quality: options.quality,
         onProgress: (progress) => updateProgress(job.id, progress),
         async onOutput(_instruction, bytes, outputIndex) {
@@ -444,11 +470,11 @@ export async function processPdfJob(jobId: string) {
 
     if (job.operation === "SPLIT") {
       const outputs: Array<Awaited<ReturnType<typeof writePdfOutput>>> = [];
-      const firstInput = inputArtifacts[0]!;
+      const firstInput = requireFirstInput(inputArtifacts);
 
       await splitStructuralPdf({
         inputs: artifactsById,
-        manifest: manifest!,
+        manifest: requireStructuralManifest(manifest),
         onProgress: (progress) => updateProgress(job.id, progress),
         async onOutput(_instruction, bytes, outputIndex) {
           const output = await writePdfOutput(
@@ -496,18 +522,18 @@ export async function processPdfJob(jobId: string) {
 
     const structuralBytes = await buildStructuralPdf({
       inputs: artifactsById,
-      manifest: manifest!,
+      manifest: requireStructuralManifest(manifest),
       onProgress: (progress) => updateProgress(job.id, progress),
     });
     const outputBytes =
       job.operation === "EDIT" || job.operation === "ANNOTATE"
         ? await applyPdfAnnotations({
             annotations: parseAnnotations(job.options),
-            manifest: manifest!,
+            manifest: requireStructuralManifest(manifest),
             pdfBytes: structuralBytes,
           })
         : structuralBytes;
-    const firstInput = inputArtifacts[0]!;
+    const firstInput = requireFirstInput(inputArtifacts);
     const output = await writePdfOutput(
       job.id,
       createOutputName(firstInput.originalName, job.operation),
@@ -523,7 +549,7 @@ export async function processPdfJob(jobId: string) {
           kind: "OUTPUT",
           mimeType: "application/pdf",
           originalName: output.originalName,
-          pageCount: manifest!.pages.length,
+          pageCount: requireStructuralManifest(manifest).pages.length,
           sha256: output.sha256,
           sizeBytes: output.sizeBytes,
           storageKey: output.storageKey,

@@ -311,12 +311,11 @@ export function reconcileUnimedSources(
       .map(([sourceKey, codes]) => [sourceKey, [...codes.values()][0]]),
   );
   const addonSourceKeys = new Set(
-    invoiceMatches
-      .filter(
-        ({ item, beneficiary }) =>
-          beneficiary && isFuneralAddonDescription(item.itemDescription),
-      )
-      .map(({ beneficiary }) => beneficiary!.sourceKey),
+    invoiceMatches.flatMap(({ item, beneficiary }) =>
+      beneficiary && isFuneralAddonDescription(item.itemDescription)
+        ? [beneficiary.sourceKey]
+        : [],
+    ),
   );
 
   const holderByDependentSourceKey = new Map<string, string>();
@@ -469,25 +468,29 @@ export function reconcileUnimedSources(
     };
   });
 
+  const branchesByCode = new Map<
+    string,
+    { code: string; cnpj: string }
+  >();
+
+  for (const beneficiary of beneficiaries) {
+    const companyCnpj = beneficiary.companyCnpj;
+    if (!companyCnpj) continue;
+
+    const branchCode = key(beneficiary.branchCode);
+    branchesByCode.set(branchCode, {
+      code: branchCode,
+      cnpj: companyCnpj,
+    });
+  }
+
   return {
     beneficiaries: reconciledBeneficiaries,
     invoiceItems: invoiceMatches.map(({ item, beneficiary }) => ({
       ...item,
       beneficiarySourceKey: beneficiary?.sourceKey ?? null,
     })),
-    branches: [
-      ...new Map(
-        beneficiaries
-          .filter((beneficiary) => beneficiary.companyCnpj)
-          .map((beneficiary) => [
-            key(beneficiary.branchCode),
-            {
-              code: key(beneficiary.branchCode),
-              cnpj: beneficiary.companyCnpj!,
-            },
-          ]),
-      ).values(),
-    ],
+    branches: [...branchesByCode.values()],
     warnings: {
       unmatchedInvoiceItems: unmatchedInvoiceDetails.length,
       unmatchedDependents: unmatchedDependentDetails.length,

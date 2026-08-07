@@ -155,6 +155,19 @@ function applyPageGeometry(page: PDFPage, geometry: PdfPageGeometry) {
   page.setRotation(degrees(geometry.rotation));
 }
 
+function readPixelByte(buffer: Buffer, index: number) {
+  const value = buffer[index];
+
+  if (value === undefined) {
+    throw new PdfToolError(
+      "PDF_VISUAL_INTEGRITY_FAILED",
+      "Os dados renderizados do PDF estão incompletos.",
+    );
+  }
+
+  return value;
+}
+
 async function assertVisualCompleteness({
   candidateBytes,
   colorMode,
@@ -185,16 +198,16 @@ async function assertVisualCompleteness({
 
   for (let index = 0; index < source.length; index += 3) {
     const sourceDistance = Math.max(
-      255 - source[index]!,
-      255 - source[index + 1]!,
-      255 - source[index + 2]!,
+      255 - readPixelByte(source, index),
+      255 - readPixelByte(source, index + 1),
+      255 - readPixelByte(source, index + 2),
     );
     if (sourceDistance < sourceContentThreshold) continue;
     sourceContentPixels += 1;
     const candidateDistance = Math.max(
-      255 - candidate[index]!,
-      255 - candidate[index + 1]!,
-      255 - candidate[index + 2]!,
+      255 - readPixelByte(candidate, index),
+      255 - readPixelByte(candidate, index + 1),
+      255 - readPixelByte(candidate, index + 2),
     );
     if (candidateDistance < 8) missingPixels += 1;
   }
@@ -231,10 +244,19 @@ async function assertVisualEquivalence(
     normalize(sourceBytes),
     normalize(candidateBytes),
   ]);
+  if (source.length !== candidate.length) {
+    throw new PdfToolError(
+      "PDF_STRUCTURAL_INTEGRITY_FAILED",
+      "A compactação alterou as dimensões dos dados renderizados.",
+    );
+  }
+
   let absoluteError = 0;
   let stronglyDifferent = 0;
   for (let index = 0; index < source.length; index += 1) {
-    const difference = Math.abs(source[index]! - candidate[index]!);
+    const difference = Math.abs(
+      readPixelByte(source, index) - readPixelByte(candidate, index),
+    );
     absoluteError += difference;
     if (difference > 16) stronglyDifferent += 1;
   }
@@ -475,14 +497,23 @@ async function copySmallestCandidate(
     })),
   );
   available.sort((left, right) => left.size - right.size);
+  const smallest = available[0];
+
+  if (!smallest) {
+    throw new PdfToolError(
+      "PDF_COMPRESSION_NO_VALID_CANDIDATE",
+      "Nenhuma estratégia produziu uma compactação íntegra.",
+    );
+  }
+
   const inputSize = (await stat(inputPath)).size;
-  if (available[0]!.size >= inputSize) {
+  if (smallest.size >= inputSize) {
     throw new PdfToolError(
       "PDF_COMPRESSION_NOT_EFFECTIVE",
       "O arquivo já está otimizado; nenhuma compactação íntegra ficou menor que o original.",
     );
   }
-  await copyFile(available[0]!.candidate, destinationPath);
+  await copyFile(smallest.candidate, destinationPath);
 }
 
 export async function compressPdfFile({
