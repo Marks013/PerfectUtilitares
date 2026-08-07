@@ -122,7 +122,9 @@ function fileKey(file: File) {
 
 function mergeFiles(current: File[], incoming: File[]) {
   const files = new Map(current.map((file) => [fileKey(file), file]));
-  incoming.forEach((file) => files.set(fileKey(file), file));
+  incoming.forEach((file) => {
+    files.set(fileKey(file), file);
+  });
   return [...files.values()];
 }
 
@@ -416,12 +418,12 @@ export function UnimedImportWorkspace() {
     const data = new FormData();
     data.append("year", match[1]);
     data.append("month", String(Number(match[2])));
-    beneficiaryFiles.forEach((file) =>
-      data.append("beneficiaryFiles", file, file.name),
-    );
-    invoiceFiles.forEach((file) =>
-      data.append("invoiceFiles", file, file.name),
-    );
+    beneficiaryFiles.forEach((file) => {
+      data.append("beneficiaryFiles", file, file.name);
+    });
+    invoiceFiles.forEach((file) => {
+      data.append("invoiceFiles", file, file.name);
+    });
     if (addressFiles[0]) {
       data.append("addressFile", addressFiles[0], addressFiles[0].name);
     }
@@ -1096,10 +1098,8 @@ export function UnimedImportWorkspace() {
                 </p>
                 <ul className="mt-2 max-h-48 space-y-1 overflow-auto">
                   {state.result.summary.warningDetails?.unmatchedInvoiceItems.map(
-                    (item, index) => (
-                      <li
-                        key={`${item.sourceKey}:${item.branchCode}:${item.category}:${item.itemDescription}:${index}`}
-                      >
+                    (item) => (
+                      <li key={item.sourceKey}>
                         {item.sourceKey} · {item.branchCode} ·{" "}
                         {item.beneficiaryName} · {item.itemDescription}
                       </li>
@@ -1116,8 +1116,8 @@ export function UnimedImportWorkspace() {
                 </summary>
                 <ul className="mt-2 space-y-1">
                   {state.result.summary.warningDetails?.unmatchedDependents.map(
-                    (item, index) => (
-                      <li key={`${item.sourceKey}:${item.branchCode}:${index}`}>
+                    (item) => (
+                      <li key={item.sourceKey}>
                         {item.branchCode} · {item.fullName} · sem referência de
                         titular na fatura
                       </li>
@@ -1134,10 +1134,8 @@ export function UnimedImportWorkspace() {
                 </summary>
                 <ul className="mt-2 space-y-1">
                   {state.result.summary.warningDetails?.ambiguousPlanCodes.map(
-                    (item, index) => (
-                      <li
-                        key={`${item.sourceKey}:${item.branchCode}:${item.planCodes.join("-")}:${index}`}
-                      >
+                    (item) => (
+                      <li key={item.sourceKey}>
                         {item.branchCode} · {item.fullName} ·{" "}
                         {item.planCodes.join(" / ")}
                       </li>

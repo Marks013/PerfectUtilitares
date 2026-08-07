@@ -105,9 +105,8 @@ function findZipEntry(zip: JSZip, candidates: string[]) {
 function extractTextNodes(xml: string) {
   const values: string[] = [];
   const textPattern = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = textPattern.exec(xml))) {
+  for (const match of xml.matchAll(textPattern)) {
     values.push(decodeXml(match[1] ?? ""));
   }
 
@@ -119,9 +118,8 @@ function parseSharedStrings(xml: string | null) {
 
   const strings: string[] = [];
   const itemPattern = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = itemPattern.exec(xml))) {
+  for (const match of xml.matchAll(itemPattern)) {
     strings.push(extractTextNodes(match[1] ?? ""));
   }
 
@@ -154,18 +152,16 @@ function parseCellValue(
 function parseSheetXml(xml: string, sharedStrings: string[]): unknown[][] {
   const rows: unknown[][] = [];
   const rowPattern = /<row\b([^>]*)>([\s\S]*?)<\/row>/g;
-  let rowMatch: RegExpExecArray | null;
 
-  while ((rowMatch = rowPattern.exec(xml))) {
+  for (const rowMatch of xml.matchAll(rowPattern)) {
     const rowNumber = Number(getAttribute(rowMatch[1] ?? "", "r"));
     const rowIndex = Number.isFinite(rowNumber) && rowNumber > 0
       ? rowNumber - 1
       : rows.length;
     const row: unknown[] = [];
     const cellPattern = /<c\b([^>]*)>([\s\S]*?)<\/c>/g;
-    let cellMatch: RegExpExecArray | null;
 
-    while ((cellMatch = cellPattern.exec(rowMatch[2] ?? ""))) {
+    for (const cellMatch of (rowMatch[2] ?? "").matchAll(cellPattern)) {
       const reference = getAttribute(cellMatch[1] ?? "", "r");
       const columnIndex = reference ? columnIndexFromReference(reference) : row.length;
       if (columnIndex >= 0) {
@@ -315,10 +311,9 @@ function cleanHorarioText(value: string) {
 function extrairHorariosDoTexto(value: string) {
   const horarios: string[] = [];
   const texto = cleanHorarioText(value);
-  let match: RegExpExecArray | null;
 
   TEXT_HOUR_PATTERN.lastIndex = 0;
-  while ((match = TEXT_HOUR_PATTERN.exec(texto))) {
+  for (const match of texto.matchAll(TEXT_HOUR_PATTERN)) {
     const hours = Number(match[1]);
     const minutes = Number(match[2]);
     if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
@@ -327,7 +322,7 @@ function extrairHorariosDoTexto(value: string) {
   }
 
   COMPACT_HOUR_PATTERN.lastIndex = 0;
-  while ((match = COMPACT_HOUR_PATTERN.exec(texto))) {
+  for (const match of texto.matchAll(COMPACT_HOUR_PATTERN)) {
     const compact = match[1].padStart(4, "0");
     const hours = Number(compact.slice(0, 2));
     const minutes = Number(compact.slice(2));

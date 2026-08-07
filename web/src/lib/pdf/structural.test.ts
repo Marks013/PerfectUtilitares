@@ -26,7 +26,9 @@ async function createInput(
   sizes: Array<[number, number]>,
 ) {
   const document = await PDFDocument.create();
-  sizes.forEach(([width, height]) => document.addPage([width, height]));
+  sizes.forEach(([width, height]) => {
+    document.addPage([width, height]);
+  });
   const bytes = await document.save();
   if (!temporaryDirectory) {
     throw new Error("O diretório temporário do teste não foi inicializado.");

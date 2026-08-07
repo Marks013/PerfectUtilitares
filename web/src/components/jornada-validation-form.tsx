@@ -619,10 +619,8 @@ export function JornadaValidationForm({ userId }: { userId: string }) {
   };
   const shouldValidateWithSaturday = (value: string) =>
     isValidPrincipalEightHours(value) || hasAuthorizedSaturdayException(value);
-  const canShowSabado = useMemo(
-    () => !interjornadaAtiva && shouldValidateWithSaturday(horarios),
-    [horarios, interjornadaAtiva, ownExceptionsQuery.data],
-  );
+  const canShowSabado =
+    !interjornadaAtiva && shouldValidateWithSaturday(horarios);
   const autoFormatStorageKey = getAutoFormatStorageKey(userId);
 
   useEffect(() => {

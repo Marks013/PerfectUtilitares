@@ -433,7 +433,9 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     setFaceStatus(null);
 
     return () => {
-      nextPreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+      nextPreviews.forEach((preview) => {
+        URL.revokeObjectURL(preview.url);
+      });
     };
   }, [files]);
 
@@ -476,12 +478,16 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
     });
     if (!initialCrop) return;
 
-    setEditorStateForKey(selectedKey, {
-      crop: initialCrop.crop,
-      zoom: initialCrop.zoom,
-      croppedArea: selectedEditor.pendingFaceArea,
-      pendingFaceArea: null,
-    });
+    setEditorStates((current) => ({
+      ...current,
+      [selectedKey]: {
+        ...getEditorState(current, selectedKey),
+        crop: initialCrop.crop,
+        zoom: initialCrop.zoom,
+        croppedArea: selectedEditor.pendingFaceArea,
+        pendingFaceArea: null,
+      },
+    }));
   }, [
     cropGeometry,
     selectedEditor.cropMode,
@@ -637,7 +643,9 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
 
   async function processBatchZip(values: PhotoSettings) {
     const formData = new FormData();
-    files.forEach((file) => formData.append("files", file));
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
     appendSettings(formData, values);
     appendBatchCrops(formData, files, editorStates);
 
@@ -1122,6 +1130,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                 ) : null}
                 {workPreview ? (
                   <div className="flex h-full items-center justify-center p-6">
+                    {/* biome-ignore lint/performance/noImgElement: preview local do editor 3x4 */}
                     <img
                       src={workPreview.url}
                       alt=""
@@ -1193,6 +1202,7 @@ export function Photo3x4Workspace({ userId }: { userId: string }) {
                         maxHeight: "440px",
                       }}
                     >
+                      {/* biome-ignore lint/performance/noImgElement: preview local recortado do editor 3x4 */}
                       <img
                         src={previewUrl}
                         alt=""

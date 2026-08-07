@@ -208,7 +208,7 @@ function EditorCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const startRef = useRef<Point | null>(null);
   const pointsRef = useRef<Point[]>([]);
-  const [aspectRatio, setAspectRatio] = useState(0.707);
+  const [aspectRatio, setAspectRatio] = useState(Math.SQRT1_2);
   const [areaPreview, setAreaPreview] = useState<{
     height: number;
     width: number;
@@ -705,7 +705,7 @@ export function PdfEditorWorkspace({
       void persist().catch(() => undefined);
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [annotations, jobId, locked, pages, persist]);
+  }, [jobId, locked, pages, persist]);
 
   async function finish() {
     if (!jobId) return;
