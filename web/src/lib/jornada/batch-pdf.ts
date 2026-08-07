@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import type { JornadaBatchLine, JornadaBatchReport } from "./batch-validation";
+import type { JornadaBatchLine, JornadaBatchReport } from "./batch-types";
 
 export type JornadaBatchPdfOptions = {
   detalhado?: boolean;
