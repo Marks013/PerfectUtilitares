@@ -142,12 +142,14 @@ export function PdfVisualCropEditor({
 
   useEffect(() => {
     if (!document || !canvasRef.current) return;
+
+    const pdfDocument = document;
     let cancelled = false;
     let renderTask: { cancel: () => void; promise: Promise<void> } | undefined;
 
     async function render() {
       try {
-        const page = await document!.getPage(pageNumber);
+        const page = await pdfDocument.getPage(pageNumber);
         if (cancelled || !canvasRef.current) return;
         const displayRotation = combinePageRotation(page.rotate, rotation);
         const base = page.getViewport({ scale: 1, rotation: displayRotation });

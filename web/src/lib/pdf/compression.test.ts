@@ -157,9 +157,14 @@ describe("PDF raster compression", () => {
     expect(resultPixels.info.height).toBe(sourcePixels.info.height);
     let absoluteError = 0;
     for (let index = 0; index < sourcePixels.data.length; index += 1) {
-      absoluteError += Math.abs(
-        sourcePixels.data[index]! - resultPixels.data[index]!,
-      );
+      const sourceValue = sourcePixels.data[index];
+      const resultValue = resultPixels.data[index];
+
+      if (sourceValue === undefined || resultValue === undefined) {
+        throw new Error("Pixels ausentes durante a comparação da compressão.");
+      }
+
+      absoluteError += Math.abs(sourceValue - resultValue);
     }
     expect(absoluteError / sourcePixels.data.length).toBeLessThan(5);
   });
@@ -208,7 +213,13 @@ describe("PDF raster compression", () => {
       pageNumber: 1,
     });
     const stats = await sharp(rendered).grayscale().stats();
-    expect(stats.channels[0]!.min).toBeLessThan(64);
+    const grayscaleChannel = stats.channels[0];
+
+    if (!grayscaleChannel) {
+      throw new Error("Canal de escala de cinza não encontrado.");
+    }
+
+    expect(grayscaleChannel.min).toBeLessThan(64);
     expect((await PDFDocument.load(await readFile(outputPath))).getPageCount()).toBe(1);
   });
 

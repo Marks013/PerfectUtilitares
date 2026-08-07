@@ -160,7 +160,14 @@ export async function saveUnimedConfiguration(
         data: { validTo },
       });
       for (const price of input.planPrices) {
-        const ageBracketId = bracketIds.get(price.ageBracketCode)!;
+        const ageBracketId = bracketIds.get(price.ageBracketCode);
+
+        if (!ageBracketId) {
+          throw new Error(
+            `A faixa etária ${price.ageBracketCode} não foi persistida.`,
+          );
+        }
+
         const priceValidTo = validToBefore(
           nextPlanValidFrom.get(versionKey(ageBracketId, price.planCode)),
         );

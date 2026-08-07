@@ -931,9 +931,8 @@ export function parsePayrollLoanRows(
 
     if (!employeeName) errors.push("nome do trabalhador");
     if (!contractNumber) errors.push("número do contrato");
-    if ((!isGeralLayout && !bankCode) || !bankName) {
+    if ((!isGeralLayout && !bankCode) || !bankName)
       errors.push("código e nome do banco");
-    }
     if (!cpfNormalized && !registration) errors.push("CPF ou matrícula");
     if (cpfNormalized && !isValidCpf(cpfNormalized)) errors.push("CPF válido");
     if (!isGeralLayout && typeof value(row, "MATRICULA") === "number") {
@@ -949,15 +948,17 @@ export function parsePayrollLoanRows(
     } else if (startCompetence > endCompetence) {
       errors.push("competência inicial anterior ou igual à final");
     }
-    if (installmentAmount === null || installmentAmount <= 0) {
+    if (installmentAmount === null || installmentAmount <= 0)
       errors.push("valor da parcela positivo");
-    }
     if (totalInstallments === null) errors.push("total de parcelas válido");
-    if (companyCnpj && !isValidCnpj(companyCnpj)) {
+    if (companyCnpj && !isValidCnpj(companyCnpj))
       errors.push("CNPJ do estabelecimento válido");
-    }
 
-    if (errors.length > 0) {
+    if (
+      errors.length > 0 || !employeeName || !contractNumber || !competence ||
+      installmentAmount === null || !startCompetence ||
+      !endCompetence || !bankName
+    ) {
       rejectedCount += 1;
       rowError(
         diagnostics,
@@ -968,17 +969,16 @@ export function parsePayrollLoanRows(
       );
       continue;
     }
-
     const sourceKey = createHash("sha256")
       .update(cpfNormalized ?? "")
       .update("\0")
       .update(registration ?? "")
       .update("\0")
-      .update(contractNumber!)
+      .update(contractNumber)
       .update("\0")
       .update(bankCode ?? "NAO_INFORMADO")
       .update("\0")
-      .update(competence!)
+      .update(competence)
       .digest("hex");
     if (sourceKeys.has(sourceKey)) {
       rejectedCount += 1;
@@ -1002,16 +1002,16 @@ export function parsePayrollLoanRows(
     rows.push({
       sourceKey,
       sourceRow: rowNumber,
-      competence: competence!,
+      competence,
       cpfNormalized,
       registration,
-      employeeName: employeeName!,
-      contractNumber: contractNumber!,
-      installmentAmount: installmentAmount!,
-      startCompetence: startCompetence!,
-      endCompetence: endCompetence!,
+      employeeName,
+      contractNumber,
+      installmentAmount,
+      startCompetence,
+      endCompetence,
       bankCode: bankCode ?? "NAO_INFORMADO",
-      bankName: bankName!,
+      bankName,
       totalInstallments,
       loanAmount,
       releasedAmount,

@@ -297,8 +297,16 @@ export function PdfOfficeConvertWorkspace({
           setDetail("Conversão concluída");
           setProgress(100);
           if (currentOutputs.length === 1) {
+            const firstOutput = currentOutputs[0];
+
+            if (!firstOutput) {
+              throw new Error(
+                "A conversão terminou sem gerar o arquivo esperado.",
+              );
+            }
+
             triggerDownload(
-              `/api/pdf/jobs/${currentJobId}/outputs/${currentOutputs[0]!.id}`,
+              `/api/pdf/jobs/${currentJobId}/outputs/${firstOutput.id}`,
             );
           } else if (currentOutputs.length > 1) {
             triggerDownload(`/api/pdf/jobs/${currentJobId}/outputs/zip`);

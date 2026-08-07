@@ -68,13 +68,38 @@ function asImageDimensions(value: unknown): ImageDimensions | null {
     : null;
 }
 
+function readNumber(
+  values: ArrayLike<number>,
+  index: number,
+  context: string,
+) {
+  const value = values[index];
+
+  if (value === undefined) {
+    throw new Error(`Valor numérico ausente durante ${context}.`);
+  }
+
+  return value;
+}
+
 function median(values: number[]) {
   if (!values.length) return null;
+
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1]! + sorted[middle]!) / 2
-    : sorted[middle]!;
+  const middleValue = readNumber(sorted, middle, "o cálculo da mediana");
+
+  if (sorted.length % 2 !== 0) {
+    return middleValue;
+  }
+
+  const lowerValue = readNumber(
+    sorted,
+    middle - 1,
+    "o cálculo da mediana",
+  );
+
+  return (lowerValue + middleValue) / 2;
 }
 
 function selectSamplePages(pageCount: number) {
@@ -106,10 +131,10 @@ export function classifyRenderedColors(
 
   for (let pixel = 0; pixel < pixelCount; pixel += step) {
     const offset = pixel * 4;
-    const red = pixels[offset]!;
-    const green = pixels[offset + 1]!;
-    const blue = pixels[offset + 2]!;
-    const alpha = pixels[offset + 3]!;
+    const red = readNumber(pixels, offset, "a análise de cor");
+    const green = readNumber(pixels, offset + 1, "a análise de cor");
+    const blue = readNumber(pixels, offset + 2, "a análise de cor");
+    const alpha = readNumber(pixels, offset + 3, "a análise de cor");
     if (alpha < 32) continue;
 
     const lightness = (red + green + blue) / 3;

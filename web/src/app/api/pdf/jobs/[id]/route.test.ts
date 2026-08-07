@@ -112,12 +112,21 @@ describe("DELETE /api/pdf/jobs/:id", () => {
         status: "EXPIRED",
       },
     });
-    expect(mocks.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.removeJobFiles.mock.invocationCallOrder[0]!,
-    );
-    expect(mocks.removeJobFiles.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.deleteMany.mock.invocationCallOrder[0]!,
-    );
+    const updateOrder = mocks.updateMany.mock.invocationCallOrder[0];
+    const removeFilesOrder =
+      mocks.removeJobFiles.mock.invocationCallOrder[0];
+    const deleteOrder = mocks.deleteMany.mock.invocationCallOrder[0];
+
+    if (
+      updateOrder === undefined ||
+      removeFilesOrder === undefined ||
+      deleteOrder === undefined
+    ) {
+      throw new Error("A ordem esperada das chamadas não foi registrada.");
+    }
+
+    expect(updateOrder).toBeLessThan(removeFilesOrder);
+    expect(removeFilesOrder).toBeLessThan(deleteOrder);
   });
 
   it("preserves expired metadata when filesystem cleanup fails", async () => {

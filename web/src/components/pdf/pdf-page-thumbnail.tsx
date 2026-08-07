@@ -48,6 +48,7 @@ export function PdfPageThumbnail({
   useEffect(() => {
     if (!visible || !document || !canvasRef.current) return;
 
+    const pdfDocument = document;
     let cancelled = false;
     let renderTask:
       | { cancel: () => void; promise: Promise<void> }
@@ -55,7 +56,7 @@ export function PdfPageThumbnail({
 
     async function render() {
       try {
-        const page = await document!.getPage(pageNumber);
+        const page = await pdfDocument.getPage(pageNumber);
         if (cancelled || !canvasRef.current) return;
 
         const displayRotation = combinePageRotation(page.rotate, rotation);

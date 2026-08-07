@@ -732,12 +732,13 @@ export function PdfOrganizerWorkspace({
   function handleSelect(event: MouseEvent, id: string) {
     const index = pages.findIndex((page) => page.id === id);
     const additive = event.ctrlKey || event.metaKey;
-    const ranged = event.shiftKey && lastSelectedIndex.current !== null;
+    const previousIndex = lastSelectedIndex.current;
+    const ranged = event.shiftKey && previousIndex !== null;
 
     setSelectedIds((current) => {
-      if (ranged) {
-        const start = Math.min(lastSelectedIndex.current!, index);
-        const end = Math.max(lastSelectedIndex.current!, index);
+      if (ranged && previousIndex !== null) {
+        const start = Math.min(previousIndex, index);
+        const end = Math.max(previousIndex, index);
         return new Set(pages.slice(start, end + 1).map((page) => page.id));
       }
 
@@ -891,9 +892,11 @@ export function PdfOrganizerWorkspace({
     setActiveId(null);
     if (!event.over || event.active.id === event.over.id) return;
 
+    const overId = event.over.id;
+
     commitPages((current) => {
       const from = current.findIndex((page) => page.id === event.active.id);
-      const to = current.findIndex((page) => page.id === event.over!.id);
+      const to = current.findIndex((page) => page.id === overId);
       return from < 0 || to < 0 ? current : arrayMove(current, from, to);
     });
   }
@@ -956,10 +959,16 @@ export function PdfOrganizerWorkspace({
           });
         },
       });
+      const firstOutput = outputs[0];
+
+      if (!firstOutput) {
+        throw new Error("O processamento terminou sem gerar um arquivo.");
+      }
+
       const downloadUrl =
         outputs.length > 1
           ? `/api/pdf/jobs/${jobId}/outputs/zip`
-          : `/api/pdf/jobs/${jobId}/outputs/${outputs[0]!.id}`;
+          : `/api/pdf/jobs/${jobId}/outputs/${firstOutput.id}`;
       triggerDownload(downloadUrl);
     } catch (caught) {
       if (isAbortError(caught)) return;

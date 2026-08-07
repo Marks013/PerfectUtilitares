@@ -111,6 +111,20 @@ function readSnapshot<T>(payload: Prisma.JsonValue): ParsedUnimedSource<T> {
   return payload as unknown as ParsedUnimedSource<T>;
 }
 
+function requireMapValue<K, V>(
+  map: ReadonlyMap<K, V>,
+  key: K,
+): V {
+  const value = map.get(key);
+  if (value === undefined) {
+    throw new UnimedPublishError(
+      "IMPORT_REJECTED",
+      "A publicação encontrou dados internos inconsistentes.",
+    );
+  }
+  return value;
+}
+
 function providedSources(input: PublishUnimedInput) {
   const sources: Array<{
     source: CoreImportSource;
@@ -490,13 +504,13 @@ export async function publishUnimedImport(
       }
 
       const beneficiaries = readSnapshot<ParsedBeneficiary>(
-        snapshotsBySource.get("BENEFICIARIES")!,
+        requireMapValue(snapshotsBySource, "BENEFICIARIES"),
       );
       const invoiceItems = readSnapshot<ParsedInvoiceItem>(
-        snapshotsBySource.get("INVOICES")!,
+        requireMapValue(snapshotsBySource, "INVOICES"),
       );
       const addressesSource = readSnapshot<ParsedAddress>(
-        snapshotsBySource.get("ADDRESSES")!,
+        requireMapValue(snapshotsBySource, "ADDRESSES"),
       );
       const previousCompetency = await tx.unimedCompetency.findFirst({
         where: {
@@ -534,22 +548,31 @@ export async function publishUnimedImport(
             },
           })
         : [];
-      const previousLinks: PreviousUnimedDependentLink[] = previousDependents
-        .filter((dependent) => dependent.holder)
-        .map((dependent) => ({
-          dependent: {
-            branchCode: dependent.branch?.code ?? "",
-            registration: dependent.registration,
-            cpf: dependent.cpf,
-            fullName: dependent.fullName,
-          },
-          holder: {
-            branchCode: dependent.holder!.branch?.code ?? "",
-            registration: dependent.holder!.registration,
-            cpf: dependent.holder!.cpf,
-            fullName: dependent.holder!.fullName,
-          },
-        }));
+      const previousLinks: PreviousUnimedDependentLink[] =
+        previousDependents.flatMap((dependent) => {
+          const holder = dependent.holder;
+
+          if (!holder) {
+            return [];
+          }
+
+          return [
+            {
+              dependent: {
+                branchCode: dependent.branch?.code ?? "",
+                registration: dependent.registration,
+                cpf: dependent.cpf,
+                fullName: dependent.fullName,
+              },
+              holder: {
+                branchCode: holder.branch?.code ?? "",
+                registration: holder.registration,
+                cpf: holder.cpf,
+                fullName: holder.fullName,
+              },
+            },
+          ];
+        });
       const reconciliation = reconcileUnimedSources(
         beneficiaries.rows,
         invoiceItems.rows,
@@ -625,7 +648,7 @@ export async function publishUnimedImport(
         data: reconciliation.beneficiaries.map((beneficiary) => ({
           tenantId: input.tenantId,
           competencyId: competency.id,
-          branchId: branchIds.get(beneficiary.branchCode)!,
+          branchId: requireMapValue(branchIds, beneficiary.branchCode),
           sourceKey: beneficiary.sourceKey,
           registration: beneficiary.registration,
           fullName: beneficiary.fullName,
@@ -655,7 +678,10 @@ export async function publishUnimedImport(
       const addresses = reconciliation.beneficiaries
         .filter((beneficiary) => hasAddressValue(beneficiary.address))
         .map((beneficiary) => ({
-          beneficiaryId: beneficiaryIds.get(beneficiary.sourceKey)!,
+          beneficiaryId: requireMapValue(
+            beneficiaryIds,
+            beneficiary.sourceKey,
+          ),
           ...beneficiary.address,
         }));
       if (addresses.length > 0) {

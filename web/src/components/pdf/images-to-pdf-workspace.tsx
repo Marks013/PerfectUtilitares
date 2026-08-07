@@ -239,10 +239,12 @@ export function ImagesToPdfWorkspace() {
   }
 
   function handleDragEnd(event: DragEndEvent) {
-    if (!event.over || event.active.id === event.over.id) return;
+    const overId = event.over?.id;
+    if (overId === undefined || event.active.id === overId) return;
+
     setItems((current) => {
       const from = current.findIndex((item) => item.id === event.active.id);
-      const to = current.findIndex((item) => item.id === event.over!.id);
+      const to = current.findIndex((item) => item.id === overId);
       return from < 0 || to < 0 ? current : arrayMove(current, from, to);
     });
   }

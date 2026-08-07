@@ -177,6 +177,21 @@ function getColorModeLabel(colorMode: CompressionColorMode) {
   return COLOR_OPTIONS.find((option) => option.value === colorMode)?.label;
 }
 
+function getMedianRounded(values: number[]) {
+  if (!values.length) return null;
+
+  const middle = Math.floor(values.length / 2);
+  const upper = values[middle];
+
+  if (upper === undefined) return null;
+  if (values.length % 2 !== 0) return upper;
+
+  const lower = values[middle - 1];
+  if (lower === undefined) return upper;
+
+  return Math.round((lower + upper) / 2);
+}
+
 function getDetectedDpiLabel(analysis: PdfCompressionAnalysis) {
   if (analysis.sourceDpi === null) return "Não se aplica";
   if (
@@ -385,12 +400,7 @@ export function PdfCompressWorkspace() {
       .map((analysis) => analysis.sourceDpi)
       .filter((dpi): dpi is number => dpi !== null)
       .sort((left, right) => left - right);
-    const middle = Math.floor(sourceDpis.length / 2);
-    const sourceDpi = sourceDpis.length
-      ? sourceDpis.length % 2
-        ? sourceDpis[middle]!
-        : Math.round((sourceDpis[middle - 1]! + sourceDpis[middle]!) / 2)
-      : null;
+    const sourceDpi = getMedianRounded(sourceDpis);
     const contentKind = analyses.some(
       (analysis) => analysis.contentKind === "SCANNED",
     )
@@ -512,10 +522,18 @@ export function PdfCompressWorkspace() {
             progress: 100,
             detail: "Compressão concluída",
           });
+          const firstOutput = nextOutputs[0];
+
+          if (!firstOutput) {
+            throw new Error(
+              "A compressão terminou sem gerar um arquivo para download.",
+            );
+          }
+
           triggerDownload(
             nextOutputs.length > 1
               ? `/api/pdf/jobs/${currentJobId}/outputs/zip`
-              : `/api/pdf/jobs/${currentJobId}/outputs/${nextOutputs[0]!.id}`,
+              : `/api/pdf/jobs/${currentJobId}/outputs/${firstOutput.id}`,
           );
           return;
         }
