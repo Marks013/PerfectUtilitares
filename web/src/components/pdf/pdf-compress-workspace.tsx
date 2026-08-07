@@ -648,33 +648,44 @@ export function PdfCompressWorkspace() {
           </div>
         )}
 
-        <div className="pdf-quality-control" role="radiogroup">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={settings?.preset === "SOURCE"}
+        <fieldset className="pdf-quality-control">
+          <legend className="sr-only">Perfil de compactação</legend>
+          <label
             data-active={settings?.preset === "SOURCE"}
-            disabled={busy || analyzing || !analyses.length}
-            onClick={() => applyDocumentRecommendation(analyses)}
+            data-disabled={busy || analyzing || !analyses.length}
           >
+            <input
+              className="sr-only"
+              type="radio"
+              name="compression-preset"
+              value="SOURCE"
+              checked={settings?.preset === "SOURCE"}
+              disabled={busy || analyzing || !analyses.length}
+              onChange={() => applyDocumentRecommendation(analyses)}
+            />
             <strong>Do documento</strong>
             <small>Usa a análise como ponto de partida</small>
-          </button>
+          </label>
           {QUALITY_OPTIONS.map((option) => (
-            <button
+            <label
               key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={settings?.preset === option.value}
               data-active={settings?.preset === option.value}
-              disabled={busy || analyzing || !files.length}
-              onClick={() => applyPreset(option.value)}
+              data-disabled={busy || analyzing || !files.length}
             >
+              <input
+                className="sr-only"
+                type="radio"
+                name="compression-preset"
+                value={option.value}
+                checked={settings?.preset === option.value}
+                disabled={busy || analyzing || !files.length}
+                onChange={() => applyPreset(option.value)}
+              />
               <strong>{option.label}</strong>
               <small>{option.description}</small>
-            </button>
+            </label>
           ))}
-        </div>
+        </fieldset>
 
         {settings ? (
           <>
@@ -684,20 +695,26 @@ export function PdfCompressWorkspace() {
                   <Minimize2 className="size-4" aria-hidden="true" />
                   Tipo de compactação
                 </legend>
-                <div className="pdf-compression-methods" role="radiogroup">
+                <div className="pdf-compression-methods">
                   {METHOD_OPTIONS.map((option) => (
-                    <button
+                    <label
                       key={option.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={settings.method === option.value}
                       data-active={settings.method === option.value}
-                      disabled={busy}
-                      onClick={() => updateSettings({ method: option.value })}
                     >
+                      <input
+                        className="sr-only"
+                        type="radio"
+                        name="compression-method"
+                        value={option.value}
+                        checked={settings.method === option.value}
+                        disabled={busy}
+                        onChange={() =>
+                          updateSettings({ method: option.value })
+                        }
+                      />
                       <strong>{option.label}</strong>
                       <small>{option.description}</small>
-                    </button>
+                    </label>
                   ))}
                 </div>
               </fieldset>
@@ -710,18 +727,22 @@ export function PdfCompressWorkspace() {
                   <Palette className="size-4" aria-hidden="true" />
                   Tratamento de cor
                 </legend>
-                <div className="pdf-color-mode-control" role="radiogroup">
+                <div className="pdf-color-mode-control">
                   {COLOR_OPTIONS.map((option) => (
-                    <button
+                    <label
                       key={option.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={settings.colorMode === option.value}
                       data-active={settings.colorMode === option.value}
-                      onClick={() =>
-                        updateSettings({ colorMode: option.value })
-                      }
                     >
+                      <input
+                        className="sr-only"
+                        type="radio"
+                        name="compression-color-mode"
+                        value={option.value}
+                        checked={settings.colorMode === option.value}
+                        onChange={() =>
+                          updateSettings({ colorMode: option.value })
+                        }
+                      />
                       <span
                         className="pdf-color-swatch"
                         data-color={option.value.toLowerCase()}
@@ -731,7 +752,7 @@ export function PdfCompressWorkspace() {
                         <strong>{option.label}</strong>
                         <small>{option.description}</small>
                       </span>
-                    </button>
+                    </label>
                   ))}
                 </div>
               </fieldset>
