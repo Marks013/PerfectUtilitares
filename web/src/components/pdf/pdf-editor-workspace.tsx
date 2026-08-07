@@ -379,6 +379,7 @@ function EditorCanvas({
             return (
               <svg
                 key={annotation.id}
+                aria-hidden="true"
                 className="pdf-editor-annotation pdf-editor-annotation--draw"
                 viewBox="0 0 1 1"
                 preserveAspectRatio="none"
@@ -432,6 +433,7 @@ function EditorCanvas({
         ) : null}
         {drawPreview.length ? (
           <svg
+            aria-hidden="true"
             className="pdf-editor-annotation pdf-editor-annotation--draw"
             viewBox="0 0 1 1"
             preserveAspectRatio="none"

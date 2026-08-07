@@ -85,10 +85,8 @@ export function UserUsagePanel() {
           </p>
         </div>
 
-        <div
-          className="inline-flex w-fit rounded-md border border-neutral-300 bg-neutral-50 p-1"
-          aria-label="Período de uso"
-        >
+        <fieldset className="inline-flex w-fit rounded-md border border-neutral-300 bg-neutral-50 p-1">
+          <legend className="sr-only">Período de uso</legend>
           {periods.map((item) => (
             <button
               key={item.value}
@@ -104,7 +102,7 @@ export function UserUsagePanel() {
               {item.label}
             </button>
           ))}
-        </div>
+        </fieldset>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-neutral-200 px-4 py-3 text-sm text-neutral-600">

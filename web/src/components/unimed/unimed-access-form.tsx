@@ -65,7 +65,6 @@ export function UnimedAccessForm({ nextPath }: UnimedAccessFormProps) {
           Senha
           <input
             autoComplete="current-password"
-            autoFocus
             className="app-input mt-2 w-full"
             maxLength={72}
             onChange={(event) => setPassword(event.target.value)}
