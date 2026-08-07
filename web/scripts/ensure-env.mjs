@@ -88,8 +88,9 @@ const changed = new Set();
 const processEnvKeys = [
   "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "POSTGRES_DATA_DIR",
   "PDF_DATA_DIR", "UNIMED_TEMPLATE_DIR", "UNIMED_ACCESS_ENV_FILE",
-  "DATABASE_URL", "AUTH_SECRET", "APP_PORT", "APP_BIND_ADDRESS", "AUTH_URL",
-  "NEXTAUTH_URL", "APP_URL", "APP_TIME_ZONE", "AUTH_TRUST_HOST",
+  "DATABASE_URL", "AUTH_SECRET", "JORNADA_EXCEL_API_KEY", "APP_PORT",
+  "APP_BIND_ADDRESS", "AUTH_URL", "NEXTAUTH_URL", "APP_URL", "APP_TIME_ZONE",
+  "AUTH_TRUST_HOST",
   "ADMIN_EMAIL", "ADMIN_PASSWORD", "DEFAULT_TENANT_NAME",
   "DEFAULT_TENANT_SLUG", "APP_DATABASE_POOL_MAX",
   "PDF_WORKER_DATABASE_POOL_MAX", "MIGRATE_DATABASE_POOL_MAX",
@@ -123,6 +124,10 @@ setIfMissingOrDefault(
 );
 setIfMissingOrDefault(
   values, "AUTH_SECRET", ["troque-este-segredo-local"],
+  () => generateSecret(32), changed,
+);
+setIfMissingOrDefault(
+  values, "JORNADA_EXCEL_API_KEY", ["troque-no-servidor"],
   () => generateSecret(32), changed,
 );
 setIfMissingOrDefault(

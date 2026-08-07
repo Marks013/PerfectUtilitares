@@ -101,6 +101,7 @@ services:
     environment:
       HOME: /tmp
       AUTH_SECRET: ${AUTH_SECRET:?execute npm run setup:env antes do docker compose}
+      JORNADA_EXCEL_API_KEY: ${JORNADA_EXCEL_API_KEY:?execute npm run setup:env antes do docker compose}
       AUTH_TRUST_HOST: "true"
       AUTH_URL: ${AUTH_URL:-http://localhost:3002}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3002}
