@@ -9,12 +9,21 @@ import {
 } from "@/lib/pdf/office";
 import {
   jpgToPdfOptionsSchema,
-  pdfAnnotationsSchema,
   pdfCompressionOptionsSchema,
-  pdfManifestSchema,
   pdfToJpgOptionsSchema,
-  type PdfManifest,
 } from "@/lib/pdf/schema";
+import {
+  NON_STRUCTURAL_OPERATIONS,
+  PdfProcessingError,
+  STRUCTURAL_OPERATIONS,
+  createOutputName,
+  createSplitOutputName,
+  parseAnnotations,
+  parseManifest,
+  requireFirstInput,
+  requireStructuralManifest,
+  updateProgress,
+} from "./processor-support";
 import {
   removePdfStorageKey,
   writeBinaryOutput,
@@ -28,131 +37,6 @@ import {
 } from "@/lib/pdf/structural";
 import { prisma } from "@/lib/prisma";
 import { assertResourceCapacity } from "@/lib/system/resource-capacity";
-
-const STRUCTURAL_OPERATIONS = new Set([
-  "MERGE",
-  "SPLIT",
-  "ROTATE",
-  "DELETE_PAGES",
-  "EXTRACT_PAGES",
-  "CROP",
-  "ORGANIZE",
-  "EDIT",
-  "ANNOTATE",
-  "PDF_TO_JPG",
-]);
-
-const NON_STRUCTURAL_OPERATIONS = new Set([
-  "COMPRESS",
-  "JPG_TO_PDF",
-  "PDF_TO_WORD",
-  "PDF_TO_EXCEL",
-  "WORD_TO_PDF",
-  "EXCEL_TO_PDF",
-]);
-
-class PdfProcessingError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "PdfProcessingError";
-  }
-}
-
-function parseManifest(options: unknown): PdfManifest {
-  const manifest =
-    options && typeof options === "object" && "manifest" in options
-      ? (options as { manifest: unknown }).manifest
-      : null;
-  const parsed = pdfManifestSchema.safeParse(manifest);
-
-  if (!parsed.success) {
-    throw new PdfProcessingError(
-      "INVALID_MANIFEST",
-      "A organização salva não pôde ser processada.",
-    );
-  }
-
-  return parsed.data;
-}
-
-function requireFirstInput<T>(inputArtifacts: readonly T[]): T {
-  const firstInput = inputArtifacts[0];
-
-  if (firstInput === undefined) {
-    throw new PdfProcessingError(
-      "INPUT_REQUIRED",
-      "Adicione ao menos um PDF antes de processar.",
-    );
-  }
-
-  return firstInput;
-}
-
-function requireStructuralManifest(
-  manifest: PdfManifest | null,
-): PdfManifest {
-  if (!manifest) {
-    throw new PdfProcessingError(
-      "INVALID_MANIFEST",
-      "A organização salva não pôde ser processada.",
-    );
-  }
-
-  return manifest;
-}
-
-function parseAnnotations(options: unknown) {
-  const annotations =
-    options && typeof options === "object" && "annotations" in options
-      ? (options as { annotations: unknown }).annotations
-      : [];
-  const parsed = pdfAnnotationsSchema.safeParse(annotations);
-
-  if (!parsed.success) {
-    throw new PdfProcessingError(
-      "INVALID_ANNOTATIONS",
-      "As marcações salvas não puderam ser processadas.",
-    );
-  }
-
-  return parsed.data;
-}
-
-function createOutputName(inputName: string, operation: string) {
-  const baseName = inputName.replace(/\.pdf$/i, "");
-  const suffix =
-    operation === "MERGE"
-      ? "unido"
-      : operation === "EXTRACT_PAGES"
-        ? "extraido"
-        : operation === "ROTATE"
-          ? "girado"
-      : operation === "DELETE_PAGES"
-        ? "ajustado"
-        : operation === "CROP"
-          ? "recortado"
-        : operation === "EDIT"
-          ? "editado"
-        : operation === "ANNOTATE"
-          ? "anotado"
-        : "organizado";
-  return `${baseName || "documento"}-${suffix}.pdf`;
-}
-
-function createSplitOutputName(inputName: string, pageNumber: number) {
-  const baseName = inputName.replace(/\.pdf$/i, "") || "documento";
-  return `${baseName}-pagina-${String(pageNumber).padStart(3, "0")}.pdf`;
-}
-
-async function updateProgress(jobId: string, progress: number) {
-  await prisma.pdfJob.updateMany({
-    where: { id: jobId, status: "RUNNING" },
-    data: { progress: Math.max(1, Math.min(99, Math.round(progress))) },
-  });
-}
 
 export async function processPdfJob(jobId: string) {
   const job = await prisma.pdfJob.findUnique({
