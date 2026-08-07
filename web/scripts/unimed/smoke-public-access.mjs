@@ -3,30 +3,28 @@ const baseUrl = process.env.UNIMED_SMOKE_BASE_URL ?? "http://127.0.0.1:3002";
 async function readCredentials() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  const [operatorName, standard, admin] = Buffer.concat(chunks)
+  const [standard, admin] = Buffer.concat(chunks)
     .toString("utf8")
     .replace(/\r/g, "")
     .split("\n");
-  if (!operatorName || !standard || !admin) {
-    throw new Error(
-      "Nome do operador e duas senhas são obrigatórios via stdin.",
-    );
+  if (!standard || !admin) {
+    throw new Error("As duas senhas são obrigatórias via stdin.");
   }
-  return { operatorName, standard, admin };
+  return { standard, admin };
 }
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function unlock(password, expectedRole, operatorName) {
+async function unlock(password, expectedRole) {
   const response = await fetch(`${baseUrl}/api/unimed/access/session`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       origin: baseUrl,
     },
-    body: JSON.stringify({ password, operatorName }),
+    body: JSON.stringify({ password }),
     redirect: "manual",
   });
   const payload = await response.json();
@@ -95,7 +93,6 @@ try {
   const standardCookie = await unlock(
     credentials.standard,
     "STANDARD",
-    credentials.operatorName,
   );
   await request("/api/unimed/access/session", standardCookie, 200);
   await request("/api/unimed/beneficiaries?q=00000000000", standardCookie, 200);
@@ -106,7 +103,6 @@ try {
   const adminCookie = await unlock(
     credentials.admin,
     "ADMIN",
-    credentials.operatorName,
   );
   await request("/api/unimed/access/session", adminCookie, 200);
   await request("/api/unimed/configuration", adminCookie, 200);
