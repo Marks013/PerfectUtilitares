@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   enforceSharedRateLimit,
@@ -22,6 +23,36 @@ import { getRequestContentLength } from "@/lib/system/resource-capacity";
 export const runtime = "nodejs";
 
 const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
+
+function isTrustedExcelRequest(request: Request): boolean {
+  const expectedKey = process.env.JORNADA_EXCEL_API_KEY?.trim();
+
+  if (!expectedKey) {
+    return false;
+  }
+
+  const authorization = request.headers.get("authorization");
+  const match = authorization?.match(/^Bearer\s+(.+)$/i);
+
+  if (!match) {
+    return false;
+  }
+
+  const suppliedKey = match[1].trim();
+
+  if (!suppliedKey) {
+    return false;
+  }
+
+  const expected = Buffer.from(expectedKey, "utf8");
+  const supplied = Buffer.from(suppliedKey, "utf8");
+
+  if (expected.length !== supplied.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expected, supplied);
+}
 
 function parseBoolean(value: FormDataEntryValue | null, fallback: boolean) {
   if (value == null) return fallback;
@@ -94,9 +125,13 @@ export function GET() {
 
 export async function POST(request: Request) {
   try {
-    const originError = requireSameOrigin(request);
-    if (originError) {
-      return originError;
+    const trustedExcel = isTrustedExcelRequest(request);
+
+    if (!trustedExcel) {
+      const originError = requireSameOrigin(request);
+      if (originError) {
+        return originError;
+      }
     }
 
     const session = await getOptionalSession();
@@ -105,7 +140,7 @@ export async function POST(request: Request) {
       limit: 6,
       windowMs: 60_000,
       dailyLimit: 12,
-      authenticated: Boolean(session),
+      authenticated: Boolean(session) || trustedExcel,
     });
     if (limited) {
       return limited;
