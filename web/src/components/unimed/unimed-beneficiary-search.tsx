@@ -198,7 +198,7 @@ export function UnimedBeneficiarySearch({
 
     const timer = window.setTimeout(() => void search(normalizedQuery), 350);
     return () => window.clearTimeout(timer);
-  }, [query, referenceDate, search]);
+  }, [query, search]);
 
   useEffect(
     () => () => {

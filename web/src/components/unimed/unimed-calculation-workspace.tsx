@@ -22,6 +22,7 @@ import {
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
   useEffect,
+  useEffectEvent,
   useId,
   useMemo,
   useRef,
@@ -1043,6 +1044,13 @@ export function UnimedCalculationWorkspace({
     }
   }
 
+  const runAutomaticCalculation = useEffectEvent(() =>
+    runCalculation({
+      generateRequiredDocument: true,
+      silent: true,
+    }),
+  );
+
   async function calculate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     lastAutomaticCalculationFingerprint.current =
@@ -1065,15 +1073,11 @@ export function UnimedCalculationWorkspace({
     const timeout = window.setTimeout(() => {
       lastAutomaticCalculationFingerprint.current =
         automaticCalculationFingerprint;
-      void runCalculation({
-        generateRequiredDocument: true,
-        silent: true,
-      });
+      void runAutomaticCalculation();
     }, 450);
 
     return () => window.clearTimeout(timeout);
     // The normalized fingerprint contains every calculation input.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [automaticCalculationFingerprint, isRefreshingPricing]);
 
   async function sendEmail(event: ReactMouseEvent<HTMLButtonElement>) {
@@ -2123,6 +2127,7 @@ export function UnimedCalculationWorkspace({
                   selectedBeneficiary?.branch?.code ??
                   null,
                 holder: {
+                  id: selectedBeneficiary?.id ?? "holder",
                   registration: selectedBeneficiary?.registration ?? null,
                   name: form.employeeName,
                   birthDate: selectedBeneficiary?.birthDate ?? null,
@@ -2134,6 +2139,7 @@ export function UnimedCalculationWorkspace({
                   funeralAmount: form.holder.addonAmount,
                 },
                 dependents: form.dependents.map((dependent) => ({
+                  id: dependent.id,
                   registration: null,
                   name: dependent.name,
                   birthDate: dependent.birthDate,

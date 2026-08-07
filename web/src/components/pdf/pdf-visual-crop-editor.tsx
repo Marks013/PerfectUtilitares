@@ -122,7 +122,7 @@ export function PdfVisualCropEditor({
   } | null>(null);
   const draftMarginsRef = useRef(margins);
   const [draftMargins, setDraftMargins] = useState(margins);
-  const [aspectRatio, setAspectRatio] = useState(0.707);
+  const [aspectRatio, setAspectRatio] = useState(Math.SQRT1_2);
   const [renderError, setRenderError] = useState(false);
   const rect = useMemo(
     () => rectFromMargins(draftMargins),

@@ -10,6 +10,7 @@ import {
 import type { UnimedCalculationResult } from "@/lib/unimed/types";
 
 type PrintPerson = {
+  id: string;
   registration: string | null;
   name: string;
   birthDate: string | null;
@@ -155,7 +156,7 @@ export function UnimedPrintCopy({
         </thead>
         <tbody>
           {rows.map((person, index) => (
-            <tr key={`${person.name}-${index}`}>
+            <tr key={person.id}>
               <td>{index === 0 ? person.registration || "—" : "Dep"}</td>
               <td>{formatUnimedBranchForPdf(data.branchCode)}</td>
               <td className="name-cell">{person.name || "—"}</td>
@@ -229,10 +230,10 @@ export function UnimedPrintCopy({
                   </span>
                   {data.payrollLoans.contracts.length > 0 ? (
                     <div className="unimed-print-loan-list">
-                      {data.payrollLoans.contracts.map((contract, index) => (
+                      {data.payrollLoans.contracts.map((contract) => (
                         <div
                           className="unimed-print-loan-contract"
-                          key={`${contract.bankCode}-${contract.contractNumber}-${index}`}
+                          key={`${contract.bankCode}:${contract.contractNumber}`}
                         >
                           <span>
                             Valor: <b>{money(contract.installmentAmount)}</b> ·

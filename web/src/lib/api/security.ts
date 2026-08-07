@@ -131,7 +131,9 @@ function getAllowedOrigins(request: Request) {
   const forwardedOrigin = getForwardedOrigin(request);
   const origins = new Set<string>([requestUrl.origin]);
 
-  configuredOrigins.forEach((origin) => origins.add(origin));
+  configuredOrigins.forEach((origin) => {
+    origins.add(origin);
+  });
 
   if (
     forwardedOrigin &&

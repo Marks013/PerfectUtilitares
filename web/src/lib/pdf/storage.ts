@@ -19,6 +19,15 @@ import {
 
 const PDF_SIGNATURE = Buffer.from("%PDF-", "ascii");
 
+function stripFileNameControlCharacters(value: string) {
+  return Array.from(value)
+    .filter((character) => {
+      const code = character.codePointAt(0);
+      return code !== undefined && code > 0x1f && code !== 0x7f;
+    })
+    .join("");
+}
+
 async function validateGeneratedPdf(contents: Uint8Array) {
   if (
     contents.byteLength < PDF_SIGNATURE.length ||
@@ -141,10 +150,7 @@ export function sanitizePdfFileName(value: string | null) {
     );
   }
 
-  const fileName = path
-    .basename(decoded)
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim();
+  const fileName = stripFileNameControlCharacters(path.basename(decoded)).trim();
 
   if (!fileName || fileName.length > 180) {
     throw new PdfStorageError(
@@ -333,10 +339,7 @@ export function sanitizeImageFileName(
     );
   }
 
-  const fileName = path
-    .basename(decoded)
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim();
+  const fileName = stripFileNameControlCharacters(path.basename(decoded)).trim();
   if (!fileName || fileName.length > 180) {
     throw new PdfStorageError(
       "INVALID_FILE_NAME",
@@ -434,10 +437,7 @@ export function sanitizeOfficeFileName(
     );
   }
 
-  const fileName = path
-    .basename(decoded)
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim();
+  const fileName = stripFileNameControlCharacters(path.basename(decoded)).trim();
   if (!fileName || fileName.length > 180) {
     throw new PdfStorageError(
       "INVALID_FILE_NAME",
@@ -575,10 +575,7 @@ export async function writeBinaryOutput(
 ) {
   await validateGeneratedImage(contents, extension);
   const artifactId = randomUUID();
-  const decodedName = path
-    .basename(fileName)
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim();
+  const decodedName = stripFileNameControlCharacters(path.basename(fileName)).trim();
   const baseName =
     decodedName.replace(/\.(?:jpe?g|png)$/i, "").slice(0, 170) || "pagina";
   const originalName = `${baseName}.${extension}`;
@@ -614,10 +611,7 @@ export async function writeOfficeOutput(
   contents: Uint8Array,
 ) {
   const artifactId = randomUUID();
-  const decodedName = path
-    .basename(fileName)
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim();
+  const decodedName = stripFileNameControlCharacters(path.basename(fileName)).trim();
   const baseName =
     decodedName.replace(/\.(?:docx|xlsx)$/i, "").slice(0, 170) || "documento";
   const originalName = `${baseName}.${extension}`;

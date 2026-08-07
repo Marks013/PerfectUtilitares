@@ -364,7 +364,9 @@ export async function renderUnimedDocumentTemplate(
       throw new UnimedDocumentError("UNIMED_DOCUMENT_TEMPLATE_INVALID", 503);
     }
     const result = replaceMergeFieldResults(xml, definition.fields, values);
-    result.seen.forEach((field) => seen.add(field));
+    result.seen.forEach((field) => {
+      seen.add(field);
+    });
     zip.file(partName, result.rendered);
   }
 

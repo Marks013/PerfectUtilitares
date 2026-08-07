@@ -19,6 +19,7 @@ function printData(
     billingClosure: "AUTOMATIC_DAY_25",
     branchCode: "MULTI ATACADO",
     holder: {
+      id: "holder",
       registration: "101",
       name: "Pessoa Titular",
       birthDate: "1980-01-01",

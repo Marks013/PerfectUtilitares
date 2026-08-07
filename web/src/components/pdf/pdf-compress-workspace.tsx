@@ -349,7 +349,9 @@ export function PdfCompressWorkspace() {
     setJobId(null);
     setWork({ phase: "IDLE", progress: 0, detail: "" });
     const next = new Map(files.map((file) => [getFileKey(file), file]));
-    acceptedFiles.forEach((file) => next.set(getFileKey(file), file));
+    acceptedFiles.forEach((file) => {
+      next.set(getFileKey(file), file);
+    });
     const nextFiles = [...next.values()].slice(0, 20);
     setFiles(nextFiles);
     void analyzeFiles(nextFiles);

@@ -145,7 +145,7 @@ function SortableImage({
           <X className="size-4" aria-hidden="true" />
         </button>
       </div>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {/* biome-ignore lint/performance/noImgElement: preview local criado com URL.createObjectURL */}
       <img src={item.url} alt="" />
       <footer title={item.file.name}>{item.file.name}</footer>
     </article>
@@ -184,7 +184,9 @@ export function ImagesToPdfWorkspace() {
 
   useEffect(
     () => () => {
-      itemsRef.current.forEach((item) => URL.revokeObjectURL(item.url));
+      itemsRef.current.forEach((item) => {
+        URL.revokeObjectURL(item.url);
+      });
     },
     [],
   );
@@ -203,7 +205,9 @@ export function ImagesToPdfWorkspace() {
         url: URL.createObjectURL(file),
         })),
       ];
-      next.slice(20).forEach((item) => URL.revokeObjectURL(item.url));
+      next.slice(20).forEach((item) => {
+        URL.revokeObjectURL(item.url);
+      });
       return next.slice(0, 20);
     });
   };
