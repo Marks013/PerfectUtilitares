@@ -5,18 +5,13 @@ import {
   ArrowRight,
   Building2,
   Calculator,
-  CalendarDays,
   Check,
   CircleDollarSign,
   FileText,
   Loader2,
   Mail,
-  Plus,
   Printer,
   RotateCcw,
-  Trash2,
-  UserRound,
-  UsersRound,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -39,410 +34,49 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { DEFAULT_UNIMED_EXCLUSION_REASONS } from "@/lib/unimed/defaults";
+import type { UnimedCalculationResult } from "@/lib/unimed/types";
 import type {
-  UnimedCalculationInput,
-  UnimedCalculationResult,
-} from "@/lib/unimed/types";
-import {
-  type UnimedBeneficiary,
-  UnimedBeneficiarySearch,
-  type UnimedPricingContext,
+  UnimedBeneficiary,
+  UnimedPricingContext,
 } from "./unimed-beneficiary-search";
+import { ResultMetric } from "./unimed-calculation-fields";
+import { UnimedCalculationIdentificationSection } from "./unimed-calculation-identification-section";
+import { UnimedCalculationMovementSection } from "./unimed-calculation-movement-section";
+import { UnimedCalculationValuesSection } from "./unimed-calculation-values-section";
+import type {
+  DependentValues,
+  FieldErrors,
+  FormValues,
+  MoneyField,
+  GeneratedDocument,
+  DocumentJobResponse,
+  UnimedCalculationApiResponse,
+  UnimedCalculationRequest,
+  UnimedExclusionReasonOption as UnimedExclusionReasonOptionData,
+} from "./unimed-calculation-types";
+import {
+  INITIAL_FORM,
+  MAX_DEPENDENTS,
+  PAYROLL_LOANS_PRINT_STORAGE_KEY,
+  dateInput,
+  defaultMoney,
+  formatCompetencyResult,
+  formatCpf,
+  formatMoneyInput,
+  formatMoneyResult,
+  parseMoney,
+  pricingIssue,
+  readApiError,
+  validateForm,
+  waitForDocumentPoll,
+} from "./unimed-calculation-utils";
 import {
   type UnimedPayrollLoanSummary,
   UnimedPrintSummary,
 } from "./unimed-print-summary";
 import { type UnimedNotice, UnimedNoticeToast } from "./unimed-notice-toast";
 
-type MoneyField = "invoicePlanAmount" | "payrollPlanAmount" | "addonAmount";
-
-type MoneyValues = Record<MoneyField, string>;
-
-type DependentValues = {
-  id: string;
-  name: string;
-  birthDate: string | null;
-  planCode: string | null;
-  age: number | null;
-  hasAddon: boolean;
-  invoicePlanAmount: string;
-  addonAmount: string;
-};
-
-type FormValues = {
-  employeeName: string;
-  cpf: string;
-  reasonCode: string;
-  exclusionDate: string;
-  planEnrollmentDate: string;
-  billingClosure: UnimedCalculationInput["billingClosure"];
-  holder: MoneyValues;
-  dependents: DependentValues[];
-};
-
-type FieldErrors = Partial<
-  Record<
-    | "employeeName"
-    | "cpf"
-    | "reasonCode"
-    | "exclusionDate"
-    | "planEnrollmentDate"
-    | MoneyField
-    | `dependent-${string}`,
-    string
-  >
->;
-
-type ApiErrorBody = {
-  error?: string | { message?: string };
-  details?: Array<{ message?: string }>;
-};
-
-type GeneratedDocument = {
-  beneficiaryId: string;
-  previewUrl: string;
-  reasonCode: number;
-};
-
-type DocumentJobResponse = {
-  job: {
-    id: string;
-    progress: number;
-    status: "QUEUED" | "RUNNING";
-  };
-};
-
-type UnimedCalculationRequest = {
-  beneficiaryId: string;
-  dependentIds: string[];
-  reasonCode: number;
-  exclusionDate: string;
-};
-
-type UnimedCalculationApiResponse = {
-  calculation: UnimedCalculationResult;
-  officialInput: UnimedCalculationInput;
-  payrollLoans?: UnimedPayrollLoanSummary | null;
-};
-
-export type UnimedExclusionReasonOption = {
-  code: number;
-  label: string;
-  documentKind: "NONE" | "RN561" | "INACTIVE_TERM";
-};
-
-const MAX_DEPENDENTS = 6;
-const PAYROLL_LOANS_PRINT_STORAGE_KEY =
-  "perfectutilitares.unimed.include-payroll-loans.v1";
-
-const INITIAL_FORM: FormValues = {
-  employeeName: "",
-  cpf: "",
-  reasonCode: "",
-  exclusionDate: "",
-  planEnrollmentDate: "",
-  billingClosure: "AUTOMATIC_DAY_25",
-  holder: {
-    invoicePlanAmount: "",
-    payrollPlanAmount: "",
-    addonAmount: "",
-  },
-  dependents: [],
-};
-
-const moneyFormatter = new Intl.NumberFormat("pt-BR", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-function normalizeMoney(value: string) {
-  return value.replace(/[^\d,.-]/g, "");
-}
-
-function parseMoney(value: string) {
-  const normalized = normalizeMoney(value).trim();
-  if (!normalized) return Number.NaN;
-
-  const hasComma = normalized.includes(",");
-  const dotCount = (normalized.match(/\./g) ?? []).length;
-  let decimal = normalized;
-
-  if (hasComma) {
-    decimal = normalized.replace(/\./g, "").replace(",", ".");
-  } else if (dotCount > 1) {
-    decimal = normalized.replace(/\./g, "");
-  } else if (dotCount === 1) {
-    const decimalPlaces = normalized.length - normalized.lastIndexOf(".") - 1;
-    if (decimalPlaces > 2) decimal = normalized.replace(".", "");
-  }
-
-  const parsed = Number(decimal);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
-}
-
-function formatMoneyInput(value: string) {
-  const parsed = parseMoney(value);
-  return Number.isFinite(parsed) ? moneyFormatter.format(parsed) : value;
-}
-
-function formatMoneyResult(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? `R$ ${moneyFormatter.format(parsed)}` : "—";
-}
-
-function formatCompetencyResult(value: string | null) {
-  if (!value) return "—";
-  const [year, month] = value.split("-");
-  return year && month ? `${month}/${year}` : value;
-}
-
-function formatCpf(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 11);
-  return digits
-    .replace(/^(\d{3})(\d)/, "$1.$2")
-    .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
-    .replace(/\.(\d{3})(\d)/, ".$1-$2");
-}
-
-function createDependent(): DependentValues {
-  return {
-    id:
-      globalThis.crypto?.randomUUID?.() ??
-      `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    name: "",
-    birthDate: null,
-    planCode: null,
-    age: null,
-    hasAddon: false,
-    invoicePlanAmount: "",
-    addonAmount: "",
-  };
-}
-
-async function readApiError(
-  response: Response,
-  fallback = "Não foi possível concluir o cálculo. Tente novamente.",
-) {
-  try {
-    const body = (await response.json()) as ApiErrorBody;
-    const detail = body.details?.find((item) => item.message)?.message;
-    if (detail) return detail;
-    if (typeof body.error === "string") return body.error;
-    if (body.error?.message) return body.error.message;
-  } catch {
-    // Resposta sem JSON: usa mensagem segura abaixo.
-  }
-
-  return fallback;
-}
-
-function waitForDocumentPoll(milliseconds: number, signal: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Operação cancelada.", "AbortError"));
-      return;
-    }
-    const onAbort = () => {
-      window.clearTimeout(timeout);
-      reject(new DOMException("Operação cancelada.", "AbortError"));
-    };
-    const timeout = window.setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-function defaultMoney(value: string | number | null | undefined) {
-  if (value === undefined || value === null || value === "") return "";
-  return formatMoneyInput(String(value));
-}
-
-function pricingIssue(status: UnimedBeneficiary["pricing"]["status"]) {
-  if (status === "MISSING_BIRTH_DATE") return "data de nascimento ausente";
-  if (status === "MISSING_PLAN_CODE") return "código do plano ausente";
-  if (status === "MISSING_AGE_BRACKET") return "faixa etária não configurada";
-  return "preço não encontrado de forma única";
-}
-
-function dateInput(value: string | undefined | null) {
-  return value?.slice(0, 10) ?? "";
-}
-
-function validateForm(form: FormValues) {
-  const errors: FieldErrors = {};
-
-  if (form.employeeName.trim().length < 3) {
-    errors.employeeName = "Informe o nome do colaborador.";
-  }
-  if (form.cpf.replace(/\D/g, "").length !== 11) {
-    errors.cpf = "Informe um CPF com 11 dígitos.";
-  }
-  if (!form.reasonCode) errors.reasonCode = "Selecione o motivo.";
-  if (!form.exclusionDate) {
-    errors.exclusionDate = "Informe a data de exclusão.";
-  }
-  if (!form.planEnrollmentDate) {
-    errors.planEnrollmentDate = "Informe a inclusão no plano.";
-  } else if (
-    form.exclusionDate &&
-    form.planEnrollmentDate > form.exclusionDate
-  ) {
-    errors.planEnrollmentDate =
-      "A inclusão no plano não pode ser posterior à exclusão.";
-  }
-
-  (
-    [
-      ["invoicePlanAmount", "Informe o valor do plano na fatura."],
-      ["payrollPlanAmount", "Informe o desconto do plano em folha."],
-      [
-        "addonAmount",
-        "Informe o valor do Acessório Funeral, mesmo quando for zero.",
-      ],
-    ] as const
-  ).forEach(([field, message]) => {
-    const value = parseMoney(form.holder[field]);
-    if (!Number.isFinite(value) || value < 0) errors[field] = message;
-  });
-
-  form.dependents.forEach((dependent) => {
-    if (
-      !Number.isFinite(parseMoney(dependent.invoicePlanAmount)) ||
-      parseMoney(dependent.invoicePlanAmount) < 0
-    ) {
-      errors[`dependent-${dependent.id}`] =
-        "Informe valor de fatura válido para este dependente.";
-    }
-    if (
-      !Number.isFinite(parseMoney(dependent.addonAmount)) ||
-      parseMoney(dependent.addonAmount) < 0
-    ) {
-      errors[`dependent-${dependent.id}`] =
-        "Informe Acessório Funeral válido para este dependente.";
-    }
-  });
-
-  return errors;
-}
-
-function FieldLabel({
-  htmlFor,
-  children,
-  required = false,
-}: {
-  htmlFor: string;
-  children: React.ReactNode;
-  required?: boolean;
-}) {
-  return (
-    <label
-      htmlFor={htmlFor}
-      className="mb-2 block text-sm font-bold text-[color:var(--app-fg)]"
-    >
-      {children}
-      {required ? (
-        <span className="ml-1 text-[color:var(--app-coral)]" aria-hidden="true">
-          *
-        </span>
-      ) : null}
-    </label>
-  );
-}
-
-function FieldError({ id, message }: { id: string; message?: string }) {
-  if (!message) return null;
-  return (
-    <p
-      id={id}
-      className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-[color:var(--app-coral)]"
-    >
-      <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-      {message}
-    </p>
-  );
-}
-
-function MoneyInput({
-  id,
-  label,
-  value,
-  error,
-  onChange,
-  onBlur,
-  hint,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  error?: string;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-  hint?: string;
-}) {
-  const errorId = `${id}-error`;
-  const hintId = `${id}-hint`;
-
-  return (
-    <div>
-      <FieldLabel htmlFor={id} required>
-        {label}
-      </FieldLabel>
-      <div className="relative">
-        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-bold text-[color:var(--app-subtle)]">
-          R$
-        </span>
-        <input
-          id={id}
-          type="text"
-          inputMode="decimal"
-          autoComplete="off"
-          placeholder="0,00"
-          value={value}
-          onChange={(event) => onChange(normalizeMoney(event.target.value))}
-          onBlur={onBlur}
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? errorId : hint ? hintId : undefined}
-          className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] py-2.5 pr-3 pl-10 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)] disabled:opacity-60"
-        />
-      </div>
-      {hint && !error ? (
-        <p id={hintId} className="mt-2 text-xs text-[color:var(--app-subtle)]">
-          {hint}
-        </p>
-      ) : null}
-      <FieldError id={errorId} message={error} />
-    </div>
-  );
-}
-
-function ResultMetric({
-  label,
-  value,
-  emphasis = false,
-}: {
-  label: string;
-  value: string;
-  emphasis?: boolean;
-}) {
-  return (
-    <div
-      className={
-        emphasis
-          ? "rounded-lg border border-[color:var(--app-success-border)] bg-[color:var(--app-success-soft)] p-3"
-          : "rounded-lg border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3"
-      }
-    >
-      <dt className="text-xs font-bold tracking-wide text-[color:var(--app-muted)] uppercase">
-        {label}
-      </dt>
-      <dd className="mt-1.5 text-lg font-black tracking-tight text-[color:var(--app-fg)] tabular-nums">
-        {value}
-      </dd>
-    </div>
-  );
-}
+export type UnimedExclusionReasonOption = UnimedExclusionReasonOptionData;
 
 export function UnimedCalculationWorkspace({
   reasons = DEFAULT_UNIMED_EXCLUSION_REASONS,
@@ -1294,410 +928,34 @@ export function UnimedCalculationWorkspace({
         className="unimed-sheet-form grid items-start xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.65fr)]"
       >
         <div className="unimed-sheet-input-grid">
-          <section className="unimed-sheet-panel border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4 sm:p-5">
-            <div className="mb-4 flex items-start gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-teal)]">
-                <UserRound className="size-5" aria-hidden="true" />
-              </span>
-              <div>
-                <h2 className="text-lg font-black text-[color:var(--app-fg)]">
-                  1. Identificação
-                </h2>
-                <p className="mt-1 text-sm text-[color:var(--app-muted)]">
-                  Dados usados na conferência e confirmação do e-mail.
-                </p>
-              </div>
-            </div>
+          <UnimedCalculationIdentificationSection
+            form={form}
+            errors={errors}
+            selectedBeneficiary={selectedBeneficiary}
+            pricingWarnings={pricingWarnings}
+            selectBeneficiary={selectBeneficiary}
+            clearSelectedBeneficiary={clearSelectedBeneficiary}
+            updateForm={updateForm}
+          />
 
-            <UnimedBeneficiarySearch
-              selected={selectedBeneficiary}
-              referenceDate={form.exclusionDate || undefined}
-              onSelect={selectBeneficiary}
-              onClear={clearSelectedBeneficiary}
-            />
+          <UnimedCalculationMovementSection
+            form={form}
+            errors={errors}
+            reasons={reasons}
+            updateForm={updateForm}
+            updateExclusionDate={updateExclusionDate}
+          />
 
-            {pricingWarnings.length > 0 ? (
-              <div
-                className="mt-4 rounded-xl border border-[color:var(--app-gold)] bg-[color:var(--app-warning-soft)] p-4"
-                role="status"
-              >
-                <p className="text-sm font-black text-[color:var(--app-fg)]">
-                  Campos que precisam de conferência
-                </p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-[color:var(--app-muted)]">
-                  {pricingWarnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            <div className="mt-6 grid gap-5 md:grid-cols-2">
-              <div>
-                <FieldLabel htmlFor="unimed-name" required>
-                  Nome do colaborador
-                </FieldLabel>
-                <input
-                  id="unimed-name"
-                  type="text"
-                  autoComplete="name"
-                  placeholder="Digite o nome completo"
-                  value={form.employeeName}
-                  onChange={(event) =>
-                    updateForm("employeeName", event.target.value)
-                  }
-                  aria-invalid={Boolean(errors.employeeName)}
-                  aria-describedby={
-                    errors.employeeName ? "unimed-name-error" : undefined
-                  }
-                  className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
-                />
-                <FieldError
-                  id="unimed-name-error"
-                  message={errors.employeeName}
-                />
-              </div>
-              <div>
-                <FieldLabel htmlFor="unimed-cpf" required>
-                  CPF do Titular
-                </FieldLabel>
-                <input
-                  id="unimed-cpf"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  placeholder="000.000.000-00"
-                  maxLength={14}
-                  value={form.cpf}
-                  onChange={(event) =>
-                    updateForm("cpf", formatCpf(event.target.value))
-                  }
-                  aria-invalid={Boolean(errors.cpf)}
-                  aria-describedby={errors.cpf ? "unimed-cpf-error" : undefined}
-                  className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
-                />
-                <FieldError id="unimed-cpf-error" message={errors.cpf} />
-              </div>
-            </div>
-          </section>
-
-          <section className="unimed-sheet-panel border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4 sm:p-5">
-            <div className="mb-4 flex items-start gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-gold)]">
-                <CalendarDays className="size-5" aria-hidden="true" />
-              </span>
-              <div>
-                <h2 className="text-lg font-black text-[color:var(--app-fg)]">
-                  2. Informações complementares
-                </h2>
-                <p className="mt-1 text-sm text-[color:var(--app-muted)]">
-                  Motivo, datas e situação do fechamento da fatura.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-5 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <FieldLabel htmlFor="unimed-reason" required>
-                  Motivo da exclusão
-                </FieldLabel>
-                <select
-                  id="unimed-reason"
-                  value={form.reasonCode}
-                  onChange={(event) =>
-                    updateForm("reasonCode", event.target.value)
-                  }
-                  aria-invalid={Boolean(errors.reasonCode)}
-                  aria-describedby={
-                    errors.reasonCode ? "unimed-reason-error" : undefined
-                  }
-                  className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
-                >
-                  <option value="">Selecione o motivo</option>
-                  {reasons.map((reason) => (
-                    <option key={reason.code} value={reason.code}>
-                      {reason.code}. {reason.label}
-                    </option>
-                  ))}
-                </select>
-                <FieldError
-                  id="unimed-reason-error"
-                  message={errors.reasonCode}
-                />
-              </div>
-
-              <div>
-                <FieldLabel htmlFor="unimed-enrollment" required>
-                  Inclusão no plano
-                </FieldLabel>
-                <input
-                  id="unimed-enrollment"
-                  type="date"
-                  value={form.planEnrollmentDate}
-                  max={form.exclusionDate || undefined}
-                  onChange={(event) =>
-                    updateForm("planEnrollmentDate", event.target.value)
-                  }
-                  aria-invalid={Boolean(errors.planEnrollmentDate)}
-                  aria-describedby={
-                    errors.planEnrollmentDate
-                      ? "unimed-enrollment-error"
-                      : undefined
-                  }
-                  className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
-                />
-                <FieldError
-                  id="unimed-enrollment-error"
-                  message={errors.planEnrollmentDate}
-                />
-              </div>
-
-              <div>
-                <FieldLabel htmlFor="unimed-exclusion" required>
-                  Data de exclusão
-                </FieldLabel>
-                <input
-                  id="unimed-exclusion"
-                  type="date"
-                  value={form.exclusionDate}
-                  min={form.planEnrollmentDate || undefined}
-                  onChange={(event) =>
-                    void updateExclusionDate(event.target.value)
-                  }
-                  aria-invalid={Boolean(errors.exclusionDate)}
-                  aria-describedby={
-                    errors.exclusionDate ? "unimed-exclusion-error" : undefined
-                  }
-                  className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
-                />
-                <FieldError
-                  id="unimed-exclusion-error"
-                  message={errors.exclusionDate}
-                />
-              </div>
-
-              <fieldset className="md:col-span-2">
-                <legend className="mb-2 text-sm font-bold text-[color:var(--app-fg)]">
-                  Fechamento da fatura
-                </legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {(
-                    [
-                      [
-                        "AUTOMATIC_DAY_25",
-                        "Fechamento automático",
-                        "Dia 25 da competência",
-                      ],
-                      ["OPEN", "Fatura aberta", "Sem fechamento aplicado"],
-                    ] as const
-                  ).map(([value, title, description]) => (
-                    <label
-                      key={value}
-                      className="flex cursor-pointer gap-3 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-4 transition has-[:checked]:border-[color:var(--app-teal)] has-[:checked]:bg-[color:var(--app-success-soft)]"
-                    >
-                      <input
-                        type="radio"
-                        name="billing-closure"
-                        value={value}
-                        checked={form.billingClosure === value}
-                        onChange={() => updateForm("billingClosure", value)}
-                        className="mt-1 size-4 shrink-0"
-                      />
-                      <span>
-                        <span className="block text-sm font-black text-[color:var(--app-fg)]">
-                          {title}
-                        </span>
-                        <span className="mt-1 block text-xs text-[color:var(--app-muted)]">
-                          {description}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-            </div>
-          </section>
-
-          <section className="unimed-sheet-panel border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4 sm:p-5">
-            <div className="mb-4 flex items-start gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-lime)]">
-                <CircleDollarSign className="size-5" aria-hidden="true" />
-              </span>
-              <div>
-                <h2 className="text-lg font-black text-[color:var(--app-fg)]">
-                  3. Valores do plano
-                </h2>
-                <p className="mt-1 text-sm text-[color:var(--app-muted)]">
-                  Nenhum preço é presumido. Use valores da competência ativa.
-                </p>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-4">
-              <p className="mb-3 text-xs font-black tracking-wide text-[color:var(--app-muted)] uppercase">
-                Titular
-              </p>
-              <div className="grid gap-4 md:grid-cols-3">
-                <MoneyInput
-                  id="unimed-invoice"
-                  label="Plano na fatura"
-                  value={form.holder.invoicePlanAmount}
-                  error={errors.invoicePlanAmount}
-                  onChange={(value) => updateHolder("invoicePlanAmount", value)}
-                  onBlur={() => blurMoney("invoicePlanAmount")}
-                />
-                <MoneyInput
-                  id="unimed-payroll"
-                  label="Plano em folha"
-                  value={form.holder.payrollPlanAmount}
-                  error={errors.payrollPlanAmount}
-                  onChange={(value) => updateHolder("payrollPlanAmount", value)}
-                  onBlur={() => blurMoney("payrollPlanAmount")}
-                />
-                <MoneyInput
-                  id="unimed-addon"
-                  label="Acessório Funeral"
-                  value={form.holder.addonAmount}
-                  error={errors.addonAmount}
-                  onChange={(value) => updateHolder("addonAmount", value)}
-                  onBlur={() => blurMoney("addonAmount")}
-                  hint={
-                    selectedBeneficiary
-                      ? `Identificação automática: ${selectedBeneficiary.hasAddon ? "possui" : "não possui"}.`
-                      : "Use 0,00 quando não houver Acessório Funeral."
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="mt-7 border-t border-[color:var(--app-border)] pt-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <UsersRound
-                    className="size-5 text-[color:var(--app-teal)]"
-                    aria-hidden="true"
-                  />
-                  <div>
-                    <h3 className="text-sm font-black text-[color:var(--app-fg)]">
-                      Dependentes
-                    </h3>
-                    <p className="text-xs text-[color:var(--app-muted)]">
-                      Até {MAX_DEPENDENTS} dependentes por cálculo.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateForm("dependents", [
-                      ...form.dependents,
-                      createDependent(),
-                    ])
-                  }
-                  disabled={form.dependents.length >= MAX_DEPENDENTS}
-                  className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-4 py-2 text-sm font-black text-[color:var(--app-fg)] transition hover:border-[color:var(--app-teal)] disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  <Plus className="size-4" aria-hidden="true" />
-                  Adicionar dependente
-                </button>
-              </div>
-
-              {form.dependents.length === 0 ? (
-                <div className="mt-5 rounded-xl border border-dashed border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-4 py-5 text-center text-sm text-[color:var(--app-muted)]">
-                  Nenhum dependente incluído neste cálculo.
-                </div>
-              ) : (
-                <div className="mt-5 overflow-hidden rounded-xl border border-[color:var(--app-border)]">
-                  {form.dependents.map((dependent, index) => {
-                    const dependentError = errors[`dependent-${dependent.id}`];
-                    return (
-                      <div
-                        key={dependent.id}
-                        className="border-b border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-4 last:border-b-0"
-                      >
-                        <div className="mb-4 flex items-center justify-between gap-3">
-                          <h4 className="text-sm font-black text-[color:var(--app-fg)]">
-                            Dependente {index + 1}
-                          </h4>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateForm(
-                                "dependents",
-                                form.dependents.filter(
-                                  (item) => item.id !== dependent.id,
-                                ),
-                              )
-                            }
-                            className="grid size-9 place-items-center rounded-lg border border-[color:var(--app-border)] text-[color:var(--app-coral)] transition hover:bg-[color:var(--app-danger-soft)]"
-                            aria-label={`Remover dependente ${index + 1}`}
-                          >
-                            <Trash2 className="size-4" aria-hidden="true" />
-                          </button>
-                        </div>
-                        <div className="grid gap-4 md:grid-cols-3">
-                          <div>
-                            <FieldLabel
-                              htmlFor={`dependent-${dependent.id}-name`}
-                            >
-                              Nome
-                            </FieldLabel>
-                            <input
-                              id={`dependent-${dependent.id}-name`}
-                              type="text"
-                              placeholder="Opcional para o cálculo"
-                              value={dependent.name}
-                              onChange={(event) =>
-                                updateDependent(
-                                  dependent.id,
-                                  "name",
-                                  event.target.value,
-                                )
-                              }
-                              className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
-                            />
-                          </div>
-                          <MoneyInput
-                            id={`dependent-${dependent.id}-invoice`}
-                            label="Plano na fatura"
-                            value={dependent.invoicePlanAmount}
-                            error={dependentError}
-                            onChange={(value) =>
-                              updateDependent(
-                                dependent.id,
-                                "invoicePlanAmount",
-                                value,
-                              )
-                            }
-                            onBlur={() =>
-                              blurDependentMoney(dependent, "invoicePlanAmount")
-                            }
-                          />
-                          <MoneyInput
-                            id={`dependent-${dependent.id}-addon`}
-                            label="Acessório Funeral"
-                            value={dependent.addonAmount}
-                            error={dependentError}
-                            onChange={(value) =>
-                              updateDependent(
-                                dependent.id,
-                                "addonAmount",
-                                value,
-                              )
-                            }
-                            onBlur={() =>
-                              blurDependentMoney(dependent, "addonAmount")
-                            }
-                            hint={`Identificação automática: ${dependent.hasAddon ? "possui" : "não possui"}.`}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
+          <UnimedCalculationValuesSection
+            form={form}
+            errors={errors}
+            selectedBeneficiary={selectedBeneficiary}
+            updateForm={updateForm}
+            updateHolder={updateHolder}
+            blurMoney={blurMoney}
+            updateDependent={updateDependent}
+            blurDependentMoney={blurDependentMoney}
+          />
         </div>
 
         <aside className="unimed-sheet-output-grid">
