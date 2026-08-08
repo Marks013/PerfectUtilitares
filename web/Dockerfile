@@ -45,11 +45,13 @@ ENV NODE_ENV=production
 COPY --from=prisma-generated /app/node_modules ./node_modules
 COPY package*.json ./
 COPY prisma.config.ts ./
+COPY tsconfig.json ./
 COPY prisma ./prisma
 COPY --from=prisma-generated /app/src/generated/prisma ./src/generated/prisma
 COPY scripts ./scripts
 COPY src/lib/jornada ./src/lib/jornada
 COPY src/lib/prisma-adapter.ts ./src/lib/prisma-adapter.ts
+COPY src/lib/auth/password.ts ./src/lib/auth/password.ts
 COPY src/lib/system/seed-admin.ts ./src/lib/system/seed-admin.ts
 COPY src/lib/unimed/defaults.ts ./src/lib/unimed/defaults.ts
 USER node
