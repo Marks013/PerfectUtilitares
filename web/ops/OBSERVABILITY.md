@@ -22,3 +22,10 @@ sudo /usr/local/sbin/validate-perfectutilitares-observability \
 Com DSN vazio, nenhuma credencial externa é necessária e os logs locais continuam
 ativos. O projeto remove `X-Powered-By`; cabeçalhos adicionados pelo proxy reverso
 devem ser ocultados na própria configuração do proxy.
+
+## Modo operacional suportado
+
+A producao atual opera com logs estruturados locais e health checks. Isso nao
+deve ser apresentado como rastreamento externo de excecoes. Nao existe endpoint
+publico de teste do Sentry. Quando um DSN HTTPS for configurado e validado, o
+Sentry passa a ser um complemento; sem DSN, permanece explicitamente desabilitado.

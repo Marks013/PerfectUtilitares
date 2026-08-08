@@ -1,8 +1,8 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { createPrismaAdapter } from "../src/lib/prisma-adapter";
-import { hash } from "bcryptjs";
 import { DEFAULT_JORNADA_RULES } from "../src/lib/jornada/default-rules";
+import { ensureBootstrapAdmin } from "../src/lib/system/seed-admin";
 import { DEFAULT_UNIMED_EXCLUSION_REASONS } from "../src/lib/unimed/defaults";
 
 const prisma = new PrismaClient({ adapter: createPrismaAdapter() });
@@ -137,7 +137,7 @@ async function main() {
     .trim()
     .toLowerCase();
   const adminPassword =
-    process.env.ADMIN_PASSWORD ?? process.env.SEED_ADMIN_PASSWORD ?? "admin123";
+    process.env.ADMIN_PASSWORD ?? process.env.SEED_ADMIN_PASSWORD;
   const tenant = await prisma.tenant.upsert({
     where: { slug: process.env.DEFAULT_TENANT_SLUG ?? "principal" },
     create: {
@@ -149,36 +149,26 @@ async function main() {
     },
   });
 
-  const admin = await prisma.user.upsert({
-    where: { email: adminEmail },
-    create: {
-      tenantId: tenant.id,
-      email: adminEmail,
-      name: "Administrador",
-      passwordHash: await hash(adminPassword, 12),
-      role: "ADMIN",
-    },
-    update: {
-      name: "Administrador",
-      tenantId: tenant.id,
-      passwordHash: await hash(adminPassword, 12),
-      role: "ADMIN",
-      status: "ACTIVE",
-    },
+  const { user: admin } = await ensureBootstrapAdmin(prisma, {
+    email: adminEmail,
+    password: adminPassword,
+    tenantId: tenant.id,
   });
 
-  await prisma.unimedUserAccess.upsert({
-    where: { userId: admin.id },
-    create: {
-      userId: admin.id,
-      tenantId: tenant.id,
-      level: "ADMIN",
-    },
-    update: {
-      tenantId: tenant.id,
-      level: "ADMIN",
-    },
-  });
+  if (admin.role === "ADMIN" && admin.status === "ACTIVE") {
+    await prisma.unimedUserAccess.upsert({
+      where: { userId: admin.id },
+      create: {
+        userId: admin.id,
+        tenantId: tenant.id,
+        level: "ADMIN",
+      },
+      update: {
+        tenantId: tenant.id,
+        level: "ADMIN",
+      },
+    });
+  }
 
   for (const branch of UNIMED_BRANCH_DOCUMENT_METADATA) {
     await prisma.unimedBranch.upsert({

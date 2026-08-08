@@ -1,3 +1,5 @@
+> **Status:** concluido e arquivado em 8 de agosto de 2026. Este arquivo e um registro historico de trabalho entregue, nao um backlog ativo. A validacao atual e definida pelo CI, pelos testes e pela documentacao operacional versionada.
+
 # Plano de correção do módulo PDF
 
 ## Objetivo
