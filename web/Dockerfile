@@ -50,6 +50,7 @@ COPY --from=prisma-generated /app/src/generated/prisma ./src/generated/prisma
 COPY scripts ./scripts
 COPY src/lib/jornada ./src/lib/jornada
 COPY src/lib/prisma-adapter.ts ./src/lib/prisma-adapter.ts
+COPY src/lib/system/seed-admin.ts ./src/lib/system/seed-admin.ts
 COPY src/lib/unimed/defaults.ts ./src/lib/unimed/defaults.ts
 USER node
 CMD ["sh", "-c", "npm run db:deploy"]
