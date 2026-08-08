@@ -5,7 +5,12 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { signIn, signOut } from "@/auth";
 import { normalizeEmail } from "@/lib/auth/email";
-import { checkRateLimit, getClientIp } from "@/lib/api/rate-limit";
+import {
+  checkSharedRateLimit,
+  getClientIp,
+  getHashedRateLimitKey,
+  SharedRateLimitUnavailableError,
+} from "@/lib/api/rate-limit";
 
 function getSafeCallbackUrl(value: FormDataEntryValue | null) {
   const callbackUrl = String(value ?? "");
@@ -41,10 +46,24 @@ export async function loginAction(formData: FormData) {
 
   const headerStore = await headers();
   const clientIp = getClientIp(headerStore);
-  const loginLimit = checkRateLimit(`login:${clientIp}:${email || "empty"}`, {
-    limit: 8,
-    windowMs: 15 * 60_000,
-  });
+  let loginLimit: Awaited<ReturnType<typeof checkSharedRateLimit>>;
+  try {
+    loginLimit = await checkSharedRateLimit(
+      getHashedRateLimitKey(
+        "login",
+        `${clientIp}\0${email || "empty"}`,
+      ),
+      {
+        limit: 8,
+        windowMs: 15 * 60_000,
+      },
+    );
+  } catch (error) {
+    if (error instanceof SharedRateLimitUnavailableError) {
+      redirect(loginErrorUrl("rate-unavailable", callbackUrl));
+    }
+    throw error;
+  }
 
   if (loginLimit.limited) {
     redirect(loginErrorUrl("rate", callbackUrl));

@@ -21,6 +21,28 @@ fi
 cd "$REPOSITORY"
 docker compose exec -T db sh -c 'exec pg_restore --list' < "$backup/database.dump" >/dev/null
 
+verify_database="perfectutil_verify_$(date -u +%Y%m%d%H%M%S)_$$"
+cleanup_database() {
+  docker compose exec -T -e VERIFY_DATABASE="$verify_database" db sh -c \
+    'PGPASSWORD="$POSTGRES_PASSWORD" dropdb --username "$POSTGRES_USER" --force --if-exists "$VERIFY_DATABASE"' \
+    >/dev/null 2>&1 || true
+}
+trap cleanup_database EXIT HUP INT TERM
+
+docker compose exec -T -e VERIFY_DATABASE="$verify_database" db sh -c \
+  'PGPASSWORD="$POSTGRES_PASSWORD" createdb --username "$POSTGRES_USER" --owner "$POSTGRES_USER" "$VERIFY_DATABASE"'
+docker compose exec -T -e VERIFY_DATABASE="$verify_database" db sh -c \
+  'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore --username "$POSTGRES_USER" --dbname "$VERIFY_DATABASE" --no-owner --no-privileges --exit-on-error' \
+  < "$backup/database.dump" >/dev/null
+table_count=$(docker compose exec -T -e VERIFY_DATABASE="$verify_database" db sh -c \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql --username "$POSTGRES_USER" --dbname "$VERIFY_DATABASE" --tuples-only --no-align --command "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = '\''public'\'';"')
+case "$table_count" in
+  ''|*[!0-9]*) echo "Restauracao de teste retornou contagem invalida" >&2; exit 1 ;;
+  0) echo "Restauracao de teste nao criou tabelas publicas" >&2; exit 1 ;;
+esac
+cleanup_database
+trap - EXIT HUP INT TERM
+
 if [ -f "$backup/host-files.tar.gz" ]; then
   if tar -tzf "$backup/host-files.tar.gz" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
     echo "Arquivo de host contem caminho inseguro" >&2
@@ -28,5 +50,5 @@ if [ -f "$backup/host-files.tar.gz" ]; then
   fi
 fi
 
-logger -t perfectutilitares-backup "backup verificado: $backup"
-printf 'Backup valido: %s\n' "$backup"
+logger -t perfectutilitares-backup "backup restaurado e verificado: $backup"
+printf 'Backup restaurado e valido: %s (%s tabelas)\n' "$backup" "$table_count"

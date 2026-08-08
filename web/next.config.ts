@@ -100,6 +100,15 @@ const nextConfig: NextConfig = {
         headers: securityHeaders,
       },
       {
+        source: "/mediapipe/face_detection/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, stale-while-revalidate=604800",
+          },
+        ],
+      },
+      {
         source: "/mediapipe/face-detection-frame.html",
         headers: faceDetectionFrameHeaders,
       },

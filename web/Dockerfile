@@ -62,6 +62,10 @@ RUN npm run build:pdf-worker
 RUN npm prune --omit=dev --ignore-scripts
 
 FROM base AS pdf-worker
+ARG SOURCE_REVISION=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
 ENV NODE_ENV=production
 RUN apk add --no-cache \
     font-dejavu \
@@ -80,6 +84,10 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=45s --retries=3 CMD ["/u
 CMD ["node", "dist/pdf-worker.mjs"]
 
 FROM base AS runner
+ARG SOURCE_REVISION=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000

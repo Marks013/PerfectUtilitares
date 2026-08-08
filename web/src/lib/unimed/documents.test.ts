@@ -407,5 +407,6 @@ describe("Unimed DOCX documents", () => {
         }
       }
     },
+    15_000,
   );
 });

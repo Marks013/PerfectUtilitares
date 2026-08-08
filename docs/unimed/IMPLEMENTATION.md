@@ -1,9 +1,9 @@
 # Módulo Unimed — Plano de implementação
 
-> Status em 31/07/2026: cronograma concluído e validado em produção, incluindo
-> envio SMTP pelo Gmail. A senha de aplicativo existente na planilha foi
-> reutilizada temporariamente com autorização; a futura rotação exige alterar
-> somente `UNIMED_SMTP_PASSWORD`. O estado final auditado está em `PROGRESS.md`.
+> Status em 08/08/2026: cronograma concluído e revalidado em produção. O
+> checklist abaixo é o registro retrospectivo da entrega, não uma lista de
+> promessas pendentes. Credenciais SMTP são geridas fora do Git por variáveis
+> protegidas; o estado final auditado está em `PROGRESS.md`.
 
 ## Visão geral
 
@@ -40,9 +40,9 @@ Congelar o comportamento esperado antes de criar a branch.
 - [x] Consolidar regras, módulos, fórmulas e gatilhos.
 - [x] Montar o primeiro caso anonimizável e a matriz de resultados esperados.
 - [x] Criar protótipo navegável.
-- [ ] Aprovar protótipo navegável.
-- [ ] Conferir documentos, impressão e e-mail.
-- [ ] Aprovar a liberação para criar a branch.
+- [x] Aprovar protótipo navegável.
+- [x] Conferir documentos, impressão e e-mail.
+- [x] Aprovar a liberação para criar a branch.
 
 ### Critério de sucesso
 
@@ -56,12 +56,12 @@ Criar limites do módulo, modelos Prisma e migrações incrementais.
 
 ### Tarefas
 
-- [ ] Criar branch `feat/unimed`.
-- [ ] Criar diretórios do domínio, componentes e rotas.
-- [ ] Definir modelos e índices Prisma.
-- [ ] Criar migração reversível.
-- [ ] Criar schemas Zod e tipos comuns.
-- [ ] Criar seed das configurações iniciais.
+- [x] Criar branch `feat/unimed`.
+- [x] Criar diretórios do domínio, componentes e rotas.
+- [x] Definir modelos e índices Prisma.
+- [x] Criar migração reversível.
+- [x] Criar schemas Zod e tipos comuns.
+- [x] Criar seed das configurações iniciais.
 
 ### Critério de sucesso
 
@@ -77,11 +77,11 @@ versionadas.
 
 ### Tarefas
 
-- [ ] Adicionar acesso ao módulo e ações por papel.
-- [ ] Criar tela e APIs de configurações.
-- [ ] Implementar competência, fechamento, preços, reajustes, motivos,
+- [x] Adicionar acesso ao módulo e ações por papel.
+- [x] Criar tela e APIs de configurações.
+- [x] Implementar competência, fechamento, preços, reajustes, motivos,
   filiais, destinatários e documentos.
-- [ ] Validar vigências sem sobreposição.
+- [x] Validar vigências sem sobreposição.
 
 ### Critério de sucesso
 
@@ -95,12 +95,12 @@ Substituir a geração manual dos bancos Access.
 
 ### Tarefas
 
-- [ ] Definir contratos e aliases de CSV/XLSX.
-- [ ] Validar tipo, tamanho, conteúdo, duplicidade e competência.
-- [ ] Normalizar beneficiários, endereços, faturas e itens.
-- [ ] Publicar atomicamente e manter ativa + anterior.
-- [ ] Excluir arquivos transitórios em sucesso ou falha.
-- [ ] Criar relatório de validação sem reter o arquivo original.
+- [x] Definir contratos e aliases de CSV/XLSX.
+- [x] Validar tipo, tamanho, conteúdo, duplicidade e competência.
+- [x] Normalizar beneficiários, endereços, faturas e itens.
+- [x] Publicar atomicamente e manter ativa + anterior.
+- [x] Excluir arquivos transitórios em sucesso ou falha.
+- [x] Criar relatório de validação sem reter o arquivo original.
 
 ### Critério de sucesso
 
@@ -115,14 +115,14 @@ Reproduzir a aba `ATUAL` de forma determinística.
 
 ### Tarefas
 
-- [ ] Pesquisa por CPF/cadastro.
-- [ ] Titular e até seis dependentes.
-- [ ] Classificação de aditivo.
-- [ ] Faixa etária, preço, filial e vigência.
-- [ ] Fatura, pró-rata, devolução e cobrança em folha.
-- [ ] Fechamento não fechado e automático dia 25.
-- [ ] Motivos e seleção de documento.
-- [ ] Testes do golden master centavo a centavo.
+- [x] Pesquisa por CPF/cadastro.
+- [x] Titular e até seis dependentes.
+- [x] Classificação de aditivo.
+- [x] Faixa etária, preço, filial e vigência.
+- [x] Fatura, pró-rata, devolução e cobrança em folha.
+- [x] Fechamento não fechado e automático dia 25.
+- [x] Motivos e seleção de documento.
+- [x] Testes do golden master centavo a centavo.
 
 ### Critério de sucesso
 
@@ -137,12 +137,12 @@ Remover dependência operacional de Word e Excel.
 
 ### Tarefas
 
-- [ ] Criar duas vias imprimíveis do cálculo.
-- [ ] Implementar RN561.
-- [ ] Implementar termo inativo.
-- [ ] Tratar seis dependentes no cálculo e quatro campos no RN561.
-- [ ] Enviar somente nome e CPF após confirmação.
-- [ ] Apagar PDF e arquivos temporários após entrega.
+- [x] Criar duas vias imprimíveis do cálculo.
+- [x] Implementar RN561.
+- [x] Implementar termo inativo.
+- [x] Tratar seis dependentes no cálculo e quatro campos no RN561.
+- [x] Enviar somente nome e CPF após confirmação.
+- [x] Apagar PDF e arquivos temporários após entrega.
 
 ### Critério de sucesso
 
@@ -156,13 +156,13 @@ Tornar a operação segura, limitada e previsível.
 
 ### Tarefas
 
-- [ ] Usar bind mounts absolutos fora do repositório.
-- [ ] Criar preflight de marcador, dono, permissão e espaço.
-- [ ] Proibir volumes Docker permanentes.
-- [ ] Implementar trava de importação e idempotência.
-- [ ] Limitar upload, memória e concorrência.
-- [ ] Remover órfãos transitórios com mais de 24 horas.
-- [ ] Garantir logs sem PII e retenção já limitada pelo Compose.
+- [x] Usar bind mounts absolutos fora do repositório.
+- [x] Criar preflight de marcador, dono, permissão e espaço.
+- [x] Proibir volumes Docker permanentes.
+- [x] Implementar trava de importação e idempotência.
+- [x] Limitar upload, memória e concorrência.
+- [x] Remover órfãos transitórios com mais de 24 horas.
+- [x] Garantir logs sem PII e retenção já limitada pelo Compose.
 
 ### Critério de sucesso
 
@@ -177,12 +177,12 @@ Liberar produção sem interromper o processo atual.
 
 ### Tarefas
 
-- [ ] Executar qualidade, build e testes de segurança.
-- [ ] Comparar cálculos reais anonimizados com Excel.
-- [ ] Fazer snapshot pré-migração.
-- [ ] Aplicar migração e seed.
-- [ ] Implantar com healthcheck e rollback documentado.
-- [ ] Manter Excel como contingência durante a transição.
+- [x] Executar qualidade, build e testes de segurança.
+- [x] Comparar cálculos reais anonimizados com Excel.
+- [x] Fazer snapshot pré-migração.
+- [x] Aplicar migração e seed.
+- [x] Implantar com healthcheck e rollback documentado.
+- [x] Manter Excel como contingência durante a transição.
 
 ### Critério de sucesso
 
@@ -191,7 +191,7 @@ testado sem perda de dados.
 
 ## Pós-implementação
 
-- [ ] Atualizar documentação operacional.
-- [ ] Revisar modularização e dependências.
-- [ ] Verificar desempenho e concorrência.
-- [ ] Registrar limitações conhecidas.
+- [x] Atualizar documentação operacional.
+- [x] Revisar modularização e dependências.
+- [x] Verificar desempenho e concorrência.
+- [x] Registrar limitações conhecidas.

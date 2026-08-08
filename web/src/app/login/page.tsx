@@ -31,6 +31,8 @@ export default async function LoginPage({
     password: "Informe sua senha.",
     rate:
       "Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.",
+    "rate-unavailable":
+      "O controle de tentativas está temporariamente indisponível. Tente novamente em instantes.",
     credentials:
       "E-mail ou senha não conferem. Revise os dados ou use a recuperação de senha.",
   };

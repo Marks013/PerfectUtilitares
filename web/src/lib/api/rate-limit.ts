@@ -33,14 +33,18 @@ export function getClientIp(headers: Headers) {
   return forwardedIp && isIP(forwardedIp) ? forwardedIp : "local";
 }
 
-export function getRateLimitKey(prefix: string, headers: Headers) {
-  const ipHash = createHmac(
+export function getHashedRateLimitKey(prefix: string, identifier: string) {
+  const identifierHash = createHmac(
     "sha256",
     process.env.AUTH_SECRET || "perfectutilitares-local-rate-limit",
   )
-    .update(getClientIp(headers))
+    .update(identifier)
     .digest("hex");
-  return `${prefix}:${ipHash}`;
+  return `${prefix}:${identifierHash}`;
+}
+
+export function getRateLimitKey(prefix: string, headers: Headers) {
+  return getHashedRateLimitKey(prefix, getClientIp(headers));
 }
 
 export function checkRateLimit(key: string, options: RateLimitOptions) {

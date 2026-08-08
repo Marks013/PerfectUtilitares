@@ -1,7 +1,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-const ROOT = path.resolve("src/lib");
+const ROOTS = [
+  path.resolve("src/lib"),
+  path.resolve("src/components"),
+];
 const BASELINE_PATH = path.resolve("module-size-baseline.json");
 const extensions = new Set([".ts", ".tsx"]);
 const entries = [];
@@ -55,7 +58,9 @@ async function visit(directory) {
   }
 }
 
-await visit(ROOT);
+for (const root of ROOTS) {
+  await visit(root);
+}
 
 const knownFiles = new Set(entries.map((entry) => entry.file));
 const missingExceptions = Object.keys(exceptions).filter(
