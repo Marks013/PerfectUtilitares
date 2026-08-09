@@ -3,7 +3,6 @@
   "ignoreFiles": [
     "ops/validate-observability-env.mjs",
     "public/global.js",
-    "public/unimed-sw.js",
     "public/mediapipe/face-detection-console-filter.js",
     "public/mediapipe/face-detection-frame.js",
     "public/mediapipe/face_detection/**"

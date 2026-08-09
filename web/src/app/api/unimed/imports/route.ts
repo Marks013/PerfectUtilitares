@@ -22,10 +22,6 @@ import {
   publishUnimedImport,
   UnimedPublishError,
 } from "@/lib/unimed/publisher";
-import {
-  parseUnimedMasterWorkbook,
-  type UnimedWorkbookSheet,
-} from "@/lib/unimed/master-workbook";
 import { unimedCompetencySchema, zodIssueDetails } from "@/lib/unimed/schema";
 import {
   UnimedXlsxSecurityError,
@@ -53,24 +49,6 @@ async function readAddressWorkbook(bytes: Buffer, fileName: string) {
     throw new UnimedImportValidationError(
       "UNIMED_ADDRESS_FILE_INVALID",
       `Base de endereços: a planilha ${fileName} não pôde ser lida como XLSX.`,
-    );
-  }
-}
-
-async function readMasterWorkbook(bytes: Buffer, fileName: string) {
-  try {
-    validateUnimedXlsxArchive(bytes);
-    return (await readXlsxFile(bytes)) as UnimedWorkbookSheet[];
-  } catch (error) {
-    if (error instanceof UnimedXlsxSecurityError) {
-      throw new UnimedImportValidationError(
-        "UNIMED_MASTER_WORKBOOK_INVALID",
-        error.message,
-      );
-    }
-    throw new UnimedImportValidationError(
-      "UNIMED_MASTER_WORKBOOK_INVALID",
-      `Planilha mestre: o arquivo ${fileName} não pôde ser lido como XLSX/XLSM.`,
     );
   }
 }
@@ -178,48 +156,30 @@ export async function POST(request: Request) {
   const beneficiaryFiles = optionalFiles(formData.getAll("beneficiaryFiles"));
   const invoiceFiles = optionalFiles(formData.getAll("invoiceFiles"));
   const addressEntries = formData.getAll("addressFile");
-  const masterEntries = formData.getAll("workbookFile");
   if (
     !beneficiaryFiles ||
     !invoiceFiles ||
     addressEntries.length > 1 ||
-    masterEntries.length > 1 ||
     addressEntries.some(
-      (entry) => !isUploadedFile(entry) || entry.size === 0,
-    ) ||
-    masterEntries.some(
       (entry) => !isUploadedFile(entry) || entry.size === 0,
     ) ||
     (beneficiaryFiles.length === 0 &&
       invoiceFiles.length === 0 &&
-      addressEntries.length === 0 &&
-      masterEntries.length === 0)
+      addressEntries.length === 0)
   ) {
     return jsonError(
       400,
       "UNIMED_FILES_REQUIRED",
-      "Envie a planilha mestre ou ao menos uma fonte válida: beneficiários, faturas ou endereços.",
+      "Envie ao menos uma fonte válida: beneficiários, faturas ou endereços.",
     );
   }
 
   const addressFile = addressEntries[0] as File | undefined;
-  const masterFile = masterEntries[0] as File | undefined;
-  if (
-    masterFile &&
-    (beneficiaryFiles.length > 0 || invoiceFiles.length > 0 || addressFile)
-  ) {
-    return jsonError(
-      400,
-      "UNIMED_MASTER_WORKBOOK_MIXED",
-      "Envie somente a planilha mestre ou somente as fontes separadas.",
-    );
-  }
   const csvFileCount = beneficiaryFiles.length + invoiceFiles.length;
   const allFiles = [
     ...beneficiaryFiles,
     ...invoiceFiles,
     ...(addressFile ? [addressFile] : []),
-    ...(masterFile ? [masterFile] : []),
   ];
   const totalBytes = allFiles.reduce((total, file) => total + file.size, 0);
   if (
@@ -241,20 +201,9 @@ export async function POST(request: Request) {
       "A base de endereços deve ser uma planilha XLSX.",
     );
   }
-  if (
-    masterFile &&
-    !/\.(xlsx|xlsm)$/i.test(masterFile.name)
-  ) {
-    return jsonError(
-      400,
-      "UNIMED_MASTER_WORKBOOK_INVALID",
-      "A planilha mestre deve ser um arquivo XLSX ou XLSM.",
-    );
-  }
 
   try {
-    const [beneficiaryInputs, invoiceInputs, addressBytes, masterBytes] =
-      await Promise.all([
+    const [beneficiaryInputs, invoiceInputs, addressBytes] = await Promise.all([
       Promise.all(
         beneficiaryFiles.map(async (file): Promise<UnimedImportFile> => ({
           name: file.name,
@@ -270,25 +219,15 @@ export async function POST(request: Request) {
       addressFile
         ? addressFile.arrayBuffer().then(Buffer.from)
         : Promise.resolve(null),
-      masterFile
-        ? masterFile.arrayBuffer().then(Buffer.from)
-        : Promise.resolve(null),
     ]);
 
-    let beneficiaries = beneficiaryInputs.length
+    const beneficiaries = beneficiaryInputs.length
       ? parseBeneficiaryCsvFiles(beneficiaryInputs)
       : undefined;
-    let invoiceItems = invoiceInputs.length
+    const invoiceItems = invoiceInputs.length
       ? parseInvoiceCsvFiles(invoiceInputs)
       : undefined;
     let addresses: ReturnType<typeof parseAddressRows> | undefined;
-    if (masterFile && masterBytes) {
-      const workbook = await readMasterWorkbook(masterBytes, masterFile.name);
-      const parsed = parseUnimedMasterWorkbook(masterFile.name, workbook);
-      beneficiaries = parsed.beneficiaries;
-      invoiceItems = parsed.invoiceItems;
-      addresses = parsed.addresses;
-    }
     if (addressFile && addressBytes) {
       const workbook = await readAddressWorkbook(
         addressBytes,

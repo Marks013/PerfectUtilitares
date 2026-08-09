@@ -72,7 +72,6 @@ type CreatePdfDraftRequest = {
   options?: Prisma.InputJsonValue;
   ownerSessionHash: string | null;
   principalKey: string;
-  requestKey?: string | null;
   tenantId: string | null;
   userId: string | null;
 };
@@ -106,7 +105,6 @@ export async function createPdfDraftWithCapacity(
           options: request.options,
           ownerSessionHash: request.ownerSessionHash,
           principalKey: request.principalKey,
-          requestKey: request.requestKey,
           tenantId: request.tenantId,
           userId: request.userId,
         },

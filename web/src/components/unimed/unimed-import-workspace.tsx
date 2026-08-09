@@ -51,7 +51,6 @@ export function useUnimedImportWorkspaceController() {
   const beneficiaryInputRef = useRef<HTMLInputElement>(null);
   const invoiceInputRef = useRef<HTMLInputElement>(null);
   const addressInputRef = useRef<HTMLInputElement>(null);
-  const masterInputRef = useRef<HTMLInputElement>(null);
   const payrollLoanInputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<XMLHttpRequest | null>(null);
   const payrollLoanRequestRef = useRef<XMLHttpRequest | null>(null);
@@ -59,7 +58,6 @@ export function useUnimedImportWorkspaceController() {
   const [beneficiaryFiles, setBeneficiaryFiles] = useState<File[]>([]);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [addressFiles, setAddressFiles] = useState<File[]>([]);
-  const [masterFiles, setMasterFiles] = useState<File[]>([]);
   const [payrollLoanFiles, setPayrollLoanFiles] = useState<File[]>([]);
   const [confirmationTarget, setConfirmationTarget] =
     useState<ConfirmationTarget | null>(null);
@@ -73,8 +71,8 @@ export function useUnimedImportWorkspaceController() {
   });
 
   const baseFiles = useMemo(
-    () => [...masterFiles, ...beneficiaryFiles, ...invoiceFiles, ...addressFiles],
-    [masterFiles, beneficiaryFiles, invoiceFiles, addressFiles],
+    () => [...beneficiaryFiles, ...invoiceFiles, ...addressFiles],
+    [beneficiaryFiles, invoiceFiles, addressFiles],
   );
   const baseBytes = useMemo(
     () => baseFiles.reduce((total, file) => total + file.size, 0),
@@ -91,24 +89,16 @@ export function useUnimedImportWorkspaceController() {
 
   const selectedBaseSources = useMemo(() => {
     const sources: string[] = [];
-    if (masterFiles.length > 0) sources.push("Planilha mestre");
     if (beneficiaryFiles.length > 0) sources.push("Beneficiários");
     if (invoiceFiles.length > 0) sources.push("Faturas");
     if (addressFiles.length > 0) sources.push("Endereços");
     return sources;
-  }, [
-    addressFiles.length,
-    beneficiaryFiles.length,
-    invoiceFiles.length,
-    masterFiles.length,
-  ]);
+  }, [addressFiles.length, beneficiaryFiles.length, invoiceFiles.length]);
 
   function releaseBaseFiles() {
-    setMasterFiles([]);
     setBeneficiaryFiles([]);
     setInvoiceFiles([]);
     setAddressFiles([]);
-    if (masterInputRef.current) masterInputRef.current.value = "";
     if (beneficiaryInputRef.current) beneficiaryInputRef.current.value = "";
     if (invoiceInputRef.current) invoiceInputRef.current.value = "";
     if (addressInputRef.current) addressInputRef.current.value = "";
@@ -153,22 +143,6 @@ export function useUnimedImportWorkspaceController() {
     }
     if (addressFiles.length > 1) {
       messages.push("Selecione no máximo uma planilha XLSX de endereços.");
-    }
-    if (masterFiles.length > 1) {
-      messages.push("Selecione no máximo uma planilha mestre.");
-    }
-    if (
-      masterFiles.length > 0 &&
-      beneficiaryFiles.length + invoiceFiles.length + addressFiles.length > 0
-    ) {
-      messages.push(
-        "Use a planilha mestre sozinha ou use as fontes separadas, nunca ambas.",
-      );
-    }
-    if (
-      masterFiles.some((file) => !/\.(xlsx|xlsm)$/i.test(file.name))
-    ) {
-      messages.push("A planilha mestre deve ser XLSX ou XLSM.");
     }
     if (
       [...beneficiaryFiles, ...invoiceFiles].some(
@@ -245,9 +219,6 @@ export function useUnimedImportWorkspaceController() {
     const data = new FormData();
     data.append("year", match[1]);
     data.append("month", String(Number(match[2])));
-    if (masterFiles[0]) {
-      data.append("workbookFile", masterFiles[0], masterFiles[0].name);
-    }
     beneficiaryFiles.forEach((file) => {
       data.append("beneficiaryFiles", file, file.name);
     });
@@ -403,7 +374,7 @@ export function useUnimedImportWorkspaceController() {
     request.send(data);
   }
 
-    return { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, Archive, CalendarDays, CheckCircle2, Database, FileGroup, FileSpreadsheet, FileText, Loader2, LockKeyhole, RotateCcw, ShieldCheck, SummaryMetric, UsersRound, addressFiles, addressInputRef, baseBytes, baseFiles, beneficiaryFiles, beneficiaryInputRef, bytesLabel, competency, confirmationTarget, fileKey, invoiceFiles, invoiceInputRef, isBusy, isPayrollLoanBusy, masterFiles, masterInputRef, mergeFiles, payrollLoanBytes, payrollLoanFiles, payrollLoanInputRef, payrollLoanState, publishBase, publishPayrollLoan, requestConfirmation, reset, selectedBaseSources, selectedMonthLabel, setAddressFiles, setBeneficiaryFiles, setCompetency, setConfirmationTarget, setInvoiceFiles, setMasterFiles, setPayrollLoanFiles, setPayrollLoanState, setState, state };
+    return { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, Archive, CalendarDays, CheckCircle2, Database, FileGroup, FileSpreadsheet, FileText, Loader2, LockKeyhole, RotateCcw, ShieldCheck, SummaryMetric, UsersRound, addressFiles, addressInputRef, baseBytes, baseFiles, beneficiaryFiles, beneficiaryInputRef, bytesLabel, competency, confirmationTarget, fileKey, invoiceFiles, invoiceInputRef, isBusy, isPayrollLoanBusy, mergeFiles, payrollLoanBytes, payrollLoanFiles, payrollLoanInputRef, payrollLoanState, publishBase, publishPayrollLoan, requestConfirmation, reset, selectedBaseSources, selectedMonthLabel, setAddressFiles, setBeneficiaryFiles, setCompetency, setConfirmationTarget, setInvoiceFiles, setPayrollLoanFiles, setPayrollLoanState, setState, state };
 }
 
 export function UnimedImportWorkspace() {

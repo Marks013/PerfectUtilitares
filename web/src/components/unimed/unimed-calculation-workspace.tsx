@@ -18,7 +18,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   useEffect,
   useEffectEvent,
-  useRef,
 } from "react";
 import {
   AlertDialog,
@@ -31,10 +30,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { DEFAULT_UNIMED_EXCLUSION_REASONS } from "@/lib/unimed/defaults";
-import {
-  calculateUnimedOffline,
-  queueUnimedOfflineAction,
-} from "@/lib/unimed/offline-store";
 import type {
   UnimedBeneficiary,
   UnimedPricingContext,
@@ -78,11 +73,6 @@ export function useUnimedCalculationWorkspaceController({
   reasons?: readonly UnimedExclusionReasonOption[];
 }) {
   const { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, isRefreshingPricing, setIsRefreshingPricing, pricingWarnings, setPricingWarnings, notice, setNotice, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, generatedDocumentUrl, pricingRequestSequence, pricingAbortController, lastAutomaticCalculationFingerprint, lastReminderFingerprint, emailRequest, selectedReason, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, invalidatePricingRefresh, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace } = useUnimedCalculationState({ reasons });
-  const documentIdempotencyRequest = useRef<{
-    beneficiaryId: string;
-    idempotencyKey: string;
-    reasonCode: number;
-  } | null>(null);
 
   function selectBeneficiary(
     beneficiary: UnimedBeneficiary,
@@ -349,28 +339,15 @@ export function useUnimedCalculationWorkspaceController({
     invalidateDocument();
 
     try {
-      let body: UnimedCalculationApiResponse;
-      let usedOfflineData = false;
-      let serverResponded = false;
-      try {
-        const response = await fetch("/api/unimed/calculation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-          signal: abortController.signal,
-        });
-        serverResponded = true;
-        if (!response.ok) throw new Error(await readApiError(response));
-        body = (await response.json()) as UnimedCalculationApiResponse;
-      } catch (requestError) {
-        if (serverResponded || abortController.signal.aborted) {
-          throw requestError;
-        }
-        const offline = await calculateUnimedOffline(input);
-        if (!offline) throw requestError;
-        body = offline;
-        usedOfflineData = true;
-      }
+      const response = await fetch("/api/unimed/calculation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) throw new Error(await readApiError(response));
+      const body = (await response.json()) as UnimedCalculationApiResponse;
       const calculation = body.calculation;
       const nextPayrollLoans = body.payrollLoans ?? null;
       if (calculationRequestSequence.current !== requestSequence) return;
@@ -408,19 +385,11 @@ export function useUnimedCalculationWorkspaceController({
         setNotice({
           id: `coparticipation-${requestSequence}`,
           type: "info",
-          title: usedOfflineData
-            ? "Cálculo offline concluído"
-            : "Cálculo concluído",
-          message: usedOfflineData
-            ? "Resultado calculado com o pacote local vigente. Documentos exigem conexão."
-            : "Lembrete: solicite a coparticipação por e-mail.",
+          title: "Cálculo concluído",
+          message: "Lembrete: solicite a coparticipação por e-mail.",
         });
       }
-      if (
-        !usedOfflineData &&
-        documentRequired &&
-        options?.generateRequiredDocument !== false
-      ) {
+      if (documentRequired && options?.generateRequiredDocument !== false) {
         await generateDocument(calculation);
       }
     } catch (error) {
@@ -494,7 +463,6 @@ export function useUnimedCalculationWorkspaceController({
       idempotencyKey,
     };
 
-    let serverResponded = false;
     try {
       const response = await fetch("/api/unimed/email", {
         method: "POST",
@@ -505,7 +473,6 @@ export function useUnimedCalculationWorkspaceController({
           confirmed: true,
         }),
       });
-      serverResponded = true;
 
       if (!response.ok) {
         throw new Error(
@@ -520,31 +487,6 @@ export function useUnimedCalculationWorkspaceController({
       setEmailDialogOpen(false);
       emailRequest.current = null;
     } catch (error) {
-      if (!serverResponded) {
-        try {
-          await queueUnimedOfflineAction({
-            id: idempotencyKey,
-            endpoint: "/api/unimed/email",
-            body: {
-              beneficiaryId: selectedBeneficiary.id,
-              idempotencyKey,
-              confirmed: true,
-            },
-          });
-          setEmailConfirmed(false);
-          setEmailDialogOpen(false);
-          emailRequest.current = null;
-          setNotice({
-            id: `email-offline-${idempotencyKey}`,
-            type: "info",
-            title: "E-mail agendado",
-            message: "O envio ocorrerá automaticamente quando a conexão voltar.",
-          });
-          return;
-        } catch {
-          // Sem armazenamento local: apresenta a falha original abaixo.
-        }
-      }
       setEmailConfirmed(false);
       setEmailError(
         error instanceof Error
@@ -569,16 +511,6 @@ export function useUnimedCalculationWorkspaceController({
     }
 
     const beneficiaryId = selectedBeneficiary.id;
-    const idempotencyKey =
-      documentIdempotencyRequest.current?.beneficiaryId === beneficiaryId &&
-      documentIdempotencyRequest.current.reasonCode === requestedReasonCode
-        ? documentIdempotencyRequest.current.idempotencyKey
-        : globalThis.crypto.randomUUID();
-    documentIdempotencyRequest.current = {
-      beneficiaryId,
-      idempotencyKey,
-      reasonCode: requestedReasonCode,
-    };
     const requestSequence = ++documentRequestSequence.current;
     documentAbortController.current?.abort();
     const abortController = new AbortController();
@@ -594,7 +526,6 @@ export function useUnimedCalculationWorkspaceController({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           beneficiaryId,
-          idempotencyKey,
           reasonCode: requestedReasonCode,
           confirmed: true,
         }),
@@ -651,7 +582,6 @@ export function useUnimedCalculationWorkspaceController({
             previewUrl: objectUrl,
             reasonCode: requestedReasonCode,
           });
-          documentIdempotencyRequest.current = null;
           return true;
         }
         if (resultResponse.status !== 202) {

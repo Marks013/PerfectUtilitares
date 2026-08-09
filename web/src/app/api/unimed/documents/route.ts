@@ -99,7 +99,6 @@ export async function POST(request: Request) {
     const job = await queueUnimedDocumentPdf({
       beneficiaryId: parsed.data.beneficiaryId,
       documentKind: reason.documentKind,
-      idempotencyKey: parsed.data.idempotencyKey,
       moduleSessionId: access.moduleSessionId,
       tenantId: access.tenantId,
     });

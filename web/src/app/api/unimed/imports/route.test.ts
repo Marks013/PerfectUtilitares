@@ -5,7 +5,6 @@ const mocks = vi.hoisted(() => ({
   parseAddressRows: vi.fn(),
   parseBeneficiaryCsvFiles: vi.fn(),
   parseInvoiceCsvFiles: vi.fn(),
-  parseUnimedMasterWorkbook: vi.fn(),
   publishUnimedImport: vi.fn(),
   readXlsxFile: vi.fn(),
   requireUnimedAccess: vi.fn(),
@@ -65,10 +64,6 @@ vi.mock("@/lib/unimed/publisher", () => {
   };
 });
 
-vi.mock("@/lib/unimed/master-workbook", () => ({
-  parseUnimedMasterWorkbook: mocks.parseUnimedMasterWorkbook,
-}));
-
 vi.mock("read-excel-file/node", () => ({
   default: mocks.readXlsxFile,
 }));
@@ -121,22 +116,13 @@ function importRequest(
     includeAddress?: boolean;
     includeBeneficiaries?: boolean;
     includeInvoices?: boolean;
-    includeMaster?: boolean;
     origin?: string;
   } = {},
 ) {
   const data = new FormData();
   data.set("year", "2026");
   data.set("month", "7");
-  if (options.includeMaster) {
-    data.set(
-      "workbookFile",
-      new File(["xlsm"], "CALCULO UNIMED.xlsm", {
-        type: "application/vnd.ms-excel.sheet.macroEnabled.12",
-      }),
-    );
-  }
-  if (!options.includeMaster && options.includeBeneficiaries !== false) {
+  if (options.includeBeneficiaries !== false) {
     data.append(
       "beneficiaryFiles",
       new File(["beneficiaries"], "beneficiarios.csv", {
@@ -144,7 +130,7 @@ function importRequest(
       }),
     );
   }
-  if (!options.includeMaster && options.includeInvoices !== false) {
+  if (options.includeInvoices !== false) {
     data.append(
       "invoiceFiles",
       new File(["invoices"], "faturas.csv", {
@@ -152,7 +138,7 @@ function importRequest(
       }),
     );
   }
-  if (!options.includeMaster && options.includeAddress !== false) {
+  if (options.includeAddress !== false) {
     data.set(
       "addressFile",
       new File(["xlsx"], options.addressName ?? "enderecos.xlsx", {
@@ -183,11 +169,6 @@ beforeEach(() => {
   mocks.parseBeneficiaryCsvFiles.mockReturnValue(beneficiarySource);
   mocks.parseInvoiceCsvFiles.mockReturnValue(invoiceSource);
   mocks.parseAddressRows.mockReturnValue(addressSource);
-  mocks.parseUnimedMasterWorkbook.mockReturnValue({
-    beneficiaries: beneficiarySource,
-    invoiceItems: invoiceSource,
-    addresses: addressSource,
-  });
   mocks.readXlsxFile.mockResolvedValue([
     {
       sheet: "Endereços",
@@ -341,36 +322,6 @@ describe("Unimed import API", () => {
         batchId: "batch-1",
       },
     });
-  });
-
-  it("imports the master XLSM as one idempotent publication", async () => {
-    mocks.readXlsxFile.mockResolvedValue([
-      { sheet: "Unimed", data: [["CODIGO"], ["1"]] },
-      { sheet: "Fatura", data: [["CONTRATO"], ["1"]] },
-      { sheet: "Endereço", data: [["CADASTRO"], ["1"]] },
-    ]);
-
-    const response = await POST(importRequest({ includeMaster: true }));
-
-    expect(response.status).toBe(201);
-    expect(mocks.validateUnimedXlsxArchive).toHaveBeenCalledWith(
-      expect.any(Buffer),
-    );
-    expect(mocks.parseUnimedMasterWorkbook).toHaveBeenCalledWith(
-      "CALCULO UNIMED.xlsm",
-      expect.arrayContaining([
-        expect.objectContaining({ sheet: "Unimed" }),
-        expect.objectContaining({ sheet: "Fatura" }),
-        expect.objectContaining({ sheet: "Endereço" }),
-      ]),
-    );
-    expect(mocks.publishUnimedImport).toHaveBeenCalledWith(
-      expect.objectContaining({
-        beneficiaries: beneficiarySource,
-        invoiceItems: invoiceSource,
-        addresses: addressSource,
-      }),
-    );
   });
 
   it("uses the current read-excel-file workbook sheet shape", async () => {

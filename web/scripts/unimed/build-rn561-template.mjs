@@ -6,6 +6,8 @@ import JSZip from "jszip";
 
 const ORIGINAL_SHA256 =
   "ab93d1bc9403250e11c10b876b146146698b85f261d60671ad3c8b5faa1733ab";
+const DEFAULT_SOURCE =
+  "G:/Samuel/00 - UNIMED/MODELO_RN561_FORMULARIO _EXCLUSAO.docx";
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT = path.join(
   scriptDirectory,
@@ -207,14 +209,7 @@ function compactContinuation(documentXml) {
 }
 
 async function main() {
-  const sourceArgument =
-    process.argv[2] || process.env.UNIMED_RN561_SOURCE?.trim();
-  if (!sourceArgument) {
-    throw new Error(
-      "Informe o modelo de origem: npm run unimed:build-rn561-template -- <origem.docx> [saida.docx].",
-    );
-  }
-  const sourcePath = path.resolve(sourceArgument);
+  const sourcePath = path.resolve(process.argv[2] || DEFAULT_SOURCE);
   const outputPath = path.resolve(process.argv[3] || DEFAULT_OUTPUT);
   const source = await readFile(sourcePath);
   const sourceHash = sha256(source);

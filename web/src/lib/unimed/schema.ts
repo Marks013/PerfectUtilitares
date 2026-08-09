@@ -1,15 +1,23 @@
 import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
 import { DEFAULT_UNIMED_EMAIL_SUBJECT } from "@/lib/unimed/defaults";
-import {
-  dateOnlySchema,
-  unimedMoneySchema as moneySchema,
-} from "@/lib/unimed/calculation-schema";
 
-export {
-  dateOnlySchema,
-  unimedCalculationInputSchema,
-} from "@/lib/unimed/calculation-schema";
+const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
+
+export const dateOnlySchema = z
+  .string()
+  .regex(dateOnlyPattern, "Use uma data no formato AAAA-MM-DD.")
+  .refine((value) => {
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    );
+  }, "Informe uma data válida.");
+
+const moneySchema = z.number().finite().nonnegative().max(99_999_999.99);
 
 const configuredMoneySchema = moneySchema.transform((value) =>
   new Prisma.Decimal(value)
@@ -33,11 +41,62 @@ export const unimedEmailRequestSchema = z
 export const unimedDocumentRequestSchema = z
   .object({
     beneficiaryId: z.string().trim().min(8).max(64),
-    idempotencyKey: z.string().uuid(),
     reasonCode: z.number().int().min(1).max(9_999),
     confirmed: z.literal(true),
   })
   .strict();
+
+export const unimedCalculationInputSchema = z
+  .object({
+    reasonCode: z.number().int().min(1).max(9_999),
+    exclusionDate: dateOnlySchema,
+    planEnrollmentDate: dateOnlySchema,
+    billingClosure: z.enum(["OPEN", "AUTOMATIC_DAY_25"]),
+    holder: z.object({
+      invoicePlanAmount: moneySchema,
+      payrollPlanAmount: moneySchema,
+      addonAmount: moneySchema,
+    }),
+    dependents: z
+      .array(
+        z.object({
+          invoicePlanAmount: moneySchema,
+          addonAmount: moneySchema,
+        }),
+      )
+      .max(6),
+    nextCompetency: z
+      .object({
+        holder: z.object({
+          invoicePlanAmount: moneySchema,
+          payrollPlanAmount: moneySchema,
+          addonAmount: moneySchema,
+        }),
+        dependents: z
+          .array(
+            z.object({
+              invoicePlanAmount: moneySchema,
+              addonAmount: moneySchema,
+            }),
+          )
+          .max(6),
+      })
+      .optional(),
+  })
+  .refine(
+    (input) =>
+      !input.nextCompetency ||
+      input.nextCompetency.dependents.length === input.dependents.length,
+    {
+      message:
+        "A próxima competência deve conter os mesmos beneficiários selecionados.",
+      path: ["nextCompetency", "dependents"],
+    },
+  )
+  .refine((input) => input.planEnrollmentDate <= input.exclusionDate, {
+    message: "A inclusão no plano não pode ocorrer após a exclusão.",
+    path: ["planEnrollmentDate"],
+  });
 
 export const unimedConfigurationSchema = z
   .object({

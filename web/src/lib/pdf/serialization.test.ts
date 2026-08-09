@@ -10,7 +10,6 @@ describe("PDF job serialization", () => {
       tenantId: "tenant-secret",
       userId: "user-secret",
       ownerSessionHash: "session-secret",
-      requestKey: null,
       principalKey: `user:${"a".repeat(64)}`,
       operation: "COMPRESS",
       status: "SUCCEEDED",

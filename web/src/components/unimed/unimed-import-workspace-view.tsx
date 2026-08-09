@@ -5,7 +5,7 @@ import type { useUnimedImportWorkspaceController } from "./unimed-import-workspa
 type Model = ReturnType<typeof useUnimedImportWorkspaceController>;
 
 export function UnimedImportWorkspaceView({ model }: { model: Model }) {
-  const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, Archive, CalendarDays, CheckCircle2, Database, FileGroup, FileSpreadsheet, FileText, Loader2, LockKeyhole, RotateCcw, ShieldCheck, SummaryMetric, UsersRound, addressFiles, addressInputRef, baseBytes, baseFiles, beneficiaryFiles, beneficiaryInputRef, bytesLabel, competency, confirmationTarget, fileKey, invoiceFiles, invoiceInputRef, isBusy, isPayrollLoanBusy, masterFiles, masterInputRef, mergeFiles, payrollLoanBytes, payrollLoanFiles, payrollLoanInputRef, payrollLoanState, publishBase, publishPayrollLoan, requestConfirmation, reset, selectedBaseSources, selectedMonthLabel, setAddressFiles, setBeneficiaryFiles, setCompetency, setConfirmationTarget, setInvoiceFiles, setMasterFiles, setPayrollLoanFiles, setPayrollLoanState, setState, state } = model;
+  const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, Archive, CalendarDays, CheckCircle2, Database, FileGroup, FileSpreadsheet, FileText, Loader2, LockKeyhole, RotateCcw, ShieldCheck, SummaryMetric, UsersRound, addressFiles, addressInputRef, baseBytes, baseFiles, beneficiaryFiles, beneficiaryInputRef, bytesLabel, competency, confirmationTarget, fileKey, invoiceFiles, invoiceInputRef, isBusy, isPayrollLoanBusy, mergeFiles, payrollLoanBytes, payrollLoanFiles, payrollLoanInputRef, payrollLoanState, publishBase, publishPayrollLoan, requestConfirmation, reset, selectedBaseSources, selectedMonthLabel, setAddressFiles, setBeneficiaryFiles, setCompetency, setConfirmationTarget, setInvoiceFiles, setPayrollLoanFiles, setPayrollLoanState, setState, state } = model;
   return (
 <div className="space-y-6">
       <header className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-7">
@@ -19,8 +19,8 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
               Importar dados por competência
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-[color:var(--app-muted)] sm:text-base">
-              Use a planilha mestre para atualizar beneficiários, faturas e
-              endereços juntos. Fontes separadas continuam disponíveis.
+              Cada fonte pode ser atualizada separadamente. A base só fica
+              pronta para uso quando possuir os dados necessários.
             </p>
           </div>
           <div className="flex items-start gap-3 rounded-2xl border border-[color:var(--app-success-border)] bg-[color:var(--app-success-soft)] p-4 lg:max-w-sm">
@@ -85,12 +85,12 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
                 Arquivos de origem
               </h2>
               <p className="mt-1 text-sm text-[color:var(--app-muted)]">
-                Prefira CALCULO UNIMED.xlsm. Alternativamente, envie as fontes
-                separadas. Máximo de 10 MB por arquivo e 20 MB no conjunto.
+                Importe uma ou mais fontes, em qualquer combinação. Máximo de 50
+                CSVs, 10 MB por arquivo e 20 MB no conjunto.
               </p>
               <p className="mt-2 text-xs font-semibold text-[color:var(--app-gold)]">
-                Planilha mestre e fontes separadas não podem ser combinadas na
-                mesma publicação.
+                Atenção: os dois conjuntos usam os mesmos nomes de lojas.
+                Confira os cabeçalhos antes de selecionar.
               </p>
             </div>
             <div
@@ -98,25 +98,6 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
                 isBusy ? "pointer-events-none opacity-60" : ""
               }`}
             >
-              <div className="lg:col-span-2">
-                <FileGroup
-                  id="unimed-master-workbook"
-                  title="Planilha mestre"
-                  description="CALCULO UNIMED.xlsm com as abas Unimed, Fatura e Endereço. Macros e conexões externas nunca são executadas."
-                  accept=".xlsm,.xlsx,application/vnd.ms-excel.sheet.macroEnabled.12,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                  multiple={false}
-                  files={masterFiles}
-                  inputRef={masterInputRef}
-                  onFiles={(files) => {
-                    setMasterFiles(files.slice(0, 1));
-                    setBeneficiaryFiles([]);
-                    setInvoiceFiles([]);
-                    setAddressFiles([]);
-                  }}
-                  onRemove={() => setMasterFiles([])}
-                  icon={FileSpreadsheet}
-                />
-              </div>
               <FileGroup
                 id="unimed-beneficiary-files"
                 title="Beneficiários"
@@ -125,10 +106,9 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
                 multiple
                 files={beneficiaryFiles}
                 inputRef={beneficiaryInputRef}
-                onFiles={(files) => {
-                  setMasterFiles([]);
-                  setBeneficiaryFiles((current) => mergeFiles(current, files));
-                }}
+                onFiles={(files) =>
+                  setBeneficiaryFiles((current) => mergeFiles(current, files))
+                }
                 onRemove={(key) =>
                   setBeneficiaryFiles((current) =>
                     current.filter((file) => fileKey(file) !== key),
@@ -144,10 +124,9 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
                 multiple
                 files={invoiceFiles}
                 inputRef={invoiceInputRef}
-                onFiles={(files) => {
-                  setMasterFiles([]);
-                  setInvoiceFiles((current) => mergeFiles(current, files));
-                }}
+                onFiles={(files) =>
+                  setInvoiceFiles((current) => mergeFiles(current, files))
+                }
                 onRemove={(key) =>
                   setInvoiceFiles((current) =>
                     current.filter((file) => fileKey(file) !== key),
@@ -164,10 +143,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
                   multiple={false}
                   files={addressFiles}
                   inputRef={addressInputRef}
-                  onFiles={(files) => {
-                    setMasterFiles([]);
-                    setAddressFiles(files.slice(0, 1));
-                  }}
+                  onFiles={(files) => setAddressFiles(files.slice(0, 1))}
                   onRemove={() => setAddressFiles([])}
                   icon={FileSpreadsheet}
                 />

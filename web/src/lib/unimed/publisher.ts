@@ -404,58 +404,20 @@ export async function publishUnimedImport(
       };
 
       const branchIds = new Map<string, string>();
-      const incomingCodes = reconciliation.branches.map(({ code }) => code);
-      const incomingCnpjs = reconciliation.branches
-        .map(({ cnpj }) => cnpj)
-        .filter((cnpj): cnpj is string => Boolean(cnpj));
-      const existingBranches = await tx.unimedBranch.findMany({
-        where: {
-          tenantId: input.tenantId,
-          OR: [
-            { code: { in: incomingCodes } },
-            { cnpj: { in: incomingCnpjs } },
-          ],
-        },
-        select: { id: true, code: true, cnpj: true },
-      });
-      const existingByCode = new Map(
-        existingBranches.map((branch) => [branch.code, branch]),
-      );
-      const existingByCnpj = new Map(
-        existingBranches
-          .filter((branch) => branch.cnpj)
-          .map((branch) => [branch.cnpj as string, branch]),
-      );
       for (const branch of reconciliation.branches) {
-        const codeMatch = existingByCode.get(branch.code);
-        const cnpjMatch = branch.cnpj
-          ? existingByCnpj.get(branch.cnpj)
-          : undefined;
-        if (codeMatch && cnpjMatch && codeMatch.id !== cnpjMatch.id) {
-          throw new UnimedPublishError(
-            "IMPORT_REJECTED",
-            `A filial ${branch.code} conflita com um CNPJ já vinculado a outra filial.`,
-          );
-        }
-        const existing = codeMatch ?? cnpjMatch;
-        const saved = existing
-          ? await tx.unimedBranch.update({
-            where: { id: existing.id },
-            data: {
-              cnpj: branch.cnpj,
-              active: true,
-            },
-            select: { id: true },
-          })
-          : await tx.unimedBranch.create({
-              data: {
-                tenantId: input.tenantId,
-                code: branch.code,
-                name: branch.code,
-                cnpj: branch.cnpj,
-              },
-              select: { id: true },
-            });
+        const saved = await tx.unimedBranch.upsert({
+          where: {
+            tenantId_code: { tenantId: input.tenantId, code: branch.code },
+          },
+          create: {
+            tenantId: input.tenantId,
+            code: branch.code,
+            name: branch.code,
+            cnpj: branch.cnpj,
+          },
+          update: { name: branch.code, cnpj: branch.cnpj, active: true },
+          select: { id: true },
+        });
         branchIds.set(branch.code, saved.id);
       }
       await tx.unimedBranch.updateMany({

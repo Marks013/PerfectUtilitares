@@ -29,9 +29,6 @@ const database = vi.hoisted(() => ({
       update: vi.fn(),
     },
     unimedBranch: {
-      create: vi.fn(),
-      findMany: vi.fn(),
-      update: vi.fn(),
       updateMany: vi.fn(),
       upsert: vi.fn(),
     },
@@ -164,9 +161,6 @@ beforeEach(() => {
   database.tx.unimedBeneficiary.update.mockResolvedValue({});
 
   database.tx.unimedBranch.updateMany.mockResolvedValue({ count: 0 });
-  database.tx.unimedBranch.create.mockResolvedValue({ id: "branch-1" });
-  database.tx.unimedBranch.findMany.mockResolvedValue([]);
-  database.tx.unimedBranch.update.mockResolvedValue({ id: "branch-1" });
   database.tx.unimedBranch.upsert.mockResolvedValue({ id: "branch-1" });
 
   database.tx.unimedCompetency.deleteMany.mockResolvedValue({ count: 0 });
@@ -429,16 +423,6 @@ describe("Unimed publisher", () => {
         },
       ])
       .mockResolvedValueOnce([]);
-    database.tx.unimedBranch.findMany.mockResolvedValueOnce([
-      {
-        id: "branch-legacy",
-        code: "LEGACY",
-        cnpj: "76361807000111",
-      },
-    ]);
-    database.tx.unimedBranch.update.mockResolvedValueOnce({
-      id: "branch-legacy",
-    });
 
     const result = await publishUnimedImport({
       tenantId: "tenant-1",
@@ -463,25 +447,7 @@ describe("Unimed publisher", () => {
       },
     });
 
-    expect(database.tx.unimedBranch.findMany).toHaveBeenCalledWith({
-      where: {
-        tenantId: "tenant-1",
-        OR: [
-          { code: { in: ["001"] } },
-          { cnpj: { in: ["76361807000111"] } },
-        ],
-      },
-      select: { id: true, code: true, cnpj: true },
-    });
-    expect(database.tx.unimedBranch.update).toHaveBeenCalledWith({
-      where: { id: "branch-legacy" },
-      data: {
-        cnpj: "76361807000111",
-        active: true,
-      },
-      select: { id: true },
-    });
-    expect(database.tx.unimedBranch.create).not.toHaveBeenCalled();
+    expect(database.tx.unimedBranch.upsert).toHaveBeenCalledOnce();
     expect(database.tx.unimedBeneficiary.createMany).toHaveBeenCalledOnce();
     expect(database.tx.unimedInvoiceItem.createMany).toHaveBeenCalledOnce();
 
