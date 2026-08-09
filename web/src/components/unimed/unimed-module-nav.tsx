@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Calculator, Settings2, Upload } from "lucide-react";
 import { UnimedAccessLogoutButton } from "@/components/unimed/unimed-access-logout-button";
+import { UnimedOfflineStatus } from "@/components/unimed/unimed-offline-status";
 
 type UnimedModuleNavProps = {
   showManagement?: boolean;
@@ -36,6 +37,7 @@ export function UnimedModuleNav({
         </>
       ) : null}
       <span className="ml-auto inline-flex items-center gap-2 text-xs font-bold text-[color:var(--app-muted)]">
+        <UnimedOfflineStatus />
         {accessRole === "ADMIN" ? "Administrador" : "Padrão"}
         <UnimedAccessLogoutButton />
       </span>

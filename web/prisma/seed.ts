@@ -171,22 +171,34 @@ async function main() {
   }
 
   for (const branch of UNIMED_BRANCH_DOCUMENT_METADATA) {
-    await prisma.unimedBranch.upsert({
+    const existingBranches = await prisma.unimedBranch.findMany({
       where: {
-        tenantId_code: { tenantId: tenant.id, code: branch.code },
-      },
-      create: {
         tenantId: tenant.id,
-        ...branch,
-        companyName: UNIMED_COMPANY_NAME,
-        phone: UNIMED_COMPANY_PHONE,
+        OR: [{ code: branch.code }, { cnpj: branch.cnpj }],
       },
-      update: {
-        ...branch,
-        companyName: UNIMED_COMPANY_NAME,
-        phone: UNIMED_COMPANY_PHONE,
-      },
+      select: { id: true },
     });
+    if (existingBranches.length > 1) {
+      throw new Error(
+        `Conflito entre código e CNPJ na filial Unimed ${branch.code}.`,
+      );
+    }
+    const branchData = {
+      ...branch,
+      companyName: UNIMED_COMPANY_NAME,
+      phone: UNIMED_COMPANY_PHONE,
+      active: true,
+    };
+    if (existingBranches[0]) {
+      await prisma.unimedBranch.update({
+        where: { id: existingBranches[0].id },
+        data: branchData,
+      });
+    } else {
+      await prisma.unimedBranch.create({
+        data: { tenantId: tenant.id, ...branchData },
+      });
+    }
   }
 
   for (const reason of DEFAULT_UNIMED_EXCLUSION_REASONS) {

@@ -61,6 +61,7 @@ function documentRequest(
 
 const validInput = {
   beneficiaryId: "beneficiary-test-123",
+  idempotencyKey: "10000000-0000-4000-8000-000000000002",
   reasonCode: 2,
   confirmed: true,
 };
@@ -81,6 +82,7 @@ beforeEach(() => {
     },
     tenantId: "tenant-test-123",
     accessLevel: "OPERATOR",
+    moduleSessionId: "module-session-test-123",
   });
   mocks.queueUnimedDocumentPdf.mockResolvedValue({
     id: "pdf-job-test-123",
@@ -162,6 +164,7 @@ describe("Unimed documents API", () => {
     const response = await POST(
       documentRequest({
         beneficiaryId: " beneficiary-test-123 ",
+        idempotencyKey: validInput.idempotencyKey,
         reasonCode: 2,
         confirmed: true,
       }),
@@ -175,6 +178,8 @@ describe("Unimed documents API", () => {
     expect(mocks.queueUnimedDocumentPdf).toHaveBeenCalledWith({
       beneficiaryId: "beneficiary-test-123",
       documentKind: "RN561",
+      idempotencyKey: validInput.idempotencyKey,
+      moduleSessionId: "module-session-test-123",
       tenantId: "tenant-test-123",
     });
     await expect(response.json()).resolves.toEqual({

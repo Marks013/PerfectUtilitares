@@ -67,9 +67,11 @@ const tenantId = "tenant-test-123";
 const moduleSessionId = "module-session-test-123";
 const jobId = "pdf-job-test-123";
 const documentPrincipal = `unimed-document:${tenantId}:${moduleSessionId}`;
+const idempotencyKey = "10000000-0000-4000-8000-000000000003";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.findFirst.mockResolvedValue(null);
   mocks.generate.mockResolvedValue({
     bytes: new TextEncoder().encode("PK synthetic docx"),
     contentType:
@@ -102,6 +104,7 @@ describe("Unimed document PDF orchestration", () => {
     const result = await queueUnimedDocumentPdf({
       beneficiaryId: "beneficiary-test-123",
       documentKind: "RN561",
+      idempotencyKey,
       moduleSessionId,
       tenantId,
     });
@@ -118,6 +121,7 @@ describe("Unimed document PDF orchestration", () => {
         operation: "WORD_TO_PDF",
         ownerSessionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         principalKey: documentPrincipal,
+        requestKey: idempotencyKey,
         tenantId,
         userId: null,
       }),
@@ -140,12 +144,15 @@ describe("Unimed document PDF orchestration", () => {
 
   it("fails safely and removes staged data when the queue is unavailable", async () => {
     mocks.enqueue.mockRejectedValue(new Error("pg-boss unavailable"));
-    mocks.findFirst.mockResolvedValue({ progress: 0, status: "QUEUED" });
+    mocks.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ progress: 0, status: "QUEUED" });
 
     await expect(
       queueUnimedDocumentPdf({
         beneficiaryId: "beneficiary-test-123",
         documentKind: "RN561",
+        idempotencyKey,
         moduleSessionId,
         tenantId,
       }),
@@ -168,6 +175,26 @@ describe("Unimed document PDF orchestration", () => {
         tenantId,
       },
     });
+  });
+
+  it("reuses a document job for the same idempotency key", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: jobId,
+      progress: 45,
+      status: "RUNNING",
+    });
+
+    await expect(
+      queueUnimedDocumentPdf({
+        beneficiaryId: "beneficiary-test-123",
+        documentKind: "RN561",
+        idempotencyKey,
+        moduleSessionId,
+        tenantId,
+      }),
+    ).resolves.toEqual({ id: jobId, progress: 45, status: "RUNNING" });
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.createDraft).not.toHaveBeenCalled();
   });
 
   it("returns only tenant-scoped pending jobs", async () => {

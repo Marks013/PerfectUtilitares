@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { UnimedDocumentKind } from "@/generated/prisma/client";
+import { Prisma, type UnimedDocumentKind } from "@/generated/prisma/client";
 import { PDFDocument } from "pdf-lib";
 import {
   createPdfDraftWithCapacity,
@@ -65,6 +65,26 @@ function ownerSessionHash(tenantId: string, moduleSessionId: string) {
     .digest("hex");
 }
 
+async function findIdempotentDocumentJob(
+  tenantId: string,
+  idempotencyKey: string,
+): Promise<UnimedDocumentPdfJob | null> {
+  const job = await prisma.pdfJob.findFirst({
+    where: {
+      operation: "WORD_TO_PDF",
+      requestKey: idempotencyKey,
+      tenantId,
+    },
+    select: { id: true, progress: true, status: true },
+  });
+  if (!job) return null;
+  return {
+    id: job.id,
+    progress: job.progress,
+    status: job.status === "QUEUED" ? "QUEUED" : "RUNNING",
+  };
+}
+
 function bytesToStream(bytes: Uint8Array) {
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -122,42 +142,64 @@ async function markFailedAndRemove(
 export async function queueUnimedDocumentPdf({
   beneficiaryId,
   documentKind,
+  idempotencyKey,
   moduleSessionId,
   tenantId,
 }: {
   beneficiaryId: string;
   documentKind: GeneratedDocumentKind;
+  idempotencyKey: string;
   moduleSessionId: string;
   tenantId: string;
 }): Promise<UnimedDocumentPdfJob> {
+  const existing = await findIdempotentDocumentJob(tenantId, idempotencyKey);
+  if (existing) return existing;
+
   const document = await generateUnimedDocument(
     tenantId,
     beneficiaryId,
     documentKind,
   );
   const principal = principalKey(tenantId, moduleSessionId);
-  const job = await createPdfDraftWithCapacity({
-    expiresAt: getPdfJobExpiry(),
-    isAuthenticated: true,
-    operation: "WORD_TO_PDF",
-    options: { documentKind, source: "UNIMED_DOCUMENT" },
-    ownerSessionHash: ownerSessionHash(tenantId, moduleSessionId),
-    principalKey: principal,
-    tenantId,
-    userId: null,
-  });
+  let jobId: string;
+  try {
+    const job = await createPdfDraftWithCapacity({
+      expiresAt: getPdfJobExpiry(),
+      isAuthenticated: true,
+      operation: "WORD_TO_PDF",
+      options: { documentKind, source: "UNIMED_DOCUMENT" },
+      ownerSessionHash: ownerSessionHash(tenantId, moduleSessionId),
+      principalKey: principal,
+      requestKey: idempotencyKey,
+      tenantId,
+      userId: null,
+    });
+    jobId = job.id;
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const duplicate = await findIdempotentDocumentJob(
+        tenantId,
+        idempotencyKey,
+      );
+      if (duplicate) return duplicate;
+    }
+    throw error;
+  }
 
   try {
     const upload = await writeOfficeUpload(
       bytesToStream(document.bytes),
-      job.id,
+      jobId,
       DOCX_CONTENT_TYPE,
     );
     await prisma.$transaction([
       prisma.pdfArtifact.create({
         data: {
           id: upload.artifactId,
-          jobId: job.id,
+          jobId,
           kind: "INPUT",
           mimeType: DOCX_CONTENT_TYPE,
           originalName: document.fileName,
@@ -167,14 +209,14 @@ export async function queueUnimedDocumentPdf({
         },
       }),
       prisma.pdfJob.update({
-        where: { id: job.id },
+        where: { id: jobId },
         data: { inputBytes: upload.sizeBytes },
       }),
     ]);
 
     const claimed = await reservePdfJobForQueue({
       isAuthenticated: true,
-      jobId: job.id,
+      jobId,
       principalKey: principal,
     });
     if (!claimed) {
@@ -186,17 +228,17 @@ export async function queueUnimedDocumentPdf({
     }
 
     try {
-      await enqueuePdfJob(job.id, { key: principal, tier: "authenticated" });
+      await enqueuePdfJob(jobId, { key: principal, tier: "authenticated" });
     } catch {
       const current = await prisma.pdfJob
         .findFirst({
-          where: { id: job.id, principalKey: principal, tenantId },
+          where: { id: jobId, principalKey: principal, tenantId },
           select: { progress: true, status: true },
         })
         .catch(() => null);
       if (current?.status === "RUNNING" || current?.status === "SUCCEEDED") {
         return {
-          id: job.id,
+          id: jobId,
           progress: current.progress,
           status: "RUNNING",
         };
@@ -208,13 +250,13 @@ export async function queueUnimedDocumentPdf({
       );
     }
 
-    return { id: job.id, progress: 0, status: "QUEUED" };
+    return { id: jobId, progress: 0, status: "QUEUED" };
   } catch (error) {
     if (error instanceof UnimedDocumentPdfError) {
-      await markFailedAndRemove(tenantId, moduleSessionId, job.id);
+      await markFailedAndRemove(tenantId, moduleSessionId, jobId);
       throw error;
     }
-    await markFailedAndRemove(tenantId, moduleSessionId, job.id);
+    await markFailedAndRemove(tenantId, moduleSessionId, jobId);
     throw new UnimedDocumentPdfError(
       "UNIMED_DOCUMENT_PDF_STORAGE_FAILED",
       503,

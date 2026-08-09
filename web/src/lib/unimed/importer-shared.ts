@@ -10,6 +10,7 @@ export class UnimedImportValidationError extends Error {
       | "UNIMED_BENEFICIARY_FILES_INVALID"
       | "UNIMED_INVOICE_FILES_INVALID"
       | "UNIMED_ADDRESS_FILE_INVALID"
+      | "UNIMED_MASTER_WORKBOOK_INVALID"
       | "UNIMED_PAYROLL_LOAN_FILE_INVALID",
     message: string,
   ) {
@@ -183,6 +184,15 @@ export function isValidCnpj(value: string) {
 export function toIsoDate(value: unknown) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
+  }
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 61 &&
+    value <= 2_958_465
+  ) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86_400_000);
+    return date.toISOString().slice(0, 10);
   }
   const raw = String(value ?? "").trim();
   const match = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);

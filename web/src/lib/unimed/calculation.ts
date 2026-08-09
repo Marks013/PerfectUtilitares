@@ -1,6 +1,5 @@
-import { Prisma } from "@/generated/prisma/client";
 import { documentKindForReason } from "@/lib/unimed/defaults";
-import { unimedCalculationInputSchema } from "@/lib/unimed/schema";
+import { unimedCalculationInputSchema } from "@/lib/unimed/calculation-schema";
 import type {
   UnimedCalculationInput,
   UnimedCalculationResult,
@@ -19,15 +18,25 @@ function completeMonthsBetween(start: Date, end: Date) {
   return Math.max(0, months - (end.getUTCDate() < start.getUTCDate() ? 1 : 0));
 }
 
-function money(value: number | Prisma.Decimal) {
-  return new Prisma.Decimal(value).toDecimalPlaces(
-    2,
-    Prisma.Decimal.ROUND_HALF_UP,
-  );
+function roundHalfUp(value: number) {
+  const sign = value < 0 ? -1 : 1;
+  return sign * Math.floor(Math.abs(value) + 0.5 + Number.EPSILON);
 }
 
-function serializeMoney(value: Prisma.Decimal) {
-  return money(value).toFixed(2);
+function cents(value: number) {
+  const sign = value < 0 ? -1 : 1;
+  const [whole, fraction = ""] = Math.abs(value).toFixed(10).split(".");
+  const padded = fraction.padEnd(3, "0");
+  const base = Number(whole) * 100 + Number(padded.slice(0, 2));
+  return sign * (base + (Number(padded[2]) >= 5 ? 1 : 0));
+}
+
+function prorate(valueCents: number, numerator: number, denominator: number) {
+  return roundHalfUp((valueCents * numerator) / denominator);
+}
+
+function serializeMoney(valueCents: number) {
+  return (valueCents / 100).toFixed(2);
 }
 
 function competency(value: Date) {
@@ -44,21 +53,17 @@ function monthlyTotals(input: {
 }) {
   const dependentsInvoice = input.dependents.reduce(
     (total, dependent) =>
-      total
-        .plus(money(dependent.invoicePlanAmount))
-        .plus(money(dependent.addonAmount)),
-    new Prisma.Decimal(0),
+      total + cents(dependent.invoicePlanAmount) + cents(dependent.addonAmount),
+    0,
   );
-  const invoiceTotal = money(
-    money(input.holder.invoicePlanAmount)
-      .plus(money(input.holder.addonAmount))
-      .plus(dependentsInvoice),
-  );
-  const payrollCharge = money(
-    money(input.holder.payrollPlanAmount)
-      .plus(money(input.holder.addonAmount))
-      .plus(dependentsInvoice),
-  );
+  const invoiceTotal =
+    cents(input.holder.invoicePlanAmount) +
+    cents(input.holder.addonAmount) +
+    dependentsInvoice;
+  const payrollCharge =
+    cents(input.holder.payrollPlanAmount) +
+    cents(input.holder.addonAmount) +
+    dependentsInvoice;
   return { invoiceTotal, payrollCharge };
 }
 
@@ -87,38 +92,36 @@ export function calculateUnimed(
 
   const currentTotals = monthlyTotals(input);
   const nextTotals = monthlyTotals(input.nextCompetency ?? input);
-  const zero = new Prisma.Decimal(0);
   const closedAfterCutoff =
     input.billingClosure === "AUTOMATIC_DAY_25" && usedDays >= 25;
   const refundDays = daysInMonth - usedDays;
-  const usedProrata = money(
-    currentTotals.invoiceTotal.dividedBy(daysInMonth).times(usedDays),
+  const usedProrata = prorate(
+    currentTotals.invoiceTotal,
+    usedDays,
+    daysInMonth,
   );
-  const invoiceProratedRefund = money(
-    currentTotals.invoiceTotal.dividedBy(daysInMonth).times(refundDays),
+  const invoiceProratedRefund = prorate(
+    currentTotals.invoiceTotal,
+    refundDays,
+    daysInMonth,
   );
-  const employeeProratedRefund = money(
-    currentTotals.payrollCharge.dividedBy(daysInMonth).times(refundDays),
+  const employeeProratedRefund = prorate(
+    currentTotals.payrollCharge,
+    refundDays,
+    daysInMonth,
   );
-  const nextCompetencyRefund = money(
-    closedAfterCutoff ? nextTotals.invoiceTotal : zero,
-  );
-  const employeeNextRefund = money(
-    closedAfterCutoff ? nextTotals.payrollCharge : zero,
-  );
-  const invoiceRefund = money(
-    invoiceProratedRefund.plus(nextCompetencyRefund),
-  );
-  const employeeFullRefund = money(
-    employeeProratedRefund.plus(employeeNextRefund),
-  );
-  const companyCurrentRefund = money(
-    invoiceProratedRefund.minus(employeeProratedRefund),
-  );
-  const companyNextRefund = money(
-    nextCompetencyRefund.minus(employeeNextRefund),
-  );
-  const companyFullRefund = money(invoiceRefund.minus(employeeFullRefund));
+  const nextCompetencyRefund = closedAfterCutoff
+    ? nextTotals.invoiceTotal
+    : 0;
+  const employeeNextRefund = closedAfterCutoff
+    ? nextTotals.payrollCharge
+    : 0;
+  const invoiceRefund = invoiceProratedRefund + nextCompetencyRefund;
+  const employeeFullRefund = employeeProratedRefund + employeeNextRefund;
+  const companyCurrentRefund =
+    invoiceProratedRefund - employeeProratedRefund;
+  const companyNextRefund = nextCompetencyRefund - employeeNextRefund;
+  const companyFullRefund = invoiceRefund - employeeFullRefund;
   const enrollmentMonths = completeMonthsBetween(enrollmentDate, exclusionDate);
 
   return {

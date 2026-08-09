@@ -177,6 +177,7 @@ model Tenant {
   unimedEmailSequences    UnimedEmailDailySequence[]
   unimedDocumentTemplates UnimedDocumentTemplate[]
   unimedEmailEvents       UnimedEmailEvent[]
+  unimedOfflineDevices    UnimedOfflineDevice[]
   createdAt               DateTime                       @default(now())
   updatedAt               DateTime                       @updatedAt
 }
@@ -207,6 +208,7 @@ model PdfJob {
   userId           String?
   user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
   ownerSessionHash String?
+  requestKey       String?
   principalKey     String        @default(dbgenerated("('legacy:rollback:'::text || (gen_random_uuid())::text)"))
   operation        PdfOperation
   status           PdfJobStatus  @default(DRAFT)
@@ -227,6 +229,7 @@ model PdfJob {
   @@index([ownerSessionHash, status, expiresAt])
   @@index([principalKey, status, expiresAt])
   @@index([userId, status, expiresAt])
+  @@unique([tenantId, requestKey])
 }
 
 model PdfArtifact {
@@ -369,6 +372,25 @@ model UnimedModuleSession {
 
   @@index([tenantId, expiresAt])
   @@index([expiresAt, revokedAt])
+}
+
+model UnimedOfflineDevice {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deviceKey        String
+  label            String
+  userAgentHash    String
+  registeredBy     String
+  lastSeenAt       DateTime @default(now())
+  offlineExpiresAt DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tenantId, deviceKey])
+  @@index([tenantId, revokedAt, lastSeenAt])
+  @@index([offlineExpiresAt])
 }
 
 model UnimedCompetency {

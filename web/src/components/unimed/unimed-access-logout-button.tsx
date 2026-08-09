@@ -3,6 +3,7 @@
 import { LockKeyhole } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { clearUnimedOfflineData } from "@/lib/unimed/offline-store";
 
 export function UnimedAccessLogoutButton() {
   const router = useRouter();
@@ -14,6 +15,7 @@ export function UnimedAccessLogoutButton() {
     try {
       await fetch("/api/unimed/access/session", { method: "DELETE" });
     } finally {
+      await clearUnimedOfflineData().catch(() => undefined);
       router.replace("/unimed/acesso");
       router.refresh();
     }

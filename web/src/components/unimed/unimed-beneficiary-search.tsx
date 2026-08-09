@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { searchUnimedOffline } from "@/lib/unimed/offline-store";
 
 type UnimedResolvedPricing = {
   status:
@@ -143,6 +144,7 @@ export function UnimedBeneficiarySearch({
       setIsSearching(true);
       setError(null);
       setHasSearched(true);
+      let serverResponded = false;
 
       try {
         const dateQuery = referenceDate
@@ -152,6 +154,7 @@ export function UnimedBeneficiarySearch({
           `/api/unimed/beneficiaries?q=${encodeURIComponent(normalizedQuery)}${dateQuery}`,
           { cache: "no-store", signal: controller.signal },
         );
+        serverResponded = true;
         if (!response.ok) throw new Error(await readSearchError(response));
         const body = (await response.json()) as {
           searchMode?: BeneficiarySearchMode;
@@ -167,6 +170,18 @@ export function UnimedBeneficiarySearch({
       } catch (searchError) {
         if (controller.signal.aborted || sequence !== requestSequence.current) {
           return;
+        }
+        if (!serverResponded) {
+          const offline = await searchUnimedOffline(
+            normalizedQuery,
+            referenceDate,
+          ).catch(() => null);
+          if (offline && sequence === requestSequence.current) {
+            setResults(offline.beneficiaries);
+            setPricingContext(offline.pricingContext);
+            setError(null);
+            return;
+          }
         }
         setResults([]);
         setPricingContext(null);
