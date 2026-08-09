@@ -1,6 +1,6 @@
 {
   "version": 1,
   "warningLines": 500,
-  "defaultMaxLines": 800,
+  "defaultMaxLines": 725,
   "exceptions": {}
 }

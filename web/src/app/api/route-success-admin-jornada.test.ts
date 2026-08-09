@@ -215,15 +215,35 @@ import { GET as getUsage } from "@/app/api/admin/usage/route";
 import { GET as getAdminUser } from "@/app/api/admin/users/[id]/route";
 import { GET as getAdminUsers } from "@/app/api/admin/users/route";
 import { POST as acceptInvitation } from "@/app/api/invitations/accept/route";
-import { GET as getCodigo } from "@/app/api/jornada/codigos/[id]/route";
+import {
+  DELETE as deleteCodigo,
+  GET as getCodigo,
+  PATCH as patchCodigo,
+} from "@/app/api/jornada/codigos/[id]/route";
 import { POST as importCodigos } from "@/app/api/jornada/codigos/import/route";
-import { GET as getCodigos } from "@/app/api/jornada/codigos/route";
-import { PATCH as patchExcecao } from "@/app/api/jornada/excecoes/[id]/route";
-import { GET as getExcecoes } from "@/app/api/jornada/excecoes/route";
+import {
+  GET as getCodigos,
+  POST as createCodigo,
+} from "@/app/api/jornada/codigos/route";
+import {
+  DELETE as deleteExcecao,
+  PATCH as patchExcecao,
+} from "@/app/api/jornada/excecoes/[id]/route";
+import {
+  GET as getExcecoes,
+  POST as createExcecao,
+} from "@/app/api/jornada/excecoes/route";
 import { POST as exportHistorico } from "@/app/api/jornada/historico/exportar/route";
 import { GET as getHistorico } from "@/app/api/jornada/historico/route";
-import { GET as getRegra } from "@/app/api/jornada/regras/[id]/route";
-import { GET as getRegras } from "@/app/api/jornada/regras/route";
+import {
+  DELETE as deleteRegra,
+  GET as getRegra,
+  PATCH as patchRegra,
+} from "@/app/api/jornada/regras/[id]/route";
+import {
+  GET as getRegras,
+  POST as createRegra,
+} from "@/app/api/jornada/regras/route";
 import { POST as validarJornada } from "@/app/api/jornada/validar/route";
 import { POST as validarLote } from "@/app/api/jornada/validar-lote/route";
 import { POST as requestPasswordReset } from "@/app/api/password-reset/request/route";
@@ -245,6 +265,21 @@ function jsonRequest(path: string, data: unknown) {
 function getRequest(path: string) {
   return new Request(`${origin}${path}`, {
     headers: { origin, "x-forwarded-for": `route-functional-${path}` },
+  });
+}
+
+function mutationRequest(
+  path: string,
+  method: "PATCH" | "DELETE",
+  data?: unknown,
+) {
+  return new Request(`${origin}${path}`, {
+    method,
+    headers: {
+      origin,
+      ...(data === undefined ? {} : { "content-type": "application/json" }),
+    },
+    body: data === undefined ? undefined : JSON.stringify(data),
   });
 }
 
@@ -331,6 +366,41 @@ const cases: FunctionalRouteCase[] = [
       }),
   },
   {
+    route: "src/app/api/jornada/codigos/route.ts#create",
+    expectedStatus: 201,
+    persistence: "codigoJornada.create",
+    run: () =>
+      createCodigo(
+        jsonRequest("/api/jornada/codigos", {
+          codigo: "A2",
+          horariosOriginal: "08:00 17:00",
+        }),
+      ),
+  },
+  {
+    route: "src/app/api/jornada/codigos/[id]/route.ts#update",
+    expectedStatus: 200,
+    persistence: "codigoJornada.update",
+    run: () =>
+      patchCodigo(
+        mutationRequest("/api/jornada/codigos/test-resource-id", "PATCH", {
+          codigo: "A2",
+          horariosOriginal: "08:00 17:00",
+        }),
+        { params: Promise.resolve({ id: "test-resource-id" }) },
+      ),
+  },
+  {
+    route: "src/app/api/jornada/codigos/[id]/route.ts#delete",
+    expectedStatus: 200,
+    persistence: "codigoJornada.delete",
+    run: () =>
+      deleteCodigo(
+        mutationRequest("/api/jornada/codigos/test-resource-id", "DELETE"),
+        { params: Promise.resolve({ id: "test-resource-id" }) },
+      ),
+  },
+  {
     route: "src/app/api/jornada/codigos/import/route.ts",
     expectedStatus: 200,
     run: () =>
@@ -358,6 +428,32 @@ const cases: FunctionalRouteCase[] = [
         jsonRequest("/api/jornada/excecoes/test-resource-id", {
           active: false,
         }),
+        { params: Promise.resolve({ id: "test-resource-id" }) },
+      ),
+  },
+  {
+    route: "src/app/api/jornada/excecoes/route.ts#create",
+    expectedStatus: 201,
+    persistence: "jornadaException.create",
+    run: () => {
+      mocks.overrides.set("jornadaException.findFirst", null);
+      return createExcecao(
+        jsonRequest("/api/jornada/excecoes", {
+          userId: "test-user-id",
+          nome: "Operador teste",
+          horarios: "08:00 17:00",
+          active: true,
+        }),
+      );
+    },
+  },
+  {
+    route: "src/app/api/jornada/excecoes/[id]/route.ts#delete",
+    expectedStatus: 200,
+    persistence: "jornadaException.update",
+    run: () =>
+      deleteExcecao(
+        mutationRequest("/api/jornada/excecoes/test-resource-id", "DELETE"),
         { params: Promise.resolve({ id: "test-resource-id" }) },
       ),
   },
@@ -412,6 +508,46 @@ const cases: FunctionalRouteCase[] = [
       getRegra(getRequest("/api/jornada/regras/test-resource-id"), {
         params: Promise.resolve({ id: "test-resource-id" }),
       }),
+  },
+  {
+    route: "src/app/api/jornada/regras/route.ts#create",
+    expectedStatus: 201,
+    persistence: "jornadaRule.create",
+    run: () =>
+      createRegra(
+        jsonRequest("/api/jornada/regras", {
+          nome: "Regra funcional",
+          duracaoMinutos: 480,
+          horasSemanais: 44,
+          horasMensais: 220,
+          intervaloMin: 30,
+          intervaloMax: 120,
+          diasValidos: ["util"],
+          active: true,
+        }),
+      ),
+  },
+  {
+    route: "src/app/api/jornada/regras/[id]/route.ts#update",
+    expectedStatus: 200,
+    persistence: "jornadaRule.update",
+    run: () =>
+      patchRegra(
+        mutationRequest("/api/jornada/regras/test-resource-id", "PATCH", {
+          nome: "Regra atualizada",
+        }),
+        { params: Promise.resolve({ id: "test-resource-id" }) },
+      ),
+  },
+  {
+    route: "src/app/api/jornada/regras/[id]/route.ts#delete",
+    expectedStatus: 200,
+    persistence: "jornadaRule.update",
+    run: () =>
+      deleteRegra(
+        mutationRequest("/api/jornada/regras/test-resource-id", "DELETE"),
+        { params: Promise.resolve({ id: "test-resource-id" }) },
+      ),
   },
   {
     route: "src/app/api/jornada/regras/route.ts",

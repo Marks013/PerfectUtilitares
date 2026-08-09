@@ -196,6 +196,7 @@ model UserInvitation {
   createdAt   DateTime  @default(now())
 
   @@index([tenantId])
+  @@index([invitedById])
   @@index([email])
   @@index([expiresAt])
 }
@@ -223,6 +224,7 @@ model PdfJob {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
+  @@index([tenantId])
   @@index([expiresAt])
   @@index([ownerSessionHash, status, expiresAt])
   @@index([principalKey, status, expiresAt])
@@ -419,6 +421,7 @@ model UnimedImportBatch {
   @@unique([tenantId, idempotencyKey])
   @@index([competencyId, status])
   @@index([requestedById, createdAt])
+  @@index([publishedById])
 }
 
 model UnimedImportSourceResult {

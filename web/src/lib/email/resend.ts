@@ -20,6 +20,15 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#039;");
 }
 
+function getResendClient(apiKey: string) {
+  const baseUrl = process.env.RESEND_API_BASE_URL?.trim();
+  resendClient ??= new Resend(
+    apiKey,
+    baseUrl ? { baseUrl: new URL(baseUrl).origin } : undefined,
+  );
+  return resendClient;
+}
+
 export async function sendInvitationEmail({
   to,
   name,
@@ -38,12 +47,12 @@ export async function sendInvitationEmail({
     throw new Error("RESEND_NOT_CONFIGURED");
   }
 
-  resendClient ??= new Resend(apiKey);
+  const client = getResendClient(apiKey);
   const safeName = escapeHtml(name);
   const safeTenantName = escapeHtml(tenantName);
   const safeInviteUrl = escapeHtml(inviteUrl);
 
-  await resendClient.emails.send({
+  await client.emails.send({
     from,
     to,
     subject: "Convite para o Sistema Web",
@@ -75,11 +84,11 @@ export async function sendPasswordResetEmail({
     throw new Error("RESEND_NOT_CONFIGURED");
   }
 
-  resendClient ??= new Resend(apiKey);
+  const client = getResendClient(apiKey);
   const safeName = escapeHtml(name);
   const safeResetUrl = escapeHtml(resetUrl);
 
-  await resendClient.emails.send({
+  await client.emails.send({
     from,
     to,
     subject: "Redefinição de senha",
