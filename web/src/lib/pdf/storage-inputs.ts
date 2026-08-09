@@ -19,9 +19,19 @@ import {
   validateOfficeArchive,
 } from "./storage-core";
 
+function assertCompleteUpload(size: number, expectedBytes?: number) {
+  if (expectedBytes && size !== expectedBytes) {
+    throw new PdfStorageError(
+      "INCOMPLETE_UPLOAD",
+      "O arquivo recebido esta incompleto. Envie novamente.",
+    );
+  }
+}
+
 export async function writePdfUpload(
   body: ReadableStream<Uint8Array> | null,
   jobId: string,
+  expectedBytes?: number,
 ) {
   if (!body) {
     throw new PdfStorageError("EMPTY_FILE", "Selecione um arquivo PDF.");
@@ -69,6 +79,8 @@ export async function writePdfUpload(
       throw new PdfStorageError("EMPTY_FILE", "O arquivo enviado está vazio.");
     }
 
+    assertCompleteUpload(size, expectedBytes);
+
     if (
       signature.length < PDF_SIGNATURE.length ||
       !signature.equals(PDF_SIGNATURE)
@@ -102,6 +114,7 @@ export async function writeImageUpload(
   body: ReadableStream<Uint8Array> | null,
   jobId: string,
   mimeType: keyof typeof IMAGE_FORMATS,
+  expectedBytes?: number,
 ) {
   if (!body) {
     throw new PdfStorageError("EMPTY_FILE", "Selecione uma imagem.");
@@ -143,6 +156,7 @@ export async function writeImageUpload(
     if (!size) {
       throw new PdfStorageError("EMPTY_FILE", "A imagem enviada está vazia.");
     }
+    assertCompleteUpload(size, expectedBytes);
     if (!IMAGE_FORMATS[mimeType].valid(signature)) {
       throw new PdfStorageError(
         "INVALID_IMAGE",
@@ -172,6 +186,7 @@ export async function writeOfficeUpload(
   body: ReadableStream<Uint8Array> | null,
   jobId: string,
   mimeType: keyof typeof OFFICE_FORMATS,
+  expectedBytes?: number,
 ) {
   if (!body) {
     throw new PdfStorageError("EMPTY_FILE", "Selecione um documento.");
@@ -214,6 +229,7 @@ export async function writeOfficeUpload(
     if (!size) {
       throw new PdfStorageError("EMPTY_FILE", "O documento enviado está vazio.");
     }
+    assertCompleteUpload(size, expectedBytes);
     if (
       signature.length < 4 ||
       signature[0] !== 0x50 ||

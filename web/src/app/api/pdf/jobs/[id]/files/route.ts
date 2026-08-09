@@ -57,8 +57,9 @@ export async function POST(request: Request, context: RouteContext) {
   const lengthError = requireMaxContentLength(request, MAX_PDF_FILE_BYTES);
   if (lengthError) return lengthError;
 
+  const requestBytes = getRequestContentLength(request);
   const capacityError = await requireResourceCapacity({
-    inputBytes: getRequestContentLength(request),
+    inputBytes: requestBytes,
     multiplier: 3,
   });
   if (capacityError) return capacityError;
@@ -109,7 +110,11 @@ export async function POST(request: Request, context: RouteContext) {
     const originalName = sanitizePdfFileName(
       request.headers.get("x-file-name"),
     );
-    const upload = await writePdfUpload(request.body, initialJob.id);
+    const upload = await writePdfUpload(
+      request.body,
+      initialJob.id,
+      requestBytes,
+    );
     uploadedStorageKey = upload.storageKey;
 
     const response = await prisma.$transaction(

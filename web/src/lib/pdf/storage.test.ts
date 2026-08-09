@@ -58,6 +58,24 @@ describe("pdf storage", () => {
     expect(result.sha256).toHaveLength(64);
   });
 
+  it("rejects a stream shorter than its declared content length", async () => {
+    temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
+    process.env.PDF_STORAGE_DIR = temporaryDirectory;
+    const bytes = new TextEncoder().encode("%PDF-1.7\\n%%EOF");
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    });
+
+    await expect(
+      writePdfUpload(stream, "job-truncated-123", bytes.length + 1),
+    ).rejects.toMatchObject({
+      code: "INCOMPLETE_UPLOAD",
+    });
+  });
+
   it("removes an incomplete non-PDF upload", async () => {
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
     process.env.PDF_STORAGE_DIR = temporaryDirectory;

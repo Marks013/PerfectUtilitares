@@ -46,8 +46,9 @@ export async function POST(request: Request, context: RouteContext) {
   const lengthError = requireMaxContentLength(request, MAX_PDF_IMAGE_BYTES);
   if (lengthError) return lengthError;
 
+  const requestBytes = getRequestContentLength(request);
   const capacityError = await requireResourceCapacity({
-    inputBytes: getRequestContentLength(request),
+    inputBytes: requestBytes,
     multiplier: 6,
   });
   if (capacityError) return capacityError;
@@ -101,7 +102,12 @@ export async function POST(request: Request, context: RouteContext) {
           request.headers.get("x-file-name"),
           mimeType,
         );
-        const upload = await writeImageUpload(request.body, job.id, mimeType);
+        const upload = await writeImageUpload(
+          request.body,
+          job.id,
+          mimeType,
+          requestBytes,
+        );
         storageKey = upload.storageKey;
         let metadata: Metadata;
         try {

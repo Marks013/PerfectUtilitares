@@ -53,6 +53,6 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|mediapipe/face-detection-frame.html|.*\\.(?:css|js|map|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|wasm)$).*)",
+    "/((?!api/pdf/jobs/[^/]+/(?:files|images|documents)(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|mediapipe/face-detection-frame.html|.*\\.(?:css|js|map|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|wasm)$).*)",
   ],
 };

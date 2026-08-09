@@ -77,6 +77,7 @@ export class PdfStorageError extends Error {
       | "INVALID_IMAGE"
       | "INVALID_DOCUMENT"
       | "FILE_TOO_LARGE"
+      | "INCOMPLETE_UPLOAD"
       | "INVALID_FILE_NAME"
       | "UPLOAD_FAILED",
     message: string,

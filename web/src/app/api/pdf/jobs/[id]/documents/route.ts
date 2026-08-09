@@ -46,8 +46,9 @@ export async function POST(request: Request, context: RouteContext) {
   const lengthError = requireMaxContentLength(request, MAX_PDF_FILE_BYTES);
   if (lengthError) return lengthError;
 
+  const requestBytes = getRequestContentLength(request);
   const capacityError = await requireResourceCapacity({
-    inputBytes: getRequestContentLength(request),
+    inputBytes: requestBytes,
     multiplier: 5,
   });
   if (capacityError) return capacityError;
@@ -115,7 +116,12 @@ export async function POST(request: Request, context: RouteContext) {
           request.headers.get("x-file-name"),
           mimeType,
         );
-        const upload = await writeOfficeUpload(request.body, job.id, mimeType);
+        const upload = await writeOfficeUpload(
+          request.body,
+          job.id,
+          mimeType,
+          requestBytes,
+        );
         uploadedStorageKey = upload.storageKey;
         const nextInputBytes = job.inputBytes + upload.sizeBytes;
         if (nextInputBytes > BigInt(MAX_PDF_JOB_BYTES)) {
