@@ -3,6 +3,7 @@ import "@/test/unimed-route-rate-limit.mock";
 
 const mocks = vi.hoisted(() => ({
   getUnimedConfiguration: vi.fn(),
+  getUnimedPriceHistory: vi.fn(),
   requireUnimedAccess: vi.fn(),
   saveUnimedConfiguration: vi.fn(),
 }));
@@ -15,7 +16,9 @@ vi.mock("@/lib/unimed/access.server", () => ({
 
 vi.mock("@/lib/unimed/configuration", () => ({
   getUnimedConfiguration: mocks.getUnimedConfiguration,
+  getUnimedPriceHistory: mocks.getUnimedPriceHistory,
   saveUnimedConfiguration: mocks.saveUnimedConfiguration,
+  UnimedConfigurationRetentionError: class extends Error {},
 }));
 
 import { GET, POST, PUT } from "@/app/api/unimed/configuration/route";
@@ -183,6 +186,34 @@ beforeEach(() => {
       },
     ],
   });
+  mocks.getUnimedPriceHistory.mockResolvedValue([
+    {
+      status: "ACTIVE",
+      validFrom: new Date("2026-08-01T00:00:00.000Z"),
+      validTo: new Date("2027-07-31T00:00:00.000Z"),
+      planPrices: [
+        {
+          planCode: "1013",
+          companyAmount: decimal(116.02),
+          employeeAmount: decimal(40),
+          ageBracket: {
+            code: "00-18",
+            label: "0 a 18",
+            minAge: 0,
+            maxAge: 18,
+            sortOrder: 1,
+          },
+        },
+      ],
+      addonPrices: [
+        {
+          code: "FUNERAL",
+          label: "Acessório Funeral",
+          amount: decimal(6.12),
+        },
+      ],
+    },
+  ]);
 });
 
 describe("Unimed configuration API", () => {
@@ -207,6 +238,7 @@ describe("Unimed configuration API", () => {
     expect(response.status).toBe(403);
     expect(mocks.requireUnimedAccess).toHaveBeenCalledWith("VIEW");
     expect(mocks.getUnimedConfiguration).not.toHaveBeenCalled();
+    expect(mocks.getUnimedPriceHistory).not.toHaveBeenCalled();
   });
 
   it("serializes configuration without tenant or persistence metadata", async () => {
@@ -217,6 +249,7 @@ describe("Unimed configuration API", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(mocks.getUnimedConfiguration).toHaveBeenCalledWith(
       "tenant-12345678",
+      new Date("2026-08-01T00:00:00.000Z"),
     );
     expect(body).toMatchObject({
       ageBrackets: [
@@ -249,6 +282,26 @@ describe("Unimed configuration API", () => {
           code: 1,
           label: "Exclusão de dependente",
           documentKind: "RN561",
+        },
+      ],
+      priceHistory: [
+        {
+          status: "ACTIVE",
+          validFrom: "2026-08-01",
+          validTo: "2027-07-31",
+          planPrices: [
+            {
+              ageBracketCode: "00-18",
+              companyAmount: "116.02",
+              employeeAmount: "40.00",
+            },
+          ],
+          addonPrices: [
+            {
+              code: "FUNERAL",
+              amount: "6.12",
+            },
+          ],
         },
       ],
     });

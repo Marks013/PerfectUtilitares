@@ -2,6 +2,7 @@
 
 import type { useUnimedConfigurationManagerController } from "./unimed-configuration-manager";
 import type { ReasonForm } from "./unimed-configuration-manager-model";
+import { UnimedConfigurationPriceHistory } from "./unimed-configuration-manager-price-history";
 import { UnimedConfigurationPlansSection } from "./unimed-configuration-manager-unimed-configuration-plans-section";
 
 type Model = ReturnType<typeof useUnimedConfigurationManagerController>;
@@ -40,8 +41,8 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
                 Configurações e valores
               </h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-[color:var(--app-muted)] sm:text-base">
-                Nova vigência preserva versões anteriores. Valores financeiros
-                usam duas casas decimais.
+                O sistema mantém a tabela ativa e a competência anterior.
+                Valores financeiros usam duas casas decimais.
               </p>
             </div>
             <button
@@ -81,10 +82,11 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
 
         <nav
           aria-label="Seções das configurações"
-          className="sticky top-2 z-10 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-2 shadow-[var(--app-shadow)] sm:grid-cols-3 lg:grid-cols-5"
+          className="sticky top-2 z-10 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-2 shadow-[var(--app-shadow)] sm:grid-cols-3 lg:grid-cols-6"
         >
           {[
             ["config-calculation-section", "Vigência"],
+            ["config-price-history-section", "Competências"],
             ["config-age-brackets-section", "Faixas e valores"],
             ["config-addons-section", "Adicionais"],
             ["config-reasons-section", "Motivos"],
@@ -198,9 +200,12 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
           </div>
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-[color:var(--app-warning-border)] bg-[color:var(--app-warning-soft)] p-3 text-xs leading-5 text-[color:var(--app-fg)]">
             <Clock3 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            Ao salvar nova vigência, versão anterior termina no dia anterior.
+            Ao salvar nova vigência, a anterior termina no dia precedente e
+            apenas as duas competências mais recentes são mantidas.
           </div>
         </ConfigSection>
+
+        <UnimedConfigurationPriceHistory model={model} />
 
         <UnimedConfigurationPlansSection model={model} />
 

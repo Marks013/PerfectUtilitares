@@ -33,6 +33,7 @@ import {
   type ReasonForm,
   type ConfigurationForm,
   type ConfigurationResponse,
+  type PriceHistoryPeriod,
   type SaveResponse,
   type Feedback,
   type FieldIssue,
@@ -64,6 +65,7 @@ export function useUnimedConfigurationManagerController() {
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryPeriod[]>([]);
 
   const clearFieldError = useCallback((fieldId: string) => {
     setFieldErrors((current) => {
@@ -110,6 +112,7 @@ export function useUnimedConfigurationManagerController() {
         );
       }
       setForm(configurationToForm(body));
+      setPriceHistory(body.priceHistory ?? []);
       setFieldErrors({});
     } catch (error) {
       setFeedback({
@@ -308,7 +311,7 @@ export function useUnimedConfigurationManagerController() {
 
 
 
-    return { loading, CalendarRange, CircleDollarSign, Clock3, ConfigFieldContext, ConfigSection, DEFAULT_UNIMED_EMAIL_SUBJECT, DecimalInput, FieldLabel, FileCog, Loader2, Mail, Plus, RefreshCw, Save, SectionHeading, Settings2, TextInput, Trash2, UnimedNoticeToast, UsersRound, bracketOptions, clearFieldError, feedback, fieldErrors, form, loadConfiguration, newAddonPrice, newAgeBracket, newPlanPrice, newReason, saveConfiguration, saving, setFeedback, setForm, updateAddon, updateAge, updatePlan, updateReason };
+    return { loading, CalendarRange, CircleDollarSign, Clock3, ConfigFieldContext, ConfigSection, DEFAULT_UNIMED_EMAIL_SUBJECT, DecimalInput, FieldLabel, FileCog, Loader2, Mail, Plus, RefreshCw, Save, SectionHeading, Settings2, TextInput, Trash2, UnimedNoticeToast, UsersRound, bracketOptions, clearFieldError, feedback, fieldErrors, form, loadConfiguration, newAddonPrice, newAgeBracket, newPlanPrice, newReason, priceHistory, saveConfiguration, saving, setFeedback, setForm, updateAddon, updateAge, updatePlan, updateReason };
 }
 
 export function UnimedConfigurationManager() {

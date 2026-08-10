@@ -47,6 +47,27 @@ export type ConfigurationForm = {
   emailSubjectTemplate: string;
 };
 
+export type PriceHistoryPeriod = {
+  status: "ACTIVE" | "PREVIOUS";
+  validFrom: string;
+  validTo: string | null;
+  planPrices: Array<{
+    planCode: string;
+    ageBracketCode: string;
+    ageBracketLabel: string;
+    minAge: number;
+    maxAge: number | null;
+    sortOrder: number;
+    companyAmount: string;
+    employeeAmount: string;
+  }>;
+  addonPrices: Array<{
+    code: string;
+    label: string;
+    amount: string;
+  }>;
+};
+
 export type ConfigurationResponse = {
   ageBrackets: Array<{
     code: string;
@@ -92,6 +113,7 @@ export type ConfigurationResponse = {
     label: string;
     documentKind: "NONE" | "RN561" | "INACTIVE_TERM";
   }>;
+  priceHistory: PriceHistoryPeriod[];
 };
 
 export type SaveResponse = {

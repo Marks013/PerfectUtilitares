@@ -11,7 +11,9 @@ import {
 import { requireUnimedAccess } from "@/lib/unimed/access.server";
 import {
   getUnimedConfiguration,
+  getUnimedPriceHistory,
   saveUnimedConfiguration,
+  UnimedConfigurationRetentionError,
 } from "@/lib/unimed/configuration";
 import {
   unimedConfigurationSchema,
@@ -29,7 +31,11 @@ export async function GET() {
   const access = await requireUnimedAccess("VIEW");
   if (!access.ok) return access.response;
 
-  const configuration = await getUnimedConfiguration(access.tenantId);
+  const priceHistory = await getUnimedPriceHistory(access.tenantId);
+  const configuration = await getUnimedConfiguration(
+    access.tenantId,
+    priceHistory[0]?.validFrom,
+  );
   const response = NextResponse.json({
     ageBrackets: configuration.ageBrackets.map((bracket) => ({
       code: bracket.code,
@@ -88,6 +94,26 @@ export async function GET() {
       label: reason.label,
       documentKind: reason.documentKind,
     })),
+    priceHistory: priceHistory.map((period) => ({
+      status: period.status,
+      validFrom: isoDate(period.validFrom),
+      validTo: period.validTo ? isoDate(period.validTo) : null,
+      planPrices: period.planPrices.map((price) => ({
+        planCode: price.planCode,
+        ageBracketCode: price.ageBracket.code,
+        ageBracketLabel: price.ageBracket.label,
+        minAge: price.ageBracket.minAge,
+        maxAge: price.ageBracket.maxAge,
+        sortOrder: price.ageBracket.sortOrder,
+        companyAmount: price.companyAmount.toFixed(2),
+        employeeAmount: price.employeeAmount.toFixed(2),
+      })),
+      addonPrices: period.addonPrices.map((price) => ({
+        code: price.code,
+        label: price.label,
+        amount: price.amount.toFixed(2),
+      })),
+    })),
   });
   response.headers.set("Cache-Control", "no-store");
   return response;
@@ -137,7 +163,14 @@ export async function PUT(request: Request) {
       parsed.data,
     );
     return NextResponse.json(saved);
-  } catch {
+  } catch (error) {
+    if (error instanceof UnimedConfigurationRetentionError) {
+      return jsonError(
+        409,
+        "UNIMED_CONFIGURATION_TOO_OLD",
+        error.message,
+      );
+    }
     return jsonError(
       500,
       "UNIMED_CONFIGURATION_FAILED",

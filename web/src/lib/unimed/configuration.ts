@@ -24,6 +24,60 @@ function versionKey(...parts: string[]) {
   return parts.join("\u0000");
 }
 
+const CONFIGURATION_VERSION_LIMIT = 2;
+
+export class UnimedConfigurationRetentionError extends Error {
+  constructor() {
+    super(
+      "A vigência informada é anterior às duas competências mais recentes e não pode ser mantida.",
+    );
+    this.name = "UnimedConfigurationRetentionError";
+  }
+}
+
+async function pruneOldConfigurationVersions(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  savedValidFrom: Date,
+) {
+  const periods = await tx.unimedPlanPriceVersion.findMany({
+    where: { tenantId },
+    select: { validFrom: true },
+    distinct: ["validFrom"],
+    orderBy: { validFrom: "desc" },
+  });
+  const retained = periods.slice(0, CONFIGURATION_VERSION_LIMIT);
+  const savedWasRetained = retained.some(
+    ({ validFrom }) => validFrom.getTime() === savedValidFrom.getTime(),
+  );
+
+  if (!savedWasRetained) {
+    throw new UnimedConfigurationRetentionError();
+  }
+
+  const obsoleteDates = periods
+    .slice(CONFIGURATION_VERSION_LIMIT)
+    .map(({ validFrom }) => validFrom);
+  const retainedDates = retained.map(({ validFrom }) => validFrom);
+
+  await Promise.all([
+    tx.unimedPlanPriceVersion.deleteMany({
+      where: { tenantId, validFrom: { notIn: retainedDates } },
+    }),
+    tx.unimedAddonPriceVersion.deleteMany({
+      where: { tenantId, validFrom: { notIn: retainedDates } },
+    }),
+    tx.unimedBillingSetting.deleteMany({
+      where: { tenantId, validFrom: { notIn: retainedDates } },
+    }),
+    tx.unimedCalculationRuleVersion.deleteMany({
+      where: { tenantId, validFrom: { notIn: retainedDates } },
+    }),
+  ]);
+
+  return obsoleteDates;
+}
+
 export async function saveUnimedConfiguration(
   tenantId: string,
   actorIdentity: string | { moduleSessionId: string },
@@ -313,6 +367,9 @@ export async function saveUnimedConfiguration(
         });
       }
 
+      const removedConfigurationPeriods =
+        await pruneOldConfigurationVersions(tx, tenantId, validFrom);
+
       await tx.auditLog.create({
         data: {
           userId: actor?.id ?? null,
@@ -330,6 +387,9 @@ export async function saveUnimedConfiguration(
             planPrices: input.planPrices.length,
             addonPrices: input.addonPrices.length,
             reasons: input.reasons?.length ?? null,
+            removedConfigurationPeriods: removedConfigurationPeriods.map(
+              (date) => date.toISOString().slice(0, 10),
+            ),
           },
         },
       });
@@ -340,6 +400,9 @@ export async function saveUnimedConfiguration(
         planPrices: input.planPrices.length,
         addonPrices: input.addonPrices.length,
         reasons: input.reasons?.length ?? null,
+        removedConfigurationPeriods: removedConfigurationPeriods.map((date) =>
+          date.toISOString().slice(0, 10),
+        ),
       };
     },
     {
@@ -409,4 +472,51 @@ export async function getUnimedConfiguration(
     email,
     reasons,
   };
+}
+
+export async function getUnimedPriceHistory(tenantId: string) {
+  const periods = await prisma.unimedPlanPriceVersion.findMany({
+    where: { tenantId },
+    select: { validFrom: true },
+    distinct: ["validFrom"],
+    orderBy: { validFrom: "desc" },
+    take: CONFIGURATION_VERSION_LIMIT,
+  });
+  const validFromDates = periods.map(({ validFrom }) => validFrom);
+
+  if (validFromDates.length === 0) return [];
+
+  const [planPrices, addonPrices] = await Promise.all([
+    prisma.unimedPlanPriceVersion.findMany({
+      where: { tenantId, validFrom: { in: validFromDates } },
+      include: { ageBracket: true },
+      orderBy: [
+        { validFrom: "desc" },
+        { planCode: "asc" },
+        { ageBracket: { sortOrder: "asc" } },
+      ],
+    }),
+    prisma.unimedAddonPriceVersion.findMany({
+      where: { tenantId, validFrom: { in: validFromDates } },
+      orderBy: [{ validFrom: "desc" }, { code: "asc" }],
+    }),
+  ]);
+
+  return periods.map((period, index) => {
+    const periodPlanPrices = planPrices.filter(
+      (price) => price.validFrom.getTime() === period.validFrom.getTime(),
+    );
+    const periodAddonPrices = addonPrices.filter(
+      (price) => price.validFrom.getTime() === period.validFrom.getTime(),
+    );
+
+    return {
+      status: index === 0 ? ("ACTIVE" as const) : ("PREVIOUS" as const),
+      validFrom: period.validFrom,
+      validTo:
+        periodPlanPrices[0]?.validTo ?? periodAddonPrices[0]?.validTo ?? null,
+      planPrices: periodPlanPrices,
+      addonPrices: periodAddonPrices,
+    };
+  });
 }

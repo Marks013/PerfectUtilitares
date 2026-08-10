@@ -24,6 +24,7 @@ vi.mock("@/lib/unimed/access", () => ({
 
 import {
   getUnimedCalculationConfiguration,
+  getUnimedPriceHistory,
   saveUnimedConfiguration,
 } from "@/lib/unimed/configuration";
 
@@ -89,6 +90,7 @@ function transactionClient() {
       ]),
       updateMany: vi.fn(),
       upsert: vi.fn(),
+      deleteMany: vi.fn(),
     },
     unimedAddonPriceVersion: {
       findMany: vi.fn().mockResolvedValue([
@@ -99,6 +101,7 @@ function transactionClient() {
       ]),
       updateMany: vi.fn(),
       upsert: vi.fn(),
+      deleteMany: vi.fn(),
     },
     unimedBillingSetting: {
       findFirst: vi.fn().mockResolvedValue({
@@ -106,6 +109,7 @@ function transactionClient() {
       }),
       updateMany: vi.fn(),
       upsert: vi.fn(),
+      deleteMany: vi.fn(),
     },
     unimedCalculationRuleVersion: {
       findFirst: vi.fn().mockResolvedValue({
@@ -113,6 +117,7 @@ function transactionClient() {
       }),
       updateMany: vi.fn(),
       upsert: vi.fn(),
+      deleteMany: vi.fn(),
     },
     unimedEmailSetting: { upsert: vi.fn() },
     unimedExclusionReason: {
@@ -154,6 +159,18 @@ describe("Unimed configuration history", () => {
 
   it("keeps a retroactive version bounded by the next future version", async () => {
     const tx = transactionClient();
+    tx.unimedPlanPriceVersion.findMany
+      .mockResolvedValueOnce([
+        {
+          ageBracketId: "bracket-1",
+          planCode: "1013",
+          validFrom: new Date("2026-09-01T00:00:00.000Z"),
+        },
+      ])
+      .mockResolvedValueOnce([
+        { validFrom: new Date("2026-09-01T00:00:00.000Z") },
+        { validFrom: new Date("2026-08-01T00:00:00.000Z") },
+      ]);
     mocks.transaction.mockImplementation(
       async (callback: (client: typeof tx) => unknown) =>
         Promise.resolve(callback(tx)),
@@ -195,5 +212,85 @@ describe("Unimed configuration history", () => {
         update: expect.objectContaining({ validTo: expectedRetroactiveEnd }),
       }),
     );
+  });
+
+  it("keeps only 2027 and 2026 when the 2027 competence is saved", async () => {
+    const tx = transactionClient();
+    tx.unimedPlanPriceVersion.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { validFrom: new Date("2027-08-01T00:00:00.000Z") },
+        { validFrom: new Date("2026-08-01T00:00:00.000Z") },
+        { validFrom: new Date("2025-08-01T00:00:00.000Z") },
+      ]);
+    tx.unimedAddonPriceVersion.findMany.mockResolvedValueOnce([]);
+    tx.unimedBillingSetting.findFirst.mockResolvedValueOnce(null);
+    tx.unimedCalculationRuleVersion.findFirst.mockResolvedValueOnce(null);
+    mocks.transaction.mockImplementation(
+      async (callback: (client: typeof tx) => unknown) =>
+        Promise.resolve(callback(tx)),
+    );
+
+    const result = await saveUnimedConfiguration(
+      "tenant-12345678",
+      "user-12345678",
+      { ...validConfiguration, validFrom: "2027-08-01" },
+    );
+    const retainedDates = [
+      new Date("2027-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    ];
+
+    for (const repository of [
+      tx.unimedPlanPriceVersion,
+      tx.unimedAddonPriceVersion,
+      tx.unimedBillingSetting,
+      tx.unimedCalculationRuleVersion,
+    ]) {
+      expect(repository.deleteMany).toHaveBeenCalledWith({
+        where: {
+          tenantId: "tenant-12345678",
+          validFrom: { notIn: retainedDates },
+        },
+      });
+    }
+    expect(result.removedConfigurationPeriods).toEqual(["2025-08-01"]);
+  });
+
+  it("returns active and previous price tables in chronological order", async () => {
+    const activeDate = new Date("2026-08-01T00:00:00.000Z");
+    const previousDate = new Date("2025-08-01T00:00:00.000Z");
+    mocks.findPlanPrices
+      .mockResolvedValueOnce([
+        { validFrom: activeDate },
+        { validFrom: previousDate },
+      ])
+      .mockResolvedValueOnce([
+        {
+          validFrom: activeDate,
+          validTo: new Date("2027-07-31T00:00:00.000Z"),
+          planCode: "UNIFIED",
+          ageBracket: { code: "00-18", sortOrder: 1 },
+        },
+        {
+          validFrom: previousDate,
+          validTo: new Date("2026-07-31T00:00:00.000Z"),
+          planCode: "UNIFIED",
+          ageBracket: { code: "00-18", sortOrder: 1 },
+        },
+      ]);
+    mocks.findAddonPrices.mockResolvedValueOnce([
+      { validFrom: activeDate, code: "FUNERAL" },
+      { validFrom: previousDate, code: "FUNERAL" },
+    ]);
+
+    const history = await getUnimedPriceHistory("tenant-12345678");
+
+    expect(history.map(({ status, validFrom }) => [status, validFrom])).toEqual([
+      ["ACTIVE", activeDate],
+      ["PREVIOUS", previousDate],
+    ]);
+    expect(history[0]?.planPrices).toHaveLength(1);
+    expect(history[1]?.addonPrices).toHaveLength(1);
   });
 });
