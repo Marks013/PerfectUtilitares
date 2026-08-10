@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   findBeneficiary: vi.fn(),
   findPayrollCompetence: vi.fn(),
   findPayrollLoans: vi.fn(),
-  getUnimedConfiguration: vi.fn(),
+  getUnimedCalculationConfiguration: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -29,7 +29,7 @@ vi.mock("@/lib/unimed/access.server", () => ({
 }));
 
 vi.mock("@/lib/unimed/configuration", () => ({
-  getUnimedConfiguration: mocks.getUnimedConfiguration,
+  getUnimedCalculationConfiguration: mocks.getUnimedCalculationConfiguration,
 }));
 
 vi.mock("@/auth", () => ({
@@ -89,7 +89,7 @@ beforeEach(() => {
       },
     ],
   });
-  mocks.getUnimedConfiguration.mockResolvedValue({
+  mocks.getUnimedCalculationConfiguration.mockResolvedValue({
     ageBrackets: [{ code: "ALL", minAge: 0, maxAge: null }],
     planPrices: [
       {
@@ -235,7 +235,7 @@ describe("Unimed calculation API", () => {
         },
       ],
     });
-    mocks.getUnimedConfiguration.mockImplementation(
+    mocks.getUnimedCalculationConfiguration.mockImplementation(
       async (_tenantId: string, referenceDate: Date) => {
         const isSeptember = referenceDate.getUTCMonth() === 8;
         return {
@@ -271,12 +271,12 @@ describe("Unimed calculation API", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.getUnimedConfiguration).toHaveBeenNthCalledWith(
+    expect(mocks.getUnimedCalculationConfiguration).toHaveBeenNthCalledWith(
       1,
       "tenant-12345678",
       new Date("2026-08-25T00:00:00.000Z"),
     );
-    expect(mocks.getUnimedConfiguration).toHaveBeenNthCalledWith(
+    expect(mocks.getUnimedCalculationConfiguration).toHaveBeenNthCalledWith(
       2,
       "tenant-12345678",
       new Date("2026-09-01T00:00:00.000Z"),

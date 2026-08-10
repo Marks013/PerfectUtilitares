@@ -86,6 +86,7 @@ vi.mock("@/lib/unimed/reconcile", () => ({
 }));
 
 import {
+  planUnimedCompetencyRetention,
   publishUnimedImport,
 } from "@/lib/unimed/publisher";
 
@@ -199,6 +200,37 @@ beforeEach(() => {
 });
 
 describe("Unimed publisher", () => {
+  it("keeps the newest competency active when an older competency is reimported", () => {
+    const retention = planUnimedCompetencyRetention(
+      [
+        { id: "july", year: 2026, month: 7, status: "PREVIOUS" },
+        { id: "august", year: 2026, month: 8, status: "ACTIVE" },
+      ],
+      "july",
+    );
+
+    expect(retention).toEqual({
+      active: { id: "august", year: 2026, month: 8, status: "ACTIVE" },
+      previous: { id: "july", year: 2026, month: 7, status: "PREVIOUS" },
+      expiredIds: [],
+      importedCompetencyRetained: true,
+    });
+  });
+
+  it("rejects a competency older than the two retained bases", () => {
+    const retention = planUnimedCompetencyRetention(
+      [
+        { id: "june", year: 2026, month: 6, status: "DRAFT" },
+        { id: "july", year: 2026, month: 7, status: "PREVIOUS" },
+        { id: "august", year: 2026, month: 8, status: "ACTIVE" },
+      ],
+      "june",
+    );
+
+    expect(retention.expiredIds).toEqual(["june"]);
+    expect(retention.importedCompetencyRetained).toBe(false);
+  });
+
   it("rejects an import without any source before opening a transaction", async () => {
     await expect(
       publishUnimedImport({
@@ -283,6 +315,28 @@ describe("Unimed publisher", () => {
     });
     expect(database.tx.unimedImportBatch.create).not.toHaveBeenCalled();
     expect(database.tx.unimedImportSnapshot.upsert).not.toHaveBeenCalled();
+  });
+
+  it("retries a serializable write conflict and then returns idempotently", async () => {
+    const conflict = Object.assign(new Error("write conflict"), {
+      code: "P2034",
+    });
+    mocks.transaction.mockRejectedValueOnce(conflict);
+    database.tx.unimedImportSnapshot.findMany.mockResolvedValueOnce([
+      { source: "BENEFICIARIES", checksum: "beneficiaries-checksum" },
+      { source: "INVOICES", checksum: "invoices-checksum" },
+      { source: "ADDRESSES", checksum: "addresses-checksum" },
+    ]);
+    database.tx.unimedImportBatch.findFirst.mockResolvedValueOnce({
+      id: "published-batch",
+      validationSummary: summary(),
+    });
+
+    const result = await publishUnimedImport(sessionInput());
+
+    expect(result.idempotent).toBe(true);
+    expect(mocks.transaction).toHaveBeenCalledTimes(2);
+    expect(database.tx.unimedImportBatch.create).not.toHaveBeenCalled();
   });
 
   it("publishes snapshots without activating the competency while sources are missing", async () => {
@@ -423,6 +477,26 @@ describe("Unimed publisher", () => {
         },
       ])
       .mockResolvedValueOnce([]);
+    database.tx.unimedCompetency.findMany.mockResolvedValueOnce([
+      {
+        id: "competency-1",
+        year: 2026,
+        month: 8,
+        status: "DRAFT",
+      },
+      {
+        id: "competency-previous",
+        year: 2026,
+        month: 7,
+        status: "ACTIVE",
+      },
+      {
+        id: "competency-expired",
+        year: 2026,
+        month: 6,
+        status: "PREVIOUS",
+      },
+    ]);
 
     const result = await publishUnimedImport({
       tenantId: "tenant-1",
@@ -465,6 +539,10 @@ describe("Unimed publisher", () => {
       data: expect.objectContaining({
         status: "ACTIVE",
       }),
+    });
+
+    expect(database.tx.unimedCompetency.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["competency-expired"] } },
     });
 
     expect(database.tx.auditLog.create).toHaveBeenCalledWith({

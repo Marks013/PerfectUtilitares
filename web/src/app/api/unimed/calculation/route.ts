@@ -13,7 +13,7 @@ import {
 import { requireUnimedAccess } from "@/lib/unimed/access.server";
 import { prisma } from "@/lib/prisma";
 import { calculateUnimed } from "@/lib/unimed/calculation";
-import { getUnimedConfiguration } from "@/lib/unimed/configuration";
+import { getUnimedCalculationConfiguration } from "@/lib/unimed/configuration";
 import { resolveUnimedPlanPrice } from "@/lib/unimed/pricing";
 import { dateOnlySchema, zodIssueDetails } from "@/lib/unimed/schema";
 import type { UnimedCalculationInput } from "@/lib/unimed/types";
@@ -53,7 +53,9 @@ function nextCompetencyReference(value: Date) {
   );
 }
 
-type Configuration = Awaited<ReturnType<typeof getUnimedConfiguration>>;
+type Configuration = Awaited<
+  ReturnType<typeof getUnimedCalculationConfiguration>
+>;
 type PersonForPricing = {
   birthDate: Date | null;
   planCode: string | null;
@@ -181,7 +183,7 @@ export async function POST(request: Request) {
     );
     const referenceYear = referenceDate.getUTCFullYear();
     const referenceMonth = referenceDate.getUTCMonth() + 1;
-    const [reason, competency, configuration] = await Promise.all([
+    const [reason, competency, configuration, beneficiary] = await Promise.all([
       prisma.unimedExclusionReason.findFirst({
         where: {
           tenantId: access.tenantId,
@@ -203,7 +205,37 @@ export async function POST(request: Request) {
         orderBy: [{ year: "desc" }, { month: "desc" }],
         select: { id: true },
       }),
-      getUnimedConfiguration(access.tenantId, referenceDate),
+      getUnimedCalculationConfiguration(access.tenantId, referenceDate),
+      prisma.unimedBeneficiary.findFirst({
+        where: {
+          id: parsed.data.beneficiaryId,
+          tenantId: access.tenantId,
+          competency: {
+            status: { in: ["ACTIVE", "PREVIOUS"] },
+            OR: [
+              { year: { lt: referenceYear } },
+              { year: referenceYear, month: { lte: referenceMonth } },
+            ],
+          },
+          category: "HOLDER",
+        },
+        select: {
+          cpf: true,
+          birthDate: true,
+          inclusionDate: true,
+          planCode: true,
+          hasAddon: true,
+          dependents: {
+            where: { id: { in: parsed.data.dependentIds } },
+            select: {
+              id: true,
+              birthDate: true,
+              planCode: true,
+              hasAddon: true,
+            },
+          },
+        },
+      }),
     ]);
     if (!reason) {
       return jsonError(
@@ -227,36 +259,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const beneficiary = await prisma.unimedBeneficiary.findFirst({
-      where: {
-        id: parsed.data.beneficiaryId,
-        tenantId: access.tenantId,
-        competency: {
-          status: { in: ["ACTIVE", "PREVIOUS"] },
-          OR: [
-            { year: { lt: referenceYear } },
-            { year: referenceYear, month: { lte: referenceMonth } },
-          ],
-        },
-        category: "HOLDER",
-      },
-      select: {
-        cpf: true,
-        birthDate: true,
-        inclusionDate: true,
-        planCode: true,
-        hasAddon: true,
-        dependents: {
-          where: { id: { in: parsed.data.dependentIds } },
-          select: {
-            id: true,
-            birthDate: true,
-            planCode: true,
-            hasAddon: true,
-          },
-        },
-      },
-    });
     if (!beneficiary) {
       return jsonError(
         422,
@@ -323,7 +325,7 @@ export async function POST(request: Request) {
     const nextReferenceDate = nextCompetencyReference(referenceDate);
     let nextMoney: OfficialMoneySetResult | null = null;
     if (cutoffApplied) {
-      const nextConfiguration = await getUnimedConfiguration(
+      const nextConfiguration = await getUnimedCalculationConfiguration(
         access.tenantId,
         nextReferenceDate,
       );

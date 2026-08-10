@@ -30,12 +30,39 @@ import {
   type PublishUnimedInput,
   type PublishUnimedResult,
 } from "@/lib/unimed/publisher-support";
+import { retryUnimedWriteConflicts } from "@/lib/unimed/transaction-retry";
 
 export { UnimedPublishError } from "@/lib/unimed/publisher-support";
 export type {
   PublishUnimedInput,
   PublishUnimedResult,
 } from "@/lib/unimed/publisher-support";
+
+type CompetencyRetentionCandidate = {
+  id: string;
+  year: number;
+  month: number;
+  status: "DRAFT" | "VALIDATING" | "READY" | "ACTIVE" | "PREVIOUS" | "REJECTED";
+};
+
+export function planUnimedCompetencyRetention(
+  candidates: CompetencyRetentionCandidate[],
+  importedCompetencyId: string,
+) {
+  const chronological = [...candidates].sort(
+    (left, right) => right.year - left.year || right.month - left.month,
+  );
+  const retained = chronological.slice(0, 2);
+
+  return {
+    active: retained[0] ?? null,
+    previous: retained[1] ?? null,
+    expiredIds: chronological.slice(2).map(({ id }) => id),
+    importedCompetencyRetained: retained.some(
+      ({ id }) => id === importedCompetencyId,
+    ),
+  };
+}
 
 export async function publishUnimedImport(
   input: PublishUnimedInput,
@@ -54,7 +81,8 @@ export async function publishUnimedImport(
     );
   }
 
-  return prisma.$transaction(
+  const runPublication = () =>
+    prisma.$transaction(
     async (tx) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`unimed:${input.tenantId}`}, 0))::text AS "lock"`,
@@ -517,24 +545,59 @@ export async function publishUnimedImport(
       }
       await relinkPayrollLoans(tx, competency.id);
 
+      const chronologicalCompetencies = await tx.unimedCompetency.findMany({
+        where: {
+          tenantId: input.tenantId,
+          OR: [
+            { id: competency.id },
+            { status: { in: ["ACTIVE", "PREVIOUS"] } },
+          ],
+        },
+        orderBy: [{ year: "desc" }, { month: "desc" }],
+        select: { id: true, year: true, month: true, status: true },
+      });
+      const retention = planUnimedCompetencyRetention(
+        chronologicalCompetencies,
+        competency.id,
+      );
+      const activeCompetency = retention.active;
+      if (
+        !activeCompetency ||
+        !retention.importedCompetencyRetained
+      ) {
+        throw new UnimedPublishError(
+          "COMPETENCY_OUTSIDE_RETENTION_WINDOW",
+          "A competência informada é anterior às duas bases mantidas pelo sistema.",
+        );
+      }
+
       await tx.unimedCompetency.updateMany({
         where: {
           tenantId: input.tenantId,
           status: "ACTIVE",
-          id: { not: competency.id },
+          id: { not: activeCompetency.id },
         },
         data: { status: "PREVIOUS" },
       });
-      await tx.unimedCompetency.update({
-        where: { id: competency.id },
-        data: { status: "ACTIVE", activatedAt: new Date() },
-      });
-      const previous = await tx.unimedCompetency.findMany({
-        where: { tenantId: input.tenantId, status: "PREVIOUS" },
-        orderBy: [{ year: "desc" }, { month: "desc" }],
-        select: { id: true },
-      });
-      const expiredCompetencyIds = previous.slice(1).map(({ id }) => id);
+      if (activeCompetency.status !== "ACTIVE") {
+        await tx.unimedCompetency.update({
+          where: { id: activeCompetency.id },
+          data: { status: "ACTIVE", activatedAt: new Date() },
+        });
+      }
+
+      const retainedPreviousCompetency = retention.previous;
+      if (
+        retainedPreviousCompetency &&
+        retainedPreviousCompetency.status !== "PREVIOUS"
+      ) {
+        await tx.unimedCompetency.update({
+          where: { id: retainedPreviousCompetency.id },
+          data: { status: "PREVIOUS" },
+        });
+      }
+
+      const expiredCompetencyIds = retention.expiredIds;
       if (expiredCompetencyIds.length > 0) {
         await tx.unimedCompetency.deleteMany({
           where: { id: { in: expiredCompetencyIds } },
@@ -586,5 +649,7 @@ export async function publishUnimedImport(
       maxWait: 10_000,
       timeout: 60_000,
     },
-  );
+    );
+
+  return retryUnimedWriteConflicts(runPublication);
 }

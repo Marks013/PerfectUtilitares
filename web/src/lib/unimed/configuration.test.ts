@@ -2,11 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  findAgeBrackets: vi.fn(),
+  findPlanPrices: vi.fn(),
+  findAddonPrices: vi.fn(),
+  findBilling: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
+    unimedAgeBracket: { findMany: mocks.findAgeBrackets },
+    unimedPlanPriceVersion: { findMany: mocks.findPlanPrices },
+    unimedAddonPriceVersion: { findMany: mocks.findAddonPrices },
+    unimedBillingSetting: { findFirst: mocks.findBilling },
   },
 }));
 
@@ -14,7 +22,10 @@ vi.mock("@/lib/unimed/access", () => ({
   canUseUnimed: vi.fn(() => true),
 }));
 
-import { saveUnimedConfiguration } from "@/lib/unimed/configuration";
+import {
+  getUnimedCalculationConfiguration,
+  saveUnimedConfiguration,
+} from "@/lib/unimed/configuration";
 
 const validConfiguration = {
   validFrom: "2026-08-01",
@@ -114,9 +125,33 @@ function transactionClient() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.findAgeBrackets.mockResolvedValue([{ code: "00-18" }]);
+  mocks.findPlanPrices.mockResolvedValue([{ planCode: "UNIFIED" }]);
+  mocks.findAddonPrices.mockResolvedValue([{ code: "FUNERAL" }]);
+  mocks.findBilling.mockResolvedValue({ closure: "AUTOMATIC_DAY_25" });
 });
 
 describe("Unimed configuration history", () => {
+  it("loads only the four data sets required by the calculation", async () => {
+    const referenceDate = new Date("2026-08-15T00:00:00.000Z");
+
+    const configuration = await getUnimedCalculationConfiguration(
+      "tenant-12345678",
+      referenceDate,
+    );
+
+    expect(configuration).toEqual({
+      ageBrackets: [{ code: "00-18" }],
+      planPrices: [{ planCode: "UNIFIED" }],
+      addonPrices: [{ code: "FUNERAL" }],
+      billing: { closure: "AUTOMATIC_DAY_25" },
+    });
+    expect(mocks.findAgeBrackets).toHaveBeenCalledOnce();
+    expect(mocks.findPlanPrices).toHaveBeenCalledOnce();
+    expect(mocks.findAddonPrices).toHaveBeenCalledOnce();
+    expect(mocks.findBilling).toHaveBeenCalledOnce();
+  });
+
   it("keeps a retroactive version bounded by the next future version", async () => {
     const tx = transactionClient();
     mocks.transaction.mockImplementation(

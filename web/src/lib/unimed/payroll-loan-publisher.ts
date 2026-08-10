@@ -7,6 +7,7 @@ import type {
   ParsedPayrollLoanSource,
 } from "@/lib/unimed/importer";
 import { UnimedPublishError } from "@/lib/unimed/publisher";
+import { retryUnimedWriteConflicts } from "@/lib/unimed/transaction-retry";
 
 export type PublishPayrollLoanInput = {
   tenantId: string;
@@ -110,7 +111,8 @@ export async function publishPayrollLoanImport(
     .update(input.loans.checksum)
     .digest("hex");
 
-  return prisma.$transaction(
+  const runPublication = () =>
+    prisma.$transaction(
     async (tx) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`unimed:${input.tenantId}`}, 0))::text AS "lock"`,
@@ -350,5 +352,7 @@ export async function publishPayrollLoanImport(
       maxWait: 10_000,
       timeout: 60_000,
     },
-  );
+    );
+
+  return retryUnimedWriteConflicts(runPublication);
 }

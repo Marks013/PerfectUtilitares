@@ -350,16 +350,19 @@ export async function saveUnimedConfiguration(
   );
 }
 
-export async function getUnimedConfiguration(
-  tenantId: string,
-  referenceDate = new Date(),
-) {
-  const activeAt = {
+function activeConfigurationAt(referenceDate: Date) {
+  return {
     validFrom: { lte: referenceDate },
     OR: [{ validTo: null }, { validTo: { gte: referenceDate } }],
   };
-  const [ageBrackets, planPrices, addonPrices, billing, rules, email, reasons] =
-    await Promise.all([
+}
+
+export async function getUnimedCalculationConfiguration(
+  tenantId: string,
+  referenceDate = new Date(),
+) {
+  const activeAt = activeConfigurationAt(referenceDate);
+  const [ageBrackets, planPrices, addonPrices, billing] = await Promise.all([
       prisma.unimedAgeBracket.findMany({
         where: { tenantId, active: true },
         orderBy: { sortOrder: "asc" },
@@ -377,6 +380,18 @@ export async function getUnimedConfiguration(
         where: { tenantId, ...activeAt },
         orderBy: { validFrom: "desc" },
       }),
+    ]);
+
+  return { ageBrackets, planPrices, addonPrices, billing };
+}
+
+export async function getUnimedConfiguration(
+  tenantId: string,
+  referenceDate = new Date(),
+) {
+  const activeAt = activeConfigurationAt(referenceDate);
+  const [calculation, rules, email, reasons] = await Promise.all([
+      getUnimedCalculationConfiguration(tenantId, referenceDate),
       prisma.unimedCalculationRuleVersion.findFirst({
         where: { tenantId, ...activeAt },
         orderBy: { validFrom: "desc" },
@@ -389,10 +404,7 @@ export async function getUnimedConfiguration(
     ]);
 
   return {
-    ageBrackets,
-    planPrices,
-    addonPrices,
-    billing,
+    ...calculation,
     rules,
     email,
     reasons,

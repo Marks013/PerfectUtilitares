@@ -50,7 +50,8 @@ export class UnimedPublishError extends Error {
       | "IMPORT_REJECTED"
       | "IMPORT_IN_PROGRESS"
       | "INVALID_ACTOR"
-      | "MISSING_BRANCH",
+      | "MISSING_BRANCH"
+      | "COMPETENCY_OUTSIDE_RETENTION_WINDOW",
     message: string,
   ) {
     super(message);
@@ -153,4 +154,3 @@ export function incompleteSummary(): PublishUnimedResult["summary"] {
     },
   };
 }
-

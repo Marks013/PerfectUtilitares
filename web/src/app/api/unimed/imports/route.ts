@@ -87,6 +87,8 @@ function publishErrorMessage(code: UnimedPublishError["code"]) {
       return "Seu acesso não permite publicar esta importação.";
     case "MISSING_BRANCH":
       return "A importação possui registros sem uma loja válida.";
+    case "COMPETENCY_OUTSIDE_RETENTION_WINDOW":
+      return "Esta competência é anterior às duas bases mantidas pelo sistema.";
     default:
       return "A importação contém registros inválidos e não foi publicada.";
   }
