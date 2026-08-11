@@ -161,6 +161,7 @@ model Tenant {
   pdfJobs                 PdfJob[]
   unimedAccesses          UnimedUserAccess[]
   unimedModuleSessions    UnimedModuleSession[]
+  unimedExcelDevices      UnimedExcelDevice[]
   unimedCompetencies      UnimedCompetency[]
   unimedImportBatches     UnimedImportBatch[]
   unimedImportSnapshots   UnimedImportSnapshot[]
@@ -371,6 +372,23 @@ model UnimedModuleSession {
 
   @@index([tenantId, expiresAt])
   @@index([expiresAt, revokedAt])
+}
+
+model UnimedExcelDevice {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tokenHash   String   @unique
+  tokenPrefix String
+  label       String
+  createdBy   String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, revokedAt, expiresAt])
 }
 
 model UnimedCompetency {

@@ -4,6 +4,7 @@ import type { useUnimedConfigurationManagerController } from "./unimed-configura
 import type { ReasonForm } from "./unimed-configuration-manager-model";
 import { UnimedConfigurationPriceHistory } from "./unimed-configuration-manager-price-history";
 import { UnimedConfigurationPlansSection } from "./unimed-configuration-manager-unimed-configuration-plans-section";
+import { UnimedExcelDevices } from "./unimed-excel-devices";
 
 type Model = ReturnType<typeof useUnimedConfigurationManagerController>;
 
@@ -82,7 +83,7 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
 
         <nav
           aria-label="Seções das configurações"
-          className="sticky top-2 z-10 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-2 shadow-[var(--app-shadow)] sm:grid-cols-3 lg:grid-cols-6"
+          className="sticky top-2 z-10 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-2 shadow-[var(--app-shadow)] sm:grid-cols-3 lg:grid-cols-7"
         >
           {[
             ["config-calculation-section", "Vigência"],
@@ -91,6 +92,7 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
             ["config-addons-section", "Adicionais"],
             ["config-reasons-section", "Motivos"],
             ["config-email-section", "E-mail"],
+            ["config-excel-section", "Planilha"],
           ].map(([href, label]) => (
             <a
               key={href}
@@ -627,6 +629,8 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
             </div>
           </div>
         </ConfigSection>
+
+        <UnimedExcelDevices />
 
         <div className="sticky bottom-4 z-20 flex flex-col gap-3 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-shell)] p-4 shadow-[var(--app-shell-shadow)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs leading-5 text-[color:var(--app-muted)]">
