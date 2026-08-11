@@ -21,10 +21,6 @@ function createApplicationContentSecurityPolicy() {
     "connect-src 'self' https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
   ];
 
-  if (process.env.NODE_ENV === "production") {
-    directives.push("upgrade-insecure-requests");
-  }
-
   return directives.join("; ");
 }
 
