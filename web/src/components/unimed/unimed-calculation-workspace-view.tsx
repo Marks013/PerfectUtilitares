@@ -5,7 +5,8 @@ import type { useUnimedCalculationWorkspaceController } from "./unimed-calculati
 type Model = ReturnType<typeof useUnimedCalculationWorkspaceController>;
 
 export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
-  const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, Check, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedNoticeToast, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isRefreshingPricing, isSendingEmail, notice, openGeneratedDocument, payrollLoans, pricingWarnings, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, setNotice, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference } = model;
+  const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isSendingEmail, openGeneratedDocument, payrollLoans, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference } = model;
+  const activeError = apiError ?? documentError ?? emailError;
   return (
 <div className="unimed-sheet-workspace">
       <header className="unimed-sheet-header border border-[color:var(--app-border)]">
@@ -21,6 +22,19 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
           </div>
         </div>
       </header>
+
+      {activeError ? (
+        <div
+          className="mx-3 mt-3 flex items-start gap-3 rounded-xl border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] p-3 text-sm text-[color:var(--app-fg)] sm:mx-5"
+          role="alert"
+        >
+          <AlertCircle
+            className="mt-0.5 size-5 shrink-0 text-[color:var(--app-coral)]"
+            aria-hidden="true"
+          />
+          <p className="font-semibold leading-5">{activeError}</p>
+        </div>
+      ) : null}
 
       <div className="unimed-sheet-column-bar" aria-hidden="true">
         <span>COLABORADOR</span>
@@ -40,7 +54,6 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
             form={form}
             errors={errors}
             selectedBeneficiary={selectedBeneficiary}
-            pricingWarnings={pricingWarnings}
             selectBeneficiary={selectBeneficiary}
             clearSelectedBeneficiary={clearSelectedBeneficiary}
             updateForm={updateForm}
@@ -83,45 +96,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
             </div>
 
             <div className="mt-4" aria-live="polite">
-              {isCalculating ? (
-                <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] p-5 text-center">
-                  <div>
-                    <Loader2
-                      className="mx-auto size-8 animate-spin text-[color:var(--app-teal)]"
-                      aria-hidden="true"
-                    />
-                    <p className="mt-3 text-sm font-black text-[color:var(--app-fg)]">
-                      Calculando…
-                    </p>
-                    <p className="mt-1 text-xs text-[color:var(--app-muted)]">
-                      Aplicando regras da competência.
-                    </p>
-                  </div>
-                </div>
-              ) : apiError ? (
-                <div
-                  className="rounded-2xl border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] p-5"
-                  role="alert"
-                >
-                  <AlertCircle
-                    className="size-7 text-[color:var(--app-coral)]"
-                    aria-hidden="true"
-                  />
-                  <h3 className="mt-3 font-black text-[color:var(--app-fg)]">
-                    Cálculo não concluído
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">
-                    {apiError}
-                  </p>
-                  <button
-                    type="submit"
-                    className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-card)] px-4 py-2 text-sm font-black text-[color:var(--app-fg)]"
-                  >
-                    <RotateCcw className="size-4" aria-hidden="true" />
-                    Tentar novamente
-                  </button>
-                </div>
-              ) : result ? (
+              {result ? (
                 <div>
                   <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                     <ResultMetric
@@ -222,18 +197,16 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
               <button
                 type="submit"
                 disabled={
-                  isCalculating || isGeneratingDocument || isRefreshingPricing
+                  isCalculating || isGeneratingDocument
                 }
                 className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[color:var(--app-action-blue)] px-5 py-3 text-sm font-black text-[color:var(--app-action-text)] shadow-[0_14px_32px_rgba(20,184,166,0.22)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
               >
-                {isCalculating || isRefreshingPricing ? (
+                {isCalculating ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                 ) : (
                   <Calculator className="size-4" aria-hidden="true" />
                 )}
-                {isRefreshingPricing
-                  ? "Atualizando valores"
-                  : documentRequired
+                {documentRequired
                     ? result
                       ? "Recalcular e gerar documento"
                       : "Calcular e gerar documento"
@@ -241,10 +214,6 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                       ? "Recalcular exclusão"
                       : "Calcular exclusão"}
               </button>
-              <p className="text-center text-xs font-semibold text-[color:var(--app-muted)]">
-                O cálculo é atualizado automaticamente ao alterar data ou
-                valores.
-              </p>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-4 py-2.5 text-sm font-bold text-[color:var(--app-fg)]">
                 <input
                   type="checkbox"
@@ -271,7 +240,6 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                 disabled={
                   !result ||
                   isCalculating ||
-                  isRefreshingPricing ||
                   (documentRequired && !documentReady)
                 }
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-5 py-2.5 text-sm font-black text-[color:var(--app-fg)] transition hover:border-[color:var(--app-gold)] disabled:cursor-not-allowed disabled:opacity-45"
@@ -307,24 +275,6 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                     ? "Abrir PDF em nova aba"
                     : "Gerar documento obrigatório"}
               </button>
-              {documentReady ? (
-                <p
-                  className="text-center text-xs font-bold text-[color:var(--app-teal)]"
-                  role="status"
-                >
-                  Documento obrigatório pronto. Abra o PDF em nova aba para
-                  imprimir ou baixar.
-                </p>
-              ) : null}
-              {documentError ? (
-                <p
-                  className="text-center text-xs font-semibold text-[color:var(--app-coral)]"
-                  role="alert"
-                >
-                  Documento obrigatório pendente: {documentError} O e-mail de
-                  coparticipação continua disponível.
-                </p>
-              ) : null}
             </div>
           </section>
 
@@ -335,7 +285,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
               </span>
               <div>
                 <h2 className="font-black text-[color:var(--app-fg)]">
-                  E-mail de exclusão
+                  Solicitação de Coparticipação
                 </h2>
                 <p className="mt-1 text-xs leading-5 text-[color:var(--app-muted)]">
                   Solicite a planilha de coparticipação para a rescisão. Nenhum
@@ -343,33 +293,6 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                 </p>
               </div>
             </div>
-            {result && !emailConfirmed ? (
-              <div
-                className="mt-4 rounded-xl border border-[color:var(--app-gold)] bg-[color:var(--app-warning-soft)] p-3 text-sm font-bold text-[color:var(--app-fg)]"
-                role="status"
-              >
-                Lembrete: envie o e-mail solicitando a planilha de
-                coparticipação. A geração do documento é uma ação separada e ele
-                não será anexado ao e-mail.
-              </div>
-            ) : null}
-            {emailConfirmed ? (
-              <div
-                className="mt-4 flex items-start gap-2 rounded-xl border border-[color:var(--app-success-border)] bg-[color:var(--app-success-soft)] p-3 text-sm font-bold text-[color:var(--app-fg)]"
-                role="status"
-              >
-                <Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                E-mail enviado com sucesso.
-              </div>
-            ) : null}
-            {emailError && !emailDialogOpen ? (
-              <div
-                className="mt-4 rounded-xl border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] p-3 text-sm font-semibold text-[color:var(--app-fg)]"
-                role="alert"
-              >
-                {emailError}
-              </div>
-            ) : null}
             <button
               type="button"
               disabled={!result || !selectedBeneficiary || isSendingEmail}
@@ -391,8 +314,6 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
           </section>
         </aside>
       </form>
-
-      <UnimedNoticeToast notice={notice} onClose={() => setNotice(null)} />
 
       <AlertDialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
         <AlertDialogContent className="border-[color:var(--app-border)] bg-[color:var(--app-card)] text-[color:var(--app-fg)]">
@@ -506,6 +427,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                 },
                 dependents: form.dependents.map((dependent) => ({
                   id: dependent.id,
+                  selected: dependent.selected,
                   registration: null,
                   name: dependent.name,
                   birthDate: dependent.birthDate,

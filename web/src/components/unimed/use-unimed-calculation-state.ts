@@ -24,13 +24,10 @@ import {
   INITIAL_FORM,
   PAYROLL_LOANS_PRINT_STORAGE_KEY,
   formatMoneyInput,
-  parseMoney,
-  validateForm,
 } from "./unimed-calculation-utils";
 import type {
   UnimedPayrollLoanSummary,
 } from "./unimed-print-summary";
-import type { UnimedNotice, } from "./unimed-notice-toast";
 import type {
   UnimedExclusionReasonOption
 } from "./unimed-calculation-workspace-model";
@@ -63,18 +60,12 @@ const formId = useId();
     useState<GeneratedDocument | null>(null);
   const [isGeneratingDocument, setIsGeneratingDocument] = useState(false);
   const [documentProgress, setDocumentProgress] = useState(0);
-  const [isRefreshingPricing, setIsRefreshingPricing] = useState(false);
-  const [pricingWarnings, setPricingWarnings] = useState<string[]>([]);
-  const [notice, setNotice] = useState<UnimedNotice | null>(null);
   const calculationRequestSequence = useRef(0);
   const calculationAbortController = useRef<AbortController | null>(null);
   const documentRequestSequence = useRef(0);
   const documentAbortController = useRef<AbortController | null>(null);
   const generatedDocumentUrl = useRef<string | null>(null);
-  const pricingRequestSequence = useRef(0);
-  const pricingAbortController = useRef<AbortController | null>(null);
   const lastAutomaticCalculationFingerprint = useRef<string | null>(null);
-  const lastReminderFingerprint = useRef<string | null>(null);
   const emailRequest = useRef<{
     beneficiaryId: string;
     idempotencyKey: string;
@@ -94,29 +85,21 @@ const formId = useId();
     generatedDocument.reasonCode === reasonCode,
   );
   const automaticCalculationFingerprint = useMemo(() => {
-    if (isRefreshingPricing || Object.keys(validateForm(form)).length > 0) {
+    if (!selectedBeneficiary || !form.reasonCode || !form.exclusionDate) {
       return null;
     }
-    if (documentRequired && !selectedBeneficiary) return null;
+    const dependentIds = form.dependents
+      .filter((dependent) => dependent.selected)
+      .map((dependent) => dependent.id);
+    if (form.reasonCode === "1" && dependentIds.length === 0) return null;
 
     return JSON.stringify({
-      beneficiaryId: selectedBeneficiary?.id ?? null,
+      beneficiaryId: selectedBeneficiary.id,
+      dependentIds,
       reasonCode: Number(form.reasonCode),
       exclusionDate: form.exclusionDate,
-      planEnrollmentDate: form.planEnrollmentDate,
-      billingClosure: form.billingClosure,
-      holder: {
-        invoicePlanAmount: parseMoney(form.holder.invoicePlanAmount),
-        payrollPlanAmount: parseMoney(form.holder.payrollPlanAmount),
-        addonAmount: parseMoney(form.holder.addonAmount),
-      },
-      dependents: form.dependents.map((dependent) => ({
-        selected: dependent.selected,
-        invoicePlanAmount: parseMoney(dependent.invoicePlanAmount),
-        addonAmount: parseMoney(dependent.addonAmount),
-      })),
     });
-  }, [documentRequired, form, isRefreshingPricing, selectedBeneficiary]);
+  }, [form.dependents, form.exclusionDate, form.reasonCode, selectedBeneficiary]);
 
   useEffect(() => {
     try {
@@ -147,34 +130,12 @@ const formId = useId();
     () => () => {
       calculationAbortController.current?.abort();
       documentAbortController.current?.abort();
-      pricingAbortController.current?.abort();
       if (generatedDocumentUrl.current) {
         URL.revokeObjectURL(generatedDocumentUrl.current);
       }
     },
     [],
   );
-
-  useEffect(() => {
-    const message = apiError ?? documentError ?? emailError;
-    if (!message) return;
-    setNotice({
-      id: `unimed-error-${message}`,
-      type: "error",
-      title: "Ação não concluída",
-      message,
-    });
-  }, [apiError, documentError, emailError]);
-
-  useEffect(() => {
-    if (pricingWarnings.length === 0) return;
-    setNotice({
-      id: `unimed-info-${pricingWarnings.join("|")}`,
-      type: "info",
-      title: "Informação para conferência",
-      message: pricingWarnings.join(" "),
-    });
-  }, [pricingWarnings]);
 
   function invalidateDocument() {
     documentRequestSequence.current += 1;
@@ -199,13 +160,6 @@ const formId = useId();
     setPayrollLoans(null);
   }
 
-  function invalidatePricingRefresh() {
-    pricingRequestSequence.current += 1;
-    pricingAbortController.current?.abort();
-    pricingAbortController.current = null;
-    setIsRefreshingPricing(false);
-  }
-
   function updateForm<K extends keyof FormValues>(
     field: K,
     value: FormValues[K],
@@ -225,10 +179,8 @@ const formId = useId();
       invalidateDocument();
     }
     if (field === "employeeName" || field === "cpf") {
-      invalidatePricingRefresh();
       setSelectedBeneficiary(null);
       setDataCompetency(null);
-      setPricingWarnings([]);
     }
     if (field in errors) {
       setErrors((current) => ({ ...current, [field]: undefined }));
@@ -286,7 +238,6 @@ const formId = useId();
 
   function resetWorkspace() {
     invalidateCalculation();
-    invalidatePricingRefresh();
     setForm(INITIAL_FORM);
     setErrors({});
     setResult(null);
@@ -297,7 +248,6 @@ const formId = useId();
     setEmailError(null);
     invalidateDocument();
     setEmailDialogOpen(false);
-    setPricingWarnings([]);
   }
-  return { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, setIncludePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, isRefreshingPricing, setIsRefreshingPricing, pricingWarnings, setPricingWarnings, notice, setNotice, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, generatedDocumentUrl, pricingRequestSequence, pricingAbortController, lastAutomaticCalculationFingerprint, lastReminderFingerprint, emailRequest, selectedReason, reasonCode, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, invalidatePricingRefresh, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace };
+  return { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, setIncludePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, generatedDocumentUrl, lastAutomaticCalculationFingerprint, emailRequest, selectedReason, reasonCode, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace };
 }

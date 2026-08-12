@@ -22,6 +22,10 @@ type PrintPerson = {
   funeralAmount: string;
 };
 
+type PrintDependent = PrintPerson & {
+  selected: boolean;
+};
+
 type UnimedPayrollLoanContract = {
   contractNumber: string;
   installmentAmount: string;
@@ -48,7 +52,7 @@ export type UnimedPrintSummaryData = {
   billingClosure: "OPEN" | "AUTOMATIC_DAY_25";
   branchCode: string | null;
   holder: PrintPerson;
-  dependents: PrintPerson[];
+  dependents: PrintDependent[];
   includePayrollLoans: boolean;
   payrollLoans: UnimedPayrollLoanSummary | null;
   result: UnimedCalculationResult;
@@ -106,7 +110,10 @@ export function UnimedPrintCopy({
   const nextCompetencyLabel = data.result.nextCompetency
     ? competence(data.result.nextCompetency)
     : nextUnimedCompetency(calculationCompetency);
-  const rows = [data.holder, ...data.dependents];
+  const rows = [
+    data.holder,
+    ...data.dependents.filter((dependent) => dependent.selected),
+  ];
   const loanCount = data.payrollLoans?.contracts.length ?? 0;
   const loanDensity =
     loanCount > 8 ? " is-dense" : loanCount > 4 ? " is-compact" : "";

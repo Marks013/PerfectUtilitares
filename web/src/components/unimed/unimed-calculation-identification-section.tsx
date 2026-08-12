@@ -18,7 +18,6 @@ type IdentificationSectionProps = {
   form: FormValues;
   errors: FieldErrors;
   selectedBeneficiary: UnimedBeneficiary | null;
-  pricingWarnings: string[];
   selectBeneficiary: (
     beneficiary: UnimedBeneficiary,
     pricingContext: UnimedPricingContext,
@@ -34,7 +33,6 @@ export function UnimedCalculationIdentificationSection({
   form,
   errors,
   selectedBeneficiary,
-  pricingWarnings,
   selectBeneficiary,
   clearSelectedBeneficiary,
   updateForm,
@@ -61,22 +59,6 @@ export function UnimedCalculationIdentificationSection({
         onSelect={selectBeneficiary}
         onClear={clearSelectedBeneficiary}
       />
-
-      {pricingWarnings.length > 0 ? (
-        <div
-          className="mt-4 rounded-xl border border-[color:var(--app-gold)] bg-[color:var(--app-warning-soft)] p-4"
-          role="status"
-        >
-          <p className="text-sm font-black text-[color:var(--app-fg)]">
-            Campos que precisam de conferência
-          </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-[color:var(--app-muted)]">
-            {pricingWarnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
 
       <div className="mt-6 grid gap-5 md:grid-cols-2">
         <div>

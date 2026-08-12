@@ -170,4 +170,42 @@ describe("Unimed printable payroll loans", () => {
     expect(content).not.toContain("Consignado digital");
     expect(content).not.toContain("Não há consignado digital");
   });
+
+  it("omits unchecked dependents from the printable PDF summary", () => {
+    const dependent = {
+      registration: null,
+      birthDate: "2010-01-01",
+      age: 16,
+      planCode: "10041",
+      hasFuneral: false,
+      invoicePlanAmount: "100.00",
+      payrollPlanAmount: null,
+      funeralAmount: "0.00",
+    };
+    const markup = renderToStaticMarkup(
+      <UnimedPrintCopy
+        copy={1}
+        data={printData({
+          dependents: [
+            {
+              ...dependent,
+              id: "dependent-selected",
+              name: "Dependente Incluído",
+              selected: true,
+            },
+            {
+              ...dependent,
+              id: "dependent-unchecked",
+              name: "Dependente Desmarcado",
+              selected: false,
+            },
+          ],
+        })}
+      />,
+    );
+    const content = text(markup);
+
+    expect(content).toContain("Dependente Incluído");
+    expect(content).not.toContain("Dependente Desmarcado");
+  });
 });

@@ -5,7 +5,6 @@ import {
   ArrowRight,
   Building2,
   Calculator,
-  Check,
   CircleDollarSign,
   FileText,
   Loader2,
@@ -58,7 +57,6 @@ import {
 import {
   UnimedPrintSummary,
 } from "./unimed-print-summary";
-import { UnimedNoticeToast } from "./unimed-notice-toast";
 import type {
   UnimedExclusionReasonOption
 } from "./unimed-calculation-workspace-model";
@@ -72,7 +70,7 @@ export function useUnimedCalculationWorkspaceController({
 }: {
   reasons?: readonly UnimedExclusionReasonOption[];
 }) {
-  const { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, isRefreshingPricing, setIsRefreshingPricing, pricingWarnings, setPricingWarnings, notice, setNotice, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, generatedDocumentUrl, pricingRequestSequence, pricingAbortController, lastAutomaticCalculationFingerprint, lastReminderFingerprint, emailRequest, selectedReason, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, invalidatePricingRefresh, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace } = useUnimedCalculationState({ reasons });
+  const { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, generatedDocumentUrl, lastAutomaticCalculationFingerprint, emailRequest, selectedReason, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace } = useUnimedCalculationState({ reasons });
 
   function selectBeneficiary(
     beneficiary: UnimedBeneficiary,
@@ -98,11 +96,6 @@ export function useUnimedCalculationWorkspaceController({
       Boolean(effectiveReferenceDate) &&
       pricingContext.referenceDate === effectiveReferenceDate;
 
-    if (!pricingMatchesExclusionDate) {
-      nextWarnings.push(
-        "Preencha a data de exclusão; os valores serão atualizados automaticamente sem remover o cadastro.",
-      );
-    }
     if (beneficiary.dependents.length > MAX_DEPENDENTS) {
       nextWarnings.push(
         `Cadastro possui ${beneficiary.dependents.length} dependentes; somente os ${MAX_DEPENDENTS} primeiros foram carregados.`,
@@ -183,124 +176,23 @@ export function useUnimedCalculationWorkspaceController({
     }));
     setErrors({});
     setResult(null);
-    setApiError(null);
+    setApiError(nextWarnings.length > 0 ? nextWarnings.join(" ") : null);
     setEmailConfirmed(false);
     setEmailError(null);
     invalidateDocument();
-    if (pricingMatchesExclusionDate && !pricingContext.billingClosure) {
-      nextWarnings.push(
-        "Fechamento não retornado pela configuração; confirme a opção manualmente.",
-      );
-    }
-    setPricingWarnings(nextWarnings);
   }
 
-  async function updateExclusionDate(value: string) {
+  function updateExclusionDate(value: string) {
     updateForm("exclusionDate", value);
-    invalidatePricingRefresh();
-    if (!selectedBeneficiary) return;
-
-    setForm((current) => ({
-      ...current,
-      holder: {
-        invoicePlanAmount: "",
-        payrollPlanAmount: "",
-        addonAmount: "",
-      },
-      dependents: current.dependents.map((dependent) => ({
-        ...dependent,
-        invoicePlanAmount: "",
-        addonAmount: "",
-      })),
-    }));
-
-    if (!value) {
-      setPricingWarnings([
-        "Informe a data de exclusão para atualizar automaticamente os valores.",
-      ]);
-      return;
-    }
-
-    const identifier =
-      selectedBeneficiary.cpf?.replace(/\D/g, "") ||
-      selectedBeneficiary.registration?.trim();
-    if (!identifier) {
-      setPricingWarnings([
-        "Cadastro mantido, mas não possui CPF ou matrícula para atualizar os preços.",
-      ]);
-      return;
-    }
-
-    const requestSequence = ++pricingRequestSequence.current;
-    const abortController = new AbortController();
-    pricingAbortController.current = abortController;
-    setIsRefreshingPricing(true);
-    setPricingWarnings(["Atualizando valores para a nova data de exclusão…"]);
-
-    try {
-      const response = await fetch(
-        `/api/unimed/beneficiaries?q=${encodeURIComponent(identifier)}&referenceDate=${encodeURIComponent(value)}`,
-        { cache: "no-store", signal: abortController.signal },
-      );
-      if (!response.ok) {
-        throw new Error(
-          await readApiError(
-            response,
-            "Não foi possível atualizar os valores para a nova data.",
-          ),
-        );
-      }
-      const body = (await response.json()) as {
-        beneficiaries?: UnimedBeneficiary[];
-        pricingContext?: UnimedPricingContext;
-      };
-      if (pricingRequestSequence.current !== requestSequence) return;
-      const selectedCpf = selectedBeneficiary.cpf?.replace(/\D/g, "");
-      const selectedRegistration = selectedBeneficiary.registration?.trim();
-      const refreshed = body.beneficiaries?.find((beneficiary) => {
-        if (selectedCpf) {
-          return beneficiary.cpf?.replace(/\D/g, "") === selectedCpf;
-        }
-        if (selectedRegistration) {
-          return beneficiary.registration?.trim() === selectedRegistration;
-        }
-        return beneficiary.id === selectedBeneficiary.id;
-      });
-      if (!refreshed || !body.pricingContext) {
-        throw new Error(
-          "Cadastro mantido, mas os preços não foram encontrados para a nova data.",
-        );
-      }
-      selectBeneficiary(refreshed, body.pricingContext, value);
-    } catch (error) {
-      if (
-        abortController.signal.aborted ||
-        pricingRequestSequence.current !== requestSequence
-      ) {
-        return;
-      }
-      setPricingWarnings([
-        error instanceof Error
-          ? error.message
-          : "Não foi possível atualizar os valores para a nova data.",
-      ]);
-    } finally {
-      if (pricingRequestSequence.current === requestSequence) {
-        pricingAbortController.current = null;
-        setIsRefreshingPricing(false);
-      }
-    }
   }
 
   function clearSelectedBeneficiary() {
     invalidateCalculation();
-    invalidatePricingRefresh();
     setSelectedBeneficiary(null);
     setDataCompetency(null);
     setEmailConfirmed(false);
     setEmailError(null);
     invalidateDocument();
-    setPricingWarnings([]);
   }
 
   async function runCalculation(options?: {
@@ -308,13 +200,12 @@ export function useUnimedCalculationWorkspaceController({
     generateRequiredDocument?: boolean;
     silent?: boolean;
   }) {
-    if (isRefreshingPricing) {
-      if (!options?.silent) {
-        setApiError("Aguarde a atualização automática dos valores.");
-      }
-      return;
-    }
-    const nextErrors = validateForm(form);
+    const allErrors = validateForm(form);
+    const nextErrors = Object.fromEntries(
+      Object.entries(allErrors).filter(([field]) =>
+        ["reasonCode", "exclusionDate"].includes(field),
+      ),
+    ) as typeof allErrors;
     if (!options?.silent) setErrors(nextErrors);
     setApiError(null);
     setEmailConfirmed(false);
@@ -329,6 +220,13 @@ export function useUnimedCalculationWorkspaceController({
     }
 
     if (Object.keys(nextErrors).length > 0) {
+      if (!options?.silent) {
+        setApiError(
+          Object.values(nextErrors).find(
+            (message): message is string => typeof message === "string",
+          ) ?? "Revise os dados informados.",
+        );
+      }
       const firstInvalid = options?.formElement?.querySelector<HTMLElement>(
         '[aria-invalid="true"]',
       );
@@ -354,7 +252,6 @@ export function useUnimedCalculationWorkspaceController({
     const abortController = new AbortController();
     calculationAbortController.current = abortController;
     setIsCalculating(true);
-    setResult(null);
     setPayrollLoans(null);
     invalidateDocument();
 
@@ -402,19 +299,6 @@ export function useUnimedCalculationWorkspaceController({
       }));
       setResult(calculation);
       setPayrollLoans(nextPayrollLoans);
-      const reminderFingerprint = JSON.stringify({
-        beneficiaryId: selectedBeneficiary?.id ?? null,
-        input,
-      });
-      if (lastReminderFingerprint.current !== reminderFingerprint) {
-        lastReminderFingerprint.current = reminderFingerprint;
-        setNotice({
-          id: `coparticipation-${requestSequence}`,
-          type: "info",
-          title: "Cálculo concluído",
-          message: "Lembrete: solicite a coparticipação por e-mail.",
-        });
-      }
       if (documentRequired && options?.generateRequiredDocument !== false) {
         await generateDocument(calculation);
       }
@@ -456,7 +340,7 @@ export function useUnimedCalculationWorkspaceController({
   }
 
   useEffect(() => {
-    if (!automaticCalculationFingerprint || isRefreshingPricing) return;
+    if (!automaticCalculationFingerprint) return;
     if (
       lastAutomaticCalculationFingerprint.current ===
       automaticCalculationFingerprint
@@ -468,11 +352,11 @@ export function useUnimedCalculationWorkspaceController({
       lastAutomaticCalculationFingerprint.current =
         automaticCalculationFingerprint;
       void runAutomaticCalculation();
-    }, 450);
+    }, 120);
 
     return () => window.clearTimeout(timeout);
     // The normalized fingerprint contains every calculation input.
-  }, [automaticCalculationFingerprint, isRefreshingPricing, lastAutomaticCalculationFingerprint]);
+  }, [automaticCalculationFingerprint, lastAutomaticCalculationFingerprint]);
 
   async function sendEmail(event: ReactMouseEvent<HTMLButtonElement>) {
     event.preventDefault();
@@ -661,7 +545,7 @@ export function useUnimedCalculationWorkspaceController({
     link.remove();
   }
 
-    return { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, Check, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedNoticeToast, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isRefreshingPricing, isSendingEmail, notice, openGeneratedDocument, payrollLoans, pricingWarnings, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, setNotice, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference };
+    return { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isSendingEmail, openGeneratedDocument, payrollLoans, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference };
 }
 
 export function UnimedCalculationWorkspace(props: Parameters<typeof useUnimedCalculationWorkspaceController>[0]) {
