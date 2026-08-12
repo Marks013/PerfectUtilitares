@@ -46,6 +46,7 @@
     "db:deploy": "prisma migrate deploy && npm run prisma:seed",
     "build:deploy": "npm run build && npm run db:deploy",
     "prisma:smoke": "tsx scripts/prisma7-smoke.ts",
+    "presence:concurrency-smoke": "tsx scripts/presence-concurrency-smoke.ts",
     "lint": "biome lint src --diagnostic-level=warn --error-on-warnings --max-diagnostics=100",
     "lint:strict": "biome lint src --error-on-warnings --max-diagnostics=200",
     "test:coverage": "vitest run --coverage",

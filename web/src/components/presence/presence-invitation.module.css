@@ -1,0 +1,367 @@
+.page {
+  --presence-accent: #16b8a5;
+  --presence-coral: #f77b5c;
+  min-height: 100dvh;
+  background: var(--app-bg);
+  color: var(--app-fg);
+  padding-bottom: 3rem;
+}
+
+.hero {
+  position: relative;
+  min-height: min(72dvh, 46rem);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.hero > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 62% center;
+}
+
+.heroShade {
+  position: absolute;
+  inset: 0;
+  background: rgb(8 8 8 / 0.42);
+  box-shadow: inset 0 -16rem 12rem -8rem rgb(5 5 5 / 0.9);
+}
+
+.heroContent {
+  position: relative;
+  width: min(72rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 5rem 0 3.5rem;
+  color: #fffaf1;
+}
+
+.heroContent h1 {
+  max-width: 15ch;
+  margin: 0.25rem 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 6rem;
+  font-weight: 500;
+  line-height: 0.96;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #8cf5e8;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.greeting {
+  margin: 1.25rem 0 0;
+  font-size: 1.15rem;
+}
+
+.theme {
+  position: absolute;
+  z-index: 2;
+  top: 1rem;
+  right: 1rem;
+  padding: 0.2rem;
+  border: 1px solid rgb(255 255 255 / 0.3);
+  border-radius: 0.75rem;
+  background: rgb(10 10 10 / 0.55);
+  backdrop-filter: blur(12px);
+}
+
+.details,
+.description,
+.rsvp,
+.giftSection,
+.feedback,
+.page > footer {
+  width: min(72rem, calc(100% - 2rem));
+  margin-inline: auto;
+}
+
+.details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 2rem;
+  padding-block: 2rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.details div,
+.sectionHeading {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.details svg,
+.sectionHeading > svg {
+  flex: 0 0 auto;
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--presence-accent);
+}
+
+.description {
+  max-width: 66rem;
+  padding: 2.25rem 0 0;
+  color: var(--app-muted);
+  font-size: 1.06rem;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+
+.rsvp,
+.giftSection {
+  padding-block: 3rem;
+}
+
+.giftSection {
+  border-top: 1px solid var(--app-border);
+}
+
+.sectionHeading h2 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.sectionHeading p {
+  margin: 0.35rem 0 0;
+  color: var(--app-muted);
+}
+
+.companions {
+  max-width: 32rem;
+  min-height: 3.5rem;
+  margin-top: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-block: 1px solid var(--app-border);
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: 2.5rem 2.75rem 2.5rem;
+  align-items: center;
+}
+
+.stepper button,
+.giftActions a {
+  width: 2.5rem;
+  height: 2.5rem;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 0.65rem;
+  background: var(--app-surface);
+  color: var(--app-fg);
+}
+
+.stepper svg,
+.giftActions svg,
+.primaryButton svg,
+.secondaryButton svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.stepper output {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.rsvpActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.primaryButton,
+.secondaryButton,
+.giftActions button {
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-radius: 0.75rem;
+  padding: 0.7rem 1rem;
+  font-weight: 800;
+}
+
+.primaryButton {
+  border: 1px solid var(--presence-accent);
+  background: var(--presence-accent);
+  color: #071312;
+}
+
+.secondaryButton {
+  border: 1px solid var(--app-border-strong);
+  background: var(--app-surface);
+  color: var(--app-fg);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.giftActions button:disabled,
+.stepper button:disabled {
+  opacity: 0.48;
+}
+
+.closed {
+  margin: 1rem 0 0;
+  color: var(--presence-coral);
+}
+
+.giftGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.giftItem {
+  min-height: 8.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1.2rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.giftItem:nth-child(odd) {
+  border-right: 1px solid var(--app-border);
+}
+
+.giftItem h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.giftItem p {
+  margin: 0.35rem 0 0;
+  color: var(--app-muted);
+  line-height: 1.5;
+}
+
+.giftItem.reserved h3 {
+  color: var(--app-subtle);
+  text-decoration: line-through;
+  text-decoration-color: var(--presence-coral);
+  text-decoration-thickness: 2px;
+}
+
+.giftActions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.giftActions button {
+  min-width: 7.25rem;
+  border: 1px solid var(--app-border-strong);
+  background: var(--app-surface-strong);
+  color: var(--app-fg);
+}
+
+.giftItem:not(.reserved) .giftActions button {
+  border-color: var(--presence-accent);
+  background: color-mix(in srgb, var(--presence-accent) 20%, var(--app-surface));
+}
+
+.feedback {
+  position: sticky;
+  z-index: 3;
+  bottom: 1rem;
+  pointer-events: none;
+}
+
+.error,
+.notice {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+  border: 1px solid;
+  border-radius: 0.75rem;
+  box-shadow: var(--app-shadow);
+  background: var(--app-card-raised);
+}
+
+.error { border-color: var(--app-danger); }
+.notice { border-color: var(--presence-accent); }
+
+.page > footer {
+  padding-top: 2rem;
+  border-top: 1px solid var(--app-border);
+  color: var(--app-subtle);
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+.centered {
+  min-height: 100dvh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: var(--app-bg);
+  color: var(--app-fg);
+  text-align: center;
+}
+
+.centered h1,
+.centered p { margin: 0; }
+.centered p { max-width: 34rem; color: var(--app-muted); }
+
+.errorMark {
+  width: 3rem;
+  height: 3rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--app-danger);
+  border-radius: 50%;
+  color: var(--app-danger);
+}
+
+.spinner { animation: presence-spin 0.8s linear infinite; }
+
+@keyframes presence-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 700px) {
+  .hero { min-height: 70dvh; }
+  .hero > img { object-position: 72% center; }
+  .heroShade { background: rgb(8 8 8 / 0.54); }
+  .heroContent { padding-bottom: 2rem; }
+  .heroContent h1 { font-size: 3rem; }
+  .details, .giftGrid { grid-template-columns: 1fr; }
+  .giftItem:nth-child(odd) { border-right: 0; }
+  .giftItem { align-items: flex-start; flex-direction: column; }
+  .giftActions { width: 100%; }
+  .giftActions button { flex: 1; }
+  .rsvpActions { flex-direction: column; }
+  .primaryButton, .secondaryButton { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 1.8s; }
+}

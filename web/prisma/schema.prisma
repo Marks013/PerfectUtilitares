@@ -117,6 +117,26 @@ enum UnimedDocumentKind {
   NONE
 }
 
+enum PresenceEventStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+enum PresenceRsvpStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+}
+
+enum PresenceDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
 model CodigoJornada {
   id                  String       @id @default(cuid())
   codigo              String
@@ -146,6 +166,8 @@ model User {
   unimedAccess           UnimedUserAccess?
   unimedRequestedImports UnimedImportBatch[] @relation("UnimedImportRequestedBy")
   unimedPublishedImports UnimedImportBatch[] @relation("UnimedImportPublishedBy")
+  presenceEventsCreated  PresenceEvent[]      @relation("PresenceEventsCreatedBy")
+  presenceActivities     PresenceActivity[]   @relation("PresenceActivitiesActor")
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
 
@@ -178,6 +200,7 @@ model Tenant {
   unimedEmailSequences    UnimedEmailDailySequence[]
   unimedDocumentTemplates UnimedDocumentTemplate[]
   unimedEmailEvents       UnimedEmailEvent[]
+  presenceEvents          PresenceEvent[]
   createdAt               DateTime                       @default(now())
   updatedAt               DateTime                       @updatedAt
 }
@@ -200,6 +223,138 @@ model UserInvitation {
   @@index([invitedById])
   @@index([email])
   @@index([expiresAt])
+}
+
+model PresenceEvent {
+  id                   String              @id @default(cuid())
+  tenantId             String
+  tenant               Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdById          String?
+  createdBy            User?               @relation("PresenceEventsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  eventSlug            String              @unique
+  title                String
+  description          String?
+  startsAt             DateTime
+  venueName            String?
+  venueAddress         String?
+  confirmationDeadline DateTime
+  timeZone             String              @default("America/Sao_Paulo")
+  status               PresenceEventStatus @default(DRAFT)
+  theme                Json?
+  publicRevision       Int                 @default(0)
+  retentionUntil       DateTime?
+  guests               PresenceGuest[]
+  gifts                PresenceGift[]
+  deliveries           PresenceDelivery[]
+  activities           PresenceActivity[]
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@index([tenantId, status])
+  @@index([createdById])
+  @@index([retentionUntil])
+}
+
+model PresenceGuest {
+  id               String             @id @default(cuid())
+  eventId          String
+  event            PresenceEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name             String
+  email            String?
+  guestSlug        String
+  rsvpStatus       PresenceRsvpStatus @default(PENDING)
+  companionLimit   Int                @default(0)
+  companionCount   Int                @default(0)
+  tokenHash        String             @unique
+  accessVersion    Int                @default(1)
+  accessExpiresAt  DateTime?
+  tokenRevokedAt   DateTime?
+  respondedAt      DateTime?
+  sessions         PresenceGuestSession[]
+  reservedGifts    PresenceGift[]     @relation("PresenceGiftReservedBy")
+  deliveries       PresenceDelivery[]
+  activities       PresenceActivity[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@unique([eventId, guestSlug])
+  @@unique([eventId, email])
+  @@index([eventId, rsvpStatus])
+  @@index([accessExpiresAt])
+}
+
+model PresenceGuestSession {
+  id            String        @id @default(cuid())
+  guestId       String
+  guest         PresenceGuest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  sessionHash   String        @unique
+  accessVersion Int
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  lastSeenAt    DateTime      @default(now())
+  createdAt     DateTime      @default(now())
+
+  @@index([guestId, revokedAt, expiresAt])
+  @@index([expiresAt])
+}
+
+model PresenceGift {
+  id                String         @id @default(cuid())
+  eventId           String
+  event             PresenceEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  title             String
+  description       String?
+  externalUrl       String?
+  position          Int            @default(0)
+  active            Boolean        @default(true)
+  reservedByGuestId String?
+  reservedByGuest   PresenceGuest? @relation("PresenceGiftReservedBy", fields: [reservedByGuestId], references: [id], onDelete: SetNull)
+  reservedAt        DateTime?
+  version           Int            @default(0)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([eventId, active, position])
+  @@index([reservedByGuestId])
+}
+
+model PresenceDelivery {
+  id             String                 @id @default(cuid())
+  eventId        String
+  event          PresenceEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  guestId        String?
+  guest          PresenceGuest?         @relation(fields: [guestId], references: [id], onDelete: SetNull)
+  idempotencyKey String
+  status         PresenceDeliveryStatus @default(PENDING)
+  attemptCount   Int                    @default(0)
+  nextAttemptAt  DateTime?
+  lastErrorCode  String?
+  sentAt         DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@unique([eventId, idempotencyKey])
+  @@index([eventId, status, nextAttemptAt])
+  @@index([guestId])
+}
+
+model PresenceActivity {
+  id          String         @id @default(cuid())
+  eventId     String
+  event       PresenceEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  guestId     String?
+  guest       PresenceGuest? @relation(fields: [guestId], references: [id], onDelete: SetNull)
+  actorUserId String?
+  actorUser   User?          @relation("PresenceActivitiesActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime       @default(now())
+
+  @@index([eventId, createdAt])
+  @@index([guestId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model PdfJob {
