@@ -26,18 +26,18 @@ export default async function HistoricoPage({
 }: HistoricoPageProps) {
   const session = await auth();
 
-  if (session?.user.status !== "ACTIVE") {
-    redirect("/login");
+  if (
+    session?.user.status !== "ACTIVE" ||
+    session.user.role !== "ADMIN"
+  ) {
+    redirect("/dashboard");
   }
 
-  const isAdmin = session.user.role === "ADMIN";
   const params = await searchParams;
   const status = getParam(params, "status") ?? "todos";
   const busca = (getParam(params, "q") ?? "").trim();
 
-  const where: Prisma.JornadaValidationWhereInput = isAdmin
-    ? {}
-    : { userId: session.user.id };
+  const where: Prisma.JornadaValidationWhereInput = {};
 
   if (status === "validas") {
     where.valido = true;
@@ -69,9 +69,7 @@ export default async function HistoricoPage({
       <div>
         <h1 className="text-2xl font-semibold text-neutral-950">Histórico</h1>
         <p className="mt-1 text-sm text-neutral-600">
-          {isAdmin
-            ? "Histórico global de validações."
-            : "Suas validações ficam disponíveis por 30 dias."}
+          Histórico global de validações.
         </p>
       </div>
 

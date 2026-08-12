@@ -208,10 +208,11 @@ async function main() {
   }
 
   for (const { id: _id, ...rule } of DEFAULT_JORNADA_RULES) {
+    const { limitePeriodoMinutos: _limitePeriodoMinutos, ...seededRule } = rule;
     await prisma.jornadaRule.upsert({
       where: { nome: rule.nome },
       create: rule,
-      update: { ...rule, active: true },
+      update: { ...seededRule, active: true },
     });
   }
 

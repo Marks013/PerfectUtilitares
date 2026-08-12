@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_JORNADA_RULES } from "./default-rules";
 import {
   validarJornadaComInterjornada,
   validarJornadaManual,
@@ -122,7 +123,45 @@ describe("validarJornadaManual", () => {
     expect(result.valido).toBe(false);
     expect(result.mensagem).toContain("Primeiro período");
     expect(result.mensagem).toContain("excede 4h");
-    expect(result.mensagem).toContain("no máximo 04:00");
+    expect(result.mensagem).toContain("limite de 04:00");
+  });
+
+  it("aceita limite configurado de 5 horas antes do intervalo", () => {
+    const rules = DEFAULT_JORNADA_RULES.map((rule) =>
+      rule.duracaoMinutos === 480 && rule.diasValidos.includes("util")
+        ? { ...rule, limitePeriodoMinutos: 300 }
+        : rule,
+    );
+    const result = validarJornadaManual(
+      { horarios: "07:00 12:00 13:00 16:00" },
+      rules,
+    );
+
+    expect(result.valido).toBe(true);
+    expect(result.duracaoCalculada).toBe("08:00");
+  });
+
+  it("aceita uma nova jornada de 5 horas sem lista fixa de durações", () => {
+    const result = validarJornadaManual(
+      { horarios: "07:00 12:00" },
+      [
+        ...DEFAULT_JORNADA_RULES,
+        {
+          nome: "Jornada de 05:00",
+          duracaoMinutos: 300,
+          horasSemanais: 30,
+          horasMensais: 150,
+          intervaloMin: 0,
+          intervaloMax: 0,
+          limitePeriodoMinutos: 300,
+          diasValidos: ["util"],
+          active: true,
+        },
+      ],
+    );
+
+    expect(result.valido).toBe(true);
+    expect(result.duracaoCalculada).toBe("05:00");
   });
 
   it("aceita jornada fora da regra quando existe exceção autorizada", () => {

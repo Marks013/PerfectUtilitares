@@ -1,34 +1,33 @@
-import { LogIn, LogOut } from "lucide-react";
+import { ChevronDown, LogIn, LogOut } from "lucide-react";
 import Link from "next/link";
 import { logoutAction } from "@/app/login/actions";
 import { auth } from "@/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const publicNavItems = [
-  { href: "/dashboard", label: "Início" },
-  { href: "/jornada/validar", label: "Validar" },
   { href: "/fotos", label: "Fotos 3x4" },
-  { href: "/pdf", label: "PDF" },
+  { href: "/pdf", label: "Manutenção de PDFs" },
   { href: "/unimed", label: "Unimed" },
 ];
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
   const session = await auth();
   const activeSession = session?.user.status !== "ACTIVE" ? null : session;
-  const navItems = [
-    ...publicNavItems,
-    ...(activeSession
-      ? [
-          { href: "/jornada/historico", label: "Meu histórico" },
-          { href: "/conta", label: "Conta" },
-        ]
-      : []),
+  const jornadaNavItems = [
+    { href: "/jornada/validar", label: "Validar" },
     ...(activeSession?.user.role === "ADMIN"
       ? [
           { href: "/jornada/regras", label: "Regras" },
           { href: "/jornada/codigos", label: "Códigos" },
-          { href: "/admin/usuarios", label: "Usuários" },
+          { href: "/jornada/historico", label: "Histórico" },
         ]
+      : []),
+  ];
+  const navItems = [
+    ...publicNavItems,
+    ...(activeSession ? [{ href: "/conta", label: "Conta" }] : []),
+    ...(activeSession?.user.role === "ADMIN"
+      ? [{ href: "/admin/usuarios", label: "Usuários" }]
       : []),
   ];
 
@@ -56,7 +55,30 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
 
-          <nav className="flex max-w-full items-center gap-2 overflow-x-auto pb-1 lg:flex-wrap lg:justify-center lg:overflow-visible lg:pb-0">
+          <nav className="flex max-w-full flex-wrap items-center gap-2 pb-1 lg:justify-center lg:pb-0">
+            <Link href="/dashboard" className="app-nav-link">
+              Início
+            </Link>
+            <details className="group relative">
+              <summary className="app-nav-link flex cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
+                Validador de Jornada
+                <ChevronDown
+                  className="size-3.5 transition-transform group-open:rotate-180"
+                  aria-hidden="true"
+                />
+              </summary>
+              <div className="absolute left-0 top-full z-50 mt-2 grid min-w-56 gap-1 rounded-xl border border-white/10 bg-[color:var(--app-shell)] p-2 shadow-[var(--app-shell-shadow)] backdrop-blur-xl">
+                {jornadaNavItems.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className="app-nav-link whitespace-nowrap"
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            </details>
             {navItems.map((item) => (
               <Link key={item.href} href={item.href} className="app-nav-link">
                 {item.label}

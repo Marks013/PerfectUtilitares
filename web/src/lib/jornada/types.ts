@@ -8,6 +8,7 @@ export type JornadaRuleInput = {
   horasMensais: number;
   intervaloMin: number;
   intervaloMax: number;
+  limitePeriodoMinutos: number;
   diasValidos: string[];
   active?: boolean;
 };

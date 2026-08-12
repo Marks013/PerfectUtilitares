@@ -17,6 +17,19 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
             Digite a escala, confira o diagnóstico e selecione somente jornadas
             válidas para gerar a alteração.
           </p>
+          <aside className="rounded-xl border border-amber-300/40 bg-amber-100/10 p-4 text-sm leading-relaxed text-[color:var(--app-muted)]">
+            <strong className="block text-[color:var(--app-fg)]">
+              Hora noturna reduzida — aviso orientativo
+            </strong>
+            <span className="mt-1 block">
+              No trabalho urbano entre 22h e 5h, cada 52min30s corresponde a 1
+              hora noturna: 7 horas reais equivalem a 8 horas computadas, com
+              adicional de no mínimo 20%. Se a jornada noturna for cumprida e
+              continuar após 5h, a prorrogação pode receber tratamento noturno
+              conforme o caso. Confirme sempre a convenção, o acordo coletivo e
+              a orientação do RH.
+            </span>
+          </aside>
         </div>
 
         <form

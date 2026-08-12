@@ -12,9 +12,7 @@ import {
   createPeriodosMessage,
   extractFirstAndLast,
   findAuthorizedException,
-  formatarJornadasAceitas,
   getRule,
-  hasLunchException,
 } from "./validator-helpers";
 import { DEFAULT_JORNADA_RULES, JORNADA_CONFIG } from "./default-rules";
 import {
@@ -73,6 +71,7 @@ export function validarJornadaManual(
   let intervaloMinutos: number | null = null;
   let periodosDetalhe = "";
   let duracaoInvalidaParaDia = false;
+  let rule: JornadaRuleInput | undefined;
   const erros: string[] = [];
 
   if (times.length === 2) {
@@ -85,15 +84,14 @@ export function validarJornadaManual(
     }
 
     duracaoMinutos = calcularDuracaoMinutos(times[0], times[1]);
-
-    if (
-      duracaoMinutos > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos &&
-      tipoDia !== "sabado"
-    ) {
-      return createError(
-        `Esta jornada soma ${formatarDuracao(duracaoMinutos)} e requer intervalo. Informe 4 horários: entrada, saída para intervalo, retorno e saída final.`,
-        tipoDia,
-        horariosNormalizado,
+    rule = getRule(rules, duracaoMinutos, tipoDia);
+    const limitePeriodoMinutos =
+      rule?.limitePeriodoMinutos ?? JORNADA_CONFIG.limitePeriodoPadraoMinutos;
+    if (duracaoMinutos > limitePeriodoMinutos) {
+      erros.push(
+        `Período único (${formatarDuracaoLegivel(duracaoMinutos)}) excede o limite de ${formatarDuracao(
+          limitePeriodoMinutos,
+        )} configurado na regra.`,
       );
     }
   } else {
@@ -128,45 +126,29 @@ export function validarJornadaManual(
     intervaloMinutos = calcularDuracaoMinutos(fim1, inicio2);
     duracaoMinutos = periodo1Minutos + periodo2Minutos;
     periodosDetalhe = createPeriodosMessage(periodo1Minutos, periodo2Minutos);
+    rule = getRule(rules, duracaoMinutos, tipoDia);
+    const limitePeriodoMinutos =
+      rule?.limitePeriodoMinutos ?? JORNADA_CONFIG.limitePeriodoPadraoMinutos;
 
-    if (periodo1Minutos > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos) {
+    if (periodo1Minutos > limitePeriodoMinutos) {
       erros.push(
         `Primeiro período (${formatarDuracaoLegivel(periodo1Minutos)}) excede ${formatarDuracaoLegivel(
-          JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos,
-        )}. Cada período de trabalho deve ter no máximo 04:00 antes de iniciar ou retornar do intervalo.`,
+          limitePeriodoMinutos,
+        )}. Cada período de trabalho deve respeitar o limite de ${formatarDuracao(
+          limitePeriodoMinutos,
+        )} configurado na regra.`,
       );
     }
 
-    if (periodo2Minutos > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos) {
+    if (periodo2Minutos > limitePeriodoMinutos) {
       erros.push(
         `Segundo período (${formatarDuracaoLegivel(periodo2Minutos)}) excede ${formatarDuracaoLegivel(
-          JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos,
-        )}. Cada período de trabalho deve ter no máximo 04:00 antes de iniciar ou retornar do intervalo.`,
+          limitePeriodoMinutos,
+        )}. Cada período de trabalho deve respeitar o limite de ${formatarDuracao(
+          limitePeriodoMinutos,
+        )} configurado na regra.`,
       );
     }
-
-    if (
-      !hasLunchException(duracaoMinutos) &&
-      intervaloMinutos < JORNADA_CONFIG.intervaloAlmocoMinimoMinutos
-    ) {
-      erros.push(
-        `Intervalo insuficiente (${formatarDuracaoLegivel(intervaloMinutos)}). Mínimo: ${formatarDuracaoLegivel(
-          JORNADA_CONFIG.intervaloAlmocoMinimoMinutos,
-        )} para jornadas de 07:20 ou 08:00.`,
-      );
-    }
-
-    if (
-      !hasLunchException(duracaoMinutos) &&
-      intervaloMinutos > JORNADA_CONFIG.intervaloAlmocoMaximoMinutos
-    ) {
-      erros.push(
-        `Intervalo excessivo (${formatarDuracaoLegivel(intervaloMinutos)}). Máximo: ${formatarDuracaoLegivel(
-          JORNADA_CONFIG.intervaloAlmocoMaximoMinutos,
-        )}.`,
-      );
-    }
-
   }
 
   const authorizedException = findAuthorizedException(
@@ -210,27 +192,6 @@ export function validarJornadaManual(
   }
 
   if (
-    duracaoMinutos === JORNADA_CONFIG.complementoSabadoMinutos &&
-    times.length !== 2
-  ) {
-    erros.push(
-      "Jornada de 04:00 não deve ter intervalo. Informe apenas 2 horários: entrada e saída.",
-    );
-  }
-
-  if (
-    tipoDia === "util" &&
-    !JORNADA_CONFIG.jornadasUtilAceitasMinutos.includes(duracaoMinutos)
-  ) {
-    duracaoInvalidaParaDia = true;
-    erros.push(
-      `Total informado: ${formatarDuracao(
-        duracaoMinutos,
-      )}. Para dia útil, as jornadas aceitas são: ${formatarJornadasAceitas()}.`,
-    );
-  }
-
-  if (
     tipoDia === "sabado" &&
     duracaoMinutos !== JORNADA_CONFIG.complementoSabadoMinutos
   ) {
@@ -244,15 +205,29 @@ export function validarJornadaManual(
     );
   }
 
-  const rule = getRule(rules, duracaoMinutos, tipoDia);
   if (!rule && !duracaoInvalidaParaDia) {
+    const duracoesAtivas = [
+      ...new Set(
+        rules
+          .filter(
+            (candidate) =>
+              candidate.active !== false && candidate.diasValidos.includes(tipoDia),
+          )
+          .map((candidate) => candidate.duracaoMinutos),
+      ),
+    ]
+      .sort((a, b) => a - b)
+      .map(formatarDuracao)
+      .join(", ");
     erros.push(
-      `Não existe regra ativa para jornada de ${formatarDuracao(duracaoMinutos)} neste tipo de dia. Verifique as regras cadastradas ou autorize uma exceção.`,
+      `Total informado: ${formatarDuracao(duracaoMinutos)}. Não existe regra ativa para esta duração neste tipo de dia.${
+        duracoesAtivas ? ` Jornadas ativas: ${duracoesAtivas}.` : ""
+      }`,
     );
   }
 
-  if (rule && rule.intervaloMin > 0) {
-    if (intervaloMinutos == null) {
+  if (rule) {
+    if (intervaloMinutos == null && rule.intervaloMin > 0) {
       return createError(
         `A regra "${rule.nome}" requer intervalo. Informe 4 horários: entrada, saída para intervalo, retorno e saída final.`,
         tipoDia,
@@ -260,7 +235,12 @@ export function validarJornadaManual(
       );
     }
 
-    if (
+    if (intervaloMinutos != null && rule.intervaloMax === 0) {
+      erros.push(
+        `Jornada de ${formatarDuracao(duracaoMinutos)} não deve ter intervalo segundo a regra "${rule.nome}". Informe apenas 2 horários: entrada e saída.`,
+      );
+    } else if (
+      intervaloMinutos != null &&
       intervaloMinutos < rule.intervaloMin &&
       !erros.some((erro) => erro.startsWith("Intervalo insuficiente"))
     ) {
@@ -272,6 +252,8 @@ export function validarJornadaManual(
     }
 
     if (
+      intervaloMinutos != null &&
+      rule.intervaloMax > 0 &&
       intervaloMinutos > rule.intervaloMax &&
       !erros.some((erro) => erro.startsWith("Intervalo excessivo"))
     ) {

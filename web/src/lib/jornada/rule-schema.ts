@@ -8,6 +8,8 @@ const booleanishSchema = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const limitePeriodoSchema = z.coerce.number().int().min(1).max(720);
+
 const jornadaRuleObjectSchema = z.object({
   nome: z.string().trim().min(3).max(100),
   duracaoMinutos: z.coerce.number().int().min(1).max(720),
@@ -15,15 +17,20 @@ const jornadaRuleObjectSchema = z.object({
   horasMensais: z.coerce.number().int().min(1).max(744),
   intervaloMin: z.coerce.number().int().min(0).max(720),
   intervaloMax: z.coerce.number().int().min(0).max(720),
+  limitePeriodoMinutos: limitePeriodoSchema,
   diasValidos: z.array(diaValidoSchema).min(1),
   active: booleanishSchema.default(true),
+});
+
+const jornadaRuleCreateObjectSchema = jornadaRuleObjectSchema.extend({
+  limitePeriodoMinutos: limitePeriodoSchema.default(240),
 });
 
 function calcularHorasMensais(horasSemanais: number) {
   return horasSemanais * 5;
 }
 
-const jornadaRuleBaseSchema = jornadaRuleObjectSchema.superRefine(
+const jornadaRuleBaseSchema = jornadaRuleCreateObjectSchema.superRefine(
   (value, context) => {
     if (value.intervaloMax < value.intervaloMin) {
       context.addIssue({

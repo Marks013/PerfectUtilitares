@@ -438,6 +438,7 @@ model JornadaRule {
   horasMensais   Int
   intervaloMin   Int
   intervaloMax   Int
+  limitePeriodoMinutos Int @default(240)
   diasValidos    String[]
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())

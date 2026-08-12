@@ -56,10 +56,6 @@ export function extractFirstAndLast(horariosNormalizado: string) {
   };
 }
 
-export function formatarJornadasAceitas() {
-  return JORNADA_CONFIG.jornadasUtilAceitasMinutos.map(formatarDuracao).join(", ");
-}
-
 export function createInterjornadaMessage(intervaloMinutos: number, prefix = "Interjornada") {
   const minimoHoras = JORNADA_CONFIG.interjornadaMinimaMinutos / 60;
 
@@ -118,10 +114,6 @@ export function addPeriodosDetalhe(erros: string[], periodosDetalhe: string): st
   return [...erros, periodosDetalhe].join("\n");
 }
 
-export function hasLunchException(duracaoMinutos: number) {
-  return JORNADA_CONFIG.jornadasComExcecaoAlmocoMinutos.includes(duracaoMinutos);
-}
-
 export function findAuthorizedException(
   exceptions: JornadaExceptionInput[],
   tipoDia: DiaValido,
@@ -176,4 +168,3 @@ export function buildExceptionResult({
 export function createMissingSaturdayComplementMessage(exceptionName: string) {
   return `Esta exceção autorizada exige complemento de sábado. Informe também a jornada de sábado cadastrada para fechar 44h semanais. Exceção: ${exceptionName}.`;
 }
-

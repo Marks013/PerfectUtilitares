@@ -56,6 +56,38 @@ describe("validarJornadaBatchXlsx", () => {
     expect(report.linhas[0]?.resultado?.duracaoCalculada).toBe("07:20");
   });
 
+  it("respeita limite configurado de 5 horas na validação em lote", async () => {
+    const buffer = await createWorkbook(`<?xml version="1.0" encoding="UTF-8"?>
+      <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+          <row r="3">
+            <c r="A3"><v>9003</v></c>
+            <c r="C3" t="inlineStr"><is><t>JORNADA CONFIGURÁVEL</t></is></c>
+            <c r="E3" t="inlineStr"><is><t>OPERADOR</t></is></c>
+            <c r="I3" t="inlineStr"><is><t>07:00</t></is></c>
+            <c r="K3" t="inlineStr"><is><t>12:00</t></is></c>
+            <c r="L3" t="inlineStr"><is><t>13:00</t></is></c>
+            <c r="N3" t="inlineStr"><is><t>16:00</t></is></c>
+          </row>
+        </sheetData>
+      </worksheet>`);
+    const rules = DEFAULT_JORNADA_RULES.map((rule) =>
+      rule.duracaoMinutos === 480 && rule.diasValidos.includes("util")
+        ? { ...rule, limitePeriodoMinutos: 300 }
+        : rule,
+    );
+
+    const report = await validarJornadaBatchXlsx({
+      buffer,
+      fileName: "FPRE110.xlsx",
+      config: DEFAULT_JORNADA_BATCH_CONFIG,
+      rules,
+    });
+
+    expect(report.validos).toBe(1);
+    expect(report.erros).toBe(0);
+  });
+
   it("contabiliza jornada 00:00 como não subordinada a horário", async () => {
     const buffer = await createWorkbook(`<?xml version="1.0" encoding="UTF-8"?>
       <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">

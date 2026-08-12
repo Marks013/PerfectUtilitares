@@ -166,6 +166,16 @@ function validarHorariosLote(
 
       const rule = getRule(rules, duration);
       if (!rule) return createError(`Duração não válida: ${formatarDuracao(duration)}`);
+      if (
+        config.validarPeriodos &&
+        duration > rule.limitePeriodoMinutos
+      ) {
+        return createError(
+          `Período único > ${formatarDuracao(
+            rule.limitePeriodoMinutos,
+          )}: ${formatarDuracao(duration)}`,
+        );
+      }
       if (rule.intervaloMin > 0) return createError("Jornada requer intervalo (4 horários)");
       return createSuccess(rule, duration, null, horarios.join(" "), codigoByHorario);
     }
@@ -188,6 +198,9 @@ function validarHorariosLote(
   const interval = calcularDuracaoMinutos(end1, start2);
   const duration2 = calcularDuracaoMinutos(start2, end2);
   const totalDuration = duration1 + duration2;
+  const rule = getRule(rules, totalDuration);
+  const limitePeriodoMinutos =
+    rule?.limitePeriodoMinutos ?? JORNADA_CONFIG.limitePeriodoPadraoMinutos;
   const errors: string[] = [];
   if (context.linhaSabado) {
     const saturdayError = validateSaturdayDuration(
@@ -198,18 +211,18 @@ function validarHorariosLote(
   }
 
   if (config.validarPeriodos) {
-    if (duration1 > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos) {
+    if (duration1 > limitePeriodoMinutos) {
       errors.push(
         `1º período > ${formatarDuracao(
-          JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos,
+          limitePeriodoMinutos,
         )}: ${formatarDuracao(duration1)}`,
       );
     }
 
-    if (duration2 > JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos) {
+    if (duration2 > limitePeriodoMinutos) {
       errors.push(
         `2º período > ${formatarDuracao(
-          JORNADA_CONFIG.periodoMaximoSemIntervaloMinutos,
+          limitePeriodoMinutos,
         )}: ${formatarDuracao(duration2)}`,
       );
     }
@@ -224,13 +237,14 @@ function validarHorariosLote(
     }
   }
 
-  const rule = getRule(rules, totalDuration);
   if (config.validarJornada && !rule) {
     errors.push(`Duração não válida: ${formatarDuracao(totalDuration)}`);
   }
 
   if (config.validarIntervalos && rule) {
-    if (interval < rule.intervaloMin) {
+    if (rule.intervaloMax === 0) {
+      errors.push("Jornada não permite intervalo (use 2 horários)");
+    } else if (interval < rule.intervaloMin) {
       errors.push(
         `Intervalo < mínimo: ${formatarDuracao(interval)} (mín: ${formatarDuracao(
           rule.intervaloMin,

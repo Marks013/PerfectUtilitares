@@ -28,6 +28,7 @@ const defaultValues: JornadaRuleFormInput = {
   horasMensais: 220,
   intervaloMin: 60,
   intervaloMax: 120,
+  limitePeriodoMinutos: 240,
   diasValidos: ["util"],
   active: true,
 };
@@ -156,6 +157,7 @@ export function JornadaRulesManager({
       horasMensais: rule.horasMensais,
       intervaloMin: rule.intervaloMin,
       intervaloMax: rule.intervaloMax,
+      limitePeriodoMinutos: rule.limitePeriodoMinutos,
       diasValidos: rule.diasValidos,
       active: rule.active,
     });
@@ -275,6 +277,22 @@ export function JornadaRulesManager({
                 className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
               />
             </label>
+            <label className="block text-sm font-medium text-neutral-800 sm:col-span-2">
+              Limite por período antes/depois do intervalo (minutos)
+              <input
+                type="number"
+                min={1}
+                max={720}
+                {...form.register("limitePeriodoMinutos", {
+                  valueAsNumber: true,
+                })}
+                disabled={!canManage}
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+              />
+              <span className="mt-1 block text-xs font-normal text-neutral-500">
+                Ex.: 240 = 04:00; 300 = 05:00. Vale para cada bloco trabalhado.
+              </span>
+            </label>
           </div>
 
           <fieldset disabled={!canManage} className="space-y-2">
@@ -321,13 +339,14 @@ export function JornadaRulesManager({
         </form>
       </section>
 
-      <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+      <section className="overflow-x-auto rounded-lg border border-neutral-200 bg-white shadow-sm">
         <table className="w-full text-left text-sm">
           <thead className="bg-neutral-50 text-neutral-600">
             <tr>
               <th className="px-4 py-3">Nome</th>
               <th className="px-4 py-3">Duração</th>
               <th className="px-4 py-3">Intervalo</th>
+              <th className="px-4 py-3">Limite por período</th>
               <th className="px-4 py-3">Dias</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3 text-right">Ações</th>
@@ -343,6 +362,7 @@ export function JornadaRulesManager({
                 <td className="px-4 py-3">
                   {rule.intervaloMin}-{rule.intervaloMax} min
                 </td>
+                <td className="px-4 py-3">{rule.limitePeriodoMinutos} min</td>
                 <td className="px-4 py-3">{rule.diasValidos.join(", ")}</td>
                 <td className="px-4 py-3">
                   <span

@@ -522,6 +522,7 @@ const cases: FunctionalRouteCase[] = [
           horasMensais: 220,
           intervaloMin: 30,
           intervaloMax: 120,
+          limitePeriodoMinutos: 300,
           diasValidos: ["util"],
           active: true,
         }),
