@@ -21,7 +21,9 @@ export async function generateUnimedDocument(
   tenantId: string,
   beneficiaryId: string,
   documentKindOrLegacyReason: GeneratedDocumentKind | 1 | 2 | 8,
+  options?: { dependentIds?: string[]; reasonCode?: number },
 ) {
+  const selectedDependentIds = options?.dependentIds;
   const beneficiary = await prisma.unimedBeneficiary.findFirst({
     where: {
       id: beneficiaryId,
@@ -35,8 +37,11 @@ export async function generateUnimedDocument(
       category: true,
       holder: { select: { fullName: true, cpf: true } },
       dependents: {
+        ...(selectedDependentIds
+          ? { where: { id: { in: selectedDependentIds } } }
+          : {}),
         orderBy: { sourceKey: "asc" },
-        select: { fullName: true, cpf: true },
+        select: { id: true, fullName: true, cpf: true },
       },
       address: {
         select: {
@@ -67,9 +72,19 @@ export async function generateUnimedDocument(
   if (!beneficiary) {
     throw new UnimedDocumentError("UNIMED_DOCUMENT_BENEFICIARY_NOT_FOUND", 404);
   }
+  if (
+    selectedDependentIds &&
+    beneficiary.dependents.length !== selectedDependentIds.length
+  ) {
+    throw new UnimedDocumentError("UNIMED_DOCUMENT_BENEFICIARY_NOT_FOUND", 404);
+  }
 
   const templateReasonCode: 1 | 2 | 8 =
-    typeof documentKindOrLegacyReason === "number"
+    options?.reasonCode === 1 ||
+    options?.reasonCode === 2 ||
+    options?.reasonCode === 8
+      ? options.reasonCode
+      : typeof documentKindOrLegacyReason === "number"
       ? documentKindOrLegacyReason
       : documentKindOrLegacyReason === "INACTIVE_TERM"
         ? 8

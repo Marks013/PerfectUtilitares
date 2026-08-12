@@ -81,6 +81,19 @@ export function useUnimedCalculationWorkspaceController({
   ) {
     invalidateCalculation();
     const nextWarnings: string[] = [];
+    const previousSelection = new Map(
+      form.dependents.map((dependent) => [
+        dependent.name.trim().toLocaleUpperCase("pt-BR"),
+        dependent.selected,
+      ]),
+    );
+    const sameHolder = Boolean(
+      selectedBeneficiary &&
+        ((selectedBeneficiary.cpf &&
+          selectedBeneficiary.cpf === beneficiary.cpf) ||
+          (selectedBeneficiary.registration &&
+            selectedBeneficiary.registration === beneficiary.registration)),
+    );
     const pricingMatchesExclusionDate =
       Boolean(effectiveReferenceDate) &&
       pricingContext.referenceDate === effectiveReferenceDate;
@@ -129,6 +142,11 @@ export function useUnimedCalculationWorkspaceController({
         }
         return {
           id: item.id,
+          selected: sameHolder
+            ? (previousSelection.get(
+                item.fullName.trim().toLocaleUpperCase("pt-BR"),
+              ) ?? true)
+            : true,
           name: item.fullName,
           birthDate: item.birthDate,
           planCode: item.planCode,
@@ -324,7 +342,9 @@ export function useUnimedCalculationWorkspaceController({
 
     const input: UnimedCalculationRequest = {
       beneficiaryId: selectedBeneficiary.id,
-      dependentIds: form.dependents.map((dependent) => dependent.id),
+      dependentIds: form.dependents
+        .filter((dependent) => dependent.selected)
+        .map((dependent) => dependent.id),
       reasonCode: Number(form.reasonCode),
       exclusionDate: form.exclusionDate,
     };
@@ -351,6 +371,12 @@ export function useUnimedCalculationWorkspaceController({
       const calculation = body.calculation;
       const nextPayrollLoans = body.payrollLoans ?? null;
       if (calculationRequestSequence.current !== requestSequence) return;
+      const officialDependents = new Map(
+        input.dependentIds.map((id, index) => [
+          id,
+          body.officialInput.dependents[index],
+        ]),
+      );
       setForm((current) => ({
         ...current,
         planEnrollmentDate: body.officialInput.planEnrollmentDate,
@@ -364,15 +390,15 @@ export function useUnimedCalculationWorkspaceController({
           ),
           addonAmount: defaultMoney(body.officialInput.holder.addonAmount),
         },
-        dependents: current.dependents.map((dependent, index) => ({
-          ...dependent,
-          invoicePlanAmount: defaultMoney(
-            body.officialInput.dependents[index]?.invoicePlanAmount,
-          ),
-          addonAmount: defaultMoney(
-            body.officialInput.dependents[index]?.addonAmount,
-          ),
-        })),
+        dependents: current.dependents.map((dependent) => {
+          if (!dependent.selected) return dependent;
+          const official = officialDependents.get(dependent.id);
+          return {
+            ...dependent,
+            invoicePlanAmount: defaultMoney(official?.invoicePlanAmount),
+            addonAmount: defaultMoney(official?.addonAmount),
+          };
+        }),
       }));
       setResult(calculation);
       setPayrollLoans(nextPayrollLoans);
@@ -526,6 +552,9 @@ export function useUnimedCalculationWorkspaceController({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           beneficiaryId,
+          dependentIds: form.dependents
+            .filter((dependent) => dependent.selected)
+            .map((dependent) => dependent.id),
           reasonCode: requestedReasonCode,
           confirmed: true,
         }),

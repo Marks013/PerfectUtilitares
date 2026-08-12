@@ -101,8 +101,10 @@ describe("Unimed document PDF orchestration", () => {
   it("queues the in-memory DOCX as a tenant-scoped authenticated PDF job", async () => {
     const result = await queueUnimedDocumentPdf({
       beneficiaryId: "beneficiary-test-123",
+      dependentIds: ["dependent-test-123"],
       documentKind: "RN561",
       moduleSessionId,
+      reasonCode: 2,
       tenantId,
     });
 
@@ -111,6 +113,7 @@ describe("Unimed document PDF orchestration", () => {
       tenantId,
       "beneficiary-test-123",
       "RN561",
+      { dependentIds: ["dependent-test-123"], reasonCode: 2 },
     );
     expect(mocks.createDraft).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -145,8 +148,10 @@ describe("Unimed document PDF orchestration", () => {
     await expect(
       queueUnimedDocumentPdf({
         beneficiaryId: "beneficiary-test-123",
+        dependentIds: ["dependent-test-123"],
         documentKind: "RN561",
         moduleSessionId,
+        reasonCode: 2,
         tenantId,
       }),
     ).rejects.toEqual(

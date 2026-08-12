@@ -61,6 +61,7 @@ function documentRequest(
 
 const validInput = {
   beneficiaryId: "beneficiary-test-123",
+  dependentIds: ["dependent-test-123"],
   reasonCode: 2,
   confirmed: true,
 };
@@ -158,10 +159,26 @@ describe("Unimed documents API", () => {
     expect(mocks.queueUnimedDocumentPdf).not.toHaveBeenCalled();
   });
 
+  it("requires selected dependents for a dependent exclusion document", async () => {
+    const response = await POST(
+      documentRequest({ ...validInput, dependentIds: [], reasonCode: 1 }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "UNIMED_DOCUMENT_CONFIRMATION_REQUIRED",
+        details: [{ path: "dependentIds" }],
+      },
+    });
+    expect(mocks.queueUnimedDocumentPdf).not.toHaveBeenCalled();
+  });
+
   it("queues PDF conversion without returning DOCX or beneficiary data", async () => {
     const response = await POST(
       documentRequest({
         beneficiaryId: " beneficiary-test-123 ",
+        dependentIds: [" dependent-test-123 "],
         reasonCode: 2,
         confirmed: true,
       }),
@@ -174,7 +191,10 @@ describe("Unimed documents API", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(mocks.queueUnimedDocumentPdf).toHaveBeenCalledWith({
       beneficiaryId: "beneficiary-test-123",
+      dependentIds: ["dependent-test-123"],
       documentKind: "RN561",
+      moduleSessionId: undefined,
+      reasonCode: 2,
       tenantId: "tenant-test-123",
     });
     await expect(response.json()).resolves.toEqual({

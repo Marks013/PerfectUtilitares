@@ -121,26 +121,31 @@ async function markFailedAndRemove(
 
 export async function queueUnimedDocumentPdf({
   beneficiaryId,
+  dependentIds,
   documentKind,
   moduleSessionId,
+  reasonCode,
   tenantId,
 }: {
   beneficiaryId: string;
+  dependentIds: string[];
   documentKind: GeneratedDocumentKind;
   moduleSessionId: string;
+  reasonCode: number;
   tenantId: string;
 }): Promise<UnimedDocumentPdfJob> {
   const document = await generateUnimedDocument(
     tenantId,
     beneficiaryId,
     documentKind,
+    { dependentIds, reasonCode },
   );
   const principal = principalKey(tenantId, moduleSessionId);
   const job = await createPdfDraftWithCapacity({
     expiresAt: getPdfJobExpiry(),
     isAuthenticated: true,
     operation: "WORD_TO_PDF",
-    options: { documentKind, source: "UNIMED_DOCUMENT" },
+    options: { documentKind, reasonCode, source: "UNIMED_DOCUMENT" },
     ownerSessionHash: ownerSessionHash(tenantId, moduleSessionId),
     principalKey: principal,
     tenantId,

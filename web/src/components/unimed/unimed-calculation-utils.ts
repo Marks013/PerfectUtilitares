@@ -84,6 +84,7 @@ export function createDependent(): DependentValues {
     id:
       globalThis.crypto?.randomUUID?.() ??
       `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    selected: true,
     name: "",
     birthDate: null,
     planCode: null,
@@ -155,6 +156,12 @@ export function validateForm(form: FormValues) {
     errors.cpf = "Informe um CPF com 11 dígitos.";
   }
   if (!form.reasonCode) errors.reasonCode = "Selecione o motivo.";
+  if (
+    form.reasonCode === "1" &&
+    !form.dependents.some((dependent) => dependent.selected)
+  ) {
+    errors.reasonCode = "Marque ao menos um dependente para esta exclusão.";
+  }
   if (!form.exclusionDate) {
     errors.exclusionDate = "Informe a data de exclusão.";
   }
@@ -182,7 +189,7 @@ export function validateForm(form: FormValues) {
     if (!Number.isFinite(value) || value < 0) errors[field] = message;
   });
 
-  form.dependents.forEach((dependent) => {
+  form.dependents.filter((dependent) => dependent.selected).forEach((dependent) => {
     if (
       !Number.isFinite(parseMoney(dependent.invoicePlanAmount)) ||
       parseMoney(dependent.invoicePlanAmount) < 0

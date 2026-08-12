@@ -10,6 +10,7 @@ type MoneyValues = Record<MoneyField, string>;
 
 export type DependentValues = {
   id: string;
+  selected: boolean;
   name: string;
   birthDate: string | null;
   planCode: string | null;

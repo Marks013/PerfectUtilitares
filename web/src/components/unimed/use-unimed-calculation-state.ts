@@ -111,6 +111,7 @@ const formId = useId();
         addonAmount: parseMoney(form.holder.addonAmount),
       },
       dependents: form.dependents.map((dependent) => ({
+        selected: dependent.selected,
         invoicePlanAmount: parseMoney(dependent.invoicePlanAmount),
         addonAmount: parseMoney(dependent.addonAmount),
       })),
@@ -249,9 +250,10 @@ const formId = useId();
   function updateDependent(
     id: string,
     field: keyof Omit<DependentValues, "id">,
-    value: string,
+    value: DependentValues[keyof Omit<DependentValues, "id">],
   ) {
     invalidateCalculation();
+    invalidateDocument();
     setForm((current) => ({
       ...current,
       dependents: current.dependents.map((dependent) =>

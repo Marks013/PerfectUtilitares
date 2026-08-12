@@ -219,6 +219,39 @@ describe("Unimed calculation API", () => {
     });
   });
 
+  it("uses only selected dependents for dependent exclusion", async () => {
+    mocks.findReason.mockResolvedValue({ documentKind: "RN561" });
+
+    const response = await POST(
+      calculationRequest({ ...validInput, reasonCode: 1 }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      calculation: {
+        invoiceTotal: "82.97",
+        payrollCharge: "82.97",
+      },
+      officialInput: {
+        dependents: [{ invoicePlanAmount: 82.97 }],
+      },
+    });
+  });
+
+  it("requires a selected dependent for dependent exclusion", async () => {
+    const response = await POST(
+      calculationRequest({ ...validInput, dependentIds: [], reasonCode: 1 }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "UNIMED_CALCULATION_INVALID",
+        details: [{ path: "dependentIds" }],
+      },
+    });
+  });
+
   it("uses the August table for 6 proportional days and the September table for the next 30 days", async () => {
     mocks.findBeneficiary.mockResolvedValue({
       cpf: "52998224725",
@@ -357,6 +390,7 @@ describe("Unimed calculation API", () => {
         hasAddon: true,
         dependents: {
           where: { id: { in: ["dependent-12345678"] } },
+          orderBy: { sourceKey: "asc" },
           select: {
             id: true,
             birthDate: true,

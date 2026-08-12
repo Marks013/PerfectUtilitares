@@ -98,8 +98,10 @@ export async function POST(request: Request) {
     }
     const job = await queueUnimedDocumentPdf({
       beneficiaryId: parsed.data.beneficiaryId,
+      dependentIds: parsed.data.dependentIds,
       documentKind: reason.documentKind,
       moduleSessionId: access.moduleSessionId,
+      reasonCode: parsed.data.reasonCode,
       tenantId: access.tenantId,
     });
     return Response.json(

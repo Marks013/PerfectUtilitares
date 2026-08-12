@@ -33,7 +33,16 @@ const calculationRequestSchema = z
     reasonCode: z.number().int().min(1).max(9_999),
     exclusionDate: dateOnlySchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.reasonCode === 1 && value.dependentIds.length === 0) {
+      context.addIssue({
+        code: "custom",
+        message: "Selecione ao menos um dependente para esta exclusão.",
+        path: ["dependentIds"],
+      });
+    }
+  });
 
 function normalizeCpf(value: string | null) {
   return value?.replace(/\D/g, "") ?? "";
@@ -227,6 +236,7 @@ export async function POST(request: Request) {
           hasAddon: true,
           dependents: {
             where: { id: { in: parsed.data.dependentIds } },
+            orderBy: { sourceKey: "asc" },
             select: {
               id: true,
               birthDate: true,

@@ -41,6 +41,7 @@ function nextMonth(value: Date) {
 function monthlyTotals(input: {
   holder: UnimedCalculationInput["holder"];
   dependents: UnimedCalculationInput["dependents"];
+  includeHolder: boolean;
 }) {
   const dependentsInvoice = input.dependents.reduce(
     (total, dependent) =>
@@ -49,16 +50,14 @@ function monthlyTotals(input: {
         .plus(money(dependent.addonAmount)),
     new Prisma.Decimal(0),
   );
-  const invoiceTotal = money(
-    money(input.holder.invoicePlanAmount)
-      .plus(money(input.holder.addonAmount))
-      .plus(dependentsInvoice),
-  );
-  const payrollCharge = money(
-    money(input.holder.payrollPlanAmount)
-      .plus(money(input.holder.addonAmount))
-      .plus(dependentsInvoice),
-  );
+  const holderInvoice = input.includeHolder
+    ? money(input.holder.invoicePlanAmount).plus(money(input.holder.addonAmount))
+    : new Prisma.Decimal(0);
+  const holderPayroll = input.includeHolder
+    ? money(input.holder.payrollPlanAmount).plus(money(input.holder.addonAmount))
+    : new Prisma.Decimal(0);
+  const invoiceTotal = money(holderInvoice.plus(dependentsInvoice));
+  const payrollCharge = money(holderPayroll.plus(dependentsInvoice));
   return { invoiceTotal, payrollCharge };
 }
 
@@ -85,8 +84,12 @@ export function calculateUnimed(
   ).getUTCDate();
   const usedDays = exclusionDate.getUTCDate();
 
-  const currentTotals = monthlyTotals(input);
-  const nextTotals = monthlyTotals(input.nextCompetency ?? input);
+  const includeHolder = input.reasonCode !== 1;
+  const currentTotals = monthlyTotals({ ...input, includeHolder });
+  const nextTotals = monthlyTotals({
+    ...(input.nextCompetency ?? input),
+    includeHolder,
+  });
   const zero = new Prisma.Decimal(0);
   const closedAfterCutoff =
     input.billingClosure === "AUTOMATIC_DAY_25" && usedDays >= 25;

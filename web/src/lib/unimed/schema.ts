@@ -41,10 +41,25 @@ export const unimedEmailRequestSchema = z
 export const unimedDocumentRequestSchema = z
   .object({
     beneficiaryId: z.string().trim().min(8).max(64),
+    dependentIds: z
+      .array(z.string().trim().min(8).max(64))
+      .max(6)
+      .refine((ids) => new Set(ids).size === ids.length, {
+        message: "Não repita dependentes no mesmo documento.",
+      }),
     reasonCode: z.number().int().min(1).max(9_999),
     confirmed: z.literal(true),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.reasonCode === 1 && value.dependentIds.length === 0) {
+      context.addIssue({
+        code: "custom",
+        message: "Selecione ao menos um dependente para esta exclusão.",
+        path: ["dependentIds"],
+      });
+    }
+  });
 
 export const unimedCalculationInputSchema = z
   .object({

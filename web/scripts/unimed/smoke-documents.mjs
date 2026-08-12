@@ -30,7 +30,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function queueAndDownload(cookie, holderId, reasonCode) {
+async function queueAndDownload(cookie, holderId, dependentIds, reasonCode) {
   const queued = await fetch(`${baseUrl}/api/unimed/documents`, {
     method: "POST",
     headers: {
@@ -40,6 +40,7 @@ async function queueAndDownload(cookie, holderId, reasonCode) {
     },
     body: JSON.stringify({
       beneficiaryId: holderId,
+      dependentIds,
       reasonCode,
       confirmed: true,
     }),
@@ -83,7 +84,7 @@ try {
       id: true,
       cpf: true,
       dependents: {
-        select: { fullName: true, cpf: true },
+        select: { id: true, fullName: true, cpf: true },
         orderBy: { fullName: "asc" },
       },
     },
@@ -119,8 +120,14 @@ try {
     .join("; ");
   assert(cookie, "Cookie administrativo não foi criado.");
 
-  const bytes = await queueAndDownload(cookie, holder.id, 2);
-  const inactiveBytes = await queueAndDownload(cookie, holder.id, 8);
+  const dependentIds = holder.dependents.map((dependent) => dependent.id);
+  const bytes = await queueAndDownload(cookie, holder.id, dependentIds, 2);
+  const inactiveBytes = await queueAndDownload(
+    cookie,
+    holder.id,
+    dependentIds,
+    8,
+  );
 
   if (outputPath) await writeFile(outputPath, bytes, { mode: 0o600 });
   if (inactiveOutputPath)

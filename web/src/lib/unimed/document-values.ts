@@ -32,7 +32,11 @@ export function buildUnimedDocumentValues(
   beneficiary: BeneficiaryDocumentData,
   reasonCode: 1 | 2 | 8,
 ): { kind: GeneratedDocumentKind; values: MergeValues } {
-  if (reasonCode === 1 && beneficiary.category !== "DEPENDENT") {
+  if (
+    reasonCode === 1 &&
+    beneficiary.category !== "DEPENDENT" &&
+    (beneficiary.category !== "HOLDER" || beneficiary.dependents.length === 0)
+  ) {
     throw new UnimedDocumentError("UNIMED_DOCUMENT_REASON_MISMATCH", 422);
   }
   if (reasonCode !== 1 && beneficiary.category !== "HOLDER") {
@@ -55,13 +59,16 @@ export function buildUnimedDocumentValues(
     };
   }
 
-  const holder = reasonCode === 1 ? beneficiary.holder : beneficiary;
+  const holder =
+    reasonCode === 1 && beneficiary.category === "DEPENDENT"
+      ? beneficiary.holder
+      : beneficiary;
   if (!holder) {
     throw new UnimedDocumentError("UNIMED_DOCUMENT_REASON_MISMATCH", 422);
   }
 
   const dependents =
-    reasonCode === 1
+    reasonCode === 1 && beneficiary.category === "DEPENDENT"
       ? [{ fullName: beneficiary.fullName, cpf: beneficiary.cpf }]
       : beneficiary.dependents;
   if (dependents.length > 6) {
@@ -91,4 +98,3 @@ export function buildUnimedDocumentValues(
 
   return { kind: "RN561", values };
 }
-

@@ -68,6 +68,25 @@ describe("Unimed calculation engine", () => {
     expect(result.invoiceRefund).toBe("264.62");
   });
 
+  it("calculates dependent exclusion from selected dependents only", () => {
+    const result = calculateUnimed({
+      reasonCode: 1,
+      exclusionDate: "2026-08-11",
+      planEnrollmentDate: "2022-08-01",
+      billingClosure: "OPEN",
+      holder: {
+        invoicePlanAmount: 176.95,
+        payrollPlanAmount: 61.26,
+        addonAmount: 0,
+      },
+      dependents: [{ invoicePlanAmount: 116.02, addonAmount: 0 }],
+    });
+
+    expect(result.invoiceTotal).toBe("116.02");
+    expect(result.payrollCharge).toBe("116.02");
+    expect(result.companyFullRefund).toBe("0.00");
+  });
+
   it("adds one full installment after the day-25 cutoff", () => {
     const result = calculateUnimed({
       reasonCode: 3,

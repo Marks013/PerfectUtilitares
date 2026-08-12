@@ -182,6 +182,24 @@ describe("Unimed DOCX documents", () => {
     expect(result.values.DEPENDENTE2).toBe("");
   });
 
+  it("maps only selected holder dependents to dependent exclusion", () => {
+    const result = buildUnimedDocumentValues(
+      beneficiary({
+        dependents: [
+          { fullName: "Pessoa Dependente Um", cpf: "11144477735" },
+          { fullName: "Pessoa Dependente Dois", cpf: "52998224725" },
+        ],
+      }),
+      1,
+    );
+
+    expect(result.values).toMatchObject({
+      NOME: "Pessoa Titular Teste",
+      DEPENDENTE1: "Pessoa Dependente Um",
+      DEPENDENTE2: "Pessoa Dependente Dois",
+    });
+  });
+
   it("maps reason 8 to inactive term with imported RG and address", () => {
     const result = buildUnimedDocumentValues(beneficiary(), 8);
 

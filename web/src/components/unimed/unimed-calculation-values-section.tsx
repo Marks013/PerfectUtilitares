@@ -33,7 +33,7 @@ type ValuesSectionProps = {
   updateDependent: (
     id: string,
     field: keyof Omit<DependentValues, "id">,
-    value: string,
+    value: DependentValues[keyof Omit<DependentValues, "id">],
   ) => void;
   blurDependentMoney: (
     dependent: DependentValues,
@@ -67,11 +67,22 @@ export function UnimedCalculationValuesSection({
         </div>
       </div>
 
-      <div className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-4">
-        <p className="mb-3 text-xs font-black tracking-wide text-[color:var(--app-muted)] uppercase">
-          Titular
-        </p>
-        <div className="grid gap-4 md:grid-cols-3">
+      <details className="group rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)]">
+        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 marker:hidden">
+          <div className="min-w-0">
+            <p className="text-sm font-black text-[color:var(--app-fg)]">Titular</p>
+            <p className="truncate text-xs text-[color:var(--app-muted)]">
+              {form.employeeName || "Dados do plano"}
+            </p>
+          </div>
+          <span className="shrink-0 text-xs font-bold text-[color:var(--app-teal)] group-open:hidden">
+            Editar
+          </span>
+          <span className="hidden shrink-0 text-xs font-bold text-[color:var(--app-muted)] group-open:inline">
+            Recolher
+          </span>
+        </summary>
+        <div className="grid gap-4 border-t border-[color:var(--app-border)] p-4 md:grid-cols-3">
           <MoneyInput
             id="unimed-invoice"
             label="Plano na fatura"
@@ -102,7 +113,7 @@ export function UnimedCalculationValuesSection({
             }
           />
         </div>
-      </div>
+      </details>
 
       <div className="mt-7 border-t border-[color:var(--app-border)] pt-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -141,35 +152,42 @@ export function UnimedCalculationValuesSection({
             Nenhum dependente incluído neste cálculo.
           </div>
         ) : (
-          <div className="mt-5 overflow-hidden rounded-xl border border-[color:var(--app-border)]">
+          <div className="mt-4 overflow-hidden rounded-xl border border-[color:var(--app-border)]">
             {form.dependents.map((dependent, index) => {
               const dependentError = errors[`dependent-${dependent.id}`];
               return (
                 <div
                   key={dependent.id}
-                  className="border-b border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-4 last:border-b-0"
+                  className="flex items-start gap-3 border-b border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 py-2.5 last:border-b-0"
                 >
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h4 className="text-sm font-black text-[color:var(--app-fg)]">
-                      Dependente {index + 1}
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateForm(
-                          "dependents",
-                          form.dependents.filter(
-                            (item) => item.id !== dependent.id,
-                          ),
-                        )
-                      }
-                      className="grid size-9 place-items-center rounded-lg border border-[color:var(--app-border)] text-[color:var(--app-coral)] transition hover:bg-[color:var(--app-danger-soft)]"
-                      aria-label={`Remover dependente ${index + 1}`}
-                    >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                    </button>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-3">
+                  <input
+                    type="checkbox"
+                    checked={dependent.selected}
+                    onChange={(event) =>
+                      updateDependent(dependent.id, "selected", event.target.checked)
+                    }
+                    className="mt-1 size-5 shrink-0 accent-[color:var(--app-teal)]"
+                    aria-label={`Incluir ${dependent.name || `dependente ${index + 1}`} no cálculo`}
+                  />
+                  <details className="group min-w-0 flex-1">
+                    <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-3 marker:hidden">
+                      <div className="min-w-0">
+                        <h4 className="truncate text-sm font-black text-[color:var(--app-fg)]">
+                          {dependent.name || `Dependente ${index + 1}`}
+                        </h4>
+                        <p className="text-xs text-[color:var(--app-muted)]">
+                          {dependent.selected ? "Incluído no cálculo" : "Fora deste cálculo"}
+                          {dependent.age !== null ? ` · ${dependent.age} anos` : ""}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-xs font-bold text-[color:var(--app-teal)] group-open:hidden">
+                        Editar
+                      </span>
+                      <span className="hidden shrink-0 text-xs font-bold text-[color:var(--app-muted)] group-open:inline">
+                        Recolher
+                      </span>
+                    </summary>
+                    <div className="mt-3 grid gap-4 border-t border-[color:var(--app-border)] pt-3 md:grid-cols-3">
                     <div>
                       <FieldLabel
                         htmlFor={`dependent-${dependent.id}-name`}
@@ -224,7 +242,26 @@ export function UnimedCalculationValuesSection({
                       }
                       hint={`Identificação automática: ${dependent.hasAddon ? "possui" : "não possui"}.`}
                     />
-                  </div>
+                      <div className="md:col-span-3 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateForm(
+                              "dependents",
+                              form.dependents.filter(
+                                (item) => item.id !== dependent.id,
+                              ),
+                            )
+                          }
+                          className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[color:var(--app-danger-border)] px-3 text-xs font-black text-[color:var(--app-coral)] transition hover:bg-[color:var(--app-danger-soft)]"
+                          aria-label={`Remover dependente ${index + 1}`}
+                        >
+                          <Trash2 className="size-4" aria-hidden="true" />
+                          Remover
+                        </button>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               );
             })}
