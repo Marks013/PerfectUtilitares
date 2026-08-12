@@ -1,0 +1,100 @@
+import { NextResponse } from "next/server";
+import {
+  enforceRateLimit,
+  jsonError,
+  methodNotAllowed,
+  readJsonBody,
+  requireAdmin,
+  requireContentType,
+  requireMaxContentLength,
+  requireSameOrigin,
+} from "@/lib/api/security";
+import {
+  presenceGiftCreateSchema,
+  presenceGiftOrderSchema,
+  zodPresenceIssues,
+} from "@/lib/presence/schema";
+import { prisma } from "@/lib/prisma";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+type RouteContext = { params: Promise<{ eventId: string }> };
+
+async function ownedEvent(eventId: string, tenantId: string) {
+  return prisma.presenceEvent.findFirst({
+    where: { id: eventId, tenantId },
+    select: { id: true },
+  });
+}
+
+async function mutationInput(request: Request) {
+  const originError = requireSameOrigin(request);
+  if (originError) return { ok: false as const, response: originError };
+  const contentTypeError = requireContentType(request, ["application/json"]);
+  if (contentTypeError) return { ok: false as const, response: contentTypeError };
+  const contentLengthError = requireMaxContentLength(request, 16 * 1024);
+  if (contentLengthError) return { ok: false as const, response: contentLengthError };
+  return readJsonBody(request);
+}
+
+export async function POST(request: Request, context: RouteContext) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const tenantId = guard.session.user.tenantId;
+  if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
+  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gifts-create", limit: 120, windowMs: 60_000 });
+  if (limited) return limited;
+  const input = await mutationInput(request);
+  if (!input.ok) return input.response;
+  const parsed = presenceGiftCreateSchema.safeParse(input.data);
+  if (!parsed.success) return jsonError(400, "VALIDATION_ERROR", "Revise os dados do presente.", zodPresenceIssues(parsed.error));
+
+  const { eventId } = await context.params;
+  const event = await ownedEvent(eventId, tenantId);
+  if (!event) return jsonError(404, "EVENT_NOT_FOUND", "Evento não encontrado.");
+  const last = await prisma.presenceGift.aggregate({ where: { eventId }, _max: { position: true } });
+  const gift = await prisma.presenceGift.create({
+    data: {
+      eventId,
+      ...parsed.data,
+      position: (last._max.position ?? -1) + 1,
+    },
+    select: { id: true, title: true, description: true, externalUrl: true, position: true, active: true },
+  });
+  await prisma.presenceActivity.create({
+    data: { eventId, actorUserId: guard.session.user.id, action: "CREATE", entityType: "PresenceGift", entityId: gift.id },
+  });
+  return NextResponse.json(gift, { status: 201, headers: { "Cache-Control": "private, no-store" } });
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const tenantId = guard.session.user.tenantId;
+  if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
+  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gifts-order", limit: 120, windowMs: 60_000 });
+  if (limited) return limited;
+  const input = await mutationInput(request);
+  if (!input.ok) return input.response;
+  const parsed = presenceGiftOrderSchema.safeParse(input.data);
+  if (!parsed.success) return jsonError(400, "VALIDATION_ERROR", "Revise a ordem dos presentes.", zodPresenceIssues(parsed.error));
+  if (new Set(parsed.data.orderedIds).size !== parsed.data.orderedIds.length) {
+    return jsonError(400, "DUPLICATE_GIFT", "A lista de ordenação contém itens repetidos.");
+  }
+
+  const { eventId } = await context.params;
+  const event = await ownedEvent(eventId, tenantId);
+  if (!event) return jsonError(404, "EVENT_NOT_FOUND", "Evento não encontrado.");
+  const count = await prisma.presenceGift.count({ where: { eventId, id: { in: parsed.data.orderedIds } } });
+  if (count !== parsed.data.orderedIds.length) {
+    return jsonError(400, "INVALID_GIFT_ORDER", "A ordem inclui um presente que não pertence ao evento.");
+  }
+  await prisma.$transaction([
+    ...parsed.data.orderedIds.map((id, position) => prisma.presenceGift.update({ where: { id }, data: { position } })),
+    prisma.presenceActivity.create({ data: { eventId, actorUserId: guard.session.user.id, action: "REORDER", entityType: "PresenceGift" } }),
+  ]);
+  return NextResponse.json({ reordered: count }, { headers: { "Cache-Control": "private, no-store" } });
+}
+
+export function GET() { return methodNotAllowed(["POST", "PATCH"]); }
+export function DELETE() { return methodNotAllowed(["POST", "PATCH"]); }

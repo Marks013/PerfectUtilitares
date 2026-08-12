@@ -1,0 +1,474 @@
+"use client";
+
+import {
+  Archive,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Clipboard,
+  Gift,
+  Link2,
+  LoaderCircle,
+  MapPin,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+  UserRoundPlus,
+  Users,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  type PresenceEventDetail,
+  type PresenceEventSummary,
+  type PresenceGiftAdmin,
+  type PresenceStatus,
+  localDateInput,
+  presenceApi,
+  rsvpLabel,
+  slugifyPresence,
+  statusLabel,
+} from "./presence-admin-model";
+
+const panel = "rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] shadow-[var(--app-panel-shadow)]";
+const field = "mt-1 min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 text-sm text-[color:var(--app-fg)] outline-none focus:border-[color:var(--app-action-blue)]";
+const primary = "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[color:var(--app-action-blue)] px-4 text-sm font-bold text-[color:var(--app-action-text)] hover:bg-[color:var(--app-action-blue-hover)] disabled:cursor-not-allowed disabled:opacity-50";
+const secondary = "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 text-sm font-semibold text-[color:var(--app-fg)] hover:border-[color:var(--app-action-blue)] disabled:opacity-50";
+const danger = "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[color:var(--app-danger)] px-3 text-sm font-bold text-white hover:opacity-90 disabled:opacity-50";
+
+function ErrorNote({ message }: { message: string | null }) {
+  return message ? (
+    <p role="alert" className="mt-3 rounded-xl border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] px-3 py-2 text-sm text-[color:var(--app-danger)]">
+      {message}
+    </p>
+  ) : null;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
+export function PresenceAdmin() {
+  const [events, setEvents] = useState<PresenceEventSummary[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<PresenceEventDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [latestLink, setLatestLink] = useState<string | null>(null);
+
+  const loadEvents = useCallback(async () => {
+    const data = await presenceApi<PresenceEventSummary[]>("/api/admin/presencas");
+    setEvents(data);
+    setSelectedId((current) => current ?? data[0]?.id ?? null);
+  }, []);
+
+  const loadDetail = useCallback(async (eventId: string) => {
+    const data = await presenceApi<PresenceEventDetail>(`/api/admin/presencas/${eventId}`);
+    setDetail(data);
+  }, []);
+
+  useEffect(() => {
+    loadEvents().catch((cause: Error) => setError(cause.message)).finally(() => setLoading(false));
+  }, [loadEvents]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    setLoading(true);
+    loadDetail(selectedId).catch((cause: Error) => setError(cause.message)).finally(() => setLoading(false));
+  }, [loadDetail, selectedId]);
+
+  async function refresh() {
+    setError(null);
+    await Promise.all([loadEvents(), selectedId ? loadDetail(selectedId) : Promise.resolve()]);
+  }
+
+  async function createEvent(form: HTMLFormElement) {
+    const data = new FormData(form);
+    const title = String(data.get("title") ?? "").trim();
+    const startsAt = new Date(String(data.get("startsAt")));
+    const deadline = new Date(String(data.get("deadline")));
+    setBusy("event-create");
+    setError(null);
+    try {
+      const created = await presenceApi<{ id: string }>("/api/admin/presencas", {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          eventSlug: slugifyPresence(String(data.get("eventSlug") || title)),
+          startsAt: startsAt.toISOString(),
+          confirmationDeadline: deadline.toISOString(),
+          venueName: String(data.get("venueName") ?? ""),
+          venueAddress: String(data.get("venueAddress") ?? ""),
+          status: "DRAFT",
+        }),
+      });
+      form.reset();
+      await loadEvents();
+      setSelectedId(created.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível criar o evento.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function updateEvent(payload: Record<string, unknown>) {
+    if (!detail) return;
+    setBusy("event-update");
+    setError(null);
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível atualizar o evento.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveEventForm(form: HTMLFormElement) {
+    const data = new FormData(form);
+    await updateEvent({
+      title: String(data.get("title") ?? ""),
+      eventSlug: slugifyPresence(String(data.get("eventSlug") ?? "")),
+      startsAt: new Date(String(data.get("startsAt"))).toISOString(),
+      confirmationDeadline: new Date(String(data.get("deadline"))).toISOString(),
+      venueName: String(data.get("venueName") ?? ""),
+      venueAddress: String(data.get("venueAddress") ?? ""),
+      description: String(data.get("description") ?? ""),
+    });
+  }
+
+  async function deleteEvent() {
+    if (!detail) return;
+    setBusy("event-delete");
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}`, { method: "DELETE" });
+      setSelectedId(null);
+      setDetail(null);
+      await loadEvents();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível excluir o evento.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createGuest(form: HTMLFormElement) {
+    if (!detail) return;
+    const data = new FormData(form);
+    const name = String(data.get("name") ?? "").trim();
+    setBusy("guest-create");
+    setLatestLink(null);
+    try {
+      const result = await presenceApi<{ invitationUrl: string }>(`/api/admin/presencas/${detail.id}/convidados`, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          email: String(data.get("email") ?? ""),
+          guestSlug: slugifyPresence(String(data.get("guestSlug") || name)),
+          companionLimit: Number(data.get("companionLimit") ?? 0),
+        }),
+      });
+      form.reset();
+      setLatestLink(result.invitationUrl);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível criar o convite.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function guestAction(guestId: string, action: "confirm" | "decline" | "reset" | "link" | "delete") {
+    if (!detail) return;
+    setBusy(`guest-${guestId}`);
+    setLatestLink(null);
+    try {
+      if (action === "link") {
+        const result = await presenceApi<{ invitationUrl: string }>(`/api/admin/presencas/${detail.id}/convidados/${guestId}/renovar-link`, { method: "POST" });
+        setLatestLink(result.invitationUrl);
+      } else if (action === "delete") {
+        await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, { method: "DELETE" });
+      } else {
+        const status = action === "confirm" ? "CONFIRMED" : action === "decline" ? "DECLINED" : "PENDING";
+        await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, { method: "PATCH", body: JSON.stringify({ rsvpStatus: status, companionCount: 0 }) });
+      }
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível atualizar o convite.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveGuest(guestId: string, form: HTMLFormElement) {
+    if (!detail) return;
+    const data = new FormData(form);
+    setBusy(`guest-${guestId}`);
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: String(data.get("name") ?? ""),
+          email: String(data.get("email") ?? "") || null,
+          guestSlug: slugifyPresence(String(data.get("guestSlug") ?? "")),
+          companionLimit: Number(data.get("companionLimit") ?? 0),
+        }),
+      });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível salvar o convite.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createGift(form: HTMLFormElement) {
+    if (!detail) return;
+    const data = new FormData(form);
+    setBusy("gift-create");
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}/presentes`, {
+        method: "POST",
+        body: JSON.stringify({ title: String(data.get("title") ?? ""), description: String(data.get("description") ?? ""), externalUrl: String(data.get("externalUrl") ?? "") || null, active: true }),
+      });
+      form.reset();
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível incluir o presente.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function giftAction(gift: PresenceGiftAdmin, action: "toggle" | "release" | "delete") {
+    if (!detail) return;
+    setBusy(`gift-${gift.id}`);
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, {
+        method: action === "delete" ? "DELETE" : "PATCH",
+        body: action === "delete" ? undefined : JSON.stringify(action === "release" ? { clearReservation: true } : { active: !gift.active }),
+      });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível atualizar o presente.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveGift(giftId: string, form: HTMLFormElement) {
+    if (!detail) return;
+    const data = new FormData(form);
+    setBusy(`gift-${giftId}`);
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}/presentes/${giftId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: String(data.get("title") ?? ""),
+          description: String(data.get("description") ?? ""),
+          externalUrl: String(data.get("externalUrl") ?? "") || null,
+        }),
+      });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível salvar o presente.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function moveGift(index: number, delta: number) {
+    if (!detail) return;
+    const next = [...detail.gifts];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    setDetail({ ...detail, gifts: next });
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}/presentes`, { method: "PATCH", body: JSON.stringify({ orderedIds: next.map((gift) => gift.id) }) });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível salvar a ordem.");
+      await loadDetail(detail.id);
+    }
+  }
+
+  const metrics = useMemo(() => {
+    const guests = detail?.guests ?? [];
+    return {
+      confirmed: guests.filter((guest) => guest.rsvpStatus === "CONFIRMED").length,
+      pending: guests.filter((guest) => guest.rsvpStatus === "PENDING").length,
+      declined: guests.filter((guest) => guest.rsvpStatus === "DECLINED").length,
+    };
+  }, [detail]);
+
+  return (
+    <div className="space-y-5 text-[color:var(--app-fg)]">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold text-[color:var(--app-action-green)]">Acesso reservado</p>
+          <h1 className="mt-1 text-balance text-2xl font-black sm:text-3xl">Gestão de eventos</h1>
+          <p className="mt-1 max-w-2xl text-pretty text-sm text-[color:var(--app-muted)]">Crie convites individuais, acompanhe confirmações e organize a lista de presentes.</p>
+        </div>
+        <button type="button" onClick={() => void refresh()} className={secondary} disabled={loading}>
+          <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} aria-hidden="true" /> Atualizar
+        </button>
+      </header>
+
+      <ErrorNote message={error} />
+
+      <section className={`${panel} p-4 sm:p-5`}>
+        <div className="mb-4 flex items-center gap-2"><CalendarDays className="size-5 text-[color:var(--app-action-blue)]" /><h2 className="text-lg font-bold">Novo evento</h2></div>
+        <form onSubmit={(event) => { event.preventDefault(); void createEvent(event.currentTarget); }} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label className="text-sm font-semibold">Nome<input name="title" required minLength={2} maxLength={120} className={field} placeholder="Aniversário da Marina" /></label>
+          <label className="text-sm font-semibold">Endereço curto<input name="eventSlug" maxLength={80} className={field} placeholder="aniversario-marina" /></label>
+          <label className="text-sm font-semibold">Data do evento<input name="startsAt" type="datetime-local" required defaultValue={localDateInput(new Date(Date.now() + 30 * 86_400_000))} className={field} /></label>
+          <label className="text-sm font-semibold">Confirmar até<input name="deadline" type="datetime-local" required defaultValue={localDateInput(new Date(Date.now() + 23 * 86_400_000))} className={field} /></label>
+          <label className="text-sm font-semibold">Local<input name="venueName" maxLength={160} className={field} placeholder="Salão principal" /></label>
+          <label className="text-sm font-semibold md:col-span-2">Endereço<input name="venueAddress" maxLength={300} className={field} placeholder="Rua, número e cidade" /></label>
+          <button type="submit" className={`${primary} self-end`} disabled={busy === "event-create"}>{busy === "event-create" ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />} Criar evento</button>
+        </form>
+      </section>
+
+      <div className="grid gap-5 xl:grid-cols-[20rem_minmax(0,1fr)]">
+        <aside className={`${panel} max-h-[44rem] overflow-y-auto p-3`}>
+          <div className="mb-3 flex items-center justify-between px-1"><h2 className="font-bold">Eventos</h2><span className="text-sm tabular-nums text-[color:var(--app-muted)]">{events.length}</span></div>
+          <div className="space-y-2">
+            {events.map((item) => (
+              <button key={item.id} type="button" onClick={() => { setError(null); setSelectedId(item.id); }} className={`w-full rounded-xl border p-3 text-left ${item.id === selectedId ? "border-[color:var(--app-action-blue)] bg-[color:var(--app-card-raised)]" : "border-[color:var(--app-border)] bg-[color:var(--app-surface)]"}`}>
+                <span className="block truncate font-bold">{item.title}</span>
+                <span className="mt-1 block text-xs text-[color:var(--app-muted)]">{formatDate(item.startsAt)}</span>
+                <span className="mt-2 flex items-center justify-between text-xs"><span>{statusLabel[item.status]}</span><span className="tabular-nums">{item._count.guests} pessoas</span></span>
+              </button>
+            ))}
+            {!events.length && !loading ? <p className="px-2 py-8 text-center text-sm text-[color:var(--app-muted)]">Nenhum evento criado.</p> : null}
+          </div>
+        </aside>
+
+        <main className="min-w-0 space-y-5">
+          {loading && !detail ? <div className={`${panel} grid min-h-72 place-items-center`}><LoaderCircle className="size-7 animate-spin text-[color:var(--app-action-blue)]" /></div> : null}
+          {detail ? (
+            <>
+              <section className={`${panel} p-4 sm:p-5`}>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0"><h2 className="truncate text-xl font-black">{detail.title}</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">/{detail.eventSlug}</p></div>
+                  <select aria-label="Situação do evento" value={detail.status} onChange={(event) => void updateEvent({ status: event.target.value as PresenceStatus })} className={`${field} mt-0 w-auto`} disabled={busy === "event-update"}>
+                    {Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {[{ label: "Confirmados", value: metrics.confirmed }, { label: "Aguardando", value: metrics.pending }, { label: "Não participarão", value: metrics.declined }, { label: "Presentes", value: detail.gifts.length }].map((metric) => <div key={metric.label} className="rounded-xl bg-[color:var(--app-surface)] p-3"><p className="text-xs text-[color:var(--app-muted)]">{metric.label}</p><p className="mt-1 text-2xl font-black tabular-nums">{metric.value}</p></div>)}
+                </div>
+                <div className="mt-4 grid gap-2 text-sm text-[color:var(--app-muted)] sm:grid-cols-2"><p className="flex items-center gap-2"><CalendarDays className="size-4" />{formatDate(detail.startsAt)}</p><p className="flex items-center gap-2"><MapPin className="size-4" />{detail.venueName || "Local não informado"}</p></div>
+                <details className="mt-4 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
+                  <summary className="cursor-pointer font-bold">Editar informações do evento</summary>
+                  <form onSubmit={(event) => { event.preventDefault(); void saveEventForm(event.currentTarget); }} className="mt-4 grid gap-3 md:grid-cols-2">
+                    <label className="text-sm font-semibold">Nome<input name="title" required defaultValue={detail.title} className={field} /></label>
+                    <label className="text-sm font-semibold">Endereço curto<input name="eventSlug" required defaultValue={detail.eventSlug} className={field} /></label>
+                    <label className="text-sm font-semibold">Data do evento<input name="startsAt" type="datetime-local" required defaultValue={localDateInput(new Date(detail.startsAt))} className={field} /></label>
+                    <label className="text-sm font-semibold">Confirmar até<input name="deadline" type="datetime-local" required defaultValue={localDateInput(new Date(detail.confirmationDeadline))} className={field} /></label>
+                    <label className="text-sm font-semibold">Local<input name="venueName" defaultValue={detail.venueName ?? ""} className={field} /></label>
+                    <label className="text-sm font-semibold">Endereço<input name="venueAddress" defaultValue={detail.venueAddress ?? ""} className={field} /></label>
+                    <label className="text-sm font-semibold md:col-span-2">Mensagem<textarea name="description" defaultValue={detail.description ?? ""} maxLength={2_000} rows={3} className={`${field} py-3`} /></label>
+                    <button type="submit" className={`${primary} md:col-span-2 md:justify-self-start`} disabled={busy === "event-update"}><Save className="size-4" /> Salvar alterações</button>
+                  </form>
+                </details>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {(detail.status === "DRAFT" || detail.status === "ARCHIVED") ? <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger}><Trash2 className="size-4" /> Excluir evento</button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir este evento?</AlertDialogTitle><AlertDialogDescription>Convites, respostas e presentes serão removidos definitivamente.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void deleteEvent()}>Excluir definitivamente</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> : <span className="inline-flex items-center gap-2 text-xs text-[color:var(--app-muted)]"><Archive className="size-4" /> Arquive antes de excluir</span>}
+                </div>
+              </section>
+
+              <section className={`${panel} p-4 sm:p-5`}>
+                <div className="mb-4 flex items-center gap-2"><UserRoundPlus className="size-5 text-[color:var(--app-action-green)]" /><h2 className="text-lg font-bold">Convidar pessoa</h2></div>
+                <form onSubmit={(event) => { event.preventDefault(); void createGuest(event.currentTarget); }} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <label className="text-sm font-semibold">Nome<input name="name" required maxLength={120} className={field} /></label>
+                  <label className="text-sm font-semibold">E-mail opcional<input name="email" type="email" maxLength={254} className={field} /></label>
+                  <label className="text-sm font-semibold">Identificação do link<input name="guestSlug" maxLength={80} className={field} placeholder="gerado pelo nome" /></label>
+                  <label className="text-sm font-semibold">Acompanhantes<input name="companionLimit" type="number" min={0} max={20} defaultValue={0} className={field} /></label>
+                  <button type="submit" className={primary} disabled={busy === "guest-create"}><Plus className="size-4" /> Gerar convite</button>
+                </form>
+                {latestLink ? <div className="mt-4 rounded-xl border border-[color:var(--app-action-green)] bg-[color:var(--app-surface)] p-3"><p className="text-sm font-bold">Link pronto. Ele só será exibido agora.</p><div className="mt-2 flex gap-2"><input readOnly value={latestLink} className={`${field} mt-0 min-w-0`} /><button type="button" className={secondary} aria-label="Copiar link" title="Copiar link" onClick={() => void navigator.clipboard.writeText(latestLink)}><Clipboard className="size-4" /></button></div></div> : null}
+              </section>
+
+              <section className={`${panel} overflow-hidden`}>
+                <div className="flex items-center justify-between border-b border-[color:var(--app-border)] px-4 py-4 sm:px-5"><div className="flex items-center gap-2"><Users className="size-5 text-[color:var(--app-action-blue)]" /><h2 className="text-lg font-bold">Lista de presença</h2></div><span className="text-sm tabular-nums text-[color:var(--app-muted)]">{detail.guests.length}</span></div>
+                <div className="max-h-[35rem] divide-y divide-[color:var(--app-border)] overflow-y-auto">
+                  {detail.guests.map((guest) => (
+                    <div key={guest.id} className="p-4">
+                      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                        <div className="min-w-0"><p className="truncate font-bold">{guest.name}</p><p className="truncate text-xs text-[color:var(--app-muted)]">{guest.email || `/${guest.guestSlug}`} · {rsvpLabel[guest.rsvpStatus]} · {guest.companionCount}/{guest.companionLimit} acompanhantes</p></div>
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "confirm")} disabled={busy === `guest-${guest.id}`}><Check className="size-4" /> Confirmar</button>
+                          <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "reset")} disabled={busy === `guest-${guest.id}`}>Aguardar</button>
+                          <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "decline")} disabled={busy === `guest-${guest.id}`}>Não participará</button>
+                          <button type="button" className={secondary} title="Gerar novo link" onClick={() => void guestAction(guest.id, "link")} disabled={busy === `guest-${guest.id}`}><Link2 className="size-4" /> Renovar</button>
+                          <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir convite de ${guest.name}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir convite?</AlertDialogTitle><AlertDialogDescription>O acesso de {guest.name} e suas reservas serão removidos.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void guestAction(guest.id, "delete")}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+                        </div>
+                      </div>
+                      <details className="mt-3 text-sm">
+                        <summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar convite</summary>
+                        <form onSubmit={(event) => { event.preventDefault(); void saveGuest(guest.id, event.currentTarget); }} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <label className="font-semibold">Nome<input name="name" required defaultValue={guest.name} className={field} /></label>
+                          <label className="font-semibold">E-mail<input name="email" type="email" defaultValue={guest.email ?? ""} className={field} /></label>
+                          <label className="font-semibold">Identificação<input name="guestSlug" required defaultValue={guest.guestSlug} className={field} /></label>
+                          <label className="font-semibold">Acompanhantes<input name="companionLimit" type="number" min={guest.companionCount} max={20} defaultValue={guest.companionLimit} className={field} /></label>
+                          <button type="submit" className={`${primary} sm:col-span-2 lg:col-span-4 lg:justify-self-start`} disabled={busy === `guest-${guest.id}`}><Save className="size-4" /> Salvar convite</button>
+                        </form>
+                      </details>
+                    </div>
+                  ))}
+                  {!detail.guests.length ? <p className="p-8 text-center text-sm text-[color:var(--app-muted)]">Adicione a primeira pessoa convidada.</p> : null}
+                </div>
+              </section>
+
+              <section className={`${panel} p-4 sm:p-5`}>
+                <div className="mb-4 flex items-center gap-2"><Gift className="size-5 text-[color:var(--app-action-green)]" /><h2 className="text-lg font-bold">Lista de presentes</h2></div>
+                <form onSubmit={(event) => { event.preventDefault(); void createGift(event.currentTarget); }} className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto]">
+                  <label className="text-sm font-semibold">Presente<input name="title" required maxLength={160} className={field} /></label><label className="text-sm font-semibold">Descrição<input name="description" maxLength={500} className={field} /></label><label className="text-sm font-semibold">Link opcional<input name="externalUrl" type="url" maxLength={2000} className={field} /></label><button type="submit" className={`${primary} self-end`}><Plus className="size-4" /> Adicionar</button>
+                </form>
+                <div className="mt-5 space-y-2">
+                  {detail.gifts.map((gift, index) => (
+                    <div key={gift.id} className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex gap-1"><button type="button" className={secondary} aria-label="Mover para cima" onClick={() => void moveGift(index, -1)} disabled={index === 0}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label="Mover para baixo" onClick={() => void moveGift(index, 1)} disabled={index === detail.gifts.length - 1}><ChevronDown className="size-4" /></button></div>
+                        <div className="min-w-48 flex-1"><p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p><p className="text-xs text-[color:var(--app-muted)]">{gift.reservedByGuest ? `Escolhido por ${gift.reservedByGuest.name}` : "Disponível"}</p></div>
+                        <button type="button" className={secondary} onClick={() => void giftAction(gift, "toggle")}>{gift.active ? "Ocultar" : "Exibir"}</button>
+                        {gift.reservedByGuest ? <button type="button" className={secondary} onClick={() => void giftAction(gift, "release")}>Liberar</button> : <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir ${gift.title}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir presente?</AlertDialogTitle><AlertDialogDescription>{gift.title} será removido da lista.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void giftAction(gift, "delete")}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
+                      </div>
+                      <details className="mt-3 text-sm">
+                        <summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar presente</summary>
+                        <form onSubmit={(event) => { event.preventDefault(); void saveGift(gift.id, event.currentTarget); }} className="mt-3 grid gap-3 md:grid-cols-3">
+                          <label className="font-semibold">Presente<input name="title" required defaultValue={gift.title} className={field} /></label>
+                          <label className="font-semibold">Descrição<input name="description" defaultValue={gift.description ?? ""} className={field} /></label>
+                          <label className="font-semibold">Link<input name="externalUrl" type="url" defaultValue={gift.externalUrl ?? ""} className={field} /></label>
+                          <button type="submit" className={`${primary} md:col-span-3 md:justify-self-start`} disabled={busy === `gift-${gift.id}`}><Save className="size-4" /> Salvar presente</button>
+                        </form>
+                      </details>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </>
+          ) : null}
+        </main>
+      </div>
+    </div>
+  );
+}
