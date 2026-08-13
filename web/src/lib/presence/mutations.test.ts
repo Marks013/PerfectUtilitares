@@ -70,7 +70,14 @@ describe("presence confirmation mutations", () => {
         { status: "CONFIRMED", companionCount: 1 },
         new Date("2026-08-20T00:00:00Z"),
       ),
-    ).resolves.toEqual({ ok: true, value: { revision: 4 } });
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        revision: 4,
+        rsvpStatus: "CONFIRMED",
+        companionCount: 1,
+      },
+    });
     expect(mocks.tx.presenceGuest.update).toHaveBeenCalledOnce();
     expect(mocks.tx.presenceActivity.create).toHaveBeenCalledOnce();
   });

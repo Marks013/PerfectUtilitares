@@ -216,6 +216,26 @@
   margin-top: 1.5rem;
 }
 
+.rsvpStatus {
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 1rem 0 0;
+  border: 1px solid var(--app-border);
+  border-radius: 0.75rem;
+  background: var(--app-surface);
+  padding: 0.7rem 0.85rem;
+  color: var(--app-muted);
+  font-weight: 700;
+}
+
+.rsvpStatus svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
 .primaryButton,
 .secondaryButton,
 .giftActions button {
@@ -239,6 +259,17 @@
   border: 1px solid var(--app-border-strong);
   background: var(--app-surface);
   color: var(--app-fg);
+}
+
+.confirmedButton {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--presence-accent) 22%, transparent);
+}
+
+.declinedButton {
+  border-color: var(--presence-coral);
+  background: color-mix(in srgb, var(--presence-coral) 12%, var(--app-surface));
+  color: var(--presence-coral);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--presence-coral) 16%, transparent);
 }
 
 .primaryButton:disabled,

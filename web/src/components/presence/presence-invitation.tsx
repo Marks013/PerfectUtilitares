@@ -66,6 +66,11 @@ type PresenceState = {
 
 type Props = { eventSlug: string; guestSlug: string };
 type RequestError = { error?: { message?: string } };
+type ConfirmationResult = {
+  revision: number;
+  rsvpStatus: "CONFIRMED" | "DECLINED";
+  companionCount: number;
+};
 
 function formatDate(value: string, timeZone: string) {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -195,8 +200,23 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
           await errorMessage(response, "Não foi possível salvar sua resposta."),
         );
       } else {
+        const result = (await response.json()) as ConfirmationResult;
         etagRef.current = null;
-        await loadState();
+        setState((current) =>
+          current
+            ? {
+                ...current,
+                revision: result.revision,
+                guest: {
+                  ...current.guest,
+                  rsvpStatus: result.rsvpStatus,
+                  companionCount: result.companionCount,
+                },
+              }
+            : current,
+        );
+        setCompanionCount(result.companionCount);
+        void loadState(true);
         setNotice(
           status === "CONFIRMED"
             ? "Presença confirmada. Que bom ter você com a gente!"
@@ -330,13 +350,23 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
           </div>
         )}
 
+        <p className={styles.rsvpStatus} aria-live="polite">
+          {guest.rsvpStatus === "CONFIRMED" && (
+            <><Check aria-hidden="true" /> Sua presença está confirmada.</>
+          )}
+          {guest.rsvpStatus === "DECLINED" && (
+            <><X aria-hidden="true" /> Sua presença está desconfirmada.</>
+          )}
+          {guest.rsvpStatus === "PENDING" && "Você ainda não respondeu ao convite."}
+        </p>
+
         <div className={styles.rsvpActions}>
-          <button type="button" className={styles.primaryButton} disabled={!event.confirmationOpen || pendingAction === "rsvp"} onClick={() => void confirm("CONFIRMED")}>
+          <button type="button" aria-pressed={guest.rsvpStatus === "CONFIRMED"} className={`${styles.primaryButton} ${guest.rsvpStatus === "CONFIRMED" ? styles.confirmedButton : ""}`} disabled={!event.confirmationOpen || pendingAction === "rsvp"} onClick={() => void confirm("CONFIRMED")}>
             {pendingAction === "rsvp" ? <LoaderCircle className={styles.spinner} aria-hidden="true" /> : <Check aria-hidden="true" />}
-            Confirmar presença
+            {guest.rsvpStatus === "CONFIRMED" ? "Presença confirmada" : "Confirmar presença"}
           </button>
-          <button type="button" className={styles.secondaryButton} disabled={!event.confirmationOpen || pendingAction === "rsvp"} onClick={() => void confirm("DECLINED")}>
-            <X aria-hidden="true" /> Não poderei ir
+          <button type="button" aria-pressed={guest.rsvpStatus === "DECLINED"} className={`${styles.secondaryButton} ${guest.rsvpStatus === "DECLINED" ? styles.declinedButton : ""}`} disabled={!event.confirmationOpen || pendingAction === "rsvp"} onClick={() => void confirm("DECLINED")}>
+            <X aria-hidden="true" /> {guest.rsvpStatus === "DECLINED" ? "Presença desconfirmada" : "Desconfirmar presença"}
           </button>
         </div>
         {!event.confirmationOpen && <p className={styles.closed}>O prazo de confirmação foi encerrado.</p>}

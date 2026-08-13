@@ -41,7 +41,11 @@ describe("presence confirmation route", () => {
     });
     updateConfirmationMock.mockResolvedValue({
       ok: true,
-      value: { revision: 4 },
+      value: {
+        revision: 4,
+        rsvpStatus: "CONFIRMED",
+        companionCount: 1,
+      },
     });
     const response = await PATCH(
       new Request("http://localhost/api/presenca/evento/convidado/confirmacao", {
@@ -56,7 +60,11 @@ describe("presence confirmation route", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ revision: 4 });
+    await expect(response.json()).resolves.toEqual({
+      revision: 4,
+      rsvpStatus: "CONFIRMED",
+      companionCount: 1,
+    });
     expect(updateConfirmationMock).toHaveBeenCalledWith(
       expect.objectContaining({ eventId: "event-1", guestId: "guest-1" }),
       { status: "CONFIRMED", companionCount: 1 },

@@ -64,6 +64,7 @@ test("presence event customization, private invitation and report work together"
     `/presenca/${slug}/convidada-e2e#c_`,
   );
   expect(guest.shortUrl).toMatch(/\/p\/p_[A-Za-z0-9_-]{16}$/);
+  expect(new URL(guest.shortUrl).origin).toBe(origin);
 
   const categoryCreated = await page.request.post(
     `/api/admin/presencas/${event.id}/categorias-presentes`,
@@ -150,6 +151,23 @@ test("presence event customization, private invitation and report work together"
   await expect(page.getByRole("heading", { name: "Jogo de panelas" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Escolhido" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Liberar" })).toBeVisible();
+  await expect(page.getByText("Você ainda não respondeu ao convite.")).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "Confirmar presença", exact: true })
+    .click();
+  await expect(page.getByText("Sua presença está confirmada.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Presença confirmada" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await page.getByRole("button", { name: "Desconfirmar presença" }).click();
+  await expect(page.getByText("Sua presença está desconfirmada.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Presença desconfirmada" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 
   await page.setViewportSize({ width: 390, height: 844 });
   const overflow = await page.evaluate(

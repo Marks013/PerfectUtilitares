@@ -30,6 +30,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { presenceShortUrlForOrigin } from "@/lib/presence/public-url";
 import {
   type PresenceEventDetail,
   type PresenceEventSummary,
@@ -243,7 +244,9 @@ export function PresenceAdmin() {
         }),
       });
       form.reset();
-      setLatestLink(result.shortUrl);
+      setLatestLink(
+        presenceShortUrlForOrigin(result.shortUrl, window.location.origin),
+      );
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível criar o convite.");
@@ -259,7 +262,9 @@ export function PresenceAdmin() {
     try {
       if (action === "link") {
         const result = await presenceApi<{ shortUrl: string }>(`/api/admin/presencas/${detail.id}/convidados/${guestId}/renovar-link`, { method: "POST" });
-        setLatestLink(result.shortUrl);
+        setLatestLink(
+          presenceShortUrlForOrigin(result.shortUrl, window.location.origin),
+        );
       } else if (action === "delete") {
         await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, { method: "DELETE" });
       } else {

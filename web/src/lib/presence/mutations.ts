@@ -11,7 +11,13 @@ export async function updatePresenceConfirmation(
   context: { eventId: string; guestId: string },
   input: { status: "CONFIRMED" | "DECLINED"; companionCount: number },
   now = new Date(),
-): Promise<PresenceMutationResult<{ revision: number }>> {
+): Promise<
+  PresenceMutationResult<{
+    revision: number;
+    rsvpStatus: "CONFIRMED" | "DECLINED";
+    companionCount: number;
+  }>
+> {
   return prisma.$transaction(async (tx) => {
     const guest = await tx.presenceGuest.findFirst({
       where: { id: context.guestId, eventId: context.eventId },
@@ -33,12 +39,13 @@ export async function updatePresenceConfirmation(
       return { ok: false, code: "COMPANION_LIMIT" };
     }
 
+    const companionCount =
+      input.status === "CONFIRMED" ? input.companionCount : 0;
     await tx.presenceGuest.update({
       where: { id: context.guestId },
       data: {
         rsvpStatus: input.status,
-        companionCount:
-          input.status === "CONFIRMED" ? input.companionCount : 0,
+        companionCount,
         respondedAt: now,
       },
     });
@@ -56,12 +63,18 @@ export async function updatePresenceConfirmation(
         entityType: "PresenceGuest",
         entityId: context.guestId,
         metadata: {
-          companionCount:
-            input.status === "CONFIRMED" ? input.companionCount : 0,
+          companionCount,
         },
       },
     });
-    return { ok: true, value: { revision: event.publicRevision } };
+    return {
+      ok: true,
+      value: {
+        revision: event.publicRevision,
+        rsvpStatus: input.status,
+        companionCount,
+      },
+    };
   });
 }
 
