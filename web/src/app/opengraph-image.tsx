@@ -12,49 +12,68 @@ export default function OpenGraphImage() {
         height: "100%",
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        background: "#111916",
-        color: "#f8faf9",
-        fontFamily: "sans-serif",
+        padding: "70px 84px",
+        background: "#071c18",
+        color: "#f5fff9",
+        fontFamily: "Arial, sans-serif",
       }}
     >
       <div
         style={{
-          width: 1020,
+          width: "100%",
+          height: "100%",
           display: "flex",
-          flexDirection: "column",
-          gap: 28,
-          borderLeft: "12px solid #18b9aa",
-          paddingLeft: 54,
+          alignItems: "center",
+          gap: 64,
+          padding: "48px 56px",
+          border: "2px solid #1d4d41",
+          borderRadius: 42,
+          background: "#0c2822",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
+        <div
+          style={{
+            width: 276,
+            height: 276,
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 64,
+            background: "#20c997",
+            color: "#062820",
+            fontSize: 184,
+            fontWeight: 900,
+            lineHeight: 1,
+          }}
+        >
+          P
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            gap: 16,
+          }}
+        >
           <div
             style={{
-              width: 88,
-              height: 88,
-              borderRadius: 24,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "#e95d4f",
-              fontSize: 32,
-              fontWeight: 900,
+              color: "#8ce7d2",
+              fontSize: 24,
+              fontWeight: 700,
+              letterSpacing: 3,
             }}
           >
-            PU
+            FERRAMENTAS ONLINE
           </div>
-          <div style={{ fontSize: 58, fontWeight: 900 }}>PerfectUtilitares</div>
-        </div>
-        <div style={{ fontSize: 30, color: "#b9c9c3", lineHeight: 1.45 }}>
-          Jornada, fotos 3x4 e manutenção de PDFs em um só lugar.
-        </div>
-        <div style={{ display: "flex", gap: 18, fontSize: 21, color: "#8ee7dd" }}>
-          <span>Online</span>
-          <span>•</span>
-          <span>Prático</span>
-          <span>•</span>
-          <span>Responsivo</span>
+          <div style={{ display: "flex", flexDirection: "column", fontSize: 82, fontWeight: 900, lineHeight: 0.98 }}>
+            <span>Perfect</span>
+            <span style={{ color: "#20c997" }}>Utilitares</span>
+          </div>
+          <div style={{ color: "#c5ddd4", fontSize: 28, fontWeight: 600 }}>
+            Jornada, fotos 3x4 e PDFs
+          </div>
         </div>
       </div>
     </div>,

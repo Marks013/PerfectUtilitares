@@ -35,7 +35,7 @@ export function buildPublicMetadata({
       url: canonical,
       images: [
         {
-          url: "/opengraph-image",
+          url: "/opengraph-image?v=20260813",
           width: 1200,
           height: 630,
           alt: `${SITE_NAME} - utilitários online`,
@@ -46,7 +46,7 @@ export function buildPublicMetadata({
       card: "summary_large_image",
       title,
       description,
-      images: ["/opengraph-image"],
+      images: ["/opengraph-image?v=20260813"],
     },
     robots: {
       index: true,
