@@ -8,6 +8,7 @@ import {
 } from "@/lib/api/security";
 import {
   generatePresenceInvitationToken,
+  generatePresenceShortCode,
   hashPresenceSecret,
 } from "@/lib/presence/tokens";
 import { prisma } from "@/lib/prisma";
@@ -50,11 +51,13 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const token = generatePresenceInvitationToken();
+  const shortCode = generatePresenceShortCode();
   await prisma.$transaction([
     prisma.presenceGuest.update({
       where: { id: guest.id },
       data: {
         tokenHash: hashPresenceSecret(token),
+        shortCodeHash: hashPresenceSecret(shortCode),
         tokenRevokedAt: null,
         accessVersion: { increment: 1 },
         activities: {
@@ -79,9 +82,13 @@ export async function POST(request: Request, context: RouteContext) {
     invitationBaseUrl(request),
   );
   invitationUrl.hash = token;
+  const shortUrl = new URL(`/p/${shortCode}`, invitationBaseUrl(request));
 
   return NextResponse.json(
-    { invitationUrl: invitationUrl.toString() },
+    {
+      invitationUrl: invitationUrl.toString(),
+      shortUrl: shortUrl.toString(),
+    },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }

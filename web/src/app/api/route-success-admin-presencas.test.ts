@@ -24,6 +24,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/presence/tokens", () => ({
   generatePresenceInvitationToken: () => `c_${"a".repeat(43)}`,
+  generatePresenceShortCode: () => `p_${"b".repeat(16)}`,
   hashPresenceSecret: () => "token-hash",
 }));
 

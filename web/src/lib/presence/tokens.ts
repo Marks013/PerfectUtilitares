@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 
 const INVITATION_PREFIX = "c_";
 const SESSION_PREFIX = "s_";
+const SHORT_PREFIX = "p_";
 
 function presencePepper() {
   const secret = process.env.AUTH_SECRET?.trim();
@@ -24,6 +25,18 @@ export function derivePresenceInvitationToken(deliveryId: string) {
 
 export function generatePresenceSessionToken() {
   return `${SESSION_PREFIX}${randomBytes(32).toString("base64url")}`;
+}
+
+export function generatePresenceShortCode() {
+  return `${SHORT_PREFIX}${randomBytes(12).toString("base64url")}`;
+}
+
+export function derivePresenceShortCode(deliveryId: string) {
+  const value = createHmac("sha256", presencePepper())
+    .update(`presence-short-link:${deliveryId}`)
+    .digest("base64url")
+    .slice(0, 16);
+  return `${SHORT_PREFIX}${value}`;
 }
 
 export function hashPresenceSecret(secret: string) {

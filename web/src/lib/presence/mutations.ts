@@ -85,6 +85,7 @@ export async function reservePresenceGift(
         id: giftId,
         eventId: context.eventId,
         active: true,
+        reservedManually: false,
         reservedByGuestId: null,
       },
       data: {
@@ -97,7 +98,7 @@ export async function reservePresenceGift(
     if (updated.count === 0) {
       const gift = await tx.presenceGift.findFirst({
         where: { id: giftId, eventId: context.eventId, active: true },
-        select: { reservedByGuestId: true },
+        select: { reservedManually: true, reservedByGuestId: true },
       });
       if (!gift) return { ok: false, code: "NOT_FOUND" };
       if (gift.reservedByGuestId === context.guestId) {
@@ -169,6 +170,7 @@ export async function releasePresenceGift(
       },
       data: {
         reservedByGuestId: null,
+        reservedManually: false,
         reservedAt: null,
         version: { increment: 1 },
       },

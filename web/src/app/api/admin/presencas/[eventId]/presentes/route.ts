@@ -52,18 +52,35 @@ export async function POST(request: Request, context: RouteContext) {
   const { eventId } = await context.params;
   const event = await ownedEvent(eventId, tenantId);
   if (!event) return jsonError(404, "EVENT_NOT_FOUND", "Evento não encontrado.");
+  if (parsed.data.categoryId) {
+    const category = await prisma.presenceGiftCategory.findFirst({
+      where: { id: parsed.data.categoryId, eventId },
+      select: { id: true },
+    });
+    if (!category) return jsonError(400, "INVALID_GIFT_CATEGORY", "Selecione uma categoria deste evento.");
+  }
+  if (parsed.data.reservedByGuestId) {
+    const guest = await prisma.presenceGuest.findFirst({
+      where: { id: parsed.data.reservedByGuestId, eventId },
+      select: { id: true },
+    });
+    if (!guest) return jsonError(400, "INVALID_GIFT_GUEST", "Selecione uma pessoa deste evento.");
+  }
   const last = await prisma.presenceGift.aggregate({ where: { eventId }, _max: { position: true } });
   const gift = await prisma.presenceGift.create({
     data: {
       eventId,
       ...parsed.data,
+      reservedManually: parsed.data.reservedManually && !parsed.data.reservedByGuestId,
+      reservedAt: parsed.data.reservedManually || parsed.data.reservedByGuestId ? new Date() : null,
       position: (last._max.position ?? -1) + 1,
     },
-    select: { id: true, title: true, description: true, externalUrl: true, position: true, active: true },
+    select: { id: true, categoryId: true, emoji: true, title: true, description: true, externalUrl: true, position: true, active: true, reservedManually: true, reservedAt: true },
   });
   await prisma.presenceActivity.create({
     data: { eventId, actorUserId: guard.session.user.id, action: "CREATE", entityType: "PresenceGift", entityId: gift.id },
   });
+  await prisma.presenceEvent.update({ where: { id: eventId }, data: { publicRevision: { increment: 1 } } });
   return NextResponse.json(gift, { status: 201, headers: { "Cache-Control": "private, no-store" } });
 }
 
@@ -91,6 +108,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
   await prisma.$transaction([
     ...parsed.data.orderedIds.map((id, position) => prisma.presenceGift.update({ where: { id }, data: { position } })),
+    prisma.presenceEvent.update({ where: { id: eventId }, data: { publicRevision: { increment: 1 } } }),
     prisma.presenceActivity.create({ data: { eventId, actorUserId: guard.session.user.id, action: "REORDER", entityType: "PresenceGift" } }),
   ]);
   return NextResponse.json({ reordered: count }, { headers: { "Cache-Control": "private, no-store" } });

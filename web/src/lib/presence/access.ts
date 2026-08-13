@@ -11,33 +11,12 @@ function earliestDate(left: Date, right: Date | null) {
   return right && right < left ? right : left;
 }
 
-export async function exchangePresenceAccess(
-  input: { eventSlug: string; guestSlug: string; token: string },
+export async function createPresenceSessionForGuest(
+  guest: { id: string; accessVersion: number; accessExpiresAt: Date | null },
+  eventSlug: string,
+  guestSlug: string,
   now = new Date(),
 ) {
-  const tokenHash = hashPresenceSecret(input.token);
-  const guest = await prisma.presenceGuest.findFirst({
-    where: {
-      tokenHash,
-      guestSlug: input.guestSlug,
-      tokenRevokedAt: null,
-      OR: [{ accessExpiresAt: null }, { accessExpiresAt: { gt: now } }],
-      event: {
-        is: {
-          eventSlug: input.eventSlug,
-          status: { in: ["PUBLISHED", "CLOSED"] },
-        },
-      },
-    },
-    select: {
-      id: true,
-      accessVersion: true,
-      accessExpiresAt: true,
-    },
-  });
-
-  if (!guest) return null;
-
   const sessionToken = generatePresenceSessionToken();
   const sessionHash = hashPresenceSecret(sessionToken);
   const expiresAt = earliestDate(
@@ -65,6 +44,41 @@ export async function exchangePresenceAccess(
   return {
     sessionToken,
     expiresAt,
-    cookieName: getPresenceCookieName(input.eventSlug, input.guestSlug),
+    cookieName: getPresenceCookieName(eventSlug, guestSlug),
   };
+}
+
+export async function exchangePresenceAccess(
+  input: { eventSlug: string; guestSlug: string; token: string },
+  now = new Date(),
+) {
+  const tokenHash = hashPresenceSecret(input.token);
+  const guest = await prisma.presenceGuest.findFirst({
+    where: {
+      tokenHash,
+      guestSlug: input.guestSlug,
+      tokenRevokedAt: null,
+      OR: [{ accessExpiresAt: null }, { accessExpiresAt: { gt: now } }],
+      event: {
+        is: {
+          eventSlug: input.eventSlug,
+          status: { in: ["PUBLISHED", "CLOSED"] },
+        },
+      },
+    },
+    select: {
+      id: true,
+      accessVersion: true,
+      accessExpiresAt: true,
+    },
+  });
+
+  if (!guest) return null;
+
+  return createPresenceSessionForGuest(
+    guest,
+    input.eventSlug,
+    input.guestSlug,
+    now,
+  );
 }

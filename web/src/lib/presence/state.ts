@@ -36,11 +36,17 @@ export async function readPresenceState(
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         select: {
           id: true,
+          categoryId: true,
+          emoji: true,
           title: true,
           description: true,
           externalUrl: true,
           position: true,
+          reservedManually: true,
           reservedByGuestId: true,
+          category: {
+            select: { id: true, name: true, emoji: true, position: true },
+          },
         },
       },
     },
@@ -68,7 +74,7 @@ export async function readPresenceState(
     guest,
     gifts: event.gifts.map(({ reservedByGuestId, ...gift }) => ({
       ...gift,
-      reserved: Boolean(reservedByGuestId),
+      reserved: gift.reservedManually || Boolean(reservedByGuestId),
       reservedByMe: reservedByGuestId === context.guestId,
     })),
   };

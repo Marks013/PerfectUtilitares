@@ -104,14 +104,28 @@ export async function GET(_request: Request, context: RouteContext) {
         orderBy: [{ name: "asc" }, { createdAt: "asc" }],
         take: 1_000,
       },
+      giftCategories: {
+        select: {
+          id: true,
+          name: true,
+          emoji: true,
+          position: true,
+          _count: { select: { gifts: true } },
+        },
+        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+        take: 100,
+      },
       gifts: {
         select: {
           id: true,
+          categoryId: true,
+          emoji: true,
           title: true,
           description: true,
           externalUrl: true,
           position: true,
           active: true,
+          reservedManually: true,
           reservedAt: true,
           reservedByGuest: { select: { id: true, name: true } },
         },
@@ -152,7 +166,9 @@ export async function GET(_request: Request, context: RouteContext) {
           ),
     gifts: {
       active: activeGifts.length,
-      reserved: activeGifts.filter((gift) => gift.reservedByGuest).length,
+      reserved: activeGifts.filter(
+        (gift) => gift.reservedManually || gift.reservedByGuest,
+      ).length,
     },
     deliveries: Object.fromEntries(
       deliveryGroups.map((group) => [group.status, group._count._all]),

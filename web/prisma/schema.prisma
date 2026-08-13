@@ -1,10 +1,10 @@
 generator client {
-  provider            = "prisma-client"
-  output              = "../src/generated/prisma"
-  runtime             = "nodejs"
-  moduleFormat        = "esm"
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  runtime                = "nodejs"
+  moduleFormat           = "esm"
   generatedFileExtension = "ts"
-  importFileExtension = "ts"
+  importFileExtension    = "ts"
 }
 
 datasource db {
@@ -176,8 +176,8 @@ model User {
   unimedAccess           UnimedUserAccess?
   unimedRequestedImports UnimedImportBatch[] @relation("UnimedImportRequestedBy")
   unimedPublishedImports UnimedImportBatch[] @relation("UnimedImportPublishedBy")
-  presenceEventsCreated  PresenceEvent[]      @relation("PresenceEventsCreatedBy")
-  presenceActivities     PresenceActivity[]   @relation("PresenceActivitiesActor")
+  presenceEventsCreated  PresenceEvent[]     @relation("PresenceEventsCreatedBy")
+  presenceActivities     PresenceActivity[]  @relation("PresenceActivitiesActor")
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
 
@@ -236,31 +236,32 @@ model UserInvitation {
 }
 
 model PresenceEvent {
-  id                   String              @id @default(cuid())
+  id                   String                 @id @default(cuid())
   tenantId             String
-  tenant               Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant               Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdById          String?
-  createdBy            User?               @relation("PresenceEventsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  eventSlug            String              @unique
+  createdBy            User?                  @relation("PresenceEventsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  eventSlug            String                 @unique
   title                String
   description          String?
   startsAt             DateTime
   venueName            String?
   venueAddress         String?
   confirmationDeadline DateTime
-  timeZone             String              @default("America/Sao_Paulo")
-  status               PresenceEventStatus @default(DRAFT)
+  timeZone             String                 @default("America/Sao_Paulo")
+  status               PresenceEventStatus    @default(DRAFT)
   theme                Json?
-  publicRevision       Int                 @default(0)
+  publicRevision       Int                    @default(0)
   reminderAt           DateTime?
   reminderProcessedAt  DateTime?
   retentionUntil       DateTime?
   guests               PresenceGuest[]
+  giftCategories       PresenceGiftCategory[]
   gifts                PresenceGift[]
   deliveries           PresenceDelivery[]
   activities           PresenceActivity[]
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
 
   @@index([tenantId, status])
   @@index([createdById])
@@ -269,26 +270,27 @@ model PresenceEvent {
 }
 
 model PresenceGuest {
-  id               String             @id @default(cuid())
-  eventId          String
-  event            PresenceEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  name             String
-  email            String?
-  guestSlug        String
-  rsvpStatus       PresenceRsvpStatus @default(PENDING)
-  companionLimit   Int                @default(0)
-  companionCount   Int                @default(0)
-  tokenHash        String             @unique
-  accessVersion    Int                @default(1)
-  accessExpiresAt  DateTime?
-  tokenRevokedAt   DateTime?
-  respondedAt      DateTime?
-  sessions         PresenceGuestSession[]
-  reservedGifts    PresenceGift[]     @relation("PresenceGiftReservedBy")
-  deliveries       PresenceDelivery[]
-  activities       PresenceActivity[]
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  id              String                 @id @default(cuid())
+  eventId         String
+  event           PresenceEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name            String
+  email           String?
+  guestSlug       String
+  rsvpStatus      PresenceRsvpStatus     @default(PENDING)
+  companionLimit  Int                    @default(0)
+  companionCount  Int                    @default(0)
+  tokenHash       String                 @unique
+  accessVersion   Int                    @default(1)
+  shortCodeHash   String?                @unique
+  accessExpiresAt DateTime?
+  tokenRevokedAt  DateTime?
+  respondedAt     DateTime?
+  sessions        PresenceGuestSession[]
+  reservedGifts   PresenceGift[]         @relation("PresenceGiftReservedBy")
+  deliveries      PresenceDelivery[]
+  activities      PresenceActivity[]
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
 
   @@unique([eventId, guestSlug])
   @@unique([eventId, email])
@@ -311,23 +313,44 @@ model PresenceGuestSession {
   @@index([expiresAt])
 }
 
+model PresenceGiftCategory {
+  id             String         @id @default(cuid())
+  eventId        String
+  event          PresenceEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name           String
+  normalizedName String
+  emoji          String         @default("🏠")
+  position       Int            @default(0)
+  gifts          PresenceGift[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([eventId, normalizedName])
+  @@index([eventId, position])
+}
+
 model PresenceGift {
-  id                String         @id @default(cuid())
+  id                String                @id @default(cuid())
   eventId           String
-  event             PresenceEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event             PresenceEvent         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  categoryId        String?
+  category          PresenceGiftCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  emoji             String                @default("🎁")
   title             String
   description       String?
   externalUrl       String?
-  position          Int            @default(0)
-  active            Boolean        @default(true)
+  position          Int                   @default(0)
+  active            Boolean               @default(true)
+  reservedManually  Boolean               @default(false)
   reservedByGuestId String?
-  reservedByGuest   PresenceGuest? @relation("PresenceGiftReservedBy", fields: [reservedByGuestId], references: [id], onDelete: SetNull)
+  reservedByGuest   PresenceGuest?        @relation("PresenceGiftReservedBy", fields: [reservedByGuestId], references: [id], onDelete: SetNull)
   reservedAt        DateTime?
-  version           Int            @default(0)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  version           Int                   @default(0)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 
   @@index([eventId, active, position])
+  @@index([categoryId, position])
   @@index([reservedByGuestId])
 }
 
@@ -364,13 +387,13 @@ model PresenceDelivery {
 }
 
 model PresenceWebhookEvent {
-  id                String           @id
+  id                String            @id
   deliveryId        String?
   delivery          PresenceDelivery? @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
   providerMessageId String
   type              String
   occurredAt        DateTime
-  createdAt         DateTime         @default(now())
+  createdAt         DateTime          @default(now())
 
   @@index([deliveryId, occurredAt])
   @@index([providerMessageId])
@@ -470,18 +493,18 @@ model UserUsageDaily {
 }
 
 model JornadaRule {
-  id             String   @id @default(cuid())
-  nome           String   @unique
-  duracaoMinutos Int
-  horasSemanais  Int
-  horasMensais   Int
-  intervaloMin   Int
-  intervaloMax   Int
-  limitePeriodoMinutos Int @default(240)
-  diasValidos    String[]
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  nome                 String   @unique
+  duracaoMinutos       Int
+  horasSemanais        Int
+  horasMensais         Int
+  intervaloMin         Int
+  intervaloMax         Int
+  limitePeriodoMinutos Int      @default(240)
+  diasValidos          String[]
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 model JornadaException {
@@ -570,18 +593,18 @@ model UnimedModuleSession {
 }
 
 model UnimedExcelDevice {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  tokenHash   String   @unique
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
   tokenPrefix String
   label       String
   createdBy   String
   expiresAt   DateTime
   revokedAt   DateTime?
   lastUsedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([tenantId, revokedAt, expiresAt])
 }

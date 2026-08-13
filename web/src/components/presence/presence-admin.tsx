@@ -4,10 +4,7 @@ import {
   Archive,
   CalendarDays,
   Check,
-  ChevronDown,
-  ChevronUp,
   Clipboard,
-  Gift,
   Link2,
   LoaderCircle,
   Mail,
@@ -36,7 +33,6 @@ import {
 import {
   type PresenceEventDetail,
   type PresenceEventSummary,
-  type PresenceGiftAdmin,
   type PresenceStatus,
   deliveryLabel,
   localDateInput,
@@ -46,6 +42,7 @@ import {
   statusLabel,
 } from "./presence-admin-model";
 import { PresenceAdminOverview } from "./presence-admin-overview";
+import { PresenceGiftManager } from "./presence-gift-manager";
 import { PresenceThemeSettings } from "./presence-theme-settings";
 
 const panel = "rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] shadow-[var(--app-panel-shadow)]";
@@ -236,7 +233,7 @@ export function PresenceAdmin() {
     setBusy("guest-create");
     setLatestLink(null);
     try {
-      const result = await presenceApi<{ invitationUrl: string }>(`/api/admin/presencas/${detail.id}/convidados`, {
+      const result = await presenceApi<{ shortUrl: string }>(`/api/admin/presencas/${detail.id}/convidados`, {
         method: "POST",
         body: JSON.stringify({
           name,
@@ -246,7 +243,7 @@ export function PresenceAdmin() {
         }),
       });
       form.reset();
-      setLatestLink(result.invitationUrl);
+      setLatestLink(result.shortUrl);
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível criar o convite.");
@@ -261,8 +258,8 @@ export function PresenceAdmin() {
     setLatestLink(null);
     try {
       if (action === "link") {
-        const result = await presenceApi<{ invitationUrl: string }>(`/api/admin/presencas/${detail.id}/convidados/${guestId}/renovar-link`, { method: "POST" });
-        setLatestLink(result.invitationUrl);
+        const result = await presenceApi<{ shortUrl: string }>(`/api/admin/presencas/${detail.id}/convidados/${guestId}/renovar-link`, { method: "POST" });
+        setLatestLink(result.shortUrl);
       } else if (action === "delete") {
         await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, { method: "DELETE" });
       } else {
@@ -296,76 +293,6 @@ export function PresenceAdmin() {
       setError(cause instanceof Error ? cause.message : "Não foi possível salvar o convite.");
     } finally {
       setBusy(null);
-    }
-  }
-
-  async function createGift(form: HTMLFormElement) {
-    if (!detail) return;
-    const data = new FormData(form);
-    setBusy("gift-create");
-    try {
-      await presenceApi(`/api/admin/presencas/${detail.id}/presentes`, {
-        method: "POST",
-        body: JSON.stringify({ title: String(data.get("title") ?? ""), description: String(data.get("description") ?? ""), externalUrl: String(data.get("externalUrl") ?? "") || null, active: true }),
-      });
-      form.reset();
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível incluir o presente.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function giftAction(gift: PresenceGiftAdmin, action: "toggle" | "release" | "delete") {
-    if (!detail) return;
-    setBusy(`gift-${gift.id}`);
-    try {
-      await presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, {
-        method: action === "delete" ? "DELETE" : "PATCH",
-        body: action === "delete" ? undefined : JSON.stringify(action === "release" ? { clearReservation: true } : { active: !gift.active }),
-      });
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível atualizar o presente.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function saveGift(giftId: string, form: HTMLFormElement) {
-    if (!detail) return;
-    const data = new FormData(form);
-    setBusy(`gift-${giftId}`);
-    try {
-      await presenceApi(`/api/admin/presencas/${detail.id}/presentes/${giftId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          title: String(data.get("title") ?? ""),
-          description: String(data.get("description") ?? ""),
-          externalUrl: String(data.get("externalUrl") ?? "") || null,
-        }),
-      });
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível salvar o presente.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function moveGift(index: number, delta: number) {
-    if (!detail) return;
-    const next = [...detail.gifts];
-    const target = index + delta;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    setDetail({ ...detail, gifts: next });
-    try {
-      await presenceApi(`/api/admin/presencas/${detail.id}/presentes`, { method: "PATCH", body: JSON.stringify({ orderedIds: next.map((gift) => gift.id) }) });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível salvar a ordem.");
-      await loadDetail(detail.id);
     }
   }
 
@@ -510,33 +437,11 @@ export function PresenceAdmin() {
                 </div>
               </section>
 
-              <section className={`${panel} p-4 sm:p-5`}>
-                <div className="mb-4 flex items-center gap-2"><Gift className="size-5 text-[color:var(--app-action-green)]" /><h2 className="text-lg font-bold">Lista de presentes</h2></div>
-                <form onSubmit={(event) => { event.preventDefault(); void createGift(event.currentTarget); }} className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto]">
-                  <label className="text-sm font-semibold">Presente<input name="title" required maxLength={160} className={field} /></label><label className="text-sm font-semibold">Descrição<input name="description" maxLength={500} className={field} /></label><label className="text-sm font-semibold">Link opcional<input name="externalUrl" type="url" maxLength={2000} className={field} /></label><button type="submit" className={`${primary} self-end`}><Plus className="size-4" /> Adicionar</button>
-                </form>
-                <div className="mt-5 space-y-2">
-                  {detail.gifts.map((gift, index) => (
-                    <div key={gift.id} className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex gap-1"><button type="button" className={secondary} aria-label="Mover para cima" onClick={() => void moveGift(index, -1)} disabled={index === 0}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label="Mover para baixo" onClick={() => void moveGift(index, 1)} disabled={index === detail.gifts.length - 1}><ChevronDown className="size-4" /></button></div>
-                        <div className="min-w-48 flex-1"><p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p><p className="text-xs text-[color:var(--app-muted)]">{gift.reservedByGuest ? `Escolhido por ${gift.reservedByGuest.name}` : "Disponível"}</p></div>
-                        <button type="button" className={secondary} onClick={() => void giftAction(gift, "toggle")}>{gift.active ? "Ocultar" : "Exibir"}</button>
-                        {gift.reservedByGuest ? <button type="button" className={secondary} onClick={() => void giftAction(gift, "release")}>Liberar</button> : <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir ${gift.title}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir presente?</AlertDialogTitle><AlertDialogDescription>{gift.title} será removido da lista.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void giftAction(gift, "delete")}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
-                      </div>
-                      <details className="mt-3 text-sm">
-                        <summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar presente</summary>
-                        <form onSubmit={(event) => { event.preventDefault(); void saveGift(gift.id, event.currentTarget); }} className="mt-3 grid gap-3 md:grid-cols-3">
-                          <label className="font-semibold">Presente<input name="title" required defaultValue={gift.title} className={field} /></label>
-                          <label className="font-semibold">Descrição<input name="description" defaultValue={gift.description ?? ""} className={field} /></label>
-                          <label className="font-semibold">Link<input name="externalUrl" type="url" defaultValue={gift.externalUrl ?? ""} className={field} /></label>
-                          <button type="submit" className={`${primary} md:col-span-3 md:justify-self-start`} disabled={busy === `gift-${gift.id}`}><Save className="size-4" /> Salvar presente</button>
-                        </form>
-                      </details>
-                    </div>
-                  ))}
-                </div>
-              </section>
+              <PresenceGiftManager
+                detail={detail}
+                onRefresh={refresh}
+                onError={setError}
+              />
             </>
           ) : null}
         </main>

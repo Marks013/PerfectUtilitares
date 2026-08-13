@@ -19,7 +19,7 @@ type RouteContext = { params: Promise<{ eventId: string; giftId: string }> };
 async function ownedGift(eventId: string, giftId: string, tenantId: string) {
   return prisma.presenceGift.findFirst({
     where: { id: giftId, eventId, event: { tenantId } },
-    select: { id: true, reservedByGuestId: true },
+    select: { id: true, reservedManually: true, reservedByGuestId: true },
   });
 }
 
@@ -44,19 +44,41 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { eventId, giftId } = await context.params;
   const current = await ownedGift(eventId, giftId, tenantId);
   if (!current) return jsonError(404, "GIFT_NOT_FOUND", "Presente não encontrado.");
+  if (parsed.data.categoryId) {
+    const category = await prisma.presenceGiftCategory.findFirst({
+      where: { id: parsed.data.categoryId, eventId },
+      select: { id: true },
+    });
+    if (!category) return jsonError(400, "INVALID_GIFT_CATEGORY", "Selecione uma categoria deste evento.");
+  }
+  if (parsed.data.reservedByGuestId) {
+    const guest = await prisma.presenceGuest.findFirst({
+      where: { id: parsed.data.reservedByGuestId, eventId },
+      select: { id: true },
+    });
+    if (!guest) return jsonError(400, "INVALID_GIFT_GUEST", "Selecione uma pessoa deste evento.");
+  }
   const { clearReservation, ...data } = parsed.data;
   const gift = await prisma.presenceGift.update({
     where: { id: current.id },
     data: {
       ...data,
-      ...(clearReservation ? { reservedByGuestId: null, reservedAt: null, version: { increment: 1 } } : {}),
+      ...(data.reservedByGuestId
+        ? { reservedManually: false, reservedAt: new Date() }
+        : data.reservedManually === false
+          ? { reservedByGuestId: null, reservedAt: null }
+          : data.reservedManually
+            ? { reservedAt: new Date() }
+            : {}),
+      ...(clearReservation ? { reservedByGuestId: null, reservedManually: false, reservedAt: null, version: { increment: 1 } } : {}),
     },
     select: {
-      id: true, title: true, description: true, externalUrl: true, position: true, active: true, reservedAt: true,
+      id: true, categoryId: true, emoji: true, title: true, description: true, externalUrl: true, position: true, active: true, reservedManually: true, reservedAt: true,
       reservedByGuest: { select: { id: true, name: true } },
     },
   });
   await prisma.presenceActivity.create({ data: { eventId, actorUserId: guard.session.user.id, action: clearReservation ? "RELEASE" : "UPDATE", entityType: "PresenceGift", entityId: gift.id } });
+  await prisma.presenceEvent.update({ where: { id: eventId }, data: { publicRevision: { increment: 1 } } });
   return NextResponse.json(gift, { headers: { "Cache-Control": "private, no-store" } });
 }
 
@@ -72,8 +94,11 @@ export async function DELETE(request: Request, context: RouteContext) {
   const { eventId, giftId } = await context.params;
   const gift = await ownedGift(eventId, giftId, tenantId);
   if (!gift) return jsonError(404, "GIFT_NOT_FOUND", "Presente não encontrado.");
-  if (gift.reservedByGuestId) return jsonError(409, "GIFT_RESERVED", "Libere a reserva antes de excluir este presente.");
-  await prisma.presenceGift.delete({ where: { id: gift.id } });
+  if (gift.reservedByGuestId || gift.reservedManually) return jsonError(409, "GIFT_RESERVED", "Libere a reserva antes de excluir este presente.");
+  await prisma.$transaction([
+    prisma.presenceGift.delete({ where: { id: gift.id } }),
+    prisma.presenceEvent.update({ where: { id: eventId }, data: { publicRevision: { increment: 1 } } }),
+  ]);
   return NextResponse.json({ deleted: true }, { headers: { "Cache-Control": "private, no-store" } });
 }
 

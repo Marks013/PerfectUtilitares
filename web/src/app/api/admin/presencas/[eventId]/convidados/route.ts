@@ -17,6 +17,7 @@ import {
 } from "@/lib/presence/schema";
 import {
   generatePresenceInvitationToken,
+  generatePresenceShortCode,
   hashPresenceSecret,
 } from "@/lib/presence/tokens";
 import { prisma } from "@/lib/prisma";
@@ -83,6 +84,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const invitationToken = generatePresenceInvitationToken();
+  const shortCode = generatePresenceShortCode();
   const accessExpiresAt = parsed.data.accessExpiresAt
     ? new Date(parsed.data.accessExpiresAt)
     : new Date(event.startsAt.getTime() + 24 * 60 * 60 * 1_000);
@@ -97,6 +99,7 @@ export async function POST(request: Request, context: RouteContext) {
         companionLimit: parsed.data.companionLimit,
         accessExpiresAt,
         tokenHash: hashPresenceSecret(invitationToken),
+        shortCodeHash: hashPresenceSecret(shortCode),
         activities: {
           create: {
             event: { connect: { id: event.id } },
@@ -121,9 +124,14 @@ export async function POST(request: Request, context: RouteContext) {
       invitationBaseUrl(request),
     );
     invitationUrl.hash = invitationToken;
+    const shortUrl = new URL(`/p/${shortCode}`, invitationBaseUrl(request));
 
     return NextResponse.json(
-      { ...guest, invitationUrl: invitationUrl.toString() },
+      {
+        ...guest,
+        invitationUrl: invitationUrl.toString(),
+        shortUrl: shortUrl.toString(),
+      },
       {
         status: 201,
         headers: { "Cache-Control": "private, no-store" },

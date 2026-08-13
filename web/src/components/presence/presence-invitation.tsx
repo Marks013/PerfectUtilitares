@@ -16,6 +16,10 @@ import {
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  type PresenceCover,
+  presenceCover,
+} from "@/lib/presence/cover";
 import styles from "./presence-invitation.module.css";
 
 type PresenceState = {
@@ -32,7 +36,7 @@ type PresenceState = {
     confirmationOpen: boolean;
     theme: {
       preset: "CELEBRATION" | "ELEGANT" | "GARDEN" | "NIGHT";
-      cover: "EVENT_TABLE" | "NONE";
+      cover: PresenceCover;
       accent: "CORAL" | "BLUE" | "GREEN" | "GOLD";
       welcomeTitle: string | null;
     };
@@ -45,6 +49,13 @@ type PresenceState = {
   };
   gifts: Array<{
     id: string;
+    emoji: string;
+    category: {
+      id: string;
+      name: string;
+      emoji: string;
+      position: number;
+    } | null;
     title: string;
     description: string | null;
     externalUrl: string | null;
@@ -250,6 +261,22 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
 
   if (!state) return null;
   const { event, guest, gifts } = state;
+  const cover = presenceCover(event.theme.cover);
+  const giftGroups = Array.from(
+    gifts.reduce((groups, gift) => {
+      const key = gift.category?.id ?? "uncategorized";
+      const current = groups.get(key) ?? {
+        id: key,
+        name: gift.category?.name ?? "Outros presentes",
+        emoji: gift.category?.emoji ?? "🎁",
+        position: gift.category?.position ?? Number.MAX_SAFE_INTEGER,
+        gifts: [],
+      };
+      current.gifts.push(gift);
+      groups.set(key, current);
+      return groups;
+    }, new Map<string, { id: string; name: string; emoji: string; position: number; gifts: typeof gifts }>()),
+  ).map(([, group]) => group).sort((left, right) => left.position - right.position);
 
   return (
     <main
@@ -258,9 +285,9 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
       data-accent={event.theme.accent.toLowerCase()}
     >
       <header className={`${styles.hero} ${event.theme.cover === "NONE" ? styles.heroWithoutCover : ""}`}>
-        {event.theme.cover === "EVENT_TABLE" ? <Image
-          src="/presence/event-table.png"
-          alt="Mesa preparada para uma celebração"
+        {cover.image ? <Image
+          src={cover.image}
+          alt={cover.alt}
           fill
           priority
           sizes="100vw"
@@ -321,22 +348,34 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
             <Gift aria-hidden="true" />
             <div><h2 id="gift-title">Lista de presentes</h2><p>Escolha um item. A lista é atualizada automaticamente.</p></div>
           </div>
-          <div className={styles.giftGrid}>
-            {gifts.map((gift) => {
-              const url = safeExternalUrl(gift.externalUrl);
-              return (
-                <article key={gift.id} className={`${styles.giftItem} ${gift.reserved ? styles.reserved : ""}`}>
-                  <div><h3>{gift.title}</h3>{gift.description && <p>{gift.description}</p>}</div>
-                  <div className={styles.giftActions}>
-                    {url && <a href={url} target="_blank" rel="noreferrer" aria-label={`Ver ${gift.title}`}><ExternalLink aria-hidden="true" /></a>}
-                    <button type="button" disabled={(gift.reserved && !gift.reservedByMe) || pendingAction === gift.id} onClick={() => void toggleGift(gift.id, gift.reservedByMe)}>
-                      {pendingAction === gift.id ? <LoaderCircle className={styles.spinner} aria-hidden="true" /> : gift.reservedByMe ? <X aria-hidden="true" /> : <Check aria-hidden="true" />}
-                      {gift.reservedByMe ? "Liberar" : gift.reserved ? "Escolhido" : "Escolher"}
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+          <div className={styles.giftGroups}>
+            {giftGroups.map((group) => (
+              <section key={group.id} className={styles.giftGroup} aria-labelledby={`gift-category-${group.id}`}>
+                <div className={styles.giftCategoryHeading}>
+                  <span aria-hidden="true">{group.emoji}</span>
+                  <h3 id={`gift-category-${group.id}`}>{group.name}</h3>
+                  <small>{group.gifts.length}</small>
+                </div>
+                <div className={styles.giftGrid}>
+                  {group.gifts.map((gift) => {
+                    const url = safeExternalUrl(gift.externalUrl);
+                    return (
+                      <article key={gift.id} className={`${styles.giftItem} ${gift.reserved ? styles.reserved : ""}`}>
+                        <span className={styles.giftEmoji} aria-hidden="true">{gift.emoji}</span>
+                        <div className={styles.giftCopy}><h4>{gift.title}</h4>{gift.description && <p>{gift.description}</p>}</div>
+                        <div className={styles.giftActions}>
+                          {url && <a href={url} target="_blank" rel="noreferrer" aria-label={`Ver ${gift.title}`}><ExternalLink aria-hidden="true" /></a>}
+                          <button type="button" disabled={(gift.reserved && !gift.reservedByMe) || pendingAction === gift.id} onClick={() => void toggleGift(gift.id, gift.reservedByMe)}>
+                            {pendingAction === gift.id ? <LoaderCircle className={styles.spinner} aria-hidden="true" /> : gift.reservedByMe ? <X aria-hidden="true" /> : <Check aria-hidden="true" />}
+                            {gift.reservedByMe ? "Liberar" : gift.reserved ? "Escolhido" : "Escolher"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         </section>
       )}

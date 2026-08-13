@@ -62,7 +62,14 @@ const optionalPatchText = (max: number) =>
 export const presenceThemeSchema = z
   .object({
     preset: z.enum(["CELEBRATION", "ELEGANT", "GARDEN", "NIGHT"]),
-    cover: z.enum(["EVENT_TABLE", "NONE"]),
+    cover: z.enum([
+      "EVENT_TABLE",
+      "WEDDING",
+      "BIRTHDAY",
+      "KITCHEN_TEA",
+      "BABY_SHOWER",
+      "NONE",
+    ]),
     accent: z.enum(["CORAL", "BLUE", "GREEN", "GOLD"]),
     welcomeTitle: z.string().trim().max(80).nullable(),
   })
@@ -164,18 +171,26 @@ export const presenceGuestUpdateSchema = z
   });
 
 export const presenceGiftCreateSchema = z.object({
+  categoryId: z.string().cuid().nullable().optional(),
+  emoji: z.string().trim().min(1).max(16).default("🎁"),
   title: z.string().trim().min(2).max(160),
   description: optionalText(500),
   externalUrl: z.url().max(2_000).nullable().optional(),
   active: z.boolean().default(true),
+  reservedManually: z.boolean().default(false),
+  reservedByGuestId: z.string().cuid().nullable().optional(),
 });
 
 export const presenceGiftUpdateSchema = z
   .object({
+    categoryId: z.string().cuid().nullable().optional(),
+    emoji: z.string().trim().min(1).max(16).optional(),
     title: z.string().trim().min(2).max(160).optional(),
     description: optionalPatchText(500),
     externalUrl: z.url().max(2_000).nullable().optional(),
     active: z.boolean().optional(),
+    reservedManually: z.boolean().optional(),
+    reservedByGuestId: z.string().cuid().nullable().optional(),
     clearReservation: z.boolean().optional(),
   })
   .refine((data) => Object.values(data).some((value) => value !== undefined), {
@@ -184,6 +199,24 @@ export const presenceGiftUpdateSchema = z
 
 export const presenceGiftOrderSchema = z.object({
   orderedIds: z.array(z.string().cuid()).min(1).max(500),
+});
+
+export const presenceGiftCategoryCreateSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  emoji: z.string().trim().min(1).max(16).default("🏠"),
+});
+
+export const presenceGiftCategoryUpdateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(80).optional(),
+    emoji: z.string().trim().min(1).max(16).optional(),
+  })
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: "Informe ao menos uma alteração.",
+  });
+
+export const presenceGiftCategoryOrderSchema = z.object({
+  orderedIds: z.array(z.string().cuid()).min(1).max(100),
 });
 
 export const presenceInvitationDeliverySchema = z.object({

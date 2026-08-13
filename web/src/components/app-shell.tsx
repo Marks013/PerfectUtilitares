@@ -27,7 +27,10 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
     ...publicNavItems,
     ...(activeSession ? [{ href: "/conta", label: "Conta" }] : []),
     ...(activeSession?.user.role === "ADMIN"
-      ? [{ href: "/admin/usuarios", label: "Usuários" }]
+      ? [
+          { href: "/admin/presencas", label: "Eventos" },
+          { href: "/admin/usuarios", label: "Usuários" },
+        ]
       : []),
   ];
 

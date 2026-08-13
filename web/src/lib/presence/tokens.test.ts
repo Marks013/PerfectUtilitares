@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   generatePresenceInvitationToken,
   generatePresenceSessionToken,
+  generatePresenceShortCode,
   getPresenceCookieName,
   getPresenceCookieOptions,
   hashPresenceSecret,
@@ -17,6 +18,7 @@ describe("presence tokens", () => {
       /^c_[A-Za-z0-9_-]{43}$/,
     );
     expect(generatePresenceSessionToken()).toMatch(/^s_[A-Za-z0-9_-]{43}$/);
+    expect(generatePresenceShortCode()).toMatch(/^p_[A-Za-z0-9_-]{16}$/);
   });
 
   it("hashes secrets with the application secret", () => {

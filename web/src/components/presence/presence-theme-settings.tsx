@@ -1,4 +1,6 @@
 import { Bell, Palette, Save } from "lucide-react";
+import Image from "next/image";
+import { presenceCoverOptions } from "@/lib/presence/cover";
 import type {
   PresenceEventDetail,
   PresenceTheme,
@@ -70,13 +72,42 @@ export function PresenceThemeSettings({
             {presetOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </label>
-        <label className="text-sm font-semibold">
-          Capa
-          <select name="cover" defaultValue={detail.theme.cover} className={field}>
-            <option value="EVENT_TABLE">Mesa de celebração</option>
-            <option value="NONE">Sem fotografia</option>
-          </select>
-        </label>
+        <fieldset className="md:col-span-2">
+          <legend className="text-sm font-semibold">Capa</legend>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {presenceCoverOptions.map((option) => (
+              <label
+                key={option.value}
+                className="group cursor-pointer overflow-hidden rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] has-[:checked]:border-[color:var(--app-action-blue)] has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[color:var(--app-action-blue)]"
+              >
+                <input
+                  className="sr-only"
+                  type="radio"
+                  name="cover"
+                  value={option.value}
+                  defaultChecked={detail.theme.cover === option.value}
+                />
+                <span className="relative block aspect-[3/2] overflow-hidden bg-[color:var(--app-surface)]">
+                  {option.image ? (
+                    <Image
+                      src={option.image}
+                      alt=""
+                      fill
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                      className="object-cover transition-transform duration-200 group-hover:scale-[1.02] motion-reduce:transition-none"
+                    />
+                  ) : (
+                    <span className="grid size-full place-items-center text-sm text-[color:var(--app-muted)]">Sem imagem</span>
+                  )}
+                </span>
+                <span className="flex min-h-11 items-center justify-between gap-2 px-3 py-2 text-sm font-semibold">
+                  {option.label}
+                  <span className="size-3 rounded-full border border-[color:var(--app-border-strong)] group-has-[:checked]:border-4 group-has-[:checked]:border-[color:var(--app-action-blue)]" aria-hidden="true" />
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <fieldset className="md:col-span-2">
           <legend className="text-sm font-semibold">Cor de destaque</legend>
           <div className="mt-2 flex flex-wrap gap-2">

@@ -31,6 +31,7 @@ vi.mock("@/lib/email/resend", () => ({
 }));
 vi.mock("@/lib/presence/tokens", () => ({
   derivePresenceInvitationToken: () => `c_${"a".repeat(43)}`,
+  derivePresenceShortCode: () => `p_${"b".repeat(16)}`,
   hashPresenceSecret: () => "hashed-token",
 }));
 
@@ -96,7 +97,7 @@ describe("presence invitation delivery", () => {
       expect.objectContaining({
         to: "guest@example.test",
         idempotencyKey: "presence/delivery-1",
-        inviteUrl: `https://perfect.example.test/presenca/formatura/ana#c_${"a".repeat(43)}`,
+        inviteUrl: `https://perfect.example.test/p/p_${"b".repeat(16)}`,
       }),
     );
     expect(mocks.prisma.presenceDelivery.update).toHaveBeenCalledWith(

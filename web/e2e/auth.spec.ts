@@ -16,6 +16,10 @@ test("login, session projection and authenticated navigation", async ({
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
 
   await expect(page).toHaveURL(/\/conta(?:\?|$)/);
+  await expect(page.getByRole("link", { name: "Eventos", exact: true })).toHaveAttribute(
+    "href",
+    "/admin/presencas",
+  );
   await expect(page.locator("body")).not.toContainText("Credenciais inválidas");
 
   const cookies = await page.context().cookies();

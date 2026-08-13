@@ -6,6 +6,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   derivePresenceInvitationToken,
+  derivePresenceShortCode,
   hashPresenceSecret,
 } from "@/lib/presence/tokens";
 
@@ -19,15 +20,8 @@ type DeliveryResult = {
   reason?: "EMAIL_REQUIRED" | "ALREADY_SENT";
 };
 
-function invitationUrl(
-  baseUrl: string,
-  eventSlug: string,
-  guestSlug: string,
-  token: string,
-) {
-  const url = new URL(`/presenca/${eventSlug}/${guestSlug}`, baseUrl);
-  url.hash = token;
-  return url.toString();
+function shortInvitationUrl(baseUrl: string, code: string) {
+  return new URL(`/p/${code}`, baseUrl).toString();
 }
 
 function eventDateLabel(startsAt: Date, timeZone: string) {
@@ -143,12 +137,8 @@ async function processPresenceDelivery(
   }
 
   const token = derivePresenceInvitationToken(delivery.id);
-  const inviteUrl = invitationUrl(
-    baseUrl,
-    delivery.event.eventSlug,
-    delivery.guest.guestSlug,
-    token,
-  );
+  const shortCode = derivePresenceShortCode(delivery.id);
+  const inviteUrl = shortInvitationUrl(baseUrl, shortCode);
 
   try {
     await prisma.$transaction([
@@ -156,6 +146,7 @@ async function processPresenceDelivery(
         where: { id: delivery.guest.id },
         data: {
           tokenHash: hashPresenceSecret(token),
+          shortCodeHash: hashPresenceSecret(shortCode),
           tokenRevokedAt: null,
           accessVersion: { increment: 1 },
         },

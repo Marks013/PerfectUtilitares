@@ -62,6 +62,54 @@ test("presence event customization, private invitation and report work together"
   expect(guest.invitationUrl).toContain(
     `/presenca/${slug}/convidada-e2e#c_`,
   );
+  expect(guest.shortUrl).toMatch(/\/p\/p_[A-Za-z0-9_-]{16}$/);
+
+  const categoryCreated = await page.request.post(
+    `/api/admin/presencas/${event.id}/categorias-presentes`,
+    {
+      headers: { origin },
+      data: { name: "Cozinha", emoji: "🍳" },
+    },
+  );
+  expect(categoryCreated.status()).toBe(201);
+  const category = await categoryCreated.json();
+
+  const markedGift = await page.request.post(
+    `/api/admin/presencas/${event.id}/presentes`,
+    {
+      headers: { origin },
+      data: {
+        title: "Jogo de panelas",
+        emoji: "🍲",
+        reservedManually: true,
+      },
+    },
+  );
+  expect(markedGift.status()).toBe(201);
+  const markedGiftData = await markedGift.json();
+  const movedGift = await page.request.patch(
+    `/api/admin/presencas/${event.id}/presentes/${markedGiftData.id}`,
+    {
+      headers: { origin },
+      data: { categoryId: category.id },
+    },
+  );
+  expect(movedGift.status()).toBe(200);
+  expect((await movedGift.json()).categoryId).toBe(category.id);
+
+  const linkedGift = await page.request.post(
+    `/api/admin/presencas/${event.id}/presentes`,
+    {
+      headers: { origin },
+      data: {
+        title: "Liquidificador",
+        emoji: "🥤",
+        categoryId: category.id,
+        reservedByGuestId: guest.id,
+      },
+    },
+  );
+  expect(linkedGift.status()).toBe(201);
 
   const configured = await page.request.patch(
     `/api/admin/presencas/${event.id}`,
@@ -71,7 +119,7 @@ test("presence event customization, private invitation and report work together"
         status: "PUBLISHED",
         theme: {
           preset: "GARDEN",
-          cover: "NONE",
+          cover: "WEDDING",
           accent: "GREEN",
           welcomeTitle: "Vamos celebrar juntos",
         },
@@ -89,11 +137,18 @@ test("presence event customization, private invitation and report work together"
   expect(report.headers()["content-type"]).toContain("text/csv");
   expect(await report.text()).toContain("Convidada E2E");
 
-  await page.goto(guest.invitationUrl);
+  await page.goto(guest.shortUrl);
   await expect(page.getByRole("heading", { name: "Celebração E2E" })).toBeVisible();
   await expect(page.getByText("Vamos celebrar juntos")).toBeVisible();
   await expect(page.getByText("Olá, Convidada E2E.")).toBeVisible();
-  await expect(page.locator("header img")).toHaveCount(0);
+  await expect(page.locator("header img")).toHaveAttribute(
+    "src",
+    /wedding\.webp/,
+  );
+  await expect(page.getByRole("heading", { name: "Cozinha" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Jogo de panelas" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Escolhido" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Liberar" })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   const overflow = await page.evaluate(

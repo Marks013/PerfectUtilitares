@@ -17,9 +17,10 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
 function capture(command, args) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8", env: process.env });
   if (result.status !== 0) {
-    throw new Error(`${command} failed: ${(result.stderr || result.stdout).trim()}`);
+    const detail = result.error?.message || result.stderr?.trim() || result.stdout?.trim() || "unknown error";
+    throw new Error(`${command} failed: ${detail}`);
   }
-  return result.stdout.trim();
+  return result.stdout?.trim() ?? "";
 }
 
 function databaseHost() {

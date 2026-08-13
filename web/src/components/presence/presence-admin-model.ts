@@ -13,7 +13,13 @@ export type PresenceDeliveryStatus =
 
 export type PresenceTheme = {
   preset: "CELEBRATION" | "ELEGANT" | "GARDEN" | "NIGHT";
-  cover: "EVENT_TABLE" | "NONE";
+  cover:
+    | "EVENT_TABLE"
+    | "WEDDING"
+    | "BIRTHDAY"
+    | "KITCHEN_TEA"
+    | "BABY_SHOWER"
+    | "NONE";
   accent: "CORAL" | "BLUE" | "GREEN" | "GOLD";
   welcomeTitle: string | null;
 };
@@ -64,13 +70,24 @@ type PresenceGuestAdmin = {
 
 export type PresenceGiftAdmin = {
   id: string;
+  categoryId: string | null;
+  emoji: string;
   title: string;
   description: string | null;
   externalUrl: string | null;
   position: number;
   active: boolean;
+  reservedManually: boolean;
   reservedAt: string | null;
   reservedByGuest: { id: string; name: string } | null;
+};
+
+type PresenceGiftCategoryAdmin = {
+  id: string;
+  name: string;
+  emoji: string;
+  position: number;
+  _count: { gifts: number };
 };
 
 export type PresenceEventDetail = PresenceEventSummary & {
@@ -85,6 +102,7 @@ export type PresenceEventDetail = PresenceEventSummary & {
   createdAt: string;
   updatedAt: string;
   guests: PresenceGuestAdmin[];
+  giftCategories: PresenceGiftCategoryAdmin[];
   gifts: PresenceGiftAdmin[];
   _count: { guests: number; gifts: number; deliveries: number };
   analytics: {

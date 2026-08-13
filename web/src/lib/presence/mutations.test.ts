@@ -91,6 +91,7 @@ describe("presence gift mutations", () => {
           id: "gift-1",
           eventId: "event-1",
           active: true,
+          reservedManually: false,
           reservedByGuestId: null,
         }),
       }),
