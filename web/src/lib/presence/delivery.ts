@@ -12,6 +12,7 @@ import {
 
 const SENDING_STALE_MS = 5 * 60 * 1_000;
 const MAX_RETRY_DELAY_MS = 60 * 60 * 1_000;
+const REMINDER_GUEST_PAGE_SIZE = 250;
 
 type DeliveryResult = {
   deliveryId: string | null;
@@ -90,6 +91,10 @@ async function processPresenceDelivery(
           name: true,
           email: true,
           guestSlug: true,
+          tokenHash: true,
+          shortCodeHash: true,
+          tokenRevokedAt: true,
+          accessVersion: true,
         },
       },
       event: {
@@ -112,6 +117,7 @@ async function processPresenceDelivery(
     }
     return { deliveryId, guestId: delivery?.guestId ?? "", status: "SKIPPED" };
   }
+  const guest = delivery.guest;
   if (claimed.count === 0) {
     const alreadySent = delivery.status === "SENT" || delivery.status === "DELIVERED";
 
@@ -123,7 +129,7 @@ async function processPresenceDelivery(
     };
   }
 
-  if (!delivery.guest.email) {
+  if (!guest.email) {
     await prisma.presenceDelivery.update({
       where: { id: delivery.id },
       data: { status: "FAILED", lastErrorCode: "EMAIL_REQUIRED" },
@@ -139,14 +145,17 @@ async function processPresenceDelivery(
   const token = derivePresenceInvitationToken(delivery.id);
   const shortCode = derivePresenceShortCode(delivery.id);
   const inviteUrl = shortInvitationUrl(baseUrl, shortCode);
+  const nextTokenHash = hashPresenceSecret(token);
+  const nextShortCodeHash = hashPresenceSecret(shortCode);
+  let providerAccepted = false;
 
   try {
     await prisma.$transaction([
       prisma.presenceGuest.update({
-        where: { id: delivery.guest.id },
+        where: { id: guest.id },
         data: {
-          tokenHash: hashPresenceSecret(token),
-          shortCodeHash: hashPresenceSecret(shortCode),
+          tokenHash: nextTokenHash,
+          shortCodeHash: nextShortCodeHash,
           tokenRevokedAt: null,
           accessVersion: { increment: 1 },
         },
@@ -162,8 +171,8 @@ async function processPresenceDelivery(
         ? sendPresenceReminderEmail
         : sendPresenceInvitationEmail;
     const providerMessageId = await sendEmail({
-      to: delivery.guest.email,
-      name: delivery.guest.name,
+      to: guest.email,
+      name: guest.name,
       eventTitle: delivery.event.title,
       eventDate: eventDateLabel(
         delivery.event.startsAt,
@@ -173,6 +182,7 @@ async function processPresenceDelivery(
       inviteUrl,
       idempotencyKey: `presence/${delivery.id}`,
     });
+    providerAccepted = true;
 
     await prisma.presenceDelivery.update({
       where: { id: delivery.id },
@@ -189,7 +199,7 @@ async function processPresenceDelivery(
     await prisma.presenceActivity.create({
       data: {
         eventId: delivery.eventId,
-        guestId: delivery.guest.id,
+        guestId: guest.id,
         actorUserId,
         action:
           delivery.kind === "REMINDER" ? "SEND_REMINDER" : "SEND_INVITATION",
@@ -200,6 +210,40 @@ async function processPresenceDelivery(
     return { deliveryId, guestId: delivery.guestId, status: "SENT" };
   } catch (error) {
     const errorCode = deliveryErrorCode(error);
+    if (!providerAccepted) {
+      try {
+        await prisma.$transaction(async (transaction) => {
+          const rollback = await transaction.presenceGuest.updateMany({
+            where: {
+              id: guest.id,
+              tokenHash: nextTokenHash,
+              shortCodeHash: nextShortCodeHash,
+              accessVersion: guest.accessVersion + 1,
+            },
+            data: {
+              tokenHash: guest.tokenHash,
+              shortCodeHash: guest.shortCodeHash,
+              tokenRevokedAt: guest.tokenRevokedAt,
+              accessVersion: guest.accessVersion,
+            },
+          });
+          if (rollback.count > 0) {
+            await transaction.presenceGuestSession.updateMany({
+              where: { guestId: guest.id, revokedAt: now },
+              data: { revokedAt: null },
+            });
+          }
+        });
+      } catch {
+        Sentry.captureMessage("Presence access rollback failed", {
+          level: "error",
+          tags: {
+            presenceDeliveryId: delivery.id,
+            presenceEventId: delivery.eventId,
+          },
+        });
+      }
+    }
     await prisma.presenceDelivery.update({
       where: { id: delivery.id },
       data: {
@@ -325,8 +369,13 @@ export async function processDuePresenceReminders(input: {
   baseUrl: string;
   now?: Date;
   eventLimit?: number;
+  guestPageSize?: number;
 }) {
   const now = input.now ?? new Date();
+  const guestPageSize = Math.min(
+    Math.max(input.guestPageSize ?? REMINDER_GUEST_PAGE_SIZE, 1),
+    REMINDER_GUEST_PAGE_SIZE,
+  );
   const events = await prisma.presenceEvent.findMany({
     where: {
       status: "PUBLISHED",
@@ -337,11 +386,6 @@ export async function processDuePresenceReminders(input: {
     select: {
       id: true,
       reminderAt: true,
-      guests: {
-        where: { rsvpStatus: "PENDING", email: { not: null } },
-        select: { id: true },
-        take: 1_000,
-      },
     },
     orderBy: { reminderAt: "asc" },
     take: input.eventLimit ?? 10,
@@ -351,33 +395,52 @@ export async function processDuePresenceReminders(input: {
   let failed = 0;
   for (const event of events) {
     const reminderKey = event.reminderAt?.toISOString() ?? "unscheduled";
-    const deliveryIds: string[] = [];
-    for (const guest of event.guests) {
-      const idempotencyKey = `reminder:${reminderKey}:${guest.id}`;
-      const delivery = await prisma.presenceDelivery.upsert({
+    let cursor: string | undefined;
+    while (true) {
+      const guests = await prisma.presenceGuest.findMany({
         where: {
-          eventId_idempotencyKey: { eventId: event.id, idempotencyKey },
-        },
-        create: {
           eventId: event.id,
-          guestId: guest.id,
-          idempotencyKey,
-          kind: "REMINDER",
+          rsvpStatus: "PENDING",
+          email: { not: null },
         },
-        update: {},
         select: { id: true },
+        orderBy: { id: "asc" },
+        take: guestPageSize,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       });
-      deliveryIds.push(delivery.id);
-    }
+      if (guests.length === 0) break;
 
-    for (let index = 0; index < deliveryIds.length; index += 5) {
-      const results = await Promise.all(
-        deliveryIds
-          .slice(index, index + 5)
-          .map((id) => processPresenceDelivery(id, input.baseUrl, null, now)),
-      );
-      sent += results.filter((result) => result.status === "SENT").length;
-      failed += results.filter((result) => result.status === "FAILED").length;
+      const deliveryIds: string[] = [];
+      for (const guest of guests) {
+        const idempotencyKey = `reminder:${reminderKey}:${guest.id}`;
+        const delivery = await prisma.presenceDelivery.upsert({
+          where: {
+            eventId_idempotencyKey: { eventId: event.id, idempotencyKey },
+          },
+          create: {
+            eventId: event.id,
+            guestId: guest.id,
+            idempotencyKey,
+            kind: "REMINDER",
+          },
+          update: {},
+          select: { id: true },
+        });
+        deliveryIds.push(delivery.id);
+      }
+
+      for (let index = 0; index < deliveryIds.length; index += 5) {
+        const results = await Promise.all(
+          deliveryIds
+            .slice(index, index + 5)
+            .map((id) => processPresenceDelivery(id, input.baseUrl, null, now)),
+        );
+        sent += results.filter((result) => result.status === "SENT").length;
+        failed += results.filter((result) => result.status === "FAILED").length;
+      }
+
+      cursor = guests.at(-1)?.id;
+      if (guests.length < guestPageSize) break;
     }
 
     await prisma.presenceEvent.updateMany({

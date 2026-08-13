@@ -41,7 +41,7 @@ describe("presence state route", () => {
     });
     readPresenceStateMock.mockResolvedValue({
       revision: 3,
-      event: { title: "Ana e João" },
+      event: { title: "Ana e João", confirmationOpen: true },
       guest: { name: "Maico", rsvpStatus: "PENDING" },
       gifts: [{ id: "gift-1", title: "Jogo de copos", reserved: false }],
     });
@@ -54,7 +54,7 @@ describe("presence state route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("etag")).toBe('W/"presence-3"');
+    expect(response.headers.get("etag")).toBe('W/"presence-3-open"');
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toMatchObject({
       guest: { name: "Maico" },
@@ -71,5 +71,33 @@ describe("presence state route", () => {
       { params },
     );
     expect(response.status).toBe(404);
+  });
+
+  it("does not return 304 when the confirmation deadline closes", async () => {
+    resolvePresenceSessionMock.mockResolvedValue({
+      sessionId: "session-1",
+      eventId: "event-1",
+      guestId: "guest-1",
+    });
+    readPresenceStateMock.mockResolvedValue({
+      revision: 3,
+      event: { title: "Ana e João", confirmationOpen: false },
+      guest: { name: "Maico", rsvpStatus: "PENDING" },
+      gifts: [],
+    });
+
+    const response = await GET(
+      new Request(
+        "http://localhost/api/presenca/casamento-ana-e-joao/maico-rafael/estado",
+        { headers: { "If-None-Match": 'W/"presence-3-open"' } },
+      ),
+      { params },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("etag")).toBe('W/"presence-3-closed"');
+    await expect(response.json()).resolves.toMatchObject({
+      event: { confirmationOpen: false },
+    });
   });
 });

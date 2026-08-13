@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
       findFirst: vi.fn(),
       update: vi.fn(),
     },
-    presenceGuest: { update: vi.fn() },
+    presenceGuest: { update: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
     presenceGuestSession: { updateMany: vi.fn() },
     presenceActivity: { create: vi.fn() },
     $transaction: vi.fn(),
@@ -54,6 +54,10 @@ const delivery = {
     name: "Ana",
     email: "guest@example.test",
     guestSlug: "ana",
+    tokenHash: "previous-token-hash",
+    shortCodeHash: "previous-short-code-hash",
+    tokenRevokedAt: null,
+    accessVersion: 4,
   },
   event: {
     eventSlug: "formatura",
@@ -70,6 +74,7 @@ describe("presence invitation delivery", () => {
     vi.stubEnv("AUTH_SECRET", "test-secret");
     mocks.prisma.presenceEvent.findFirst.mockResolvedValue(event);
     mocks.prisma.presenceEvent.findMany.mockResolvedValue([]);
+    mocks.prisma.presenceGuest.findMany.mockResolvedValue([]);
     mocks.prisma.presenceEvent.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.presenceDelivery.upsert.mockResolvedValue({ id: "delivery-1" });
     mocks.prisma.presenceDelivery.updateMany.mockResolvedValue({ count: 1 });
@@ -77,7 +82,18 @@ describe("presence invitation delivery", () => {
     mocks.prisma.presenceDelivery.update.mockResolvedValue({});
     mocks.prisma.presenceGuest.update.mockReturnValue({ operation: "guest-update" });
     mocks.prisma.presenceGuestSession.updateMany.mockReturnValue({ operation: "session-update" });
-    mocks.prisma.$transaction.mockResolvedValue([]);
+    mocks.prisma.presenceGuest.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.$transaction.mockImplementation(async (operation: unknown) => {
+      if (typeof operation === "function") {
+        return operation({
+          presenceGuest: { updateMany: mocks.prisma.presenceGuest.updateMany },
+          presenceGuestSession: {
+            updateMany: mocks.prisma.presenceGuestSession.updateMany,
+          },
+        });
+      }
+      return [];
+    });
     mocks.prisma.presenceActivity.create.mockResolvedValue({});
     mocks.send.mockResolvedValue("provider-message-1");
   });
@@ -153,6 +169,25 @@ describe("presence invitation delivery", () => {
         tags: expect.objectContaining({ errorCode: "DELIVERY_FAILED" }),
       }),
     );
+    expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(mocks.prisma.presenceGuest.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "guest-1",
+        tokenHash: "hashed-token",
+        shortCodeHash: "hashed-token",
+        accessVersion: 5,
+      },
+      data: {
+        tokenHash: "previous-token-hash",
+        shortCodeHash: "previous-short-code-hash",
+        tokenRevokedAt: null,
+        accessVersion: 4,
+      },
+    });
+    expect(mocks.prisma.presenceGuestSession.updateMany).toHaveBeenLastCalledWith({
+      where: { guestId: "guest-1", revokedAt: expect.any(Date) },
+      data: { revokedAt: null },
+    });
   });
 
   it("rejects retries for deliveries outside the administrator tenant", async () => {
@@ -172,8 +207,11 @@ describe("presence invitation delivery", () => {
   it("creates one idempotent reminder for each pending guest", async () => {
     const reminderAt = new Date("2026-08-13T11:00:00.000Z");
     mocks.prisma.presenceEvent.findMany.mockResolvedValue([
-      { id: "event-1", reminderAt, guests: [{ id: "guest-1" }] },
+      { id: "event-1", reminderAt },
     ]);
+    mocks.prisma.presenceGuest.findMany
+      .mockResolvedValueOnce([{ id: "guest-1" }])
+      .mockResolvedValueOnce([]);
     mocks.prisma.presenceDelivery.findUnique.mockResolvedValue({
       ...delivery,
       kind: "REMINDER",
@@ -196,5 +234,34 @@ describe("presence invitation delivery", () => {
     expect(mocks.prisma.presenceEvent.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { reminderProcessedAt: expect.any(Date) } }),
     );
+  });
+
+  it("paginates all pending guests before marking the reminder complete", async () => {
+    const reminderAt = new Date("2026-08-13T11:00:00.000Z");
+    mocks.prisma.presenceEvent.findMany.mockResolvedValue([
+      { id: "event-1", reminderAt },
+    ]);
+    mocks.prisma.presenceGuest.findMany
+      .mockReset()
+      .mockResolvedValueOnce([{ id: "guest-1" }, { id: "guest-2" }])
+      .mockResolvedValueOnce([{ id: "guest-3" }]);
+
+    const result = await processDuePresenceReminders({
+      baseUrl: "https://perfect.example.test",
+      now: new Date("2026-08-13T12:00:00.000Z"),
+      guestPageSize: 2,
+    });
+
+    expect(result).toEqual({ events: 1, sent: 3, failed: 0 });
+    expect(mocks.prisma.presenceGuest.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        cursor: { id: "guest-2" },
+        skip: 1,
+        take: 2,
+      }),
+    );
+    expect(mocks.prisma.presenceDelivery.upsert).toHaveBeenCalledTimes(3);
+    expect(mocks.prisma.presenceEvent.updateMany).toHaveBeenCalledTimes(1);
   });
 });

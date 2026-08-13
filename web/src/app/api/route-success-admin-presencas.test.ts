@@ -41,7 +41,25 @@ describe("route-success: admin presencas fase 2", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue(session);
-    mocks.transaction.mockImplementation(async (operations: Promise<unknown>[]) => Promise.all(operations));
+    mocks.transaction.mockImplementation(
+      async (
+        operations:
+          | Promise<unknown>[]
+          | ((transaction: unknown) => Promise<unknown>),
+      ) => {
+        if (typeof operations === "function") {
+          return operations({
+            presenceGift: {
+              aggregate: mocks.giftAggregate,
+              create: mocks.giftCreate,
+            },
+            presenceActivity: { create: mocks.activityCreate },
+            presenceEvent: { update: mocks.eventUpdate },
+          });
+        }
+        return Promise.all(operations);
+      },
+    );
     mocks.activityCreate.mockResolvedValue({ id: "activity-1" });
     mocks.deliveryGroupBy.mockResolvedValue([]);
   });

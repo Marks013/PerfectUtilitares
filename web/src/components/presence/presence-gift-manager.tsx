@@ -4,11 +4,13 @@ import {
   ChevronDown,
   ChevronUp,
   Gift,
+  ListFilter,
   Plus,
   Save,
+  Search,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +33,84 @@ const field = "mt-1 min-h-11 w-full rounded-xl border border-[color:var(--app-bo
 const primary = "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[color:var(--app-action-blue)] px-4 text-sm font-bold text-[color:var(--app-action-text)] hover:bg-[color:var(--app-action-blue-hover)] disabled:opacity-50";
 const secondary = "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 text-sm font-semibold text-[color:var(--app-fg)] hover:border-[color:var(--app-action-blue)] disabled:opacity-50";
 const danger = "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[color:var(--app-danger)] px-3 text-sm font-bold text-white hover:opacity-90 disabled:opacity-50";
+
+const categoryEmojiOptions = [
+  ["🏠", "Casa"],
+  ["🍳", "Cozinha"],
+  ["🛋️", "Sala"],
+  ["🛏️", "Quarto"],
+  ["🛁", "Banheiro"],
+  ["🧺", "Lavanderia"],
+  ["🍽️", "Sala de jantar"],
+  ["🌿", "Área externa"],
+  ["👶", "Bebê"],
+  ["✨", "Outros"],
+] as const;
+
+const giftEmojiOptions = [
+  ["🎁", "Presente"],
+  ["🍽️", "Mesa"],
+  ["🍷", "Taças"],
+  ["☕", "Café"],
+  ["🍳", "Cozinha"],
+  ["🔪", "Utensílios"],
+  ["🛏️", "Cama"],
+  ["🛁", "Banho"],
+  ["🧺", "Lavanderia"],
+  ["🪴", "Decoração"],
+  ["💡", "Iluminação"],
+  ["📺", "Eletrônico"],
+  ["💳", "Cota"],
+] as const;
+
+function EmojiPicker({
+  name,
+  label,
+  defaultValue,
+  options,
+}: {
+  name: string;
+  label: string;
+  defaultValue: string;
+  options: ReadonlyArray<readonly [string, string]>;
+}) {
+  const [value, setValue] = useState(defaultValue);
+
+  return (
+    <fieldset>
+      <legend className="text-xs font-semibold">{label}</legend>
+      <input type="hidden" name={name} value={value} />
+      <details className="relative mt-1">
+        <summary
+          className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 text-sm font-semibold hover:border-[color:var(--app-action-blue)]"
+          aria-label={`${label}: ${value}`}
+        >
+          <span className="text-2xl" aria-hidden="true">{value}</span>
+          <span>Escolher</span>
+        </summary>
+        <div className="mt-2 grid grid-cols-5 gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-2 shadow-[var(--app-panel-shadow)] sm:grid-cols-6">
+          {options.map(([emoji, optionLabel]) => (
+            <button
+              key={`${emoji}-${optionLabel}`}
+              type="button"
+              className={`grid min-h-11 place-items-center rounded-lg border text-xl transition duration-150 ${
+                value === emoji
+                  ? "border-[color:var(--app-action-blue)] bg-[color:var(--app-surface)]"
+                  : "border-transparent hover:border-[color:var(--app-border)]"
+              }`}
+              aria-label={optionLabel}
+              aria-pressed={value === emoji}
+              title={optionLabel}
+              onClick={() => setValue(emoji)}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      </details>
+    </fieldset>
+  );
+}
 
 function reservationPayload(value: string) {
   if (value.startsWith("guest:")) {
@@ -73,6 +153,9 @@ export function PresenceGiftManager({
   onError: (message: string) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
 
   async function run(key: string, action: () => Promise<void>) {
     setBusy(key);
@@ -132,10 +215,52 @@ export function PresenceGiftManager({
     }));
   }
 
-  const categoryGroups = [
-    ...detail.giftCategories.map((category) => ({ ...category, gifts: detail.gifts.filter((gift) => gift.categoryId === category.id) })),
-    { id: "uncategorized", name: "Sem categoria", emoji: "🎁", position: Number.MAX_SAFE_INTEGER, _count: { gifts: 0 }, gifts: detail.gifts.filter((gift) => !gift.categoryId) },
-  ].filter((group) => group.id !== "uncategorized" || group.gifts.length > 0);
+  const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
+  const filteredGifts = useMemo(
+    () => detail.gifts.filter((gift) => {
+      const reserved = Boolean(gift.reservedByGuest || gift.reservedManually);
+      const matchesQuery =
+        !normalizedQuery ||
+        gift.title.toLocaleLowerCase("pt-BR").includes(normalizedQuery) ||
+        gift.description?.toLocaleLowerCase("pt-BR").includes(normalizedQuery);
+      const matchesStatus =
+        statusFilter === "ALL" ||
+        (statusFilter === "AVAILABLE" && gift.active && !reserved) ||
+        (statusFilter === "RESERVED" && reserved) ||
+        (statusFilter === "HIDDEN" && !gift.active);
+      const matchesCategory =
+        categoryFilter === "ALL" ||
+        (categoryFilter === "UNCATEGORIZED" && !gift.categoryId) ||
+        gift.categoryId === categoryFilter;
+      return matchesQuery && matchesStatus && matchesCategory;
+    }),
+    [categoryFilter, detail.gifts, normalizedQuery, statusFilter],
+  );
+  const hasFilters = Boolean(normalizedQuery) || statusFilter !== "ALL" || categoryFilter !== "ALL";
+  const categoryGroups = useMemo(
+    () => [
+      ...detail.giftCategories.map((category) => ({
+        ...category,
+        gifts: filteredGifts.filter((gift) => gift.categoryId === category.id),
+      })),
+      {
+        id: "uncategorized",
+        name: "Sem categoria",
+        emoji: "🎁",
+        position: Number.MAX_SAFE_INTEGER,
+        _count: { gifts: 0 },
+        gifts: filteredGifts.filter((gift) => !gift.categoryId),
+      },
+    ].filter((group) =>
+      hasFilters
+        ? group.gifts.length > 0
+        : group.id !== "uncategorized" || group.gifts.length > 0,
+    ),
+    [detail.giftCategories, filteredGifts, hasFilters],
+  );
+  const reservedCount = detail.gifts.filter(
+    (gift) => gift.reservedByGuest || gift.reservedManually,
+  ).length;
 
   return (
     <section className={panel}>
@@ -157,7 +282,12 @@ export function PresenceGiftManager({
             });
           }}
         >
-          <label className="text-sm font-semibold">Emoji<input name="emoji" maxLength={16} defaultValue="🏠" className={`${field} text-center text-xl`} /></label>
+          <EmojiPicker
+            name="emoji"
+            label="Ícone"
+            defaultValue="🏠"
+            options={categoryEmojiOptions}
+          />
           <label className="text-sm font-semibold">Nome da categoria<input name="name" required maxLength={80} className={field} placeholder="Cozinha, quarto, sala..." /></label>
           <button type="submit" className={`${primary} self-end`} disabled={busy === "category-create"}><Plus className="size-4" /> Criar</button>
         </form>
@@ -173,7 +303,12 @@ export function PresenceGiftManager({
               }}
             >
               <div className="flex gap-1 self-end"><button type="button" className={secondary} aria-label={`Mover ${category.name} para cima`} disabled={index === 0 || busy === "category-order"} onClick={() => void moveCategory(index, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${category.name} para baixo`} disabled={index === detail.giftCategories.length - 1 || busy === "category-order"} onClick={() => void moveCategory(index, 1)}><ChevronDown className="size-4" /></button></div>
-              <label className="text-xs font-semibold">Emoji<input name="emoji" maxLength={16} defaultValue={category.emoji} className={`${field} text-center text-xl`} /></label>
+              <EmojiPicker
+                name="emoji"
+                label="Ícone"
+                defaultValue={category.emoji}
+                options={categoryEmojiOptions}
+              />
               <label className="text-xs font-semibold">Categoria<input name="name" required maxLength={80} defaultValue={category.name} className={field} /></label>
               <div className="flex gap-2 self-end"><button type="submit" className={secondary} disabled={busy === `category-${category.id}`}><Save className="size-4" /> Salvar</button><AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir categoria ${category.name}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir esta categoria?</AlertDialogTitle><AlertDialogDescription>Os {category._count.gifts} presentes serão mantidos e movidos para “Sem categoria”.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void run(`category-${category.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/categorias-presentes/${category.id}`, { method: "DELETE" }))}>Excluir categoria</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
             </form>
@@ -193,13 +328,63 @@ export function PresenceGiftManager({
           });
         }}
       >
-        <label className="text-sm font-semibold">Presente<div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2"><input name="emoji" maxLength={16} defaultValue="🎁" aria-label="Emoji do presente" className={`${field} text-center text-xl`} /><input name="title" required maxLength={160} className={field} placeholder="Nome do presente" /></div></label>
+        <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-2">
+          <EmojiPicker
+            name="emoji"
+            label="Ícone"
+            defaultValue="🎁"
+            options={giftEmojiOptions}
+          />
+          <label className="text-sm font-semibold">Presente<input name="title" required maxLength={160} className={field} placeholder="Nome do presente" /></label>
+        </div>
         <label className="text-sm font-semibold">Categoria<select name="categoryId" className={field}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label>
         <ReservationSelect detail={detail} />
         <label className="text-sm font-semibold">Link opcional<input name="externalUrl" type="url" maxLength={2_000} className={field} /></label>
         <label className="text-sm font-semibold md:col-span-2 xl:col-span-3">Descrição<input name="description" maxLength={500} className={field} /></label>
         <button type="submit" className={`${primary} self-end`} disabled={busy === "gift-create"}><Plus className="size-4" /> Adicionar presente</button>
       </form>
+
+      <div className="mt-6 grid gap-3 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div>
+          <div className="flex flex-wrap gap-2 text-xs font-semibold tabular-nums text-[color:var(--app-muted)]">
+            <span>{detail.gifts.length} presentes</span>
+            <span aria-hidden="true">•</span>
+            <span>{detail.gifts.filter((gift) => gift.active && !gift.reservedByGuest && !gift.reservedManually).length} disponíveis</span>
+            <span aria-hidden="true">•</span>
+            <span>{reservedCount} escolhidos</span>
+          </div>
+          <div className="relative mt-2">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--app-muted)]" aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className={`${field} mt-0 pl-9`}
+              placeholder="Buscar presente"
+              aria-label="Buscar presente"
+            />
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="text-xs font-semibold">
+            Situação
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className={field}>
+              <option value="ALL">Todas</option>
+              <option value="AVAILABLE">Disponíveis</option>
+              <option value="RESERVED">Escolhidos</option>
+              <option value="HIDDEN">Ocultos</option>
+            </select>
+          </label>
+          <label className="text-xs font-semibold">
+            Categoria
+            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className={field}>
+              <option value="ALL">Todas</option>
+              <option value="UNCATEGORIZED">Sem categoria</option>
+              {detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}
+            </select>
+          </label>
+        </div>
+      </div>
 
       <div className="mt-6 space-y-5">
         {categoryGroups.map((group) => (
@@ -208,13 +393,14 @@ export function PresenceGiftManager({
             <div className="space-y-2">
               {group.gifts.map((gift, index) => (
                 <div key={gift.id} className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
-                  <div className="flex flex-wrap items-center gap-3"><div className="flex gap-1"><button type="button" className={secondary} aria-label={`Mover ${gift.title} para cima`} disabled={index === 0 || busy === "gift-order"} onClick={() => void moveGift(gift, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${gift.title} para baixo`} disabled={index === group.gifts.length - 1 || busy === "gift-order"} onClick={() => void moveGift(gift, 1)}><ChevronDown className="size-4" /></button></div><span className="grid size-11 place-items-center rounded-lg bg-[color:var(--app-card)] text-2xl" aria-hidden="true">{gift.emoji}</span><div className="min-w-48 flex-1"><p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p><p className="text-xs text-[color:var(--app-muted)]">{gift.reservedByGuest ? `Escolhido por ${gift.reservedByGuest.name}` : gift.reservedManually ? "Já escolhido" : "Disponível"}</p></div><button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ active: !gift.active }) }))}>{gift.active ? "Ocultar" : "Exibir"}</button>{(gift.reservedByGuest || gift.reservedManually) ? <button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ clearReservation: true }) }))}>Liberar</button> : <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir ${gift.title}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir presente?</AlertDialogTitle><AlertDialogDescription>{gift.title} será removido da lista.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "DELETE" }))}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}</div>
-                  <details className="mt-3 text-sm"><summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar presente</summary><form className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify(giftPayload(form)) })); }}><label className="font-semibold">Presente<div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2"><input name="emoji" maxLength={16} defaultValue={gift.emoji} aria-label={`Emoji de ${gift.title}`} className={`${field} text-center text-xl`} /><input name="title" required defaultValue={gift.title} className={field} /></div></label><label className="font-semibold">Categoria<select name="categoryId" defaultValue={gift.categoryId ?? ""} className={field}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><ReservationSelect detail={detail} gift={gift} /><label className="font-semibold">Link<input name="externalUrl" type="url" defaultValue={gift.externalUrl ?? ""} className={field} /></label><label className="font-semibold md:col-span-2 xl:col-span-4">Descrição<input name="description" defaultValue={gift.description ?? ""} className={field} /></label><button type="submit" className={`${primary} md:col-span-2 md:justify-self-start xl:col-span-4`} disabled={busy === `gift-${gift.id}`}><Save className="size-4" /> Salvar presente</button></form></details>
+                  <div className="flex flex-wrap items-center gap-3"><div className="flex gap-1"><button type="button" className={secondary} aria-label={`Mover ${gift.title} para cima`} disabled={index === 0 || busy === "gift-order"} onClick={() => void moveGift(gift, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${gift.title} para baixo`} disabled={index === group.gifts.length - 1 || busy === "gift-order"} onClick={() => void moveGift(gift, 1)}><ChevronDown className="size-4" /></button></div><span className="grid size-11 place-items-center rounded-lg bg-[color:var(--app-card)] text-2xl" aria-hidden="true">{gift.emoji}</span><div className="min-w-48 flex-1"><p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p><p className="text-xs text-[color:var(--app-muted)]">{gift.reservedByGuest ? `Escolhido por ${gift.reservedByGuest.name}` : gift.reservedManually ? "Já escolhido" : "Disponível"}</p></div><label className="text-xs font-semibold text-[color:var(--app-muted)]"><span className="sr-only">Mover {gift.title} para outra categoria</span><select aria-label={`Mover ${gift.title} para outra categoria`} defaultValue={gift.categoryId ?? ""} className="min-h-10 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] px-2 text-sm text-[color:var(--app-fg)]" disabled={busy === `gift-${gift.id}`} onChange={(event) => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ categoryId: event.target.value || null }) }))}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ active: !gift.active }) }))}>{gift.active ? "Ocultar" : "Exibir"}</button>{(gift.reservedByGuest || gift.reservedManually) ? <button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ clearReservation: true }) }))}>Liberar</button> : <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir ${gift.title}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir presente?</AlertDialogTitle><AlertDialogDescription>{gift.title} será removido da lista.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "DELETE" }))}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}</div>
+                  <details className="mt-3 text-sm"><summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar presente</summary><form className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify(giftPayload(form)) })); }}><div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-2"><EmojiPicker name="emoji" label="Ícone" defaultValue={gift.emoji} options={giftEmojiOptions} /><label className="font-semibold">Presente<input name="title" required defaultValue={gift.title} className={field} /></label></div><label className="font-semibold">Categoria<select name="categoryId" defaultValue={gift.categoryId ?? ""} className={field}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><ReservationSelect detail={detail} gift={gift} /><label className="font-semibold">Link<input name="externalUrl" type="url" defaultValue={gift.externalUrl ?? ""} className={field} /></label><label className="font-semibold md:col-span-2 xl:col-span-4">Descrição<input name="description" defaultValue={gift.description ?? ""} className={field} /></label><button type="submit" className={`${primary} md:col-span-2 md:justify-self-start xl:col-span-4`} disabled={busy === `gift-${gift.id}`}><Save className="size-4" /> Salvar presente</button></form></details>
                 </div>
               ))}
             </div>
           </section>
         ))}
+        {detail.gifts.length > 0 && filteredGifts.length === 0 && <div className="rounded-xl border border-dashed border-[color:var(--app-border)] p-8 text-center"><ListFilter className="mx-auto size-5 text-[color:var(--app-muted)]" aria-hidden="true" /><p className="mt-2 text-sm text-[color:var(--app-muted)]">Nenhum presente corresponde aos filtros.</p></div>}
         {!detail.gifts.length && <p className="rounded-xl border border-dashed border-[color:var(--app-border)] p-8 text-center text-sm text-[color:var(--app-muted)]">Adicione o primeiro presente da lista.</p>}
       </div>
     </section>

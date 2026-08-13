@@ -53,7 +53,8 @@ export async function GET(request: Request, context: RouteContext) {
     return jsonError(404, "INVITATION_NOT_FOUND", "Convite não encontrado.");
   }
 
-  const etag = `W/"presence-${state.revision}"`;
+  const confirmationState = state.event.confirmationOpen ? "open" : "closed";
+  const etag = `W/"presence-${state.revision}-${confirmationState}"`;
   if (request.headers.get("if-none-match") === etag) {
     return new NextResponse(null, { status: 304, headers: privateHeaders(etag) });
   }

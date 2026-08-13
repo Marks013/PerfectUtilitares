@@ -82,47 +82,53 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   try {
-    const guest = await prisma.presenceGuest.update({
-      where: { id: current.id },
-      data: {
-        ...parsed.data,
-        email:
-          parsed.data.email === undefined
-            ? undefined
-            : parsed.data.email
-              ? normalizeEmail(parsed.data.email)
-              : null,
-        accessExpiresAt:
-          parsed.data.accessExpiresAt === undefined
-            ? undefined
-            : parsed.data.accessExpiresAt
-              ? new Date(parsed.data.accessExpiresAt)
-              : null,
-        companionCount: rsvpStatus === "DECLINED" ? 0 : parsed.data.companionCount,
-        respondedAt: parsed.data.rsvpStatus ? new Date() : undefined,
-        activities: {
-          create: {
-            eventId,
-            actorUserId: guard.session.user.id,
-            action: "UPDATE",
-            entityType: "PresenceGuest",
-            entityId: current.id,
+    const [guest] = await prisma.$transaction([
+      prisma.presenceGuest.update({
+        where: { id: current.id },
+        data: {
+          ...parsed.data,
+          email:
+            parsed.data.email === undefined
+              ? undefined
+              : parsed.data.email
+                ? normalizeEmail(parsed.data.email)
+                : null,
+          accessExpiresAt:
+            parsed.data.accessExpiresAt === undefined
+              ? undefined
+              : parsed.data.accessExpiresAt
+                ? new Date(parsed.data.accessExpiresAt)
+                : null,
+          companionCount: rsvpStatus === "DECLINED" ? 0 : parsed.data.companionCount,
+          respondedAt: parsed.data.rsvpStatus ? new Date() : undefined,
+          activities: {
+            create: {
+              eventId,
+              actorUserId: guard.session.user.id,
+              action: "UPDATE",
+              entityType: "PresenceGuest",
+              entityId: current.id,
+            },
           },
         },
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        guestSlug: true,
-        rsvpStatus: true,
-        companionLimit: true,
-        companionCount: true,
-        accessExpiresAt: true,
-        tokenRevokedAt: true,
-        respondedAt: true,
-      },
-    });
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          guestSlug: true,
+          rsvpStatus: true,
+          companionLimit: true,
+          companionCount: true,
+          accessExpiresAt: true,
+          tokenRevokedAt: true,
+          respondedAt: true,
+        },
+      }),
+      prisma.presenceEvent.update({
+        where: { id: eventId },
+        data: { publicRevision: { increment: 1 } },
+      }),
+    ]);
     return NextResponse.json(guest, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -154,7 +160,22 @@ export async function DELETE(request: Request, context: RouteContext) {
     return jsonError(404, "GUEST_NOT_FOUND", "Pessoa convidada não encontrada.");
   }
 
-  await prisma.presenceGuest.delete({ where: { id: guest.id } });
+  await prisma.$transaction([
+    prisma.presenceGuest.delete({ where: { id: guest.id } }),
+    prisma.presenceEvent.update({
+      where: { id: eventId },
+      data: { publicRevision: { increment: 1 } },
+    }),
+    prisma.presenceActivity.create({
+      data: {
+        eventId,
+        actorUserId: guard.session.user.id,
+        action: "DELETE",
+        entityType: "PresenceGuest",
+        entityId: guest.id,
+      },
+    }),
+  ]);
   return NextResponse.json({ deleted: true }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
