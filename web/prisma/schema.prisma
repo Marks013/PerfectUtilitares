@@ -279,6 +279,8 @@ model PresenceGuest {
   rsvpStatus      PresenceRsvpStatus     @default(PENDING)
   companionLimit  Int                    @default(0)
   companionCount  Int                    @default(0)
+  adultCount      Int                    @default(0)
+  childCount      Int                    @default(0)
   tokenHash       String                 @unique
   accessVersion   Int                    @default(1)
   shortCodeHash   String?                @unique

@@ -59,7 +59,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(
       400,
       "VALIDATION_ERROR",
-      "Revise sua confirmação e a quantidade de acompanhantes.",
+      "Informe ao menos um adulto para confirmar a presença.",
       zodPresenceIssues(parsed.error),
     );
   }
@@ -71,13 +71,6 @@ export async function PATCH(request: Request, context: RouteContext) {
         409,
         "CONFIRMATION_CLOSED",
         "O prazo de confirmação terminou. Fale com o responsável pelo evento para ajustar sua resposta.",
-      );
-    }
-    if (result.code === "COMPANION_LIMIT") {
-      return jsonError(
-        400,
-        "COMPANION_LIMIT",
-        "A quantidade de acompanhantes ultrapassa o limite deste convite.",
       );
     }
     return jsonError(404, "INVITATION_NOT_FOUND", "Convite não encontrado.");

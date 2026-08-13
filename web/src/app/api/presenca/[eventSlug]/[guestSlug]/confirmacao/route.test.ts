@@ -44,7 +44,8 @@ describe("presence confirmation route", () => {
       value: {
         revision: 4,
         rsvpStatus: "CONFIRMED",
-        companionCount: 1,
+        adultCount: 2,
+        childCount: 1,
       },
     });
     const response = await PATCH(
@@ -54,7 +55,7 @@ describe("presence confirmation route", () => {
           origin: "http://localhost",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ status: "CONFIRMED", companionCount: 1 }),
+        body: JSON.stringify({ status: "CONFIRMED", adultCount: 2, childCount: 1 }),
       }),
       context,
     );
@@ -63,11 +64,12 @@ describe("presence confirmation route", () => {
     await expect(response.json()).resolves.toEqual({
       revision: 4,
       rsvpStatus: "CONFIRMED",
-      companionCount: 1,
+      adultCount: 2,
+      childCount: 1,
     });
     expect(updateConfirmationMock).toHaveBeenCalledWith(
       expect.objectContaining({ eventId: "event-1", guestId: "guest-1" }),
-      { status: "CONFIRMED", companionCount: 1 },
+      { status: "CONFIRMED", adultCount: 2, childCount: 1 },
     );
   });
 
@@ -84,7 +86,7 @@ describe("presence confirmation route", () => {
           origin: "http://localhost",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ status: "DECLINED", companionCount: 0 }),
+        body: JSON.stringify({ status: "DECLINED", adultCount: 0, childCount: 0 }),
       }),
       context,
     );

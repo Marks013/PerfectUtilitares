@@ -36,31 +36,90 @@ const danger = "inline-flex min-h-10 items-center justify-center gap-2 rounded-x
 
 const categoryEmojiOptions = [
   ["🏠", "Casa"],
+  ["🏡", "Lar"],
+  ["🏢", "Apartamento"],
   ["🍳", "Cozinha"],
+  ["🧑‍🍳", "Cozinha gourmet"],
   ["🛋️", "Sala"],
+  ["📺", "Sala de TV"],
+  ["🍽️", "Sala de jantar"],
   ["🛏️", "Quarto"],
+  ["👗", "Closet"],
   ["🛁", "Banheiro"],
   ["🧺", "Lavanderia"],
-  ["🍽️", "Sala de jantar"],
-  ["🌿", "Área externa"],
+  ["🧹", "Limpeza"],
+  ["💻", "Escritório"],
+  ["📚", "Biblioteca"],
+  ["🧸", "Quarto infantil"],
   ["👶", "Bebê"],
+  ["🎮", "Lazer"],
+  ["🎉", "Festa"],
+  ["🧰", "Ferramentas"],
+  ["🚗", "Garagem"],
+  ["🏊", "Piscina"],
+  ["🍖", "Churrasqueira"],
+  ["🌻", "Jardim"],
+  ["🌿", "Área externa"],
+  ["🐾", "Animais"],
+  ["✈️", "Viagem"],
+  ["💝", "Cotas especiais"],
   ["✨", "Outros"],
 ] as const;
 
 const giftEmojiOptions = [
   ["🎁", "Presente"],
+  ["🎀", "Lembrança"],
+  ["💝", "Presente especial"],
   ["🍽️", "Mesa"],
+  ["🍴", "Talheres"],
+  ["🥄", "Utensílios"],
+  ["🥣", "Tigelas"],
+  ["🍲", "Panelas"],
+  ["🥘", "Frigideira"],
+  ["🫖", "Bule"],
   ["🍷", "Taças"],
+  ["🥂", "Brinde"],
+  ["🥃", "Copos"],
   ["☕", "Café"],
   ["🍳", "Cozinha"],
   ["🔪", "Utensílios"],
+  ["🧊", "Geladeira"],
+  ["🔥", "Fogão"],
+  ["🧁", "Confeitaria"],
   ["🛏️", "Cama"],
+  ["🛌", "Roupa de cama"],
+  ["🪞", "Espelho"],
+  ["👗", "Vestuário"],
   ["🛁", "Banho"],
+  ["🧴", "Cuidados"],
   ["🧺", "Lavanderia"],
+  ["🧹", "Limpeza"],
+  ["🪣", "Organização"],
   ["🪴", "Decoração"],
+  ["🖼️", "Quadro"],
+  ["🕯️", "Vela"],
+  ["🕰️", "Relógio"],
   ["💡", "Iluminação"],
+  ["🛋️", "Móvel"],
+  ["🪑", "Cadeira"],
   ["📺", "Eletrônico"],
+  ["🔊", "Áudio"],
+  ["📱", "Tecnologia"],
+  ["💻", "Informática"],
+  ["🎮", "Jogos"],
+  ["🧸", "Infantil"],
+  ["👶", "Bebê"],
+  ["🐾", "Pet"],
+  ["🧰", "Ferramenta"],
+  ["🌻", "Jardim"],
+  ["🏕️", "Área externa"],
+  ["🚗", "Automóvel"],
+  ["✈️", "Viagem"],
+  ["🏨", "Lua de mel"],
+  ["🎟️", "Experiência"],
+  ["💵", "Contribuição"],
   ["💳", "Cota"],
+  ["✨", "Outro"],
 ] as const;
 
 function EmojiPicker({
@@ -77,18 +136,18 @@ function EmojiPicker({
   const [value, setValue] = useState(defaultValue);
 
   return (
-    <fieldset>
+    <fieldset className="min-w-0">
       <legend className="text-xs font-semibold">{label}</legend>
       <input type="hidden" name={name} value={value} />
-      <details className="relative mt-1">
+      <details className="relative mt-1 min-w-0">
         <summary
-          className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 text-sm font-semibold hover:border-[color:var(--app-action-blue)]"
+          className="flex min-h-11 w-full cursor-pointer list-none items-center gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 text-sm font-semibold hover:border-[color:var(--app-action-blue)]"
           aria-label={`${label}: ${value}`}
         >
           <span className="text-2xl" aria-hidden="true">{value}</span>
           <span>Escolher</span>
         </summary>
-        <div className="mt-2 grid grid-cols-5 gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-2 shadow-[var(--app-panel-shadow)] sm:grid-cols-6">
+        <div className="absolute left-0 top-full z-20 mt-2 grid w-80 max-w-[calc(100vw-3rem)] grid-cols-5 gap-2 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-2 shadow-[var(--app-panel-shadow)] sm:grid-cols-6">
           {options.map(([emoji, optionLabel]) => (
             <button
               key={`${emoji}-${optionLabel}`}
@@ -101,7 +160,10 @@ function EmojiPicker({
               aria-label={optionLabel}
               aria-pressed={value === emoji}
               title={optionLabel}
-              onClick={() => setValue(emoji)}
+              onClick={(event) => {
+                setValue(emoji);
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
             >
               {emoji}
             </button>
@@ -272,7 +334,7 @@ export function PresenceGiftManager({
       <details className="mt-5 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
         <summary className="cursor-pointer font-bold">Categorias</summary>
         <form
-          className="mt-3 grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto]"
+          className="mt-3 grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)_auto]"
           onSubmit={(event) => {
             event.preventDefault();
             const form = event.currentTarget;
@@ -295,7 +357,7 @@ export function PresenceGiftManager({
           {detail.giftCategories.map((category, index) => (
             <form
               key={category.id}
-              className="grid gap-2 py-3 sm:grid-cols-[auto_5rem_minmax(0,1fr)_auto] sm:items-end"
+              className="grid gap-2 py-3 sm:grid-cols-[auto_9rem_minmax(0,1fr)_auto] sm:items-end"
               onSubmit={(event) => {
                 event.preventDefault();
                 const form = event.currentTarget;
@@ -318,7 +380,7 @@ export function PresenceGiftManager({
       </details>
 
       <form
-        className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4"
+        className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5"
         onSubmit={(event) => {
           event.preventDefault();
           const form = event.currentTarget;
@@ -328,19 +390,17 @@ export function PresenceGiftManager({
           });
         }}
       >
-        <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-2">
-          <EmojiPicker
-            name="emoji"
-            label="Ícone"
-            defaultValue="🎁"
-            options={giftEmojiOptions}
-          />
-          <label className="text-sm font-semibold">Presente<input name="title" required maxLength={160} className={field} placeholder="Nome do presente" /></label>
-        </div>
+        <EmojiPicker
+          name="emoji"
+          label="Ícone"
+          defaultValue="🎁"
+          options={giftEmojiOptions}
+        />
+        <label className="text-sm font-semibold">Presente<input name="title" required maxLength={160} className={field} placeholder="Nome do presente" /></label>
         <label className="text-sm font-semibold">Categoria<select name="categoryId" className={field}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label>
         <ReservationSelect detail={detail} />
         <label className="text-sm font-semibold">Link opcional<input name="externalUrl" type="url" maxLength={2_000} className={field} /></label>
-        <label className="text-sm font-semibold md:col-span-2 xl:col-span-3">Descrição<input name="description" maxLength={500} className={field} /></label>
+        <label className="text-sm font-semibold md:col-span-2 xl:col-span-4">Descrição<input name="description" maxLength={500} className={field} /></label>
         <button type="submit" className={`${primary} self-end`} disabled={busy === "gift-create"}><Plus className="size-4" /> Adicionar presente</button>
       </form>
 
@@ -394,7 +454,7 @@ export function PresenceGiftManager({
               {group.gifts.map((gift, index) => (
                 <div key={gift.id} className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
                   <div className="flex flex-wrap items-center gap-3"><div className="flex gap-1"><button type="button" className={secondary} aria-label={`Mover ${gift.title} para cima`} disabled={index === 0 || busy === "gift-order"} onClick={() => void moveGift(gift, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${gift.title} para baixo`} disabled={index === group.gifts.length - 1 || busy === "gift-order"} onClick={() => void moveGift(gift, 1)}><ChevronDown className="size-4" /></button></div><span className="grid size-11 place-items-center rounded-lg bg-[color:var(--app-card)] text-2xl" aria-hidden="true">{gift.emoji}</span><div className="min-w-48 flex-1"><p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p><p className="text-xs text-[color:var(--app-muted)]">{gift.reservedByGuest ? `Escolhido por ${gift.reservedByGuest.name}` : gift.reservedManually ? "Já escolhido" : "Disponível"}</p></div><label className="text-xs font-semibold text-[color:var(--app-muted)]"><span className="sr-only">Mover {gift.title} para outra categoria</span><select aria-label={`Mover ${gift.title} para outra categoria`} defaultValue={gift.categoryId ?? ""} className="min-h-10 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] px-2 text-sm text-[color:var(--app-fg)]" disabled={busy === `gift-${gift.id}`} onChange={(event) => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ categoryId: event.target.value || null }) }))}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ active: !gift.active }) }))}>{gift.active ? "Ocultar" : "Exibir"}</button>{(gift.reservedByGuest || gift.reservedManually) ? <button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ clearReservation: true }) }))}>Liberar</button> : <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir ${gift.title}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir presente?</AlertDialogTitle><AlertDialogDescription>{gift.title} será removido da lista.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "DELETE" }))}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}</div>
-                  <details className="mt-3 text-sm"><summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar presente</summary><form className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify(giftPayload(form)) })); }}><div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-2"><EmojiPicker name="emoji" label="Ícone" defaultValue={gift.emoji} options={giftEmojiOptions} /><label className="font-semibold">Presente<input name="title" required defaultValue={gift.title} className={field} /></label></div><label className="font-semibold">Categoria<select name="categoryId" defaultValue={gift.categoryId ?? ""} className={field}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><ReservationSelect detail={detail} gift={gift} /><label className="font-semibold">Link<input name="externalUrl" type="url" defaultValue={gift.externalUrl ?? ""} className={field} /></label><label className="font-semibold md:col-span-2 xl:col-span-4">Descrição<input name="description" defaultValue={gift.description ?? ""} className={field} /></label><button type="submit" className={`${primary} md:col-span-2 md:justify-self-start xl:col-span-4`} disabled={busy === `gift-${gift.id}`}><Save className="size-4" /> Salvar presente</button></form></details>
+                  <details className="mt-3 text-sm"><summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar presente</summary><form className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify(giftPayload(form)) })); }}><EmojiPicker name="emoji" label="Ícone" defaultValue={gift.emoji} options={giftEmojiOptions} /><label className="font-semibold">Presente<input name="title" required defaultValue={gift.title} className={field} /></label><label className="font-semibold">Categoria<select name="categoryId" defaultValue={gift.categoryId ?? ""} className={field}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><ReservationSelect detail={detail} gift={gift} /><label className="font-semibold">Link<input name="externalUrl" type="url" defaultValue={gift.externalUrl ?? ""} className={field} /></label><label className="font-semibold md:col-span-2 xl:col-span-5">Descrição<input name="description" defaultValue={gift.description ?? ""} className={field} /></label><button type="submit" className={`${primary} md:col-span-2 md:justify-self-start xl:col-span-5`} disabled={busy === `gift-${gift.id}`}><Save className="size-4" /> Salvar presente</button></form></details>
                 </div>
               ))}
             </div>

@@ -3,7 +3,6 @@
 import {
   Archive,
   CalendarDays,
-  Check,
   Clipboard,
   Link2,
   LoaderCircle,
@@ -106,6 +105,20 @@ export function PresenceAdmin() {
     }
     setLoading(true);
     loadDetail(selectedId).catch((cause: Error) => setError(cause.message)).finally(() => setLoading(false));
+  }, [loadDetail, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const updateWhenVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadDetail(selectedId).catch(() => undefined);
+    };
+    const timer = window.setInterval(updateWhenVisible, 5_000);
+    document.addEventListener("visibilitychange", updateWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", updateWhenVisible);
+    };
   }, [loadDetail, selectedId]);
 
   async function refresh() {
@@ -240,7 +253,6 @@ export function PresenceAdmin() {
           name,
           email: String(data.get("email") ?? ""),
           guestSlug: slugifyPresence(String(data.get("guestSlug") || name)),
-          companionLimit: Number(data.get("companionLimit") ?? 0),
         }),
       });
       form.reset();
@@ -255,7 +267,7 @@ export function PresenceAdmin() {
     }
   }
 
-  async function guestAction(guestId: string, action: "confirm" | "decline" | "reset" | "link" | "delete") {
+  async function guestAction(guestId: string, action: "decline" | "reset" | "link" | "delete") {
     if (!detail) return;
     setBusy(`guest-${guestId}`);
     setLatestLink(null);
@@ -268,8 +280,8 @@ export function PresenceAdmin() {
       } else if (action === "delete") {
         await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, { method: "DELETE" });
       } else {
-        const status = action === "confirm" ? "CONFIRMED" : action === "decline" ? "DECLINED" : "PENDING";
-        await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, { method: "PATCH", body: JSON.stringify({ rsvpStatus: status, companionCount: 0 }) });
+        const status = action === "decline" ? "DECLINED" : "PENDING";
+        await presenceApi(`/api/admin/presencas/${detail.id}/convidados/${guestId}`, { method: "PATCH", body: JSON.stringify({ rsvpStatus: status }) });
       }
       await refresh();
     } catch (cause) {
@@ -290,7 +302,6 @@ export function PresenceAdmin() {
           name: String(data.get("name") ?? ""),
           email: String(data.get("email") ?? "") || null,
           guestSlug: slugifyPresence(String(data.get("guestSlug") ?? "")),
-          companionLimit: Number(data.get("companionLimit") ?? 0),
         }),
       });
       await refresh();
@@ -395,11 +406,10 @@ export function PresenceAdmin() {
 
               <section className={`${panel} p-4 sm:p-5`}>
                 <div className="mb-4 flex items-center gap-2"><UserRoundPlus className="size-5 text-[color:var(--app-action-green)]" /><h2 className="text-lg font-bold">Convidar pessoa</h2></div>
-                <form onSubmit={(event) => { event.preventDefault(); void createGuest(event.currentTarget); }} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <form onSubmit={(event) => { event.preventDefault(); void createGuest(event.currentTarget); }} className="grid gap-3 md:grid-cols-3">
                   <label className="text-sm font-semibold">Nome<input name="name" required maxLength={120} className={field} /></label>
                   <label className="text-sm font-semibold">E-mail opcional<input name="email" type="email" maxLength={254} className={field} /></label>
                   <label className="text-sm font-semibold">Identificação do link<input name="guestSlug" maxLength={80} className={field} placeholder="gerado pelo nome" /></label>
-                  <label className="text-sm font-semibold">Acompanhantes<input name="companionLimit" type="number" min={0} max={20} defaultValue={0} className={field} /></label>
                   <button type="submit" className={primary} disabled={busy === "guest-create"}><Plus className="size-4" /> Gerar convite</button>
                 </form>
                 {latestLink ? <div className="mt-4 rounded-xl border border-[color:var(--app-action-green)] bg-[color:var(--app-surface)] p-3"><p className="text-sm font-bold">Link pronto. Ele só será exibido agora.</p><div className="mt-2 flex gap-2"><input readOnly value={latestLink} className={`${field} mt-0 min-w-0`} /><button type="button" className={secondary} aria-label="Copiar link" title="Copiar link" onClick={() => void navigator.clipboard.writeText(latestLink)}><Clipboard className="size-4" /></button></div></div> : null}
@@ -415,9 +425,8 @@ export function PresenceAdmin() {
                   {filteredGuests.map((guest) => (
                     <div key={guest.id} className="p-4">
                       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                        <div className="min-w-0"><p className="truncate font-bold">{guest.name}</p><p className="truncate text-xs text-[color:var(--app-muted)]">{guest.email || `/${guest.guestSlug}`} · {rsvpLabel[guest.rsvpStatus]} · {guest.companionCount}/{guest.companionLimit} acompanhantes</p>{guest.deliveries[0] ? <p className="mt-1 flex items-center gap-1 text-xs text-[color:var(--app-muted)]"><Mail className="size-3.5" /> {deliveryLabel[guest.deliveries[0].status]}{guest.deliveries[0].sentAt ? ` em ${formatDate(guest.deliveries[0].sentAt)}` : ""}{guest.deliveries[0].attemptCount > 1 ? ` · ${guest.deliveries[0].attemptCount} tentativas` : ""}</p> : null}</div>
+                        <div className="min-w-0"><p className="truncate font-bold">{guest.name}</p><p className="truncate text-xs text-[color:var(--app-muted)]">{guest.email || `/${guest.guestSlug}`} · {rsvpLabel[guest.rsvpStatus]}{guest.rsvpStatus === "CONFIRMED" ? ` · ${guest.adultCount} adulto(s) · ${guest.childCount} criança(s)` : ""}</p>{guest.deliveries[0] ? <p className="mt-1 flex items-center gap-1 text-xs text-[color:var(--app-muted)]"><Mail className="size-3.5" /> {deliveryLabel[guest.deliveries[0].status]}{guest.deliveries[0].sentAt ? ` em ${formatDate(guest.deliveries[0].sentAt)}` : ""}{guest.deliveries[0].attemptCount > 1 ? ` · ${guest.deliveries[0].attemptCount} tentativas` : ""}</p> : null}</div>
                         <div className="flex flex-wrap gap-2">
-                          <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "confirm")} disabled={busy === `guest-${guest.id}`}><Check className="size-4" /> Confirmar</button>
                           <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "reset")} disabled={busy === `guest-${guest.id}`}>Aguardar</button>
                           <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "decline")} disabled={busy === `guest-${guest.id}`}>Não participará</button>
                           <button type="button" className={secondary} title="Gerar novo link" onClick={() => void guestAction(guest.id, "link")} disabled={busy === `guest-${guest.id}`}><Link2 className="size-4" /> Renovar</button>
@@ -427,12 +436,11 @@ export function PresenceAdmin() {
                       </div>
                       <details className="mt-3 text-sm">
                         <summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar convite</summary>
-                        <form onSubmit={(event) => { event.preventDefault(); void saveGuest(guest.id, event.currentTarget); }} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <form onSubmit={(event) => { event.preventDefault(); void saveGuest(guest.id, event.currentTarget); }} className="mt-3 grid gap-3 sm:grid-cols-3">
                           <label className="font-semibold">Nome<input name="name" required defaultValue={guest.name} className={field} /></label>
                           <label className="font-semibold">E-mail<input name="email" type="email" defaultValue={guest.email ?? ""} className={field} /></label>
                           <label className="font-semibold">Identificação<input name="guestSlug" required defaultValue={guest.guestSlug} className={field} /></label>
-                          <label className="font-semibold">Acompanhantes<input name="companionLimit" type="number" min={guest.companionCount} max={20} defaultValue={guest.companionLimit} className={field} /></label>
-                          <button type="submit" className={`${primary} sm:col-span-2 lg:col-span-4 lg:justify-self-start`} disabled={busy === `guest-${guest.id}`}><Save className="size-4" /> Salvar convite</button>
+                          <button type="submit" className={`${primary} sm:col-span-3 sm:justify-self-start`} disabled={busy === `guest-${guest.id}`}><Save className="size-4" /> Salvar convite</button>
                         </form>
                       </details>
                     </div>

@@ -4,25 +4,29 @@ export type PresenceMutationResult<T> =
   | { ok: true; value: T }
   | {
       ok: false;
-      code: "CLOSED" | "CONFLICT" | "NOT_FOUND" | "COMPANION_LIMIT";
+      code: "CLOSED" | "CONFLICT" | "NOT_FOUND";
     };
 
 export async function updatePresenceConfirmation(
   context: { eventId: string; guestId: string },
-  input: { status: "CONFIRMED" | "DECLINED"; companionCount: number },
+  input: {
+    status: "CONFIRMED" | "DECLINED";
+    adultCount: number;
+    childCount: number;
+  },
   now = new Date(),
 ): Promise<
   PresenceMutationResult<{
     revision: number;
     rsvpStatus: "CONFIRMED" | "DECLINED";
-    companionCount: number;
+    adultCount: number;
+    childCount: number;
   }>
 > {
   return prisma.$transaction(async (tx) => {
     const guest = await tx.presenceGuest.findFirst({
       where: { id: context.guestId, eventId: context.eventId },
       select: {
-        companionLimit: true,
         event: {
           select: { status: true, confirmationDeadline: true },
         },
@@ -35,17 +39,17 @@ export async function updatePresenceConfirmation(
     ) {
       return { ok: false, code: "CLOSED" };
     }
-    if (input.companionCount > guest.companionLimit) {
-      return { ok: false, code: "COMPANION_LIMIT" };
-    }
-
-    const companionCount =
-      input.status === "CONFIRMED" ? input.companionCount : 0;
+    const adultCount = input.status === "CONFIRMED" ? input.adultCount : 0;
+    const childCount = input.status === "CONFIRMED" ? input.childCount : 0;
+    const companionCount = Math.max(0, adultCount + childCount - 1);
     await tx.presenceGuest.update({
       where: { id: context.guestId },
       data: {
         rsvpStatus: input.status,
+        adultCount,
+        childCount,
         companionCount,
+        companionLimit: companionCount,
         respondedAt: now,
       },
     });
@@ -63,7 +67,8 @@ export async function updatePresenceConfirmation(
         entityType: "PresenceGuest",
         entityId: context.guestId,
         metadata: {
-          companionCount,
+          adultCount,
+          childCount,
         },
       },
     });
@@ -72,7 +77,8 @@ export async function updatePresenceConfirmation(
       value: {
         revision: event.publicRevision,
         rsvpStatus: input.status,
-        companionCount,
+        adultCount,
+        childCount,
       },
     };
   });

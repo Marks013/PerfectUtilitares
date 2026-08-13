@@ -96,7 +96,6 @@ export async function POST(request: Request, context: RouteContext) {
         name: parsed.data.name,
         email: parsed.data.email ? normalizeEmail(parsed.data.email) : null,
         guestSlug: parsed.data.guestSlug,
-        companionLimit: parsed.data.companionLimit,
         accessExpiresAt,
         tokenHash: hashPresenceSecret(invitationToken),
         shortCodeHash: hashPresenceSecret(shortCode),
@@ -114,7 +113,6 @@ export async function POST(request: Request, context: RouteContext) {
         name: true,
         email: true,
         guestSlug: true,
-        companionLimit: true,
         accessExpiresAt: true,
       },
     });

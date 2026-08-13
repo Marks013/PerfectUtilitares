@@ -44,8 +44,8 @@ describe("admin presence guest route", () => {
     mocks.guestFind.mockResolvedValue({
       id: "guest-1",
       eventId: "event-1",
-      companionLimit: 2,
-      companionCount: 0,
+      adultCount: 0,
+      childCount: 0,
       rsvpStatus: "PENDING",
     });
     mocks.guestUpdate.mockReturnValue({ operation: "guest-update" });
@@ -57,8 +57,8 @@ describe("admin presence guest route", () => {
         email: "ana@example.com",
         guestSlug: "ana",
         rsvpStatus: "CONFIRMED",
-        companionLimit: 2,
-        companionCount: 1,
+        adultCount: 0,
+        childCount: 0,
       },
       { id: "event-1" },
     ]);
@@ -69,7 +69,7 @@ describe("admin presence guest route", () => {
       new Request("http://localhost/api/admin/presencas/event-1/convidados/guest-1", {
         method: "PATCH",
         headers: { Origin: "http://localhost", "Content-Type": "application/json" },
-        body: JSON.stringify({ rsvpStatus: "CONFIRMED", companionCount: 1 }),
+        body: JSON.stringify({ name: "Ana Maria" }),
       }),
       context,
     );
@@ -85,12 +85,12 @@ describe("admin presence guest route", () => {
     });
   });
 
-  it("rejects declined invitations with companions", async () => {
+  it("does not let the host confirm without quantities supplied by the guest", async () => {
     const response = await PATCH(
       new Request("http://localhost/api/admin/presencas/event-1/convidados/guest-1", {
         method: "PATCH",
         headers: { Origin: "http://localhost", "Content-Type": "application/json" },
-        body: JSON.stringify({ rsvpStatus: "DECLINED", companionCount: 1 }),
+        body: JSON.stringify({ rsvpStatus: "CONFIRMED" }),
       }),
       context,
     );

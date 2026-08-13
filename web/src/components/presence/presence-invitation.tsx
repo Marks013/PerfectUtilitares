@@ -44,8 +44,8 @@ type PresenceState = {
   guest: {
     name: string;
     rsvpStatus: "PENDING" | "CONFIRMED" | "DECLINED";
-    companionLimit: number;
-    companionCount: number;
+    adultCount: number;
+    childCount: number;
   };
   gifts: Array<{
     id: string;
@@ -69,7 +69,8 @@ type RequestError = { error?: { message?: string } };
 type ConfirmationResult = {
   revision: number;
   rsvpStatus: "CONFIRMED" | "DECLINED";
-  companionCount: number;
+  adultCount: number;
+  childCount: number;
 };
 
 function formatDate(value: string, timeZone: string) {
@@ -100,9 +101,11 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [companionCount, setCompanionCount] = useState(0);
+  const [adultCount, setAdultCount] = useState(0);
+  const [childCount, setChildCount] = useState(0);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const etagRef = useRef<string | null>(null);
+  const attendanceDirtyRef = useRef(false);
 
   const stateUrl = `/api/presenca/${eventSlug}/${guestSlug}/estado`;
 
@@ -124,7 +127,10 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
       const nextState = (await response.json()) as PresenceState;
       etagRef.current = response.headers.get("etag");
       setState(nextState);
-      setCompanionCount(nextState.guest.companionCount);
+      if (!attendanceDirtyRef.current) {
+        setAdultCount(nextState.guest.adultCount);
+        setChildCount(nextState.guest.childCount);
+      }
     },
     [stateUrl],
   );
@@ -180,6 +186,11 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
   }, [loadState, state]);
 
   async function confirm(status: "CONFIRMED" | "DECLINED") {
+    if (status === "CONFIRMED" && adultCount === 0) {
+      setNotice(null);
+      setError("Informe ao menos um adulto antes de confirmar. Crianças são opcionais.");
+      return;
+    }
     setPendingAction("rsvp");
     setError(null);
     setNotice(null);
@@ -191,7 +202,8 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             status,
-            companionCount: status === "CONFIRMED" ? companionCount : 0,
+            adultCount: status === "CONFIRMED" ? adultCount : 0,
+            childCount: status === "CONFIRMED" ? childCount : 0,
           }),
         },
       );
@@ -210,12 +222,15 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
                 guest: {
                   ...current.guest,
                   rsvpStatus: result.rsvpStatus,
-                  companionCount: result.companionCount,
+                  adultCount: result.adultCount,
+                  childCount: result.childCount,
                 },
               }
             : current,
         );
-        setCompanionCount(result.companionCount);
+        attendanceDirtyRef.current = false;
+        setAdultCount(result.adultCount);
+        setChildCount(result.childCount);
         void loadState(true);
         setNotice(
           status === "CONFIRMED"
@@ -281,6 +296,10 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
 
   if (!state) return null;
   const { event, guest, gifts } = state;
+  const attendanceUnchanged =
+    adultCount === guest.adultCount && childCount === guest.childCount;
+  const confirmationSaved =
+    guest.rsvpStatus === "CONFIRMED" && attendanceUnchanged;
   const cover = presenceCover(event.theme.cover);
   const giftGroups = Array.from(
     gifts.reduce((groups, gift) => {
@@ -339,20 +358,32 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
           </div>
         </div>
 
-        {guest.companionLimit > 0 && (
-          <div className={styles.companions}>
-            <span>Acompanhantes</span>
-            <div className={styles.stepper}>
-              <button type="button" aria-label="Remover acompanhante" disabled={companionCount === 0 || pendingAction === "rsvp"} onClick={() => setCompanionCount((value) => Math.max(0, value - 1))}><Minus aria-hidden="true" /></button>
-              <output aria-live="polite">{companionCount}</output>
-              <button type="button" aria-label="Adicionar acompanhante" disabled={companionCount === guest.companionLimit || pendingAction === "rsvp"} onClick={() => setCompanionCount((value) => Math.min(guest.companionLimit, value + 1))}><Plus aria-hidden="true" /></button>
+        <fieldset className={styles.attendanceSelector} disabled={pendingAction === "rsvp" || !event.confirmationOpen}>
+          <legend>Quantas pessoas irão?</legend>
+          <p>Informe ao menos um adulto. A quantidade de crianças é opcional.</p>
+          <div className={styles.attendanceGrid}>
+            <div className={styles.attendanceRow}>
+              <span><strong>Adultos</strong><small>Inclua você na contagem</small></span>
+              <div className={styles.stepper}>
+                <button type="button" aria-label="Remover adulto" disabled={adultCount === 0} onClick={() => { attendanceDirtyRef.current = true; setAdultCount((value) => Math.max(0, value - 1)); }}><Minus aria-hidden="true" /></button>
+                <output aria-live="polite" aria-label={`${adultCount} adultos`}>{adultCount}</output>
+                <button type="button" aria-label="Adicionar adulto" onClick={() => { attendanceDirtyRef.current = true; setAdultCount((value) => Math.min(999, value + 1)); }}><Plus aria-hidden="true" /></button>
+              </div>
+            </div>
+            <div className={styles.attendanceRow}>
+              <span><strong>Crianças</strong><small>Informe somente quem comparecerá</small></span>
+              <div className={styles.stepper}>
+                <button type="button" aria-label="Remover criança" disabled={childCount === 0} onClick={() => { attendanceDirtyRef.current = true; setChildCount((value) => Math.max(0, value - 1)); }}><Minus aria-hidden="true" /></button>
+                <output aria-live="polite" aria-label={`${childCount} crianças`}>{childCount}</output>
+                <button type="button" aria-label="Adicionar criança" onClick={() => { attendanceDirtyRef.current = true; setChildCount((value) => Math.min(999, value + 1)); }}><Plus aria-hidden="true" /></button>
+              </div>
             </div>
           </div>
-        )}
+        </fieldset>
 
         <p className={styles.rsvpStatus} aria-live="polite">
           {guest.rsvpStatus === "CONFIRMED" && (
-            <><Check aria-hidden="true" /> Sua presença está confirmada.</>
+            <><Check aria-hidden="true" /> Presença confirmada para {guest.adultCount + guest.childCount} pessoa(s): {guest.adultCount} adulto(s) e {guest.childCount} criança(s).</>
           )}
           {guest.rsvpStatus === "DECLINED" && (
             <><X aria-hidden="true" /> Sua presença está desconfirmada.</>
@@ -361,9 +392,9 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
         </p>
 
         <div className={styles.rsvpActions}>
-          <button type="button" aria-pressed={guest.rsvpStatus === "CONFIRMED"} className={`${styles.primaryButton} ${guest.rsvpStatus === "CONFIRMED" ? styles.confirmedButton : ""}`} disabled={!event.confirmationOpen || pendingAction === "rsvp"} onClick={() => void confirm("CONFIRMED")}>
+          <button type="button" aria-pressed={guest.rsvpStatus === "CONFIRMED"} className={`${styles.primaryButton} ${confirmationSaved ? styles.confirmedButton : ""}`} disabled={!event.confirmationOpen || pendingAction === "rsvp" || confirmationSaved} onClick={() => void confirm("CONFIRMED")}>
             {pendingAction === "rsvp" ? <LoaderCircle className={styles.spinner} aria-hidden="true" /> : <Check aria-hidden="true" />}
-            {guest.rsvpStatus === "CONFIRMED" ? "Presença confirmada" : "Confirmar presença"}
+            {confirmationSaved ? "Presença confirmada" : guest.rsvpStatus === "CONFIRMED" ? "Atualizar confirmação" : "Confirmar presença"}
           </button>
           <button type="button" aria-pressed={guest.rsvpStatus === "DECLINED"} className={`${styles.secondaryButton} ${guest.rsvpStatus === "DECLINED" ? styles.declinedButton : ""}`} disabled={!event.confirmationOpen || pendingAction === "rsvp"} onClick={() => void confirm("DECLINED")}>
             <X aria-hidden="true" /> {guest.rsvpStatus === "DECLINED" ? "Presença desconfirmada" : "Desconfirmar presença"}

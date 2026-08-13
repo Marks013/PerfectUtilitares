@@ -73,8 +73,8 @@ export async function GET(_request: Request, context: RouteContext) {
           email: true,
           guestSlug: true,
           rsvpStatus: true,
-          companionLimit: true,
-          companionCount: true,
+          adultCount: true,
+          childCount: true,
           accessExpiresAt: true,
           tokenRevokedAt: true,
           respondedAt: true,
@@ -149,11 +149,20 @@ export async function GET(_request: Request, context: RouteContext) {
     (totals, guest) => {
       totals[guest.rsvpStatus] += 1;
       if (guest.rsvpStatus === "CONFIRMED") {
-        totals.expectedAttendance += 1 + guest.companionCount;
+        totals.adultsExpected += guest.adultCount;
+        totals.childrenExpected += guest.childCount;
+        totals.expectedAttendance += guest.adultCount + guest.childCount;
       }
       return totals;
     },
-    { PENDING: 0, CONFIRMED: 0, DECLINED: 0, expectedAttendance: 0 },
+    {
+      PENDING: 0,
+      CONFIRMED: 0,
+      DECLINED: 0,
+      expectedAttendance: 0,
+      adultsExpected: 0,
+      childrenExpected: 0,
+    },
   );
   const activeGifts = event.gifts.filter((gift) => gift.active);
   const analytics = {

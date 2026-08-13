@@ -20,15 +20,21 @@ export function PresenceAdminOverview({
     <div className="mt-5 border-y border-[color:var(--app-border)] py-4">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className={metricClass}>
-          <p className="text-xs text-[color:var(--app-muted)]">Confirmados</p>
+          <p className="text-xs text-[color:var(--app-muted)]">Convites aceitos</p>
           <p className="mt-1 text-2xl font-black tabular-nums">
-            {analytics.rsvp.CONFIRMED}
+            {analytics.rsvp.CONFIRMED}/{detail.guests.length}
+          </p>
+          <p className="mt-1 text-xs text-[color:var(--app-muted)]">
+            {analytics.rsvp.PENDING} aguardando · {analytics.rsvp.DECLINED} recusado(s)
           </p>
         </div>
         <div className={metricClass}>
-          <p className="text-xs text-[color:var(--app-muted)]">Pessoas esperadas</p>
+          <p className="text-xs text-[color:var(--app-muted)]">Pessoas confirmadas</p>
           <p className="mt-1 text-2xl font-black tabular-nums">
             {analytics.rsvp.expectedAttendance}
+          </p>
+          <p className="mt-1 text-xs text-[color:var(--app-muted)]">
+            {analytics.rsvp.adultsExpected} adulto(s) · {analytics.rsvp.childrenExpected} criança(s)
           </p>
         </div>
         <div className={metricClass}>
@@ -67,8 +73,8 @@ export function PresenceAdminOverview({
             />
           </div>
           <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[color:var(--app-muted)]">
-            <span className="inline-flex items-center gap-1"><MailCheck className="size-3.5" /> {analytics.rsvp.PENDING} aguardando</span>
-            <span className="inline-flex items-center gap-1"><Gift className="size-3.5" /> {analytics.rsvp.DECLINED} não participarão</span>
+            <span className="inline-flex items-center gap-1"><MailCheck className="size-3.5" /> {analytics.rsvp.CONFIRMED + analytics.rsvp.DECLINED} de {detail.guests.length} responderam</span>
+            <span className="inline-flex items-center gap-1"><Gift className="size-3.5" /> Contagem de pessoas informada pelos convidados</span>
           </p>
         </div>
         <a

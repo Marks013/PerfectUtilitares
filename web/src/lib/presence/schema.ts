@@ -27,14 +27,23 @@ export const presencePublicRouteSchema = z.object({
 export const presenceConfirmationSchema = z
   .object({
     status: z.enum(["CONFIRMED", "DECLINED"]),
-    companionCount: z.number().int().min(0).max(20),
+    adultCount: z.number().int().min(0).max(999),
+    childCount: z.number().int().min(0).max(999).default(0),
   })
   .superRefine((data, context) => {
-    if (data.status === "DECLINED" && data.companionCount !== 0) {
+    const attendance = data.adultCount + data.childCount;
+    if (data.status === "CONFIRMED" && data.adultCount === 0) {
       context.addIssue({
         code: "custom",
-        path: ["companionCount"],
-        message: "Uma recusa não pode incluir acompanhantes.",
+        path: ["adultCount"],
+        message: "Informe ao menos um adulto para confirmar a presença.",
+      });
+    }
+    if (data.status === "DECLINED" && attendance !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["adultCount"],
+        message: "Uma recusa não pode incluir participantes.",
       });
     }
   });
@@ -133,7 +142,6 @@ export const presenceGuestCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(254).optional().or(z.literal("")),
   guestSlug: presenceSlugSchema,
-  companionLimit: z.number().int().min(0).max(20).default(0),
   accessExpiresAt: z.iso.datetime({ offset: true }).optional(),
 });
 
@@ -161,8 +169,6 @@ export const presenceGuestUpdateSchema = z
     name: z.string().trim().min(2).max(120).optional(),
     email: z.string().trim().email().max(254).nullable().optional(),
     guestSlug: presenceSlugSchema.optional(),
-    companionLimit: z.number().int().min(0).max(20).optional(),
-    companionCount: z.number().int().min(0).max(20).optional(),
     rsvpStatus: z.enum(["PENDING", "CONFIRMED", "DECLINED"]).optional(),
     accessExpiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   })

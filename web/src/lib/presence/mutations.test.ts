@@ -35,28 +35,44 @@ beforeEach(() => {
 const context = { eventId: "event-1", guestId: "guest-1" };
 
 describe("presence confirmation mutations", () => {
-  it("rejects companions above the invitation limit", async () => {
+  it("accepts the attendance quantity supplied by the guest without a host limit", async () => {
     mocks.tx.presenceGuest.findFirst.mockResolvedValue({
-      companionLimit: 1,
       event: {
         status: "PUBLISHED",
         confirmationDeadline: new Date("2026-09-01T00:00:00Z"),
       },
     });
+    mocks.tx.presenceEvent.update.mockResolvedValue({ publicRevision: 3 });
 
     await expect(
       updatePresenceConfirmation(
         context,
-        { status: "CONFIRMED", companionCount: 2 },
+        { status: "CONFIRMED", adultCount: 6, childCount: 4 },
         new Date("2026-08-20T00:00:00Z"),
       ),
-    ).resolves.toEqual({ ok: false, code: "COMPANION_LIMIT" });
-    expect(mocks.tx.presenceGuest.update).not.toHaveBeenCalled();
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        revision: 3,
+        rsvpStatus: "CONFIRMED",
+        adultCount: 6,
+        childCount: 4,
+      },
+    });
+    expect(mocks.tx.presenceGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          adultCount: 6,
+          childCount: 4,
+          companionCount: 9,
+          companionLimit: 9,
+        }),
+      }),
+    );
   });
 
   it("updates confirmation, revision and audit atomically", async () => {
     mocks.tx.presenceGuest.findFirst.mockResolvedValue({
-      companionLimit: 2,
       event: {
         status: "PUBLISHED",
         confirmationDeadline: new Date("2026-09-01T00:00:00Z"),
@@ -67,7 +83,7 @@ describe("presence confirmation mutations", () => {
     await expect(
       updatePresenceConfirmation(
         context,
-        { status: "CONFIRMED", companionCount: 1 },
+        { status: "CONFIRMED", adultCount: 2, childCount: 1 },
         new Date("2026-08-20T00:00:00Z"),
       ),
     ).resolves.toEqual({
@@ -75,7 +91,8 @@ describe("presence confirmation mutations", () => {
       value: {
         revision: 4,
         rsvpStatus: "CONFIRMED",
-        companionCount: 1,
+        adultCount: 2,
+        childCount: 1,
       },
     });
     expect(mocks.tx.presenceGuest.update).toHaveBeenCalledOnce();

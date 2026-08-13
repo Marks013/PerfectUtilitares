@@ -30,8 +30,8 @@ async function ownedGuest(eventId: string, guestId: string, tenantId: string) {
     select: {
       id: true,
       eventId: true,
-      companionLimit: true,
-      companionCount: true,
+      adultCount: true,
+      childCount: true,
       rsvpStatus: true,
     },
   });
@@ -71,14 +71,16 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(404, "GUEST_NOT_FOUND", "Pessoa convidada não encontrada.");
   }
 
-  const companionLimit = parsed.data.companionLimit ?? current.companionLimit;
-  const companionCount = parsed.data.companionCount ?? current.companionCount;
   const rsvpStatus = parsed.data.rsvpStatus ?? current.rsvpStatus;
-  if (companionCount > companionLimit) {
-    return jsonError(400, "COMPANION_LIMIT_EXCEEDED", "A quantidade de acompanhantes excede o limite do convite.");
-  }
-  if (rsvpStatus === "DECLINED" && companionCount !== 0) {
-    return jsonError(400, "DECLINED_WITH_COMPANIONS", "Uma recusa não pode incluir acompanhantes.");
+  const resetAttendance = rsvpStatus !== "CONFIRMED";
+  const adultCount = resetAttendance ? 0 : current.adultCount;
+  const childCount = resetAttendance ? 0 : current.childCount;
+  if (rsvpStatus === "CONFIRMED" && adultCount + childCount === 0) {
+    return jsonError(
+      400,
+      "ATTENDANCE_REQUIRED",
+      "A quantidade de adultos e crianças deve ser informada pelo convidado.",
+    );
   }
 
   try {
@@ -99,7 +101,10 @@ export async function PATCH(request: Request, context: RouteContext) {
               : parsed.data.accessExpiresAt
                 ? new Date(parsed.data.accessExpiresAt)
                 : null,
-          companionCount: rsvpStatus === "DECLINED" ? 0 : parsed.data.companionCount,
+          adultCount,
+          childCount,
+          companionCount: Math.max(0, adultCount + childCount - 1),
+          companionLimit: Math.max(0, adultCount + childCount - 1),
           respondedAt: parsed.data.rsvpStatus ? new Date() : undefined,
           activities: {
             create: {
@@ -117,8 +122,8 @@ export async function PATCH(request: Request, context: RouteContext) {
           email: true,
           guestSlug: true,
           rsvpStatus: true,
-          companionLimit: true,
-          companionCount: true,
+          adultCount: true,
+          childCount: true,
           accessExpiresAt: true,
           tokenRevokedAt: true,
           respondedAt: true,

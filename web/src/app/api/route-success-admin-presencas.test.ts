@@ -82,9 +82,9 @@ describe("route-success: admin presencas fase 2", () => {
       mocks.guestUpdate.mockResolvedValue({}); mocks.sessionUpdateMany.mockResolvedValue({ count: 1 });
       response = await linkRoute.POST(new Request("http://localhost/api/admin/presencas/event-1/convidados/guest-1/renovar-link", { method: "POST", headers: { origin: "http://localhost" } }), context);
     } else if (routeCase.route.includes("convidados/[guestId]")) {
-      mocks.guestFindFirst.mockResolvedValue({ id: "guest-1", eventId: "event-1", companionLimit: 2, companionCount: 0, rsvpStatus: "PENDING" });
-      mocks.guestUpdate.mockResolvedValue({ id: "guest-1", name: "Ana", email: null, guestSlug: "ana", rsvpStatus: "CONFIRMED", companionLimit: 2, companionCount: 0, accessExpiresAt: null, tokenRevokedAt: null, respondedAt: new Date() });
-      response = await guestRoute.PATCH(new Request("http://localhost/api/admin/presencas/event-1/convidados/guest-1", { method: "PATCH", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ rsvpStatus: "CONFIRMED", companionCount: 0 }) }), context);
+      mocks.guestFindFirst.mockResolvedValue({ id: "guest-1", eventId: "event-1", adultCount: 0, childCount: 0, rsvpStatus: "PENDING" });
+      mocks.guestUpdate.mockResolvedValue({ id: "guest-1", name: "Ana", email: null, guestSlug: "ana", rsvpStatus: "PENDING", adultCount: 0, childCount: 0, accessExpiresAt: null, tokenRevokedAt: null, respondedAt: new Date() });
+      response = await guestRoute.PATCH(new Request("http://localhost/api/admin/presencas/event-1/convidados/guest-1", { method: "PATCH", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ rsvpStatus: "PENDING" }) }), context);
     } else if (routeCase.route.endsWith("presentes/route.ts")) {
       mocks.eventFindFirst.mockResolvedValue({ id: "event-1" }); mocks.giftAggregate.mockResolvedValue({ _max: { position: 1 } });
       mocks.giftCreate.mockResolvedValue({ id: "gift-1", title: "Presente", description: null, externalUrl: null, position: 2, active: true });

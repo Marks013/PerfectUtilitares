@@ -58,8 +58,8 @@ type PresenceGuestAdmin = {
   email: string | null;
   guestSlug: string;
   rsvpStatus: RsvpStatus;
-  companionLimit: number;
-  companionCount: number;
+  adultCount: number;
+  childCount: number;
   accessExpiresAt: string | null;
   tokenRevokedAt: string | null;
   respondedAt: string | null;
@@ -111,6 +111,8 @@ export type PresenceEventDetail = PresenceEventSummary & {
       CONFIRMED: number;
       DECLINED: number;
       expectedAttendance: number;
+      adultsExpected: number;
+      childrenExpected: number;
     };
     responseRate: number;
     gifts: { active: number; reserved: number };

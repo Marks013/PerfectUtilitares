@@ -55,8 +55,8 @@ describe("/api/admin/presencas/[eventId] route", () => {
           email: null,
           guestSlug: "ana",
           rsvpStatus: "CONFIRMED",
-          companionLimit: 2,
-          companionCount: 1,
+          adultCount: 2,
+          childCount: 1,
           accessExpiresAt: null,
           tokenRevokedAt: null,
           respondedAt: new Date("2026-08-10T00:00:00.000Z"),
@@ -95,7 +95,11 @@ describe("/api/admin/presencas/[eventId] route", () => {
     expect(body.analytics).toEqual(
       expect.objectContaining({
         responseRate: 100,
-        rsvp: expect.objectContaining({ expectedAttendance: 2 }),
+        rsvp: expect.objectContaining({
+          expectedAttendance: 3,
+          adultsExpected: 2,
+          childrenExpected: 1,
+        }),
         gifts: { active: 1, reserved: 1 },
         deliveries: { DELIVERED: 1 },
       }),

@@ -55,7 +55,6 @@ describe("/api/admin/presencas/[eventId]/convidados route", () => {
       name: "Ana Souza",
       email: "ana@example.com",
       guestSlug: "ana-souza",
-      companionLimit: 1,
       accessExpiresAt: new Date("2026-12-21T22:00:00.000Z"),
     });
 
@@ -70,7 +69,6 @@ describe("/api/admin/presencas/[eventId]/convidados route", () => {
           name: "Ana Souza",
           email: " ANA@EXAMPLE.COM ",
           guestSlug: "ana-souza",
-          companionLimit: 1,
         }),
       }),
       context,

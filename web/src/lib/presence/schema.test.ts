@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   presenceAccessSchema,
+  presenceConfirmationSchema,
   presenceEventCreateSchema,
   presencePublicRouteSchema,
 } from "@/lib/presence/schema";
@@ -21,6 +22,46 @@ describe("presence schemas", () => {
       presencePublicRouteSchema.safeParse({
         eventSlug: "Casamento Ana",
         guestSlug: "../admin",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires at least one adult and keeps children optional", () => {
+    expect(
+      presenceConfirmationSchema.safeParse({
+        status: "CONFIRMED",
+        adultCount: 0,
+        childCount: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      presenceConfirmationSchema.safeParse({
+        status: "CONFIRMED",
+        adultCount: 2,
+        childCount: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      presenceConfirmationSchema.safeParse({
+        status: "CONFIRMED",
+        adultCount: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      presenceConfirmationSchema.safeParse({
+        status: "CONFIRMED",
+        adultCount: 0,
+        childCount: 2,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("clears attendance when presence is declined", () => {
+    expect(
+      presenceConfirmationSchema.safeParse({
+        status: "DECLINED",
+        adultCount: 1,
+        childCount: 0,
       }).success,
     ).toBe(false);
   });
