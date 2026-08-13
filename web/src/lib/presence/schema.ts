@@ -59,6 +59,24 @@ const optionalPatchText = (max: number) =>
     .optional()
     .transform((value) => (value === undefined ? undefined : value || null));
 
+export const presenceThemeSchema = z
+  .object({
+    preset: z.enum(["CELEBRATION", "ELEGANT", "GARDEN", "NIGHT"]),
+    cover: z.enum(["EVENT_TABLE", "NONE"]),
+    accent: z.enum(["CORAL", "BLUE", "GREEN", "GOLD"]),
+    welcomeTitle: z.string().trim().max(80).nullable(),
+  })
+  .strict();
+
+export type PresenceTheme = z.infer<typeof presenceThemeSchema>;
+
+export const defaultPresenceTheme: PresenceTheme = {
+  preset: "CELEBRATION",
+  cover: "EVENT_TABLE",
+  accent: "CORAL",
+  welcomeTitle: null,
+};
+
 export const presenceEventCreateSchema = z
   .object({
     eventSlug: presenceSlugSchema,
@@ -70,6 +88,9 @@ export const presenceEventCreateSchema = z
     venueAddress: optionalText(300),
     timeZone: z.string().trim().min(1).max(80).default("America/Sao_Paulo"),
     status: z.enum(["DRAFT", "PUBLISHED"]).default("DRAFT"),
+    theme: presenceThemeSchema.default(defaultPresenceTheme),
+    reminderAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    retentionUntil: z.iso.datetime({ offset: true }).nullable().optional(),
   })
   .superRefine((data, context) => {
     if (Date.parse(data.confirmationDeadline) > Date.parse(data.startsAt)) {
@@ -77,6 +98,26 @@ export const presenceEventCreateSchema = z
         code: "custom",
         path: ["confirmationDeadline"],
         message: "O prazo de confirmação deve terminar antes do evento.",
+      });
+    }
+    if (
+      data.reminderAt &&
+      Date.parse(data.reminderAt) > Date.parse(data.confirmationDeadline)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["reminderAt"],
+        message: "O lembrete deve ser enviado antes do fim das confirmações.",
+      });
+    }
+    if (
+      data.retentionUntil &&
+      Date.parse(data.retentionUntil) <= Date.parse(data.startsAt)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["retentionUntil"],
+        message: "A retenção deve terminar depois do evento.",
       });
     }
   });
@@ -100,6 +141,9 @@ export const presenceEventUpdateSchema = z
     venueAddress: optionalPatchText(300),
     timeZone: z.string().trim().min(1).max(80).optional(),
     status: z.enum(["DRAFT", "PUBLISHED", "CLOSED", "ARCHIVED"]).optional(),
+    theme: presenceThemeSchema.optional(),
+    reminderAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    retentionUntil: z.iso.datetime({ offset: true }).nullable().optional(),
   })
   .refine((data) => Object.values(data).some((value) => value !== undefined), {
     message: "Informe ao menos uma alteração.",
@@ -145,6 +189,10 @@ export const presenceGiftOrderSchema = z.object({
 export const presenceInvitationDeliverySchema = z.object({
   requestId: z.uuid(),
   guestIds: z.array(z.string().cuid()).min(1).max(50),
+});
+
+export const presenceAdminExportQuerySchema = z.object({
+  status: z.enum(["ALL", "PENDING", "CONFIRMED", "DECLINED"]).default("ALL"),
 });
 
 export function zodPresenceIssues(error: z.ZodError) {

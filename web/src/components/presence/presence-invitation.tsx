@@ -30,6 +30,12 @@ type PresenceState = {
     timeZone: string;
     status: "DRAFT" | "PUBLISHED" | "CLOSED" | "ARCHIVED";
     confirmationOpen: boolean;
+    theme: {
+      preset: "CELEBRATION" | "ELEGANT" | "GARDEN" | "NIGHT";
+      cover: "EVENT_TABLE" | "NONE";
+      accent: "CORAL" | "BLUE" | "GREEN" | "GOLD";
+      welcomeTitle: string | null;
+    };
   };
   guest: {
     name: string;
@@ -146,8 +152,15 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
 
   useEffect(() => {
     if (!state) return;
-    const timer = window.setInterval(() => void loadState(true), 5_000);
-    return () => window.clearInterval(timer);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadState(true);
+    };
+    const timer = window.setInterval(refreshWhenVisible, 5_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [loadState, state]);
 
   async function confirm(status: "CONFIRMED" | "DECLINED") {
@@ -239,19 +252,23 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
   const { event, guest, gifts } = state;
 
   return (
-    <main className={styles.page}>
-      <header className={styles.hero}>
-        <Image
+    <main
+      className={styles.page}
+      data-preset={event.theme.preset.toLowerCase()}
+      data-accent={event.theme.accent.toLowerCase()}
+    >
+      <header className={`${styles.hero} ${event.theme.cover === "NONE" ? styles.heroWithoutCover : ""}`}>
+        {event.theme.cover === "EVENT_TABLE" ? <Image
           src="/presence/event-table.png"
           alt="Mesa preparada para uma celebração"
           fill
           priority
           sizes="100vw"
-        />
+        /> : null}
         <div className={styles.heroShade} />
         <div className={styles.theme}><ThemeToggle /></div>
         <div className={styles.heroContent}>
-          <p className={styles.eyebrow}>Você é nosso convidado</p>
+          <p className={styles.eyebrow}>{event.theme.welcomeTitle || "Você é nosso convidado"}</p>
           <h1>{event.title}</h1>
           <p className={styles.greeting}>Olá, {guest.name}.</p>
         </div>

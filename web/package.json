@@ -10,6 +10,7 @@
     "env:set": "node scripts/set-env-value.mjs",
     "admin:rotate-password": "tsx scripts/rotate-admin-password.ts",
     "setup:unimed-access": "node scripts/configure-unimed-access.mjs",
+    "setup:presence-webhook": "node scripts/configure-presence-webhook.mjs",
     "sync:mediapipe": "npm run sync:mediapipe:check",
     "sync:mediapipe:check": "node scripts/sync-mediapipe.mjs check",
     "sync:mediapipe:update": "node scripts/sync-mediapipe.mjs update",

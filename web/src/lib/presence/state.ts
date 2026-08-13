@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { parsePresenceTheme } from "@/lib/presence/theme";
 
 export async function readPresenceState(
   context: { eventId: string; guestId: string },
@@ -60,7 +61,7 @@ export async function readPresenceState(
       confirmationDeadline: event.confirmationDeadline,
       timeZone: event.timeZone,
       status: event.status,
-      theme: event.theme,
+      theme: parsePresenceTheme(event.theme),
       confirmationOpen:
         event.status === "PUBLISHED" && event.confirmationDeadline >= now,
     },

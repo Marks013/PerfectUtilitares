@@ -1,5 +1,8 @@
 import * as Sentry from "@sentry/nextjs";
-import { sendPresenceInvitationEmail } from "@/lib/email/resend";
+import {
+  sendPresenceInvitationEmail,
+  sendPresenceReminderEmail,
+} from "@/lib/email/resend";
 import { prisma } from "@/lib/prisma";
 import {
   derivePresenceInvitationToken,
@@ -49,10 +52,10 @@ function retryAt(attemptCount: number, now: Date) {
   return new Date(now.getTime() + delay);
 }
 
-async function processDelivery(
+async function processPresenceDelivery(
   deliveryId: string,
   baseUrl: string,
-  actorUserId: string,
+  actorUserId: string | null,
   now = new Date(),
 ): Promise<DeliveryResult> {
   const staleAt = new Date(now.getTime() - SENDING_STALE_MS);
@@ -84,6 +87,7 @@ async function processDelivery(
       eventId: true,
       guestId: true,
       idempotencyKey: true,
+      kind: true,
       status: true,
       attemptCount: true,
       guest: {
@@ -115,11 +119,13 @@ async function processDelivery(
     return { deliveryId, guestId: delivery?.guestId ?? "", status: "SKIPPED" };
   }
   if (claimed.count === 0) {
+    const alreadySent = delivery.status === "SENT" || delivery.status === "DELIVERED";
+
     return {
       deliveryId,
       guestId: delivery.guestId,
-      status: delivery.status === "SENT" ? "SENT" : "SENDING",
-      reason: delivery.status === "SENT" ? "ALREADY_SENT" : undefined,
+      status: alreadySent ? "SENT" : "SENDING",
+      reason: alreadySent ? "ALREADY_SENT" : undefined,
     };
   }
 
@@ -160,7 +166,11 @@ async function processDelivery(
       }),
     ]);
 
-    const providerMessageId = await sendPresenceInvitationEmail({
+    const sendEmail =
+      delivery.kind === "REMINDER"
+        ? sendPresenceReminderEmail
+        : sendPresenceInvitationEmail;
+    const providerMessageId = await sendEmail({
       to: delivery.guest.email,
       name: delivery.guest.name,
       eventTitle: delivery.event.title,
@@ -178,6 +188,8 @@ async function processDelivery(
       data: {
         status: "SENT",
         providerMessageId,
+        providerStatus: "sent",
+        providerEventAt: new Date(),
         sentAt: new Date(),
         nextAttemptAt: null,
         lastErrorCode: null,
@@ -188,7 +200,8 @@ async function processDelivery(
         eventId: delivery.eventId,
         guestId: delivery.guest.id,
         actorUserId,
-        action: "SEND_INVITATION",
+        action:
+          delivery.kind === "REMINDER" ? "SEND_REMINDER" : "SEND_INVITATION",
         entityType: "PresenceDelivery",
         entityId: delivery.id,
       },
@@ -204,7 +217,7 @@ async function processDelivery(
         nextAttemptAt: retryAt(delivery.attemptCount, now),
       },
     });
-    Sentry.captureMessage("Presence invitation delivery failed", {
+    Sentry.captureMessage("Presence email delivery failed", {
       level: "error",
       tags: {
         presenceDeliveryId: delivery.id,
@@ -276,7 +289,7 @@ export async function deliverPresenceInvitations(input: {
     results.push(
       ...(await Promise.all(
         chunk.map((deliveryId) =>
-          processDelivery(deliveryId, input.baseUrl, input.actorUserId),
+          processPresenceDelivery(deliveryId, input.baseUrl, input.actorUserId),
         ),
       )),
     );
@@ -300,17 +313,120 @@ export async function retryPresenceInvitation(input: {
     select: { id: true, status: true },
   });
   if (!delivery) return { kind: "DELIVERY_NOT_FOUND" as const };
-  if (delivery.status === "SENT") return { kind: "ALREADY_SENT" as const };
+  if (delivery.status === "SENT" || delivery.status === "DELIVERED") {
+    return { kind: "ALREADY_SENT" as const };
+  }
   if (delivery.status === "SENDING") return { kind: "DELIVERY_BUSY" as const };
 
   await prisma.presenceDelivery.update({
     where: { id: delivery.id },
     data: { status: "PENDING", nextAttemptAt: null },
   });
-  const result = await processDelivery(
+  const result = await processPresenceDelivery(
     delivery.id,
     input.baseUrl,
     input.actorUserId,
   );
   return { kind: "OK" as const, result };
+}
+
+export async function processDuePresenceReminders(input: {
+  baseUrl: string;
+  now?: Date;
+  eventLimit?: number;
+}) {
+  const now = input.now ?? new Date();
+  const events = await prisma.presenceEvent.findMany({
+    where: {
+      status: "PUBLISHED",
+      reminderAt: { lte: now },
+      reminderProcessedAt: null,
+      confirmationDeadline: { gt: now },
+    },
+    select: {
+      id: true,
+      reminderAt: true,
+      guests: {
+        where: { rsvpStatus: "PENDING", email: { not: null } },
+        select: { id: true },
+        take: 1_000,
+      },
+    },
+    orderBy: { reminderAt: "asc" },
+    take: input.eventLimit ?? 10,
+  });
+
+  let sent = 0;
+  let failed = 0;
+  for (const event of events) {
+    const reminderKey = event.reminderAt?.toISOString() ?? "unscheduled";
+    const deliveryIds: string[] = [];
+    for (const guest of event.guests) {
+      const idempotencyKey = `reminder:${reminderKey}:${guest.id}`;
+      const delivery = await prisma.presenceDelivery.upsert({
+        where: {
+          eventId_idempotencyKey: { eventId: event.id, idempotencyKey },
+        },
+        create: {
+          eventId: event.id,
+          guestId: guest.id,
+          idempotencyKey,
+          kind: "REMINDER",
+        },
+        update: {},
+        select: { id: true },
+      });
+      deliveryIds.push(delivery.id);
+    }
+
+    for (let index = 0; index < deliveryIds.length; index += 5) {
+      const results = await Promise.all(
+        deliveryIds
+          .slice(index, index + 5)
+          .map((id) => processPresenceDelivery(id, input.baseUrl, null, now)),
+      );
+      sent += results.filter((result) => result.status === "SENT").length;
+      failed += results.filter((result) => result.status === "FAILED").length;
+    }
+
+    await prisma.presenceEvent.updateMany({
+      where: {
+        id: event.id,
+        reminderAt: event.reminderAt,
+        reminderProcessedAt: null,
+      },
+      data: { reminderProcessedAt: now },
+    });
+  }
+
+  return { events: events.length, sent, failed };
+}
+
+export async function retryDuePresenceDeliveries(input: {
+  baseUrl: string;
+  now?: Date;
+  limit?: number;
+}) {
+  const now = input.now ?? new Date();
+  const deliveries = await prisma.presenceDelivery.findMany({
+    where: { status: "FAILED", nextAttemptAt: { lte: now } },
+    select: { id: true },
+    orderBy: { nextAttemptAt: "asc" },
+    take: input.limit ?? 50,
+  });
+  const results: DeliveryResult[] = [];
+  for (let index = 0; index < deliveries.length; index += 5) {
+    results.push(
+      ...(await Promise.all(
+        deliveries
+          .slice(index, index + 5)
+          .map(({ id }) => processPresenceDelivery(id, input.baseUrl, null, now)),
+      )),
+    );
+  }
+  return {
+    processed: results.length,
+    sent: results.filter((result) => result.status === "SENT").length,
+    failed: results.filter((result) => result.status === "FAILED").length,
+  };
 }

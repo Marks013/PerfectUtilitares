@@ -1,10 +1,31 @@
 .page {
-  --presence-accent: #16b8a5;
+  --presence-accent: #b43c24;
   --presence-coral: #f77b5c;
+  --presence-hero-bg: #3a201d;
   min-height: 100dvh;
   background: var(--app-bg);
   color: var(--app-fg);
   padding-bottom: 3rem;
+}
+
+.page[data-accent="blue"] { --presence-accent: #1769aa; }
+.page[data-accent="green"] { --presence-accent: #1f7553; }
+.page[data-accent="gold"] { --presence-accent: #82580d; }
+
+.page[data-preset="elegant"] { --presence-hero-bg: #252225; }
+.page[data-preset="garden"] { --presence-hero-bg: #173c31; }
+.page[data-preset="night"] { --presence-hero-bg: #141924; }
+
+.page[data-preset="elegant"] .heroContent h1 {
+  font-family: Cambria, Georgia, serif;
+}
+
+.page[data-preset="garden"] .heroShade {
+  background: rgb(8 45 35 / 0.48);
+}
+
+.page[data-preset="night"] .heroShade {
+  background: rgb(7 12 24 / 0.62);
 }
 
 .hero {
@@ -13,6 +34,11 @@
   display: flex;
   align-items: flex-end;
   overflow: hidden;
+}
+
+.heroWithoutCover {
+  min-height: min(58dvh, 38rem);
+  background: var(--presence-hero-bg);
 }
 
 .hero > img {
@@ -206,7 +232,7 @@
 .primaryButton {
   border: 1px solid var(--presence-accent);
   background: var(--presence-accent);
-  color: #071312;
+  color: #ffffff;
 }
 
 .secondaryButton {

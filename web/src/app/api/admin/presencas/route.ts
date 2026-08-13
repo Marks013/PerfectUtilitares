@@ -19,6 +19,8 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DEFAULT_RETENTION_MS = 180 * 24 * 60 * 60 * 1_000;
+
 export async function GET() {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
@@ -108,6 +110,13 @@ export async function POST(request: Request) {
         venueAddress: parsed.data.venueAddress,
         timeZone: parsed.data.timeZone,
         status: parsed.data.status,
+        theme: parsed.data.theme,
+        reminderAt: parsed.data.reminderAt
+          ? new Date(parsed.data.reminderAt)
+          : null,
+        retentionUntil: parsed.data.retentionUntil
+          ? new Date(parsed.data.retentionUntil)
+          : new Date(Date.parse(parsed.data.startsAt) + DEFAULT_RETENTION_MS),
         activities: {
           create: {
             actorUser: { connect: { id: guard.session.user.id } },

@@ -1,14 +1,37 @@
 export type PresenceStatus = "DRAFT" | "PUBLISHED" | "CLOSED" | "ARCHIVED";
 export type RsvpStatus = "PENDING" | "CONFIRMED" | "DECLINED";
-export type PresenceDeliveryStatus = "PENDING" | "SENDING" | "SENT" | "FAILED";
+export type PresenceDeliveryStatus =
+  | "PENDING"
+  | "SENDING"
+  | "SENT"
+  | "DELIVERED"
+  | "DELAYED"
+  | "BOUNCED"
+  | "COMPLAINED"
+  | "SUPPRESSED"
+  | "FAILED";
+
+export type PresenceTheme = {
+  preset: "CELEBRATION" | "ELEGANT" | "GARDEN" | "NIGHT";
+  cover: "EVENT_TABLE" | "NONE";
+  accent: "CORAL" | "BLUE" | "GREEN" | "GOLD";
+  welcomeTitle: string | null;
+};
 
 type PresenceDeliveryAdmin = {
   id: string;
+  kind: "INVITATION" | "REMINDER";
   status: PresenceDeliveryStatus;
   attemptCount: number;
   nextAttemptAt: string | null;
   lastAttemptAt: string | null;
   sentAt: string | null;
+  providerStatus: string | null;
+  deliveredAt: string | null;
+  openedAt: string | null;
+  clickedAt: string | null;
+  bouncedAt: string | null;
+  complainedAt: string | null;
   createdAt: string;
 };
 
@@ -55,11 +78,26 @@ export type PresenceEventDetail = PresenceEventSummary & {
   venueName: string | null;
   venueAddress: string | null;
   timeZone: string;
+  theme: PresenceTheme;
+  reminderAt: string | null;
+  reminderProcessedAt: string | null;
+  retentionUntil: string | null;
   createdAt: string;
   updatedAt: string;
   guests: PresenceGuestAdmin[];
   gifts: PresenceGiftAdmin[];
   _count: { guests: number; gifts: number; deliveries: number };
+  analytics: {
+    rsvp: {
+      PENDING: number;
+      CONFIRMED: number;
+      DECLINED: number;
+      expectedAttendance: number;
+    };
+    responseRate: number;
+    gifts: { active: number; reserved: number };
+    deliveries: Partial<Record<PresenceDeliveryStatus, number>>;
+  };
 };
 
 export const statusLabel: Record<PresenceStatus, string> = {
@@ -79,6 +117,11 @@ export const deliveryLabel: Record<PresenceDeliveryStatus, string> = {
   PENDING: "Preparado",
   SENDING: "Enviando",
   SENT: "Enviado",
+  DELIVERED: "Entregue",
+  DELAYED: "Entrega atrasada",
+  BOUNCED: "Devolvido",
+  COMPLAINED: "Marcado como spam",
+  SUPPRESSED: "Suprimido",
   FAILED: "Falhou",
 };
 

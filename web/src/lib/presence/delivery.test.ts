@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deliverPresenceInvitations,
+  processDuePresenceReminders,
   retryPresenceInvitation,
 } from "@/lib/presence/delivery";
 
 const mocks = vi.hoisted(() => {
   const prisma = {
-    presenceEvent: { findFirst: vi.fn() },
+    presenceEvent: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     presenceDelivery: {
       upsert: vi.fn(),
       updateMany: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@sentry/nextjs", () => ({ captureMessage: mocks.captureMessage }));
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/email/resend", () => ({
   sendPresenceInvitationEmail: mocks.send,
+  sendPresenceReminderEmail: mocks.send,
 }));
 vi.mock("@/lib/presence/tokens", () => ({
   derivePresenceInvitationToken: () => `c_${"a".repeat(43)}`,
@@ -43,6 +45,7 @@ const delivery = {
   eventId: "event-1",
   guestId: "guest-1",
   idempotencyKey: "invite:request-1:guest-1",
+  kind: "INVITATION",
   status: "SENDING",
   attemptCount: 1,
   guest: {
@@ -65,6 +68,8 @@ describe("presence invitation delivery", () => {
     vi.clearAllMocks();
     vi.stubEnv("AUTH_SECRET", "test-secret");
     mocks.prisma.presenceEvent.findFirst.mockResolvedValue(event);
+    mocks.prisma.presenceEvent.findMany.mockResolvedValue([]);
+    mocks.prisma.presenceEvent.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.presenceDelivery.upsert.mockResolvedValue({ id: "delivery-1" });
     mocks.prisma.presenceDelivery.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.presenceDelivery.findUnique.mockResolvedValue(delivery);
@@ -101,9 +106,9 @@ describe("presence invitation delivery", () => {
     );
   });
 
-  it("does not send twice when the same delivery is already claimed", async () => {
+  it("does not resend a delivery already confirmed by the provider", async () => {
     mocks.prisma.presenceDelivery.updateMany.mockResolvedValue({ count: 0 });
-    mocks.prisma.presenceDelivery.findUnique.mockResolvedValue({ ...delivery, status: "SENT" });
+    mocks.prisma.presenceDelivery.findUnique.mockResolvedValue({ ...delivery, status: "DELIVERED" });
 
     const result = await deliverPresenceInvitations({
       eventId: "event-1",
@@ -142,7 +147,7 @@ describe("presence invitation delivery", () => {
       }),
     );
     expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "Presence invitation delivery failed",
+      "Presence email delivery failed",
       expect.objectContaining({
         tags: expect.objectContaining({ errorCode: "DELIVERY_FAILED" }),
       }),
@@ -161,5 +166,34 @@ describe("presence invitation delivery", () => {
       }),
     ).resolves.toEqual({ kind: "DELIVERY_NOT_FOUND" });
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("creates one idempotent reminder for each pending guest", async () => {
+    const reminderAt = new Date("2026-08-13T11:00:00.000Z");
+    mocks.prisma.presenceEvent.findMany.mockResolvedValue([
+      { id: "event-1", reminderAt, guests: [{ id: "guest-1" }] },
+    ]);
+    mocks.prisma.presenceDelivery.findUnique.mockResolvedValue({
+      ...delivery,
+      kind: "REMINDER",
+    });
+
+    const result = await processDuePresenceReminders({
+      baseUrl: "https://perfect.example.test",
+      now: new Date("2026-08-13T12:00:00.000Z"),
+    });
+
+    expect(result).toEqual({ events: 1, sent: 1, failed: 0 });
+    expect(mocks.prisma.presenceDelivery.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          kind: "REMINDER",
+          idempotencyKey: `reminder:${reminderAt.toISOString()}:guest-1`,
+        }),
+      }),
+    );
+    expect(mocks.prisma.presenceEvent.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { reminderProcessedAt: expect.any(Date) } }),
+    );
   });
 });

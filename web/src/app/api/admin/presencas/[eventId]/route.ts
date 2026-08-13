@@ -14,6 +14,7 @@ import {
   presenceEventUpdateSchema,
   zodPresenceIssues,
 } from "@/lib/presence/schema";
+import { parsePresenceTheme } from "@/lib/presence/theme";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -58,7 +59,11 @@ export async function GET(_request: Request, context: RouteContext) {
       venueAddress: true,
       timeZone: true,
       status: true,
+      theme: true,
       publicRevision: true,
+      reminderAt: true,
+      reminderProcessedAt: true,
+      retentionUntil: true,
       createdAt: true,
       updatedAt: true,
       guests: {
@@ -77,11 +82,18 @@ export async function GET(_request: Request, context: RouteContext) {
           deliveries: {
             select: {
               id: true,
+              kind: true,
               status: true,
               attemptCount: true,
               nextAttemptAt: true,
               lastAttemptAt: true,
               sentAt: true,
+              providerStatus: true,
+              deliveredAt: true,
+              openedAt: true,
+              clickedAt: true,
+              bouncedAt: true,
+              complainedAt: true,
               createdAt: true,
             },
             orderBy: { createdAt: "desc" },
@@ -114,7 +126,44 @@ export async function GET(_request: Request, context: RouteContext) {
     return jsonError(404, "EVENT_NOT_FOUND", "Evento não encontrado.");
   }
 
-  return NextResponse.json(event, {
+  const deliveryGroups = await prisma.presenceDelivery.groupBy({
+    by: ["status"],
+    where: { eventId: event.id },
+    _count: { _all: true },
+  });
+  const rsvp = event.guests.reduce(
+    (totals, guest) => {
+      totals[guest.rsvpStatus] += 1;
+      if (guest.rsvpStatus === "CONFIRMED") {
+        totals.expectedAttendance += 1 + guest.companionCount;
+      }
+      return totals;
+    },
+    { PENDING: 0, CONFIRMED: 0, DECLINED: 0, expectedAttendance: 0 },
+  );
+  const activeGifts = event.gifts.filter((gift) => gift.active);
+  const analytics = {
+    rsvp,
+    responseRate:
+      event.guests.length === 0
+        ? 0
+        : Math.round(
+            ((rsvp.CONFIRMED + rsvp.DECLINED) / event.guests.length) * 100,
+          ),
+    gifts: {
+      active: activeGifts.length,
+      reserved: activeGifts.filter((gift) => gift.reservedByGuest).length,
+    },
+    deliveries: Object.fromEntries(
+      deliveryGroups.map((group) => [group.status, group._count._all]),
+    ),
+  };
+
+  return NextResponse.json({
+    ...event,
+    theme: parsePresenceTheme(event.theme),
+    analytics,
+  }, {
     headers: { "Cache-Control": "private, no-store" },
   });
 }
@@ -161,6 +210,8 @@ export async function PATCH(request: Request, context: RouteContext) {
       startsAt: true,
       confirmationDeadline: true,
       status: true,
+      reminderAt: true,
+      retentionUntil: true,
     },
   });
   if (!current) {
@@ -178,6 +229,34 @@ export async function PATCH(request: Request, context: RouteContext) {
       400,
       "INVALID_CONFIRMATION_DEADLINE",
       "O prazo de confirmação deve terminar antes do evento.",
+    );
+  }
+
+  const reminderAt =
+    parsed.data.reminderAt === undefined
+      ? current.reminderAt
+      : parsed.data.reminderAt
+        ? new Date(parsed.data.reminderAt)
+        : null;
+  if (reminderAt && reminderAt.getTime() > confirmationDeadline.getTime()) {
+    return jsonError(
+      400,
+      "INVALID_REMINDER_AT",
+      "O lembrete deve ser enviado antes do fim das confirmações.",
+    );
+  }
+
+  const retentionUntil =
+    parsed.data.retentionUntil === undefined
+      ? current.retentionUntil
+      : parsed.data.retentionUntil
+        ? new Date(parsed.data.retentionUntil)
+        : null;
+  if (retentionUntil && retentionUntil.getTime() <= startsAt.getTime()) {
+    return jsonError(
+      400,
+      "INVALID_RETENTION_UNTIL",
+      "A retenção deve terminar depois do evento.",
     );
   }
 
@@ -199,6 +278,12 @@ export async function PATCH(request: Request, context: RouteContext) {
         confirmationDeadline: parsed.data.confirmationDeadline
           ? confirmationDeadline
           : undefined,
+        reminderAt:
+          parsed.data.reminderAt === undefined ? undefined : reminderAt,
+        reminderProcessedAt:
+          parsed.data.reminderAt === undefined ? undefined : null,
+        retentionUntil:
+          parsed.data.retentionUntil === undefined ? undefined : retentionUntil,
         publicRevision: { increment: 1 },
         activities: {
           create: {

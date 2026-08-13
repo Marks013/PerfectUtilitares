@@ -15,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Trash2,
   UserRoundPlus,
@@ -44,6 +45,8 @@ import {
   slugifyPresence,
   statusLabel,
 } from "./presence-admin-model";
+import { PresenceAdminOverview } from "./presence-admin-overview";
+import { PresenceThemeSettings } from "./presence-theme-settings";
 
 const panel = "rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] shadow-[var(--app-panel-shadow)]";
 const field = "mt-1 min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 text-sm text-[color:var(--app-fg)] outline-none focus:border-[color:var(--app-action-blue)]";
@@ -63,6 +66,12 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
+function isRetryableDelivery(status: string | undefined) {
+  return ["FAILED", "BOUNCED", "COMPLAINED", "SUPPRESSED"].includes(
+    status ?? "",
+  );
+}
+
 export function PresenceAdmin() {
   const [events, setEvents] = useState<PresenceEventSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -72,6 +81,10 @@ export function PresenceAdmin() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [latestLink, setLatestLink] = useState<string | null>(null);
+  const [guestSearch, setGuestSearch] = useState("");
+  const [guestFilter, setGuestFilter] = useState<
+    "ALL" | "PENDING" | "CONFIRMED" | "DECLINED"
+  >("ALL");
 
   const loadEvents = useCallback(async () => {
     const data = await presenceApi<PresenceEventSummary[]>("/api/admin/presencas");
@@ -356,14 +369,17 @@ export function PresenceAdmin() {
     }
   }
 
-  const metrics = useMemo(() => {
+  const filteredGuests = useMemo(() => {
     const guests = detail?.guests ?? [];
-    return {
-      confirmed: guests.filter((guest) => guest.rsvpStatus === "CONFIRMED").length,
-      pending: guests.filter((guest) => guest.rsvpStatus === "PENDING").length,
-      declined: guests.filter((guest) => guest.rsvpStatus === "DECLINED").length,
-    };
-  }, [detail]);
+    const term = guestSearch.trim().toLocaleLowerCase("pt-BR");
+    return guests.filter((guest) => {
+      if (guestFilter !== "ALL" && guest.rsvpStatus !== guestFilter) return false;
+      if (!term) return true;
+      return `${guest.name} ${guest.email ?? ""}`
+        .toLocaleLowerCase("pt-BR")
+        .includes(term);
+    });
+  }, [detail, guestFilter, guestSearch]);
 
   return (
     <div className="space-y-5 text-[color:var(--app-fg)]">
@@ -420,9 +436,7 @@ export function PresenceAdmin() {
                     {Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {[{ label: "Confirmados", value: metrics.confirmed }, { label: "Aguardando", value: metrics.pending }, { label: "Não participarão", value: metrics.declined }, { label: "Presentes", value: detail.gifts.length }].map((metric) => <div key={metric.label} className="rounded-xl bg-[color:var(--app-surface)] p-3"><p className="text-xs text-[color:var(--app-muted)]">{metric.label}</p><p className="mt-1 text-2xl font-black tabular-nums">{metric.value}</p></div>)}
-                </div>
+                <PresenceAdminOverview detail={detail} />
                 <div className="mt-4 grid gap-2 text-sm text-[color:var(--app-muted)] sm:grid-cols-2"><p className="flex items-center gap-2"><CalendarDays className="size-4" />{formatDate(detail.startsAt)}</p><p className="flex items-center gap-2"><MapPin className="size-4" />{detail.venueName || "Local não informado"}</p></div>
                 <details className="mt-4 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
                   <summary className="cursor-pointer font-bold">Editar informações do evento</summary>
@@ -437,6 +451,11 @@ export function PresenceAdmin() {
                     <button type="submit" className={`${primary} md:col-span-2 md:justify-self-start`} disabled={busy === "event-update"}><Save className="size-4" /> Salvar alterações</button>
                   </form>
                 </details>
+                <PresenceThemeSettings
+                  detail={detail}
+                  busy={busy === "event-update"}
+                  onSave={updateEvent}
+                />
                 <div className="mt-4 flex flex-wrap gap-2">
                   {(detail.status === "DRAFT" || detail.status === "ARCHIVED") ? <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger}><Trash2 className="size-4" /> Excluir evento</button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir este evento?</AlertDialogTitle><AlertDialogDescription>Convites, respostas e presentes serão removidos definitivamente.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void deleteEvent()}>Excluir definitivamente</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> : <span className="inline-flex items-center gap-2 text-xs text-[color:var(--app-muted)]"><Archive className="size-4" /> Arquive antes de excluir</span>}
                 </div>
@@ -455,9 +474,13 @@ export function PresenceAdmin() {
               </section>
 
               <section className={`${panel} overflow-hidden`}>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--app-border)] px-4 py-4 sm:px-5"><div className="flex items-center gap-2"><Users className="size-5 text-[color:var(--app-action-blue)]" /><h2 className="text-lg font-bold">Lista de presença</h2><span className="text-sm tabular-nums text-[color:var(--app-muted)]">{detail.guests.length}</span></div><AlertDialog><AlertDialogTrigger asChild><button type="button" className={primary} disabled={detail.status !== "PUBLISHED" || busy === "delivery-send" || !detail.guests.some((guest) => guest.email)}>{busy === "delivery-send" ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />} Enviar por e-mail</button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Enviar convites por e-mail?</AlertDialogTitle><AlertDialogDescription>O envio será feito para todas as pessoas com e-mail cadastrado. Convites enviados anteriormente receberão um novo link individual.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void sendInvitations(detail.guests.filter((guest) => guest.email).map((guest) => guest.id))}>Enviar convites</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--app-border)] px-4 py-4 sm:px-5"><div className="flex items-center gap-2"><Users className="size-5 text-[color:var(--app-action-blue)]" /><h2 className="text-lg font-bold">Lista de presença</h2><span className="text-sm tabular-nums text-[color:var(--app-muted)]">{filteredGuests.length}/{detail.guests.length}</span></div><AlertDialog><AlertDialogTrigger asChild><button type="button" className={primary} disabled={detail.status !== "PUBLISHED" || busy === "delivery-send" || !detail.guests.some((guest) => guest.email)}>{busy === "delivery-send" ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />} Enviar por e-mail</button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Enviar convites por e-mail?</AlertDialogTitle><AlertDialogDescription>O envio será feito para todas as pessoas com e-mail cadastrado. Convites enviados anteriormente receberão um novo link individual.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void sendInvitations(detail.guests.filter((guest) => guest.email).map((guest) => guest.id))}>Enviar convites</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
+                <div className="grid gap-3 border-b border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-4 py-3 sm:grid-cols-[minmax(0,1fr)_13rem] sm:px-5">
+                  <label className="relative"><span className="sr-only">Buscar convidado</span><Search className="pointer-events-none absolute left-3 top-3.5 size-4 text-[color:var(--app-muted)]" aria-hidden="true" /><input value={guestSearch} onChange={(event) => setGuestSearch(event.target.value)} className={`${field} mt-0 pl-9`} placeholder="Buscar por nome ou e-mail" /></label>
+                  <label><span className="sr-only">Filtrar respostas</span><select value={guestFilter} onChange={(event) => setGuestFilter(event.target.value as typeof guestFilter)} className={`${field} mt-0`}><option value="ALL">Todas as respostas</option><option value="PENDING">Aguardando</option><option value="CONFIRMED">Confirmados</option><option value="DECLINED">Não participarão</option></select></label>
+                </div>
                 <div className="max-h-[35rem] divide-y divide-[color:var(--app-border)] overflow-y-auto">
-                  {detail.guests.map((guest) => (
+                  {filteredGuests.map((guest) => (
                     <div key={guest.id} className="p-4">
                       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                         <div className="min-w-0"><p className="truncate font-bold">{guest.name}</p><p className="truncate text-xs text-[color:var(--app-muted)]">{guest.email || `/${guest.guestSlug}`} · {rsvpLabel[guest.rsvpStatus]} · {guest.companionCount}/{guest.companionLimit} acompanhantes</p>{guest.deliveries[0] ? <p className="mt-1 flex items-center gap-1 text-xs text-[color:var(--app-muted)]"><Mail className="size-3.5" /> {deliveryLabel[guest.deliveries[0].status]}{guest.deliveries[0].sentAt ? ` em ${formatDate(guest.deliveries[0].sentAt)}` : ""}{guest.deliveries[0].attemptCount > 1 ? ` · ${guest.deliveries[0].attemptCount} tentativas` : ""}</p> : null}</div>
@@ -466,7 +489,7 @@ export function PresenceAdmin() {
                           <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "reset")} disabled={busy === `guest-${guest.id}`}>Aguardar</button>
                           <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "decline")} disabled={busy === `guest-${guest.id}`}>Não participará</button>
                           <button type="button" className={secondary} title="Gerar novo link" onClick={() => void guestAction(guest.id, "link")} disabled={busy === `guest-${guest.id}`}><Link2 className="size-4" /> Renovar</button>
-                          {guest.email ? <button type="button" className={secondary} onClick={() => guest.deliveries[0]?.status === "FAILED" ? void retryDelivery(guest.deliveries[0].id) : void sendInvitations([guest.id])} disabled={detail.status !== "PUBLISHED" || busy === "delivery-send" || busy === `delivery-${guest.deliveries[0]?.id}`}><Mail className="size-4" /> {guest.deliveries[0]?.status === "FAILED" ? "Tentar novamente" : guest.deliveries[0]?.status === "SENT" ? "Reenviar e-mail" : "Enviar e-mail"}</button> : null}
+                          {guest.email ? <button type="button" className={secondary} onClick={() => isRetryableDelivery(guest.deliveries[0]?.status) ? void retryDelivery(guest.deliveries[0].id) : void sendInvitations([guest.id])} disabled={detail.status !== "PUBLISHED" || busy === "delivery-send" || busy === `delivery-${guest.deliveries[0]?.id}`}><Mail className="size-4" /> {isRetryableDelivery(guest.deliveries[0]?.status) ? "Tentar novamente" : ["SENT", "DELIVERED", "DELAYED"].includes(guest.deliveries[0]?.status ?? "") ? "Reenviar e-mail" : "Enviar e-mail"}</button> : null}
                           <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir convite de ${guest.name}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir convite?</AlertDialogTitle><AlertDialogDescription>O acesso de {guest.name} e suas reservas serão removidos.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void guestAction(guest.id, "delete")}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
                         </div>
                       </div>
@@ -483,6 +506,7 @@ export function PresenceAdmin() {
                     </div>
                   ))}
                   {!detail.guests.length ? <p className="p-8 text-center text-sm text-[color:var(--app-muted)]">Adicione a primeira pessoa convidada.</p> : null}
+                  {detail.guests.length && !filteredGuests.length ? <p className="p-8 text-center text-sm text-[color:var(--app-muted)]">Nenhum convite corresponde aos filtros.</p> : null}
                 </div>
               </section>
 

@@ -134,7 +134,17 @@ enum PresenceDeliveryStatus {
   PENDING
   SENDING
   SENT
+  DELIVERED
+  DELAYED
+  BOUNCED
+  COMPLAINED
+  SUPPRESSED
   FAILED
+}
+
+enum PresenceDeliveryKind {
+  INVITATION
+  REMINDER
 }
 
 model CodigoJornada {
@@ -242,6 +252,8 @@ model PresenceEvent {
   status               PresenceEventStatus @default(DRAFT)
   theme                Json?
   publicRevision       Int                 @default(0)
+  reminderAt           DateTime?
+  reminderProcessedAt  DateTime?
   retentionUntil       DateTime?
   guests               PresenceGuest[]
   gifts                PresenceGift[]
@@ -252,6 +264,7 @@ model PresenceEvent {
 
   @@index([tenantId, status])
   @@index([createdById])
+  @@index([status, reminderAt, reminderProcessedAt])
   @@index([retentionUntil])
 }
 
@@ -319,25 +332,49 @@ model PresenceGift {
 }
 
 model PresenceDelivery {
-  id             String                 @id @default(cuid())
-  eventId        String
-  event          PresenceEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  guestId        String?
-  guest          PresenceGuest?         @relation(fields: [guestId], references: [id], onDelete: SetNull)
-  idempotencyKey String
-  status         PresenceDeliveryStatus @default(PENDING)
-  attemptCount   Int                    @default(0)
-  nextAttemptAt  DateTime?
-  lastErrorCode  String?
+  id                String                 @id @default(cuid())
+  eventId           String
+  event             PresenceEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  guestId           String?
+  guest             PresenceGuest?         @relation(fields: [guestId], references: [id], onDelete: SetNull)
+  idempotencyKey    String
+  kind              PresenceDeliveryKind   @default(INVITATION)
+  status            PresenceDeliveryStatus @default(PENDING)
+  attemptCount      Int                    @default(0)
+  nextAttemptAt     DateTime?
+  lastErrorCode     String?
   providerMessageId String?
-  lastAttemptAt  DateTime?
-  sentAt         DateTime?
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
+  providerStatus    String?
+  providerEventAt   DateTime?
+  lastAttemptAt     DateTime?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  openedAt          DateTime?
+  clickedAt         DateTime?
+  bouncedAt         DateTime?
+  complainedAt      DateTime?
+  webhookEvents     PresenceWebhookEvent[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 
   @@unique([eventId, idempotencyKey])
   @@index([eventId, status, nextAttemptAt])
   @@index([guestId])
+  @@index([providerMessageId])
+}
+
+model PresenceWebhookEvent {
+  id                String           @id
+  deliveryId        String?
+  delivery          PresenceDelivery? @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  providerMessageId String
+  type              String
+  occurredAt        DateTime
+  createdAt         DateTime         @default(now())
+
+  @@index([deliveryId, occurredAt])
+  @@index([providerMessageId])
+  @@index([createdAt])
 }
 
 model PresenceActivity {

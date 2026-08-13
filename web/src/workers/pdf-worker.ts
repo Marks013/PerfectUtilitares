@@ -13,6 +13,11 @@ import {
   cleanupCompletedPdfJobInputs,
   cleanupExpiredPdfJobs,
 } from "@/lib/pdf/retention";
+import {
+  processDuePresenceReminders,
+  retryDuePresenceDeliveries,
+} from "@/lib/presence/delivery";
+import { cleanupPresenceData } from "@/lib/presence/retention";
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
@@ -141,6 +146,8 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
 );
 
 let cleanupPromise: Promise<unknown> | null = null;
+let presenceMaintenancePromise: Promise<unknown> | null = null;
+let lastPresenceCleanupAt = 0;
 const heartbeatPath =
   process.env.PDF_WORKER_HEARTBEAT_PATH ?? "/tmp/perfect-pdf-worker-heartbeat";
 let heartbeatPromise: Promise<void> | null = null;
@@ -184,7 +191,33 @@ function runRetentionCleanup() {
   return cleanupPromise;
 }
 
+function runPresenceMaintenance() {
+  if (presenceMaintenancePromise) return presenceMaintenancePromise;
+  const baseUrl = process.env.APP_URL;
+  if (!baseUrl) return Promise.resolve();
+
+  presenceMaintenancePromise = (async () => {
+    const now = new Date();
+    await processDuePresenceReminders({ baseUrl, now });
+    await retryDuePresenceDeliveries({ baseUrl, now });
+    if (now.getTime() - lastPresenceCleanupAt >= 60 * 60 * 1_000) {
+      await cleanupPresenceData(now);
+      lastPresenceCleanupAt = now.getTime();
+    }
+  })()
+    .catch((error) => {
+      Sentry.captureException(error, {
+        tags: { presenceMaintenance: true },
+      });
+    })
+    .finally(() => {
+      presenceMaintenancePromise = null;
+    });
+  return presenceMaintenancePromise;
+}
+
 void runRetentionCleanup();
+void runPresenceMaintenance();
 await refreshWorkerHeartbeat();
 const heartbeatTimer = setInterval(() => void refreshWorkerHeartbeat(), 15_000);
 heartbeatTimer.unref();
@@ -193,13 +226,20 @@ const retentionTimer = setInterval(
   5 * 60 * 1_000,
 );
 retentionTimer.unref();
+const presenceMaintenanceTimer = setInterval(
+  () => void runPresenceMaintenance(),
+  60_000,
+);
+presenceMaintenanceTimer.unref();
 
 async function shutdown(signal: string) {
   console.info(`[pdf-worker] encerrando por ${signal}`);
   clearInterval(heartbeatTimer);
   clearInterval(retentionTimer);
+  clearInterval(presenceMaintenanceTimer);
   await heartbeatPromise;
   await cleanupPromise;
+  await presenceMaintenancePromise;
   await stopPdfQueue();
   await prisma.$disconnect();
   await Sentry.close(2_000);

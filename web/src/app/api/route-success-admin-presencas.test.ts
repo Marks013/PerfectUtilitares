@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   sessionUpdateMany: vi.fn(),
   giftAggregate: vi.fn(), giftCreate: vi.fn(), giftCount: vi.fn(), giftUpdate: vi.fn(), giftFindFirst: vi.fn(), giftDelete: vi.fn(),
   activityCreate: vi.fn(), transaction: vi.fn(),
+  deliveryGroupBy: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
@@ -17,6 +18,7 @@ vi.mock("@/lib/prisma", () => ({
     presenceGuestSession: { updateMany: mocks.sessionUpdateMany },
     presenceGift: { aggregate: mocks.giftAggregate, create: mocks.giftCreate, count: mocks.giftCount, update: mocks.giftUpdate, findFirst: mocks.giftFindFirst, delete: mocks.giftDelete },
     presenceActivity: { create: mocks.activityCreate },
+    presenceDelivery: { groupBy: mocks.deliveryGroupBy },
     $transaction: mocks.transaction,
   },
 }));
@@ -40,6 +42,7 @@ describe("route-success: admin presencas fase 2", () => {
     mocks.auth.mockResolvedValue(session);
     mocks.transaction.mockImplementation(async (operations: Promise<unknown>[]) => Promise.all(operations));
     mocks.activityCreate.mockResolvedValue({ id: "activity-1" });
+    mocks.deliveryGroupBy.mockResolvedValue([]);
   });
 
   const routeCases = [

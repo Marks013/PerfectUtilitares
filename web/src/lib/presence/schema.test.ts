@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   presenceAccessSchema,
+  presenceEventCreateSchema,
   presencePublicRouteSchema,
 } from "@/lib/presence/schema";
 
@@ -22,5 +23,34 @@ describe("presence schemas", () => {
         guestSlug: "../admin",
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts controlled customization and valid automation dates", () => {
+    const parsed = presenceEventCreateSchema.safeParse({
+      eventSlug: "formatura-2026",
+      title: "Formatura 2026",
+      startsAt: "2026-12-20T19:00:00-03:00",
+      confirmationDeadline: "2026-12-10T23:59:00-03:00",
+      reminderAt: "2026-12-08T09:00:00-03:00",
+      retentionUntil: "2027-06-20T19:00:00-03:00",
+      theme: {
+        preset: "ELEGANT",
+        cover: "NONE",
+        accent: "GOLD",
+        welcomeTitle: "Celebre conosco",
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects a reminder scheduled after confirmation closes", () => {
+    const parsed = presenceEventCreateSchema.safeParse({
+      eventSlug: "formatura-2026",
+      title: "Formatura 2026",
+      startsAt: "2026-12-20T19:00:00-03:00",
+      confirmationDeadline: "2026-12-10T23:59:00-03:00",
+      reminderAt: "2026-12-11T09:00:00-03:00",
+    });
+    expect(parsed.success).toBe(false);
   });
 });

@@ -22,6 +22,11 @@ uma instância Docker com Next.js, PostgreSQL e Prisma.
 - Atualizar clientes por polling condicional com `ETag`; pausar em aba oculta.
 - Reservar presente por atualização condicional e idempotente.
 - Aplicar retenção configurável e sanitização de dados no Sentry.
+- Personalizar convites apenas com temas e cores controlados, preservando
+  contraste e evitando conteúdo remoto arbitrário.
+- Enviar lembrete idempotente para respostas pendentes e registrar eventos
+  assinados do Resend sem armazenar o endereço do destinatário no webhook.
+- Expor métricas e relatório CSV somente ao administrador do tenant.
 
 ## Alternativas rejeitadas
 
@@ -50,6 +55,8 @@ Mitigações:
 
 - Intervalo de 15 segundos, `ETag` e pausa quando documento estiver oculto.
 - Índices por expiração e rotina de retenção idempotente.
+- A rotina de retenção remove sessões expiradas e somente exclui eventos
+  arquivados cujo prazo configurado já terminou.
 - Encapsular autorização administrativa nos guards existentes.
 
 ## Gatilhos para revisão

@@ -21,6 +21,87 @@ test.beforeEach(() => {
   test.skip(!adminEmail || !adminPassword, "Admin credentials are required");
 });
 
+test("presence event customization, private invitation and report work together", async ({
+  page,
+}) => {
+  await login(page);
+  const origin = new URL(page.url()).origin;
+  const startsAt = new Date(Date.now() + 30 * 86_400_000);
+  const deadline = new Date(Date.now() + 20 * 86_400_000);
+  const reminderAt = new Date(Date.now() + 15 * 86_400_000);
+  const retentionUntil = new Date(Date.now() + 210 * 86_400_000);
+  const slug = `evento-e2e-${Date.now()}`;
+
+  const created = await page.request.post("/api/admin/presencas", {
+    headers: { origin },
+    data: {
+      eventSlug: slug,
+      title: "Celebração E2E",
+      startsAt: startsAt.toISOString(),
+      confirmationDeadline: deadline.toISOString(),
+      status: "DRAFT",
+    },
+  });
+  expect(created.status()).toBe(201);
+  const event = await created.json();
+
+  const guestCreated = await page.request.post(
+    `/api/admin/presencas/${event.id}/convidados`,
+    {
+      headers: { origin },
+      data: {
+        name: "Convidada E2E",
+        email: "convidada@example.test",
+        guestSlug: "convidada-e2e",
+        companionLimit: 2,
+      },
+    },
+  );
+  expect(guestCreated.status()).toBe(201);
+  const guest = await guestCreated.json();
+  expect(guest.invitationUrl).toContain(
+    `/presenca/${slug}/convidada-e2e#c_`,
+  );
+
+  const configured = await page.request.patch(
+    `/api/admin/presencas/${event.id}`,
+    {
+      headers: { origin },
+      data: {
+        status: "PUBLISHED",
+        theme: {
+          preset: "GARDEN",
+          cover: "NONE",
+          accent: "GREEN",
+          welcomeTitle: "Vamos celebrar juntos",
+        },
+        reminderAt: reminderAt.toISOString(),
+        retentionUntil: retentionUntil.toISOString(),
+      },
+    },
+  );
+  expect(configured.status()).toBe(200);
+
+  const report = await page.request.get(
+    `/api/admin/presencas/${event.id}/relatorio?status=ALL`,
+  );
+  expect(report.status()).toBe(200);
+  expect(report.headers()["content-type"]).toContain("text/csv");
+  expect(await report.text()).toContain("Convidada E2E");
+
+  await page.goto(guest.invitationUrl);
+  await expect(page.getByRole("heading", { name: "Celebração E2E" })).toBeVisible();
+  await expect(page.getByText("Vamos celebrar juntos")).toBeVisible();
+  await expect(page.getByText("Olá, Convidada E2E.")).toBeVisible();
+  await expect(page.locator("header img")).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
 test("password reset reaches the isolated email transport", async ({ page }) => {
   test.skip(!mailCaptureUrl, "Isolated email capture is required");
   await page.goto("/login");
