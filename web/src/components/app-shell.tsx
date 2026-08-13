@@ -30,6 +30,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
     ...(activeSession?.user.role === "ADMIN"
       ? [
           { href: "/admin/presencas", label: "Eventos" },
+          { href: "/admin/seo", label: "Visibilidade" },
           { href: "/admin/usuarios", label: "Usuários" },
         ]
       : []),
@@ -100,6 +101,25 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
       <main className="relative z-10 mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:py-10">
         {children}
       </main>
+      <footer className="relative z-10 mx-auto max-w-7xl px-4 pb-8 sm:px-6">
+        <div className="flex flex-col gap-3 border-t border-[color:var(--app-border)] pt-5 text-xs text-[color:var(--app-muted)] sm:flex-row sm:items-center sm:justify-between">
+          <p>PerfectUtilitares · ferramentas online para tarefas do dia a dia.</p>
+          <nav className="flex flex-wrap items-center gap-x-4 gap-y-2" aria-label="Informações legais">
+            <Link href="/privacidade" className="hover:text-[color:var(--app-fg)]">
+              Privacidade
+            </Link>
+            <Link href="/cookies" className="hover:text-[color:var(--app-fg)]">
+              Cookies
+            </Link>
+            <Link href="/termos" className="hover:text-[color:var(--app-fg)]">
+              Termos
+            </Link>
+            <Link href="/contato" className="hover:text-[color:var(--app-fg)]">
+              Contato
+            </Link>
+          </nav>
+        </div>
+      </footer>
     </div>
   );
 }

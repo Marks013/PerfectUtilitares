@@ -32,6 +32,26 @@ Para servidor com Docker e Nginx Proxy Manager, consulte:
 
 Por padrão, o container usa a porta interna `3000` e publica a porta externa `3002`.
 
+## Google Search Console e Core Web Vitals
+
+O painel administrativo **Visibilidade** recebe Core Web Vitals das rotas públicas
+sem armazenar IP, usuário ou conteúdo enviado. As amostras são mantidas por 90 dias.
+
+Para habilitar consultas, CTR, posição e inspeção de indexação do Search Console:
+
+1. Verifique a propriedade do domínio no Google Search Console.
+2. Crie uma conta de serviço com acesso somente de leitura às APIs Search Console e
+   URL Inspection.
+3. Adicione o e-mail da conta de serviço como usuário da propriedade.
+4. Configure `GOOGLE_SEARCH_CONSOLE_SITE_URL`,
+   `GOOGLE_SEARCH_CONSOLE_CLIENT_EMAIL` e
+   `GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY` no `.env` do servidor.
+5. Opcionalmente, configure `GOOGLE_SITE_VERIFICATION` para publicar a meta tag de
+   verificação e `CONTACT_EMAIL` para a página de contato.
+
+A chave privada deve permanecer apenas no `.env` do servidor. Represente quebras de
+linha como `\\n`; nunca versione essa credencial.
+
 ## Referências de Migração
 
 Os projetos legados foram usados apenas como referência local durante a recriação. O repositório publica o produto Web e a documentação de auditoria/paridade, sem carregar os fontes e builds antigos.

@@ -83,6 +83,8 @@ services:
         AUTH_URL: ${AUTH_URL:-http://localhost:3002}
         NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3002}
         APP_URL: ${APP_URL:-http://localhost:3002}
+        CONTACT_EMAIL: ${CONTACT_EMAIL:-admin@perfectutilitares.com}
+        GOOGLE_SITE_VERIFICATION: ${GOOGLE_SITE_VERIFICATION:-}
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
         SENTRY_ORG: ${SENTRY_ORG:-}
         SENTRY_PROJECT: ${SENTRY_PROJECT:-}
@@ -109,6 +111,11 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3002}
       APP_URL: ${APP_URL:-http://localhost:3002}
       APP_TIME_ZONE: ${APP_TIME_ZONE:-America/Sao_Paulo}
+      CONTACT_EMAIL: ${CONTACT_EMAIL:-admin@perfectutilitares.com}
+      GOOGLE_SITE_VERIFICATION: ${GOOGLE_SITE_VERIFICATION:-}
+      GOOGLE_SEARCH_CONSOLE_SITE_URL: ${GOOGLE_SEARCH_CONSOLE_SITE_URL:-}
+      GOOGLE_SEARCH_CONSOLE_CLIENT_EMAIL: ${GOOGLE_SEARCH_CONSOLE_CLIENT_EMAIL:-}
+      GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY: ${GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local.test}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?execute npm run setup:env antes do docker compose}
       DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Principal}

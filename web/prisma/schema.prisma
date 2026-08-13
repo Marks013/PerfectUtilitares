@@ -564,6 +564,19 @@ model AuditLog {
   @@index([userId])
 }
 
+model SeoWebVital {
+  id             String   @id @default(cuid())
+  path           String
+  metric         String
+  value          Float
+  rating         String
+  navigationType String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([path, metric, createdAt])
+}
+
 model UnimedUserAccess {
   id        String            @id @default(cuid())
   tenantId  String

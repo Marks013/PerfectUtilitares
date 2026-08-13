@@ -21,6 +21,10 @@ const routes = [
   "/pdf/word-para-pdf",
   "/pdf/excel-para-pdf",
   "/pdf/jpg-para-pdf",
+  "/privacidade",
+  "/cookies",
+  "/termos",
+  "/contato",
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {
