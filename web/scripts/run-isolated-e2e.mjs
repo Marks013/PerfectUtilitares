@@ -228,6 +228,7 @@ try {
     SENTRY_DSN: "",
     SENTRY_AUTH_TOKEN: "",
   };
+  await run("npx", ["prisma", "generate"], env);
   await run("npx", ["prisma", "migrate", "deploy"], env);
   await run("npm", ["run", "prisma:seed"], env);
   app = start("npx", ["next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], env);
