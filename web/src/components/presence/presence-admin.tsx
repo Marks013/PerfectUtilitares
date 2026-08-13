@@ -10,10 +10,12 @@ import {
   Gift,
   Link2,
   LoaderCircle,
+  Mail,
   MapPin,
   Plus,
   RefreshCw,
   Save,
+  Send,
   Trash2,
   UserRoundPlus,
   Users,
@@ -35,6 +37,7 @@ import {
   type PresenceEventSummary,
   type PresenceGiftAdmin,
   type PresenceStatus,
+  deliveryLabel,
   localDateInput,
   presenceApi,
   rsvpLabel,
@@ -67,6 +70,7 @@ export function PresenceAdmin() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [latestLink, setLatestLink] = useState<string | null>(null);
 
   const loadEvents = useCallback(async () => {
@@ -96,6 +100,48 @@ export function PresenceAdmin() {
   async function refresh() {
     setError(null);
     await Promise.all([loadEvents(), selectedId ? loadDetail(selectedId) : Promise.resolve()]);
+  }
+
+  async function sendInvitations(guestIds: string[]) {
+    if (!detail || !guestIds.length) return;
+    setBusy("delivery-send");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await presenceApi<{
+        results: Array<{ status: "SENT" | "FAILED" | "SKIPPED" | "SENDING" }>;
+      }>(`/api/admin/presencas/${detail.id}/entregas`, {
+        method: "POST",
+        body: JSON.stringify({ requestId: crypto.randomUUID(), guestIds }),
+      });
+      const sent = result.results.filter((item) => item.status === "SENT").length;
+      const failed = result.results.filter((item) => item.status === "FAILED").length;
+      const skipped = result.results.filter((item) => item.status === "SKIPPED").length;
+      setNotice(
+        `${sent} convite${sent === 1 ? " enviado" : "s enviados"}.${failed ? ` ${failed} falharam.` : ""}${skipped ? ` ${skipped} sem e-mail foram ignorados.` : ""}`,
+      );
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível enviar os convites.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function retryDelivery(deliveryId: string) {
+    if (!detail) return;
+    setBusy(`delivery-${deliveryId}`);
+    setError(null);
+    setNotice(null);
+    try {
+      await presenceApi(`/api/admin/presencas/${detail.id}/entregas/${deliveryId}/reenviar`, { method: "POST" });
+      setNotice("Convite reenviado.");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível reenviar o convite.");
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function createEvent(form: HTMLFormElement) {
@@ -333,6 +379,7 @@ export function PresenceAdmin() {
       </header>
 
       <ErrorNote message={error} />
+      {notice ? <p role="status" className="rounded-xl border border-[color:var(--app-action-green)] bg-[color:var(--app-surface)] px-3 py-2 text-sm text-[color:var(--app-fg)]">{notice}</p> : null}
 
       <section className={`${panel} p-4 sm:p-5`}>
         <div className="mb-4 flex items-center gap-2"><CalendarDays className="size-5 text-[color:var(--app-action-blue)]" /><h2 className="text-lg font-bold">Novo evento</h2></div>
@@ -408,17 +455,18 @@ export function PresenceAdmin() {
               </section>
 
               <section className={`${panel} overflow-hidden`}>
-                <div className="flex items-center justify-between border-b border-[color:var(--app-border)] px-4 py-4 sm:px-5"><div className="flex items-center gap-2"><Users className="size-5 text-[color:var(--app-action-blue)]" /><h2 className="text-lg font-bold">Lista de presença</h2></div><span className="text-sm tabular-nums text-[color:var(--app-muted)]">{detail.guests.length}</span></div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--app-border)] px-4 py-4 sm:px-5"><div className="flex items-center gap-2"><Users className="size-5 text-[color:var(--app-action-blue)]" /><h2 className="text-lg font-bold">Lista de presença</h2><span className="text-sm tabular-nums text-[color:var(--app-muted)]">{detail.guests.length}</span></div><AlertDialog><AlertDialogTrigger asChild><button type="button" className={primary} disabled={detail.status !== "PUBLISHED" || busy === "delivery-send" || !detail.guests.some((guest) => guest.email)}>{busy === "delivery-send" ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />} Enviar por e-mail</button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Enviar convites por e-mail?</AlertDialogTitle><AlertDialogDescription>O envio será feito para todas as pessoas com e-mail cadastrado. Convites enviados anteriormente receberão um novo link individual.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void sendInvitations(detail.guests.filter((guest) => guest.email).map((guest) => guest.id))}>Enviar convites</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
                 <div className="max-h-[35rem] divide-y divide-[color:var(--app-border)] overflow-y-auto">
                   {detail.guests.map((guest) => (
                     <div key={guest.id} className="p-4">
                       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                        <div className="min-w-0"><p className="truncate font-bold">{guest.name}</p><p className="truncate text-xs text-[color:var(--app-muted)]">{guest.email || `/${guest.guestSlug}`} · {rsvpLabel[guest.rsvpStatus]} · {guest.companionCount}/{guest.companionLimit} acompanhantes</p></div>
+                        <div className="min-w-0"><p className="truncate font-bold">{guest.name}</p><p className="truncate text-xs text-[color:var(--app-muted)]">{guest.email || `/${guest.guestSlug}`} · {rsvpLabel[guest.rsvpStatus]} · {guest.companionCount}/{guest.companionLimit} acompanhantes</p>{guest.deliveries[0] ? <p className="mt-1 flex items-center gap-1 text-xs text-[color:var(--app-muted)]"><Mail className="size-3.5" /> {deliveryLabel[guest.deliveries[0].status]}{guest.deliveries[0].sentAt ? ` em ${formatDate(guest.deliveries[0].sentAt)}` : ""}{guest.deliveries[0].attemptCount > 1 ? ` · ${guest.deliveries[0].attemptCount} tentativas` : ""}</p> : null}</div>
                         <div className="flex flex-wrap gap-2">
                           <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "confirm")} disabled={busy === `guest-${guest.id}`}><Check className="size-4" /> Confirmar</button>
                           <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "reset")} disabled={busy === `guest-${guest.id}`}>Aguardar</button>
                           <button type="button" className={secondary} onClick={() => void guestAction(guest.id, "decline")} disabled={busy === `guest-${guest.id}`}>Não participará</button>
                           <button type="button" className={secondary} title="Gerar novo link" onClick={() => void guestAction(guest.id, "link")} disabled={busy === `guest-${guest.id}`}><Link2 className="size-4" /> Renovar</button>
+                          {guest.email ? <button type="button" className={secondary} onClick={() => guest.deliveries[0]?.status === "FAILED" ? void retryDelivery(guest.deliveries[0].id) : void sendInvitations([guest.id])} disabled={detail.status !== "PUBLISHED" || busy === "delivery-send" || busy === `delivery-${guest.deliveries[0]?.id}`}><Mail className="size-4" /> {guest.deliveries[0]?.status === "FAILED" ? "Tentar novamente" : guest.deliveries[0]?.status === "SENT" ? "Reenviar e-mail" : "Enviar e-mail"}</button> : null}
                           <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir convite de ${guest.name}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir convite?</AlertDialogTitle><AlertDialogDescription>O acesso de {guest.name} e suas reservas serão removidos.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void guestAction(guest.id, "delete")}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
                         </div>
                       </div>

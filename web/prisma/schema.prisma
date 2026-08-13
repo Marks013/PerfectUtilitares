@@ -329,6 +329,8 @@ model PresenceDelivery {
   attemptCount   Int                    @default(0)
   nextAttemptAt  DateTime?
   lastErrorCode  String?
+  providerMessageId String?
+  lastAttemptAt  DateTime?
   sentAt         DateTime?
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt

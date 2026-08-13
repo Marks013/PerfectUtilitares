@@ -142,6 +142,11 @@ export const presenceGiftOrderSchema = z.object({
   orderedIds: z.array(z.string().cuid()).min(1).max(500),
 });
 
+export const presenceInvitationDeliverySchema = z.object({
+  requestId: z.uuid(),
+  guestIds: z.array(z.string().cuid()).min(1).max(50),
+});
+
 export function zodPresenceIssues(error: z.ZodError) {
   return error.issues.map((issue) => ({
     path: issue.path.join("."),

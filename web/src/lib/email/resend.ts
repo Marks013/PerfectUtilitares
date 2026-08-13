@@ -68,6 +68,65 @@ export async function sendInvitationEmail({
   });
 }
 
+function resendErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") return "UNKNOWN";
+  const candidate = "name" in error ? error.name : null;
+  if (typeof candidate !== "string") return "UNKNOWN";
+  return candidate.replace(/[^A-Za-z0-9_]+/g, "_").toUpperCase().slice(0, 80);
+}
+
+export async function sendPresenceInvitationEmail({
+  to,
+  name,
+  eventTitle,
+  eventDate,
+  venueName,
+  inviteUrl,
+  idempotencyKey,
+}: {
+  to: string;
+  name: string;
+  eventTitle: string;
+  eventDate: string;
+  venueName: string | null;
+  inviteUrl: string;
+  idempotencyKey: string;
+}) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!apiKey || !from) throw new Error("RESEND_NOT_CONFIGURED");
+
+  const safeName = escapeHtml(name);
+  const safeEventTitle = escapeHtml(eventTitle);
+  const safeEventDate = escapeHtml(eventDate);
+  const safeVenueName = venueName ? escapeHtml(venueName) : null;
+  const safeInviteUrl = escapeHtml(inviteUrl);
+  const result = await getResendClient(apiKey).emails.send(
+    {
+      from,
+      to,
+      subject: `Confirme sua presença em ${eventTitle}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #171717;">
+          <h1 style="font-size: 24px;">${safeEventTitle}</h1>
+          <p>Olá, ${safeName}.</p>
+          <p>Seu convite está pronto. Confirme ou atualize sua presença pelo link individual abaixo.</p>
+          <p><strong>Data:</strong> ${safeEventDate}</p>
+          ${safeVenueName ? `<p><strong>Local:</strong> ${safeVenueName}</p>` : ""}
+          <p style="margin: 24px 0;"><a href="${safeInviteUrl}" style="background: #2563eb; border-radius: 8px; color: #ffffff; display: inline-block; font-weight: 700; padding: 12px 18px; text-decoration: none;">Responder convite</a></p>
+          <p style="font-size: 13px; color: #525252;">Este link é pessoal. Não encaminhe para outras pessoas.</p>
+        </div>
+      `,
+      text: `Olá, ${name}. Confirme sua presença em ${eventTitle}. Data: ${eventDate}.${venueName ? ` Local: ${venueName}.` : ""} Acesse: ${inviteUrl}`,
+    },
+    { idempotencyKey },
+  );
+
+  if (result.error) throw new Error(`RESEND_${resendErrorCode(result.error)}`);
+  if (!result.data?.id) throw new Error("RESEND_EMPTY_RESPONSE");
+  return result.data.id;
+}
+
 export async function sendPasswordResetEmail({
   to,
   name,

@@ -1,5 +1,16 @@
 export type PresenceStatus = "DRAFT" | "PUBLISHED" | "CLOSED" | "ARCHIVED";
 export type RsvpStatus = "PENDING" | "CONFIRMED" | "DECLINED";
+export type PresenceDeliveryStatus = "PENDING" | "SENDING" | "SENT" | "FAILED";
+
+type PresenceDeliveryAdmin = {
+  id: string;
+  status: PresenceDeliveryStatus;
+  attemptCount: number;
+  nextAttemptAt: string | null;
+  lastAttemptAt: string | null;
+  sentAt: string | null;
+  createdAt: string;
+};
 
 export type PresenceEventSummary = {
   id: string;
@@ -24,6 +35,7 @@ type PresenceGuestAdmin = {
   tokenRevokedAt: string | null;
   respondedAt: string | null;
   createdAt: string;
+  deliveries: PresenceDeliveryAdmin[];
   _count: { reservedGifts: number };
 };
 
@@ -61,6 +73,13 @@ export const rsvpLabel: Record<RsvpStatus, string> = {
   PENDING: "Aguardando",
   CONFIRMED: "Confirmado",
   DECLINED: "Não participará",
+};
+
+export const deliveryLabel: Record<PresenceDeliveryStatus, string> = {
+  PENDING: "Preparado",
+  SENDING: "Enviando",
+  SENT: "Enviado",
+  FAILED: "Falhou",
 };
 
 export function slugifyPresence(value: string) {

@@ -15,6 +15,13 @@ export function generatePresenceInvitationToken() {
   return `${INVITATION_PREFIX}${randomBytes(32).toString("base64url")}`;
 }
 
+export function derivePresenceInvitationToken(deliveryId: string) {
+  const secret = createHmac("sha256", presencePepper())
+    .update(`presence-delivery:${deliveryId}`)
+    .digest("base64url");
+  return `${INVITATION_PREFIX}${secret}`;
+}
+
 export function generatePresenceSessionToken() {
   return `${SESSION_PREFIX}${randomBytes(32).toString("base64url")}`;
 }

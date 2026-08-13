@@ -121,4 +121,34 @@ describe("Resend email adapter", () => {
     expect(reset.html).toContain("O&#039;Reilly");
     expect(reset.html).toContain("a=1&amp;b=2");
   });
+
+  it("sends a presence invitation with provider idempotency", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.RESEND_FROM_EMAIL = "Perfect <no-reply@example.test>";
+    const { sendPresenceInvitationEmail } = await loadModule();
+
+    await expect(
+      sendPresenceInvitationEmail({
+        to: "guest@example.test",
+        name: "Ana <Souza>",
+        eventTitle: "Formatura & Festa",
+        eventDate: "20 de dezembro de 2026 às 19:00",
+        venueName: "Salão <Principal>",
+        inviteUrl: "https://example.test/presenca#c_token&a=1",
+        idempotencyKey: "presence/delivery-1",
+      }),
+    ).resolves.toBe("email-id");
+
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "guest@example.test",
+        subject: "Confirme sua presença em Formatura & Festa",
+      }),
+      { idempotencyKey: "presence/delivery-1" },
+    );
+    expect(mocks.send.mock.calls[0]?.[0].html).toContain(
+      "Ana &lt;Souza&gt;",
+    );
+    expect(mocks.send.mock.calls[0]?.[0].html).not.toContain("<Principal>");
+  });
 });
