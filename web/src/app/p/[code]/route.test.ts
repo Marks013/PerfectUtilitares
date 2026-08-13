@@ -49,9 +49,7 @@ describe("presence short invitation route", () => {
     );
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe(
-      "https://example.test/presenca/casamento/ana",
-    );
+    expect(response.headers.get("location")).toBe("/presenca/casamento/ana");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
   });
 

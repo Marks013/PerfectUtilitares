@@ -11,11 +11,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ code: string }> };
 
-function unavailable(request: Request) {
-  const response = NextResponse.redirect(
-    new URL("/presenca/convite/indisponivel", request.url),
-    307,
-  );
+function unavailable() {
+  const response = new NextResponse(null, {
+    status: 307,
+    headers: { Location: "/presenca/convite/indisponivel" },
+  });
   response.headers.set("Cache-Control", "no-store");
   return response;
 }
@@ -29,7 +29,7 @@ export async function GET(request: Request, context: RouteContext) {
   if (limited) return limited;
 
   const { code } = await context.params;
-  if (!/^p_[A-Za-z0-9_-]{16}$/.test(code)) return unavailable(request);
+  if (!/^p_[A-Za-z0-9_-]{16}$/.test(code)) return unavailable();
   const now = new Date();
   const guest = await prisma.presenceGuest.findUnique({
     where: { shortCodeHash: hashPresenceSecret(code) },
@@ -50,7 +50,7 @@ export async function GET(request: Request, context: RouteContext) {
     (guest.accessExpiresAt && guest.accessExpiresAt <= now) ||
     !["PUBLISHED", "CLOSED"].includes(guest.event.status)
   ) {
-    return unavailable(request);
+    return unavailable();
   }
 
   const session = await createPresenceSessionForGuest(
@@ -59,13 +59,12 @@ export async function GET(request: Request, context: RouteContext) {
     guest.guestSlug,
     now,
   );
-  const response = NextResponse.redirect(
-    new URL(
-      `/presenca/${guest.event.eventSlug}/${guest.guestSlug}`,
-      request.url,
-    ),
-    307,
-  );
+  const response = new NextResponse(null, {
+    status: 307,
+    headers: {
+      Location: `/presenca/${guest.event.eventSlug}/${guest.guestSlug}`,
+    },
+  });
   response.cookies.set(
     session.cookieName,
     session.sessionToken,
