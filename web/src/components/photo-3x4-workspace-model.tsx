@@ -10,7 +10,6 @@ import {
   type PhotoSettings,
 } from "@/lib/photos/schema";
 export type ResultFile = {
-  url: string;
   blob: Blob;
   fileName: string;
   label: string;
@@ -152,12 +151,14 @@ export function loadImage(url: string) {
 }
 
 export function downloadResult(result: ResultFile) {
+  const url = URL.createObjectURL(result.blob);
   const link = document.createElement("a");
-  link.href = result.url;
+  link.href = url;
   link.download = result.fileName;
   document.body.appendChild(link);
   link.click();
   link.remove();
+  globalThis.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 export function getFileKey(file: File) {

@@ -5,7 +5,7 @@ import type { usePhoto3x4WorkspaceController } from "./photo-3x4-workspace";
 type Model = ReturnType<typeof usePhoto3x4WorkspaceController>;
 
 export function Photo3x4WorkspaceView({ model }: { model: Model }) {
-  const { Archive, ChevronLeft, ChevronRight, Cropper, Download, ImageIcon, Loader2, PHOTO_ASPECT, PHOTO_DEFAULTS, RotateCcw, ScanFace, Scissors, SlidersHorizontal, Upload, X, clearFiles, cropAreaBorderWidth, cropModeDescription, detectFace, detectFacesInBatch, editorStates, faceStatus, files, form, getEditorState, getFileKey, getPhotoFormErrorMessages, goToPhoto, hasFiles, isBatch, isBusy, isDetectingBatchFaces, isDetectingFace, previewBorderColor, previewBorderWidth, previewFilter, previewUrl, processPhotoFile, processZip, processingFileKey, progressPercent, resetAdjustments, selectedEditor, selectedFile, selectedIndex, selectedKey, setCropGeometry, setSelectedEditorState, setSelectedIndex, singlePhotoMutation, updateFiles, watchedAddBorder, watchedBorderColor, watchedQuality, workPreview, workProgress, zipMutation, zipResult } = model;
+  const { Archive, ChevronLeft, ChevronRight, Cropper, Download, ImageIcon, Loader2, PHOTO_ASPECT, PHOTO_DEFAULTS, RotateCcw, ScanFace, Scissors, SlidersHorizontal, Upload, X, clearFiles, cropAreaBorderWidth, cropModeDescription, detectFace, detectFacesInBatch, downloadResult, editorStates, faceStatus, files, form, getEditorState, getFileKey, getPhotoFormErrorMessages, goToPhoto, hasFiles, isBatch, isBusy, isDetectingBatchFaces, isDetectingFace, previewBorderColor, previewBorderWidth, previewFilter, previewUrl, processPhotoFile, processZip, processingFileKey, progressPercent, resetAdjustments, selectedEditor, selectedFile, selectedIndex, selectedKey, setCropGeometry, setSelectedEditorState, setSelectedIndex, singlePhotoMutation, singleResult, updateFiles, watchedAddBorder, watchedBorderColor, watchedQuality, workPreview, workProgress, zipMutation, zipResult } = model;
   return (
 <div className="photo-studio">
       <section className="photo-workbench">
@@ -377,15 +377,26 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
               </button>
             ) : null}
 
-            {zipResult ? (
-              <a
-                href={zipResult.url}
-                download={zipResult.fileName}
+            {singleResult ? (
+              <button
+                type="button"
+                onClick={() => downloadResult(singleResult)}
                 className="photo-secondary-button"
               >
                 <Download className="size-4" aria-hidden="true" />
-                ZIP pronto
-              </a>
+                Baixar foto novamente
+              </button>
+            ) : null}
+
+            {zipResult ? (
+              <button
+                type="button"
+                onClick={() => downloadResult(zipResult)}
+                className="photo-secondary-button"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                Baixar ZIP novamente
+              </button>
             ) : null}
           </div>
 

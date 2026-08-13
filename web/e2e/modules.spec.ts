@@ -153,10 +153,11 @@ test("presence event customization, private invitation and report work together"
   await expect(page.getByRole("button", { name: "Liberar" })).toBeVisible();
   await expect(page.getByText("Você ainda não respondeu ao convite.")).toBeVisible();
 
+  await page.getByRole("button", { name: "Adicionar adulto" }).click();
   await page
     .getByRole("button", { name: "Confirmar presença", exact: true })
     .click();
-  await expect(page.getByText("Sua presença está confirmada.")).toBeVisible();
+  await expect(page.getByText(/Presença confirmada para 1 pessoa/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Presença confirmada" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -229,6 +230,48 @@ test("photo endpoint processes real image bytes and dimensions", async ({ page }
 
   const metadata = await sharp(await response.body()).metadata();
   expect(metadata).toMatchObject({ format: "jpeg", width: 354, height: 472 });
+
+  const reprocessed = await page.request.post("/api/fotos/processar", {
+    headers: { origin },
+    multipart: {
+      file: { name: "portrait.png", mimeType: "image/png", buffer: source },
+      format: "png",
+      quality: "82",
+      brightness: "1.1",
+      contrast: "0.9",
+    },
+  });
+  expect(reprocessed.status()).toBe(200);
+  const reprocessedMetadata = await sharp(await reprocessed.body()).metadata();
+  expect(reprocessedMetadata).toMatchObject({
+    format: "png",
+    width: 354,
+    height: 472,
+  });
+
+  const batch = await page.request.post("/api/fotos/lote", {
+    headers: { origin },
+    multipart: {
+      files: { name: "portrait-a.png", mimeType: "image/png", buffer: source },
+      format: "jpeg",
+      quality: "88",
+    },
+  });
+  expect(batch.status()).toBe(200);
+  expect(batch.headers()["content-type"]).toBe("application/zip");
+  expect((await batch.body()).byteLength).toBeGreaterThan(0);
+});
+
+test("Jornada navigation collapses after selecting an option", async ({ page }) => {
+  await page.goto("/dashboard");
+  const menu = page.locator("details").filter({ hasText: "Validador de Jornada" });
+
+  await menu.locator("summary").click();
+  await expect(menu).toHaveAttribute("open", "");
+  await menu.getByRole("link", { name: "Validar", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/jornada\/validar(?:\?|$)/);
+  await expect(menu).not.toHaveAttribute("open", "");
 });
 
 test("Unimed unlock creates a real session and reads configuration", async ({

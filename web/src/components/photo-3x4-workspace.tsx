@@ -70,6 +70,7 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
   const [workProgress, setWorkProgress] = useState<WorkProgress>(null);
   const [workPreview, setWorkPreview] = useState<WorkPreview>(null);
   const [processingFileKey, setProcessingFileKey] = useState<string | null>(null);
+  const [singleResult, setSingleResult] = useState<ResultFile | null>(null);
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
   const restoredSettings = useRef(false);
   const photoSettingsStorageKey = getPhotoSettingsStorageKey(userId);
@@ -201,14 +202,6 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
   }, [selectedKey]);
 
   useEffect(() => {
-    return () => {
-      if (zipResult) {
-        URL.revokeObjectURL(zipResult.url);
-      }
-    };
-  }, [zipResult]);
-
-  useEffect(() => {
     if (
       !selectedKey ||
       selectedEditor.cropMode !== "manual" ||
@@ -246,10 +239,8 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
   ]);
 
   function clearResults() {
-    if (zipResult) {
-      URL.revokeObjectURL(zipResult.url);
-      setZipResult(null);
-    }
+    setSingleResult(null);
+    setZipResult(null);
   }
 
   function updateFiles(nextFiles: File[]) {
@@ -384,7 +375,6 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
 
     const blob = await response.blob();
     return {
-      url: URL.createObjectURL(blob),
       blob,
       fileName: getDownloadFileName(response, "foto-3x4.jpg"),
       label: file.name,
@@ -452,8 +442,8 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
         label: "Foto concluída",
         detail: result.fileName,
       });
+      setSingleResult(result);
       downloadResult(result);
-      window.setTimeout(() => URL.revokeObjectURL(result.url), 30_000);
     },
     onError() {
       setWorkProgress(null);
@@ -481,16 +471,12 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
       const zip = await processBatchZip(values);
 
       return {
-        url: URL.createObjectURL(zip.blob),
         blob: zip.blob,
         fileName: zip.fileName,
         label: zip.label,
       };
     },
     onSuccess(result) {
-      if (zipResult) {
-        URL.revokeObjectURL(zipResult.url);
-      }
       setWorkPreview(null);
       setZipResult(result);
       setWorkProgress({
@@ -508,7 +494,10 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
     },
   });
 
-  const processZip = form.handleSubmit((values) => zipMutation.mutate(values));
+  const processZip = form.handleSubmit((values) => {
+    clearResults();
+    zipMutation.mutate(values);
+  });
 
   function processPhotoFile(file: File | null) {
     if (!file || singlePhotoMutation.isPending) {
@@ -516,6 +505,7 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
     }
 
     void form.handleSubmit((values) => {
+      clearResults();
       setProcessingFileKey(getFileKey(file));
       singlePhotoMutation.mutate({ file, values });
     })();
@@ -716,7 +706,7 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
     isDetectingFace ||
     isDetectingBatchFaces;
 
-    return { Archive, ChevronLeft, ChevronRight, Cropper, Download, ImageIcon, Loader2, PHOTO_ASPECT, PHOTO_DEFAULTS, RotateCcw, ScanFace, Scissors, SlidersHorizontal, Upload, X, clearFiles, cropAreaBorderWidth, cropModeDescription, detectFace, detectFacesInBatch, editorStates, faceStatus, files, form, getEditorState, getFileKey, getPhotoFormErrorMessages, goToPhoto, hasFiles, isBatch, isBusy, isDetectingBatchFaces, isDetectingFace, previewBorderColor, previewBorderWidth, previewFilter, previewUrl, processPhotoFile, processZip, processingFileKey, progressPercent, resetAdjustments, selectedEditor, selectedFile, selectedIndex, selectedKey, setCropGeometry, setSelectedEditorState, setSelectedIndex, singlePhotoMutation, updateFiles, watchedAddBorder, watchedBorderColor, watchedQuality, workPreview, workProgress, zipMutation, zipResult };
+    return { Archive, ChevronLeft, ChevronRight, Cropper, Download, ImageIcon, Loader2, PHOTO_ASPECT, PHOTO_DEFAULTS, RotateCcw, ScanFace, Scissors, SlidersHorizontal, Upload, X, clearFiles, cropAreaBorderWidth, cropModeDescription, detectFace, detectFacesInBatch, downloadResult, editorStates, faceStatus, files, form, getEditorState, getFileKey, getPhotoFormErrorMessages, goToPhoto, hasFiles, isBatch, isBusy, isDetectingBatchFaces, isDetectingFace, previewBorderColor, previewBorderWidth, previewFilter, previewUrl, processPhotoFile, processZip, processingFileKey, progressPercent, resetAdjustments, selectedEditor, selectedFile, selectedIndex, selectedKey, setCropGeometry, setSelectedEditorState, setSelectedIndex, singlePhotoMutation, singleResult, updateFiles, watchedAddBorder, watchedBorderColor, watchedQuality, workPreview, workProgress, zipMutation, zipResult };
 }
 
 export function Photo3x4Workspace(props: Parameters<typeof usePhoto3x4WorkspaceController>[0]) {

@@ -1,7 +1,8 @@
-import { ChevronDown, LogIn, LogOut } from "lucide-react";
+import { LogIn, LogOut } from "lucide-react";
 import Link from "next/link";
 import { logoutAction } from "@/app/login/actions";
 import { auth } from "@/auth";
+import { JornadaNavMenu } from "@/components/app-jornada-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const publicNavItems = [
@@ -62,26 +63,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             <Link href="/dashboard" className="app-nav-link">
               Início
             </Link>
-            <details className="group relative">
-              <summary className="app-nav-link flex cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
-                Validador de Jornada
-                <ChevronDown
-                  className="size-3.5 transition-transform group-open:rotate-180"
-                  aria-hidden="true"
-                />
-              </summary>
-              <div className="absolute left-0 top-full z-50 mt-2 grid min-w-56 gap-1 rounded-xl border border-white/10 bg-[color:var(--app-shell)] p-2 shadow-[var(--app-shell-shadow)] backdrop-blur-xl">
-                {jornadaNavItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="app-nav-link whitespace-nowrap"
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-              </div>
-            </details>
+            <JornadaNavMenu items={jornadaNavItems} />
             {navItems.map((item) => (
               <Link key={item.href} href={item.href} className="app-nav-link">
                 {item.label}
