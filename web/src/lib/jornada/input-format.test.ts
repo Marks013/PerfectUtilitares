@@ -3,6 +3,7 @@ import {
   calcularDuracaoEntrada,
   formatarHorariosEntrada,
   isJornadaOitoHoras,
+  temTrabalhoNoturno,
 } from "./input-format";
 
 describe("formatarHorariosEntrada", () => {
@@ -24,5 +25,19 @@ describe("formatarHorariosEntrada", () => {
       duracaoFormatada: "07:20",
       duracaoMinutos: 440,
     });
+  });
+
+  it("detecta trabalho que cruza o periodo noturno", () => {
+    expect(temTrabalhoNoturno("21:30 22:30")).toBe(true);
+    expect(temTrabalhoNoturno("04:00 06:00")).toBe(true);
+    expect(temTrabalhoNoturno("0800 1200 2200 2300")).toBe(true);
+    expect(temTrabalhoNoturno("22:00 05:00")).toBe(true);
+  });
+
+  it("nao considera jornadas diurnas nem os limites externos", () => {
+    expect(temTrabalhoNoturno("08:00 12:00 13:00 17:00")).toBe(false);
+    expect(temTrabalhoNoturno("05:00 12:00 13:00 22:00")).toBe(false);
+    expect(temTrabalhoNoturno("")).toBe(false);
+    expect(temTrabalhoNoturno("horario invalido")).toBe(false);
   });
 });

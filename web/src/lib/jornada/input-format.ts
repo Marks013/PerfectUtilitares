@@ -1,6 +1,9 @@
 import { normalizarHorarios } from "@/lib/codigos/horario-normalizer";
 import { calcularDuracaoMinutos, formatarDuracao, parseHorario } from "./time";
 
+const FIM_PERIODO_NOTURNO_MINUTOS = 5 * 60;
+const INICIO_PERIODO_NOTURNO_MINUTOS = 22 * 60;
+
 function formatarTokenHorario(token: string): string {
   const trimmed = token.trim();
   const compacto = /^\d{3,4}$/.test(trimmed)
@@ -33,6 +36,37 @@ export function formatarHorariosEntrada(value: string): string {
     .split(/\s+/)
     .map(formatarTokenHorario)
     .join(" ");
+}
+
+function intervaloTemTrabalhoNoturno(inicio: number, fim: number): boolean {
+  if (inicio === fim) return false;
+
+  if (fim < inicio) {
+    return true;
+  }
+
+  return (
+    inicio < FIM_PERIODO_NOTURNO_MINUTOS ||
+    fim > INICIO_PERIODO_NOTURNO_MINUTOS
+  );
+}
+
+export function temTrabalhoNoturno(value: string): boolean {
+  const horariosNormalizado = normalizarHorarios(formatarHorariosEntrada(value));
+  if (!horariosNormalizado) return false;
+
+  const pontos = horariosNormalizado.split(" ");
+  if (pontos.length !== 2 && pontos.length !== 4) return false;
+
+  const parsed = pontos.map(parseHorario);
+  if (parsed.some((item) => item == null)) return false;
+
+  const tempos = parsed as number[];
+  return Array.from({ length: tempos.length / 2 }, (_, index) => {
+    const inicio = tempos[index * 2];
+    const fim = tempos[index * 2 + 1];
+    return intervaloTemTrabalhoNoturno(inicio, fim);
+  }).some(Boolean);
 }
 
 export function calcularDuracaoEntrada(value: string): {

@@ -22,6 +22,7 @@ import { useForm } from "react-hook-form";
 import {
   calcularDuracaoEntrada,
   formatarHorariosEntrada,
+  temTrabalhoNoturno,
 } from "@/lib/jornada/input-format";
 import {
   AUTO_FORMAT_KEY,
@@ -89,6 +90,7 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
   });
   const horarios = form.watch("horarios");
   const segundaJornadaHorarios = form.watch("segundaJornadaHorarios");
+  const sabadoHorarios = form.watch("sabadoHorarios");
   const autoFormatar = form.watch("autoFormatar");
   const interjornadaAtiva = form.watch("interjornadaAtiva");
   const duracaoPrincipal = useMemo(
@@ -120,6 +122,20 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
     isValidPrincipalEightHours(value) || hasAuthorizedSaturdayException(value);
   const canShowSabado =
     !interjornadaAtiva && shouldValidateWithSaturday(horarios);
+  const temJornadaNoturna = useMemo(
+    () =>
+      temTrabalhoNoturno(horarios) ||
+      (interjornadaAtiva &&
+        temTrabalhoNoturno(segundaJornadaHorarios ?? "")) ||
+      (canShowSabado && temTrabalhoNoturno(sabadoHorarios ?? "")),
+    [
+      canShowSabado,
+      horarios,
+      interjornadaAtiva,
+      sabadoHorarios,
+      segundaJornadaHorarios,
+    ],
+  );
   const autoFormatStorageKey = getAutoFormatStorageKey(userId);
 
   useEffect(() => {
@@ -546,7 +562,7 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
     .sort(([, left], [, right]) => right - left)
     .slice(0, 6);
 
-    return { AlertTriangle, CheckCircle2, Clock3, Download, FileSpreadsheet, History, INTERJORNADA_HELP_TEXT, Info, Link, Loader2, ResultCard, RotateCcw, TableProperties, Trash2, Upload, addPdfPerson, allVisibleSelected, batchFile, batchMutation, batchPdfDetalhado, batchPdfError, batchRepeated, batchTopErrors, batchUsarHorariosAgrupados, batchValidarIntervalos, batchValidarJornada, batchValidarPeriodos, bulkSelectionMode, canShowSabado, clearHistoryMutation, createPdfPerson, duracaoPrincipal, duracaoSegundaJornada, exportError, exportSelected, filteredHistorico, form, formatDate, formatField, getCombinedMonthlyHours, getCombinedWeeklyHours, getPrimaryMessage, getSecondaryMessages, hasAccount, hideInvalidHistory, historico, historicoQuery, historyPage, historyPageCount, horariosField, interjornadaAtiva, isBatchPdfExporting, isCombinedResponse, isExporting, joinCodigos, mutation, pdfPeopleByKey, removePdfPerson, sabadoField, segundaJornadaField, selectableVisibleHistorico, selectedDeleteMutation, selectedErrorCount, selectedHistoryIds, selectedItemCount, selectedSet, selectedValidCount, selectionMode, setBatchFile, setBatchPdfDetalhado, setBatchPdfError, setBatchUsarHorariosAgrupados, setBatchValidarIntervalos, setBatchValidarJornada, setBatchValidarPeriodos, setHideInvalidHistory, setHistoryPage, submitBatchPdfExport, submitBatchValidation, submitValidation, sumDurations, toggleAllVisible, toggleOne, totalErrorCount, totalValidCount, updatePdfPerson, visibleHistorico };
+    return { AlertTriangle, CheckCircle2, Clock3, Download, FileSpreadsheet, History, INTERJORNADA_HELP_TEXT, Info, Link, Loader2, ResultCard, RotateCcw, TableProperties, Trash2, Upload, addPdfPerson, allVisibleSelected, batchFile, batchMutation, batchPdfDetalhado, batchPdfError, batchRepeated, batchTopErrors, batchUsarHorariosAgrupados, batchValidarIntervalos, batchValidarJornada, batchValidarPeriodos, bulkSelectionMode, canShowSabado, clearHistoryMutation, createPdfPerson, duracaoPrincipal, duracaoSegundaJornada, exportError, exportSelected, filteredHistorico, form, formatDate, formatField, getCombinedMonthlyHours, getCombinedWeeklyHours, getPrimaryMessage, getSecondaryMessages, hasAccount, hideInvalidHistory, historico, historicoQuery, historyPage, historyPageCount, horariosField, interjornadaAtiva, isBatchPdfExporting, isCombinedResponse, isExporting, joinCodigos, mutation, pdfPeopleByKey, removePdfPerson, sabadoField, segundaJornadaField, selectableVisibleHistorico, selectedDeleteMutation, selectedErrorCount, selectedHistoryIds, selectedItemCount, selectedSet, selectedValidCount, selectionMode, setBatchFile, setBatchPdfDetalhado, setBatchPdfError, setBatchUsarHorariosAgrupados, setBatchValidarIntervalos, setBatchValidarJornada, setBatchValidarPeriodos, setHideInvalidHistory, setHistoryPage, submitBatchPdfExport, submitBatchValidation, submitValidation, sumDurations, temJornadaNoturna, toggleAllVisible, toggleOne, totalErrorCount, totalValidCount, updatePdfPerson, visibleHistorico };
 }
 
 export function JornadaValidationForm(props: Parameters<typeof useJornadaValidationFormController>[0]) {

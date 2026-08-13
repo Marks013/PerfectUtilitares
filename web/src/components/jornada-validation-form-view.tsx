@@ -6,7 +6,7 @@ import { JornadaHistorySection } from "./jornada-validation-form-jornada-history
 type Model = ReturnType<typeof useJornadaValidationFormController>;
 
 export function JornadaValidationFormView({ model }: { model: Model }) {
-  const { CheckCircle2, Clock3, Download, FileSpreadsheet, INTERJORNADA_HELP_TEXT, Info, Loader2, ResultCard, RotateCcw, TableProperties, Upload, batchFile, batchMutation, batchPdfDetalhado, batchPdfError, batchRepeated, batchTopErrors, batchUsarHorariosAgrupados, batchValidarIntervalos, batchValidarJornada, batchValidarPeriodos, canShowSabado, duracaoPrincipal, duracaoSegundaJornada, form, formatField, getCombinedMonthlyHours, getCombinedWeeklyHours, horariosField, interjornadaAtiva, isBatchPdfExporting, isCombinedResponse, joinCodigos, mutation, sabadoField, segundaJornadaField, setBatchFile, setBatchPdfDetalhado, setBatchPdfError, setBatchUsarHorariosAgrupados, setBatchValidarIntervalos, setBatchValidarJornada, setBatchValidarPeriodos, submitBatchPdfExport, submitBatchValidation, submitValidation, sumDurations } = model;
+  const { CheckCircle2, Clock3, Download, FileSpreadsheet, INTERJORNADA_HELP_TEXT, Info, Loader2, ResultCard, RotateCcw, TableProperties, Upload, batchFile, batchMutation, batchPdfDetalhado, batchPdfError, batchRepeated, batchTopErrors, batchUsarHorariosAgrupados, batchValidarIntervalos, batchValidarJornada, batchValidarPeriodos, canShowSabado, duracaoPrincipal, duracaoSegundaJornada, form, formatField, getCombinedMonthlyHours, getCombinedWeeklyHours, horariosField, interjornadaAtiva, isBatchPdfExporting, isCombinedResponse, joinCodigos, mutation, sabadoField, segundaJornadaField, setBatchFile, setBatchPdfDetalhado, setBatchPdfError, setBatchUsarHorariosAgrupados, setBatchValidarIntervalos, setBatchValidarJornada, setBatchValidarPeriodos, submitBatchPdfExport, submitBatchValidation, submitValidation, sumDurations, temJornadaNoturna } = model;
   return (
 <div className="jornada-studio">
       <section className="jornada-command">
@@ -17,7 +17,8 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
             Digite a escala, confira o diagnóstico e selecione somente jornadas
             válidas para gerar a alteração.
           </p>
-          <aside className="rounded-xl border border-amber-300/40 bg-amber-100/10 p-4 text-sm leading-relaxed text-[color:var(--app-muted)]">
+          {temJornadaNoturna ? (
+            <aside className="rounded-xl border border-amber-300/40 bg-amber-100/10 p-4 text-sm leading-relaxed text-[color:var(--app-muted)]">
             <strong className="block text-[color:var(--app-fg)]">
               Hora noturna reduzida — aviso orientativo
             </strong>
@@ -29,7 +30,8 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
               conforme o caso. Confirme sempre a convenção, o acordo coletivo e
               a orientação do RH.
             </span>
-          </aside>
+            </aside>
+          ) : null}
         </div>
 
         <form
