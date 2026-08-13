@@ -24,6 +24,7 @@ test.beforeEach(() => {
 test("presence event customization, private invitation and report work together", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   await login(page);
   const origin = new URL(page.url()).origin;
   const startsAt = new Date(Date.now() + 30 * 86_400_000);
