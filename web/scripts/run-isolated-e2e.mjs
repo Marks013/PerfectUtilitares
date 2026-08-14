@@ -24,6 +24,23 @@ function capture(command, args) {
 }
 
 function databaseHost() {
+  // No GitHub Actions o PostgreSQL é um service container, não um serviço
+  // iniciado pelo Docker Compose deste projeto. Nesse ambiente a conexão
+  // oficial já é fornecida por DATABASE_URL.
+  if (process.env.CI === "true") {
+    const url = new URL(process.env.DATABASE_URL);
+    const username = decodeURIComponent(url.username);
+    const password = decodeURIComponent(url.password);
+    if (!url.hostname || !username) {
+      throw new Error("CI DATABASE_URL does not contain PostgreSQL host/user.");
+    }
+    return {
+      address: url.hostname,
+      username,
+      password,
+    };
+  }
+
   const id = capture("docker", [
     "ps",
     "--filter",
