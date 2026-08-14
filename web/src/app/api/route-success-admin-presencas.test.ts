@@ -52,6 +52,7 @@ describe("route-success: admin presencas fase 2", () => {
             presenceGift: {
               aggregate: mocks.giftAggregate,
               create: mocks.giftCreate,
+              update: mocks.giftUpdate,
             },
             presenceActivity: { create: mocks.activityCreate },
             presenceEvent: { update: mocks.eventUpdate },
@@ -90,8 +91,28 @@ describe("route-success: admin presencas fase 2", () => {
       mocks.giftCreate.mockResolvedValue({ id: "gift-1", title: "Presente", description: null, externalUrl: null, position: 2, active: true });
       response = await giftsRoute.POST(new Request("http://localhost/api/admin/presencas/event-1/presentes", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ title: "Presente", active: true }) }), context);
     } else {
-      mocks.giftFindFirst.mockResolvedValue({ id: "gift-1", reservedByGuestId: null });
-      mocks.giftUpdate.mockResolvedValue({ id: "gift-1", title: "Presente", description: null, externalUrl: null, position: 0, active: false, reservedAt: null, reservedByGuest: null });
+      mocks.giftFindFirst.mockResolvedValue({
+        id: "gift-1",
+        quantity: 1,
+        reservedManually: false,
+        reservedByGuestId: null,
+        _count: { reservations: 0 },
+      });
+      mocks.giftUpdate.mockResolvedValue({
+        id: "gift-1",
+        categoryId: null,
+        emoji: null,
+        title: "Presente",
+        description: null,
+        externalUrl: null,
+        position: 0,
+        active: false,
+        quantity: 1,
+        reservedManually: false,
+        reservedAt: null,
+        reservedByGuest: null,
+        _count: { reservations: 0 },
+      });
       response = await giftRoute.PATCH(new Request("http://localhost/api/admin/presencas/event-1/presentes/gift-1", { method: "PATCH", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ active: false }) }), context);
     }
     expect(response.status).toBe(routeCase.expectedStatus);

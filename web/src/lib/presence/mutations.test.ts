@@ -7,13 +7,21 @@ import {
 
 const mocks = vi.hoisted(() => {
   const tx = {
+    $queryRaw: vi.fn(),
     presenceEvent: {
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },
     presenceGuest: { findFirst: vi.fn(), update: vi.fn() },
-    presenceGift: { findFirst: vi.fn(), updateMany: vi.fn() },
+    presenceGift: { findFirst: vi.fn(), update: vi.fn() },
+    presenceGiftReservation: {
+      findUnique: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      delete: vi.fn(),
+      findFirst: vi.fn(),
+    },
     presenceActivity: { create: vi.fn() },
   };
   return {
@@ -30,6 +38,14 @@ vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.tx.$queryRaw.mockResolvedValue([]);
+  mocks.tx.presenceGiftReservation.findUnique.mockResolvedValue(null);
+  mocks.tx.presenceGiftReservation.count.mockResolvedValue(0);
+  mocks.tx.presenceGiftReservation.create.mockResolvedValue({
+    id: "reservation-1",
+  });
+  mocks.tx.presenceGift.update.mockResolvedValue({ id: "gift-1" });
+  mocks.tx.presenceActivity.create.mockResolvedValue({ id: "activity-1" });
 });
 
 const context = { eventId: "event-1", guestId: "guest-1" };
@@ -59,6 +75,7 @@ describe("presence confirmation mutations", () => {
         childCount: 4,
       },
     });
+
     expect(mocks.tx.presenceGuest.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -101,49 +118,78 @@ describe("presence confirmation mutations", () => {
 });
 
 describe("presence gift mutations", () => {
-  it("claims only an active unreserved gift from the same event", async () => {
+  it("claims capacity on an active gift from the same event", async () => {
     mocks.tx.presenceEvent.findUnique.mockResolvedValue({ status: "PUBLISHED" });
-    mocks.tx.presenceGift.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.presenceGift.findFirst.mockResolvedValue({
+      id: "gift-1",
+      quantity: 1,
+      reservedManually: false,
+      reservedByGuestId: null,
+    });
     mocks.tx.presenceEvent.update.mockResolvedValue({ publicRevision: 5 });
 
     await expect(
       reservePresenceGift(context, "gift-1"),
     ).resolves.toEqual({ ok: true, value: { revision: 5 } });
-    expect(mocks.tx.presenceGift.updateMany).toHaveBeenCalledWith(
+
+    expect(mocks.tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(mocks.tx.presenceGiftReservation.create).toHaveBeenCalledWith({
+      data: {
+        giftId: "gift-1",
+        guestId: "guest-1",
+        reservedAt: expect.any(Date),
+      },
+    });
+    expect(mocks.tx.presenceGift.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          id: "gift-1",
-          eventId: "event-1",
-          active: true,
-          reservedManually: false,
-          reservedByGuestId: null,
+        where: { id: "gift-1" },
+        data: expect.objectContaining({
+          reservedByGuestId: "guest-1",
+          version: { increment: 1 },
         }),
       }),
     );
   });
 
-  it("returns conflict after losing a concurrent reservation", async () => {
+  it("returns conflict when the locked gift has no remaining capacity", async () => {
     mocks.tx.presenceEvent.findUnique.mockResolvedValue({ status: "PUBLISHED" });
-    mocks.tx.presenceGift.updateMany.mockResolvedValue({ count: 0 });
     mocks.tx.presenceGift.findFirst.mockResolvedValue({
+      id: "gift-1",
+      quantity: 1,
+      reservedManually: false,
       reservedByGuestId: "guest-2",
     });
+    mocks.tx.presenceGiftReservation.count.mockResolvedValue(1);
 
     await expect(
       reservePresenceGift(context, "gift-1"),
     ).resolves.toEqual({ ok: false, code: "CONFLICT" });
+
+    expect(mocks.tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(mocks.tx.presenceGiftReservation.create).not.toHaveBeenCalled();
     expect(mocks.tx.presenceEvent.update).not.toHaveBeenCalled();
   });
 
-  it("does not let another guest release a reservation", async () => {
+  it("treats releasing a gift not reserved by this guest as an idempotent no-op", async () => {
     mocks.tx.presenceEvent.findUnique.mockResolvedValue({ status: "PUBLISHED" });
     mocks.tx.presenceGift.findFirst.mockResolvedValue({
+      id: "gift-1",
+      reservedManually: false,
       reservedByGuestId: "guest-2",
+      reservedAt: new Date("2026-08-10T00:00:00Z"),
+    });
+    mocks.tx.presenceGiftReservation.findUnique.mockResolvedValue(null);
+    mocks.tx.presenceEvent.findUniqueOrThrow.mockResolvedValue({
+      publicRevision: 7,
     });
 
     await expect(
       releasePresenceGift(context, "gift-1"),
-    ).resolves.toEqual({ ok: false, code: "CONFLICT" });
-    expect(mocks.tx.presenceGift.updateMany).not.toHaveBeenCalled();
+    ).resolves.toEqual({ ok: true, value: { revision: 7 } });
+
+    expect(mocks.tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(mocks.tx.presenceGiftReservation.delete).not.toHaveBeenCalled();
+    expect(mocks.tx.presenceGift.update).not.toHaveBeenCalled();
+    expect(mocks.tx.presenceEvent.update).not.toHaveBeenCalled();
   });
 });
