@@ -42,8 +42,14 @@ export async function readPresenceState(
           description: true,
           externalUrl: true,
           position: true,
+          quantity: true,
           reservedManually: true,
-          reservedByGuestId: true,
+          reservations: {
+            where: { guestId: context.guestId },
+            select: { id: true },
+            take: 1,
+          },
+          _count: { select: { reservations: true } },
           category: {
             select: { id: true, name: true, emoji: true, position: true },
           },
@@ -72,10 +78,21 @@ export async function readPresenceState(
         event.status === "PUBLISHED" && event.confirmationDeadline >= now,
     },
     guest,
-    gifts: event.gifts.map(({ reservedByGuestId, ...gift }) => ({
-      ...gift,
-      reserved: gift.reservedManually || Boolean(reservedByGuestId),
-      reservedByMe: reservedByGuestId === context.guestId,
-    })),
+    gifts: event.gifts.map(({ reservations, _count, reservedManually, ...gift }) => {
+      const reservedCount =
+        _count.reservations + (reservedManually ? 1 : 0);
+      const unlimited = gift.quantity === null;
+      return {
+        ...gift,
+        reservedManually,
+        reservedCount,
+        availableCount: unlimited
+          ? null
+          : Math.max(0, (gift.quantity ?? 0) - reservedCount),
+        unlimited,
+        reserved: !unlimited && reservedCount >= (gift.quantity ?? 0),
+        reservedByMe: reservations.length > 0,
+      };
+    }),
   };
 }

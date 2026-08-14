@@ -270,29 +270,30 @@ model PresenceEvent {
 }
 
 model PresenceGuest {
-  id              String                 @id @default(cuid())
-  eventId         String
-  event           PresenceEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  name            String
-  email           String?
-  guestSlug       String
-  rsvpStatus      PresenceRsvpStatus     @default(PENDING)
-  companionLimit  Int                    @default(0)
-  companionCount  Int                    @default(0)
-  adultCount      Int                    @default(0)
-  childCount      Int                    @default(0)
-  tokenHash       String                 @unique
-  accessVersion   Int                    @default(1)
-  shortCodeHash   String?                @unique
-  accessExpiresAt DateTime?
-  tokenRevokedAt  DateTime?
-  respondedAt     DateTime?
-  sessions        PresenceGuestSession[]
-  reservedGifts   PresenceGift[]         @relation("PresenceGiftReservedBy")
-  deliveries      PresenceDelivery[]
-  activities      PresenceActivity[]
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
+  id               String                    @id @default(cuid())
+  eventId          String
+  event            PresenceEvent             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name             String
+  email            String?
+  guestSlug        String
+  rsvpStatus       PresenceRsvpStatus        @default(PENDING)
+  companionLimit   Int                       @default(0)
+  companionCount   Int                       @default(0)
+  adultCount       Int                       @default(0)
+  childCount       Int                       @default(0)
+  tokenHash        String                    @unique
+  accessVersion    Int                       @default(1)
+  shortCodeHash    String?                   @unique
+  accessExpiresAt  DateTime?
+  tokenRevokedAt   DateTime?
+  respondedAt      DateTime?
+  sessions         PresenceGuestSession[]
+  reservedGifts    PresenceGift[]            @relation("PresenceGiftReservedBy")
+  giftReservations PresenceGiftReservation[]
+  deliveries       PresenceDelivery[]
+  activities       PresenceActivity[]
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
 
   @@unique([eventId, guestSlug])
   @@unique([eventId, email])
@@ -332,28 +333,43 @@ model PresenceGiftCategory {
 }
 
 model PresenceGift {
-  id                String                @id @default(cuid())
+  id                String                    @id @default(cuid())
   eventId           String
-  event             PresenceEvent         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event             PresenceEvent             @relation(fields: [eventId], references: [id], onDelete: Cascade)
   categoryId        String?
-  category          PresenceGiftCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  emoji             String                @default("🎁")
+  category          PresenceGiftCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  emoji             String                    @default("🎁")
   title             String
   description       String?
   externalUrl       String?
-  position          Int                   @default(0)
-  active            Boolean               @default(true)
-  reservedManually  Boolean               @default(false)
+  position          Int                       @default(0)
+  active            Boolean                   @default(true)
+  quantity          Int?                      @default(1)
+  reservedManually  Boolean                   @default(false)
   reservedByGuestId String?
-  reservedByGuest   PresenceGuest?        @relation("PresenceGiftReservedBy", fields: [reservedByGuestId], references: [id], onDelete: SetNull)
+  reservedByGuest   PresenceGuest?            @relation("PresenceGiftReservedBy", fields: [reservedByGuestId], references: [id], onDelete: SetNull)
   reservedAt        DateTime?
-  version           Int                   @default(0)
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
+  reservations      PresenceGiftReservation[]
+  version           Int                       @default(0)
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
 
   @@index([eventId, active, position])
   @@index([categoryId, position])
   @@index([reservedByGuestId])
+}
+
+model PresenceGiftReservation {
+  id         String        @id @default(cuid())
+  giftId     String
+  gift       PresenceGift  @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  guestId    String
+  guest      PresenceGuest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  reservedAt DateTime      @default(now())
+
+  @@unique([giftId, guestId])
+  @@index([giftId, reservedAt])
+  @@index([guestId])
 }
 
 model PresenceDelivery {

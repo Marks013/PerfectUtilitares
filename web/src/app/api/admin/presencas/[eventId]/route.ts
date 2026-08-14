@@ -125,9 +125,11 @@ export async function GET(_request: Request, context: RouteContext) {
           externalUrl: true,
           position: true,
           active: true,
+          quantity: true,
           reservedManually: true,
           reservedAt: true,
           reservedByGuest: { select: { id: true, name: true } },
+          _count: { select: { reservations: true } },
         },
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         take: 1_000,
@@ -164,7 +166,19 @@ export async function GET(_request: Request, context: RouteContext) {
       childrenExpected: 0,
     },
   );
-  const activeGifts = event.gifts.filter((gift) => gift.active);
+  const gifts = event.gifts.map(({ _count, ...gift }) => {
+    const reservedCount =
+      _count.reservations + (gift.reservedManually ? 1 : 0);
+    return {
+      ...gift,
+      reservedCount,
+      availableCount:
+        gift.quantity === null
+          ? null
+          : Math.max(0, gift.quantity - reservedCount),
+    };
+  });
+  const activeGifts = gifts.filter((gift) => gift.active);
   const analytics = {
     rsvp,
     responseRate:
@@ -176,7 +190,7 @@ export async function GET(_request: Request, context: RouteContext) {
     gifts: {
       active: activeGifts.length,
       reserved: activeGifts.filter(
-        (gift) => gift.reservedManually || gift.reservedByGuest,
+        (gift) => gift.reservedCount > 0,
       ).length,
     },
     deliveries: Object.fromEntries(
@@ -186,6 +200,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   return NextResponse.json({
     ...event,
+    gifts,
     theme: parsePresenceTheme(event.theme),
     analytics,
   }, {

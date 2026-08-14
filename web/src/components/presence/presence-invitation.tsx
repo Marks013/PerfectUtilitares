@@ -59,6 +59,10 @@ type PresenceState = {
     title: string;
     description: string | null;
     externalUrl: string | null;
+    quantity: number | null;
+    reservedCount: number;
+    availableCount: number | null;
+    unlimited: boolean;
     reserved: boolean;
     reservedByMe: boolean;
   }>;
@@ -423,7 +427,15 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
                     return (
                       <article key={gift.id} className={`${styles.giftItem} ${gift.reserved ? styles.reserved : ""}`}>
                         <span className={styles.giftEmoji} aria-hidden="true">{gift.emoji}</span>
-                        <div className={styles.giftCopy}><h4>{gift.title}</h4>{gift.description && <p>{gift.description}</p>}</div>
+                        <div className={styles.giftCopy}>
+                          <h4>{gift.title}</h4>
+                          {gift.description && <p>{gift.description}</p>}
+                          {gift.unlimited ? (
+                            <p>∞ Disponível sem limite · {gift.reservedCount} escolha(s)</p>
+                          ) : gift.quantity && gift.quantity > 1 ? (
+                            <p>{gift.availableCount} de {gift.quantity} disponíveis</p>
+                          ) : null}
+                        </div>
                         <div className={styles.giftActions}>
                           {url && <a href={url} target="_blank" rel="noreferrer" aria-label={`Ver ${gift.title}`}><ExternalLink aria-hidden="true" /></a>}
                           <button type="button" disabled={(gift.reserved && !gift.reservedByMe) || pendingAction === gift.id} onClick={() => void toggleGift(gift.id, gift.reservedByMe)}>

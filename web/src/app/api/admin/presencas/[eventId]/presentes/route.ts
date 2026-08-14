@@ -92,10 +92,20 @@ export async function POST(request: Request, context: RouteContext) {
         externalUrl: true,
         position: true,
         active: true,
+        quantity: true,
         reservedManually: true,
         reservedAt: true,
       },
     });
+    if (parsed.data.reservedByGuestId) {
+      await transaction.presenceGiftReservation.create({
+        data: {
+          giftId: created.id,
+          guestId: parsed.data.reservedByGuestId,
+          reservedAt: created.reservedAt ?? new Date(),
+        },
+      });
+    }
     await transaction.presenceActivity.create({
       data: {
         eventId,

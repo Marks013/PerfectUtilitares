@@ -183,6 +183,7 @@ export const presenceGiftCreateSchema = z.object({
   description: optionalText(500),
   externalUrl: z.url().max(2_000).nullable().optional(),
   active: z.boolean().default(true),
+  quantity: z.number().int().min(1).max(9_999).nullable().default(1),
   reservedManually: z.boolean().default(false),
   reservedByGuestId: z.string().cuid().nullable().optional(),
 });
@@ -195,6 +196,7 @@ export const presenceGiftUpdateSchema = z
     description: optionalPatchText(500),
     externalUrl: z.url().max(2_000).nullable().optional(),
     active: z.boolean().optional(),
+    quantity: z.number().int().min(1).max(9_999).nullable().optional(),
     reservedManually: z.boolean().optional(),
     reservedByGuestId: z.string().cuid().nullable().optional(),
     clearReservation: z.boolean().optional(),

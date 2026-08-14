@@ -77,6 +77,9 @@ export type PresenceGiftAdmin = {
   externalUrl: string | null;
   position: number;
   active: boolean;
+  quantity: number | null;
+  reservedCount: number;
+  availableCount: number | null;
   reservedManually: boolean;
   reservedAt: string | null;
   reservedByGuest: { id: string; name: string } | null;

@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export type PresenceMutationResult<T> =
@@ -99,39 +100,54 @@ export async function reservePresenceGift(
       return { ok: false, code: "CLOSED" };
     }
 
-    const updated = await tx.presenceGift.updateMany({
-      where: {
-        id: giftId,
-        eventId: context.eventId,
-        active: true,
-        reservedManually: false,
-        reservedByGuestId: null,
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "PresenceGift" WHERE "id" = ${giftId} AND "eventId" = ${context.eventId} FOR UPDATE`,
+    );
+
+    const gift = await tx.presenceGift.findFirst({
+      where: { id: giftId, eventId: context.eventId, active: true },
+      select: {
+        id: true,
+        quantity: true,
+        reservedManually: true,
+        reservedByGuestId: true,
       },
+    });
+    if (!gift) return { ok: false, code: "NOT_FOUND" };
+
+    const existing = await tx.presenceGiftReservation.findUnique({
+      where: { giftId_guestId: { giftId, guestId: context.guestId } },
+      select: { id: true },
+    });
+    if (existing) {
+      const unchangedEvent = await tx.presenceEvent.findUniqueOrThrow({
+        where: { id: context.eventId },
+        select: { publicRevision: true },
+      });
+      return { ok: true, value: { revision: unchangedEvent.publicRevision } };
+    }
+
+    const reservationCount = await tx.presenceGiftReservation.count({
+      where: { giftId },
+    });
+    const used = reservationCount + (gift.reservedManually ? 1 : 0);
+    if (gift.quantity !== null && used >= gift.quantity) {
+      return { ok: false, code: "CONFLICT" };
+    }
+
+    await tx.presenceGiftReservation.create({
+      data: { giftId, guestId: context.guestId, reservedAt: now },
+    });
+
+    await tx.presenceGift.update({
+      where: { id: gift.id },
       data: {
-        reservedByGuestId: context.guestId,
-        reservedAt: now,
+        ...(gift.reservedByGuestId
+          ? {}
+          : { reservedByGuestId: context.guestId, reservedAt: now }),
         version: { increment: 1 },
       },
     });
-
-    if (updated.count === 0) {
-      const gift = await tx.presenceGift.findFirst({
-        where: { id: giftId, eventId: context.eventId, active: true },
-        select: { reservedManually: true, reservedByGuestId: true },
-      });
-      if (!gift) return { ok: false, code: "NOT_FOUND" };
-      if (gift.reservedByGuestId === context.guestId) {
-        const unchangedEvent = await tx.presenceEvent.findUniqueOrThrow({
-          where: { id: context.eventId },
-          select: { publicRevision: true },
-        });
-        return {
-          ok: true,
-          value: { revision: unchangedEvent.publicRevision },
-        };
-      }
-      return { ok: false, code: "CONFLICT" };
-    }
 
     const updatedEvent = await tx.presenceEvent.update({
       where: { id: context.eventId },
@@ -165,36 +181,58 @@ export async function releasePresenceGift(
       return { ok: false, code: "CLOSED" };
     }
 
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "PresenceGift" WHERE "id" = ${giftId} AND "eventId" = ${context.eventId} FOR UPDATE`,
+    );
+
     const gift = await tx.presenceGift.findFirst({
       where: { id: giftId, eventId: context.eventId, active: true },
-      select: { reservedByGuestId: true },
+      select: {
+        id: true,
+        reservedManually: true,
+        reservedByGuestId: true,
+        reservedAt: true,
+      },
     });
     if (!gift) return { ok: false, code: "NOT_FOUND" };
-    if (!gift.reservedByGuestId) {
-      const event = await tx.presenceEvent.findUniqueOrThrow({
+
+    const reservation = await tx.presenceGiftReservation.findUnique({
+      where: { giftId_guestId: { giftId, guestId: context.guestId } },
+      select: { id: true },
+    });
+    if (!reservation) {
+      const unchangedEvent = await tx.presenceEvent.findUniqueOrThrow({
         where: { id: context.eventId },
         select: { publicRevision: true },
       });
-      return { ok: true, value: { revision: event.publicRevision } };
-    }
-    if (gift.reservedByGuestId !== context.guestId) {
-      return { ok: false, code: "CONFLICT" };
+      return { ok: true, value: { revision: unchangedEvent.publicRevision } };
     }
 
-    const released = await tx.presenceGift.updateMany({
-      where: {
-        id: giftId,
-        eventId: context.eventId,
-        reservedByGuestId: context.guestId,
-      },
+    await tx.presenceGiftReservation.delete({ where: { id: reservation.id } });
+
+    let replacement: { guestId: string; reservedAt: Date } | null = null;
+    if (gift.reservedByGuestId === context.guestId) {
+      replacement = await tx.presenceGiftReservation.findFirst({
+        where: { giftId },
+        orderBy: { reservedAt: "asc" },
+        select: { guestId: true, reservedAt: true },
+      });
+    }
+
+    await tx.presenceGift.update({
+      where: { id: gift.id },
       data: {
-        reservedByGuestId: null,
-        reservedManually: false,
-        reservedAt: null,
+        ...(gift.reservedByGuestId === context.guestId
+          ? {
+              reservedByGuestId: replacement?.guestId ?? null,
+              reservedAt:
+                replacement?.reservedAt ??
+                (gift.reservedManually ? gift.reservedAt : null),
+            }
+          : {}),
         version: { increment: 1 },
       },
     });
-    if (released.count === 0) return { ok: false, code: "CONFLICT" };
 
     const event = await tx.presenceEvent.update({
       where: { id: context.eventId },
