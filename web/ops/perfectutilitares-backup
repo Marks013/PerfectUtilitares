@@ -3,14 +3,25 @@ set -eu
 
 REPOSITORY=${REPOSITORY:-/home/ubuntu/PerfectUtilitares/web}
 BACKUP_ROOT=${BACKUP_ROOT:-/home/ubuntu/perfectutilitares-backups}
-BACKUP_KEEP_COUNT=${BACKUP_KEEP_COUNT:-14}
+BACKUP_DAILY_KEEP_DAYS=${BACKUP_DAILY_KEEP_DAYS:-7}
+BACKUP_MAX_AGE_DAYS=${BACKUP_MAX_AGE_DAYS:-30}
 BACKUP_RCLONE_REMOTE=${BACKUP_RCLONE_REMOTE:-}
 LOCK_FILE=${BACKUP_LOCK_FILE:-/run/lock/perfectutilitares-backup.lock}
 
-case "$BACKUP_KEEP_COUNT" in
-  ''|*[!0-9]*) echo "BACKUP_KEEP_COUNT invalido" >&2; exit 2 ;;
+case "$BACKUP_DAILY_KEEP_DAYS" in
+  ''|*[!0-9]*) echo "BACKUP_DAILY_KEEP_DAYS invalido" >&2; exit 2 ;;
 esac
-[ "$BACKUP_KEEP_COUNT" -ge 2 ] || { echo "Mantenha ao menos dois backups" >&2; exit 2; }
+case "$BACKUP_MAX_AGE_DAYS" in
+  ''|*[!0-9]*) echo "BACKUP_MAX_AGE_DAYS invalido" >&2; exit 2 ;;
+esac
+[ "$BACKUP_DAILY_KEEP_DAYS" -ge 1 ] || {
+  echo "BACKUP_DAILY_KEEP_DAYS deve ser ao menos 1" >&2
+  exit 2
+}
+[ "$BACKUP_MAX_AGE_DAYS" -gt "$BACKUP_DAILY_KEEP_DAYS" ] || {
+  echo "BACKUP_MAX_AGE_DAYS deve ser maior que BACKUP_DAILY_KEEP_DAYS" >&2
+  exit 2
+}
 [ -d "$REPOSITORY" ] || { echo "Repositorio inexistente: $REPOSITORY" >&2; exit 1; }
 
 BACKUP_ROOT=$(realpath -m -- "$BACKUP_ROOT")
@@ -19,7 +30,6 @@ case "$BACKUP_ROOT" in
   /*) ;;
   *) echo "BACKUP_ROOT deve ser absoluto" >&2; exit 2 ;;
 esac
-
 mkdir -p -- "$BACKUP_ROOT"
 chmod 0700 "$BACKUP_ROOT"
 exec 9>"$LOCK_FILE"
@@ -31,11 +41,9 @@ final="$BACKUP_ROOT/$backup_id"
 mkdir -m 0700 "$partial"
 cleanup() { rm -rf -- "$partial"; }
 trap cleanup EXIT HUP INT TERM
-
 cd "$REPOSITORY"
 docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format=custom --compress=9 --no-owner --no-privileges' > "$partial/database.dump"
 docker compose exec -T db sh -c 'exec pg_restore --list' < "$partial/database.dump" >/dev/null
-
 paths_file="$partial/host-files.list"
 for source in \
   /home/ubuntu/perfectutilitares-config \
@@ -49,7 +57,6 @@ if [ -s "$paths_file" ]; then
   tar -C / -czf "$partial/host-files.tar.gz" -T "$paths_file"
 fi
 rm -f -- "$paths_file"
-
 printf '%s\n' \
   "created_utc=$backup_id" \
   "repository=$REPOSITORY" \
@@ -63,14 +70,53 @@ printf '%s\n' \
 mv -- "$partial" "$final"
 trap - EXIT HUP INT TERM
 
+# Retenção:
+# - 0..BACKUP_DAILY_KEEP_DAYS dias: mantém todos os snapshots;
+# - depois disso até BACKUP_MAX_AGE_DAYS: mantém o mais recente da semana ISO;
+# - acima de BACKUP_MAX_AGE_DAYS: remove.
+# Apenas diretórios AAAAMMDDTHHMMSSZ entram nesta rotação.
+now_epoch=$(date -u +%s)
+weekly_seen=""
+
 find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '20*' -printf '%f\n' |
   sort -r |
-  awk -v keep="$BACKUP_KEEP_COUNT" 'NR > keep { print }' |
   while IFS= read -r old_name; do
     case "$old_name" in
-      20[0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z)
-        old_path=$(realpath -m -- "$BACKUP_ROOT/$old_name")
-        [ "$(dirname -- "$old_path")" = "$BACKUP_ROOT" ] && rm -rf -- "$old_path"
+      20[0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
+      *) continue ;;
+    esac
+
+    stamp_iso=$(printf '%s\n' "$old_name" |
+      sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$/\1-\2-\3 \4:\5:\6 UTC/')
+    old_epoch=$(date -u -d "$stamp_iso" +%s) || continue
+    age_seconds=$((now_epoch - old_epoch))
+    [ "$age_seconds" -ge 0 ] || continue
+    age_days=$((age_seconds / 86400))
+
+    if [ "$age_days" -le "$BACKUP_DAILY_KEEP_DAYS" ]; then
+      continue
+    fi
+
+    old_path=$(realpath -m -- "$BACKUP_ROOT/$old_name")
+    [ "$(dirname -- "$old_path")" = "$BACKUP_ROOT" ] || continue
+
+    if [ "$age_days" -gt "$BACKUP_MAX_AGE_DAYS" ]; then
+      logger -t perfectutilitares-backup \
+        "removendo snapshot antigo: $old_name (${age_days}d)"
+      rm -rf -- "$old_path"
+      continue
+    fi
+
+    # sort -r garante que o primeiro snapshot visto da semana é o mais recente.
+    iso_week=$(date -u -d "$stamp_iso" +%G-%V)
+    case "|$weekly_seen|" in
+      *"|$iso_week|"*)
+        logger -t perfectutilitares-backup \
+          "removendo snapshot semanal redundante: $old_name (semana $iso_week)"
+        rm -rf -- "$old_path"
+        ;;
+      *)
+        weekly_seen="${weekly_seen:+$weekly_seen|}$iso_week"
         ;;
     esac
   done
