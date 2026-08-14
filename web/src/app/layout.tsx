@@ -22,14 +22,14 @@ export const metadata: Metadata = {
     title: SITE_NAME,
     description:
       "Ferramentas públicas para validar jornadas, preparar fotos 3x4 e trabalhar com PDFs.",
-    images: [{ url: "/opengraph-image", width: 1200, height: 630 }],
+    images: [{ url: "/opengraph-image?v=20260813-2", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
     title: SITE_NAME,
     description:
       "Ferramentas públicas para validar jornadas, preparar fotos 3x4 e trabalhar com PDFs.",
-    images: ["/opengraph-image"],
+    images: ["/opengraph-image?v=20260813-2"],
   },
   verification: {
     google: process.env.GOOGLE_SITE_VERIFICATION || undefined,

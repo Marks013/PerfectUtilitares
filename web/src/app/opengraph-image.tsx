@@ -11,70 +11,93 @@ export default function OpenGraphImage() {
         width: "100%",
         height: "100%",
         display: "flex",
-        alignItems: "center",
-        padding: "70px 84px",
-        background: "#071c18",
-        color: "#f5fff9",
+        overflow: "hidden",
+        background: "#f2fff9",
+        color: "#062b23",
         fontFamily: "Arial, sans-serif",
       }}
     >
       <div
         style={{
-          width: "100%",
+          position: "relative",
+          width: 475,
           height: "100%",
           display: "flex",
           alignItems: "center",
-          gap: 64,
-          padding: "48px 56px",
-          border: "2px solid #1d4d41",
-          borderRadius: 42,
-          background: "#0c2822",
+          justifyContent: "center",
+          flexShrink: 0,
+          overflow: "hidden",
+          background: "#19b987",
         }}
       >
         <div
           style={{
-            width: 276,
-            height: 276,
-            flexShrink: 0,
+            position: "absolute",
+            width: 740,
+            height: 740,
+            borderRadius: 370,
+            border: "54px solid #8af0cf",
+            right: -460,
+            top: -310,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            width: 520,
+            height: 520,
+            borderRadius: 260,
+            border: "38px solid #087c5a",
+            left: -330,
+            bottom: -310,
+          }}
+        />
+        <div
+          style={{
+            zIndex: 1,
+            width: 306,
+            height: 306,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            borderRadius: 64,
-            background: "#20c997",
-            color: "#062820",
-            fontSize: 184,
+            border: "18px solid #ffffff",
+            borderRadius: 76,
+            background: "#083f32",
+            color: "#ffffff",
+            fontSize: 214,
             fontWeight: 900,
             lineHeight: 1,
           }}
         >
           P
         </div>
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          gap: 28,
+          padding: "74px 68px",
+          background: "#f2fff9",
+        }}
+      >
         <div
           style={{
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            gap: 16,
+            color: "#087c5a",
+            fontSize: 24,
+            fontWeight: 800,
+            letterSpacing: 3,
           }}
         >
-          <div
-            style={{
-              color: "#8ce7d2",
-              fontSize: 24,
-              fontWeight: 700,
-              letterSpacing: 3,
-            }}
-          >
-            FERRAMENTAS ONLINE
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", fontSize: 82, fontWeight: 900, lineHeight: 0.98 }}>
-            <span>Perfect</span>
-            <span style={{ color: "#20c997" }}>Utilitares</span>
-          </div>
-          <div style={{ color: "#c5ddd4", fontSize: 28, fontWeight: 600 }}>
-            Jornada, fotos 3x4 e PDFs
-          </div>
+          FERRAMENTAS ONLINE
         </div>
+        <div style={{ display: "flex", flexDirection: "column", fontSize: 84, fontWeight: 900, lineHeight: 0.94 }}>
+          <span>Perfect</span>
+          <span style={{ color: "#07966d" }}>Utilitares</span>
+        </div>
+        <div style={{ width: 210, height: 12, borderRadius: 6, background: "#19b987" }} />
       </div>
     </div>,
     size,
