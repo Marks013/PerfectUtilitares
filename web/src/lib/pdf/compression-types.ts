@@ -5,7 +5,7 @@ type PdfCompressionQuality =
   | "BALANCED"
   | "PRINT";
 type PdfCompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
-type PdfCompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
+export type PdfCompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
 
 export type PdfCompressionOptions = {
   quality: PdfCompressionQuality;

@@ -5,7 +5,7 @@ import type { usePdfCompressWorkspaceController } from "./pdf-compress-workspace
 type Model = ReturnType<typeof usePdfCompressWorkspaceController>;
 
 export function PdfCompressWorkspaceView({ model }: { model: Model }) {
-  const { Archive, ArrowLeft, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, QUALITY_OPTIONS, ScanLine, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, settings, updateSettings, work } = model;
+  const { Archive, ArrowLeft, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, QUALITY_OPTIONS, ScanLine, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, setWarning, settings, updateSettings, warning, work } = model;
   return (
 <div className="pdf-workspace">
       <header className="pdf-workspace__header">
@@ -290,21 +290,23 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                 {settings.method === "LOSSLESS"
                   ? "Conteúdo original preservado"
                   : settings.method === "AUTO"
-                    ? "O menor resultado vence"
+                    ? "Estratégia automática por conteúdo"
                     : "Configuração aplicada integralmente"}
               </strong>
               <small>
                 {settings.method === "LOSSLESS"
                   ? "Mantém texto selecionável, vetores e imagens sem rasterizar."
-                  : `${settings.dpi} DPI · ${
-                      COLOR_OPTIONS.find(
-                        (option) => option.value === settings.colorMode,
-                      )?.label
-                    } · ${
-                      settings.colorMode === "MONOCHROME"
-                        ? "PNG binário"
-                        : `JPEG ${settings.imageQuality}%`
-                    }. A recompressão visual achata as páginas para reduzir imagens já compactadas.`}
+                  : settings.method === "AUTO"
+                    ? `O servidor analisa estrutura, OCR, cobertura de imagem, resolução e codificação antes de decidir. Rasterização só é usada quando houver benefício provável.`
+                    : `${settings.dpi} DPI · ${
+                        COLOR_OPTIONS.find(
+                          (option) => option.value === settings.colorMode,
+                        )?.label
+                      } · ${
+                        settings.colorMode === "MONOCHROME"
+                          ? "PNG binário"
+                          : `JPEG ${settings.imageQuality}%`
+                      }.`}
               </small>
             </div>
           </>
@@ -325,6 +327,14 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
         <small>Até 20 arquivos, com no máximo 100 MB cada</small>
       </div>
 
+      {warning ? (
+        <div className="pdf-alert" role="status">
+          {warning}
+          <button type="button" onClick={() => setWarning(null)} title="Fechar">
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
       {error ? (
         <div className="pdf-alert pdf-alert--danger" role="alert">
           {error}

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { degrees, PDFDocument, type PDFPage } from "pdf-lib";
 import sharp from "sharp";
-import { renderPdfPageToPng } from "@/lib/pdf/render";
+import { renderPdfPageToPng, renderPdfPagesToPng } from "@/lib/pdf/render";
 import { ensureServerLocalStorage } from "@/lib/pdf/server-runtime";
 import {
   PdfToolError,
@@ -161,6 +161,17 @@ async function assertVisualEquivalence(
   }
 }
 
+function selectValidationPageIndexes(pageCount: number) {
+  if (pageCount <= 5) return Array.from({ length: pageCount }, (_, index) => index);
+  return [
+    0,
+    Math.round((pageCount - 1) * 0.25),
+    Math.round((pageCount - 1) * 0.5),
+    Math.round((pageCount - 1) * 0.75),
+    pageCount - 1,
+  ].filter((page, index, pages) => pages.indexOf(page) === index);
+}
+
 export async function validateStructuralCandidate(
   inputPath: string,
   candidatePath: string,
@@ -169,46 +180,34 @@ export async function validateStructuralCandidate(
     PDFDocument.load(await readFile(inputPath), { updateMetadata: false }),
     PDFDocument.load(await readFile(candidatePath), { updateMetadata: false }),
   ]);
-  if (source.getPageCount() !== candidate.getPageCount()) {
+  const pageCount = source.getPageCount();
+  if (pageCount !== candidate.getPageCount()) {
     throw new PdfToolError(
       "PDF_STRUCTURAL_INTEGRITY_FAILED",
       "A compactação alterou a quantidade de páginas e foi descartada.",
     );
   }
-
-  for (let pageIndex = 0; pageIndex < source.getPageCount(); pageIndex += 1) {
+  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
     const sourceGeometry = readPageGeometry(source.getPage(pageIndex));
     const candidateGeometry = readPageGeometry(candidate.getPage(pageIndex));
     const boxesMatch = (
       ["mediaBox", "cropBox", "bleedBox", "trimBox", "artBox"] as const
-    ).every((box) =>
-      samePageBox(sourceGeometry[box], candidateGeometry[box]),
-    );
-    if (
-      !boxesMatch ||
-      sourceGeometry.rotation !== candidateGeometry.rotation
-    ) {
+    ).every((box) => samePageBox(sourceGeometry[box], candidateGeometry[box]));
+    if (!boxesMatch || sourceGeometry.rotation !== candidateGeometry.rotation) {
       throw new PdfToolError(
         "PDF_STRUCTURAL_INTEGRITY_FAILED",
         "A compactação alterou a geometria das páginas e foi descartada.",
       );
     }
+  }
+  for (const pageIndex of selectValidationPageIndexes(pageCount)) {
     const [sourcePage, candidatePage] = await Promise.all([
-      renderPdfPageToPng({
-        dpi: 72,
-        inputPath,
-        pageNumber: pageIndex + 1,
-      }),
-      renderPdfPageToPng({
-        dpi: 72,
-        inputPath: candidatePath,
-        pageNumber: pageIndex + 1,
-      }),
+      renderPdfPageToPng({ dpi: 72, inputPath, pageNumber: pageIndex + 1 }),
+      renderPdfPageToPng({ dpi: 72, inputPath: candidatePath, pageNumber: pageIndex + 1 }),
     ]);
     await assertVisualEquivalence(sourcePage, candidatePage);
   }
 }
-
 async function encodeRenderedPage({
   colorMode,
   imageQuality,
@@ -269,88 +268,108 @@ export async function rasterizePdfForCompression({
     updateMetadata: false,
   });
   const output = await PDFDocument.create();
-
   try {
-    if (source.getPageCount() > 1_000) {
+    const pageCount = source.getPageCount();
+    if (pageCount > 1_000) {
       throw new PdfToolError(
         "PDF_PAGE_LIMIT_EXCEEDED",
         "O PDF ultrapassa o limite de 1.000 páginas para recompressão visual.",
       );
     }
+    const configuredChunk = Number(process.env.PDF_RASTER_RENDER_CHUNK_SIZE ?? 6);
+    const chunkSize = Number.isInteger(configuredChunk) && configuredChunk >= 1 && configuredChunk <= 16
+      ? configuredChunk
+      : 6;
+    for (let chunkStart = 1; chunkStart <= pageCount; chunkStart += chunkSize) {
+      const pageNumbers = Array.from(
+        { length: Math.min(chunkSize, pageCount - chunkStart + 1) },
+        (_, offset) => chunkStart + offset,
+      );
 
-    for (let pageIndex = 1; pageIndex <= source.getPageCount(); pageIndex += 1) {
-      const sourcePage = source.getPage(pageIndex - 1);
-      const geometry = readPageGeometry(sourcePage);
-      const rotated = geometry.rotation === 90 || geometry.rotation === 270;
-      const canvasWidth = Math.max(
-        1,
-        Math.ceil(
-          (rotated ? geometry.mediaBox.height : geometry.mediaBox.width) *
-            (options.dpi / 72),
-        ),
-      );
-      const canvasHeight = Math.max(
-        1,
-        Math.ceil(
-          (rotated ? geometry.mediaBox.width : geometry.mediaBox.height) *
-            (options.dpi / 72),
-        ),
-      );
-      if (canvasWidth * canvasHeight > 25_000_000) {
-        throw new PdfToolError(
-          "PDF_PAGE_RENDER_LIMIT_EXCEEDED",
-          "Uma página ficou grande demais para o DPI escolhido. Reduza a resolução.",
+      for (const pageIndex of pageNumbers) {
+        const sourcePage = source.getPage(pageIndex - 1);
+        const geometry = readPageGeometry(sourcePage);
+        const rotated = geometry.rotation === 90 || geometry.rotation === 270;
+        const canvasWidth = Math.max(
+          1,
+          Math.ceil(
+            (rotated ? geometry.mediaBox.height : geometry.mediaBox.width) *
+              (options.dpi / 72),
+          ),
         );
+        const canvasHeight = Math.max(
+          1,
+          Math.ceil(
+            (rotated ? geometry.mediaBox.width : geometry.mediaBox.height) *
+              (options.dpi / 72),
+          ),
+        );
+        if (canvasWidth * canvasHeight > 25_000_000) {
+          throw new PdfToolError(
+            "PDF_PAGE_RENDER_LIMIT_EXCEEDED",
+            "Uma página ficou grande demais para o DPI escolhido. Reduza a resolução.",
+          );
+        }
       }
-      const renderedPage = await renderPdfPageToPng({
+
+      const renderedPages = await renderPdfPagesToPng({
         dpi: options.dpi,
         inputPath,
-        pageNumber: pageIndex,
-      });
-      const unrotatedPage = geometry.rotation
-        ? await sharp(renderedPage, { failOn: "error" })
-            .rotate((360 - geometry.rotation) % 360)
-            .png()
-            .toBuffer()
-        : renderedPage;
-
-      const encoded = await encodeRenderedPage({
-        colorMode: options.colorMode,
-        imageQuality: options.imageQuality,
-        monochromeThreshold: options.monochromeThreshold,
-        pngBytes: unrotatedPage,
-      });
-      const encodedVisual = geometry.rotation
-        ? await sharp(encoded.bytes, { failOn: "error" })
-            .rotate(geometry.rotation)
-            .png()
-            .toBuffer()
-        : encoded.bytes;
-      await assertVisualCompleteness({
-        candidateBytes: encodedVisual,
-        colorMode: options.colorMode,
-        monochromeThreshold: options.monochromeThreshold,
-        sourceBytes: renderedPage,
-      });
-      const image =
-        encoded.format === "PNG"
-          ? await output.embedPng(encoded.bytes)
-          : await output.embedJpg(encoded.bytes);
-      const outputPage = output.addPage([
-        geometry.mediaBox.width,
-        geometry.mediaBox.height,
-      ]);
-      applyPageGeometry(outputPage, geometry);
-      outputPage.drawImage(image, {
-        height: geometry.cropBox.height,
-        width: geometry.cropBox.width,
-        x: geometry.cropBox.x,
-        y: geometry.cropBox.y,
+        pageNumbers,
       });
 
-      await onProgress?.((pageIndex / source.getPageCount()) * 100);
+      for (const pageIndex of pageNumbers) {
+        const sourcePage = source.getPage(pageIndex - 1);
+        const geometry = readPageGeometry(sourcePage);
+        const renderedPage = renderedPages.get(pageIndex);
+        if (!renderedPage) {
+          throw new PdfToolError(
+            "PDF_RENDER_MISSING_PAGE",
+            "O renderizador não devolveu uma das páginas solicitadas.",
+          );
+        }
+        const unrotatedPage = geometry.rotation
+          ? await sharp(renderedPage, { failOn: "error" })
+              .rotate((360 - geometry.rotation) % 360)
+              .png()
+              .toBuffer()
+          : renderedPage;
+        const encoded = await encodeRenderedPage({
+          colorMode: options.colorMode,
+          imageQuality: options.imageQuality,
+          monochromeThreshold: options.monochromeThreshold,
+          pngBytes: unrotatedPage,
+        });
+        const encodedVisual = geometry.rotation
+          ? await sharp(encoded.bytes, { failOn: "error" })
+              .rotate(geometry.rotation)
+              .png()
+              .toBuffer()
+          : encoded.bytes;
+        await assertVisualCompleteness({
+          candidateBytes: encodedVisual,
+          colorMode: options.colorMode,
+          monochromeThreshold: options.monochromeThreshold,
+          sourceBytes: renderedPage,
+        });
+        const image =
+          encoded.format === "PNG"
+            ? await output.embedPng(encoded.bytes)
+            : await output.embedJpg(encoded.bytes);
+        const outputPage = output.addPage([
+          geometry.mediaBox.width,
+          geometry.mediaBox.height,
+        ]);
+        applyPageGeometry(outputPage, geometry);
+        outputPage.drawImage(image, {
+          height: geometry.cropBox.height,
+          width: geometry.cropBox.width,
+          x: geometry.cropBox.x,
+          y: geometry.cropBox.y,
+        });
+        await onProgress?.((pageIndex / pageCount) * 100);
+      }
     }
-
     await writeFile(
       outputPath,
       await output.save({
@@ -369,4 +388,3 @@ export async function rasterizePdfForCompression({
         );
   }
 }
-

@@ -43,11 +43,32 @@ import {
   getMedianRounded,
   getDetectedDpiLabel,
   triggerDownload,
-  wait,
   uploadPdf
 } from "./pdf-compress-workspace-model";
 export * from "./pdf-compress-workspace-model";
 import { PdfCompressWorkspaceView } from "./pdf-compress-workspace-view";
+import { pollPdfJob } from "./pdf-job-polling";
+
+async function mapClientWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, Math.max(1, items.length)) }, async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= items.length) return;
+        const item = items[index];
+        if (item === undefined) return;
+        results[index] = await mapper(item, index);
+      }
+    }),
+  );
+  return results;
+}
 
 export function usePdfCompressWorkspaceController() {
   const [files, setFiles] = useState<File[]>([]);
@@ -59,9 +80,12 @@ export function usePdfCompressWorkspaceController() {
     total: 0,
   });
   const analysisRunRef = useRef(0);
+  const analysisCacheRef = useRef(new Map<string, PdfCompressionAnalysis>());
+  const pollAbortRef = useRef<AbortController | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<PdfOutput[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [work, setWork] = useState<WorkState>({
     phase: "IDLE",
     progress: 0,
@@ -103,44 +127,39 @@ export function usePdfCompressWorkspaceController() {
 
   async function analyzeFiles(nextFiles: File[]) {
     const runId = ++analysisRunRef.current;
-    setAnalyses([]);
     setSettings(null);
     setAnalysisProgress({ completed: 0, total: nextFiles.length });
-
     if (!nextFiles.length) {
+      setAnalyses([]);
       setAnalyzing(false);
       return;
     }
-
     setAnalyzing(true);
-    const nextAnalyses: PdfCompressionAnalysis[] = [];
-
+    let completed = 0;
     try {
-      for (const [index, file] of nextFiles.entries()) {
-        const analysis = await analyzePdfForCompression(file, getFileKey(file));
-        if (analysisRunRef.current !== runId) return;
-        nextAnalyses.push(analysis);
-        setAnalyses([...nextAnalyses]);
-        setAnalysisProgress({
-          completed: index + 1,
-          total: nextFiles.length,
-        });
-      }
+      const nextAnalyses = await mapClientWithConcurrency(nextFiles, 2, async (file) => {
+        const key = getFileKey(file);
+        const cached = analysisCacheRef.current.get(key);
+        const analysis = cached ?? await analyzePdfForCompression(file, key);
+        if (!cached) analysisCacheRef.current.set(key, analysis);
+        completed += 1;
+        if (analysisRunRef.current === runId) {
+          setAnalysisProgress({ completed, total: nextFiles.length });
+        }
+        return analysis;
+      });
+      if (analysisRunRef.current !== runId) return;
+      setAnalyses(nextAnalyses);
       applyDocumentRecommendation(nextAnalyses);
     } catch {
       if (analysisRunRef.current !== runId) return;
       setAnalyses([]);
       setSettings(null);
-      setError(
-        "Não foi possível analisar este PDF. Remova o arquivo e tente novamente.",
-      );
+      setError("Não foi possível analisar este PDF. Remova o arquivo e tente novamente.");
     } finally {
-      if (analysisRunRef.current === runId) {
-        setAnalyzing(false);
-      }
+      if (analysisRunRef.current === runId) setAnalyzing(false);
     }
   }
-
   const onDrop = (acceptedFiles: File[]) => {
     setError(null);
     setOutputs([]);
@@ -202,7 +221,7 @@ export function usePdfCompressWorkspaceController() {
       .sort((left, right) => left - right);
     const sourceDpi = getMedianRounded(sourceDpis);
     const contentKind = analyses.some(
-      (analysis) => analysis.contentKind === "SCANNED",
+      (analysis) => analysis.contentKind === "SCANNED" || analysis.contentKind === "SCANNED_OCR",
     )
       ? "Documento digitalizado"
       : analyses.some((analysis) => analysis.contentKind === "MIXED")
@@ -235,7 +254,11 @@ export function usePdfCompressWorkspaceController() {
     if (!files.length || busy || analyzing || !settings) return;
 
     setError(null);
+    setWarning(null);
     setOutputs([]);
+    pollAbortRef.current?.abort();
+    const pollController = new AbortController();
+    pollAbortRef.current = pollController;
 
     try {
       const createResponse = await fetch("/api/pdf/jobs", {
@@ -265,22 +288,31 @@ export function usePdfCompressWorkspaceController() {
       const currentJobId = createBody.job.id;
       setJobId(currentJobId);
 
-      for (const [index, file] of files.entries()) {
+      const uploadProgress = new Map<number, number>();
+      await mapClientWithConcurrency(files, 3, async (file, index) => {
+        uploadProgress.set(index, 0);
         setWork({
           phase: "UPLOADING",
-          progress: Math.round((index / files.length) * 100),
+          progress: Math.round(
+            [...uploadProgress.values()].reduce((sum, value) => sum + value, 0) /
+              files.length,
+          ),
           detail: `Enviando ${file.name}`,
         });
         await uploadPdf(currentJobId, file, (fileProgress) => {
+          uploadProgress.set(index, fileProgress);
+          const totalProgress = [...uploadProgress.values()].reduce(
+            (sum, value) => sum + value,
+            0,
+          );
           setWork({
             phase: "UPLOADING",
-            progress: Math.round(
-              ((index + fileProgress / 100) / files.length) * 100,
-            ),
+            progress: Math.round(totalProgress / files.length),
             detail: `Enviando ${file.name}`,
           });
         });
-      }
+        uploadProgress.set(index, 100);
+      });
 
       const queueResponse = await fetch(`/api/pdf/jobs/${currentJobId}/queue`, {
         method: "POST",
@@ -300,65 +332,62 @@ export function usePdfCompressWorkspaceController() {
         detail: "Aguardando processamento",
       });
 
-      for (let attempt = 0; attempt < 600; attempt += 1) {
-        await wait(1_000);
-        const response = await fetch(`/api/pdf/jobs/${currentJobId}`, {
-          cache: "no-store",
-        });
-        const body = (await response.json()) as { job: PdfJob } | ApiError;
-        if (!response.ok || !("job" in body)) {
-          throw new Error(
-            readApiError(body, "Não foi possível acompanhar a compressão."),
-          );
-        }
-
-        const nextOutputs = body.job.artifacts.filter(
-          (artifact): artifact is PdfOutput => artifact.kind === "OUTPUT",
-        );
-        if (body.job.status === "SUCCEEDED") {
-          setOutputs(nextOutputs);
-          setWork({
-            phase: "SUCCEEDED",
-            progress: 100,
-            detail: "Compressão concluída",
-          });
-          const firstOutput = nextOutputs[0];
-
-          if (!firstOutput) {
-            throw new Error(
-              "A compressão terminou sem gerar um arquivo para download.",
-            );
+      const nextOutputs = await pollPdfJob({
+        jobId: currentJobId,
+        signal: pollController.signal,
+        isOutput: (artifact): artifact is PdfOutput =>
+          typeof artifact === "object" &&
+          artifact !== null &&
+          "kind" in artifact &&
+          (artifact as { kind?: unknown }).kind === "OUTPUT",
+        onConnectionIssue: (message) => {
+          setWarning(message);
+        },
+        onUpdate: (job, currentOutputs) => {
+          setOutputs(currentOutputs);
+          if (job.status === "RUNNING") {
+            setWork({
+              phase: "RUNNING",
+              progress: job.progress,
+              detail: "Analisando e compactando os arquivos",
+            });
+            return;
           }
+          if (job.status === "SUCCEEDED") {
+            setWork({
+              phase: "SUCCEEDED",
+              progress: 100,
+              detail: "Compressão concluída",
+            });
+            if (job.errorMessage) setWarning(job.errorMessage);
+            return;
+          }
+          setWork({
+            phase: "QUEUED",
+            progress: job.progress,
+            detail: "Aguardando processamento",
+          });
+        },
+      });
 
-          triggerDownload(
-            nextOutputs.length > 1
-              ? `/api/pdf/jobs/${currentJobId}/outputs/zip`
-              : `/api/pdf/jobs/${currentJobId}/outputs/${firstOutput.id}`,
-          );
-          return;
-        }
+      setOutputs(nextOutputs);
+      setWork({
+        phase: "SUCCEEDED",
+        progress: 100,
+        detail: "Compressão concluída",
+      });
 
-        if (
-          body.job.status === "FAILED" ||
-          body.job.status === "CANCELLED" ||
-          body.job.status === "EXPIRED"
-        ) {
-          throw new Error(
-            body.job.errorMessage ?? "A compressão não pôde ser concluída.",
-          );
-        }
-
-        setWork({
-          phase: body.job.status === "RUNNING" ? "RUNNING" : "QUEUED",
-          progress: body.job.progress,
-          detail:
-            body.job.status === "RUNNING"
-              ? "Recomprimindo páginas e comparando resultados"
-              : "Aguardando processamento",
-        });
+      const firstOutput = nextOutputs[0];
+      if (!firstOutput) {
+        throw new Error(
+          "A compressão terminou sem gerar um arquivo para download.",
+        );
       }
-
-      throw new Error("A compressão demorou além do esperado.");
+      triggerDownload(
+        nextOutputs.length > 1
+          ? `/api/pdf/jobs/${currentJobId}/outputs/zip`
+          : `/api/pdf/jobs/${currentJobId}/outputs/${firstOutput.id}`,
+      );
     } catch (caught) {
       setWork({ phase: "IDLE", progress: 0, detail: "" });
       setError(
@@ -366,10 +395,14 @@ export function usePdfCompressWorkspaceController() {
           ? caught.message
           : "Não foi possível comprimir os PDFs.",
       );
+    } finally {
+      if (pollAbortRef.current === pollController) {
+        pollAbortRef.current = null;
+      }
     }
   }
 
-    return { Archive, ArrowLeft, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, QUALITY_OPTIONS, ScanLine, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, settings, updateSettings, work };
+    return { Archive, ArrowLeft, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, QUALITY_OPTIONS, ScanLine, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, setWarning, settings, updateSettings, warning, work };
 }
 
 export function PdfCompressWorkspace() {

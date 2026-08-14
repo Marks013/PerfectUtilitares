@@ -1,6 +1,6 @@
 import { createCanvas } from "@napi-rs/canvas";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PDFDocument } from "pdf-lib";
@@ -166,6 +166,103 @@ export async function renderPdfPageToPng(options: RenderPdfPageOptions) {
       );
     }
     return bytes;
+  } finally {
+    await rm(temporaryDirectory, { force: true, recursive: true });
+  }
+}
+
+
+
+export async function renderPdfPagesToPng({
+  dpi,
+  inputPath,
+  pageNumbers,
+}: {
+  dpi: number;
+  inputPath: string;
+  pageNumbers: number[];
+}) {
+  const uniquePages = [...new Set(pageNumbers)].sort((a, b) => a - b);
+  const result = new Map<number, Buffer>();
+  if (!uniquePages.length) return result;
+  if (process.env.PDF_RENDERER === "pdfjs") {
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const document = await pdfjs.getDocument(
+      pdfJsServerDocumentOptions(new Uint8Array(await readFile(inputPath))),
+    ).promise;
+    try {
+      for (const pageNumber of uniquePages) {
+        const page = await document.getPage(pageNumber);
+        try {
+          const viewport = page.getViewport({ scale: dpi / 72 });
+          const canvas = createCanvas(
+            Math.max(1, Math.ceil(viewport.width)),
+            Math.max(1, Math.ceil(viewport.height)),
+          );
+          const context = canvas.getContext("2d");
+          await page.render({
+            background: "#FFFFFF",
+            canvas: canvas as unknown as HTMLCanvasElement,
+            canvasContext: context as unknown as CanvasRenderingContext2D,
+            viewport,
+          }).promise;
+          result.set(pageNumber, canvas.toBuffer("image/png"));
+        } finally {
+          page.cleanup();
+        }
+      }
+    } finally {
+      await document.cleanup();
+    }
+    return result;
+  }
+  const first = uniquePages[0];
+  const last = uniquePages[uniquePages.length - 1];
+  if (first === undefined || last === undefined) return result;
+  const contiguous = last - first + 1 === uniquePages.length;
+  if (!contiguous) {
+    for (const pageNumber of uniquePages) {
+      result.set(pageNumber, await renderPdfPageToPng({ dpi, inputPath, pageNumber }));
+    }
+    return result;
+  }
+  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-render-batch-"));
+  const outputPrefix = path.join(temporaryDirectory, "page");
+  try {
+    await runPoppler([
+      "-f",
+      String(first),
+      "-l",
+      String(last),
+      "-png",
+      "-r",
+      String(dpi),
+      inputPath,
+      outputPrefix,
+    ]);
+    const files = await readdir(temporaryDirectory);
+    for (const fileName of files) {
+      const match = fileName.match(/-(\d+)\.png$/i);
+      if (!match) continue;
+      const pageNumber = Number(match[1]);
+      if (!uniquePages.includes(pageNumber)) continue;
+      const bytes = await readFile(path.join(temporaryDirectory, fileName));
+      const metadata = await sharp(bytes, { failOn: "error" }).metadata();
+      if (!metadata.width || !metadata.height) {
+        throw new PdfRenderError(
+          "PDF_RENDER_EMPTY",
+          "O renderizador produziu uma página vazia.",
+        );
+      }
+      result.set(pageNumber, bytes);
+    }
+    if (result.size !== uniquePages.length) {
+      throw new PdfRenderError(
+        "PDF_RENDER_MISSING_PAGE",
+        "O renderizador não devolveu todas as páginas solicitadas.",
+      );
+    }
+    return result;
   } finally {
     await rm(temporaryDirectory, { force: true, recursive: true });
   }

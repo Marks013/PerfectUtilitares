@@ -28,6 +28,7 @@ export type PdfOutput = {
 };
 
 export type PdfJob = {
+  errorCode?: string | null;
   errorMessage: string | null;
   progress: number;
   status: string;
@@ -97,7 +98,7 @@ export const METHOD_OPTIONS: Array<{
   {
     value: "AUTO",
     label: "Automática",
-    description: "Compara e mantém o menor resultado",
+    description: "Analisa o PDF e executa apenas a estratégia necessária",
   },
   {
     value: "LOSSLESS",
@@ -149,6 +150,7 @@ export function formatBytes(value: number) {
 export function getContentKindLabel(analysis: PdfCompressionAnalysis) {
   if (analysis.contentKind === "VECTOR") return "Texto e vetores";
   if (analysis.contentKind === "MIXED") return "Conteúdo misto";
+  if (analysis.contentKind === "SCANNED_OCR") return "Digitalizado + OCR";
   return "Documento digitalizado";
 }
 
@@ -191,9 +193,6 @@ export function triggerDownload(url: string) {
   link.remove();
 }
 
-export function wait(milliseconds: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
 
 export function uploadPdf(
   jobId: string,

@@ -279,6 +279,33 @@ describe("PDF processor lifecycle", () => {
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
+
+  it("keeps successful outputs when one file in a compression batch fails", async () => {
+    mocks.findUnique.mockResolvedValueOnce(
+      makeJob({
+        artifacts: [
+          inputArtifact({ id: "input-1", originalName: "ok.pdf" }),
+          inputArtifact({ id: "input-2", originalName: "falha.pdf", storageKey: "jobs/job-1/input-2.pdf" }),
+        ],
+      }),
+    );
+    mocks.compress
+      .mockResolvedValueOnce(compressedOutput)
+      .mockRejectedValueOnce(new PdfToolError("QPDF_FAILED", "qpdf falhou"));
+
+    await expect(processPdfJob("job-1")).resolves.toBeUndefined();
+
+    expect(mocks.artifactCreateMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ id: "output-1", kind: "OUTPUT" })],
+    });
+    expect(mocks.jobUpdate).toHaveBeenLastCalledWith({
+      where: { id: "job-1" },
+      data: expect.objectContaining({
+        errorCode: "PDF_COMPRESSION_PARTIAL",
+        status: "SUCCEEDED",
+      }),
+    });
+  });
   it("preserves a known processing error code and marks the job failed", async () => {
     const error = new PdfToolError("QPDF_FAILED", "qpdf falhou");
 

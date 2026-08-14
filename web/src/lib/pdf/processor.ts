@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/node";
 import { applyPdfAnnotations } from "@/lib/pdf/annotations";
 import { getPdfWorkingSetMultiplier } from "@/lib/pdf/capacity";
 import { compressPdfFile, PdfToolError } from "@/lib/pdf/compression";
+import { mapWithConcurrency } from "@/lib/pdf/compression-concurrency";
 import { buildPdfFromImages } from "@/lib/pdf/images-to-pdf";
 import {
   convertOfficeToPdf,
@@ -121,30 +122,66 @@ export async function processPdfJob(jobId: string) {
   try {
     if (job.operation === "COMPRESS") {
       const options = pdfCompressionOptionsSchema.parse(job.options ?? {});
-      const outputs: Array<Awaited<ReturnType<typeof compressPdfFile>>> = [];
-
-      for (const [index, input] of inputArtifacts.entries()) {
-        const baseName = input.originalName.replace(/\.pdf$/i, "");
-        const output = await compressPdfFile({
-          inputStorageKey: input.storageKey,
-          jobId: job.id,
-          onProgress: (progress) =>
-            updateProgress(
-              job.id,
-              5 +
-                ((index + progress / 100) / inputArtifacts.length) * 85,
-            ),
-          options,
-          outputName: `${baseName || "documento"}-comprimido.pdf`,
-        });
-        outputs.push(output);
-        writtenStorageKeys.push(output.storageKey);
+      const configuredConcurrency = Number(process.env.PDF_COMPRESSION_FILE_CONCURRENCY ?? 2);
+      const fileConcurrency = Number.isInteger(configuredConcurrency) && configuredConcurrency >= 1 && configuredConcurrency <= 4
+        ? configuredConcurrency
+        : 2;
+      const itemProgress = new Map<string, number>();
+      const failures: Array<{ name: string; message: string }> = [];
+      const results = await mapWithConcurrency(
+        inputArtifacts,
+        fileConcurrency,
+        async (input, index) => {
+          const baseName = input.originalName.replace(/\.pdf$/i, "");
+          let lastPersisted = -10;
+          try {
+            const output = await compressPdfFile({
+              inputStorageKey: input.storageKey,
+              jobId: job.id,
+              onProgress: async (progress) => {
+                itemProgress.set(input.id, progress);
+                if (progress < 100 && progress - lastPersisted < 5) return;
+                lastPersisted = progress;
+                const aggregate = inputArtifacts.reduce(
+                  (total, artifact) => total + (itemProgress.get(artifact.id) ?? 0),
+                  0,
+                ) / inputArtifacts.length;
+                await updateProgress(job.id, 5 + aggregate * 0.85);
+              },
+              options,
+              outputName: `${baseName || "documento"}-comprimido.pdf`,
+            });
+            itemProgress.set(input.id, 100);
+            writtenStorageKeys.push(output.storageKey);
+            return { ok: true as const, index, input, output };
+          } catch (error) {
+            itemProgress.set(input.id, 100);
+            failures.push({
+              name: input.originalName,
+              message: error instanceof Error ? error.message : "Falha ao compactar este arquivo.",
+            });
+            return { ok: false as const, index, input, error };
+          }
+        },
+      );
+      const succeeded = results.filter((result) => result.ok);
+      if (!succeeded.length) {
+        const firstFailure = failures[0];
+        const originalError = results.find((result) => !result.ok)?.error;
+        if (originalError) throw originalError;
+        throw new PdfProcessingError(
+          "PDF_COMPRESSION_BATCH_FAILED",
+          firstFailure?.message ?? "Nenhum arquivo do lote pôde ser compactado.",
+        );
       }
-
+      const outputs = succeeded.map((result) => result.output);
       const totalBytes = outputs.reduce(
         (total, output) => total + output.sizeBytes,
         BigInt(0),
       );
+      const partialMessage = failures.length
+        ? `${failures.length} de ${inputArtifacts.length} arquivo(s) falharam; os demais foram concluídos e estão disponíveis para download.`
+        : null;
       await prisma.$transaction([
         prisma.pdfArtifact.createMany({
           data: outputs.map((output) => ({
@@ -162,8 +199,8 @@ export async function processPdfJob(jobId: string) {
           where: { id: job.id },
           data: {
             completedAt: new Date(),
-            errorCode: null,
-            errorMessage: null,
+            errorCode: failures.length ? "PDF_COMPRESSION_PARTIAL" : null,
+            errorMessage: partialMessage,
             outputBytes: totalBytes,
             progress: 100,
             status: "SUCCEEDED",
@@ -172,7 +209,6 @@ export async function processPdfJob(jobId: string) {
       ]);
       return;
     }
-
     if (job.operation === "JPG_TO_PDF") {
       const options = jpgToPdfOptionsSchema.parse(job.options ?? {});
       const outputBytes = await buildPdfFromImages({

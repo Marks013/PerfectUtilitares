@@ -6,15 +6,14 @@ import {
   reservePdfOutput,
   resolvePdfStorageKey,
 } from "@/lib/pdf/storage";
-import {
-  PdfToolError,
-  type PdfCompressionOptions,
-} from "./compression-types";
+import { analyzePdfCompressionProfile } from "./compression-analyzer";
+import { withRasterCompressionSlot } from "./compression-concurrency";
+import { planPdfCompression } from "./compression-planner";
+import { PdfToolError, type PdfCompressionOptions } from "./compression-types";
 import {
   rasterizePdfForCompression,
   validateStructuralCandidate,
 } from "./compression-visual";
-
 export { PdfToolError } from "./compression-types";
 export type { PdfCompressionOptions } from "./compression-types";
 export { rasterizePdfForCompression } from "./compression-visual";
@@ -28,7 +27,6 @@ function runQpdf(args: string[], timeoutMs = 10 * 60 * 1000) {
     });
     let errorOutput = "";
     let settled = false;
-
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
@@ -46,7 +44,6 @@ function runQpdf(args: string[], timeoutMs = 10 * 60 * 1000) {
         ),
       );
     }, timeoutMs);
-
     process.stderr.setEncoding("utf8");
     process.stderr.on("data", (chunk: string) => {
       if (errorOutput.length < 4_000) errorOutput += chunk;
@@ -65,10 +62,7 @@ function runQpdf(args: string[], timeoutMs = 10 * 60 * 1000) {
     });
     process.once("close", (code) => {
       finish(() => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
+        if (code === 0) return resolve();
         reject(
           new PdfToolError(
             "PDF_COMPRESSION_FAILED",
@@ -94,41 +88,48 @@ async function optimizePdfStructure(inputPath: string, outputPath: string) {
   ]);
 }
 
-async function copySmallestCandidate(
-  candidates: string[],
-  destinationPath: string,
-  inputPath: string,
-) {
-  if (!candidates.length) {
-    throw new PdfToolError(
-      "PDF_COMPRESSION_NO_VALID_CANDIDATE",
-      "Nenhuma estratégia produziu uma compactação íntegra.",
-    );
+function minimumSavingsRatio() {
+  const configured = Number(process.env.PDF_COMPRESSION_MIN_SAVINGS_RATIO ?? 0.005);
+  return Number.isFinite(configured) && configured >= 0 && configured <= 0.25
+    ? configured
+    : 0.005;
+}
+
+async function selectCandidateOrOriginal({
+  candidatePath,
+  destinationPath,
+  inputPath,
+}: {
+  candidatePath: string;
+  destinationPath: string;
+  inputPath: string;
+}) {
+  const [candidate, input] = await Promise.all([stat(candidatePath), stat(inputPath)]);
+  const threshold = Math.floor(input.size * (1 - minimumSavingsRatio()));
+  if (candidate.size >= threshold) {
+    await copyFile(inputPath, destinationPath);
+    return "UNCHANGED" as const;
   }
-  const available = await Promise.all(
-    candidates.map(async (candidate) => ({
-      candidate,
-      size: (await stat(candidate)).size,
+  await copyFile(candidatePath, destinationPath);
+  return "COMPRESSED" as const;
+}
+
+async function smallestPath(paths: string[]) {
+  const candidates = await Promise.all(
+    paths.map(async (candidatePath) => ({
+      candidatePath,
+      size: (await stat(candidatePath)).size,
     })),
   );
-  available.sort((left, right) => left.size - right.size);
-  const smallest = available[0];
-
-  if (!smallest) {
+  candidates.sort((a, b) => a.size - b.size);
+  const first = candidates[0];
+  if (!first) {
     throw new PdfToolError(
       "PDF_COMPRESSION_NO_VALID_CANDIDATE",
       "Nenhuma estratégia produziu uma compactação íntegra.",
     );
   }
-
-  const inputSize = (await stat(inputPath)).size;
-  if (smallest.size >= inputSize) {
-    throw new PdfToolError(
-      "PDF_COMPRESSION_NOT_EFFECTIVE",
-      "O arquivo já está otimizado; nenhuma compactação íntegra ficou menor que o original.",
-    );
-  }
-  await copyFile(smallest.candidate, destinationPath);
+  return first.candidatePath;
 }
 
 export async function compressPdfFile({
@@ -150,67 +151,73 @@ export async function compressPdfFile({
   const rasterPath = `${reservation.temporaryPath}.raster.pdf`;
   const optimizedRasterPath = `${reservation.temporaryPath}.raster-optimized.pdf`;
   const temporaryCandidates = [structuralPath, rasterPath, optimizedRasterPath];
-
   try {
-    const validCandidates: string[] = [];
-    if (options.method === "LOSSLESS" || options.method === "AUTO") {
+    await onProgress?.(2);
+    const profile =
+      options.method === "AUTO"
+        ? await analyzePdfCompressionProfile(inputPath)
+        : null;
+    const plan = planPdfCompression(options, profile);
+    await onProgress?.(10);
+    let outcome: "COMPRESSED" | "UNCHANGED";
+    if (plan.strategy === "SKIP") {
+      await copyFile(inputPath, reservation.temporaryPath);
+      outcome = "UNCHANGED";
+      await onProgress?.(95);
+    } else if (plan.strategy === "STRUCTURAL") {
       try {
         await optimizePdfStructure(inputPath, structuralPath);
+        await onProgress?.(options.method === "LOSSLESS" ? 75 : 55);
         await validateStructuralCandidate(inputPath, structuralPath);
-        validCandidates.push(structuralPath);
-      } catch {
-        // AUTO ainda pode usar candidato visual; LOSSLESS falhará sem candidato.
+        outcome = await selectCandidateOrOriginal({
+          candidatePath: structuralPath,
+          destinationPath: reservation.temporaryPath,
+          inputPath,
+        });
+      } catch (error) {
+        if (options.method === "LOSSLESS") {
+          throw new PdfToolError(
+            "PDF_COMPRESSION_NO_VALID_CANDIDATE",
+            "Nenhuma estratégia produziu uma compactação íntegra.",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        await copyFile(inputPath, reservation.temporaryPath);
+        outcome = "UNCHANGED";
       }
-      await onProgress?.(options.method === "AUTO" ? 10 : 90);
-    }
-
-    if (options.method === "RASTER" || options.method === "AUTO") {
-      try {
+      await onProgress?.(options.method === "LOSSLESS" ? 90 : 95);
+    } else {
+      outcome = await withRasterCompressionSlot(async () => {
         await rasterizePdfForCompression({
           inputPath,
-          options,
+          options: plan.rasterOptions,
           outputPath: rasterPath,
-          onProgress: (progress) =>
-            onProgress?.(
-              options.method === "AUTO" ? 10 + progress * 0.8 : progress * 0.9,
-            ),
+          onProgress: (progress) => onProgress?.(10 + progress * 0.75),
         });
-        validCandidates.push(rasterPath);
+        const valid = [rasterPath];
         try {
           await optimizePdfStructure(rasterPath, optimizedRasterPath);
           await validateStructuralCandidate(rasterPath, optimizedRasterPath);
-          validCandidates.push(optimizedRasterPath);
+          valid.push(optimizedRasterPath);
         } catch {
-          // Raster válido continua sendo candidato quando qpdf não otimiza.
+          // O raster íntegro continua sendo válido mesmo quando qpdf não reduz mais.
         }
-      } catch (error) {
-        if (options.method === "RASTER") throw error;
-      }
+        return selectCandidateOrOriginal({
+          candidatePath: await smallestPath(valid),
+          destinationPath: reservation.temporaryPath,
+          inputPath,
+        });
+      });
       await onProgress?.(95);
     }
-
-    if (options.method === "LOSSLESS") {
-      await copySmallestCandidate(
-        validCandidates,
-        reservation.temporaryPath,
-        inputPath,
-      );
-    } else if (options.method === "RASTER") {
-      await copySmallestCandidate(
-        validCandidates,
-        reservation.temporaryPath,
-        inputPath,
-      );
-    } else {
-      await copySmallestCandidate(
-        validCandidates,
-        reservation.temporaryPath,
-        inputPath,
-      );
-    }
-
     await onProgress?.(100);
-    return await commitPdfOutput(reservation);
+    return {
+      ...(await commitPdfOutput(reservation)),
+      outcome,
+      strategy: plan.strategy,
+      analysis: profile,
+      planReason: plan.reason,
+    };
   } catch (error) {
     await discardPdfOutput(reservation).catch(() => undefined);
     throw error;

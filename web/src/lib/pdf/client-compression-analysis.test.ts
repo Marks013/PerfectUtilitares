@@ -28,6 +28,8 @@ function analysis(
     maximumDpi: 300,
     imageCount: 1,
     hasSelectableText: false,
+    hasOcrLayer: false,
+    fullPageImageRatio: 1,
     ...overrides,
   };
 }
@@ -86,5 +88,22 @@ describe("PDF compression analysis", () => {
       dpi: 200,
       colorMode: "COLOR",
     });
+  });
+
+  it("recognizes scanned OCR as scan-like for automatic recommendations", () => {
+    expect(
+      deriveCompressionRecommendation([
+        analysis({
+          contentKind: "SCANNED_OCR",
+          colorMode: "MONOCHROME",
+          sourceDpi: 200,
+          minimumDpi: 200,
+          maximumDpi: 200,
+          hasSelectableText: true,
+          hasOcrLayer: true,
+          fullPageImageRatio: 1,
+        }),
+      ]),
+    ).toMatchObject({ method: "AUTO", dpi: 200, colorMode: "MONOCHROME" });
   });
 });
