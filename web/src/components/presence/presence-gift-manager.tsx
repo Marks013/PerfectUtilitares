@@ -238,6 +238,10 @@ function giftIsFull(gift: PresenceGiftAdmin) {
   return gift.quantity !== null && gift.reservedCount >= gift.quantity;
 }
 
+function giftHasSelections(gift: PresenceGiftAdmin) {
+  return gift.reservedCount > 0;
+}
+
 export function PresenceGiftManager({
   detail,
   onRefresh,
@@ -320,21 +324,26 @@ export function PresenceGiftManager({
   const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
   const filteredGifts = useMemo(
     () => detail.gifts.filter((gift) => {
-      const reserved = giftIsFull(gift);
+      const selected = giftHasSelections(gift);
       const matchesQuery =
         !normalizedQuery ||
         gift.title.toLocaleLowerCase("pt-BR").includes(normalizedQuery) ||
         gift.description?.toLocaleLowerCase("pt-BR").includes(normalizedQuery);
       const matchesStatus =
         statusFilter === "ALL" ||
-        (statusFilter === "AVAILABLE" && gift.active && !reserved) ||
-        (statusFilter === "RESERVED" && reserved) ||
+        (statusFilter === "AVAILABLE" && gift.active && !giftIsFull(gift)) ||
+        (statusFilter === "RESERVED" && selected) ||
         (statusFilter === "HIDDEN" && !gift.active);
       const matchesCategory =
         categoryFilter === "ALL" ||
         (categoryFilter === "UNCATEGORIZED" && !gift.categoryId) ||
         gift.categoryId === categoryFilter;
       return matchesQuery && matchesStatus && matchesCategory;
+    }).sort((left, right) => {
+      const selectedFirst =
+        Number(giftHasSelections(right)) - Number(giftHasSelections(left));
+      if (selectedFirst !== 0) return selectedFirst;
+      return left.position - right.position;
     }),
     [categoryFilter, detail.gifts, normalizedQuery, statusFilter],
   );
@@ -357,7 +366,13 @@ export function PresenceGiftManager({
       hasFilters
         ? group.gifts.length > 0
         : group.id !== "uncategorized" || group.gifts.length > 0,
-    ),
+    ).sort((left, right) => {
+      const selectedFirst =
+        Number(right.gifts.some(giftHasSelections)) -
+        Number(left.gifts.some(giftHasSelections));
+      if (selectedFirst !== 0) return selectedFirst;
+      return left.position - right.position;
+    }),
     [detail.giftCategories, filteredGifts, hasFilters],
   );
   const reservedCount = detail.gifts.reduce(
@@ -369,7 +384,7 @@ export function PresenceGiftManager({
     <section className={panel}>
       <div className="flex items-center gap-2">
         <Gift className="size-5 text-[color:var(--app-action-green)]" aria-hidden="true" />
-        <div><h2 className="text-lg font-bold">Lista de presentes</h2><p className="text-sm text-[color:var(--app-muted)]">Organize por cômodo ou por qualquer categoria que faça sentido.</p></div>
+        <div><h2 className="text-lg font-bold">Lista de presentes</h2><p className="text-sm text-[color:var(--app-muted)]">Organize por cômodo ou por qualquer categoria que faça sentido. Itens escolhidos aparecem primeiro e ficam destacados.</p></div>
       </div>
 
       <details className="mt-5 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
@@ -473,7 +488,7 @@ export function PresenceGiftManager({
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className={field}>
               <option value="ALL">Todas</option>
               <option value="AVAILABLE">Disponíveis</option>
-              <option value="RESERVED">Esgotados</option>
+              <option value="RESERVED">Escolhidos</option>
               <option value="HIDDEN">Ocultos</option>
             </select>
           </label>
@@ -494,8 +509,25 @@ export function PresenceGiftManager({
             <div className="mb-2 flex items-center gap-2"><span className="grid size-9 place-items-center rounded-lg bg-[color:var(--app-surface)] text-xl" aria-hidden="true">{group.emoji}</span><h3 id={`admin-gift-category-${group.id}`} className="font-bold">{group.name}</h3><span className="text-xs tabular-nums text-[color:var(--app-muted)]">{group.gifts.length}</span></div>
             <div className="space-y-2">
               {group.gifts.map((gift, index) => (
-                <div key={gift.id} className="rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3">
-                  <div className="flex flex-wrap items-center gap-3"><div className="flex gap-1"><button type="button" className={secondary} aria-label={`Mover ${gift.title} para cima`} disabled={index === 0 || busy === "gift-order"} onClick={() => void moveGift(gift, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${gift.title} para baixo`} disabled={index === group.gifts.length - 1 || busy === "gift-order"} onClick={() => void moveGift(gift, 1)}><ChevronDown className="size-4" /></button></div><span className="grid size-11 place-items-center rounded-lg bg-[color:var(--app-card)] text-2xl" aria-hidden="true">{gift.emoji}</span><div className="min-w-48 flex-1"><p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p><p className="text-xs text-[color:var(--app-muted)]">{gift.quantity === null ? `Ilimitado · ${gift.reservedCount} escolha(s)` : `${gift.reservedCount}/${gift.quantity} escolhido(s) · ${gift.availableCount ?? 0} disponível(is)`}</p></div><label className="text-xs font-semibold text-[color:var(--app-muted)]"><span className="sr-only">Mover {gift.title} para outra categoria</span><select aria-label={`Mover ${gift.title} para outra categoria`} defaultValue={gift.categoryId ?? ""} className="min-h-10 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] px-2 text-sm text-[color:var(--app-fg)]" disabled={busy === `gift-${gift.id}`} onChange={(event) => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ categoryId: event.target.value || null }) }))}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ active: !gift.active }) }))}>{gift.active ? "Ocultar" : "Exibir"}</button>{(gift.reservedCount > 0) ? <button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ clearReservation: true }) }))}>Liberar</button> : <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir ${gift.title}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir presente?</AlertDialogTitle><AlertDialogDescription>{gift.title} será removido da lista.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "DELETE" }))}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}</div>
+                <div
+                  key={gift.id}
+                  className={`rounded-xl border p-3 transition ${
+                    giftHasSelections(gift)
+                      ? "border-2 border-[color:var(--app-action-green)] bg-[color:var(--app-card)] shadow-sm"
+                      : "border-[color:var(--app-border)] bg-[color:var(--app-surface)]"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center gap-3"><div className="flex gap-1"><button type="button" className={secondary} aria-label={`Mover ${gift.title} para cima`} disabled={index === 0 || busy === "gift-order"} onClick={() => void moveGift(gift, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${gift.title} para baixo`} disabled={index === group.gifts.length - 1 || busy === "gift-order"} onClick={() => void moveGift(gift, 1)}><ChevronDown className="size-4" /></button></div><span className="grid size-11 place-items-center rounded-lg bg-[color:var(--app-card)] text-2xl" aria-hidden="true">{gift.emoji}</span><div className="min-w-48 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p>
+                      {giftHasSelections(gift) && (
+                        <span className="inline-flex rounded-full bg-[color:var(--app-action-green)] px-2 py-0.5 text-[11px] font-bold text-white">
+                          Escolhido · {gift.reservedCount}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-[color:var(--app-muted)]">{gift.quantity === null ? `Ilimitado · ${gift.reservedCount} escolha(s)` : `${gift.reservedCount}/${gift.quantity} escolhido(s) · ${gift.availableCount ?? 0} disponível(is)`}</p>
+                  </div><label className="text-xs font-semibold text-[color:var(--app-muted)]"><span className="sr-only">Mover {gift.title} para outra categoria</span><select aria-label={`Mover ${gift.title} para outra categoria`} defaultValue={gift.categoryId ?? ""} className="min-h-10 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] px-2 text-sm text-[color:var(--app-fg)]" disabled={busy === `gift-${gift.id}`} onChange={(event) => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ categoryId: event.target.value || null }) }))}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ active: !gift.active }) }))}>{gift.active ? "Ocultar" : "Exibir"}</button>{(gift.reservedCount > 0) ? <button type="button" className={secondary} onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify({ clearReservation: true }) }))}>Liberar</button> : <AlertDialog><AlertDialogTrigger asChild><button type="button" className={danger} aria-label={`Excluir ${gift.title}`}><Trash2 className="size-4" /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir presente?</AlertDialogTitle><AlertDialogDescription>{gift.title} será removido da lista.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "DELETE" }))}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}</div>
                   <details className="mt-3 text-sm"><summary className="cursor-pointer font-semibold text-[color:var(--app-muted)]">Editar presente</summary><form className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; void run(`gift-${gift.id}`, () => presenceApi(`/api/admin/presencas/${detail.id}/presentes/${gift.id}`, { method: "PATCH", body: JSON.stringify(giftPayload(form)) })); }}><EmojiPicker name="emoji" label="Ícone" defaultValue={gift.emoji} options={giftEmojiOptions} /><label className="font-semibold">Presente<input name="title" required defaultValue={gift.title} className={field} /></label><label className="font-semibold">Categoria<select name="categoryId" defaultValue={gift.categoryId ?? ""} className={field}><option value="">Sem categoria</option>{detail.giftCategories.map((category) => <option key={category.id} value={category.id}>{category.emoji} {category.name}</option>)}</select></label><ReservationSelect detail={detail} gift={gift} /><QuantityFields gift={gift} /><label className="font-semibold">Link<input name="externalUrl" type="url" defaultValue={gift.externalUrl ?? ""} className={field} /></label><label className="font-semibold md:col-span-2 xl:col-span-5">Descrição<input name="description" defaultValue={gift.description ?? ""} className={field} /></label><button type="submit" className={`${primary} md:col-span-2 md:justify-self-start xl:col-span-5`} disabled={busy === `gift-${gift.id}`}><Save className="size-4" /> Salvar presente</button></form></details>
                 </div>
               ))}

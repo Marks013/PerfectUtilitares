@@ -319,7 +319,26 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
       groups.set(key, current);
       return groups;
     }, new Map<string, { id: string; name: string; emoji: string; position: number; gifts: typeof gifts }>()),
-  ).map(([, group]) => group).sort((left, right) => left.position - right.position);
+  )
+    .map(([, group]) => ({
+      ...group,
+      gifts: [...group.gifts].sort((left, right) => {
+        // Ordem visual no convite:
+        // 0 = escolha deste convidado (sempre em destaque no topo)
+        // 1 = disponível (inclui parcial e ilimitado)
+        // 2 = esgotado por outros convidados (vai para o final)
+        const leftPriority = left.reservedByMe ? 0 : left.reserved ? 2 : 1;
+        const rightPriority = right.reservedByMe ? 0 : right.reserved ? 2 : 1;
+        return leftPriority - rightPriority;
+      }),
+    }))
+    .sort((left, right) => {
+      const myChoiceFirst =
+        Number(right.gifts.some((gift) => gift.reservedByMe)) -
+        Number(left.gifts.some((gift) => gift.reservedByMe));
+      if (myChoiceFirst !== 0) return myChoiceFirst;
+      return left.position - right.position;
+    });
 
   return (
     <main
@@ -411,7 +430,7 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
         <section className={styles.giftSection} aria-labelledby="gift-title">
           <div className={styles.sectionHeading}>
             <Gift aria-hidden="true" />
-            <div><h2 id="gift-title">Lista de presentes</h2><p>Escolha um item. A lista é atualizada automaticamente.</p></div>
+            <div><h2 id="gift-title">Lista de presentes</h2><p>Escolha um item. Suas escolhas aparecem primeiro e ficam destacadas.</p></div>
           </div>
           <div className={styles.giftGroups}>
             {giftGroups.map((group) => (
@@ -425,10 +444,23 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
                   {group.gifts.map((gift) => {
                     const url = safeExternalUrl(gift.externalUrl);
                     return (
-                      <article key={gift.id} className={`${styles.giftItem} ${gift.reserved ? styles.reserved : ""}`}>
+                      <article
+                        key={gift.id}
+                        className={`${styles.giftItem} ${
+                          gift.reserved && !gift.reservedByMe ? styles.reserved : ""
+                        } ${gift.reservedByMe ? styles.reservedByMe : ""}`}
+                      >
                         <span className={styles.giftEmoji} aria-hidden="true">{gift.emoji}</span>
                         <div className={styles.giftCopy}>
-                          <h4>{gift.title}</h4>
+                          <div className={styles.giftTitleRow}>
+                            <h4>{gift.title}</h4>
+                            {gift.reservedByMe && (
+                              <span className={styles.myChoiceBadge}>
+                                <Check aria-hidden="true" />
+                                Sua escolha
+                              </span>
+                            )}
+                          </div>
                           {gift.description && <p>{gift.description}</p>}
                           {gift.unlimited ? (
                             <p>∞ Disponível sem limite · {gift.reservedCount} escolha(s)</p>

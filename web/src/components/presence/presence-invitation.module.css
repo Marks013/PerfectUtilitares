@@ -379,6 +379,48 @@
   gap: 1.25rem;
   padding: 1.2rem;
   border-bottom: 1px solid var(--app-border);
+  transition: background 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.reservedByMe {
+  position: relative;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--presence-accent) 18%, var(--app-surface)) 0%,
+    color-mix(in srgb, var(--presence-accent) 8%, var(--app-surface)) 100%
+  );
+  box-shadow:
+    inset 4px 0 0 var(--presence-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--presence-accent) 45%, transparent);
+}
+
+.giftTitleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.myChoiceBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: fit-content;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--presence-accent) 65%, transparent);
+  border-radius: 999px;
+  background: var(--presence-accent);
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.myChoiceBadge svg {
+  width: 0.8rem;
+  height: 0.8rem;
+  stroke-width: 3;
 }
 
 .giftItem:nth-child(odd) {
@@ -413,11 +455,16 @@
   line-height: 1.5;
 }
 
-.giftItem.reserved h4 {
+.giftItem.reserved:not(.reservedByMe) h4 {
   color: var(--app-subtle);
   text-decoration: line-through;
   text-decoration-color: var(--presence-coral);
   text-decoration-thickness: 2px;
+}
+
+.giftItem.reservedByMe h4 {
+  color: var(--app-fg);
+  text-decoration: none;
 }
 
 .giftActions {
@@ -437,6 +484,13 @@
 .giftItem:not(.reserved) .giftActions button {
   border-color: var(--presence-accent);
   background: color-mix(in srgb, var(--presence-accent) 20%, var(--app-surface));
+}
+
+.giftItem.reservedByMe .giftActions button {
+  border-color: var(--presence-accent);
+  background: var(--presence-accent);
+  color: #ffffff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--presence-accent) 14%, transparent);
 }
 
 .feedback {
