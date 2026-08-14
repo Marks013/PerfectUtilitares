@@ -77,7 +77,7 @@ describe("/api/admin/presencas/[eventId]/convidados route", () => {
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.invitationUrl).toBe(
-      `http://localhost/presenca/formatura-2026/ana-souza#c_${"a".repeat(43)}`,
+      `${new URL(process.env.APP_URL ?? process.env.AUTH_URL ?? "http://localhost").origin}/presenca/formatura-2026/ana-souza#c_${"a".repeat(43)}`,
     );
     expect(guestCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
