@@ -473,6 +473,7 @@ model PdfArtifact {
   job          PdfJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
   kind         PdfArtifactKind
   storageKey   String          @unique
+  metadata     Json?
   originalName String
   mimeType     String
   sizeBytes    BigInt

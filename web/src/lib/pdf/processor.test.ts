@@ -127,6 +127,7 @@ function inputArtifact(overrides: Record<string, unknown> = {}) {
     id: "input-1",
     kind: "INPUT",
     originalName: "arquivo.pdf",
+    sizeBytes: 200n,
     storageKey: "jobs/job-1/input.pdf",
     ...overrides,
   };
@@ -150,6 +151,13 @@ const compressedOutput = {
   sha256: "abc123",
   sizeBytes: 40n,
   storageKey: "jobs/job-1/output.pdf",
+  outcome: "COMPRESSED" as const,
+  strategy: "RASTER" as const,
+  analysis: null,
+  planReason: "scan de teste",
+  requestedOptions: { quality: "BALANCED" },
+  appliedOptions: { quality: "BALANCED" },
+  textLayerPreserved: true,
 };
 
 beforeEach(() => {
@@ -261,6 +269,20 @@ describe("PDF processor lifecycle", () => {
           sha256: "abc123",
           sizeBytes: 40n,
           storageKey: "jobs/job-1/output.pdf",
+          metadata: {
+            compression: {
+              sourceArtifactId: "input-1",
+              sourceName: "arquivo.pdf",
+              sourceSizeBytes: "200",
+              outcome: "COMPRESSED",
+              strategy: "RASTER",
+              planReason: "scan de teste",
+              analysis: null,
+              requested: { quality: "BALANCED" },
+              applied: { quality: "BALANCED" },
+              textLayerPreserved: true,
+            },
+          },
         },
       ],
     });

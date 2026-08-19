@@ -40,10 +40,10 @@ describe("PDF compression planner", () => {
     ).toMatchObject({ strategy: "STRUCTURAL", expectedSavings: "LOW" });
   });
 
-  it("keeps explicit RASTER raster", () => {
+  it("protects OCR from explicit RASTER", () => {
     expect(
       planPdfCompression({ ...options, method: "RASTER" }, profile()),
-    ).toMatchObject({ strategy: "RASTER", expectedSavings: "MEDIUM" });
+    ).toMatchObject({ strategy: "STRUCTURAL", expectedSavings: "LOW" });
   });
 
   it("uses conservative structural compression when analysis is unavailable", () => {
@@ -127,6 +127,81 @@ describe("PDF compression planner", () => {
         }),
       ),
     ).toMatchObject({ strategy: "STRUCTURAL" });
+  });
+
+  it("keeps explicit RASTER for scans without OCR", () => {
+    expect(
+      planPdfCompression(
+        { ...options, method: "RASTER" },
+        profile({
+          contentKind: "SCANNED",
+          hasSelectableText: false,
+          hasOcrLayer: false,
+          alreadyOptimized: false,
+          predominantImageEncoding: "JPEG",
+          bitsPerComponent: 8,
+        }),
+      ),
+    ).toMatchObject({ strategy: "RASTER", expectedSavings: "MEDIUM" });
+  });
+
+  it("does not recompress an already optimized scan just because SCREEN uses RASTER", () => {
+    expect(
+      planPdfCompression(
+        {
+          ...options,
+          quality: "SCREEN",
+          method: "RASTER",
+          dpi: 96,
+          imageQuality: 55,
+        },
+        profile({
+          contentKind: "SCANNED",
+          hasSelectableText: false,
+          hasOcrLayer: false,
+          alreadyOptimized: true,
+          colorMode: "MONOCHROME",
+          predominantImageEncoding: "JBIG2",
+          bitsPerComponent: 1,
+        }),
+      ),
+    ).toMatchObject({ strategy: "SKIP", expectedSavings: "NONE" });
+  });
+
+  it("preserves custom color mode for scans without OCR", () => {
+    const plan = planPdfCompression(
+      {
+        ...options,
+        quality: "CUSTOM",
+        colorMode: "MONOCHROME",
+      },
+      profile({
+        contentKind: "SCANNED",
+        colorMode: "COLOR",
+        hasSelectableText: false,
+        hasOcrLayer: false,
+        alreadyOptimized: false,
+        predominantImageEncoding: "JPEG",
+        bitsPerComponent: 8,
+      }),
+    );
+    expect(plan.rasterOptions.colorMode).toBe("MONOCHROME");
+  });
+
+  it("uses detected color mode for presets", () => {
+    const plan = planPdfCompression(
+      { ...options, quality: "BALANCED", colorMode: "COLOR" },
+      profile({
+        contentKind: "SCANNED",
+        colorMode: "GRAYSCALE",
+        hasSelectableText: false,
+        hasOcrLayer: false,
+        alreadyOptimized: false,
+        predominantImageEncoding: "JPEG",
+        bitsPerComponent: 8,
+      }),
+    );
+    expect(plan.rasterOptions.colorMode).toBe("GRAYSCALE");
   });
 
   it("keeps vector and mixed documents structural", () => {

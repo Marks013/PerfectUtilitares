@@ -25,6 +25,7 @@ export function serializePdfJob(job: JobWithArtifacts) {
       mimeType: artifact.mimeType,
       sizeBytes: artifact.sizeBytes.toString(),
       pageCount: artifact.pageCount,
+      metadata: artifact.metadata,
       createdAt: artifact.createdAt,
     })),
   };

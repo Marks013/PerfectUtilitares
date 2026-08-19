@@ -1,5 +1,6 @@
 export type PollablePdfJob<TArtifact> = {
   artifacts: TArtifact[];
+  errorCode: string | null;
   errorMessage: string | null;
   progress: number;
   status:

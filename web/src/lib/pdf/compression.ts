@@ -154,9 +154,9 @@ export async function compressPdfFile({
   try {
     await onProgress?.(2);
     const profile =
-      options.method === "AUTO"
-        ? await analyzePdfCompressionProfile(inputPath)
-        : null;
+      options.method === "LOSSLESS"
+        ? null
+        : await analyzePdfCompressionProfile(inputPath);
     const plan = planPdfCompression(options, profile);
     await onProgress?.(10);
     let outcome: "COMPRESSED" | "UNCHANGED";
@@ -217,6 +217,15 @@ export async function compressPdfFile({
       strategy: plan.strategy,
       analysis: profile,
       planReason: plan.reason,
+      requestedOptions: options,
+      appliedOptions:
+        outcome === "COMPRESSED" && plan.strategy === "RASTER"
+          ? plan.rasterOptions
+          : null,
+      textLayerPreserved:
+        outcome === "UNCHANGED" ||
+        plan.strategy !== "RASTER" ||
+        !profile?.hasSelectableText,
     };
   } catch (error) {
     await discardPdfOutput(reservation).catch(() => undefined);

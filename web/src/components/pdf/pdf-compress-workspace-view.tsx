@@ -291,14 +291,14 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                   ? "Conteúdo original preservado"
                   : settings.method === "AUTO"
                     ? "Estratégia automática por conteúdo"
-                    : "Configuração aplicada integralmente"}
+                    : "Recompressão visual quando segura"}
               </strong>
               <small>
                 {settings.method === "LOSSLESS"
                   ? "Mantém texto selecionável, vetores e imagens sem rasterizar."
                   : settings.method === "AUTO"
                     ? `O servidor analisa estrutura, OCR, cobertura de imagem, resolução e codificação antes de decidir. Rasterização só é usada quando houver benefício provável.`
-                    : `${settings.dpi} DPI · ${
+                    : `Alvo: ${settings.dpi} DPI · ${
                         COLOR_OPTIONS.find(
                           (option) => option.value === settings.colorMode,
                         )?.label
@@ -306,7 +306,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                         settings.colorMode === "MONOCHROME"
                           ? "PNG binário"
                           : `JPEG ${settings.imageQuality}%`
-                      }.`}
+                      }. O servidor preserva texto, vetores e OCR quando rasterizar causaria perda estrutural.`}
               </small>
             </div>
           </>
@@ -324,7 +324,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
         <span>
           Arraste PDFs ou <strong>selecione arquivos</strong>
         </span>
-        <small>Até 20 arquivos, com no máximo 100 MB cada</small>
+        <small>Até 20 arquivos · 100 MB por arquivo · 500 MB no total</small>
       </div>
 
       {warning ? (
@@ -357,7 +357,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
               type="button"
               className="pdf-primary-button"
               disabled={
-                busy || analyzing || !settings || work.phase === "SUCCEEDED"
+                busy || analyzing || !settings
               }
               onClick={() => void processFiles()}
             >
@@ -432,24 +432,33 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
               <Check className="size-5" aria-hidden="true" />
             </span>
             <div>
-              <strong>Compressão concluída</strong>
+              <strong>
+                {work.phase === "PARTIAL"
+                  ? "Compressão parcialmente concluída"
+                  : work.phase === "UNCHANGED"
+                    ? "Nenhuma redução obtida"
+                    : "Compressão concluída"}
+              </strong>
               <small>
-                {savedPercent > 0
-                  ? `${savedPercent}% menor · ${formatBytes(outputBytes)}`
-                  : savedPercent < 0
-                    ? `${Math.abs(savedPercent)}% maior · ${formatBytes(outputBytes)}`
-                    : `Tamanho original preservado · ${formatBytes(outputBytes)}`}
+                {work.phase === "UNCHANGED"
+                  ? `O original foi preservado · ${formatBytes(outputBytes)}`
+                  : savedPercent > 0
+                    ? `${savedPercent}% menor · ${formatBytes(outputBytes)}`
+                    : `Sem redução mensurável · ${formatBytes(outputBytes)}`}
               </small>
             </div>
           </div>
           <div className="pdf-output-list">
-            {outputs.map((output, index) => {
-              const originalSize = files[index]?.size;
+            {outputs.map((output) => {
+              const originalSize = Number(
+                output.metadata?.compression?.sourceSizeBytes ?? 0,
+              );
               const outputSize = Number(output.sizeBytes);
               const reduction =
-                originalSize && originalSize > 0
+                originalSize > 0
                   ? Math.round((1 - outputSize / originalSize) * 100)
                   : 0;
+              const compression = output.metadata?.compression;
               return (
                 <a
                   key={output.id}
@@ -461,8 +470,41 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                     <small>
                       {originalSize ? `${formatBytes(originalSize)} → ` : ""}
                       {formatBytes(outputSize)}
-                      {reduction > 0 ? ` · ${reduction}% menor` : ""}
+                      {compression?.outcome === "UNCHANGED"
+                        ? " · original preservado"
+                        : reduction > 0
+                          ? ` · ${reduction}% menor`
+                          : ""}
+                      {compression?.strategy
+                        ? ` · ${compression.strategy}`
+                        : ""}
                     </small>
+                    {compression?.planReason ? (
+                      <small>{compression.planReason}</small>
+                    ) : null}
+                    {compression?.applied ? (
+                      <small>
+                        Aplicado: {compression.applied.dpi ?? "—"} DPI ·{" "}
+                        {compression.applied.colorMode
+                          ? getColorModeLabel(compression.applied.colorMode)
+                          : "tonalidade preservada"}
+                        {compression.applied.imageQuality
+                          ? ` · JPEG ${compression.applied.imageQuality}%`
+                          : ""}
+                        {compression.analysis?.hasOcrLayer
+                          ? compression.textLayerPreserved
+                            ? " · OCR preservado"
+                            : " · OCR não preservado"
+                          : ""}
+                      </small>
+                    ) : compression?.requested &&
+                      (compression.strategy === "STRUCTURAL" ||
+                        compression.strategy === "SKIP") ? (
+                      <small>
+                        Ajustes visuais não aplicados nesta estratégia; estrutura
+                        original preservada.
+                      </small>
+                    ) : null}
                   </span>
                   <Download className="size-4" aria-hidden="true" />
                 </a>

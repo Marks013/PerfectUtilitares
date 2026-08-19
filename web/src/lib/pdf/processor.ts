@@ -184,7 +184,7 @@ export async function processPdfJob(jobId: string) {
         : null;
       await prisma.$transaction([
         prisma.pdfArtifact.createMany({
-          data: outputs.map((output) => ({
+          data: succeeded.map(({ input, output }) => ({
             id: output.artifactId,
             jobId: job.id,
             kind: "OUTPUT",
@@ -193,6 +193,20 @@ export async function processPdfJob(jobId: string) {
             sha256: output.sha256,
             sizeBytes: output.sizeBytes,
             storageKey: output.storageKey,
+            metadata: {
+              compression: {
+                sourceArtifactId: input.id,
+                sourceName: input.originalName,
+                sourceSizeBytes: input.sizeBytes.toString(),
+                outcome: output.outcome,
+                strategy: output.strategy,
+                planReason: output.planReason,
+                analysis: output.analysis,
+                requested: output.requestedOptions,
+                applied: output.appliedOptions,
+                textLayerPreserved: output.textLayerPreserved,
+              },
+            },
           })),
         }),
         prisma.pdfJob.update({

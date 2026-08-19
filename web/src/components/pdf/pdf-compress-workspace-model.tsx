@@ -25,6 +25,41 @@ export type PdfOutput = {
   kind: "OUTPUT";
   originalName: string;
   sizeBytes: string;
+  metadata?: {
+    compression?: {
+      sourceArtifactId?: string;
+      sourceName?: string;
+      sourceSizeBytes?: string;
+      outcome?: "COMPRESSED" | "UNCHANGED";
+      strategy?: "SKIP" | "STRUCTURAL" | "RASTER";
+      planReason?: string;
+      analysis?: {
+        contentKind?: string;
+        sourceDpi?: number | null;
+        colorMode?: CompressionColorMode;
+        hasSelectableText?: boolean;
+        hasOcrLayer?: boolean;
+        predominantImageEncoding?: string | null;
+      } | null;
+      requested?: {
+        quality?: CompressionQuality | "CUSTOM";
+        method?: CompressionMethod;
+        dpi?: number;
+        colorMode?: CompressionColorMode;
+        imageQuality?: number;
+        monochromeThreshold?: number;
+      };
+      applied?: {
+        quality?: CompressionQuality | "CUSTOM";
+        method?: CompressionMethod;
+        dpi?: number;
+        colorMode?: CompressionColorMode;
+        imageQuality?: number;
+        monochromeThreshold?: number;
+      } | null;
+      textLayerPreserved?: boolean;
+    };
+  } | null;
 };
 
 export type PdfJob = {
@@ -36,7 +71,14 @@ export type PdfJob = {
 };
 
 export type WorkState = {
-  phase: "IDLE" | "UPLOADING" | "QUEUED" | "RUNNING" | "SUCCEEDED";
+  phase:
+    | "IDLE"
+    | "UPLOADING"
+    | "QUEUED"
+    | "RUNNING"
+    | "SUCCEEDED"
+    | "UNCHANGED"
+    | "PARTIAL";
   progress: number;
   detail: string;
 };
@@ -108,7 +150,7 @@ export const METHOD_OPTIONS: Array<{
   {
     value: "RASTER",
     label: "Recompressão visual",
-    description: "Achata páginas para reduzir de verdade",
+    description: "Recomprime scans sem OCR; texto e OCR são preservados",
   },
 ];
 
