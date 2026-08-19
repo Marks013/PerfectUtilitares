@@ -1,4 +1,5 @@
 // PERFECT_PDF_FULL32_V2_2
+// PERFECT_PDF_ADAPTIVE_V4_2
 import { readFile } from "node:fs/promises";
 import {
   PDFDocument,
@@ -304,7 +305,7 @@ async function normalizedVisual(bytes: Buffer) {
   return sharp(bytes, { failOn: "error" })
     .flatten({ background: "#FFFFFF" })
     .grayscale()
-    .resize(256, 256, { fit: "fill" })
+    .resize(384, 384, { fit: "fill" })
     .raw()
     .toBuffer();
 }
@@ -315,11 +316,11 @@ async function validateLossyVisual(inputPath: string, candidatePath: string) {
   });
   for (const pageNumber of samplePages(sourcePdf.getPageCount())) {
     const [sourcePng, candidatePng] = await Promise.all([
-      renderPdfPageToPng({ inputPath, pageNumber, dpi: 72 }),
+      renderPdfPageToPng({ inputPath, pageNumber, dpi: 96 }),
       renderPdfPageToPng({
         inputPath: candidatePath,
         pageNumber,
-        dpi: 72,
+        dpi: 96,
       }),
     ]);
     const [source, candidate] = await Promise.all([
@@ -346,7 +347,7 @@ async function validateLossyVisual(inputPath: string, candidatePath: string) {
     }
     const meanError = absoluteError / Math.max(1, source.length);
     const missingRatio = darkSource > 0 ? missingDark / darkSource : 0;
-    if (meanError > 30 || missingRatio > 0.04) {
+    if (meanError > 24 || missingRatio > 0.025) {
       throw new PdfToolError(
         "PDF_VISUAL_INTEGRITY_FAILED",
         "A recompressão alterou excessivamente o conteúdo visual.",

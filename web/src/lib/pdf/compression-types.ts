@@ -1,6 +1,7 @@
 // PERFECT_PDF_FULL32_V2_2
+// PERFECT_PDF_ADAPTIVE_V4_2
 export const PDF_COMPRESSION_PROTOCOL_REVISION =
-  "perfect-pdf-full32-2026.08.19-v2.2";
+  "perfect-pdf-adaptive-2026.08.19-v4.2";
 
 export type PdfCompressionQuality =
   | "SOURCE"

@@ -1,4 +1,5 @@
 "use client";
+// PERFECT_PDF_ADAPTIVE_V4_2
 // PERFECT_PDF_FULL32_V2_2
 
 import type { usePdfCompressWorkspaceController } from "./pdf-compress-workspace";
@@ -305,8 +306,8 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                         )?.label
                       } · ${
                         settings.colorMode === "MONOCHROME"
-                          ? "CCITT/compactação binária quando disponível"
-                          : `JPEG ${settings.imageQuality}%`
+                          ? "JBIG2 lossless após downsample quando seguro; CCITT como estágio/fallback"
+                          : `DCT/JPEG ${settings.imageQuality}% com validação visual`
                       }. O servidor preserva texto, vetores e OCR quando rasterizar causaria perda estrutural.`}
               </small>
             </div>
@@ -494,13 +495,28 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                         formulários, bookmarks e metadata preservados.
                       </small>
                     ) : null}
+                    {compression?.selectedCandidate ? (
+                      <small>
+                        Motor efetivo: {compression.selectedCandidate.engine ?? "—"}
+                        {compression.selectedCandidate.encoding
+                          ? ` · ${compression.selectedCandidate.encoding}`
+                          : ""}
+                        {compression.selectedCandidate.dpi
+                          ? ` · ${compression.selectedCandidate.dpi} DPI`
+                          : ""}
+                        {compression.selectedCandidate.lossy
+                          ? " · transformação visual"
+                          : " · otimização preservadora"}
+                      </small>
+                    ) : null}
                     {compression?.applied ? (
                       <small>
                         Aplicado: {compression.applied.dpi ?? "—"} DPI ·{" "}
                         {compression.applied.colorMode
                           ? getColorModeLabel(compression.applied.colorMode)
                           : "tonalidade preservada"}
-                        {compression.applied.imageQuality
+                        {compression.applied.imageQuality &&
+                        compression.selectedCandidate?.encoding === "JPEG"
                           ? ` · JPEG ${compression.applied.imageQuality}%`
                           : ""}
                         {compression.analysis?.hasOcrLayer

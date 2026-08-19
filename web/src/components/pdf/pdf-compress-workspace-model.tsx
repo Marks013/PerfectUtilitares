@@ -1,6 +1,7 @@
 "use client";
 // PERFECT_PDF_FULL32_V2_2
 // PERFECT_PDF_REVALIDATION_V1_2
+// PERFECT_PDF_ADAPTIVE_V4_2
 
 import type {
   CompressionColorMode,
@@ -79,6 +80,16 @@ export type PdfOutput = {
         colorMode?: CompressionColorMode;
         imageQuality?: number;
         monochromeThreshold?: number;
+      } | null;
+      selectedCandidate?: {
+        kind?: string;
+        engine?: string;
+        description?: string;
+        visualTransform?: boolean;
+        lossy?: boolean;
+        encoding?: string | null;
+        dpi?: number | null;
+        colorMode?: CompressionColorMode | null;
       } | null;
       notApplied?: string[];
       preservation?: {
@@ -210,7 +221,7 @@ export const COLOR_OPTIONS: Array<{
   {
     value: "MONOCHROME",
     label: "Preto e branco",
-    description: "1 bit / CCITT quando aplicável",
+    description: "1 bit · JBIG2 lossless/CCITT conforme o conteúdo",
   },
 ];
 

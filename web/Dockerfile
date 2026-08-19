@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # PERFECT_PDF_FULL32_V2_2
+# PERFECT_PDF_ADAPTIVE_V4_2
 
 FROM node:24.19.0-alpine AS base
 RUN apk add --no-cache libc6-compat openssl vips
@@ -82,6 +83,8 @@ RUN apk add --no-cache \
     libreoffice-calc \
     libreoffice-writer \
     ghostscript \
+    jbig2enc \
+    ocrmypdf \
     poppler-utils \
     postgresql-client \
     qpdf
