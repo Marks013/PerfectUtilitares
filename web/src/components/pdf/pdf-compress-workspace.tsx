@@ -1,5 +1,6 @@
 "use client";
 // PERFECT_PDF_FULL32_V2_2
+// PERFECT_PDF_REVALIDATION_V1_2
 
 import {
   Archive,
@@ -44,6 +45,7 @@ import {
   getColorModeLabel,
   getMedianRounded,
   getDetectedDpiLabel,
+  resolveCompressionCompletion,
   triggerDownload,
   uploadPdf
 } from "./pdf-compress-workspace-model";
@@ -426,25 +428,14 @@ export function usePdfCompressWorkspaceController() {
             return;
           }
           if (job.status === "SUCCEEDED") {
-            const outcomes = currentOutputs.map(
-              (output) => output.metadata?.compression?.outcome,
+            const completion = resolveCompressionCompletion(
+              currentOutputs,
+              job.errorCode,
             );
-            const phase =
-              job.errorCode === "PDF_COMPRESSION_PARTIAL"
-                ? "PARTIAL"
-                : outcomes.length > 0 &&
-                    outcomes.every((outcome) => outcome === "UNCHANGED")
-                  ? "UNCHANGED"
-                  : "SUCCEEDED";
             setWork({
-              phase,
+              phase: completion.phase,
               progress: 100,
-              detail:
-                phase === "PARTIAL"
-                  ? "Compressão parcialmente concluída"
-                  : phase === "UNCHANGED"
-                    ? "Nenhuma redução obtida"
-                    : "Compressão concluída",
+              detail: completion.detail,
             });
             if (job.errorMessage) setWarning(job.errorMessage);
             return;
@@ -458,41 +449,22 @@ export function usePdfCompressWorkspaceController() {
       });
 
       setOutputs(nextOutputs);
-      const outcomes = nextOutputs.map(
-        (output) => output.metadata?.compression?.outcome,
+      const completion = resolveCompressionCompletion(
+        nextOutputs,
+        finalErrorCode,
       );
-      const isPartial = finalErrorCode === "PDF_COMPRESSION_PARTIAL";
-      const allCompressed =
-        !isPartial &&
-        outcomes.length > 0 &&
-        outcomes.every((outcome) => outcome === "COMPRESSED");
-      const allUnchanged =
-        !isPartial &&
-        outcomes.length > 0 &&
-        outcomes.every((outcome) => outcome === "UNCHANGED");
-      const finalPhase: WorkState["phase"] = isPartial
-        ? "PARTIAL"
-        : allUnchanged
-          ? "UNCHANGED"
-          : "SUCCEEDED";
       setWork({
-        phase: finalPhase,
+        phase: completion.phase,
         progress: 100,
-        detail:
-          finalPhase === "PARTIAL"
-            ? "Compressão parcialmente concluída"
-            : finalPhase === "UNCHANGED"
-              ? "Nenhuma redução obtida"
-              : "Compressão concluída",
+        detail: completion.detail,
       });
-
       const firstOutput = nextOutputs[0];
       if (!firstOutput) {
         throw new Error(
           "A compressão terminou sem gerar um arquivo para download.",
         );
       }
-      if (allCompressed) {
+      if (completion.autoDownload) {
         triggerDownload(
           nextOutputs.length > 1
             ? `/api/pdf/jobs/${currentJobId}/outputs/zip`

@@ -1,5 +1,6 @@
 "use client";
 // PERFECT_PDF_FULL32_V2_2
+// PERFECT_PDF_REVALIDATION_V1_2
 
 import type {
   CompressionColorMode,
@@ -113,6 +114,52 @@ export type WorkState = {
   progress: number;
   detail: string;
 };
+
+export type PdfCompressionCompletion = {
+  phase: Extract<WorkState["phase"], "SUCCEEDED" | "UNCHANGED" | "PARTIAL">;
+  detail: string;
+  autoDownload: boolean;
+};
+
+export function resolveCompressionCompletion(
+  outputs: readonly PdfOutput[],
+  errorCode?: string | null,
+): PdfCompressionCompletion {
+  const outcomes = outputs.map(
+    (output) => output.metadata?.compression?.outcome,
+  );
+  const partial = errorCode === "PDF_COMPRESSION_PARTIAL";
+  const allCompressed =
+    !partial &&
+    outcomes.length > 0 &&
+    outcomes.every((outcome) => outcome === "COMPRESSED");
+  const allUnchanged =
+    !partial &&
+    outcomes.length > 0 &&
+    outcomes.every((outcome) => outcome === "UNCHANGED");
+
+  if (partial) {
+    return {
+      phase: "PARTIAL",
+      detail: "Compressão parcialmente concluída",
+      autoDownload: false,
+    };
+  }
+
+  if (allUnchanged) {
+    return {
+      phase: "UNCHANGED",
+      detail: "Nenhuma redução obtida",
+      autoDownload: false,
+    };
+  }
+
+  return {
+    phase: "SUCCEEDED",
+    detail: "Compressão concluída",
+    autoDownload: allCompressed,
+  };
+}
 
 export const COMPRESSION_PRESETS = PDF_COMPRESSION_PRESETS;
 
