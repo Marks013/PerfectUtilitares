@@ -5,8 +5,9 @@ import { renderPdfPageToPng, renderPdfPagesToPng } from "@/lib/pdf/render";
 import { ensureServerLocalStorage } from "@/lib/pdf/server-runtime";
 import {
   PdfToolError,
-  type PdfCompressionOptions,
+  type PdfCompressionEffectiveOptions,
 } from "./compression-types";
+// PERFECT_PDF_FULL32_V2_2
 
 type PdfPageBox = ReturnType<PDFPage["getMediaBox"]>;
 
@@ -64,7 +65,7 @@ async function assertVisualCompleteness({
   colorMode,
   monochromeThreshold,
   sourceBytes,
-}: Pick<PdfCompressionOptions, "colorMode" | "monochromeThreshold"> & {
+}: Pick<PdfCompressionEffectiveOptions, "colorMode" | "monochromeThreshold"> & {
   candidateBytes: Buffer;
   sourceBytes: Buffer;
 }) {
@@ -214,7 +215,7 @@ async function encodeRenderedPage({
   monochromeThreshold,
   pngBytes,
 }: Pick<
-  PdfCompressionOptions,
+  PdfCompressionEffectiveOptions,
   "colorMode" | "imageQuality" | "monochromeThreshold"
 > & {
   pngBytes: Buffer;
@@ -259,7 +260,7 @@ export async function rasterizePdfForCompression({
   onProgress,
 }: {
   inputPath: string;
-  options: PdfCompressionOptions;
+  options: PdfCompressionEffectiveOptions;
   outputPath: string;
   onProgress?: (progress: number) => Promise<void> | void;
 }) {
@@ -276,15 +277,49 @@ export async function rasterizePdfForCompression({
         "O PDF ultrapassa o limite de 1.000 páginas para recompressão visual.",
       );
     }
-    const configuredChunk = Number(process.env.PDF_RASTER_RENDER_CHUNK_SIZE ?? 6);
-    const chunkSize = Number.isInteger(configuredChunk) && configuredChunk >= 1 && configuredChunk <= 16
-      ? configuredChunk
-      : 6;
-    for (let chunkStart = 1; chunkStart <= pageCount; chunkStart += chunkSize) {
-      const pageNumbers = Array.from(
-        { length: Math.min(chunkSize, pageCount - chunkStart + 1) },
-        (_, offset) => chunkStart + offset,
-      );
+    const configuredTargetPixels = Number(
+      process.env.PDF_RASTER_CHUNK_TARGET_PIXELS ?? 18_000_000,
+    );
+    const targetPixels =
+      Number.isFinite(configuredTargetPixels) &&
+      configuredTargetPixels >= 2_000_000 &&
+      configuredTargetPixels <= 80_000_000
+        ? configuredTargetPixels
+        : 18_000_000;
+    let chunkStart = 1;
+    while (chunkStart <= pageCount) {
+      const pageNumbers: number[] = [];
+      let estimatedPixels = 0;
+      for (
+        let candidate = chunkStart;
+        candidate <= pageCount && pageNumbers.length < 16;
+        candidate += 1
+      ) {
+        const sourcePage = source.getPage(candidate - 1);
+        const geometry = readPageGeometry(sourcePage);
+        const rotated = geometry.rotation === 90 || geometry.rotation === 270;
+        const width = Math.max(
+          1,
+          Math.ceil(
+            (rotated ? geometry.mediaBox.height : geometry.mediaBox.width) *
+              (options.dpi / 72),
+          ),
+        );
+        const height = Math.max(
+          1,
+          Math.ceil(
+            (rotated ? geometry.mediaBox.width : geometry.mediaBox.height) *
+              (options.dpi / 72),
+          ),
+        );
+        const pagePixels = width * height;
+        if (pageNumbers.length > 0 && estimatedPixels + pagePixels > targetPixels) {
+          break;
+        }
+        pageNumbers.push(candidate);
+        estimatedPixels += pagePixels;
+      }
+      if (!pageNumbers.length) pageNumbers.push(chunkStart);
 
       for (const pageIndex of pageNumbers) {
         const sourcePage = source.getPage(pageIndex - 1);
@@ -369,6 +404,7 @@ export async function rasterizePdfForCompression({
         });
         await onProgress?.((pageIndex / pageCount) * 100);
       }
+      chunkStart = (pageNumbers.at(-1) ?? chunkStart) + 1;
     }
     await writeFile(
       outputPath,

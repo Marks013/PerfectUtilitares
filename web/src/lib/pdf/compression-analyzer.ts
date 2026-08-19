@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import { PdfToolError, type PdfCompressionColorMode } from "./compression-types";
+// PERFECT_PDF_FULL32_V2_2
 
 type PdfCompressionContentKind =
   | "VECTOR"
@@ -35,6 +36,15 @@ export type PdfCompressionProfile = {
   predominantImageEncoding: PdfImageEncoding;
   bitsPerComponent: number | null;
   alreadyOptimized: boolean;
+  optimizationClass:
+    | "OPTIMIZED_MONO"
+    | "OPTIMIZED_JPEG"
+    | "OPTIMIZED_JPX"
+    | "RECOMPRESSIBLE_JPEG"
+    | "RECOMPRESSIBLE_FLATE"
+    | "OVERSIZED_SCAN"
+    | "MIXED_WITH_HEAVY_IMAGES"
+    | "UNKNOWN";
 };
 
 type PdfImageRow = {
@@ -315,8 +325,10 @@ export async function analyzePdfCompressionProfile(
     })),
   );
   const sourceDpi = sourceDpiValue === null ? null : Math.round(sourceDpiValue);
-  const alreadyOptimized =
-    (contentKind === "SCANNED" || contentKind === "SCANNED_OCR") &&
+  const scanContent =
+    contentKind === "SCANNED" || contentKind === "SCANNED_OCR";
+  const optimizedMono =
+    scanContent &&
     fullPageImageRatio >= 0.8 &&
     colorMode === "MONOCHROME" &&
     bitsPerComponent === 1 &&
@@ -325,6 +337,32 @@ export async function analyzePdfCompressionProfile(
     sourceDpi <= 300 &&
     (predominantImageEncoding === "JBIG2" ||
       predominantImageEncoding === "CCITT");
+  const optimizedPhotoScan =
+    scanContent &&
+    fullPageImageRatio >= 0.8 &&
+    sourceDpi !== null &&
+    sourceDpi >= 120 &&
+    sourceDpi <= 220 &&
+    (predominantImageEncoding === "JPEG" ||
+      predominantImageEncoding === "JPX");
+  const alreadyOptimized = optimizedMono || optimizedPhotoScan;
+  const optimizationClass: PdfCompressionProfile["optimizationClass"] =
+    optimizedMono
+      ? "OPTIMIZED_MONO"
+      : optimizedPhotoScan && predominantImageEncoding === "JPX"
+        ? "OPTIMIZED_JPX"
+        : optimizedPhotoScan
+          ? "OPTIMIZED_JPEG"
+          : contentKind === "MIXED" && imageCoverageRatio >= 0.35
+            ? "MIXED_WITH_HEAVY_IMAGES"
+            : sourceDpi !== null && sourceDpi >= 260
+              ? "OVERSIZED_SCAN"
+              : predominantImageEncoding === "JPEG"
+                ? "RECOMPRESSIBLE_JPEG"
+                : predominantImageEncoding === "FLATE" ||
+                    predominantImageEncoding === "OTHER"
+                  ? "RECOMPRESSIBLE_FLATE"
+                  : "UNKNOWN";
   return {
     pageCount,
     sampledPages,
@@ -341,5 +379,6 @@ export async function analyzePdfCompressionProfile(
     predominantImageEncoding,
     bitsPerComponent,
     alreadyOptimized,
+    optimizationClass,
   };
 }

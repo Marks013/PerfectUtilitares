@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+# PERFECT_PDF_FULL32_V2_2
 
 FROM node:24.19.0-alpine AS base
 RUN apk add --no-cache libc6-compat openssl vips
@@ -73,12 +74,14 @@ ARG SOURCE_REVISION=unknown
 ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
+ENV SOURCE_REVISION=${SOURCE_REVISION}
 ENV NODE_ENV=production
 RUN apk add --no-cache \
     font-dejavu \
     font-liberation \
     libreoffice-calc \
     libreoffice-writer \
+    ghostscript \
     poppler-utils \
     postgresql-client \
     qpdf
@@ -95,6 +98,7 @@ ARG SOURCE_REVISION=unknown
 ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
+ENV SOURCE_REVISION=${SOURCE_REVISION}
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000

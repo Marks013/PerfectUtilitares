@@ -129,7 +129,8 @@ ${PDFIMAGES_HEADER}
       imageCount: 1,
       predominantImageEncoding: "JPEG",
       bitsPerComponent: 8,
-      alreadyOptimized: false,
+      alreadyOptimized: true,
+      optimizationClass: "OPTIMIZED_JPEG",
     });
   });
 
@@ -149,6 +150,7 @@ ${PDFIMAGES_HEADER}
       predominantImageEncoding: "JBIG2",
       bitsPerComponent: 1,
       alreadyOptimized: true,
+      optimizationClass: "OPTIMIZED_MONO",
     });
   });
 

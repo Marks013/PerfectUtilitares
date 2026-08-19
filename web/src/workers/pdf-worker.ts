@@ -10,6 +10,11 @@ import {
 } from "@/lib/pdf/queue";
 import { getPdfJobExpiry } from "@/lib/pdf/constants";
 import {
+  currentPdfCompressionProtocolRevision,
+  currentPdfCompressionRevision,
+  pdfWorkerHeartbeatPath,
+} from "@/lib/pdf/compression-worker-revision";
+import {
   cleanupCompletedPdfJobInputs,
   cleanupExpiredPdfJobs,
 } from "@/lib/pdf/retention";
@@ -18,6 +23,7 @@ import {
   retryDuePresenceDeliveries,
 } from "@/lib/presence/delivery";
 import { cleanupPresenceData } from "@/lib/presence/retention";
+// PERFECT_PDF_FULL32_V2_2
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
@@ -148,8 +154,7 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
 let cleanupPromise: Promise<unknown> | null = null;
 let presenceMaintenancePromise: Promise<unknown> | null = null;
 let lastPresenceCleanupAt = 0;
-const heartbeatPath =
-  process.env.PDF_WORKER_HEARTBEAT_PATH ?? "/tmp/perfect-pdf-worker-heartbeat";
+const heartbeatPath = pdfWorkerHeartbeatPath();
 let heartbeatPromise: Promise<void> | null = null;
 
 function refreshWorkerHeartbeat() {
@@ -163,7 +168,12 @@ function refreshWorkerHeartbeat() {
     const temporaryPath = `${heartbeatPath}.${process.pid}.tmp`;
     await writeFile(
       temporaryPath,
-      JSON.stringify({ pid: process.pid, updatedAt: new Date().toISOString() }),
+      JSON.stringify({
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+        revision: currentPdfCompressionRevision(),
+        protocolRevision: currentPdfCompressionProtocolRevision(),
+      }),
       "utf8",
     );
     await rename(temporaryPath, heartbeatPath);

@@ -5,7 +5,7 @@ import { degrees, PDFDocument, rgb } from "pdf-lib";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  type PdfCompressionOptions,
+  type PdfCompressionEffectiveOptions,
   rasterizePdfForCompression,
 } from "@/lib/pdf/compression";
 import { renderPdfPageToPng } from "@/lib/pdf/render";
@@ -34,8 +34,8 @@ async function createSourcePdf(filePath: string) {
 }
 
 function options(
-  overrides: Partial<PdfCompressionOptions> = {},
-): PdfCompressionOptions {
+  overrides: Partial<PdfCompressionEffectiveOptions> = {},
+): PdfCompressionEffectiveOptions {
   return {
     quality: "BALANCED",
     method: "RASTER",
@@ -43,6 +43,15 @@ function options(
     colorMode: "COLOR",
     imageQuality: 72,
     monochromeThreshold: 160,
+    userOverrides: {
+      method: true,
+      dpi: true,
+      colorMode: true,
+      imageQuality: true,
+      monochromeThreshold: true,
+    },
+    preserveTextLayer: false,
+    allowSemanticLoss: true,
     ...overrides,
   };
 }

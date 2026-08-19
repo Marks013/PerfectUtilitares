@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { PDF_COMPRESSION_PRESETS } from "./compression-policy";
+import { NO_PDF_COMPRESSION_OVERRIDES } from "./compression-types";
+// PERFECT_PDF_FULL32_V2_2
 
 const pdfOperationSchema = z.enum([
   "COMPRESS",
@@ -22,30 +25,6 @@ export const pdfJobCreateSchema = z.object({
   options: z.record(z.string(), z.unknown()).optional(),
 });
 
-const pdfCompressionPresets = {
-  SCREEN: {
-    method: "RASTER",
-    dpi: 96,
-    colorMode: "COLOR",
-    imageQuality: 55,
-    monochromeThreshold: 160,
-  },
-  BALANCED: {
-    method: "AUTO",
-    dpi: 150,
-    colorMode: "COLOR",
-    imageQuality: 72,
-    monochromeThreshold: 160,
-  },
-  PRINT: {
-    method: "AUTO",
-    dpi: 220,
-    colorMode: "COLOR",
-    imageQuality: 86,
-    monochromeThreshold: 160,
-  },
-} as const;
-
 export const pdfCompressionOptionsSchema = z
   .object({
     quality: z
@@ -53,13 +32,26 @@ export const pdfCompressionOptionsSchema = z
       .default("BALANCED"),
     method: z.enum(["AUTO", "LOSSLESS", "RASTER"]).optional(),
     dpi: z.number().int().min(72).max(300).optional(),
-    colorMode: z.enum(["COLOR", "GRAYSCALE", "MONOCHROME"]).optional(),
+    colorMode: z
+      .enum(["KEEP_DETECTED", "COLOR", "GRAYSCALE", "MONOCHROME"])
+      .optional(),
     imageQuality: z.number().int().min(35).max(95).optional(),
     monochromeThreshold: z.number().int().min(64).max(224).optional(),
+    userOverrides: z
+      .object({
+        method: z.boolean().default(false),
+        dpi: z.boolean().default(false),
+        colorMode: z.boolean().default(false),
+        imageQuality: z.boolean().default(false),
+        monochromeThreshold: z.boolean().default(false),
+      })
+      .optional(),
+    preserveTextLayer: z.boolean().default(true),
+    allowSemanticLoss: z.boolean().default(false),
+    sourceRevision: z.string().trim().min(1).max(128).optional(),
   })
   .superRefine((options, context) => {
     if (options.quality !== "SOURCE" && options.quality !== "CUSTOM") return;
-
     const requiredFields = [
       "method",
       "dpi",
@@ -82,8 +74,8 @@ export const pdfCompressionOptionsSchema = z
       options.quality === "SCREEN" ||
       options.quality === "BALANCED" ||
       options.quality === "PRINT"
-        ? pdfCompressionPresets[options.quality]
-        : pdfCompressionPresets.BALANCED;
+        ? PDF_COMPRESSION_PRESETS[options.quality]
+        : PDF_COMPRESSION_PRESETS.BALANCED;
     return {
       quality: options.quality,
       method: options.method ?? preset.method,
@@ -92,6 +84,13 @@ export const pdfCompressionOptionsSchema = z
       imageQuality: options.imageQuality ?? preset.imageQuality,
       monochromeThreshold:
         options.monochromeThreshold ?? preset.monochromeThreshold,
+      userOverrides: {
+        ...NO_PDF_COMPRESSION_OVERRIDES,
+        ...(options.userOverrides ?? {}),
+      },
+      preserveTextLayer: options.preserveTextLayer,
+      allowSemanticLoss: options.allowSemanticLoss,
+      sourceRevision: options.sourceRevision,
     };
   });
 

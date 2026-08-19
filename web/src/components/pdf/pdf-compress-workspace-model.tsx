@@ -1,19 +1,40 @@
 "use client";
+// PERFECT_PDF_FULL32_V2_2
 
 import type {
   CompressionColorMode,
   CompressionMethod,
   PdfCompressionAnalysis,
 } from "@/lib/pdf/client-compression-analysis";
+import { PDF_COMPRESSION_PRESETS } from "@/lib/pdf/compression-policy";
+
 export type CompressionQuality = "SOURCE" | "SCREEN" | "BALANCED" | "PRINT";
+export type CompressionColorPolicy = "KEEP_DETECTED" | CompressionColorMode;
+
+export type CompressionOverrides = {
+  method: boolean;
+  dpi: boolean;
+  colorMode: boolean;
+  imageQuality: boolean;
+  monochromeThreshold: boolean;
+};
+
+export const NO_OVERRIDES: CompressionOverrides = {
+  method: false,
+  dpi: false,
+  colorMode: false,
+  imageQuality: false,
+  monochromeThreshold: false,
+};
 
 export type CompressionSettings = {
   preset: CompressionQuality | null;
   method: CompressionMethod;
   dpi: number;
-  colorMode: CompressionColorMode;
+  colorMode: CompressionColorPolicy;
   imageQuality: number;
   monochromeThreshold: number;
+  userOverrides: CompressionOverrides;
 };
 
 export type ApiError = {
@@ -31,7 +52,7 @@ export type PdfOutput = {
       sourceName?: string;
       sourceSizeBytes?: string;
       outcome?: "COMPRESSED" | "UNCHANGED";
-      strategy?: "SKIP" | "STRUCTURAL" | "RASTER";
+      strategy?: "SKIP" | "STRUCTURAL" | "IMAGE_RECOMPRESSION" | "RASTER";
       planReason?: string;
       analysis?: {
         contentKind?: string;
@@ -40,12 +61,13 @@ export type PdfOutput = {
         hasSelectableText?: boolean;
         hasOcrLayer?: boolean;
         predominantImageEncoding?: string | null;
+        optimizationClass?: string;
       } | null;
       requested?: {
         quality?: CompressionQuality | "CUSTOM";
         method?: CompressionMethod;
         dpi?: number;
-        colorMode?: CompressionColorMode;
+        colorMode?: CompressionColorPolicy;
         imageQuality?: number;
         monochromeThreshold?: number;
       };
@@ -57,6 +79,15 @@ export type PdfOutput = {
         imageQuality?: number;
         monochromeThreshold?: number;
       } | null;
+      notApplied?: string[];
+      preservation?: {
+        textLayer?: boolean;
+        annotations?: boolean;
+        forms?: boolean;
+        bookmarks?: boolean;
+        metadata?: boolean;
+        semanticValidated?: boolean;
+      };
       textLayerPreserved?: boolean;
     };
   } | null;
@@ -83,53 +114,16 @@ export type WorkState = {
   detail: string;
 };
 
-export const COMPRESSION_PRESETS: Record<
-  Exclude<CompressionQuality, "SOURCE">,
-  Omit<CompressionSettings, "preset">
-> = {
-  SCREEN: {
-    method: "RASTER",
-    dpi: 96,
-    colorMode: "COLOR",
-    imageQuality: 55,
-    monochromeThreshold: 160,
-  },
-  BALANCED: {
-    method: "AUTO",
-    dpi: 150,
-    colorMode: "COLOR",
-    imageQuality: 72,
-    monochromeThreshold: 160,
-  },
-  PRINT: {
-    method: "AUTO",
-    dpi: 220,
-    colorMode: "COLOR",
-    imageQuality: 86,
-    monochromeThreshold: 160,
-  },
-};
+export const COMPRESSION_PRESETS = PDF_COMPRESSION_PRESETS;
 
 export const QUALITY_OPTIONS: Array<{
   value: Exclude<CompressionQuality, "SOURCE">;
   label: string;
   description: string;
 }> = [
-  {
-    value: "SCREEN",
-    label: "Compacto",
-    description: "96 DPI e recompressão forte",
-  },
-  {
-    value: "BALANCED",
-    label: "Equilibrado",
-    description: "150 DPI com escolha automática",
-  },
-  {
-    value: "PRINT",
-    label: "Impressão",
-    description: "220 DPI e maior fidelidade",
-  },
+  { value: "SCREEN", label: "Compacto", description: "96 DPI e recompressão forte" },
+  { value: "BALANCED", label: "Equilibrado", description: "150 DPI com escolha automática" },
+  { value: "PRINT", label: "Impressão", description: "220 DPI e maior fidelidade" },
 ];
 
 export const METHOD_OPTIONS: Array<{
@@ -140,39 +134,36 @@ export const METHOD_OPTIONS: Array<{
   {
     value: "AUTO",
     label: "Automática",
-    description: "Analisa o PDF e executa apenas a estratégia necessária",
+    description: "Plano individual por PDF, preservando OCR, texto e vetores",
   },
   {
     value: "LOSSLESS",
     label: "Sem perdas",
-    description: "Preserva texto, vetores e imagens",
+    description: "Compactação estrutural sem alteração visual",
   },
   {
     value: "RASTER",
     label: "Recompressão visual",
-    description: "Recomprime scans sem OCR; texto e OCR são preservados",
+    description: "Só achata páginas com opt-in explícito de perda semântica",
   },
 ];
 
 export const COLOR_OPTIONS: Array<{
-  value: CompressionColorMode;
+  value: CompressionColorPolicy;
   label: string;
   description: string;
 }> = [
   {
-    value: "COLOR",
-    label: "Colorido",
-    description: "24 bits",
+    value: "KEEP_DETECTED",
+    label: "Manter detectado",
+    description: "Mantém a tonalidade individual de cada PDF",
   },
-  {
-    value: "GRAYSCALE",
-    label: "Tons de cinza",
-    description: "8 bits",
-  },
+  { value: "COLOR", label: "Colorido", description: "24 bits" },
+  { value: "GRAYSCALE", label: "Tons de cinza", description: "8 bits" },
   {
     value: "MONOCHROME",
     label: "Preto e branco",
-    description: "1 bit",
+    description: "1 bit / CCITT quando aplicável",
   },
 ];
 
@@ -196,23 +187,18 @@ export function getContentKindLabel(analysis: PdfCompressionAnalysis) {
   return "Documento digitalizado";
 }
 
-export function getColorModeLabel(colorMode: CompressionColorMode) {
+export function getColorModeLabel(colorMode: CompressionColorPolicy) {
   return COLOR_OPTIONS.find((option) => option.value === colorMode)?.label;
 }
 
 export function getMedianRounded(values: number[]) {
   if (!values.length) return null;
-
   const middle = Math.floor(values.length / 2);
   const upper = values[middle];
-
   if (upper === undefined) return null;
   if (values.length % 2 !== 0) return upper;
-
   const lower = values[middle - 1];
-  if (lower === undefined) return upper;
-
-  return Math.round((lower + upper) / 2);
+  return lower === undefined ? upper : Math.round((lower + upper) / 2);
 }
 
 export function getDetectedDpiLabel(analysis: PdfCompressionAnalysis) {
@@ -234,7 +220,6 @@ export function triggerDownload(url: string) {
   link.click();
   link.remove();
 }
-
 
 export function uploadPdf(
   jobId: string,
@@ -258,11 +243,8 @@ export function uploadPdf(
       } catch {
         body = null;
       }
-      if (request.status >= 200 && request.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(readApiError(body, `Falha ao enviar ${file.name}.`)));
-      }
+      if (request.status >= 200 && request.status < 300) resolve();
+      else reject(new Error(readApiError(body, `Falha ao enviar ${file.name}.`)));
     });
     request.addEventListener("error", () => {
       reject(new Error(`A conexão foi interrompida ao enviar ${file.name}.`));

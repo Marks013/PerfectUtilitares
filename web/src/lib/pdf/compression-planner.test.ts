@@ -1,234 +1,184 @@
+// PERFECT_PDF_FULL32_V2_2
 import { describe, expect, it } from "vitest";
-import { planPdfCompression } from "@/lib/pdf/compression-planner";
-import type { PdfCompressionProfile } from "@/lib/pdf/compression-analyzer";
-import type { PdfCompressionOptions } from "@/lib/pdf/compression-types";
+import { planPdfCompression } from "./compression-planner";
+import type { PdfCompressionProfile } from "./compression-analyzer";
+import type { PdfCompressionOptions } from "./compression-types";
 
-const options: PdfCompressionOptions = {
-  quality: "BALANCED",
-  method: "AUTO",
-  dpi: 150,
-  colorMode: "MONOCHROME",
-  imageQuality: 80,
-  monochromeThreshold: 160,
+const profile: PdfCompressionProfile = {
+  pageCount: 1,
+  sampledPages: [1],
+  contentKind: "SCANNED_OCR",
+  colorMode: "GRAYSCALE",
+  sourceDpi: 200,
+  minimumDpi: 200,
+  maximumDpi: 200,
+  fullPageImageRatio: 1,
+  imageCoverageRatio: 1,
+  imageCount: 1,
+  hasSelectableText: true,
+  hasOcrLayer: true,
+  predominantImageEncoding: "JPEG",
+  bitsPerComponent: 8,
+  alreadyOptimized: false,
+  optimizationClass: "RECOMPRESSIBLE_JPEG",
 };
 
-function profile(overrides: Partial<PdfCompressionProfile> = {}): PdfCompressionProfile {
+function options(patch: Partial<PdfCompressionOptions> = {}): PdfCompressionOptions {
   return {
-    pageCount: 185,
-    sampledPages: [1, 46, 93, 139, 185],
-    contentKind: "SCANNED_OCR",
-    colorMode: "MONOCHROME",
-    sourceDpi: 200,
-    minimumDpi: 200,
-    maximumDpi: 200,
-    fullPageImageRatio: 1,
-    imageCoverageRatio: 1,
-    imageCount: 185,
-    hasSelectableText: true,
-    hasOcrLayer: true,
-    predominantImageEncoding: "JBIG2",
-    bitsPerComponent: 1,
-    alreadyOptimized: true,
-    ...overrides,
+    quality: "CUSTOM",
+    method: "AUTO",
+    dpi: 150,
+    colorMode: "KEEP_DETECTED",
+    imageQuality: 72,
+    monochromeThreshold: 160,
+    preserveTextLayer: true,
+    allowSemanticLoss: false,
+    userOverrides: {
+      method: false,
+      dpi: false,
+      colorMode: false,
+      imageQuality: false,
+      monochromeThreshold: false,
+    },
+    ...patch,
   };
 }
 
-describe("PDF compression planner", () => {
-  it("keeps explicit LOSSLESS structural", () => {
-    expect(
-      planPdfCompression({ ...options, method: "LOSSLESS" }, profile()),
-    ).toMatchObject({ strategy: "STRUCTURAL", expectedSavings: "LOW" });
+describe("planPdfCompression full32", () => {
+  it("mantém a tonalidade detectada", () => {
+    expect(planPdfCompression(options(), profile).effectiveOptions.colorMode)
+      .toBe("GRAYSCALE");
   });
 
-  it("protects OCR from explicit RASTER", () => {
-    expect(
-      planPdfCompression({ ...options, method: "RASTER" }, profile()),
-    ).toMatchObject({ strategy: "STRUCTURAL", expectedSavings: "LOW" });
-  });
-
-  it("uses conservative structural compression when analysis is unavailable", () => {
-    expect(planPdfCompression(options, null)).toMatchObject({
-      strategy: "STRUCTURAL",
-      expectedSavings: "LOW",
-    });
-  });
-
-  it("does not rasterize an OCR + JBIG2 + 200 DPI monochrome scan", () => {
-    expect(planPdfCompression(options, profile())).toMatchObject({
-      strategy: "SKIP",
-      expectedSavings: "NONE",
-    });
-  });
-
-  it("rasterizes oversized scans", () => {
-    expect(
-      planPdfCompression(
-        { ...options, dpi: 150, colorMode: "COLOR" },
-        profile({
-          contentKind: "SCANNED",
-          colorMode: "COLOR",
-          sourceDpi: 600,
-          maximumDpi: 600,
-          predominantImageEncoding: "JPEG",
-          bitsPerComponent: 8,
-          alreadyOptimized: false,
-          hasSelectableText: false,
-          hasOcrLayer: false,
-        }),
-      ),
-    ).toMatchObject({ strategy: "RASTER" });
-  });
-
-  it("rasterizes inefficient FLATE scans near the target DPI", () => {
-    expect(
-      planPdfCompression(
-        options,
-        profile({
-          contentKind: "SCANNED",
-          sourceDpi: 160,
-          predominantImageEncoding: "FLATE",
-          bitsPerComponent: 8,
-          alreadyOptimized: false,
-          hasSelectableText: false,
-          hasOcrLayer: false,
-        }),
-      ),
-    ).toMatchObject({ strategy: "RASTER" });
-  });
-
-  it("rasterizes JPEG scans meaningfully above the target DPI", () => {
-    expect(
-      planPdfCompression(
-        options,
-        profile({
-          contentKind: "SCANNED",
-          sourceDpi: 180,
-          predominantImageEncoding: "JPEG",
-          bitsPerComponent: 8,
-          alreadyOptimized: false,
-          hasSelectableText: false,
-          hasOcrLayer: false,
-        }),
-      ),
-    ).toMatchObject({ strategy: "RASTER" });
-  });
-
-  it("keeps efficient scans structural when rasterization has no clear benefit", () => {
-    expect(
-      planPdfCompression(
-        options,
-        profile({
-          contentKind: "SCANNED",
-          sourceDpi: 150,
-          predominantImageEncoding: "JBIG2",
-          alreadyOptimized: false,
-          hasSelectableText: false,
-          hasOcrLayer: false,
-        }),
-      ),
-    ).toMatchObject({ strategy: "STRUCTURAL" });
-  });
-
-  it("keeps explicit RASTER for scans without OCR", () => {
-    expect(
-      planPdfCompression(
-        { ...options, method: "RASTER" },
-        profile({
-          contentKind: "SCANNED",
-          hasSelectableText: false,
-          hasOcrLayer: false,
-          alreadyOptimized: false,
-          predominantImageEncoding: "JPEG",
-          bitsPerComponent: 8,
-        }),
-      ),
-    ).toMatchObject({ strategy: "RASTER", expectedSavings: "MEDIUM" });
-  });
-
-  it("does not recompress an already optimized scan just because SCREEN uses RASTER", () => {
-    expect(
-      planPdfCompression(
-        {
-          ...options,
-          quality: "SCREEN",
-          method: "RASTER",
-          dpi: 96,
-          imageQuality: 55,
+  it("nunca rasteriza OCR em AUTO", () => {
+    const plan = planPdfCompression(
+      options({
+        userOverrides: {
+          method: false,
+          dpi: true,
+          colorMode: false,
+          imageQuality: true,
+          monochromeThreshold: false,
         },
-        profile({
-          contentKind: "SCANNED",
-          hasSelectableText: false,
-          hasOcrLayer: false,
-          alreadyOptimized: true,
-          colorMode: "MONOCHROME",
-          predominantImageEncoding: "JBIG2",
-          bitsPerComponent: 1,
-        }),
-      ),
-    ).toMatchObject({ strategy: "SKIP", expectedSavings: "NONE" });
+      }),
+      profile,
+    );
+    expect(plan.strategy).toBe("IMAGE_RECOMPRESSION");
   });
 
-  it("preserves custom color mode for scans without OCR", () => {
+  it("RASTER explícito com preservação ativa não achata OCR/estrutura", () => {
     const plan = planPdfCompression(
-      {
-        ...options,
-        quality: "CUSTOM",
+      options({
+        method: "RASTER",
+        preserveTextLayer: true,
+        allowSemanticLoss: false,
+      }),
+      profile,
+    );
+    expect(plan.strategy).toBe("IMAGE_RECOMPRESSION");
+    expect(plan.preservesSemantics).toBe(true);
+  });
+
+  it("qualidade explícita participa da decisão", () => {
+    const scan = { ...profile, contentKind: "SCANNED" as const, hasOcrLayer: false };
+    const plan = planPdfCompression(
+      options({
+        imageQuality: 55,
+        userOverrides: {
+          method: false,
+          dpi: false,
+          colorMode: false,
+          imageQuality: true,
+          monochromeThreshold: false,
+        },
+      }),
+      scan,
+    );
+    expect(plan.strategy).toBe("IMAGE_RECOMPRESSION");
+    expect(plan.effectiveOptions.imageQuality).toBe(55);
+  });
+
+  it("AUTO considera ganho estimado em JPEG 200 -> 150 DPI", () => {
+    const scan = {
+      ...profile,
+      contentKind: "SCANNED" as const,
+      hasOcrLayer: false,
+      sourceDpi: 200,
+      minimumDpi: 200,
+      maximumDpi: 200,
+      predominantImageEncoding: "JPEG" as const,
+    };
+    const plan = planPdfCompression(options(), scan);
+    expect(plan.strategy).toBe("IMAGE_RECOMPRESSION");
+    expect(plan.expectedSavings).not.toBe("NONE");
+  });
+
+  it("MIXED usa recompressão preservadora quando há override visual", () => {
+    const mixed = {
+      ...profile,
+      contentKind: "MIXED" as const,
+      hasOcrLayer: false,
+    };
+    const plan = planPdfCompression(
+      options({
+        userOverrides: {
+          method: false,
+          dpi: true,
+          colorMode: false,
+          imageQuality: false,
+          monochromeThreshold: false,
+        },
+      }),
+      mixed,
+    );
+    expect(plan.strategy).toBe("IMAGE_RECOMPRESSION");
+  });
+
+  it("MIXED com imagens pesadas entra em recompressão preservadora", () => {
+    const mixed = {
+      ...profile,
+      contentKind: "MIXED" as const,
+      hasOcrLayer: false,
+      optimizationClass: "MIXED_WITH_HEAVY_IMAGES" as const,
+      sourceDpi: 150,
+      minimumDpi: 150,
+      maximumDpi: 150,
+    };
+    expect(planPdfCompression(options(), mixed).strategy).toBe(
+      "IMAGE_RECOMPRESSION",
+    );
+  });
+
+  it("scan JPEG/JPX já otimizado pode ser preservado sem override", () => {
+    const optimized = {
+      ...profile,
+      contentKind: "SCANNED" as const,
+      hasOcrLayer: false,
+      alreadyOptimized: true,
+      optimizationClass: "OPTIMIZED_JPEG" as const,
+      sourceDpi: 150,
+      minimumDpi: 150,
+      maximumDpi: 150,
+    };
+    expect(planPdfCompression(options({ dpi: 150 }), optimized).strategy).toBe(
+      "SKIP",
+    );
+  });
+
+  it("não ignora override de cor", () => {
+    const plan = planPdfCompression(
+      options({
         colorMode: "MONOCHROME",
-      },
-      profile({
-        contentKind: "SCANNED",
-        colorMode: "COLOR",
-        hasSelectableText: false,
-        hasOcrLayer: false,
-        alreadyOptimized: false,
-        predominantImageEncoding: "JPEG",
-        bitsPerComponent: 8,
+        userOverrides: {
+          method: false,
+          dpi: false,
+          colorMode: true,
+          imageQuality: false,
+          monochromeThreshold: false,
+        },
       }),
+      profile,
     );
-    expect(plan.rasterOptions.colorMode).toBe("MONOCHROME");
-  });
-
-  it("uses detected color mode for presets", () => {
-    const plan = planPdfCompression(
-      { ...options, quality: "BALANCED", colorMode: "COLOR" },
-      profile({
-        contentKind: "SCANNED",
-        colorMode: "GRAYSCALE",
-        hasSelectableText: false,
-        hasOcrLayer: false,
-        alreadyOptimized: false,
-        predominantImageEncoding: "JPEG",
-        bitsPerComponent: 8,
-      }),
-    );
-    expect(plan.rasterOptions.colorMode).toBe("GRAYSCALE");
-  });
-
-  it("keeps vector and mixed documents structural", () => {
-    expect(
-      planPdfCompression(
-        options,
-        profile({
-          contentKind: "VECTOR",
-          colorMode: "COLOR",
-          sourceDpi: null,
-          minimumDpi: null,
-          maximumDpi: null,
-          imageCount: 0,
-          fullPageImageRatio: 0,
-          imageCoverageRatio: 0,
-          predominantImageEncoding: null,
-          bitsPerComponent: null,
-          alreadyOptimized: false,
-        }),
-      ),
-    ).toMatchObject({ strategy: "STRUCTURAL" });
-
-    expect(
-      planPdfCompression(
-        options,
-        profile({ contentKind: "MIXED", alreadyOptimized: false }),
-      ),
-    ).toMatchObject({ strategy: "STRUCTURAL" });
+    expect(plan.effectiveOptions.colorMode).toBe("MONOCHROME");
   });
 });

@@ -1,3 +1,4 @@
+# PERFECT_PDF_FULL32_V2_2
 x-logging: &default-logging
   driver: json-file
   options:
@@ -88,7 +89,7 @@ services:
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
         SENTRY_ORG: ${SENTRY_ORG:-}
         SENTRY_PROJECT: ${SENTRY_PROJECT:-}
-        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_REVISION: ${SOURCE_REVISION:?defina SOURCE_REVISION com o SHA Git antes do deploy}
         BUILD_DATE: ${BUILD_DATE:-unknown}
     env_file:
       - path: ${UNIMED_ACCESS_ENV_FILE:-/home/ubuntu/perfectutilitares-config/unimed/access.env}
@@ -177,7 +178,7 @@ services:
       context: .
       target: pdf-worker
       args:
-        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_REVISION: ${SOURCE_REVISION:?defina SOURCE_REVISION com o SHA Git antes do deploy}
         BUILD_DATE: ${BUILD_DATE:-unknown}
     restart: unless-stopped
     init: true
@@ -202,9 +203,10 @@ services:
       PDF_WORKER_CONCURRENCY: ${PDF_WORKER_CONCURRENCY:-2}
       PDF_COMPRESSION_FILE_CONCURRENCY: ${PDF_COMPRESSION_FILE_CONCURRENCY:-2}
       PDF_COMPRESSION_RASTER_CONCURRENCY: ${PDF_COMPRESSION_RASTER_CONCURRENCY:-1}
-      PDF_RASTER_RENDER_CHUNK_SIZE: ${PDF_RASTER_RENDER_CHUNK_SIZE:-6}
+      PDF_RASTER_CHUNK_TARGET_PIXELS: ${PDF_RASTER_CHUNK_TARGET_PIXELS:-18000000}
       PDF_COMPRESSION_MIN_SAVINGS_RATIO: ${PDF_COMPRESSION_MIN_SAVINGS_RATIO:-0.005}
-      PDF_WORKER_HEARTBEAT_PATH: /tmp/perfect-pdf-worker-heartbeat
+      PDF_COMPRESSION_TOOL_TIMEOUT_MS: ${PDF_COMPRESSION_TOOL_TIMEOUT_MS:-600000}
+      PDF_WORKER_HEARTBEAT_PATH: /data/pdf-jobs/.perfect-pdf-worker-heartbeat
       PDF_WORKER_HEARTBEAT_MAX_AGE_SECONDS: ${PDF_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-90}
       STORAGE_BLOCK_USED_PERCENT: ${STORAGE_BLOCK_USED_PERCENT:-80}
       STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}

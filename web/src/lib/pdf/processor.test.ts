@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// PERFECT_PDF_FULL32_V2_2
 
 const mocks = vi.hoisted(() => ({
   applyAnnotations: vi.fn(),
@@ -157,6 +158,15 @@ const compressedOutput = {
   planReason: "scan de teste",
   requestedOptions: { quality: "BALANCED" },
   appliedOptions: { quality: "BALANCED" },
+  notApplied: [],
+  preservation: {
+    textLayer: true,
+    annotations: true,
+    forms: true,
+    bookmarks: true,
+    metadata: true,
+    semanticValidated: true,
+  },
   textLayerPreserved: true,
 };
 
@@ -280,6 +290,15 @@ describe("PDF processor lifecycle", () => {
               analysis: null,
               requested: { quality: "BALANCED" },
               applied: { quality: "BALANCED" },
+              notApplied: [],
+              preservation: {
+                textLayer: true,
+                annotations: true,
+                forms: true,
+                bookmarks: true,
+                metadata: true,
+                semanticValidated: true,
+              },
               textLayerPreserved: true,
             },
           },

@@ -15,11 +15,13 @@ import {
   PdfPublicCapacityError,
 } from "@/lib/pdf/capacity";
 import { getPdfJobExpiry } from "@/lib/pdf/constants";
+import { PDF_COMPRESSION_PROTOCOL_REVISION } from "@/lib/pdf/compression-types";
 import { pdfJobCreateSchema } from "@/lib/pdf/schema";
 import { serializePdfJob } from "@/lib/pdf/serialization";
 import { zodIssueDetails } from "@/lib/users/schema";
 
 export const runtime = "nodejs";
+// PERFECT_PDF_FULL32_V2_2
 
 export function GET() {
   return methodNotAllowed(["POST"]);
@@ -67,7 +69,17 @@ export async function POST(request: Request) {
       principalKey: principal.key,
       isAuthenticated: principal.tier === "authenticated",
       operation: parsed.data.operation,
-      options: parsed.data.options as Prisma.InputJsonValue | undefined,
+      options:
+        parsed.data.operation === "COMPRESS"
+          ? ({
+              ...(parsed.data.options ?? {}),
+              sourceRevision:
+                process.env.SOURCE_REVISION &&
+                process.env.SOURCE_REVISION !== "unknown"
+                  ? process.env.SOURCE_REVISION
+                  : PDF_COMPRESSION_PROTOCOL_REVISION,
+            } as Prisma.InputJsonValue)
+          : (parsed.data.options as Prisma.InputJsonValue | undefined),
       expiresAt: getPdfJobExpiry(),
     });
 

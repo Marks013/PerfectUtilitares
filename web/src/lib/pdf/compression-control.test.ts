@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// PERFECT_PDF_FULL32_V2_2
 
 const mocks = vi.hoisted(() => ({
   commit: vi.fn(),
@@ -44,10 +45,34 @@ vi.mock("sharp", () => ({
 
 vi.mock("@/lib/pdf/render", () => ({
   renderPdfPageToPng: mocks.render,
+  renderPdfPagesToPng: mocks.render,
 }));
 
 vi.mock("@/lib/pdf/server-runtime", () => ({
   ensureServerLocalStorage: mocks.ensure,
+}));
+vi.mock("@/lib/pdf/compression-analyzer", () => ({
+  analyzePdfCompressionProfile: vi.fn().mockResolvedValue({
+    pageCount: 1,
+    sampledPages: [1],
+    contentKind: "SCANNED",
+    colorMode: "COLOR",
+    sourceDpi: 300,
+    minimumDpi: 300,
+    maximumDpi: 300,
+    fullPageImageRatio: 1,
+    imageCoverageRatio: 1,
+    imageCount: 1,
+    hasSelectableText: false,
+    hasOcrLayer: false,
+    predominantImageEncoding: "JPEG",
+    bitsPerComponent: 8,
+    alreadyOptimized: false,
+    optimizationClass: "OVERSIZED_SCAN",
+  }),
+}));
+vi.mock("@/lib/pdf/compression-semantic", () => ({
+  validateSemanticCandidate: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/pdf/storage", () => ({
@@ -59,13 +84,13 @@ vi.mock("@/lib/pdf/storage", () => ({
 
 import {
   compressPdfFile,
-  type PdfCompressionOptions,
+  type PdfCompressionEffectiveOptions,
   rasterizePdfForCompression,
 } from "@/lib/pdf/compression";
 
 function compressionOptions(
-  method: PdfCompressionOptions["method"],
-): PdfCompressionOptions {
+  method: PdfCompressionEffectiveOptions["method"],
+): PdfCompressionEffectiveOptions {
   return {
     quality: "BALANCED",
     method,
@@ -73,6 +98,15 @@ function compressionOptions(
     colorMode: "COLOR",
     imageQuality: 72,
     monochromeThreshold: 160,
+    userOverrides: {
+      method: true,
+      dpi: true,
+      colorMode: true,
+      imageQuality: true,
+      monochromeThreshold: true,
+    },
+    preserveTextLayer: false,
+    allowSemanticLoss: true,
   };
 }
 
@@ -201,13 +235,13 @@ describe("PDF compression control paths", () => {
       "/tmp/output.partial.structural.pdf",
       "/tmp/output.partial",
     );
-    expect(onProgress).toHaveBeenCalledWith(90);
+    expect(onProgress).toHaveBeenCalledWith(95);
     expect(onProgress).toHaveBeenCalledWith(100);
     expect(mocks.commit).toHaveBeenCalledWith({
       temporaryPath: "/tmp/output.partial",
     });
     expect(mocks.discard).not.toHaveBeenCalled();
-    expect(mocks.rm).toHaveBeenCalledTimes(3);
+    expect(mocks.rm).toHaveBeenCalledTimes(6);
     expect(result).toMatchObject({
       artifactId: "output-1",
       sizeBytes: 100n,
@@ -233,7 +267,7 @@ describe("PDF compression control paths", () => {
     expect(mocks.discard).toHaveBeenCalledWith({
       temporaryPath: "/tmp/output.partial",
     });
-    expect(mocks.rm).toHaveBeenCalledTimes(3);
+    expect(mocks.rm).toHaveBeenCalledTimes(6);
   });
 
   it("discards the reservation when raster compression exceeds the render limit", async () => {
@@ -258,7 +292,7 @@ describe("PDF compression control paths", () => {
     expect(mocks.discard).toHaveBeenCalledWith({
       temporaryPath: "/tmp/output.partial",
     });
-    expect(mocks.rm).toHaveBeenCalledTimes(3);
+    expect(mocks.rm).toHaveBeenCalledTimes(6);
   });
 
   it("rejects raster compression above the thousand-page safety limit", async () => {

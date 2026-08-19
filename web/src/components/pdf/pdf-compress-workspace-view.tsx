@@ -1,4 +1,5 @@
 "use client";
+// PERFECT_PDF_FULL32_V2_2
 
 import type { usePdfCompressWorkspaceController } from "./pdf-compress-workspace";
 
@@ -200,7 +201,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                       />
                       <span
                         className="pdf-color-swatch"
-                        data-color={option.value.toLowerCase()}
+                        data-color={option.value === "KEEP_DETECTED" ? "detected" : option.value.toLowerCase()}
                         aria-hidden="true"
                       />
                       <span>
@@ -297,14 +298,14 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                 {settings.method === "LOSSLESS"
                   ? "Mantém texto selecionável, vetores e imagens sem rasterizar."
                   : settings.method === "AUTO"
-                    ? `O servidor analisa estrutura, OCR, cobertura de imagem, resolução e codificação antes de decidir. Rasterização só é usada quando houver benefício provável.`
+                    ? `O servidor analisa estrutura, OCR, cobertura de imagem, resolução e codificação antes de decidir. OCR e conteúdo misto usam recompressão preservadora; AUTO não achata estruturas semânticas.`
                     : `Alvo: ${settings.dpi} DPI · ${
                         COLOR_OPTIONS.find(
                           (option) => option.value === settings.colorMode,
                         )?.label
                       } · ${
                         settings.colorMode === "MONOCHROME"
-                          ? "PNG binário"
+                          ? "CCITT/compactação binária quando disponível"
                           : `JPEG ${settings.imageQuality}%`
                       }. O servidor preserva texto, vetores e OCR quando rasterizar causaria perda estrutural.`}
               </small>
@@ -370,7 +371,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                 ? "Analisando"
                 : busy
                   ? "Processando"
-                  : "Comprimir arquivos"}
+                  : outputs.length ? "Comprimir novamente" : "Comprimir arquivos"}
             </button>
           </header>
 
@@ -481,6 +482,17 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                     </small>
                     {compression?.planReason ? (
                       <small>{compression.planReason}</small>
+                    ) : null}
+                    {compression?.notApplied?.length ? (
+                      <small>
+                        Não aplicado: {compression.notApplied.join(", ")}
+                      </small>
+                    ) : null}
+                    {compression?.preservation?.semanticValidated ? (
+                      <small>
+                        Integridade semântica validada: texto/OCR, links,
+                        formulários, bookmarks e metadata preservados.
+                      </small>
                     ) : null}
                     {compression?.applied ? (
                       <small>

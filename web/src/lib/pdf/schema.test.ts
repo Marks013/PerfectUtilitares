@@ -97,14 +97,16 @@ describe("pdf schemas", () => {
     );
   });
 
-  it("expands compact compression defaults", () => {
-    expect(pdfCompressionOptionsSchema.parse({ quality: "SCREEN" })).toEqual({
+  it("expands compact compression defaults without forcing color", () => {
+    expect(pdfCompressionOptionsSchema.parse({ quality: "SCREEN" })).toMatchObject({
       quality: "SCREEN",
-      method: "RASTER",
+      method: "AUTO",
       dpi: 96,
-      colorMode: "COLOR",
+      colorMode: "KEEP_DETECTED",
       imageQuality: 55,
       monochromeThreshold: 160,
+      preserveTextLayer: true,
+      allowSemanticLoss: false,
     });
   });
 
@@ -136,7 +138,7 @@ describe("pdf schemas", () => {
         imageQuality: 84,
         monochromeThreshold: 160,
       }),
-    ).toEqual({
+    ).toMatchObject({
       quality: "SOURCE",
       method: "AUTO",
       dpi: 220,

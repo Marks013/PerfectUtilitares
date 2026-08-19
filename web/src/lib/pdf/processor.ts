@@ -38,6 +38,7 @@ import {
 } from "@/lib/pdf/structural";
 import { prisma } from "@/lib/prisma";
 import { assertResourceCapacity } from "@/lib/system/resource-capacity";
+// PERFECT_PDF_FULL32_V2_2
 
 export async function processPdfJob(jobId: string) {
   const job = await prisma.pdfJob.findUnique({
@@ -204,6 +205,8 @@ export async function processPdfJob(jobId: string) {
                 analysis: output.analysis,
                 requested: output.requestedOptions,
                 applied: output.appliedOptions,
+                notApplied: output.notApplied,
+                preservation: output.preservation,
                 textLayerPreserved: output.textLayerPreserved,
               },
             },

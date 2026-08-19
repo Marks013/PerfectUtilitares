@@ -1,4 +1,5 @@
 "use client";
+// PERFECT_PDF_FULL32_V2_2
 
 import {
   Archive,
@@ -32,6 +33,7 @@ import {
   type PdfJob,
   type WorkState,
   COMPRESSION_PRESETS,
+  NO_OVERRIDES,
   QUALITY_OPTIONS,
   METHOD_OPTIONS,
   COLOR_OPTIONS,
@@ -103,13 +105,10 @@ export function usePdfCompressWorkspaceController() {
   }
 
   function applyPreset(preset: Exclude<CompressionQuality, "SOURCE">) {
-    const recommendation = analyses.length
-      ? deriveCompressionRecommendation(analyses)
-      : null;
     setSettings({
       preset,
       ...COMPRESSION_PRESETS[preset],
-      colorMode: recommendation?.colorMode ?? settings?.colorMode ?? "COLOR",
+      userOverrides: { ...NO_OVERRIDES },
     });
     invalidateResult();
   }
@@ -121,20 +120,36 @@ export function usePdfCompressWorkspaceController() {
     setSettings({
       preset: "SOURCE",
       ...deriveCompressionRecommendation(currentAnalyses),
+      userOverrides: { ...NO_OVERRIDES },
     });
     invalidateResult();
   }
 
-  function updateSettings(next: Partial<Omit<CompressionSettings, "preset">>) {
-    setSettings((current) =>
-      current
-        ? {
-            ...current,
-            ...next,
-            preset: null,
-          }
-        : current,
-    );
+  function updateSettings(
+    next: Partial<
+      Pick<
+        CompressionSettings,
+        "method" | "dpi" | "colorMode" | "imageQuality" | "monochromeThreshold"
+      >
+    >,
+  ) {
+    setSettings((current) => {
+      if (!current) return current;
+      const userOverrides = { ...current.userOverrides };
+      if (next.method !== undefined) userOverrides.method = true;
+      if (next.dpi !== undefined) userOverrides.dpi = true;
+      if (next.colorMode !== undefined) userOverrides.colorMode = true;
+      if (next.imageQuality !== undefined) userOverrides.imageQuality = true;
+      if (next.monochromeThreshold !== undefined) {
+        userOverrides.monochromeThreshold = true;
+      }
+      return {
+        ...current,
+        ...next,
+        preset: null,
+        userOverrides,
+      };
+    });
     invalidateResult();
   }
 
@@ -325,6 +340,9 @@ export function usePdfCompressWorkspaceController() {
             colorMode: settings.colorMode,
             imageQuality: settings.imageQuality,
             monochromeThreshold: settings.monochromeThreshold,
+            userOverrides: settings.userOverrides,
+            preserveTextLayer: true,
+            allowSemanticLoss: false,
           },
         }),
       });

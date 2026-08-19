@@ -13,6 +13,7 @@ import {
   reservePdfJobForQueue,
 } from "@/lib/pdf/capacity";
 import { enqueuePdfJob } from "@/lib/pdf/queue";
+import { readPdfWorkerCompatibility } from "@/lib/pdf/compression-worker-revision";
 import {
   jpgToPdfOptionsSchema,
   pdfCompressionOptionsSchema,
@@ -23,6 +24,7 @@ import { prisma } from "@/lib/prisma";
 import { recordUserUsage } from "@/lib/usage/record";
 
 export const runtime = "nodejs";
+// PERFECT_PDF_FULL32_V2_2
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -197,6 +199,13 @@ export async function POST(request: Request, context: RouteContext) {
       "JPG_TO_PDF_OPTIONS_INVALID",
       "Revise as opções selecionadas para criar o PDF.",
     );
+  }
+
+  if (job.operation === "COMPRESS") {
+    const worker = await readPdfWorkerCompatibility();
+    if (!worker.ok) {
+      return jsonError(503, worker.code, worker.message);
+    }
   }
 
   let claimed = false;

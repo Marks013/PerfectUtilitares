@@ -2,9 +2,11 @@ import {
   configurePdfJsClient,
   pdfJsClientDocumentOptions,
 } from "@/lib/pdf/pdfjs-client";
+// PERFECT_PDF_FULL32_V2_2
 
 export type CompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
 export type CompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
+export type CompressionColorPolicy = "KEEP_DETECTED" | CompressionColorMode;
 type CompressionContentKind =
   | "VECTOR"
   | "MIXED"
@@ -28,7 +30,7 @@ export type PdfCompressionAnalysis = {
 export type CompressionRecommendation = {
   method: CompressionMethod;
   dpi: number;
-  colorMode: CompressionColorMode;
+  colorMode: CompressionColorPolicy;
   imageQuality: number;
   monochromeThreshold: number;
 };
@@ -120,21 +122,26 @@ export function classifyRenderedColors(pixels: Uint8ClampedArray): CompressionCo
 export function deriveCompressionRecommendation(
   analyses: PdfCompressionAnalysis[],
 ): CompressionRecommendation {
-  const detectedDpis = analyses.map((item) => item.sourceDpi).filter((dpi): dpi is number => dpi !== null);
-  const sourceDpi = median(detectedDpis);
-  const allVector = analyses.length > 0 && analyses.every((item) => item.contentKind === "VECTOR");
-  const hasScan = analyses.some((item) => item.contentKind === "SCANNED" || item.contentKind === "SCANNED_OCR");
-  const colorMode = analyses.some((item) => item.colorMode === "COLOR")
-    ? "COLOR"
-    : analyses.some((item) => item.colorMode === "GRAYSCALE")
-      ? "GRAYSCALE"
-      : "MONOCHROME";
-  const dpi = nearestDpi(Math.max(72, Math.min(300, sourceDpi ?? (hasScan ? 200 : 150))));
+  const sourceDpis = analyses
+    .map((item) => item.sourceDpi)
+    .filter((dpi): dpi is number => dpi !== null);
+  const sourceDpi = median(sourceDpis);
+  const allVector =
+    analyses.length > 0 &&
+    analyses.every((item) => item.contentKind === "VECTOR");
+  const hasScan = analyses.some(
+    (item) =>
+      item.contentKind === "SCANNED" || item.contentKind === "SCANNED_OCR",
+  );
+  const dpi = nearestDpi(
+    Math.max(72, Math.min(300, sourceDpi ?? (hasScan ? 200 : 150))),
+  );
   return {
     method: allVector ? "LOSSLESS" : "AUTO",
     dpi,
-    colorMode,
-    imageQuality: colorMode === "COLOR" ? (dpi >= 220 ? 86 : dpi >= 150 ? 80 : 74) : 84,
+    // O preview nunca transforma a tonalidade de todo o lote em uma escolha global.
+    colorMode: "KEEP_DETECTED",
+    imageQuality: dpi >= 220 ? 86 : dpi >= 150 ? 76 : 68,
     monochromeThreshold: 160,
   };
 }
