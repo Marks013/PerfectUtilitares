@@ -6,6 +6,7 @@ import { analyzePdfCompressionProfile } from "./compression-analyzer";
 import { withRasterCompressionSlot } from "./compression-concurrency";
 import {
   buildPreservingImageCandidates,
+  hasRequiredPdfSavings,
   optimizeMonochromeRasterCandidate,
   type PdfCompressionCandidate,
 } from "./compression-image-recompression";
@@ -187,10 +188,11 @@ async function selectCandidateOrOriginal({
     }
   }
   const eligible = existing.filter(({ candidate, size }) => {
-    const threshold = Math.floor(
-      input.size * (1 - minimumSavingsRatioForCandidate(candidate)),
+    return hasRequiredPdfSavings(
+      input.size,
+      size,
+      minimumSavingsRatioForCandidate(candidate),
     );
-    return size < threshold;
   });
   eligible.sort((left, right) => left.size - right.size);
   const best = eligible[0];
@@ -206,6 +208,29 @@ async function selectCandidateOrOriginal({
     outcome: "COMPRESSED" as const,
     selectedCandidate: best.candidate,
   };
+}
+
+async function hasEligibleAdaptiveMonoCandidate(
+  inputPath: string,
+  candidates: PdfCompressionCandidate[],
+) {
+  const adaptive = candidates.find(
+    (candidate) => candidate.kind === "MONO_XOBJECT_JBIG2",
+  );
+  if (!adaptive) return false;
+  try {
+    const [input, output] = await Promise.all([
+      stat(inputPath),
+      stat(adaptive.path),
+    ]);
+    return hasRequiredPdfSavings(
+      input.size,
+      output.size,
+      minimumSavingsRatioForCandidate(adaptive),
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function compressPdfFile({
@@ -314,23 +339,30 @@ export async function compressPdfFile({
           baseOutputPath: preservingBase,
           options: plan.effectiveOptions,
           profile,
+          minimumAdaptiveMonoSavingsRatio:
+            minimumSavingsRatioForCandidate({
+              visualTransform: true,
+              lossy: true,
+            }),
         }),
       );
-      try {
-        await optimizePdfStructure(inputPath, structuralPath);
-        await validateStructuralCandidate(inputPath, structuralPath);
-        await validateSemanticCandidate(inputPath, structuralPath, {
-          visual: false,
-        });
-        candidates.push(
-          genericCandidate(
-            structuralPath,
-            "STRUCTURAL",
-            "Compactação estrutural lossless com qpdf.",
-          ),
-        );
-      } catch {
-        // O candidato estrutural é opcional.
+      if (!(await hasEligibleAdaptiveMonoCandidate(inputPath, candidates))) {
+        try {
+          await optimizePdfStructure(inputPath, structuralPath);
+          await validateStructuralCandidate(inputPath, structuralPath);
+          await validateSemanticCandidate(inputPath, structuralPath, {
+            visual: false,
+          });
+          candidates.push(
+            genericCandidate(
+              structuralPath,
+              "STRUCTURAL",
+              "Compactação estrutural lossless com qpdf.",
+            ),
+          );
+        } catch {
+          // O candidato estrutural é opcional.
+        }
       }
       semanticValidated = candidates.length > 0;
       const selection = await selectCandidateOrOriginal({

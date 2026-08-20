@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGhostscriptImageArgs,
   buildOcrMyPdfOptimizerArgs,
+  hasRequiredPdfSavings,
   ocrMyPdfOptimizationLevel,
   resolveAdaptiveMonoXObjectTargetDpi,
   resolveAdaptiveMonoXObjectThreshold,
@@ -82,6 +83,14 @@ describe("adaptive PDF compression v4.2", () => {
     const opts = options();
     expect(resolveAdaptiveMonoXObjectTargetDpi(source, opts)).toBe(150);
     expect(resolveAdaptiveMonoXObjectThreshold(opts)).toBe(160);
+  });
+
+  it("encerra o fast path apenas quando o ganho visual mínimo é atingido", () => {
+    expect(hasRequiredPdfSavings(10_000, 9_699, 0.03)).toBe(true);
+    expect(hasRequiredPdfSavings(10_000, 9_700, 0.03)).toBe(false);
+    expect(hasRequiredPdfSavings(10_000, 4_500, 0.03)).toBe(true);
+    expect(hasRequiredPdfSavings(0, 0, 0.03)).toBe(false);
+    expect(hasRequiredPdfSavings(10_000, 4_500, 1)).toBe(false);
   });
 
   it("respeita overrides explícitos no caminho XObject monocromático", () => {

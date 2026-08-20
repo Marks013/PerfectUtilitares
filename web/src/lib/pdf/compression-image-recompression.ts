@@ -33,6 +33,27 @@ export type PdfCompressionCandidate = {
   notApplied: string[];
 };
 
+export function hasRequiredPdfSavings(
+  inputBytes: number,
+  candidateBytes: number,
+  minimumSavingsRatio: number,
+) {
+  if (
+    !Number.isFinite(inputBytes) ||
+    !Number.isFinite(candidateBytes) ||
+    !Number.isFinite(minimumSavingsRatio) ||
+    inputBytes <= 0 ||
+    candidateBytes < 0 ||
+    minimumSavingsRatio < 0 ||
+    minimumSavingsRatio >= 1
+  ) {
+    return false;
+  }
+  return (
+    candidateBytes < Math.floor(inputBytes * (1 - minimumSavingsRatio))
+  );
+}
+
 function compressionToolTimeoutMs() {
   const configured = Number(
     process.env.PDF_COMPRESSION_TOOL_TIMEOUT_MS ?? 10 * 60 * 1000,
@@ -388,11 +409,13 @@ export async function buildPreservingImageCandidates({
   baseOutputPath,
   options,
   profile,
+  minimumAdaptiveMonoSavingsRatio = 0.03,
 }: {
   inputPath: string;
   baseOutputPath: string;
   options: PdfCompressionEffectiveOptions;
   profile: PdfCompressionProfile;
+  minimumAdaptiveMonoSavingsRatio?: number;
 }) {
   const candidates: PdfCompressionCandidate[] = [];
 
@@ -424,6 +447,19 @@ export async function buildPreservingImageCandidates({
           notApplied: ["imageQuality"],
         }),
       );
+      const [input, output] = await Promise.all([
+        stat(inputPath),
+        stat(monoXObjectPath),
+      ]);
+      if (
+        hasRequiredPdfSavings(
+          input.size,
+          output.size,
+          minimumAdaptiveMonoSavingsRatio,
+        )
+      ) {
+        return candidates;
+      }
     } catch {
       await rm(monoXObjectPath, { force: true }).catch(() => undefined);
     }
