@@ -8,6 +8,7 @@ import {
   parsePdfImagesList,
   selectCompressionSamplePages,
 } from "@/lib/pdf/compression-analyzer";
+import { summarizeSelectableTextPages } from "@/lib/pdf/compression-detection";
 
 const temporaryDirectories: string[] = [];
 const RGB_PNG = Buffer.from(
@@ -51,6 +52,18 @@ async function makeSyntheticPdf(options: {
   return path;
 }
 
+async function makeBlankPdf(pageCount: number) {
+  const directory = await mkdtemp(join(tmpdir(), "pdf-compression-pages-"));
+  temporaryDirectories.push(directory);
+  const path = join(directory, "input.pdf");
+  const document = await PDFDocument.create();
+  for (let page = 0; page < pageCount; page += 1) {
+    document.addPage([72, 72]);
+  }
+  await writeFile(path, await document.save());
+  return path;
+}
+
 async function withFakePdfImages<T>(
   output: string,
   callback: () => Promise<T>,
@@ -82,7 +95,24 @@ const PDFIMAGES_HEADER = `page   num  type   width height color comp bpc  enc in
 describe("server PDF compression analyzer", () => {
   it("samples small and large documents deterministically", () => {
     expect(selectCompressionSamplePages(3)).toEqual([1, 2, 3]);
-    expect(selectCompressionSamplePages(185)).toEqual([1, 46, 93, 139, 185]);
+    expect(selectCompressionSamplePages(10)).toEqual([1, 3, 6, 8, 10]);
+    expect(selectCompressionSamplePages(185)).toEqual([
+      1, 32, 62, 93, 124, 154, 185,
+    ]);
+    expect(selectCompressionSamplePages(300)).toEqual([
+      1, 38, 76, 113, 151, 188, 225, 263, 300,
+    ]);
+  });
+
+  it("não confunde texto isolado com uma camada OCR representativa", () => {
+    expect(summarizeSelectableTextPages([80, 0, 0, 0, 0])).toEqual({
+      hasSelectableText: true,
+      representative: false,
+    });
+    expect(summarizeSelectableTextPages([20, 18, 0, 16, 14])).toEqual({
+      hasSelectableText: true,
+      representative: true,
+    });
   });
 
   it("parses valid Poppler rows and skips malformed rows", () => {
@@ -152,6 +182,29 @@ ${PDFIMAGES_HEADER}
       alreadyOptimized: true,
       optimizationClass: "OPTIMIZED_MONO",
     });
+  });
+
+  it("considera imagens de páginas fora da amostra de texto", async () => {
+    const path = await makeBlankPdf(10);
+    const rows = Array.from({ length: 10 }, (_, index) => {
+      const page = index + 1;
+      const color = page === 5 ? "rgb " : "gray";
+      const components = page === 5 ? 3 : 1;
+      const bits = page === 5 ? 8 : 1;
+      const encoding = page === 5 ? "jpeg " : "jbig2";
+      return `${String(page).padStart(4)}     0 image     200   200  ${color}    ${components}   ${bits}  ${encoding}  no       10  0   200   200  24K  0.5%`;
+    }).join("\n");
+
+    const profile = await withFakePdfImages(
+      `${PDFIMAGES_HEADER}\n${rows}`,
+      () => analyzePdfCompressionProfile(path),
+    );
+
+    expect(profile.sampledPages).toEqual([1, 3, 6, 8, 10]);
+    expect(profile.imageCount).toBe(10);
+    expect(profile.fullPageImageRatio).toBe(1);
+    expect(profile.colorMode).toBe("COLOR");
+    expect(profile.alreadyOptimized).toBe(false);
   });
 
   it("classifies partial image coverage as MIXED", async () => {

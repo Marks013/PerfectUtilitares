@@ -2,6 +2,10 @@ import {
   configurePdfJsClient,
   pdfJsClientDocumentOptions,
 } from "@/lib/pdf/pdfjs-client";
+import {
+  selectCompressionSamplePages,
+  summarizeSelectableTextPages,
+} from "@/lib/pdf/compression-detection";
 // PERFECT_PDF_FULL32_V2_2
 
 export type CompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
@@ -79,16 +83,6 @@ function median(values: number[]) {
   if (sorted.length % 2) return upper;
   return (readNumber(sorted, middle - 1, "o cálculo da mediana") + upper) / 2;
 }
-function selectSamplePages(pageCount: number) {
-  if (pageCount <= 5) return Array.from({ length: pageCount }, (_, index) => index + 1);
-  return [
-    1,
-    Math.max(1, Math.round(pageCount * 0.25)),
-    Math.max(1, Math.round(pageCount * 0.5)),
-    Math.max(1, Math.round(pageCount * 0.75)),
-    pageCount,
-  ].filter((page, index, pages) => pages.indexOf(page) === index);
-}
 function nearestDpi(value: number) {
   return DPI_OPTIONS.reduce((nearest, option) =>
     Math.abs(option - value) < Math.abs(nearest - value) ? option : nearest,
@@ -159,11 +153,11 @@ export async function analyzePdfForCompression(
   });
   const document = await loadingTask.promise;
   const pageCount = document.numPages;
-  const sampledPageNumbers = selectSamplePages(pageCount);
+  const sampledPageNumbers = selectCompressionSamplePages(pageCount);
   const effectiveDpis: number[] = [];
   const colorModes: CompressionColorMode[] = [];
   let imageCount = 0;
-  let textCharacters = 0;
+  const textCharacterCounts: number[] = [];
   let fullPageImagePages = 0;
   try {
     for (const pageNumber of sampledPageNumbers) {
@@ -185,10 +179,10 @@ export async function analyzePdfForCompression(
         background: "#FFFFFF",
       }).promise;
       const [textContent, operatorList] = await Promise.all([textContentPromise, operatorListPromise]);
-      textCharacters += textContent.items.reduce(
+      textCharacterCounts.push(textContent.items.reduce(
         (total, item) => total + ("str" in item && typeof item.str === "string" ? item.str.trim().length : 0),
         0,
-      );
+      ));
       colorModes.push(classifyRenderedColors(context.getImageData(0, 0, canvas.width, canvas.height).data));
       let currentMatrix = IDENTITY_MATRIX;
       const matrixStack: Matrix[] = [];
@@ -240,13 +234,13 @@ export async function analyzePdfForCompression(
   } finally {
     await loadingTask.destroy();
   }
-  const hasSelectableText = textCharacters >= sampledPageNumbers.length * 12;
+  const textLayer = summarizeSelectableTextPages(textCharacterCounts);
   const fullPageImageRatio = fullPageImagePages / sampledPageNumbers.length;
   const scanLike = imageCount > 0 && fullPageImageRatio >= 0.8;
   const contentKind: CompressionContentKind = imageCount === 0
     ? "VECTOR"
     : scanLike
-      ? hasSelectableText ? "SCANNED_OCR" : "SCANNED"
+      ? textLayer.representative ? "SCANNED_OCR" : "SCANNED"
       : "MIXED";
   const sourceDpi = median(effectiveDpis);
   const roundedDpis = effectiveDpis.map((dpi) => Math.round(dpi));
@@ -264,8 +258,8 @@ export async function analyzePdfForCompression(
     minimumDpi: roundedDpis.length ? Math.min(...roundedDpis) : null,
     maximumDpi: roundedDpis.length ? Math.max(...roundedDpis) : null,
     imageCount,
-    hasSelectableText,
-    hasOcrLayer: scanLike && hasSelectableText,
+    hasSelectableText: textLayer.hasSelectableText,
+    hasOcrLayer: scanLike && textLayer.representative,
     fullPageImageRatio,
   };
 }

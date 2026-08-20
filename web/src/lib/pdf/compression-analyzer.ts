@@ -2,6 +2,10 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
+import {
+  selectCompressionSamplePages,
+  summarizeSelectableTextPages,
+} from "./compression-detection";
 import { PdfToolError, type PdfCompressionColorMode } from "./compression-types";
 // PERFECT_PDF_FULL32_V2_2
 
@@ -121,18 +125,7 @@ function runCommand(executable: string, args: string[], timeoutMs = 30_000) {
   });
 }
 
-export function selectCompressionSamplePages(pageCount: number) {
-  if (pageCount <= 5) {
-    return Array.from({ length: pageCount }, (_, index) => index + 1);
-  }
-  return [
-    1,
-    Math.max(1, Math.round(pageCount * 0.25)),
-    Math.max(1, Math.round(pageCount * 0.5)),
-    Math.max(1, Math.round(pageCount * 0.75)),
-    pageCount,
-  ].filter((page, index, pages) => pages.indexOf(page) === index);
-}
+export { selectCompressionSamplePages } from "./compression-detection";
 
 function median(values: number[]) {
   if (!values.length) return null;
@@ -218,20 +211,20 @@ async function readSelectableText(inputPath: string, pageNumbers: number[]) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const loadingTask = pdfjs.getDocument(pdfJsServerDocumentOptions(bytes));
   const document = await loadingTask.promise;
-  let characters = 0;
+  const characterCounts: number[] = [];
   try {
     for (const pageNumber of pageNumbers) {
       const page = await document.getPage(pageNumber);
       try {
         const text = await page.getTextContent();
-        characters += text.items.reduce(
+        characterCounts.push(text.items.reduce(
           (total, item) =>
             total +
             ("str" in item && typeof item.str === "string"
               ? item.str.trim().length
               : 0),
           0,
-        );
+        ));
       } finally {
         page.cleanup();
       }
@@ -239,7 +232,7 @@ async function readSelectableText(inputPath: string, pageNumbers: number[]) {
   } finally {
     await loadingTask.destroy();
   }
-  return characters >= pageNumbers.length * 12;
+  return summarizeSelectableTextPages(characterCounts);
 }
 
 export async function analyzePdfCompressionProfile(
@@ -252,21 +245,26 @@ export async function analyzePdfCompressionProfile(
     throw new PdfToolError("PDF_EMPTY", "O PDF não possui páginas para analisar.");
   }
   const sampledPages = selectCompressionSamplePages(pageCount);
-  const [imageList, hasSelectableText] = await Promise.all([
+  const [imageList, textLayer] = await Promise.all([
     runCommand("pdfimages", ["-list", inputPath]),
     readSelectableText(inputPath, sampledPages),
   ]);
   const rows = parsePdfImagesList(imageList);
-  const sampledSet = new Set(sampledPages);
-  const sampledRows = rows.filter((row) => sampledSet.has(row.page));
+  const rowsByPage = new Map<number, PdfImageRow[]>();
+  for (const row of rows) {
+    if (row.page > pageCount) continue;
+    const pageRows = rowsByPage.get(row.page) ?? [];
+    pageRows.push(row);
+    rowsByPage.set(row.page, pageRows);
+  }
   const dominantRows: Array<PdfImageRow & { coverage: number }> = [];
   let fullPageImages = 0;
   let coverageSum = 0;
-  for (const pageNumber of sampledPages) {
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = source.getPage(pageNumber - 1);
     const box = page.getMediaBox();
     const pageArea = Math.max(1, box.width * box.height);
-    const pageRows = sampledRows.filter((row) => row.page === pageNumber);
+    const pageRows = rowsByPage.get(pageNumber) ?? [];
     let best: (PdfImageRow & { coverage: number }) | null = null;
     for (const row of pageRows) {
       const widthPoints = (row.width * 72) / row.xPpi;
@@ -283,18 +281,18 @@ export async function analyzePdfCompressionProfile(
       if (best.coverage >= 0.82) fullPageImages += 1;
     }
   }
-  const fullPageImageRatio = fullPageImages / sampledPages.length;
-  const imageCoverageRatio = coverageSum / sampledPages.length;
+  const fullPageImageRatio = fullPageImages / pageCount;
+  const imageCoverageRatio = coverageSum / pageCount;
   const scanLike = fullPageImageRatio >= 0.8;
   const contentKind: PdfCompressionContentKind =
     rows.length === 0
       ? "VECTOR"
       : scanLike
-        ? hasSelectableText
+        ? textLayer.representative
           ? "SCANNED_OCR"
           : "SCANNED"
         : "MIXED";
-  const relevantRows = dominantRows.length ? dominantRows : sampledRows;
+  const relevantRows = dominantRows.length ? dominantRows : rows;
   const dpis = relevantRows.map((row) => Math.min(row.xPpi, row.yPpi));
   const sourceDpiValue = median(dpis);
   const roundedDpis = dpis.map((dpi) => Math.round(dpi));
@@ -374,8 +372,8 @@ export async function analyzePdfCompressionProfile(
     fullPageImageRatio,
     imageCoverageRatio,
     imageCount: rows.length,
-    hasSelectableText,
-    hasOcrLayer: scanLike && hasSelectableText,
+    hasSelectableText: textLayer.hasSelectableText,
+    hasOcrLayer: scanLike && textLayer.representative,
     predominantImageEncoding,
     bitsPerComponent,
     alreadyOptimized,
