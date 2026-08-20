@@ -301,13 +301,43 @@ function samplePages(pageCount: number) {
   ].filter((page, index, pages) => pages.indexOf(page) === index);
 }
 
+const VISUAL_SAMPLE_SIZE = 384;
+const VISUAL_DARK_THRESHOLD = 248;
+const VISUAL_POSITION_TOLERANCE_PX = 2;
+
 async function normalizedVisual(bytes: Buffer) {
   return sharp(bytes, { failOn: "error" })
     .flatten({ background: "#FFFFFF" })
     .grayscale()
-    .resize(384, 384, { fit: "fill" })
+    .resize(VISUAL_SAMPLE_SIZE, VISUAL_SAMPLE_SIZE, { fit: "fill" })
     .raw()
     .toBuffer();
+}
+
+function nearbyDarkMask(candidate: Buffer) {
+  const mask = new Uint8Array(candidate.length);
+  for (let index = 0; index < candidate.length; index += 1) {
+    if ((candidate[index] ?? 255) > VISUAL_DARK_THRESHOLD) continue;
+    const x = index % VISUAL_SAMPLE_SIZE;
+    const y = Math.floor(index / VISUAL_SAMPLE_SIZE);
+    for (
+      let row = Math.max(0, y - VISUAL_POSITION_TOLERANCE_PX);
+      row <= Math.min(VISUAL_SAMPLE_SIZE - 1, y + VISUAL_POSITION_TOLERANCE_PX);
+      row += 1
+    ) {
+      for (
+        let column = Math.max(0, x - VISUAL_POSITION_TOLERANCE_PX);
+        column <= Math.min(
+          VISUAL_SAMPLE_SIZE - 1,
+          x + VISUAL_POSITION_TOLERANCE_PX,
+        );
+        column += 1
+      ) {
+        mask[row * VISUAL_SAMPLE_SIZE + column] = 1;
+      }
+    }
+  }
+  return mask;
 }
 
 async function validateLossyVisual(inputPath: string, candidatePath: string) {
@@ -333,6 +363,7 @@ async function validateLossyVisual(inputPath: string, candidatePath: string) {
         "O candidato alterou as dimensões visuais.",
       );
     }
+    const candidateDarkNearby = nearbyDarkMask(candidate);
     let absoluteError = 0;
     let darkSource = 0;
     let missingDark = 0;
@@ -342,7 +373,7 @@ async function validateLossyVisual(inputPath: string, candidatePath: string) {
       absoluteError += Math.abs(left - right);
       if (left < 220) {
         darkSource += 1;
-        if (right > 248) missingDark += 1;
+        if (!candidateDarkNearby[index]) missingDark += 1;
       }
     }
     const meanError = absoluteError / Math.max(1, source.length);

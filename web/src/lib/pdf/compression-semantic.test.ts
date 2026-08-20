@@ -55,6 +55,70 @@ describe("validateSemanticCandidate", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("aceita pequeno deslocamento visual causado por reamostragem", async () => {
+    const files = await tempPaths();
+    const source = await PDFDocument.create();
+    const sourcePage = source.addPage([384, 384]);
+    const candidate = await PDFDocument.create();
+    const candidatePage = candidate.addPage([384, 384]);
+
+    for (let y = 48; y <= 336; y += 18) {
+      sourcePage.drawRectangle({
+        x: 48,
+        y,
+        width: 288,
+        height: 1,
+        color: rgb(0, 0, 0),
+      });
+      candidatePage.drawRectangle({
+        x: 50,
+        y,
+        width: 288,
+        height: 1,
+        color: rgb(0, 0, 0),
+      });
+    }
+
+    await writeFile(files.source, await source.save());
+    await writeFile(files.candidate, await candidate.save());
+
+    await expect(
+      validateSemanticCandidate(files.source, files.candidate),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejeita remoção real de conteúdo visual", async () => {
+    const files = await tempPaths();
+    const source = await PDFDocument.create();
+    const sourcePage = source.addPage([384, 384]);
+    const candidate = await PDFDocument.create();
+    const candidatePage = candidate.addPage([384, 384]);
+
+    for (let y = 48; y <= 336; y += 18) {
+      sourcePage.drawRectangle({
+        x: 48,
+        y,
+        width: 288,
+        height: 2,
+        color: rgb(0, 0, 0),
+      });
+    }
+    candidatePage.drawRectangle({
+      x: 48,
+      y: 48,
+      width: 288,
+      height: 2,
+      color: rgb(0, 0, 0),
+    });
+
+    await writeFile(files.source, await source.save());
+    await writeFile(files.candidate, await candidate.save());
+
+    await expect(
+      validateSemanticCandidate(files.source, files.candidate),
+    ).rejects.toMatchObject({ code: "PDF_VISUAL_INTEGRITY_FAILED" });
+  });
+
   it("rejeita perda de camada textual mesmo quando o texto é invisível", async () => {
     const files = await tempPaths();
 
