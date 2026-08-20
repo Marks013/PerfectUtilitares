@@ -23,9 +23,9 @@ export const PDF_COMPRESSION_PRESETS: Record<
 > = {
   SCREEN: {
     method: "AUTO",
-    dpi: 96,
+    dpi: 120,
     colorMode: "KEEP_DETECTED",
-    imageQuality: 55,
+    imageQuality: 60,
     monochromeThreshold: 160,
   },
   BALANCED: {

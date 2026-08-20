@@ -179,9 +179,9 @@ export const QUALITY_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  { value: "SCREEN", label: "Compacto", description: "96 DPI e recompressão forte" },
-  { value: "BALANCED", label: "Equilibrado", description: "150 DPI com escolha automática" },
-  { value: "PRINT", label: "Impressão", description: "220 DPI e maior fidelidade" },
+  { value: "SCREEN", label: "Compacto", description: "120 DPI · maior redução" },
+  { value: "BALANCED", label: "Equilibrado", description: "150 DPI · leitura e tamanho" },
+  { value: "PRINT", label: "Impressão", description: "220 DPI · maior definição" },
 ];
 
 export const METHOD_OPTIONS: Array<{
@@ -192,17 +192,17 @@ export const METHOD_OPTIONS: Array<{
   {
     value: "AUTO",
     label: "Automática",
-    description: "Plano individual por PDF, preservando OCR, texto e vetores",
+    description: "Escolhe o melhor tratamento e preserva texto pesquisável",
   },
   {
     value: "LOSSLESS",
     label: "Sem perdas",
-    description: "Compactação estrutural sem alteração visual",
+    description: "Mantém aparência e conteúdo originais",
   },
   {
     value: "RASTER",
     label: "Recompressão visual",
-    description: "Só achata páginas com opt-in explícito de perda semântica",
+    description: "Prioriza redução mantendo a estrutura quando possível",
   },
 ];
 

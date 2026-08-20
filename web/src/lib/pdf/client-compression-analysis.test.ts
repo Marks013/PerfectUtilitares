@@ -56,18 +56,18 @@ describe("PDF compression analysis", () => {
     ).toMatchObject({
       method: "LOSSLESS",
       dpi: 150,
-      colorMode: "COLOR",
+      colorMode: "KEEP_DETECTED",
     });
   });
 
-  it("uses the nearest supported DPI for scanned documents", () => {
+  it("reduces oversized scans to a readable automatic target", () => {
     expect(
       deriveCompressionRecommendation([analysis({ sourceDpi: 287 })]),
     ).toMatchObject({
       method: "AUTO",
-      dpi: 300,
-      colorMode: "COLOR",
-      imageQuality: 86,
+      dpi: 150,
+      colorMode: "KEEP_DETECTED",
+      imageQuality: 76,
     });
   });
 
@@ -85,8 +85,8 @@ describe("PDF compression analysis", () => {
       ]),
     ).toMatchObject({
       method: "AUTO",
-      dpi: 200,
-      colorMode: "COLOR",
+      dpi: 150,
+      colorMode: "KEEP_DETECTED",
     });
   });
 
@@ -104,6 +104,10 @@ describe("PDF compression analysis", () => {
           fullPageImageRatio: 1,
         }),
       ]),
-    ).toMatchObject({ method: "AUTO", dpi: 200, colorMode: "MONOCHROME" });
+    ).toMatchObject({
+      method: "AUTO",
+      dpi: 150,
+      colorMode: "KEEP_DETECTED",
+    });
   });
 });

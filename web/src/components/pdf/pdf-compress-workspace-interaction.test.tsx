@@ -120,6 +120,7 @@ function makeModel(options?: {
   const model = {
     Archive: DummyIcon,
     ArrowLeft: DummyIcon,
+    ChevronDown: DummyIcon,
     Check: DummyIcon,
     Download: DummyIcon,
     FileSearch: DummyIcon,
@@ -129,7 +130,11 @@ function makeModel(options?: {
     Loader2: DummyIcon,
     Minimize2: DummyIcon,
     Palette: DummyIcon,
+    Printer: DummyIcon,
     ScanLine: DummyIcon,
+    ShieldCheck: DummyIcon,
+    SlidersHorizontal: DummyIcon,
+    Sparkles: DummyIcon,
     Upload: DummyIcon,
     X: DummyIcon,
     COLOR_OPTIONS,
@@ -188,6 +193,13 @@ describe("PDF compression workspace interaction regressions", () => {
     const root = PdfCompressWorkspaceView({ model });
 
     expect(textContent(root)).toContain("Comprimir novamente");
+    expect(textContent(root)).toContain("Opções avançadas");
+
+    const advanced = findElement(
+      root,
+      (element) => element.type === "details",
+    );
+    expect(advanced.props.open).not.toBe(true);
 
     const quality = findElement(
       root,
@@ -288,6 +300,9 @@ describe("PDF compression workspace interaction regressions", () => {
     );
     expect(controllerSource).toMatch(
       /function updateSettings[\s\S]*?invalidateResult\(\);/,
+    );
+    expect(controllerSource).toMatch(
+      /function updateSettings[\s\S]*?preset: null/,
     );
     expect(controllerSource).toMatch(
       /function invalidateResult\(\)[\s\S]*?setOutputs\(\[\]\)[\s\S]*?setJobId\(null\)[\s\S]*?phase: "IDLE"/,

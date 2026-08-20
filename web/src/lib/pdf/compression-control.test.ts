@@ -241,7 +241,7 @@ describe("PDF compression control paths", () => {
       temporaryPath: "/tmp/output.partial",
     });
     expect(mocks.discard).not.toHaveBeenCalled();
-    expect(mocks.rm).toHaveBeenCalledTimes(6);
+    expect(mocks.rm).toHaveBeenCalledTimes(10);
     expect(result).toMatchObject({
       artifactId: "output-1",
       sizeBytes: 100n,
@@ -267,7 +267,7 @@ describe("PDF compression control paths", () => {
     expect(mocks.discard).toHaveBeenCalledWith({
       temporaryPath: "/tmp/output.partial",
     });
-    expect(mocks.rm).toHaveBeenCalledTimes(6);
+    expect(mocks.rm).toHaveBeenCalledTimes(10);
   });
 
   it("discards the reservation when raster compression exceeds the render limit", async () => {
@@ -292,7 +292,7 @@ describe("PDF compression control paths", () => {
     expect(mocks.discard).toHaveBeenCalledWith({
       temporaryPath: "/tmp/output.partial",
     });
-    expect(mocks.rm).toHaveBeenCalledTimes(6);
+    expect(mocks.rm).toHaveBeenCalledTimes(10);
   });
 
   it("rejects raster compression above the thousand-page safety limit", async () => {

@@ -90,6 +90,7 @@ RUN apk add --no-cache \
     qpdf
 COPY --from=pdf-worker-builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=pdf-worker-builder --chown=node:node /app/dist ./dist
+COPY --chown=node:node src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py
 COPY ops/container-health/pdf-worker-healthcheck /usr/local/bin/pdf-worker-healthcheck
 RUN chmod 0555 /usr/local/bin/pdf-worker-healthcheck
 USER node

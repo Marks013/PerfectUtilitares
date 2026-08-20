@@ -101,9 +101,9 @@ describe("pdf schemas", () => {
     expect(pdfCompressionOptionsSchema.parse({ quality: "SCREEN" })).toMatchObject({
       quality: "SCREEN",
       method: "AUTO",
-      dpi: 96,
+      dpi: 120,
       colorMode: "KEEP_DETECTED",
-      imageQuality: 55,
+      imageQuality: 60,
       monochromeThreshold: 160,
       preserveTextLayer: true,
       allowSemanticLoss: false,

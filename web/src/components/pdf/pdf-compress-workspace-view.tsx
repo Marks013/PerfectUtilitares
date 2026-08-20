@@ -7,7 +7,17 @@ import type { usePdfCompressWorkspaceController } from "./pdf-compress-workspace
 type Model = ReturnType<typeof usePdfCompressWorkspaceController>;
 
 export function PdfCompressWorkspaceView({ model }: { model: Model }) {
-  const { Archive, ArrowLeft, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, QUALITY_OPTIONS, ScanLine, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, setWarning, settings, updateSettings, warning, work } = model;
+  const { Archive, ArrowLeft, ChevronDown, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, Printer, QUALITY_OPTIONS, ScanLine, ShieldCheck, SlidersHorizontal, Sparkles, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, setWarning, settings, updateSettings, warning, work } = model;
+  const presetLabel = analyzing
+    ? "Analisando"
+    : settings?.preset === "SOURCE"
+      ? "Automático"
+      : settings?.preset
+        ? QUALITY_OPTIONS.find((option) => option.value === settings.preset)?.label
+        : settings
+          ? "Personalizado"
+          : "Aguardando PDF";
+  const PresetStatusIcon = settings?.preset === null ? SlidersHorizontal : Sparkles;
   return (
 <div className="pdf-workspace">
       <header className="pdf-workspace__header">
@@ -35,18 +45,9 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                   : "Envie um PDF para detectar suas características."}
             </small>
           </div>
-          <span>
-            {analyzing
-              ? "Analisando"
-              : settings?.preset === "SOURCE"
-                ? "Baseada no documento"
-                : settings?.preset
-                  ? QUALITY_OPTIONS.find(
-                      (option) => option.value === settings.preset,
-                    )?.label
-                  : settings
-                    ? "Personalizado"
-                    : "Aguardando PDF"}
+          <span className="pdf-compress-settings__status">
+            <PresetStatusIcon className="size-3.5" aria-hidden="true" />
+            {presetLabel}
           </span>
         </div>
 
@@ -120,59 +121,110 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
               disabled={busy || analyzing || !analyses.length}
               onChange={() => applyDocumentRecommendation(analyses)}
             />
-            <strong>Do documento</strong>
-            <small>Usa a análise como ponto de partida</small>
+            <span className="pdf-quality-control__title">
+              <Sparkles className="size-4" aria-hidden="true" />
+              <strong>Automático</strong>
+            </span>
+            <small>Escolhe conforme cada documento</small>
           </label>
-          {QUALITY_OPTIONS.map((option) => (
-            <label
-              key={option.value}
-              data-active={settings?.preset === option.value}
-              data-disabled={busy || analyzing || !files.length}
-            >
-              <input
-                className="sr-only"
-                type="radio"
-                name="compression-preset"
-                value={option.value}
-                checked={settings?.preset === option.value}
-                disabled={busy || analyzing || !files.length}
-                onChange={() => applyPreset(option.value)}
-              />
-              <strong>{option.label}</strong>
-              <small>{option.description}</small>
-            </label>
-          ))}
+          {QUALITY_OPTIONS.map((option) => {
+            const OptionIcon =
+              option.value === "SCREEN"
+                ? Minimize2
+                : option.value === "PRINT"
+                  ? Printer
+                  : Gauge;
+            return (
+              <label
+                key={option.value}
+                data-active={settings?.preset === option.value}
+                data-disabled={busy || analyzing || !files.length}
+              >
+                <input
+                  className="sr-only"
+                  type="radio"
+                  name="compression-preset"
+                  value={option.value}
+                  checked={settings?.preset === option.value}
+                  disabled={busy || analyzing || !files.length}
+                  onChange={() => applyPreset(option.value)}
+                />
+                <span className="pdf-quality-control__title">
+                  <OptionIcon className="size-4" aria-hidden="true" />
+                  <strong>{option.label}</strong>
+                </span>
+                <small>{option.description}</small>
+              </label>
+            );
+          })}
+          {settings?.preset === null ? (
+            <div className="pdf-quality-control__custom" aria-live="polite">
+              <span className="pdf-quality-control__title">
+                <SlidersHorizontal className="size-4" aria-hidden="true" />
+                <strong>Personalizado</strong>
+              </span>
+              <small>Alterações manuais aplicadas</small>
+            </div>
+          ) : null}
         </fieldset>
 
         {settings ? (
           <>
-            <div className="pdf-compression-options">
+            <details className="pdf-compression-advanced">
+              <summary>
+                <span>
+                  <SlidersHorizontal className="size-4" aria-hidden="true" />
+                  <span>
+                    <strong>Opções avançadas</strong>
+                    <small>DPI, tonalidade, qualidade e método</small>
+                  </span>
+                </span>
+                <span
+                  className="pdf-compression-advanced__state"
+                  data-custom={settings.preset === null}
+                >
+                  {settings.preset === null ? "Personalizado" : "Opcional"}
+                  <ChevronDown className="size-4" aria-hidden="true" />
+                </span>
+              </summary>
+              <div className="pdf-compression-options">
               <fieldset className="pdf-compression-option pdf-compression-option--wide">
                 <legend>
                   <Minimize2 className="size-4" aria-hidden="true" />
                   Tipo de compactação
                 </legend>
                 <div className="pdf-compression-methods">
-                  {METHOD_OPTIONS.map((option) => (
-                    <label
-                      key={option.value}
-                      data-active={settings.method === option.value}
-                    >
-                      <input
-                        className="sr-only"
-                        type="radio"
-                        name="compression-method"
-                        value={option.value}
-                        checked={settings.method === option.value}
-                        disabled={busy}
-                        onChange={() =>
-                          updateSettings({ method: option.value })
-                        }
-                      />
-                      <strong>{option.label}</strong>
-                      <small>{option.description}</small>
-                    </label>
-                  ))}
+                  {METHOD_OPTIONS.map((option) => {
+                    const MethodIcon =
+                      option.value === "AUTO"
+                        ? Sparkles
+                        : option.value === "LOSSLESS"
+                          ? ShieldCheck
+                          : ScanLine;
+                    return (
+                      <label
+                        key={option.value}
+                        data-active={settings.method === option.value}
+                      >
+                        <input
+                          className="sr-only"
+                          type="radio"
+                          name="compression-method"
+                          value={option.value}
+                          checked={settings.method === option.value}
+                          disabled={busy}
+                          onChange={() =>
+                            updateSettings({ method: option.value })
+                          }
+                        />
+                        <span className="pdf-compression-methods__title">
+                          <MethodIcon className="size-4" aria-hidden="true" />
+                          <strong>{option.label}</strong>
+                        </span>
+                        <small>{option.description}</small>
+                      </label>
+                    );
+                  })}
                 </div>
               </fieldset>
 
@@ -282,7 +334,8 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                   </small>
                 </label>
               )}
-            </div>
+              </div>
+            </details>
 
             <div
               className="pdf-compression-summary"
@@ -297,18 +350,18 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
               </strong>
               <small>
                 {settings.method === "LOSSLESS"
-                  ? "Mantém texto selecionável, vetores e imagens sem rasterizar."
+                  ? "Mantém texto pesquisável, elementos gráficos e imagens originais."
                   : settings.method === "AUTO"
-                    ? `O servidor analisa estrutura, OCR, cobertura de imagem, resolução e codificação antes de decidir. OCR e conteúdo misto usam recompressão preservadora; AUTO não achata estruturas semânticas.`
+                    ? "Analisa cada documento e reduz imagens quando houver ganho seguro, mantendo texto pesquisável."
                     : `Alvo: ${settings.dpi} DPI · ${
                         COLOR_OPTIONS.find(
                           (option) => option.value === settings.colorMode,
                         )?.label
                       } · ${
                         settings.colorMode === "MONOCHROME"
-                          ? "JBIG2 lossless após downsample quando seguro; CCITT como estágio/fallback"
-                          : `DCT/JPEG ${settings.imageQuality}% com validação visual`
-                      }. O servidor preserva texto, vetores e OCR quando rasterizar causaria perda estrutural.`}
+                          ? `corte do preto ${settings.monochromeThreshold}`
+                          : `qualidade ${settings.imageQuality}%`
+                      }. Texto pesquisável e estrutura serão preservados quando possível.`}
               </small>
             </div>
           </>

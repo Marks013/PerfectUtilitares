@@ -236,6 +236,7 @@ export async function compressPdfFile({
     `${preservingBase}.qpdf-images.pdf`,
     `${preservingBase}.gs-images.pdf`,
     `${preservingBase}.mono-jbig2.pdf`,
+    `${preservingBase}.mono-xobject-jbig2.pdf`,
     `${preservingBase}.deep-opt.pdf`,
     `${preservingBase}.ocr-opt.pdf`,
   ];
@@ -458,6 +459,9 @@ export async function compressPdfFile({
                 ...plan.effectiveOptions,
                 dpi: resultAnalysis.sourceDpi ?? plan.effectiveOptions.dpi,
                 colorMode: resultAnalysis.colorMode,
+                monochromeThreshold:
+                  selectedCandidate.appliedMonochromeThreshold ??
+                  plan.effectiveOptions.monochromeThreshold,
               }
             : null;
     const resultStrategy =

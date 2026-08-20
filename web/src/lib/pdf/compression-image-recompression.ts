@@ -16,6 +16,7 @@ export type PdfCompressionCandidateKind =
   | "GS_IMAGE_RECOMPRESSION"
   | "GS_OCRMYPDF_DEEP"
   | "MONO_JBIG2"
+  | "MONO_XOBJECT_JBIG2"
   | "OCRMYPDF_LOSSLESS"
   | "RASTER";
 
@@ -28,6 +29,7 @@ export type PdfCompressionCandidate = {
   visualTransform: boolean;
   // true se algum estágio puder alterar amostras de imagem.
   lossy: boolean;
+  appliedMonochromeThreshold?: number;
   notApplied: string[];
 };
 
@@ -186,7 +188,7 @@ export function buildGhostscriptImageArgs({
     "-dDownsampleMonoImages=true",
     "-dColorImageDownsampleType=/Bicubic",
     "-dGrayImageDownsampleType=/Bicubic",
-    "-dMonoImageDownsampleType=/Bicubic",
+    "-dMonoImageDownsampleType=/Subsample",
     // O default do pdfwrite é conservador demais para 250 -> 150/220 DPI.
     "-dColorImageDownsampleThreshold=1.05",
     "-dGrayImageDownsampleThreshold=1.05",
@@ -326,6 +328,61 @@ export function shouldUseJbig2PostOptimization(
   );
 }
 
+export function resolveAdaptiveMonoXObjectTargetDpi(
+  profile: PdfCompressionProfile,
+  options: PdfCompressionEffectiveOptions,
+) {
+  if (
+    profile.optimizationClass !== "OPTIMIZED_MONO" ||
+    profile.predominantImageEncoding !== "JBIG2" ||
+    profile.bitsPerComponent !== 1 ||
+    profile.colorMode !== "MONOCHROME" ||
+    options.colorMode !== "MONOCHROME" ||
+    profile.sourceDpi === null ||
+    profile.sourceDpi <= options.dpi
+  ) {
+    return null;
+  }
+
+  const targetDpi = Math.max(72, options.dpi);
+
+  return targetDpi < profile.sourceDpi ? targetDpi : null;
+}
+
+export function resolveAdaptiveMonoXObjectThreshold(
+  options: PdfCompressionEffectiveOptions,
+) {
+  return options.monochromeThreshold;
+}
+
+async function monoXObjectJbig2Candidate({
+  inputPath,
+  outputPath,
+  sourceDpi,
+  targetDpi,
+  threshold,
+}: {
+  inputPath: string;
+  outputPath: string;
+  sourceDpi: number;
+  targetDpi: number;
+  threshold: number;
+}) {
+  await runTool("python3", [
+    process.env.PDF_MONO_XOBJECT_RESAMPLER ??
+      "/app/mono-xobject-resample.py",
+    inputPath,
+    outputPath,
+    "--source-dpi",
+    String(sourceDpi),
+    "--target-dpi",
+    String(targetDpi),
+    "--threshold",
+    String(threshold),
+  ]);
+  await validateSemanticCandidate(inputPath, outputPath);
+}
+
 export async function buildPreservingImageCandidates({
   inputPath,
   baseOutputPath,
@@ -338,6 +395,39 @@ export async function buildPreservingImageCandidates({
   profile: PdfCompressionProfile;
 }) {
   const candidates: PdfCompressionCandidate[] = [];
+
+  const adaptiveMonoTargetDpi = resolveAdaptiveMonoXObjectTargetDpi(
+    profile,
+    options,
+  );
+  if (adaptiveMonoTargetDpi !== null && profile.sourceDpi !== null) {
+    const monoXObjectPath = `${baseOutputPath}.mono-xobject-jbig2.pdf`;
+    const adaptiveThreshold = resolveAdaptiveMonoXObjectThreshold(options);
+    try {
+      await monoXObjectJbig2Candidate({
+        inputPath,
+        outputPath: monoXObjectPath,
+        sourceDpi: profile.sourceDpi,
+        targetDpi: adaptiveMonoTargetDpi,
+        threshold: adaptiveThreshold,
+      });
+      candidates.push(
+        candidate({
+          path: monoXObjectPath,
+          kind: "MONO_XOBJECT_JBIG2",
+          engine: "pikepdf + Pillow + jbig2enc",
+          description:
+            `XObjects monocromáticos reamostrados de forma adaptativa para ${adaptiveMonoTargetDpi} DPI e reencodados em JBIG2 generic lossless; páginas e camada OCR originais foram preservadas.`,
+          visualTransform: true,
+          lossy: true,
+          appliedMonochromeThreshold: adaptiveThreshold,
+          notApplied: ["imageQuality"],
+        }),
+      );
+    } catch {
+      await rm(monoXObjectPath, { force: true }).catch(() => undefined);
+    }
+  }
 
   const qpdfPath = `${baseOutputPath}.qpdf-images.pdf`;
   try {
@@ -369,7 +459,7 @@ export async function buildPreservingImageCandidates({
     profile.predominantImageEncoding === "FLATE" ||
     profile.predominantImageEncoding === "OTHER";
 
-  if (imageWork) {
+  if (imageWork && adaptiveMonoTargetDpi === null) {
     const safeColorMode = resolveSafeGhostscriptColorMode(options, profile);
     const notApplied =
       options.colorMode === "MONOCHROME" && safeColorMode !== "MONOCHROME"

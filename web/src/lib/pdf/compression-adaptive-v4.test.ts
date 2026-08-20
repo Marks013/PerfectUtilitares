@@ -5,6 +5,8 @@ import {
   buildGhostscriptImageArgs,
   buildOcrMyPdfOptimizerArgs,
   ocrMyPdfOptimizationLevel,
+  resolveAdaptiveMonoXObjectTargetDpi,
+  resolveAdaptiveMonoXObjectThreshold,
   resolveSafeGhostscriptColorMode,
   shouldUseJbig2PostOptimization,
 } from "./compression-image-recompression";
@@ -72,6 +74,44 @@ describe("adaptive PDF compression v4.2", () => {
     expect(args).toContain("-dMonoImageResolution=150");
     expect(args).toContain("-dMonoImageFilter=/CCITTFaxEncode");
     expect(args).toContain("-dMonoImageDownsampleThreshold=1.05");
+    expect(args).toContain("-dMonoImageDownsampleType=/Subsample");
+  });
+
+  it("usa caminho XObject adaptativo para JBIG2 já otimizado", () => {
+    const source = profile();
+    const opts = options();
+    expect(resolveAdaptiveMonoXObjectTargetDpi(source, opts)).toBe(150);
+    expect(resolveAdaptiveMonoXObjectThreshold(opts)).toBe(160);
+  });
+
+  it("respeita overrides explícitos no caminho XObject monocromático", () => {
+    const source = profile();
+    const opts = options({
+      dpi: 165,
+      monochromeThreshold: 172,
+      userOverrides: {
+        method: false,
+        dpi: true,
+        colorMode: false,
+        imageQuality: false,
+        monochromeThreshold: true,
+      },
+    });
+    expect(resolveAdaptiveMonoXObjectTargetDpi(source, opts)).toBe(165);
+    expect(resolveAdaptiveMonoXObjectThreshold(opts)).toBe(172);
+  });
+
+  it("não usa XObject adaptativo fora de OPTIMIZED_MONO/JBIG2 bilevel", () => {
+    expect(
+      resolveAdaptiveMonoXObjectTargetDpi(
+        profile({
+          optimizationClass: "RECOMPRESSIBLE_JPEG",
+          predominantImageEncoding: "JPEG",
+          bitsPerComponent: 8,
+        }),
+        options(),
+      ),
+    ).toBeNull();
   });
 
   it("não finge threshold 1-bit de uma origem 8-bit no AUTO", () => {

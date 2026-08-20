@@ -5,6 +5,7 @@
 import {
   Archive,
   ArrowLeft,
+  ChevronDown,
   Check,
   Download,
   FileSearch,
@@ -13,7 +14,11 @@ import {
   Loader2,
   Minimize2,
   Palette,
+  Printer,
   ScanLine,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
   Upload,
   X,
 } from "lucide-react";
@@ -485,7 +490,7 @@ export function usePdfCompressWorkspaceController() {
     }
   }
 
-    return { Archive, ArrowLeft, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, QUALITY_OPTIONS, ScanLine, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, setWarning, settings, updateSettings, warning, work };
+    return { Archive, ArrowLeft, ChevronDown, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, Printer, QUALITY_OPTIONS, ScanLine, ShieldCheck, SlidersHorizontal, Sparkles, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, setWarning, settings, updateSettings, warning, work };
 }
 
 export function PdfCompressWorkspace() {

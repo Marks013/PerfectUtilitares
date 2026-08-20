@@ -133,8 +133,10 @@ export function deriveCompressionRecommendation(
     (item) =>
       item.contentKind === "SCANNED" || item.contentKind === "SCANNED_OCR",
   );
+  const automaticDpi =
+    hasScan && sourceDpi !== null && sourceDpi > 150 ? 150 : sourceDpi;
   const dpi = nearestDpi(
-    Math.max(72, Math.min(300, sourceDpi ?? (hasScan ? 200 : 150))),
+    Math.max(72, Math.min(300, automaticDpi ?? 150)),
   );
   return {
     method: allVector ? "LOSSLESS" : "AUTO",
