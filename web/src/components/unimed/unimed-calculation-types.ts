@@ -13,6 +13,7 @@ export type DependentValues = {
   source: "OFFICIAL" | "MANUAL";
   selected: boolean;
   name: string;
+  cpf?: string;
   birthDate: string | null;
   inclusionDate: string;
   planCode: string | null;

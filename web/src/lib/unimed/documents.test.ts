@@ -267,6 +267,22 @@ describe("Unimed DOCX documents", () => {
     },
   );
 
+  it("maps a manually supplied dependent into RN561 values", () => {
+    const result = buildUnimedDocumentValues(
+      beneficiary({
+        dependents: [
+          { fullName: "Dependente Manual", cpf: "11144477735" },
+        ],
+      }),
+      1,
+    );
+
+    expect(result.values).toMatchObject({
+      DEPENDENTE1: "Dependente Manual",
+      CPF1: "111.444.777-35",
+    });
+  });
+
   it("replaces cached merge results, removes data links and preserves layout parts", async () => {
     const input = await syntheticTemplate();
     const values = Object.fromEntries(

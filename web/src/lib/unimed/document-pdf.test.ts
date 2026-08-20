@@ -102,6 +102,9 @@ describe("Unimed document PDF orchestration", () => {
     const result = await queueUnimedDocumentPdf({
       beneficiaryId: "beneficiary-test-123",
       dependentIds: ["dependent-test-123"],
+      manualDependents: [
+        { fullName: "Dependente Manual", cpf: "11144477735" },
+      ],
       documentKind: "RN561",
       moduleSessionId,
       reasonCode: 2,
@@ -113,7 +116,13 @@ describe("Unimed document PDF orchestration", () => {
       tenantId,
       "beneficiary-test-123",
       "RN561",
-      { dependentIds: ["dependent-test-123"], reasonCode: 2 },
+      {
+        dependentIds: ["dependent-test-123"],
+        manualDependents: [
+          { fullName: "Dependente Manual", cpf: "11144477735" },
+        ],
+        reasonCode: 2,
+      },
     );
     expect(mocks.createDraft).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -149,6 +158,7 @@ describe("Unimed document PDF orchestration", () => {
       queueUnimedDocumentPdf({
         beneficiaryId: "beneficiary-test-123",
         dependentIds: ["dependent-test-123"],
+        manualDependents: [],
         documentKind: "RN561",
         moduleSessionId,
         reasonCode: 2,

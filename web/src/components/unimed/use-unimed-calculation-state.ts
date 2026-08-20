@@ -217,7 +217,9 @@ export function useUnimedCalculationState({
   function blurMoney(field: MoneyField) {
     const value = form.holder[field];
     if (!value) return;
-    updateHolder(field, formatMoneyInput(value));
+    const formattedValue = formatMoneyInput(value);
+    if (formattedValue === value) return;
+    updateHolder(field, formattedValue);
   }
 
   function blurDependentMoney(
@@ -226,7 +228,9 @@ export function useUnimedCalculationState({
   ) {
     const value = dependent[field];
     if (!value) return;
-    updateDependent(dependent.id, field, formatMoneyInput(value));
+    const formattedValue = formatMoneyInput(value);
+    if (formattedValue === value) return;
+    updateDependent(dependent.id, field, formattedValue);
   }
 
   function resetWorkspace() {

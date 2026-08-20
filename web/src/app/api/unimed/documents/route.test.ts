@@ -192,6 +192,7 @@ describe("Unimed documents API", () => {
     expect(mocks.queueUnimedDocumentPdf).toHaveBeenCalledWith({
       beneficiaryId: "beneficiary-test-123",
       dependentIds: ["dependent-test-123"],
+      manualDependents: [],
       documentKind: "RN561",
       moduleSessionId: undefined,
       reasonCode: 2,
@@ -200,6 +201,64 @@ describe("Unimed documents API", () => {
     await expect(response.json()).resolves.toEqual({
       job: { id: "pdf-job-test-123", progress: 0, status: "QUEUED" },
     });
+  });
+
+  it("queues an RN561 with a validated manual dependent", async () => {
+    const response = await POST(
+      documentRequest({
+        ...validInput,
+        dependentIds: [],
+        manualDependents: [
+          {
+            clientId: "manual-dependent-123",
+            fullName: " Dependente Manual ",
+            cpf: "111.444.777-35",
+          },
+        ],
+        reasonCode: 1,
+      }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.queueUnimedDocumentPdf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dependentIds: [],
+        manualDependents: [
+          {
+            clientId: "manual-dependent-123",
+            fullName: "Dependente Manual",
+            cpf: "11144477735",
+          },
+        ],
+        reasonCode: 1,
+      }),
+    );
+  });
+
+  it("rejects a manual dependent without a complete CPF", async () => {
+    const response = await POST(
+      documentRequest({
+        ...validInput,
+        dependentIds: [],
+        manualDependents: [
+          {
+            clientId: "manual-dependent-123",
+            fullName: "Dependente Manual",
+            cpf: "123",
+          },
+        ],
+        reasonCode: 1,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "UNIMED_DOCUMENT_CONFIRMATION_REQUIRED",
+        details: [{ path: "manualDependents.0.cpf" }],
+      },
+    });
+    expect(mocks.queueUnimedDocumentPdf).not.toHaveBeenCalled();
   });
 
   it("returns safe structured template errors", async () => {

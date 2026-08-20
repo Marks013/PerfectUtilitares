@@ -89,13 +89,14 @@ export function createDependent(
     source: "MANUAL",
     selected: true,
     name: "",
+    cpf: "",
     birthDate: null,
     inclusionDate: defaultInclusionDate,
     planCode: null,
     age: null,
     hasAddon: false,
     invoicePlanAmount: "",
-    addonAmount: "",
+    addonAmount: "0,00",
   };
 }
 

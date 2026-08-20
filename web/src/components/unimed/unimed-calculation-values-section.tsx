@@ -18,6 +18,7 @@ import type {
 import {
   MAX_DEPENDENTS,
   createDependent,
+  formatCpf,
 } from "./unimed-calculation-utils";
 
 type ValuesSectionProps = {
@@ -209,6 +210,33 @@ export function UnimedCalculationValuesSection({
                         className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
                       />
                     </div>
+                    {dependent.source === "MANUAL" ? (
+                      <div>
+                        <FieldLabel
+                          htmlFor={`dependent-${dependent.id}-cpf`}
+                          required
+                        >
+                          CPF
+                        </FieldLabel>
+                        <input
+                          id={`dependent-${dependent.id}-cpf`}
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          placeholder="000.000.000-00"
+                          value={dependent.cpf ?? ""}
+                          aria-invalid={Boolean(dependentError)}
+                          onChange={(event) =>
+                            updateDependent(
+                              dependent.id,
+                              "cpf",
+                              formatCpf(event.target.value),
+                            )
+                          }
+                          className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
+                        />
+                      </div>
+                    ) : null}
                     <div>
                       <FieldLabel
                         htmlFor={`dependent-${dependent.id}-inclusion-date`}

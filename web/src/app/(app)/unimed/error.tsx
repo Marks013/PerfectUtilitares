@@ -10,7 +10,7 @@ export default function UnimedError({
 }) {
   return (
     <div className="grid min-h-[28rem] place-items-center px-4">
-      <section className="w-full max-w-lg rounded-[var(--app-radius-lg)] border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] p-6 text-center shadow-[var(--app-shadow)]">
+      <section className="w-full max-w-lg rounded-(--app-radius-lg) border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] p-6 text-center shadow-[var(--app-shadow)]">
         <AlertTriangle
           className="mx-auto size-9 text-[color:var(--app-coral)]"
           aria-hidden="true"

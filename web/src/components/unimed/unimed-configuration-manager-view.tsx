@@ -31,7 +31,7 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
       value={{ errors: fieldErrors, clear: clearFieldError }}
     >
       <div className="space-y-6">
-        <header className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-7">
+        <header className="rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-7">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 py-1.5 text-xs font-black tracking-wide text-[color:var(--app-teal)] uppercase">
@@ -211,7 +211,7 @@ export function UnimedConfigurationManagerView({ model }: { model: Model }) {
 
         <UnimedConfigurationPlansSection model={model} />
 
-        <section className="hidden rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
+        <section className="hidden rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <SectionHeading
               icon={CircleDollarSign}

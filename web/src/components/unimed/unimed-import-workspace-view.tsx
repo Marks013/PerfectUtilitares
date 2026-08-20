@@ -8,7 +8,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
   const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, Archive, CalendarDays, CheckCircle2, Database, FileGroup, FileSpreadsheet, FileText, Loader2, LockKeyhole, RotateCcw, ShieldCheck, SummaryMetric, UsersRound, addressFiles, addressInputRef, baseBytes, baseFiles, beneficiaryFiles, beneficiaryInputRef, bytesLabel, competency, confirmationTarget, fileKey, invoiceFiles, invoiceInputRef, isBusy, isPayrollLoanBusy, mergeFiles, payrollLoanBytes, payrollLoanFiles, payrollLoanInputRef, payrollLoanState, publishBase, publishPayrollLoan, requestConfirmation, reset, selectedBaseSources, selectedMonthLabel, setAddressFiles, setBeneficiaryFiles, setCompetency, setConfirmationTarget, setInvoiceFiles, setPayrollLoanFiles, setPayrollLoanState, setState, state } = model;
   return (
 <div className="space-y-6">
-      <header className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-7">
+      <header className="rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-7">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-3 py-1.5 text-xs font-black tracking-wide text-[color:var(--app-teal)] uppercase">
@@ -38,7 +38,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-6">
-          <section className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
+          <section className="rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
             <div className="flex items-start gap-3">
               <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-gold)]">
                 <CalendarDays className="size-5" aria-hidden="true" />
@@ -79,7 +79,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
             />
           </section>
 
-          <section className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
+          <section className="rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
             <div className="mb-5">
               <h2 className="text-lg font-black text-[color:var(--app-fg)]">
                 Arquivos de origem
@@ -151,7 +151,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
             </div>
           </section>
 
-          <section className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
+          <section className="rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6">
             <div className="mb-5">
               <h2 className="text-lg font-black text-[color:var(--app-fg)]">
                 Empréstimo Consignado
@@ -314,7 +314,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
         </div>
 
         <aside className="space-y-5 xl:sticky xl:top-32">
-          <section className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)]">
+          <section className="rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)]">
             <h2 className="font-black text-[color:var(--app-fg)]">
               Resumo da seleção
             </h2>
@@ -380,7 +380,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
 
           {state.status === "uploading" || state.status === "processing" ? (
             <section
-              className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)]"
+              className="rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)]"
               aria-live="polite"
             >
               <div className="flex items-center gap-3">
@@ -420,7 +420,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
 
           {state.status === "error" ? (
             <section
-              className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] p-5"
+              className="rounded-(--app-radius-lg) border border-[color:var(--app-danger-border)] bg-[color:var(--app-danger-soft)] p-5"
               role="alert"
             >
               <AlertCircle
@@ -442,7 +442,7 @@ export function UnimedImportWorkspaceView({ model }: { model: Model }) {
 
       {state.status === "success" ? (
         <section
-          className="rounded-[var(--app-radius-lg)] border border-[color:var(--app-success-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6"
+          className="rounded-(--app-radius-lg) border border-[color:var(--app-success-border)] bg-[color:var(--app-card)] p-5 shadow-[var(--app-shadow)] sm:p-6"
           aria-live="polite"
         >
           <div className="flex items-start gap-3">

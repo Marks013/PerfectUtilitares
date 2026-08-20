@@ -45,6 +45,19 @@ export const unimedEmailRequestSchema = z
   })
   .strict();
 
+const manualDocumentDependentSchema = z
+  .object({
+    clientId: z.string().trim().min(8).max(64),
+    fullName: z.string().trim().min(2).max(200),
+    cpf: z
+      .string()
+      .trim()
+      .max(18)
+      .transform((value) => value.replace(/\D/g, ""))
+      .pipe(z.string().regex(/^\d{11}$/, "Informe um CPF com 11 dígitos.")),
+  })
+  .strict();
+
 export const unimedDocumentRequestSchema = z
   .object({
     beneficiaryId: z.string().trim().min(8).max(64),
@@ -54,16 +67,26 @@ export const unimedDocumentRequestSchema = z
       .refine((ids) => new Set(ids).size === ids.length, {
         message: "Não repita dependentes no mesmo documento.",
       }),
+    manualDependents: z.array(manualDocumentDependentSchema).max(6).default([]),
     reasonCode: z.number().int().min(1).max(9_999),
     confirmed: z.literal(true),
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.reasonCode === 1 && value.dependentIds.length === 0) {
+    const dependentCount =
+      value.dependentIds.length + value.manualDependents.length;
+    if (value.reasonCode === 1 && dependentCount === 0) {
       context.addIssue({
         code: "custom",
         message: "Selecione ao menos um dependente para esta exclusão.",
         path: ["dependentIds"],
+      });
+    }
+    if (dependentCount > 6) {
+      context.addIssue({
+        code: "custom",
+        message: "Selecione no máximo seis dependentes no documento.",
+        path: ["manualDependents"],
       });
     }
   });

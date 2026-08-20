@@ -21,7 +21,11 @@ export async function generateUnimedDocument(
   tenantId: string,
   beneficiaryId: string,
   documentKindOrLegacyReason: GeneratedDocumentKind | 1 | 2 | 8,
-  options?: { dependentIds?: string[]; reasonCode?: number },
+  options?: {
+    dependentIds?: string[];
+    manualDependents?: Array<{ fullName: string; cpf: string }>;
+    reasonCode?: number;
+  },
 ) {
   const selectedDependentIds = options?.dependentIds;
   const beneficiary = await prisma.unimedBeneficiary.findFirst({
@@ -91,7 +95,16 @@ export async function generateUnimedDocument(
         : beneficiary.category === "DEPENDENT"
           ? 1
           : 2;
-  const document = buildUnimedDocumentValues(beneficiary, templateReasonCode);
+  const document = buildUnimedDocumentValues(
+    {
+      ...beneficiary,
+      dependents: [
+        ...beneficiary.dependents,
+        ...(options?.manualDependents ?? []),
+      ],
+    },
+    templateReasonCode,
+  );
   const template = await loadVerifiedTemplate(document.kind);
   const bytes = await renderUnimedDocumentTemplate(
     template,

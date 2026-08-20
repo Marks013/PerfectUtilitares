@@ -180,7 +180,7 @@ export function ConfigSection({
       id={id}
       open={defaultOpen}
       tabIndex={-1}
-      className={`group scroll-mt-28 rounded-[var(--app-radius-lg)] border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4 shadow-[var(--app-shadow)] outline-none focus-within:border-[color:var(--app-teal)] sm:p-6 ${className}`}
+      className={`group scroll-mt-28 rounded-(--app-radius-lg) border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4 shadow-[var(--app-shadow)] outline-none focus-within:border-[color:var(--app-teal)] sm:p-6 ${className}`}
     >
       <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-3 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] [&::-webkit-details-marker]:hidden">
         <SectionHeading icon={icon} title={title} description={description} />

@@ -146,6 +146,7 @@ export function useUnimedCalculationWorkspaceController({
               ) ?? true)
             : true,
           name: item.fullName,
+          cpf: "",
           birthDate: item.birthDate,
           inclusionDate:
             dateInput(item.inclusionDate) || dateInput(beneficiary.inclusionDate),
@@ -275,13 +276,7 @@ export function useUnimedCalculationWorkspaceController({
       setResult(calculation);
       setPayrollLoans(nextPayrollLoans);
       if (documentRequired && options?.generateRequiredDocument !== false) {
-        if (input.manualDependents.length > 0) {
-          setDocumentError(
-            "Cálculo concluído. O documento automático exige dependentes cadastrados na base.",
-          );
-        } else {
-          void generateDocument(calculation);
-        }
+        void generateDocument(calculation);
       }
     } catch (error) {
       if (
@@ -392,22 +387,40 @@ export function useUnimedCalculationWorkspaceController({
   async function generateDocument(calculation = result) {
     const requestedReasonCode = Number(form.reasonCode);
     if (
-      form.dependents.some(
-        (dependent) => dependent.selected && dependent.source === "MANUAL",
-      )
-    ) {
-      setDocumentError(
-        "O documento automático exige dependentes cadastrados na base.",
-      );
-      return false;
-    }
-    if (
       !selectedBeneficiary ||
       !calculation ||
       !selectedReason ||
       selectedReason.documentKind === "NONE" ||
       isGeneratingDocument
     ) {
+      return false;
+    }
+
+    const manualDependents =
+      selectedReason.documentKind === "RN561"
+        ? form.dependents
+            .filter(
+              (dependent) =>
+                dependent.selected && dependent.source === "MANUAL",
+            )
+            .map((dependent) => ({
+              clientId: dependent.id,
+              fullName: dependent.name.trim(),
+              cpf: dependent.cpf?.replace(/\D/g, "") ?? "",
+            }))
+        : [];
+    const invalidManualDependent = manualDependents.find(
+      (dependent) => dependent.cpf.length !== 11,
+    );
+    if (invalidManualDependent) {
+      setErrors((current) => ({
+        ...current,
+        [`dependent-${invalidManualDependent.clientId}`]:
+          "Informe o CPF do dependente com 11 dígitos para gerar o documento.",
+      }));
+      setDocumentError(
+        `Informe o CPF de ${invalidManualDependent.fullName || "dependente manual"} para gerar o documento.`,
+      );
       return false;
     }
 
@@ -433,6 +446,7 @@ export function useUnimedCalculationWorkspaceController({
                 dependent.selected && dependent.source === "OFFICIAL",
             )
             .map((dependent) => dependent.id),
+          manualDependents,
           reasonCode: requestedReasonCode,
           confirmed: true,
         }),

@@ -318,6 +318,7 @@ test("Unimed calculates a manual dependent once with its own inclusion date", as
   expect(unlock.status()).toBe(200);
 
   const calculationRequests: Array<Record<string, unknown>> = [];
+  const documentRequests: Array<Record<string, unknown>> = [];
   await page.route("**/api/unimed/beneficiaries?**", async (route) => {
     await route.fulfill({
       status: 200,
@@ -395,6 +396,26 @@ test("Unimed calculates a manual dependent once with its own inclusion date", as
       }),
     });
   });
+  await page.route("**/api/unimed/documents**", async (route) => {
+    if (route.request().method() === "POST") {
+      documentRequests.push(
+        route.request().postDataJSON() as Record<string, unknown>,
+      );
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: { id: "unimed-document-e2e", progress: 0, status: "QUEUED" },
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/pdf",
+      body: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+    });
+  });
 
   await page.goto("/unimed");
   await page.locator("#unimed-reason").selectOption("1");
@@ -408,6 +429,7 @@ test("Unimed calculates a manual dependent once with its own inclusion date", as
   const manualDependent = page.locator("details").last();
   await manualDependent.locator("summary").click();
   await manualDependent.getByLabel("Nome").fill("Dependente manual E2E");
+  await manualDependent.getByLabel("CPF").fill("11144477735");
   await manualDependent.getByLabel("Inclusão no plano").fill("2026-08-10");
   await manualDependent.getByLabel("Plano na fatura").fill("150,50");
   await manualDependent.getByLabel("Acessório Funeral").fill("6,12");
@@ -427,6 +449,26 @@ test("Unimed calculates a manual dependent once with its own inclusion date", as
       },
     ],
   });
+  await page
+    .getByRole("button", { name: "Gerar documento obrigatório" })
+    .click();
+  await expect.poll(() => documentRequests.length).toBe(1);
+  expect(documentRequests[0]).toMatchObject({
+    dependentIds: [],
+    manualDependents: [
+      {
+        fullName: "Dependente manual E2E",
+        cpf: "11144477735",
+      },
+    ],
+    reasonCode: 1,
+  });
+  await expect(
+    page.getByRole("button", { name: "Imprimir duas vias" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Abrir PDF em nova aba" }),
+  ).toBeVisible();
 });
 
 test("PDF merge persists, queues, processes and downloads a valid result", async ({

@@ -48,13 +48,14 @@ describe("unimed calculation utilities", () => {
     expect(dependent).toMatchObject({
       source: "MANUAL",
       name: "",
+      cpf: "",
       birthDate: null,
       inclusionDate: "2026-08-01",
       planCode: null,
       age: null,
       hasAddon: false,
       invoicePlanAmount: "",
-      addonAmount: "",
+      addonAmount: "0,00",
     });
   });
 

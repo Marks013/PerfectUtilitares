@@ -123,6 +123,7 @@ export async function queueUnimedDocumentPdf({
   beneficiaryId,
   dependentIds,
   documentKind,
+  manualDependents,
   moduleSessionId,
   reasonCode,
   tenantId,
@@ -130,6 +131,7 @@ export async function queueUnimedDocumentPdf({
   beneficiaryId: string;
   dependentIds: string[];
   documentKind: GeneratedDocumentKind;
+  manualDependents: Array<{ fullName: string; cpf: string }>;
   moduleSessionId: string;
   reasonCode: number;
   tenantId: string;
@@ -138,7 +140,7 @@ export async function queueUnimedDocumentPdf({
     tenantId,
     beneficiaryId,
     documentKind,
-    { dependentIds, reasonCode },
+    { dependentIds, manualDependents, reasonCode },
   );
   const principal = principalKey(tenantId, moduleSessionId);
   const job = await createPdfDraftWithCapacity({
