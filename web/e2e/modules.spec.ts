@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
+import { calculateUnimed } from "../src/lib/unimed/calculation";
+import type { UnimedCalculationInput } from "../src/lib/unimed/types";
 
 const enabled = process.env.E2E_MUTATION === "1";
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -302,9 +304,135 @@ test("Unimed unlock creates a real session and reads configuration", async ({
   );
 });
 
+test("Unimed calculates a manual dependent once with its own inclusion date", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  test.skip(!unimedAdminPassword, "Isolated Unimed password is required");
+  await page.goto("/unimed/acesso");
+  const origin = new URL(page.url()).origin;
+  const unlock = await page.request.post("/api/unimed/access/session", {
+    headers: { origin },
+    data: { password: unimedAdminPassword },
+  });
+  expect(unlock.status()).toBe(200);
+
+  const calculationRequests: Array<Record<string, unknown>> = [];
+  await page.route("**/api/unimed/beneficiaries?**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        beneficiaries: [
+          {
+            id: "beneficiary-e2e",
+            registration: "4954",
+            fullName: "Titular E2E",
+            cpf: "12345678901",
+            birthDate: "1990-01-01",
+            inclusionDate: "2026-08-01",
+            category: "HOLDER",
+            relationship: null,
+            planCode: "01",
+            planName: "Unimed",
+            accommodation: "Enfermaria",
+            hasAddon: false,
+            branch: { code: "MATRIZ", name: "Matriz" },
+            pricing: {
+              status: "RESOLVED",
+              age: 36,
+              ageBracketCode: "34-38",
+              planCode: "01",
+              companyAmount: "210.00",
+              employeeAmount: "61.26",
+            },
+            dependents: [],
+          },
+        ],
+        pricingContext: {
+          referenceDate: "2026-08-20",
+          dataCompetency: { year: 2026, month: 8 },
+          billingClosure: "OPEN",
+          addonPrices: [{ code: "FUNERAL", label: "Funeral", amount: "6.12" }],
+        },
+      }),
+    });
+  });
+  await page.route("**/api/unimed/calculation", async (route) => {
+    const request = route.request().postDataJSON() as Record<string, unknown>;
+    calculationRequests.push(request);
+    const manualDependents = request.manualDependents as Array<{
+      clientId: string;
+      inclusionDate?: string;
+      invoicePlanAmount: number;
+      addonAmount: number;
+    }>;
+    const officialInput = {
+      reasonCode: Number(request.reasonCode),
+      exclusionDate: String(request.exclusionDate),
+      planEnrollmentDate: String(request.planEnrollmentDate),
+      billingClosure: "OPEN",
+      holder: {
+        invoicePlanAmount: 210,
+        payrollPlanAmount: 61.26,
+        addonAmount: 0,
+      },
+      dependents: manualDependents.map((dependent) => ({
+        clientId: dependent.clientId,
+        planEnrollmentDate:
+          dependent.inclusionDate ?? String(request.planEnrollmentDate),
+        invoicePlanAmount: dependent.invoicePlanAmount,
+        addonAmount: dependent.addonAmount,
+      })),
+    } satisfies UnimedCalculationInput;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        calculation: calculateUnimed(officialInput),
+        officialInput,
+        payrollLoans: null,
+      }),
+    });
+  });
+
+  await page.goto("/unimed");
+  await page.locator("#unimed-reason").selectOption("1");
+  await page.locator("#unimed-enrollment").fill("2026-08-01");
+  await page.locator("#unimed-exclusion").fill("2026-08-20");
+  await page.getByLabel("Pesquisar beneficiário").fill("4954");
+  await page.getByRole("button", { name: "Buscar agora" }).click();
+  await page.getByRole("button", { name: /Titular E2E/ }).click();
+  await page.getByRole("button", { name: "Adicionar dependente" }).click();
+
+  const manualDependent = page.locator("details").last();
+  await manualDependent.locator("summary").click();
+  await manualDependent.getByLabel("Nome").fill("Dependente manual E2E");
+  await manualDependent.getByLabel("Inclusão no plano").fill("2026-08-10");
+  await manualDependent.getByLabel("Plano na fatura").fill("150,50");
+  await manualDependent.getByLabel("Acessório Funeral").fill("6,12");
+
+  await expect.poll(() => calculationRequests.length).toBe(1);
+  await page.waitForTimeout(900);
+  expect(calculationRequests).toHaveLength(1);
+  expect(calculationRequests[0]).toMatchObject({
+    reasonCode: 1,
+    planEnrollmentDate: "2026-08-01",
+    manualDependents: [
+      {
+        fullName: "Dependente manual E2E",
+        inclusionDate: "2026-08-10",
+        invoicePlanAmount: 150.5,
+        addonAmount: 6.12,
+      },
+    ],
+  });
+});
+
 test("PDF merge persists, queues, processes and downloads a valid result", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   await login(page);
   const origin = new URL(page.url()).origin;
   const create = await page.request.post("/api/pdf/jobs", {
@@ -386,6 +514,82 @@ test("PDF merge persists, queues, processes and downloads a valid result", async
     expect(download.status()).toBe(200);
     const merged = await PDFDocument.load(await download.body());
     expect(merged.getPageCount()).toBe(2);
+  } finally {
+    const cleanup = await page.request.delete(`/api/pdf/jobs/${jobId}`, {
+      headers: { origin },
+    });
+    expect(cleanup.status()).toBe(204);
+  }
+});
+
+test("PDF automatic compression queues and returns a valid document", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await login(page);
+  const origin = new URL(page.url()).origin;
+  const create = await page.request.post("/api/pdf/jobs", {
+    headers: { origin },
+    data: { operation: "COMPRESS", options: { quality: "BALANCED" } },
+  });
+  expect(create.status()).toBe(201);
+  const created = await create.json();
+  const jobId = created.job.id;
+
+  try {
+    const document = await PDFDocument.create();
+    const pageOne = document.addPage([595, 842]);
+    for (let line = 0; line < 80; line += 1) {
+      pageOne.drawText(`PerfectUtilitares E2E compression line ${line + 1}`, {
+        x: 40,
+        y: 800 - line * 9,
+        size: 7,
+      });
+    }
+    const input = Buffer.from(await document.save());
+    const upload = await page.request.post(`/api/pdf/jobs/${jobId}/files`, {
+      headers: {
+        origin,
+        "content-type": "application/pdf",
+        "content-length": String(input.length),
+        "x-file-name": encodeURIComponent("automatic-compression.pdf"),
+      },
+      data: input,
+    });
+    expect(upload.status()).toBe(201);
+
+    const queued = await page.request.post(`/api/pdf/jobs/${jobId}/queue`, {
+      headers: { origin },
+    });
+    expect([200, 202]).toContain(queued.status());
+
+    let job:
+      | {
+          status: string;
+          artifacts: Array<{ id: string; kind: string }>;
+        }
+      | undefined;
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(`/api/pdf/jobs/${jobId}`);
+          expect(response.status()).toBe(200);
+          job = (await response.json()).job;
+          return job?.status;
+        },
+        { timeout: 90_000, intervals: [250, 500, 1_000] },
+      )
+      .toBe("SUCCEEDED");
+
+    const output = job?.artifacts.find((artifact) => artifact.kind === "OUTPUT");
+    expect(output).toBeTruthy();
+    const download = await page.request.get(
+      `/api/pdf/jobs/${jobId}/outputs/${output!.id}`,
+    );
+    expect(download.status()).toBe(200);
+    expect(download.headers()["content-type"]).toContain("application/pdf");
+    const compressed = await PDFDocument.load(await download.body());
+    expect(compressed.getPageCount()).toBe(1);
   } finally {
     const cleanup = await page.request.delete(`/api/pdf/jobs/${jobId}`, {
       headers: { origin },

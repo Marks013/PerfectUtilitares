@@ -25,6 +25,7 @@ import {
   PAYROLL_LOANS_PRINT_STORAGE_KEY,
   formatMoneyInput,
 } from "./unimed-calculation-utils";
+import { buildAutomaticCalculationFingerprint } from "./unimed-calculation-state-model";
 import type {
   UnimedPayrollLoanSummary,
 } from "./unimed-print-summary";
@@ -38,7 +39,7 @@ export function useUnimedCalculationState({
 }: {
   reasons?: readonly UnimedExclusionReasonOption[];
 }) {
-const formId = useId();
+  const formId = useId();
   const [form, setForm] = useState<FormValues>(INITIAL_FORM);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [result, setResult] = useState<UnimedCalculationResult | null>(null);
@@ -84,36 +85,14 @@ const formId = useId();
     generatedDocument?.beneficiaryId === selectedBeneficiary.id &&
     generatedDocument.reasonCode === reasonCode,
   );
-  const automaticCalculationFingerprint = useMemo(() => {
-    if (!selectedBeneficiary || !form.reasonCode || !form.exclusionDate) {
-      return null;
-    }
-    const dependents = form.dependents
-      .filter((dependent) => dependent.selected)
-      .map((dependent) => ({
-        id: dependent.id,
-        source: dependent.source,
-        name: dependent.name.trim(),
-        inclusionDate: dependent.inclusionDate,
-        invoicePlanAmount: dependent.invoicePlanAmount,
-        addonAmount: dependent.addonAmount,
-      }));
-    if (form.reasonCode === "1" && dependents.length === 0) return null;
-
-    return JSON.stringify({
-      beneficiaryId: selectedBeneficiary.id,
-      dependents,
-      reasonCode: Number(form.reasonCode),
-      exclusionDate: form.exclusionDate,
-      planEnrollmentDate: form.planEnrollmentDate,
-    });
-  }, [
-    form.dependents,
-    form.exclusionDate,
-    form.planEnrollmentDate,
-    form.reasonCode,
-    selectedBeneficiary,
-  ]);
+  const automaticCalculationFingerprint = useMemo(
+    () =>
+      buildAutomaticCalculationFingerprint(
+        form,
+        selectedBeneficiary?.id ?? null,
+      ),
+    [form, selectedBeneficiary?.id],
+  );
 
   useEffect(() => {
     try {

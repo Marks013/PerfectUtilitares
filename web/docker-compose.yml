@@ -89,7 +89,7 @@ services:
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
         SENTRY_ORG: ${SENTRY_ORG:-}
         SENTRY_PROJECT: ${SENTRY_PROJECT:-}
-        SOURCE_REVISION: ${SOURCE_REVISION:?defina SOURCE_REVISION com o SHA Git antes do deploy}
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}
     env_file:
       - path: ${UNIMED_ACCESS_ENV_FILE:-/home/ubuntu/perfectutilitares-config/unimed/access.env}
@@ -178,7 +178,7 @@ services:
       context: .
       target: pdf-worker
       args:
-        SOURCE_REVISION: ${SOURCE_REVISION:?defina SOURCE_REVISION com o SHA Git antes do deploy}
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}
     restart: unless-stopped
     init: true

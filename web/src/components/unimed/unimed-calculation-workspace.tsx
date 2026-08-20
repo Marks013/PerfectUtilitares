@@ -40,8 +40,12 @@ import { UnimedCalculationValuesSection } from "./unimed-calculation-values-sect
 import type {
   DocumentJobResponse,
   UnimedCalculationApiResponse,
-  UnimedCalculationRequest,
 } from "./unimed-calculation-types";
+import {
+  AUTOMATIC_CALCULATION_DEBOUNCE_MS,
+  buildUnimedCalculationRequest,
+  mergeOfficialCalculationInput,
+} from "./unimed-calculation-state-model";
 import {
   MAX_DEPENDENTS,
   dateInput,
@@ -49,7 +53,6 @@ import {
   formatCompetencyResult,
   formatCpf,
   formatMoneyResult,
-  parseMoney,
   pricingIssue,
   readApiError,
   validateForm,
@@ -243,29 +246,7 @@ export function useUnimedCalculationWorkspaceController({
       return;
     }
 
-    const selectedDependents = form.dependents.filter(
-      (dependent) => dependent.selected,
-    );
-    const input: UnimedCalculationRequest = {
-      beneficiaryId: selectedBeneficiary.id,
-      dependentIds: selectedDependents
-        .filter((dependent) => dependent.source === "OFFICIAL")
-        .map((dependent) => dependent.id),
-      manualDependents: selectedDependents
-        .filter((dependent) => dependent.source === "MANUAL")
-        .map((dependent) => ({
-          clientId: dependent.id,
-          fullName: dependent.name.trim(),
-          ...(dependent.inclusionDate
-            ? { inclusionDate: dependent.inclusionDate }
-            : {}),
-          invoicePlanAmount: parseMoney(dependent.invoicePlanAmount),
-          addonAmount: parseMoney(dependent.addonAmount),
-        })),
-      reasonCode: Number(form.reasonCode),
-      exclusionDate: form.exclusionDate,
-      planEnrollmentDate: form.planEnrollmentDate,
-    };
+    const input = buildUnimedCalculationRequest(form, selectedBeneficiary.id);
 
     calculationAbortController.current?.abort();
     const requestSequence = ++calculationRequestSequence.current;
@@ -288,36 +269,9 @@ export function useUnimedCalculationWorkspaceController({
       const calculation = body.calculation;
       const nextPayrollLoans = body.payrollLoans ?? null;
       if (calculationRequestSequence.current !== requestSequence) return;
-      const resolvedDependents = new Map(
-        body.officialInput.dependents.flatMap((dependent) =>
-          dependent.clientId ? [[dependent.clientId, dependent] as const] : [],
-        ),
+      setForm((current) =>
+        mergeOfficialCalculationInput(current, body.officialInput),
       );
-      setForm((current) => ({
-        ...current,
-        planEnrollmentDate: body.officialInput.planEnrollmentDate,
-        billingClosure: body.officialInput.billingClosure,
-        holder: {
-          invoicePlanAmount: defaultMoney(
-            body.officialInput.holder.invoicePlanAmount,
-          ),
-          payrollPlanAmount: defaultMoney(
-            body.officialInput.holder.payrollPlanAmount,
-          ),
-          addonAmount: defaultMoney(body.officialInput.holder.addonAmount),
-        },
-        dependents: current.dependents.map((dependent) => {
-          if (!dependent.selected) return dependent;
-          const official = resolvedDependents.get(dependent.id);
-          return {
-            ...dependent,
-            inclusionDate:
-              official?.planEnrollmentDate ?? dependent.inclusionDate,
-            invoicePlanAmount: defaultMoney(official?.invoicePlanAmount),
-            addonAmount: defaultMoney(official?.addonAmount),
-          };
-        }),
-      }));
       setResult(calculation);
       setPayrollLoans(nextPayrollLoans);
       if (documentRequired && options?.generateRequiredDocument !== false) {
@@ -379,7 +333,7 @@ export function useUnimedCalculationWorkspaceController({
       lastAutomaticCalculationFingerprint.current =
         automaticCalculationFingerprint;
       void runAutomaticCalculation();
-    }, 120);
+    }, AUTOMATIC_CALCULATION_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeout);
     // The normalized fingerprint contains every calculation input.
