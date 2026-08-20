@@ -10,7 +10,7 @@ import type {
 import { PdfToolError } from "./compression-types";
 import { validateSemanticCandidate } from "./compression-semantic";
 
-export type PdfCompressionCandidateKind =
+type PdfCompressionCandidateKind =
   | "STRUCTURAL"
   | "QPDF_IMAGE_OPTIMIZE"
   | "GS_IMAGE_RECOMPRESSION"

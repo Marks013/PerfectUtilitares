@@ -19,6 +19,13 @@ export const dateOnlySchema = z
 
 const moneySchema = z.number().finite().nonnegative().max(99_999_999.99);
 
+const dependentMoneySchema = z.object({
+  clientId: z.string().trim().min(8).max(64).optional(),
+  planEnrollmentDate: dateOnlySchema.optional(),
+  invoicePlanAmount: moneySchema,
+  addonAmount: moneySchema,
+});
+
 const configuredMoneySchema = moneySchema.transform((value) =>
   new Prisma.Decimal(value)
     .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
@@ -73,12 +80,7 @@ export const unimedCalculationInputSchema = z
       addonAmount: moneySchema,
     }),
     dependents: z
-      .array(
-        z.object({
-          invoicePlanAmount: moneySchema,
-          addonAmount: moneySchema,
-        }),
-      )
+      .array(dependentMoneySchema)
       .max(6),
     nextCompetency: z
       .object({
@@ -88,12 +90,7 @@ export const unimedCalculationInputSchema = z
           addonAmount: moneySchema,
         }),
         dependents: z
-          .array(
-            z.object({
-              invoicePlanAmount: moneySchema,
-              addonAmount: moneySchema,
-            }),
-          )
+          .array(dependentMoneySchema)
           .max(6),
       })
       .optional(),
@@ -111,6 +108,20 @@ export const unimedCalculationInputSchema = z
   .refine((input) => input.planEnrollmentDate <= input.exclusionDate, {
     message: "A inclusão no plano não pode ocorrer após a exclusão.",
     path: ["planEnrollmentDate"],
+  })
+  .superRefine((input, context) => {
+    input.dependents.forEach((dependent, index) => {
+      if (
+        dependent.planEnrollmentDate &&
+        dependent.planEnrollmentDate > input.exclusionDate
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "A inclusão do dependente não pode ocorrer após a exclusão.",
+          path: ["dependents", index, "planEnrollmentDate"],
+        });
+      }
+    });
   });
 
 export const unimedConfigurationSchema = z

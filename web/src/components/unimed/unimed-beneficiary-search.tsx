@@ -50,6 +50,7 @@ export type UnimedBeneficiary = {
     id: string;
     fullName: string;
     birthDate: string | null;
+    inclusionDate: string | null;
     category: "DEPENDENT";
     relationship: string | null;
     planCode: string | null;

@@ -79,14 +79,18 @@ export function formatCpf(value: string) {
     .replace(/\.(\d{3})(\d)/, ".$1-$2");
 }
 
-export function createDependent(): DependentValues {
+export function createDependent(
+  defaultInclusionDate = "",
+): DependentValues {
   return {
     id:
       globalThis.crypto?.randomUUID?.() ??
       `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    source: "MANUAL",
     selected: true,
     name: "",
     birthDate: null,
+    inclusionDate: defaultInclusionDate,
     planCode: null,
     age: null,
     hasAddon: false,
@@ -190,6 +194,21 @@ export function validateForm(form: FormValues) {
   });
 
   form.dependents.filter((dependent) => dependent.selected).forEach((dependent) => {
+    if (
+      dependent.inclusionDate &&
+      form.exclusionDate &&
+      dependent.inclusionDate > form.exclusionDate
+    ) {
+      errors[`dependent-${dependent.id}`] =
+        "A inclusão do dependente não pode ocorrer após a exclusão.";
+      return;
+    }
+    if (dependent.source !== "MANUAL") return;
+    if (dependent.name.trim().length < 2) {
+      errors[`dependent-${dependent.id}`] =
+        "Informe o nome do dependente incluído manualmente.";
+      return;
+    }
     if (
       !Number.isFinite(parseMoney(dependent.invoicePlanAmount)) ||
       parseMoney(dependent.invoicePlanAmount) < 0

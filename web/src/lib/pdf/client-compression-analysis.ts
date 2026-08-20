@@ -10,7 +10,7 @@ import {
 
 export type CompressionMethod = "AUTO" | "LOSSLESS" | "RASTER";
 export type CompressionColorMode = "COLOR" | "GRAYSCALE" | "MONOCHROME";
-export type CompressionColorPolicy = "KEEP_DETECTED" | CompressionColorMode;
+type CompressionColorPolicy = "KEEP_DETECTED" | CompressionColorMode;
 type CompressionContentKind =
   | "VECTOR"
   | "MIXED"

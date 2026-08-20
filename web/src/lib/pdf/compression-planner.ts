@@ -6,7 +6,7 @@ import type {
   PdfCompressionOptions,
 } from "./compression-types";
 
-export type PdfCompressionStrategy =
+type PdfCompressionStrategy =
   | "SKIP"
   | "STRUCTURAL"
   | "IMAGE_RECOMPRESSION"

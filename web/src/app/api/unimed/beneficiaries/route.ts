@@ -153,6 +153,7 @@ export async function GET(request: Request) {
               id: true,
               fullName: true,
               birthDate: true,
+              inclusionDate: true,
               category: true,
               relationship: true,
               planCode: true,

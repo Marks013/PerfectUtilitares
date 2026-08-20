@@ -10,9 +10,11 @@ type MoneyValues = Record<MoneyField, string>;
 
 export type DependentValues = {
   id: string;
+  source: "OFFICIAL" | "MANUAL";
   selected: boolean;
   name: string;
   birthDate: string | null;
+  inclusionDate: string;
   planCode: string | null;
   age: number | null;
   hasAddon: boolean;
@@ -66,8 +68,16 @@ export type DocumentJobResponse = {
 export type UnimedCalculationRequest = {
   beneficiaryId: string;
   dependentIds: string[];
+  manualDependents: Array<{
+    clientId: string;
+    fullName: string;
+    inclusionDate?: string;
+    invoicePlanAmount: number;
+    addonAmount: number;
+  }>;
   reasonCode: number;
   exclusionDate: string;
+  planEnrollmentDate: string;
 };
 
 export type UnimedCalculationApiResponse = {

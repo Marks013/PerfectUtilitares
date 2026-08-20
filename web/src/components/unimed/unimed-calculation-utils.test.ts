@@ -42,12 +42,14 @@ describe("unimed calculation utilities", () => {
   });
 
   it("creates a dependent with independent safe defaults", () => {
-    const dependent = createDependent();
+    const dependent = createDependent("2026-08-01");
     expect(dependent.id).toEqual(expect.any(String));
     expect(dependent.id.length).toBeGreaterThan(0);
     expect(dependent).toMatchObject({
+      source: "MANUAL",
       name: "",
       birthDate: null,
+      inclusionDate: "2026-08-01",
       planCode: null,
       age: null,
       hasAddon: false,
@@ -106,6 +108,8 @@ describe("unimed calculation utilities", () => {
         {
           ...createDependent(),
           id: "dependent-1",
+          name: "Dependente manual",
+          inclusionDate: "2026-08-01",
           invoicePlanAmount: "80,00",
           addonAmount: "0,00",
         },
@@ -152,6 +156,17 @@ describe("unimed calculation utilities", () => {
         planEnrollmentDate: "2026-09-01",
       }).planEnrollmentDate,
     ).toBeDefined();
+    expect(
+      validateForm({
+        ...validForm,
+        dependents: [
+          {
+            ...validForm.dependents[0],
+            inclusionDate: "2026-09-01",
+          },
+        ],
+      })["dependent-dependent-1"],
+    ).toContain("inclusão do dependente");
   });
 
   it("resolves polling and aborts without a pending timer", async () => {

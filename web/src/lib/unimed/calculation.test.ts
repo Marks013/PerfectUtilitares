@@ -87,6 +87,86 @@ describe("Unimed calculation engine", () => {
     expect(result.companyFullRefund).toBe("0.00");
   });
 
+  it("uses the dependent inclusion date for admission and exclusion in the same month", () => {
+    const result = calculateUnimed({
+      reasonCode: 1,
+      exclusionDate: "2026-08-20",
+      planEnrollmentDate: "2020-01-01",
+      billingClosure: "OPEN",
+      holder: {
+        invoicePlanAmount: 200,
+        payrollPlanAmount: 60,
+        addonAmount: 0,
+      },
+      dependents: [
+        {
+          clientId: "manual-dependent-1",
+          planEnrollmentDate: "2026-08-11",
+          invoicePlanAmount: 310,
+          addonAmount: 0,
+        },
+      ],
+    });
+
+    expect(result.invoiceTotal).toBe("310.00");
+    expect(result.usedProrata).toBe("100.00");
+    expect(result.currentCompetencyRefund).toBe("210.00");
+    expect(result.dependentUsage).toEqual([
+      {
+        clientId: "manual-dependent-1",
+        planEnrollmentDate: "2026-08-11",
+        usedDays: 10,
+        refundDays: 21,
+        usedProrata: "100.00",
+        currentRefund: "210.00",
+      },
+    ]);
+  });
+
+  it("falls back to the holder inclusion date for legacy dependents", () => {
+    const result = calculateUnimed({
+      reasonCode: 1,
+      exclusionDate: "2026-08-20",
+      planEnrollmentDate: "2026-08-11",
+      billingClosure: "OPEN",
+      holder: {
+        invoicePlanAmount: 200,
+        payrollPlanAmount: 60,
+        addonAmount: 0,
+      },
+      dependents: [{ invoicePlanAmount: 310, addonAmount: 0 }],
+    });
+
+    expect(result.usedProrata).toBe("100.00");
+    expect(result.dependentUsage?.[0]).toMatchObject({
+      planEnrollmentDate: "2026-08-11",
+      usedDays: 10,
+    });
+  });
+
+  it("rejects a dependent inclusion after the exclusion date", () => {
+    expect(() =>
+      calculateUnimed({
+        reasonCode: 1,
+        exclusionDate: "2026-08-20",
+        planEnrollmentDate: "2020-01-01",
+        billingClosure: "OPEN",
+        holder: {
+          invoicePlanAmount: 200,
+          payrollPlanAmount: 60,
+          addonAmount: 0,
+        },
+        dependents: [
+          {
+            planEnrollmentDate: "2026-08-21",
+            invoicePlanAmount: 310,
+            addonAmount: 0,
+          },
+        ],
+      }),
+    ).toThrow("A inclusão do dependente não pode ocorrer após a exclusão.");
+  });
+
   it("adds one full installment after the day-25 cutoff", () => {
     const result = calculateUnimed({
       reasonCode: 3,

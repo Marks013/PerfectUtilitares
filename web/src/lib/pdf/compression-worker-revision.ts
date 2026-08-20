@@ -37,7 +37,7 @@ export function pdfWorkerHeartbeatPath() {
   );
 }
 
-export function pdfWorkerHeartbeatMaxAgeMs() {
+function pdfWorkerHeartbeatMaxAgeMs() {
   const configured = Number(
     process.env.PDF_WORKER_HEARTBEAT_MAX_AGE_SECONDS ?? 90,
   );

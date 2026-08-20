@@ -21,6 +21,7 @@ import type { UnimedCalculationInput } from "@/lib/unimed/types";
 export const runtime = "nodejs";
 
 const MAX_CALCULATION_BODY_BYTES = 16 * 1024;
+const manualMoneySchema = z.number().finite().nonnegative().max(99_999_999.99);
 const calculationRequestSchema = z
   .object({
     beneficiaryId: z.string().trim().min(8).max(64),
@@ -30,16 +31,68 @@ const calculationRequestSchema = z
       .refine((ids) => new Set(ids).size === ids.length, {
         message: "Não repita dependentes no mesmo cálculo.",
       }),
+    manualDependents: z
+      .array(
+        z
+          .object({
+            clientId: z.string().trim().min(8).max(64),
+            fullName: z.string().trim().min(2).max(160),
+            inclusionDate: dateOnlySchema.optional(),
+            invoicePlanAmount: manualMoneySchema,
+            addonAmount: manualMoneySchema,
+          })
+          .strict(),
+      )
+      .max(6)
+      .refine(
+        (dependents) =>
+          new Set(dependents.map((dependent) => dependent.clientId)).size ===
+          dependents.length,
+        { message: "Não repita dependentes manuais no mesmo cálculo." },
+      )
+      .default([]),
     reasonCode: z.number().int().min(1).max(9_999),
     exclusionDate: dateOnlySchema,
+    planEnrollmentDate: dateOnlySchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.reasonCode === 1 && value.dependentIds.length === 0) {
+    const dependentCount =
+      value.dependentIds.length + value.manualDependents.length;
+    if (dependentCount > 6) {
+      context.addIssue({
+        code: "custom",
+        message: "Use no máximo seis dependentes por cálculo.",
+        path: ["manualDependents"],
+      });
+    }
+    if (value.reasonCode === 1 && dependentCount === 0) {
       context.addIssue({
         code: "custom",
         message: "Selecione ao menos um dependente para esta exclusão.",
         path: ["dependentIds"],
+      });
+    }
+    value.manualDependents.forEach((dependent, index) => {
+      if (
+        dependent.inclusionDate &&
+        dependent.inclusionDate > value.exclusionDate
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "A inclusão do dependente não pode ocorrer após a exclusão.",
+          path: ["manualDependents", index, "inclusionDate"],
+        });
+      }
+    });
+    if (
+      value.planEnrollmentDate &&
+      value.planEnrollmentDate > value.exclusionDate
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "A inclusão no plano não pode ocorrer após a exclusão.",
+        path: ["planEnrollmentDate"],
       });
     }
   });
@@ -240,6 +293,7 @@ export async function POST(request: Request) {
             select: {
               id: true,
               birthDate: true,
+              inclusionDate: true,
               planCode: true,
               hasAddon: true,
             },
@@ -300,11 +354,29 @@ export async function POST(request: Request) {
         "Um dos dependentes não pertence ao titular selecionado.",
       );
     }
-    if (!beneficiary.inclusionDate) {
+    const holderEnrollmentSource =
+      parsed.data.planEnrollmentDate ?? beneficiary.inclusionDate;
+    if (!holderEnrollmentSource) {
       return jsonError(
         422,
         "UNIMED_ENROLLMENT_DATE_MISSING",
         "A data de inclusão do titular não está disponível na base vigente.",
+      );
+    }
+    const holderEnrollmentDate =
+      typeof holderEnrollmentSource === "string"
+        ? holderEnrollmentSource
+        : dateOnly(holderEnrollmentSource);
+    const dependentWithInvalidEnrollment = selectedDependents.find(
+      (dependent) =>
+        dependent.inclusionDate &&
+        dateOnly(dependent.inclusionDate) > parsed.data.exclusionDate,
+    );
+    if (dependentWithInvalidEnrollment) {
+      return jsonError(
+        422,
+        "UNIMED_DEPENDENT_ENROLLMENT_INVALID",
+        "A inclusão do dependente não pode ocorrer após a exclusão.",
       );
     }
 
@@ -361,18 +433,48 @@ export async function POST(request: Request) {
       }
     }
 
+    const currentDependents = [
+      ...currentMoney.dependents.map((dependent, index) => ({
+        ...dependent,
+        clientId: selectedDependents[index].id,
+        planEnrollmentDate: selectedDependents[index].inclusionDate
+          ? dateOnly(selectedDependents[index].inclusionDate)
+          : holderEnrollmentDate,
+      })),
+      ...parsed.data.manualDependents.map((dependent) => ({
+        clientId: dependent.clientId,
+        planEnrollmentDate:
+          dependent.inclusionDate ?? holderEnrollmentDate,
+        invoicePlanAmount: dependent.invoicePlanAmount,
+        addonAmount: dependent.addonAmount,
+      })),
+    ];
     const officialInput: UnimedCalculationInput = {
       reasonCode: parsed.data.reasonCode,
       exclusionDate: parsed.data.exclusionDate,
-      planEnrollmentDate: dateOnly(beneficiary.inclusionDate),
+      planEnrollmentDate: holderEnrollmentDate,
       billingClosure: configuration.billing.closure,
       holder: currentMoney.holder,
-      dependents: currentMoney.dependents,
+      dependents: currentDependents,
       ...(nextMoney?.status === "RESOLVED"
         ? {
             nextCompetency: {
               holder: nextMoney.holder,
-              dependents: nextMoney.dependents,
+              dependents: [
+                ...nextMoney.dependents.map((dependent, index) => ({
+                  ...dependent,
+                  clientId: selectedDependents[index].id,
+                  planEnrollmentDate:
+                    currentDependents[index].planEnrollmentDate,
+                })),
+                ...parsed.data.manualDependents.map((dependent) => ({
+                  clientId: dependent.clientId,
+                  planEnrollmentDate:
+                    dependent.inclusionDate ?? holderEnrollmentDate,
+                  invoicePlanAmount: dependent.invoicePlanAmount,
+                  addonAmount: dependent.addonAmount,
+                })),
+              ],
             },
           }
         : {}),

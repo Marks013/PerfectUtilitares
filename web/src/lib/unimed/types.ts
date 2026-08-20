@@ -29,7 +29,10 @@ type UnimedMoneyComponents = {
 type UnimedDependentMoneyComponents = Omit<
   UnimedMoneyComponents,
   "payrollPlanAmount"
->;
+> & {
+  clientId?: string;
+  planEnrollmentDate?: string;
+};
 
 export type UnimedCalculationInput = {
   reasonCode: number;
@@ -69,6 +72,14 @@ export type UnimedCalculationResult = {
   companyFullRefund: string;
   enrollmentMonths: number;
   contributionMonths: number;
+  dependentUsage?: Array<{
+    clientId: string;
+    planEnrollmentDate: string;
+    usedDays: number;
+    refundDays: number;
+    usedProrata: string;
+    currentRefund: string;
+  }>;
   documentKind: UnimedDocumentKind;
   emailHasAttachment: false;
   display: {

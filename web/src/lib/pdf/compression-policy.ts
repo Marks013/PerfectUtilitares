@@ -43,5 +43,3 @@ export const PDF_COMPRESSION_PRESETS: Record<
     monochromeThreshold: 160,
   },
 };
-
-export const DEFAULT_PDF_COMPRESSION_PRESET = PDF_COMPRESSION_PRESETS.BALANCED;

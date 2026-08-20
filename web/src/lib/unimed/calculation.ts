@@ -38,6 +38,17 @@ function nextMonth(value: Date) {
   return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 1));
 }
 
+function activeDaysInCompetency(enrollmentDate: Date, exclusionDate: Date) {
+  if (
+    enrollmentDate.getUTCFullYear() < exclusionDate.getUTCFullYear() ||
+    (enrollmentDate.getUTCFullYear() === exclusionDate.getUTCFullYear() &&
+      enrollmentDate.getUTCMonth() < exclusionDate.getUTCMonth())
+  ) {
+    return exclusionDate.getUTCDate();
+  }
+  return exclusionDate.getUTCDate() - enrollmentDate.getUTCDate() + 1;
+}
+
 function monthlyTotals(input: {
   holder: UnimedCalculationInput["holder"];
   dependents: UnimedCalculationInput["dependents"];
@@ -93,15 +104,60 @@ export function calculateUnimed(
   const zero = new Prisma.Decimal(0);
   const closedAfterCutoff =
     input.billingClosure === "AUTOMATIC_DAY_25" && usedDays >= 25;
-  const refundDays = daysInMonth - usedDays;
-  const usedProrata = money(
-    currentTotals.invoiceTotal.dividedBy(daysInMonth).times(usedDays),
+  const holderUsedDays = usedDays;
+  const dependentUsage = input.dependents.map((dependent, index) => {
+    const dependentEnrollmentDate = parseDateOnly(
+      dependent.planEnrollmentDate ?? input.planEnrollmentDate,
+    );
+    const dependentUsedDays = activeDaysInCompetency(
+      dependentEnrollmentDate,
+      exclusionDate,
+    );
+    const dependentInvoice = money(dependent.invoicePlanAmount).plus(
+      money(dependent.addonAmount),
+    );
+    const dependentUsedProrata = dependentInvoice
+      .dividedBy(daysInMonth)
+      .times(dependentUsedDays);
+    return {
+      clientId: dependent.clientId ?? `dependent-${index + 1}`,
+      planEnrollmentDate:
+        dependent.planEnrollmentDate ?? input.planEnrollmentDate,
+      usedDays: dependentUsedDays,
+      refundDays: daysInMonth - dependentUsedDays,
+      usedProrata: dependentUsedProrata,
+      currentRefund: dependentInvoice.minus(dependentUsedProrata),
+    };
+  });
+  const holderInvoice = includeHolder
+    ? money(input.holder.invoicePlanAmount).plus(
+        money(input.holder.addonAmount),
+      )
+    : zero;
+  const holderPayroll = includeHolder
+    ? money(input.holder.payrollPlanAmount).plus(
+        money(input.holder.addonAmount),
+      )
+    : zero;
+  const invoiceUsedProrata = dependentUsage.reduce(
+    (total, dependent) => total.plus(dependent.usedProrata),
+    holderInvoice.dividedBy(daysInMonth).times(holderUsedDays),
   );
+  const employeeUsedProrata = dependentUsage.reduce(
+    (total, dependent) => total.plus(dependent.usedProrata),
+    holderPayroll.dividedBy(daysInMonth).times(holderUsedDays),
+  );
+  const effectiveUsedDays = Math.max(
+    includeHolder ? holderUsedDays : 0,
+    ...dependentUsage.map((dependent) => dependent.usedDays),
+  );
+  const refundDays = daysInMonth - effectiveUsedDays;
+  const usedProrata = money(invoiceUsedProrata);
   const invoiceProratedRefund = money(
-    currentTotals.invoiceTotal.dividedBy(daysInMonth).times(refundDays),
+    currentTotals.invoiceTotal.minus(invoiceUsedProrata),
   );
   const employeeProratedRefund = money(
-    currentTotals.payrollCharge.dividedBy(daysInMonth).times(refundDays),
+    currentTotals.payrollCharge.minus(employeeUsedProrata),
   );
   const nextCompetencyRefund = money(
     closedAfterCutoff ? nextTotals.invoiceTotal : zero,
@@ -127,7 +183,7 @@ export function calculateUnimed(
   return {
     invoiceTotal: serializeMoney(currentTotals.invoiceTotal),
     daysInMonth,
-    usedDays,
+    usedDays: effectiveUsedDays,
     usedProrata: serializeMoney(usedProrata),
     cutoffApplied: closedAfterCutoff,
     currentCompetency: competency(exclusionDate),
@@ -149,6 +205,14 @@ export function calculateUnimed(
     companyFullRefund: serializeMoney(companyFullRefund),
     enrollmentMonths,
     contributionMonths: Math.max(1, enrollmentMonths),
+    dependentUsage: dependentUsage.map((dependent) => ({
+      clientId: dependent.clientId,
+      planEnrollmentDate: dependent.planEnrollmentDate,
+      usedDays: dependent.usedDays,
+      refundDays: dependent.refundDays,
+      usedProrata: serializeMoney(dependent.usedProrata),
+      currentRefund: serializeMoney(dependent.currentRefund),
+    })),
     documentKind: documentKindForReason(input.reasonCode),
     emailHasAttachment: false,
     display: {

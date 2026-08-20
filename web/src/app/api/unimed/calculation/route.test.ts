@@ -43,6 +43,7 @@ const validInput = {
   dependentIds: ["dependent-12345678"],
   reasonCode: 8,
   exclusionDate: "2026-07-22",
+  planEnrollmentDate: "2022-01-22",
 };
 
 function calculationRequest(
@@ -84,6 +85,7 @@ beforeEach(() => {
       {
         id: "dependent-12345678",
         birthDate: new Date("2015-01-01T00:00:00.000Z"),
+        inclusionDate: new Date("2022-01-22T00:00:00.000Z"),
         planCode: "DEPENDENT",
         hasAddon: false,
       },
@@ -216,6 +218,114 @@ describe("Unimed calculation API", () => {
         },
       },
       payrollLoans: null,
+    });
+  });
+
+  it("accepts a manual dependent without applying the official ownership check", async () => {
+    mocks.findBeneficiary.mockResolvedValue({
+      cpf: "52998224725",
+      birthDate: new Date("1990-01-01T00:00:00.000Z"),
+      inclusionDate: new Date("2022-01-22T00:00:00.000Z"),
+      planCode: "HOLDER",
+      hasAddon: true,
+      dependents: [],
+    });
+    const response = await POST(
+      calculationRequest({
+        ...validInput,
+        dependentIds: [],
+        reasonCode: 1,
+        exclusionDate: "2026-07-20",
+        manualDependents: [
+          {
+            clientId: "manual-dependent-123",
+            fullName: "Dependente manual",
+            inclusionDate: "2026-07-11",
+            invoicePlanAmount: 310,
+            addonAmount: 0,
+          },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      officialInput: {
+        dependents: [
+          {
+            clientId: "manual-dependent-123",
+            planEnrollmentDate: "2026-07-11",
+            invoicePlanAmount: 310,
+            addonAmount: 0,
+          },
+        ],
+      },
+      calculation: {
+        usedProrata: "100.00",
+        currentCompetencyRefund: "210.00",
+        dependentUsage: [
+          {
+            clientId: "manual-dependent-123",
+            usedDays: 10,
+          },
+        ],
+      },
+    });
+  });
+
+  it("preserves a holder inclusion date edited by the user", async () => {
+    const response = await POST(
+      calculationRequest({
+        ...validInput,
+        planEnrollmentDate: "2026-07-10",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      officialInput: { planEnrollmentDate: "2026-07-10" },
+    });
+  });
+
+  it("uses each official dependent inclusion date and falls back to the holder date", async () => {
+    mocks.findBeneficiary.mockResolvedValue({
+      cpf: "52998224725",
+      birthDate: new Date("1990-01-01T00:00:00.000Z"),
+      inclusionDate: new Date("2026-07-01T00:00:00.000Z"),
+      planCode: "HOLDER",
+      hasAddon: true,
+      dependents: [
+        {
+          id: "dependent-12345678",
+          birthDate: new Date("2015-01-01T00:00:00.000Z"),
+          inclusionDate: new Date("2026-07-11T00:00:00.000Z"),
+          planCode: "DEPENDENT",
+          hasAddon: false,
+        },
+      ],
+    });
+
+    const response = await POST(
+      calculationRequest({
+        ...validInput,
+        reasonCode: 1,
+        exclusionDate: "2026-07-20",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      officialInput: {
+        dependents: [
+          {
+            clientId: "dependent-12345678",
+            planEnrollmentDate: "2026-07-11",
+          },
+        ],
+      },
+      calculation: {
+        dependentUsage: [{ usedDays: 10 }],
+      },
     });
   });
 
@@ -394,6 +504,7 @@ describe("Unimed calculation API", () => {
           select: {
             id: true,
             birthDate: true,
+            inclusionDate: true,
             planCode: true,
             hasAddon: true,
           },

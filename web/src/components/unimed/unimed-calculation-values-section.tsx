@@ -136,7 +136,7 @@ export function UnimedCalculationValuesSection({
             onClick={() =>
               updateForm("dependents", [
                 ...form.dependents,
-                createDependent(),
+                createDependent(form.planEnrollmentDate),
               ])
             }
             disabled={form.dependents.length >= MAX_DEPENDENTS}
@@ -187,7 +187,7 @@ export function UnimedCalculationValuesSection({
                         Recolher
                       </span>
                     </summary>
-                    <div className="mt-3 grid gap-4 border-t border-[color:var(--app-border)] pt-3 md:grid-cols-3">
+                    <div className="mt-3 grid gap-4 border-t border-[color:var(--app-border)] pt-3 md:grid-cols-2 xl:grid-cols-4">
                     <div>
                       <FieldLabel
                         htmlFor={`dependent-${dependent.id}-name`}
@@ -208,6 +208,33 @@ export function UnimedCalculationValuesSection({
                         }
                         className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
                       />
+                    </div>
+                    <div>
+                      <FieldLabel
+                        htmlFor={`dependent-${dependent.id}-inclusion-date`}
+                      >
+                        Inclusão no plano
+                      </FieldLabel>
+                      <input
+                        id={`dependent-${dependent.id}-inclusion-date`}
+                        type="date"
+                        value={dependent.inclusionDate}
+                        readOnly={dependent.source === "OFFICIAL"}
+                        aria-invalid={Boolean(dependentError)}
+                        onChange={(event) =>
+                          updateDependent(
+                            dependent.id,
+                            "inclusionDate",
+                            event.target.value,
+                          )
+                        }
+                        className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)] read-only:cursor-default read-only:opacity-75"
+                      />
+                      <p className="mt-1 text-xs text-[color:var(--app-muted)]">
+                        {dependent.source === "OFFICIAL"
+                          ? "Data da base; usa a inclusão do titular quando ausente."
+                          : "Se ficar vazia, será usada a inclusão do titular."}
+                      </p>
                     </div>
                     <MoneyInput
                       id={`dependent-${dependent.id}-invoice`}
@@ -242,7 +269,7 @@ export function UnimedCalculationValuesSection({
                       }
                       hint={`Identificação automática: ${dependent.hasAddon ? "possui" : "não possui"}.`}
                     />
-                      <div className="md:col-span-3 flex justify-end">
+                      <div className="md:col-span-2 xl:col-span-4 flex justify-end">
                         <button
                           type="button"
                           onClick={() =>

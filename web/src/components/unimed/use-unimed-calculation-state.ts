@@ -88,18 +88,32 @@ const formId = useId();
     if (!selectedBeneficiary || !form.reasonCode || !form.exclusionDate) {
       return null;
     }
-    const dependentIds = form.dependents
+    const dependents = form.dependents
       .filter((dependent) => dependent.selected)
-      .map((dependent) => dependent.id);
-    if (form.reasonCode === "1" && dependentIds.length === 0) return null;
+      .map((dependent) => ({
+        id: dependent.id,
+        source: dependent.source,
+        name: dependent.name.trim(),
+        inclusionDate: dependent.inclusionDate,
+        invoicePlanAmount: dependent.invoicePlanAmount,
+        addonAmount: dependent.addonAmount,
+      }));
+    if (form.reasonCode === "1" && dependents.length === 0) return null;
 
     return JSON.stringify({
       beneficiaryId: selectedBeneficiary.id,
-      dependentIds,
+      dependents,
       reasonCode: Number(form.reasonCode),
       exclusionDate: form.exclusionDate,
+      planEnrollmentDate: form.planEnrollmentDate,
     });
-  }, [form.dependents, form.exclusionDate, form.reasonCode, selectedBeneficiary]);
+  }, [
+    form.dependents,
+    form.exclusionDate,
+    form.planEnrollmentDate,
+    form.reasonCode,
+    selectedBeneficiary,
+  ]);
 
   useEffect(() => {
     try {

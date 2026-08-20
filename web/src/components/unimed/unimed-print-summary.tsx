@@ -103,6 +103,12 @@ export function UnimedPrintCopy({
 }) {
   const daysInMonth = data.result.daysInMonth;
   const usedDays = data.result.usedDays;
+  const dependentUsageById = new Map(
+    (data.result.dependentUsage ?? []).map((dependent) => [
+      dependent.clientId,
+      dependent,
+    ]),
+  );
   const afterCutoff = data.result.cutoffApplied;
   const baseCompetencyLabel = competence(data.competency);
   const calculationCompetency = data.result.currentCompetency;
@@ -180,7 +186,11 @@ export function UnimedPrintCopy({
                   : money(person.payrollPlanAmount)}
               </td>
               <td>{money(person.funeralAmount)}</td>
-              <td>{usedDays}</td>
+              <td>
+                {index === 0
+                  ? usedDays
+                  : (dependentUsageById.get(person.id)?.usedDays ?? usedDays)}
+              </td>
             </tr>
           ))}
         </tbody>
