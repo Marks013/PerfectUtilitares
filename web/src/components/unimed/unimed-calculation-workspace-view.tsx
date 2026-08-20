@@ -398,6 +398,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                 employeeName: form.employeeName,
                 cpf: form.cpf,
                 registration: selectedBeneficiary?.registration,
+                reasonCode: Number(form.reasonCode),
                 reason: selectedReason
                   ? `${selectedReason.code}. ${selectedReason.label}`
                   : "",

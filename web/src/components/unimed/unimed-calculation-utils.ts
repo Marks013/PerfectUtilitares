@@ -210,19 +210,9 @@ export function validateForm(form: FormValues) {
         "Informe o nome do dependente incluído manualmente.";
       return;
     }
-    if (
-      !Number.isFinite(parseMoney(dependent.invoicePlanAmount)) ||
-      parseMoney(dependent.invoicePlanAmount) < 0
-    ) {
+    if (!dependent.birthDate) {
       errors[`dependent-${dependent.id}`] =
-        "Informe valor de fatura válido para este dependente.";
-    }
-    if (
-      !Number.isFinite(parseMoney(dependent.addonAmount)) ||
-      parseMoney(dependent.addonAmount) < 0
-    ) {
-      errors[`dependent-${dependent.id}`] =
-        "Informe Acessório Funeral válido para este dependente.";
+        "Informe a data de nascimento para calcular o valor da tabela.";
     }
   });
 

@@ -12,6 +12,7 @@ function printData(
     employeeName: "Pessoa Titular",
     cpf: "529.982.247-25",
     registration: "101",
+    reasonCode: 8,
     reason: "8. Inativo",
     competency: "2026-07",
     exclusionDate: "2026-08-31",
@@ -207,5 +208,37 @@ describe("Unimed printable payroll loans", () => {
 
     expect(content).toContain("Dependente Incluído");
     expect(content).not.toContain("Dependente Desmarcado");
+  });
+
+  it("prints only selected dependents for dependent exclusion", () => {
+    const markup = renderToStaticMarkup(
+      <UnimedPrintCopy
+        copy={1}
+        data={printData({
+          reasonCode: 1,
+          reason: "1. Exclusão de Dependente",
+          dependents: [
+            {
+              id: "manual-dependent",
+              selected: true,
+              registration: null,
+              name: "Dependente Manual",
+              birthDate: "2010-01-01",
+              age: 16,
+              planCode: "01",
+              hasFuneral: false,
+              invoicePlanAmount: "203.71",
+              payrollPlanAmount: null,
+              funeralAmount: "0.00",
+            },
+          ],
+        })}
+      />,
+    );
+    const content = text(markup);
+
+    expect(content).toContain("Dependente Manual");
+    expect(content).not.toContain("Pessoa Titular");
+    expect(markup).toContain("<td>Dep</td>");
   });
 });

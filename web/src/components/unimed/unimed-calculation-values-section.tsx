@@ -68,7 +68,8 @@ export function UnimedCalculationValuesSection({
         </div>
       </div>
 
-      <details className="group rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)]">
+      {form.reasonCode !== "1" ? (
+        <details className="group rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)]">
         <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 marker:hidden">
           <div className="min-w-0">
             <p className="text-sm font-black text-[color:var(--app-fg)]">Titular</p>
@@ -114,7 +115,8 @@ export function UnimedCalculationValuesSection({
             }
           />
         </div>
-      </details>
+        </details>
+      ) : null}
 
       <div className="mt-7 border-t border-[color:var(--app-border)] pt-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -237,6 +239,30 @@ export function UnimedCalculationValuesSection({
                         />
                       </div>
                     ) : null}
+                    {dependent.source === "MANUAL" ? (
+                      <div>
+                        <FieldLabel
+                          htmlFor={`dependent-${dependent.id}-birth-date`}
+                          required
+                        >
+                          Data de nascimento
+                        </FieldLabel>
+                        <input
+                          id={`dependent-${dependent.id}-birth-date`}
+                          type="date"
+                          value={dependent.birthDate ?? ""}
+                          aria-invalid={Boolean(dependentError)}
+                          onChange={(event) =>
+                            updateDependent(
+                              dependent.id,
+                              "birthDate",
+                              event.target.value || null,
+                            )
+                          }
+                          className="min-h-11 w-full rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] transition focus:border-[color:var(--app-teal)]"
+                        />
+                      </div>
+                    ) : null}
                     <div>
                       <FieldLabel
                         htmlFor={`dependent-${dependent.id}-inclusion-date`}
@@ -264,39 +290,89 @@ export function UnimedCalculationValuesSection({
                           : "Se ficar vazia, será usada a inclusão do titular."}
                       </p>
                     </div>
-                    <MoneyInput
-                      id={`dependent-${dependent.id}-invoice`}
-                      label="Plano na fatura"
-                      value={dependent.invoicePlanAmount}
-                      error={dependentError}
-                      onChange={(value) =>
-                        updateDependent(
-                          dependent.id,
-                          "invoicePlanAmount",
-                          value,
-                        )
-                      }
-                      onBlur={() =>
-                        blurDependentMoney(dependent, "invoicePlanAmount")
-                      }
-                    />
-                    <MoneyInput
-                      id={`dependent-${dependent.id}-addon`}
-                      label="Acessório Funeral"
-                      value={dependent.addonAmount}
-                      error={dependentError}
-                      onChange={(value) =>
-                        updateDependent(
-                          dependent.id,
-                          "addonAmount",
-                          value,
-                        )
-                      }
-                      onBlur={() =>
-                        blurDependentMoney(dependent, "addonAmount")
-                      }
-                      hint={`Identificação automática: ${dependent.hasAddon ? "possui" : "não possui"}.`}
-                    />
+                    {dependent.source === "MANUAL" ? (
+                      <>
+                        <div>
+                          <FieldLabel
+                            htmlFor={`dependent-${dependent.id}-invoice`}
+                          >
+                            Valor da tabela
+                          </FieldLabel>
+                          <input
+                            id={`dependent-${dependent.id}-invoice`}
+                            type="text"
+                            value={dependent.invoicePlanAmount}
+                            placeholder="Calculado automaticamente"
+                            readOnly
+                            className="min-h-11 w-full cursor-default rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] opacity-75"
+                          />
+                          <p className="mt-1 text-xs text-[color:var(--app-muted)]">
+                            Conforme nascimento e tabela vigente.
+                          </p>
+                        </div>
+                        <div>
+                          <FieldLabel
+                            htmlFor={`dependent-${dependent.id}-has-addon`}
+                          >
+                            Acessório Funeral
+                          </FieldLabel>
+                          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)]">
+                            <input
+                              id={`dependent-${dependent.id}-has-addon`}
+                              type="checkbox"
+                              checked={dependent.hasAddon}
+                              onChange={(event) =>
+                                updateDependent(
+                                  dependent.id,
+                                  "hasAddon",
+                                  event.target.checked,
+                                )
+                              }
+                              className="size-5 accent-[color:var(--app-teal)]"
+                            />
+                            {dependent.hasAddon
+                              ? dependent.addonAmount || "Calculando..."
+                              : "Não possui"}
+                          </label>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <MoneyInput
+                          id={`dependent-${dependent.id}-invoice`}
+                          label="Plano na fatura"
+                          value={dependent.invoicePlanAmount}
+                          error={dependentError}
+                          onChange={(value) =>
+                            updateDependent(
+                              dependent.id,
+                              "invoicePlanAmount",
+                              value,
+                            )
+                          }
+                          onBlur={() =>
+                            blurDependentMoney(dependent, "invoicePlanAmount")
+                          }
+                        />
+                        <MoneyInput
+                          id={`dependent-${dependent.id}-addon`}
+                          label="Acessório Funeral"
+                          value={dependent.addonAmount}
+                          error={dependentError}
+                          onChange={(value) =>
+                            updateDependent(
+                              dependent.id,
+                              "addonAmount",
+                              value,
+                            )
+                          }
+                          onBlur={() =>
+                            blurDependentMoney(dependent, "addonAmount")
+                          }
+                          hint={`Identificação automática: ${dependent.hasAddon ? "possui" : "não possui"}.`}
+                        />
+                      </>
+                    )}
                       <div className="md:col-span-2 xl:col-span-4 flex justify-end">
                         <button
                           type="button"

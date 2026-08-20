@@ -240,9 +240,9 @@ describe("Unimed calculation API", () => {
           {
             clientId: "manual-dependent-123",
             fullName: "Dependente manual",
+            birthDate: "2015-01-01",
             inclusionDate: "2026-07-11",
-            invoicePlanAmount: 310,
-            addonAmount: 0,
+            hasAddon: false,
           },
         ],
       }),
@@ -255,14 +255,14 @@ describe("Unimed calculation API", () => {
           {
             clientId: "manual-dependent-123",
             planEnrollmentDate: "2026-07-11",
-            invoicePlanAmount: 310,
+            invoicePlanAmount: 200,
             addonAmount: 0,
           },
         ],
       },
       calculation: {
-        usedProrata: "100.00",
-        currentCompetencyRefund: "210.00",
+        usedProrata: "64.52",
+        currentCompetencyRefund: "135.48",
         dependentUsage: [
           {
             clientId: "manual-dependent-123",

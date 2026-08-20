@@ -110,9 +110,8 @@ describe("unimed calculation utilities", () => {
           ...createDependent(),
           id: "dependent-1",
           name: "Dependente manual",
+          birthDate: "2010-01-01",
           inclusionDate: "2026-08-01",
-          invoicePlanAmount: "80,00",
-          addonAmount: "0,00",
         },
       ],
     };
@@ -131,10 +130,9 @@ describe("unimed calculation utilities", () => {
         addonAmount: "",
       },
       dependents: [
-        {
-          ...validForm.dependents[0],
-          invoicePlanAmount: "-1",
-          addonAmount: "invalid",
+          {
+            ...validForm.dependents[0],
+            birthDate: null,
         },
       ],
     });

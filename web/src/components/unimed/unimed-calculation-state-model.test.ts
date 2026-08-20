@@ -40,7 +40,7 @@ function form(overrides: Partial<FormValues> = {}): FormValues {
         source: "MANUAL",
         selected: true,
         name: "  Dependente manual  ",
-        birthDate: null,
+        birthDate: "2010-01-01",
         inclusionDate: "",
         planCode: null,
         age: null,
@@ -75,8 +75,8 @@ describe("Unimed automatic calculation state model", () => {
         {
           clientId: "manual-1",
           fullName: "Dependente manual",
-          invoicePlanAmount: 150.5,
-          addonAmount: 6.12,
+          birthDate: "2010-01-01",
+          hasAddon: true,
         },
       ],
       reasonCode: 3,
@@ -175,7 +175,9 @@ describe("Unimed automatic calculation state model", () => {
       invoicePlanAmount: "130,00",
     });
     expect(merged.dependents[1]).toMatchObject({
+      age: 16,
       inclusionDate: "2026-08-02",
+      invoicePlanAmount: "150,50",
       addonAmount: "6,12",
     });
     expect(merged.dependents[2]).toBe(current.dependents[2]);

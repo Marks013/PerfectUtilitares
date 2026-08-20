@@ -1,9 +1,10 @@
 import type { UnimedCalculationInput } from "@/lib/unimed/types";
+import { approximateUnimedAge } from "@/lib/unimed/pricing";
 import type {
   FormValues,
   UnimedCalculationRequest,
 } from "./unimed-calculation-types";
-import { defaultMoney, parseMoney } from "./unimed-calculation-utils";
+import { defaultMoney } from "./unimed-calculation-utils";
 
 export const AUTOMATIC_CALCULATION_DEBOUNCE_MS = 450;
 
@@ -25,11 +26,11 @@ export function buildUnimedCalculationRequest(
       .map((dependent) => ({
         clientId: dependent.id,
         fullName: dependent.name.trim(),
+        birthDate: dependent.birthDate ?? "",
         ...(dependent.inclusionDate
           ? { inclusionDate: dependent.inclusionDate }
           : {}),
-        invoicePlanAmount: parseMoney(dependent.invoicePlanAmount),
-        addonAmount: parseMoney(dependent.addonAmount),
+        hasAddon: dependent.hasAddon,
       })),
     reasonCode: Number(form.reasonCode),
     exclusionDate: form.exclusionDate,
@@ -57,9 +58,9 @@ export function buildAutomaticCalculationFingerprint(
     manualDependents: input.manualDependents.map((dependent) => ({
       clientId: dependent.clientId,
       fullName: dependent.fullName,
+      birthDate: dependent.birthDate,
       inclusionDate: dependent.inclusionDate ?? form.planEnrollmentDate,
-      invoicePlanAmount: dependent.invoicePlanAmount,
-      addonAmount: dependent.addonAmount,
+      hasAddon: dependent.hasAddon,
     })),
   });
 }
@@ -88,6 +89,13 @@ export function mergeOfficialCalculationInput(
       const official = resolvedDependents.get(dependent.id);
       return {
         ...dependent,
+        age:
+          dependent.source === "MANUAL" && dependent.birthDate
+            ? approximateUnimedAge(
+                new Date(`${dependent.birthDate}T00:00:00.000Z`),
+                new Date(`${officialInput.exclusionDate}T00:00:00.000Z`),
+              )
+            : dependent.age,
         inclusionDate:
           official?.planEnrollmentDate ?? dependent.inclusionDate,
         invoicePlanAmount: defaultMoney(official?.invoicePlanAmount),

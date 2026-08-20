@@ -45,6 +45,7 @@ export type UnimedPrintSummaryData = {
   employeeName: string;
   cpf: string;
   registration?: string | null;
+  reasonCode: number;
   reason: string;
   competency: string;
   exclusionDate: string;
@@ -116,10 +117,13 @@ export function UnimedPrintCopy({
   const nextCompetencyLabel = data.result.nextCompetency
     ? competence(data.result.nextCompetency)
     : nextUnimedCompetency(calculationCompetency);
-  const rows = [
-    data.holder,
-    ...data.dependents.filter((dependent) => dependent.selected),
-  ];
+  const selectedDependents = data.dependents.filter(
+    (dependent) => dependent.selected,
+  );
+  const rows =
+    data.reasonCode === 1
+      ? selectedDependents
+      : [data.holder, ...selectedDependents];
   const loanCount = data.payrollLoans?.contracts.length ?? 0;
   const loanDensity =
     loanCount > 8 ? " is-dense" : loanCount > 4 ? " is-compact" : "";
@@ -168,12 +172,14 @@ export function UnimedPrintCopy({
           </tr>
         </thead>
         <tbody>
-          {rows.map((person, index) => (
+          {rows.map((person) => {
+            const isHolder = person.id === data.holder.id;
+            return (
             <tr key={person.id}>
-              <td>{index === 0 ? person.registration || "—" : "Dep"}</td>
+              <td>{isHolder ? person.registration || "—" : "Dep"}</td>
               <td>{formatUnimedBranchForPdf(data.branchCode)}</td>
               <td className="name-cell">{person.name || "—"}</td>
-              <td>{index === 0 ? data.reason : "—"}</td>
+              <td>{isHolder ? data.reason : "—"}</td>
               <td>{date(person.birthDate)}</td>
               <td>{person.hasFuneral ? "02" : "01"}</td>
               <td>{currentCompetencyLabel}</td>
@@ -187,12 +193,13 @@ export function UnimedPrintCopy({
               </td>
               <td>{money(person.funeralAmount)}</td>
               <td>
-                {index === 0
+                {isHolder
                   ? usedDays
                   : (dependentUsageById.get(person.id)?.usedDays ?? usedDays)}
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
 

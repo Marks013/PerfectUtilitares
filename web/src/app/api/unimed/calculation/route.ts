@@ -21,7 +21,6 @@ import type { UnimedCalculationInput } from "@/lib/unimed/types";
 export const runtime = "nodejs";
 
 const MAX_CALCULATION_BODY_BYTES = 16 * 1024;
-const manualMoneySchema = z.number().finite().nonnegative().max(99_999_999.99);
 const calculationRequestSchema = z
   .object({
     beneficiaryId: z.string().trim().min(8).max(64),
@@ -37,9 +36,9 @@ const calculationRequestSchema = z
           .object({
             clientId: z.string().trim().min(8).max(64),
             fullName: z.string().trim().min(2).max(160),
+            birthDate: dateOnlySchema,
             inclusionDate: dateOnlySchema.optional(),
-            invoicePlanAmount: manualMoneySchema,
-            addonAmount: manualMoneySchema,
+            hasAddon: z.boolean().default(false),
           })
           .strict(),
       )
@@ -74,6 +73,13 @@ const calculationRequestSchema = z
       });
     }
     value.manualDependents.forEach((dependent, index) => {
+      if (dependent.birthDate > value.exclusionDate) {
+        context.addIssue({
+          code: "custom",
+          message: "O nascimento do dependente não pode ocorrer após a exclusão.",
+          path: ["manualDependents", index, "birthDate"],
+        });
+      }
       if (
         dependent.inclusionDate &&
         dependent.inclusionDate > value.exclusionDate
@@ -380,9 +386,29 @@ export async function POST(request: Request) {
       );
     }
 
+    const dependentPricingInputs = [
+      ...selectedDependents.map((dependent) => ({
+        clientId: dependent.id,
+        planEnrollmentDate: dependent.inclusionDate
+          ? dateOnly(dependent.inclusionDate)
+          : holderEnrollmentDate,
+        person: dependent,
+      })),
+      ...parsed.data.manualDependents.map((dependent) => ({
+        clientId: dependent.clientId,
+        planEnrollmentDate:
+          dependent.inclusionDate ?? holderEnrollmentDate,
+        person: {
+          birthDate: new Date(`${dependent.birthDate}T00:00:00.000Z`),
+          planCode: beneficiary.planCode,
+          hasAddon: dependent.hasAddon,
+        },
+      })),
+    ];
+
     const currentMoney = officialMoneySet({
       holder: beneficiary,
-      dependents: selectedDependents,
+      dependents: dependentPricingInputs.map((dependent) => dependent.person),
       configuration,
       referenceDate,
     });
@@ -413,7 +439,7 @@ export async function POST(request: Request) {
       );
       nextMoney = officialMoneySet({
         holder: beneficiary,
-        dependents: selectedDependents,
+        dependents: dependentPricingInputs.map((dependent) => dependent.person),
         configuration: nextConfiguration,
         referenceDate: nextReferenceDate,
       });
@@ -433,22 +459,13 @@ export async function POST(request: Request) {
       }
     }
 
-    const currentDependents = [
-      ...currentMoney.dependents.map((dependent, index) => ({
+    const currentDependents = currentMoney.dependents.map(
+      (dependent, index) => ({
         ...dependent,
-        clientId: selectedDependents[index].id,
-        planEnrollmentDate: selectedDependents[index].inclusionDate
-          ? dateOnly(selectedDependents[index].inclusionDate)
-          : holderEnrollmentDate,
-      })),
-      ...parsed.data.manualDependents.map((dependent) => ({
-        clientId: dependent.clientId,
-        planEnrollmentDate:
-          dependent.inclusionDate ?? holderEnrollmentDate,
-        invoicePlanAmount: dependent.invoicePlanAmount,
-        addonAmount: dependent.addonAmount,
-      })),
-    ];
+        clientId: dependentPricingInputs[index].clientId,
+        planEnrollmentDate: dependentPricingInputs[index].planEnrollmentDate,
+      }),
+    );
     const officialInput: UnimedCalculationInput = {
       reasonCode: parsed.data.reasonCode,
       exclusionDate: parsed.data.exclusionDate,
@@ -460,21 +477,12 @@ export async function POST(request: Request) {
         ? {
             nextCompetency: {
               holder: nextMoney.holder,
-              dependents: [
-                ...nextMoney.dependents.map((dependent, index) => ({
+              dependents: nextMoney.dependents.map((dependent, index) => ({
                   ...dependent,
-                  clientId: selectedDependents[index].id,
+                  clientId: dependentPricingInputs[index].clientId,
                   planEnrollmentDate:
-                    currentDependents[index].planEnrollmentDate,
+                    dependentPricingInputs[index].planEnrollmentDate,
                 })),
-                ...parsed.data.manualDependents.map((dependent) => ({
-                  clientId: dependent.clientId,
-                  planEnrollmentDate:
-                    dependent.inclusionDate ?? holderEnrollmentDate,
-                  invoicePlanAmount: dependent.invoicePlanAmount,
-                  addonAmount: dependent.addonAmount,
-                })),
-              ],
             },
           }
         : {}),

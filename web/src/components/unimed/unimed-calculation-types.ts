@@ -72,9 +72,9 @@ export type UnimedCalculationRequest = {
   manualDependents: Array<{
     clientId: string;
     fullName: string;
+    birthDate: string;
     inclusionDate?: string;
-    invoicePlanAmount: number;
-    addonAmount: number;
+    hasAddon: boolean;
   }>;
   reasonCode: number;
   exclusionDate: string;

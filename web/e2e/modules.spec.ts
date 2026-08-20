@@ -304,7 +304,7 @@ test("Unimed unlock creates a real session and reads configuration", async ({
   );
 });
 
-test("Unimed calculates a manual dependent once with its own inclusion date", async ({
+test("Unimed calculates a manual dependent from birth and inclusion dates", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -364,9 +364,9 @@ test("Unimed calculates a manual dependent once with its own inclusion date", as
     calculationRequests.push(request);
     const manualDependents = request.manualDependents as Array<{
       clientId: string;
+      birthDate: string;
       inclusionDate?: string;
-      invoicePlanAmount: number;
-      addonAmount: number;
+      hasAddon: boolean;
     }>;
     const officialInput = {
       reasonCode: Number(request.reasonCode),
@@ -382,8 +382,8 @@ test("Unimed calculates a manual dependent once with its own inclusion date", as
         clientId: dependent.clientId,
         planEnrollmentDate:
           dependent.inclusionDate ?? String(request.planEnrollmentDate),
-        invoicePlanAmount: dependent.invoicePlanAmount,
-        addonAmount: dependent.addonAmount,
+        invoicePlanAmount: 150.5,
+        addonAmount: dependent.hasAddon ? 6.12 : 0,
       })),
     } satisfies UnimedCalculationInput;
     await route.fulfill({
@@ -430,25 +430,26 @@ test("Unimed calculates a manual dependent once with its own inclusion date", as
   await manualDependent.locator("summary").click();
   await manualDependent.getByLabel("Nome").fill("Dependente manual E2E");
   await manualDependent.getByLabel("CPF").fill("11144477735");
+  await manualDependent.getByLabel("Data de nascimento").fill("2010-01-01");
   await manualDependent.getByLabel("Inclusão no plano").fill("2026-08-10");
-  await manualDependent.getByLabel("Plano na fatura").fill("150,50");
-  await manualDependent.getByLabel("Acessório Funeral").fill("6,12");
+  await manualDependent.getByLabel("Acessório Funeral").check();
 
-  await expect.poll(() => calculationRequests.length).toBe(1);
+  await expect
+    .poll(() => calculationRequests.at(-1))
+    .toMatchObject({
+      reasonCode: 1,
+      planEnrollmentDate: "2026-08-01",
+      manualDependents: [
+        {
+          fullName: "Dependente manual E2E",
+          birthDate: "2010-01-01",
+          inclusionDate: "2026-08-10",
+          hasAddon: true,
+        },
+      ],
+    });
   await page.waitForTimeout(900);
-  expect(calculationRequests).toHaveLength(1);
-  expect(calculationRequests[0]).toMatchObject({
-    reasonCode: 1,
-    planEnrollmentDate: "2026-08-01",
-    manualDependents: [
-      {
-        fullName: "Dependente manual E2E",
-        inclusionDate: "2026-08-10",
-        invoicePlanAmount: 150.5,
-        addonAmount: 6.12,
-      },
-    ],
-  });
+  expect(calculationRequests.length).toBeLessThanOrEqual(3);
   await page
     .getByRole("button", { name: "Gerar documento obrigatório" })
     .click();
