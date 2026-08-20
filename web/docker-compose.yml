@@ -144,7 +144,7 @@ services:
       SENTRY_REPLAYS_SESSION_SAMPLE_RATE: ${SENTRY_REPLAYS_SESSION_SAMPLE_RATE:-0.0}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
       PDF_ANONYMOUS_SESSION_TTL_MINUTES: ${PDF_ANONYMOUS_SESSION_TTL_MINUTES:-120}
-      PDF_STORAGE_DIR: /data/pdf-jobs
+      PDF_STORAGE_DIR: /app/data/pdf-jobs
       UNIMED_TEMPLATE_DIR: /data/unimed-templates
       PDF_MAX_ACTIVE_JOBS: ${PDF_MAX_ACTIVE_JOBS:-12}
       PDF_MAX_ACTIVE_INPUT_BYTES: ${PDF_MAX_ACTIVE_INPUT_BYTES:-4294967296}
@@ -153,7 +153,7 @@ services:
       STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}
     user: "${APP_UID:-1001}:${APP_GID:-1001}"
     volumes:
-      - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
+      - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/app/data/pdf-jobs
       - ${UNIMED_TEMPLATE_DIR:-../storage/unimed-templates}:/data/unimed-templates:ro
       - /var/lib/server-resource-guard:/run/server-resource-guard:ro
     tmpfs:
@@ -198,7 +198,7 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3002}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
-      PDF_STORAGE_DIR: /data/pdf-jobs
+      PDF_STORAGE_DIR: /app/data/pdf-jobs
       PDF_WORKER_AUTHENTICATED_GROUP_CONCURRENCY: ${PDF_WORKER_AUTHENTICATED_GROUP_CONCURRENCY:-2}
       PDF_WORKER_CONCURRENCY: ${PDF_WORKER_CONCURRENCY:-2}
       PDF_COMPRESSION_FILE_CONCURRENCY: ${PDF_COMPRESSION_FILE_CONCURRENCY:-2}
@@ -206,14 +206,14 @@ services:
       PDF_RASTER_CHUNK_TARGET_PIXELS: ${PDF_RASTER_CHUNK_TARGET_PIXELS:-18000000}
       PDF_COMPRESSION_MIN_SAVINGS_RATIO: ${PDF_COMPRESSION_MIN_SAVINGS_RATIO:-0.005}
       PDF_COMPRESSION_TOOL_TIMEOUT_MS: ${PDF_COMPRESSION_TOOL_TIMEOUT_MS:-600000}
-      PDF_WORKER_HEARTBEAT_PATH: /data/pdf-jobs/.perfect-pdf-worker-heartbeat
+      PDF_WORKER_HEARTBEAT_PATH: /app/data/pdf-jobs/.perfect-pdf-worker-heartbeat
       PDF_WORKER_HEARTBEAT_MAX_AGE_SECONDS: ${PDF_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-90}
       STORAGE_BLOCK_USED_PERCENT: ${STORAGE_BLOCK_USED_PERCENT:-80}
       STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
     user: "${APP_UID:-1001}:${APP_GID:-1001}"
     volumes:
-      - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/data/pdf-jobs
+      - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/app/data/pdf-jobs
       - /var/lib/server-resource-guard:/run/server-resource-guard:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=512m,uid=${APP_UID:-1001},gid=${APP_GID:-1001},mode=1770

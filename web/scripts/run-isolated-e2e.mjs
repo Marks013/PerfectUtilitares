@@ -192,6 +192,12 @@ adminUrl.searchParams.delete("schema");
 const testUrl = databaseUrl(name, database);
 const temp = await mkdtemp(path.join(os.tmpdir(), "perfectutilitares-e2e-"));
 await mkdir(path.join(temp, "pdf-storage"), { recursive: true });
+const pdfWorkerHeartbeatPath = path.join(
+  cwd,
+  "data",
+  "pdf-jobs",
+  `pdf-worker-heartbeat-${process.pid}`,
+);
 const nextDistDir = `.next-e2e-${process.pid}-${Date.now()}`;
 const nextEnvPath = path.join(cwd, "next-env.d.ts");
 const originalNextEnv = await readFile(nextEnvPath, "utf8");
@@ -241,7 +247,7 @@ try {
     UNIMED_ACCESS_COOKIE_SECRET: randomBytes(48).toString("base64url"),
     UNIMED_ACCESS_SESSION_TTL_MINUTES: "30",
     PDF_STORAGE_DIR: path.join(temp, "pdf-storage"),
-    PDF_WORKER_HEARTBEAT_PATH: path.join(temp, "pdf-worker-heartbeat"),
+    PDF_WORKER_HEARTBEAT_PATH: pdfWorkerHeartbeatPath,
     SENTRY_DSN: "",
     SENTRY_AUTH_TOKEN: "",
   };
@@ -268,6 +274,7 @@ try {
   }
   await databaseAdmin.end().catch(() => undefined);
   await rm(temp, { recursive: true, force: true });
+  await rm(pdfWorkerHeartbeatPath, { force: true });
   await rm(path.join(cwd, nextDistDir), { recursive: true, force: true });
   if ((await readFile(nextEnvPath, "utf8")) !== originalNextEnv) {
     await writeFile(nextEnvPath, originalNextEnv);

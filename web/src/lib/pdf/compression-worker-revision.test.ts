@@ -1,21 +1,27 @@
 // PERFECT_PDF_FULL32_V2_2
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   currentPdfCompressionRevision,
+  pdfWorkerHeartbeatPath,
   readPdfWorkerCompatibility,
 } from "./compression-worker-revision";
 import { PDF_COMPRESSION_PROTOCOL_REVISION } from "./compression-types";
 
 const directories: string[] = [];
+const heartbeatFiles: string[] = [];
 const originalHeartbeat = process.env.PDF_WORKER_HEARTBEAT_PATH;
 const originalRevision = process.env.SOURCE_REVISION;
 
 afterEach(async () => {
   process.env.PDF_WORKER_HEARTBEAT_PATH = originalHeartbeat;
   process.env.SOURCE_REVISION = originalRevision;
+  await Promise.all(
+    heartbeatFiles.splice(0).map((file) => rm(file, { force: true })),
+  );
   await Promise.all(
     directories
       .splice(0)
@@ -26,8 +32,13 @@ afterEach(async () => {
 async function heartbeatFile() {
   const directory = await mkdtemp(path.join(tmpdir(), "pdf-worker-revision-"));
   directories.push(directory);
-  const file = path.join(directory, "heartbeat.json");
-  process.env.PDF_WORKER_HEARTBEAT_PATH = file;
+  process.env.PDF_WORKER_HEARTBEAT_PATH = path.join(
+    directory,
+    `heartbeat-${randomUUID()}.json`,
+  );
+  const file = pdfWorkerHeartbeatPath();
+  heartbeatFiles.push(file);
+  await mkdir(path.dirname(file), { recursive: true });
   return file;
 }
 

@@ -54,7 +54,9 @@ export default function OpenGraphImage() {
         />
         <div
           style={{
-            zIndex: 1,
+            position: "absolute",
+            left: 84,
+            top: 162,
             width: 306,
             height: 306,
             display: "flex",

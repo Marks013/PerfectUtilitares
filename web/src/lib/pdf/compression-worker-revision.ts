@@ -21,12 +21,19 @@ export function currentPdfCompressionProtocolRevision() {
   return PDF_COMPRESSION_PROTOCOL_REVISION;
 }
 
-export function pdfWorkerHeartbeatPath() {
+function pdfWorkerHeartbeatFileName() {
   const configured = process.env.PDF_WORKER_HEARTBEAT_PATH?.trim();
-  if (configured) return configured;
+  return configured
+    ? path.basename(configured)
+    : ".perfect-pdf-worker-heartbeat";
+}
+
+export function pdfWorkerHeartbeatPath() {
   return path.join(
-    process.env.PDF_STORAGE_DIR ?? "/data/pdf-jobs",
-    ".perfect-pdf-worker-heartbeat",
+    process.cwd(),
+    "data",
+    "pdf-jobs",
+    pdfWorkerHeartbeatFileName(),
   );
 }
 
@@ -54,11 +61,20 @@ function isHeartbeat(value: unknown): value is PdfWorkerHeartbeat {
 
 export async function readPdfWorkerCompatibility() {
   const expectedRevision = currentPdfCompressionRevision();
-  const heartbeatPath = pdfWorkerHeartbeatPath();
 
   let heartbeat: PdfWorkerHeartbeat;
   try {
-    const parsed = JSON.parse(await readFile(heartbeatPath, "utf8")) as unknown;
+    const parsed = JSON.parse(
+      await readFile(
+        path.join(
+          process.cwd(),
+          "data",
+          "pdf-jobs",
+          pdfWorkerHeartbeatFileName(),
+        ),
+        "utf8",
+      ),
+    ) as unknown;
     if (!isHeartbeat(parsed)) {
       return {
         ok: false as const,
