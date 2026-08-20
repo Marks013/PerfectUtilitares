@@ -205,7 +205,6 @@ export function useUnimedCalculationWorkspaceController({
 
   async function runCalculation(options?: {
     formElement?: HTMLFormElement;
-    generateRequiredDocument?: boolean;
     silent?: boolean;
   }) {
     const allErrors = validateForm(form);
@@ -275,9 +274,6 @@ export function useUnimedCalculationWorkspaceController({
       );
       setResult(calculation);
       setPayrollLoans(nextPayrollLoans);
-      if (documentRequired && options?.generateRequiredDocument !== false) {
-        void generateDocument(calculation);
-      }
     } catch (error) {
       if (
         abortController.signal.aborted ||
@@ -300,7 +296,6 @@ export function useUnimedCalculationWorkspaceController({
 
   const runAutomaticCalculation = useEffectEvent(() =>
     runCalculation({
-      generateRequiredDocument: false,
       silent: true,
     }),
   );
@@ -311,7 +306,6 @@ export function useUnimedCalculationWorkspaceController({
       automaticCalculationFingerprint;
     await runCalculation({
       formElement: event.currentTarget,
-      generateRequiredDocument: true,
     });
   }
 

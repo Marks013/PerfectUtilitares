@@ -450,6 +450,13 @@ test("Unimed calculates a manual dependent from birth and inclusion dates", asyn
     });
   await page.waitForTimeout(900);
   expect(calculationRequests.length).toBeLessThanOrEqual(3);
+  expect(documentRequests).toHaveLength(0);
+  await expect(
+    page.getByRole("button", { name: "Recalcular exclusão" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Imprimir duas vias" }),
+  ).toBeEnabled();
   await page
     .getByRole("button", { name: "Gerar documento obrigatório" })
     .click();

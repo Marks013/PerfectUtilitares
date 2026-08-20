@@ -206,13 +206,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                 ) : (
                   <Calculator className="size-4" aria-hidden="true" />
                 )}
-                {documentRequired
-                    ? result
-                      ? "Recalcular e gerar documento"
-                      : "Calcular e gerar documento"
-                    : result
-                      ? "Recalcular exclusão"
-                      : "Calcular exclusão"}
+                {result ? "Recalcular exclusão" : "Calcular exclusão"}
               </button>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-4 py-2.5 text-sm font-bold text-[color:var(--app-fg)]">
                 <input
@@ -237,11 +231,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
               <button
                 type="button"
                 onClick={() => window.print()}
-                disabled={
-                  !result ||
-                  isCalculating ||
-                  (documentRequired && !documentReady)
-                }
+                disabled={!result || isCalculating}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-5 py-2.5 text-sm font-black text-[color:var(--app-fg)] transition hover:border-[color:var(--app-gold)] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <Printer className="size-4" aria-hidden="true" />
