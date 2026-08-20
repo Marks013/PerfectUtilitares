@@ -210,7 +210,7 @@ describe("Unimed printable payroll loans", () => {
     expect(content).not.toContain("Dependente Desmarcado");
   });
 
-  it("prints only selected dependents for dependent exclusion", () => {
+  it("keeps the holder as reference without plan amounts for dependent exclusion", () => {
     const markup = renderToStaticMarkup(
       <UnimedPrintCopy
         copy={1}
@@ -236,9 +236,20 @@ describe("Unimed printable payroll loans", () => {
       />,
     );
     const content = text(markup);
+    const holderRow = markup.match(/<tr><td>101<\/td>[\s\S]*?<\/tr>/)?.[0];
 
+    expect(content).toContain("Pessoa Titular");
     expect(content).toContain("Dependente Manual");
-    expect(content).not.toContain("Pessoa Titular");
     expect(markup).toContain("<td>Dep</td>");
+    expect(holderRow).toBeDefined();
+    expect(holderRow).toContain("<td>—</td><td>—</td><td>R$ 0,00</td>");
+    expect(holderRow).not.toContain("R$ 100,00");
+    expect(holderRow).not.toContain("R$ 61,26");
+    expect(markup).toContain(
+      "Inclusão: <strong>01/01/2022</strong>",
+    );
+    expect(markup).toContain(
+      "CPF do Titular: <strong>529.982.247-25</strong>",
+    );
   });
 });

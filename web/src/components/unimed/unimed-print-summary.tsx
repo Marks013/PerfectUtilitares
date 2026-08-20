@@ -120,10 +120,7 @@ export function UnimedPrintCopy({
   const selectedDependents = data.dependents.filter(
     (dependent) => dependent.selected,
   );
-  const rows =
-    data.reasonCode === 1
-      ? selectedDependents
-      : [data.holder, ...selectedDependents];
+  const rows = [data.holder, ...selectedDependents];
   const loanCount = data.payrollLoans?.contracts.length ?? 0;
   const loanDensity =
     loanCount > 8 ? " is-dense" : loanCount > 4 ? " is-compact" : "";
@@ -174,6 +171,7 @@ export function UnimedPrintCopy({
         <tbody>
           {rows.map((person) => {
             const isHolder = person.id === data.holder.id;
+            const hideHolderPlanAmounts = data.reasonCode === 1 && isHolder;
             return (
             <tr key={person.id}>
               <td>{isHolder ? person.registration || "—" : "Dep"}</td>
@@ -185,9 +183,13 @@ export function UnimedPrintCopy({
               <td>{currentCompetencyLabel}</td>
               <td>{date(data.exclusionDate)}</td>
               <td>{person.age ?? "—"}</td>
-              <td>{money(person.invoicePlanAmount)}</td>
               <td>
-                {person.payrollPlanAmount === null
+                {hideHolderPlanAmounts
+                  ? "—"
+                  : money(person.invoicePlanAmount)}
+              </td>
+              <td>
+                {hideHolderPlanAmounts || person.payrollPlanAmount === null
                   ? "—"
                   : money(person.payrollPlanAmount)}
               </td>
