@@ -76,6 +76,14 @@ COPY src/lib/prisma-adapter.ts ./src/lib/prisma-adapter.ts
 COPY src/lib/auth/password.ts ./src/lib/auth/password.ts
 COPY src/lib/system/seed-admin.ts ./src/lib/system/seed-admin.ts
 COPY src/lib/unimed/defaults.ts ./src/lib/unimed/defaults.ts
+ARG SOURCE_REVISION=untracked
+ARG BUILD_DATE=1970-01-01T00:00:00Z
+LABEL org.opencontainers.image.title="PerfectUtilitares Migrator" \
+      org.opencontainers.image.description="Migracoes e inicializacao do PerfectUtilitares" \
+      org.opencontainers.image.source="https://github.com/Marks013/PerfectUtilitares" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
 USER node
 CMD ["sh", "-c", "npm run db:deploy"]
 
