@@ -8,11 +8,14 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
-FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime-base
-RUN apk add --no-cache ca-certificates libc6-compat libstdc++ openssl vips
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS node-runtime-base
+RUN apk add --no-cache ca-certificates libc6-compat libstdc++ openssl
 COPY --from=base /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+
+FROM node-runtime-base AS runtime-base
+RUN apk add --no-cache vips
 
 FROM base AS deps
 COPY package*.json ./
@@ -62,9 +65,9 @@ RUN --mount=type=cache,id=perfectutilitares-next-cache,target=/app/.next/cache,s
     find /app/.next/standalone -maxdepth 1 -type f \
       \( -name '.env' -o -name '.env.*' \) -delete
 
-FROM base AS migrator
+FROM node-runtime-base AS migrator
 ENV NODE_ENV=production
-COPY --from=migrator-deps /app/node_modules ./node_modules
+COPY --from=migrator-deps --chown=1000:1000 /app/node_modules ./node_modules
 COPY ops/migrator/package*.json ./
 COPY prisma.config.ts ./
 COPY tsconfig.json ./
@@ -84,8 +87,8 @@ LABEL org.opencontainers.image.title="PerfectUtilitares Migrator" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
-USER node
-CMD ["sh", "-c", "npm run db:deploy"]
+USER 1000:1000
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node --import tsx prisma/seed.ts"]
 
 FROM prisma-generated AS pdf-worker-builder
 COPY prisma.config.ts tsconfig.json ./
