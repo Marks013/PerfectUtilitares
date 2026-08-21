@@ -18,7 +18,7 @@ type ApiError = { error?: { message?: string } };
 export class PdfOutputMissingError extends Error {
   constructor() {
     super(
-      "O processamento terminou sem gerar um arquivo válido. Reabra o documento e tente novamente. Se o problema continuar, contate o suporte.",
+      "Não conseguimos concluir este arquivo. Abra-o novamente e tente outra vez. Se o problema continuar, fale com o suporte.",
     );
     this.name = "PdfOutputMissingError";
   }

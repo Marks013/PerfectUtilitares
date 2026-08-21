@@ -57,6 +57,7 @@ export function useUnimedCalculationState({
   const [emailError, setEmailError] = useState<string | null>(null);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  const [documentNotice, setDocumentNotice] = useState<string | null>(null);
   const [generatedDocument, setGeneratedDocument] =
     useState<GeneratedDocument | null>(null);
   const [isGeneratingDocument, setIsGeneratingDocument] = useState(false);
@@ -65,6 +66,7 @@ export function useUnimedCalculationState({
   const calculationAbortController = useRef<AbortController | null>(null);
   const documentRequestSequence = useRef(0);
   const documentAbortController = useRef<AbortController | null>(null);
+  const documentGenerationLock = useRef(false);
   const generatedDocumentUrl = useRef<string | null>(null);
   const lastAutomaticCalculationFingerprint = useRef<string | null>(null);
   const emailRequest = useRef<{
@@ -134,12 +136,14 @@ export function useUnimedCalculationState({
     documentRequestSequence.current += 1;
     documentAbortController.current?.abort();
     documentAbortController.current = null;
+    documentGenerationLock.current = false;
     if (generatedDocumentUrl.current) {
       URL.revokeObjectURL(generatedDocumentUrl.current);
       generatedDocumentUrl.current = null;
     }
     setGeneratedDocument(null);
     setDocumentError(null);
+    setDocumentNotice(null);
     setIsGeneratingDocument(false);
     setDocumentProgress(0);
   }
@@ -246,5 +250,5 @@ export function useUnimedCalculationState({
     invalidateDocument();
     setEmailDialogOpen(false);
   }
-  return { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, setIncludePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, generatedDocumentUrl, lastAutomaticCalculationFingerprint, emailRequest, selectedReason, reasonCode, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace };
+  return { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, setIncludePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, documentNotice, setDocumentNotice, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, documentGenerationLock, generatedDocumentUrl, lastAutomaticCalculationFingerprint, emailRequest, selectedReason, reasonCode, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace };
 }

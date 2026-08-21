@@ -70,12 +70,7 @@ COPY src ./src
 RUN npm run build:pdf-worker
 RUN npm prune --omit=dev --ignore-scripts
 
-FROM base AS pdf-worker
-ARG SOURCE_REVISION=unknown
-ARG BUILD_DATE=unknown
-LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.created="${BUILD_DATE}"
-ENV SOURCE_REVISION=${SOURCE_REVISION}
+FROM base AS pdf-runtime
 ENV NODE_ENV=production
 RUN apk add --no-cache \
     font-dejavu \
@@ -88,6 +83,13 @@ RUN apk add --no-cache \
     poppler-utils \
     postgresql-client \
     qpdf
+
+FROM pdf-runtime AS pdf-worker
+ARG SOURCE_REVISION=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+ENV SOURCE_REVISION=${SOURCE_REVISION}
 COPY --from=pdf-worker-builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=pdf-worker-builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py

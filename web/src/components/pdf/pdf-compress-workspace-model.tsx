@@ -152,7 +152,7 @@ export function resolveCompressionCompletion(
   if (partial) {
     return {
       phase: "PARTIAL",
-      detail: "Compressão parcialmente concluída",
+      detail: "Alguns arquivos foram compactados",
       autoDownload: false,
     };
   }
@@ -160,14 +160,14 @@ export function resolveCompressionCompletion(
   if (allUnchanged) {
     return {
       phase: "UNCHANGED",
-      detail: "Nenhuma redução obtida",
+      detail: "Os arquivos já estavam bem otimizados",
       autoDownload: false,
     };
   }
 
   return {
     phase: "SUCCEEDED",
-    detail: "Compressão concluída",
+    detail: "Compactação concluída com sucesso",
     autoDownload: allCompressed,
   };
 }

@@ -5,8 +5,16 @@ import type { useUnimedCalculationWorkspaceController } from "./unimed-calculati
 type Model = ReturnType<typeof useUnimedCalculationWorkspaceController>;
 
 export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
-  const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isSendingEmail, openGeneratedDocument, payrollLoans, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference } = model;
+  const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentNotice, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isSendingEmail, openGeneratedDocument, payrollLoans, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference } = model;
   const activeError = apiError ?? documentError ?? emailError;
+  const documentProgressLabel =
+    documentProgress < 15
+      ? "Preparando documento"
+      : documentProgress < 70
+        ? "Convertendo para PDF"
+        : documentProgress < 96
+          ? "Validando o arquivo"
+          : "Finalizando PDF";
   return (
 <div className="unimed-sheet-workspace">
       <header className="unimed-sheet-header border border-[color:var(--app-border)]">
@@ -252,19 +260,38 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                   !documentRequired ||
                   isGeneratingDocument
                 }
-                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-5 py-2.5 text-sm font-black text-[color:var(--app-fg)] transition hover:border-[color:var(--app-teal)] disabled:cursor-not-allowed disabled:opacity-45"
+                aria-busy={isGeneratingDocument}
+                className="relative inline-flex min-h-11 w-full overflow-hidden rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-5 py-2.5 text-sm font-black text-[color:var(--app-fg)] transition hover:border-[color:var(--app-teal)] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {isGeneratingDocument ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <FileText className="size-4" aria-hidden="true" />
-                )}
-                {isGeneratingDocument
-                  ? `Gerando PDF${documentProgress > 0 ? ` (${documentProgress}%)` : "…"}`
-                  : documentReady
-                    ? "Abrir PDF em nova aba"
-                    : "Gerar documento obrigatório"}
+                  <span
+                    className="absolute inset-y-0 left-0 bg-[color:var(--app-teal-soft)] transition-[width] duration-500 ease-out"
+                    style={{ width: `${documentProgress}%` }}
+                    role="progressbar"
+                    aria-label="Progresso da geração do documento"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={documentProgress}
+                  />
+                ) : null}
+                <span className="relative z-10 inline-flex items-center justify-center gap-2">
+                  {isGeneratingDocument ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <FileText className="size-4" aria-hidden="true" />
+                  )}
+                  {isGeneratingDocument
+                    ? `${documentProgressLabel} (${Math.max(1, documentProgress)}%)`
+                    : documentReady
+                      ? "Abrir PDF em nova aba"
+                      : "Gerar documento obrigatório"}
+                </span>
               </button>
+              {documentNotice ? (
+                <p className="text-xs font-semibold leading-5 text-[color:var(--app-muted)]" role="status">
+                  {documentNotice}
+                </p>
+              ) : null}
             </div>
           </section>
 

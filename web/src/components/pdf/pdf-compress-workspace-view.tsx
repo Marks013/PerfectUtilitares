@@ -424,7 +424,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
               {analyzing
                 ? "Analisando"
                 : busy
-                  ? "Processando"
+                  ? "Compactando arquivos"
                   : outputs.length ? "Comprimir novamente" : "Comprimir arquivos"}
             </button>
           </header>
@@ -489,14 +489,14 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
             <div>
               <strong>
                 {work.phase === "PARTIAL"
-                  ? "Compressão parcialmente concluída"
+                  ? "Alguns arquivos foram compactados"
                   : work.phase === "UNCHANGED"
-                    ? "Nenhuma redução obtida"
-                    : "Compressão concluída"}
+                    ? "Os arquivos já estavam bem otimizados"
+                    : "Compactação concluída com sucesso"}
               </strong>
               <small>
                 {work.phase === "UNCHANGED"
-                  ? `O original foi preservado · ${formatBytes(outputBytes)}`
+                  ? `Mantivemos o original para evitar perda de qualidade · ${formatBytes(outputBytes)}`
                   : savedPercent > 0
                     ? `${savedPercent}% menor · ${formatBytes(outputBytes)}`
                     : `Sem redução mensurável · ${formatBytes(outputBytes)}`}

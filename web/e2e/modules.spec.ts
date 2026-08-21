@@ -319,6 +319,7 @@ test("Unimed calculates a manual dependent from birth and inclusion dates", asyn
 
   const calculationRequests: Array<Record<string, unknown>> = [];
   const documentRequests: Array<Record<string, unknown>> = [];
+  let documentStatusPolls = 0;
   await page.route("**/api/unimed/beneficiaries?**", async (route) => {
     await route.fulfill({
       status: 200,
@@ -410,6 +411,21 @@ test("Unimed calculates a manual dependent from birth and inclusion dates", asyn
       });
       return;
     }
+    documentStatusPolls += 1;
+    if (documentStatusPolls <= 2) {
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: {
+            id: "unimed-document-e2e",
+            progress: documentStatusPolls === 1 ? 25 : 70,
+            status: "RUNNING",
+          },
+        }),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/pdf",
@@ -457,10 +473,21 @@ test("Unimed calculates a manual dependent from birth and inclusion dates", asyn
   await expect(
     page.getByRole("button", { name: "Imprimir duas vias" }),
   ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Gerar documento obrigatório" })
-    .click();
+  const documentButton = page.getByRole("button", {
+    name: "Gerar documento obrigatório",
+  });
+  const popupPromise = page.waitForEvent("popup");
+  await documentButton.click();
+  const documentPopup = await popupPromise;
   await expect.poll(() => documentRequests.length).toBe(1);
+  await expect
+    .poll(async () => {
+      const label = await page
+        .locator('button[aria-busy="true"]')
+        .textContent();
+      return Number(label?.match(/\((\d+)%\)/)?.[1] ?? 0);
+    })
+    .toBeGreaterThan(1);
   expect(documentRequests[0]).toMatchObject({
     dependentIds: [],
     manualDependents: [
@@ -477,6 +504,9 @@ test("Unimed calculates a manual dependent from birth and inclusion dates", asyn
   await expect(
     page.getByRole("button", { name: "Abrir PDF em nova aba" }),
   ).toBeVisible();
+  await expect(
+    documentPopup.locator('iframe[title="Documento gerado"]'),
+  ).toHaveAttribute("src", /^blob:/);
 });
 
 test("PDF merge persists, queues, processes and downloads a valid result", async ({

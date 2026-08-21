@@ -68,13 +68,47 @@ export * from "./unimed-calculation-workspace-model";
 import { UnimedCalculationWorkspaceView } from "./unimed-calculation-workspace-view";
 import { useUnimedCalculationState } from "./use-unimed-calculation-state";
 
+function reserveDocumentPreviewWindow() {
+  let previewWindow: Window | null = null;
+  try {
+    previewWindow = window.open("about:blank", "_blank");
+    if (!previewWindow) return null;
+
+    previewWindow.opener = null;
+    previewWindow.document.title = "Preparando documento";
+    previewWindow.document.body.style.cssText =
+      "margin:0;min-height:100vh;display:grid;place-items:center;background:#111715;color:#f4f7f5;font-family:system-ui,sans-serif";
+    const message = previewWindow.document.createElement("p");
+    message.textContent = "Seu documento está sendo preparado…";
+    message.style.cssText = "font-size:16px;font-weight:700";
+    previewWindow.document.body.appendChild(message);
+    return previewWindow;
+  } catch {
+    previewWindow?.close();
+    return null;
+  }
+}
+
+function showDocumentInPreviewWindow(
+  previewWindow: Window,
+  documentUrl: string,
+) {
+  previewWindow.document.title = "Documento gerado";
+  previewWindow.document.body.style.cssText =
+    "margin:0;min-height:100vh;background:#111715";
+  const preview = previewWindow.document.createElement("iframe");
+  preview.src = documentUrl;
+  preview.title = "Documento gerado";
+  preview.style.cssText = "display:block;width:100%;height:100vh;border:0";
+  previewWindow.document.body.replaceChildren(preview);
+}
 
 export function useUnimedCalculationWorkspaceController({
   reasons = DEFAULT_UNIMED_EXCLUSION_REASONS,
 }: {
   reasons?: readonly UnimedExclusionReasonOption[];
 }) {
-  const { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, generatedDocumentUrl, lastAutomaticCalculationFingerprint, emailRequest, selectedReason, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace } = useUnimedCalculationState({ reasons });
+  const { formId, form, setForm, errors, setErrors, result, setResult, payrollLoans, setPayrollLoans, includePayrollLoans, apiError, setApiError, isCalculating, setIsCalculating, selectedBeneficiary, setSelectedBeneficiary, dataCompetency, setDataCompetency, emailDialogOpen, setEmailDialogOpen, emailConfirmed, setEmailConfirmed, emailError, setEmailError, isSendingEmail, setIsSendingEmail, documentError, setDocumentError, documentNotice, setDocumentNotice, generatedDocument, setGeneratedDocument, isGeneratingDocument, setIsGeneratingDocument, documentProgress, setDocumentProgress, calculationRequestSequence, calculationAbortController, documentRequestSequence, documentAbortController, documentGenerationLock, generatedDocumentUrl, lastAutomaticCalculationFingerprint, emailRequest, selectedReason, documentRequired, documentReady, automaticCalculationFingerprint, updatePayrollLoansPrintPreference, invalidateDocument, invalidateCalculation, updateForm, updateHolder, updateDependent, blurMoney, blurDependentMoney, resetWorkspace } = useUnimedCalculationState({ reasons });
 
   function selectBeneficiary(
     beneficiary: UnimedBeneficiary,
@@ -385,7 +419,8 @@ export function useUnimedCalculationWorkspaceController({
       !calculation ||
       !selectedReason ||
       selectedReason.documentKind === "NONE" ||
-      isGeneratingDocument
+      isGeneratingDocument ||
+      documentGenerationLock.current
     ) {
       return false;
     }
@@ -418,13 +453,18 @@ export function useUnimedCalculationWorkspaceController({
       return false;
     }
 
+    documentGenerationLock.current = true;
+    setDocumentNotice(null);
+    const previewWindow = reserveDocumentPreviewWindow();
+    let previewOpened = false;
+
     const beneficiaryId = selectedBeneficiary.id;
     const requestSequence = ++documentRequestSequence.current;
     documentAbortController.current?.abort();
     const abortController = new AbortController();
     documentAbortController.current = abortController;
     setIsGeneratingDocument(true);
-    setDocumentProgress(0);
+    setDocumentProgress(1);
     setDocumentError(null);
     setGeneratedDocument(null);
 
@@ -463,7 +503,7 @@ export function useUnimedCalculationWorkspaceController({
           "O servidor não confirmou a fila de geração do PDF. Tente novamente.",
         );
       }
-      setDocumentProgress(queued.job.progress);
+      setDocumentProgress(Math.max(1, queued.job.progress));
 
       for (let attempt = 0; attempt < 195; attempt += 1) {
         await waitForDocumentPoll(1_000, abortController.signal);
@@ -475,6 +515,7 @@ export function useUnimedCalculationWorkspaceController({
           },
         );
         if (resultResponse.status === 200) {
+          setDocumentProgress((current) => Math.max(current, 96));
           const contentType = resultResponse.headers.get("Content-Type") ?? "";
           if (!contentType.toLowerCase().startsWith("application/pdf")) {
             throw new Error("O servidor não devolveu um PDF válido.");
@@ -497,6 +538,21 @@ export function useUnimedCalculationWorkspaceController({
             previewUrl: objectUrl,
             reasonCode: requestedReasonCode,
           });
+          if (previewWindow && !previewWindow.closed) {
+            try {
+              showDocumentInPreviewWindow(previewWindow, objectUrl);
+              previewOpened = true;
+            } catch {
+              previewWindow.close();
+              setDocumentNotice(
+                "Documento pronto. A abertura automática foi bloqueada; use o botão abaixo para abrir.",
+              );
+            }
+          } else {
+            setDocumentNotice(
+              "Documento pronto. A abertura automática foi bloqueada; use o botão abaixo para abrir.",
+            );
+          }
           return true;
         }
         if (resultResponse.status !== 202) {
@@ -510,9 +566,11 @@ export function useUnimedCalculationWorkspaceController({
         const pending = (await resultResponse
           .json()
           .catch(() => null)) as DocumentJobResponse | null;
-        setDocumentProgress(
-          Math.max(0, Math.min(99, Number(pending?.job?.progress) || 0)),
+        const serverProgress = Math.max(
+          1,
+          Math.min(99, Number(pending?.job?.progress) || 0),
         );
+        setDocumentProgress((current) => Math.max(current, serverProgress));
       }
       throw new Error("A geração do PDF demorou mais do que o esperado.");
     } catch (error) {
@@ -529,7 +587,11 @@ export function useUnimedCalculationWorkspaceController({
       );
       return false;
     } finally {
+      if (!previewOpened && previewWindow && !previewWindow.closed) {
+        previewWindow.close();
+      }
       if (documentRequestSequence.current === requestSequence) {
+        documentGenerationLock.current = false;
         documentAbortController.current = null;
         setIsGeneratingDocument(false);
       }
@@ -538,6 +600,7 @@ export function useUnimedCalculationWorkspaceController({
 
   function openGeneratedDocument() {
     if (!generatedDocument?.previewUrl) return;
+    setDocumentNotice(null);
     const link = document.createElement("a");
     link.href = generatedDocument.previewUrl;
     link.target = "_blank";
@@ -547,7 +610,7 @@ export function useUnimedCalculationWorkspaceController({
     link.remove();
   }
 
-    return { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isSendingEmail, openGeneratedDocument, payrollLoans, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference };
+    return { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentNotice, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isSendingEmail, openGeneratedDocument, payrollLoans, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference };
 }
 
 export function UnimedCalculationWorkspace(props: Parameters<typeof useUnimedCalculationWorkspaceController>[0]) {

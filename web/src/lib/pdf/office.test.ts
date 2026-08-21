@@ -49,8 +49,10 @@ describe("office-to-PDF conversion boundary", () => {
   });
 
   it("runs LibreOffice with an isolated profile and validates the PDF", async () => {
+    const onProgress = vi.fn();
     const result = await convertOfficeToPdf({
       jobId: "job-1",
+      onProgress,
       storageKey: "job-1/input/document.docx",
     });
 
@@ -72,6 +74,9 @@ describe("office-to-PDF conversion boundary", () => {
       expect.stringContaining("/storage/job-1/work/"),
       { force: true, recursive: true },
     );
+    expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+      10, 20, 70, 85, 95,
+    ]);
   });
 
   it("rejects a successful command that produced no PDF", async () => {

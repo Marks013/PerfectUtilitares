@@ -118,9 +118,9 @@ export function PdfOrganizerWorkspaceView({ model }: { model: Model }) {
             <Download className="size-4" aria-hidden="true" />
           )}
           {processing.status === "QUEUED"
-            ? "Na fila"
-            : processing.status === "RUNNING"
-              ? `Processando ${processing.progress}%`
+              ? "Na fila"
+              : processing.status === "RUNNING"
+              ? `Organizando ${processing.progress}%`
               : processing.status === "SUCCEEDED"
                 ? "PDF concluído"
                 : copy.finishLabel}
@@ -186,8 +186,8 @@ export function PdfOrganizerWorkspaceView({ model }: { model: Model }) {
             <span>
               <strong>
                 {processing.status === "QUEUED"
-                  ? "Aguardando processamento"
-                  : "Preparando documento"}
+                  ? "Aguardando para organizar os PDFs"
+                  : "Organizando as páginas"}
               </strong>
               <small>
                 Você pode acompanhar o avanço sem recarregar a página.

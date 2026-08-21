@@ -153,7 +153,7 @@ export function usePdfOrganizerWorkspaceController({
     if (!recoveredJobId) return;
 
     async function recoverDraft() {
-      setUpload({ fileName: "Recuperando rascunho", progress: 0 });
+      setUpload({ fileName: "Reabrindo organização", progress: 0 });
       setError(null);
       try {
         const response = await fetch(`/api/pdf/jobs/${recoveredJobId}`, {
@@ -163,11 +163,13 @@ export function usePdfOrganizerWorkspaceController({
           { job: RecoverableJob } | ApiError;
         if (!response.ok || !("job" in body)) {
           throw new Error(
-            readApiError(body, "Não foi possível recuperar o rascunho."),
+            readApiError(body, "Não foi possível reabrir esta organização."),
           );
         }
         if (body.job.status !== "DRAFT" || body.job.operation !== operation) {
-          throw new Error("Este rascunho não pode mais ser alterado.");
+          throw new Error(
+            "Esta organização expirou. Adicione os PDFs novamente para continuar.",
+          );
         }
 
         const options =
@@ -243,7 +245,7 @@ export function usePdfOrganizerWorkspaceController({
         setError(
           caught instanceof Error
             ? caught.message
-            : "Não foi possível recuperar o rascunho.",
+            : "Não foi possível reabrir esta organização.",
         );
       } finally {
         setUpload(null);
@@ -594,7 +596,9 @@ export function usePdfOrganizerWorkspaceController({
       const firstOutput = outputs[0];
 
       if (!firstOutput) {
-        throw new Error("O processamento terminou sem gerar um arquivo.");
+        throw new Error(
+          "Não conseguimos gerar o arquivo. Confira se os PDFs abrem normalmente e tente novamente.",
+        );
       }
 
       const downloadUrl =

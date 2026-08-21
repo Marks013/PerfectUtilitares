@@ -295,13 +295,22 @@ export async function processPdfJob(jobId: string) {
         sizeBytes: bigint;
         storageKey: string;
       }> = [];
+      await updateProgress(job.id, 5);
 
       for (const [index, input] of inputArtifacts.entries()) {
+        const inputProgressStart =
+          5 + (index / inputArtifacts.length) * 85;
+        const inputProgressSpan = 85 / inputArtifacts.length;
         const baseName =
           input.originalName.replace(/\.(?:pdf|docx|xlsx)$/i, "") ||
           "documento";
         const bytes = await convertOfficeToPdf({
           jobId: job.id,
+          onProgress: (progress) =>
+            updateProgress(
+              job.id,
+              inputProgressStart + (progress / 100) * inputProgressSpan,
+            ),
           storageKey: input.storageKey,
         });
         const output = await writePdfOutput(
@@ -311,10 +320,7 @@ export async function processPdfJob(jobId: string) {
         );
         outputs.push({ ...output, mimeType: "application/pdf" });
         writtenStorageKeys.push(output.storageKey);
-        await updateProgress(
-          job.id,
-          5 + ((index + 1) / inputArtifacts.length) * 85,
-        );
+        await updateProgress(job.id, inputProgressStart + inputProgressSpan);
       }
 
       const totalBytes = outputs.reduce(

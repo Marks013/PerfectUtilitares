@@ -177,10 +177,10 @@ function makeModel(options?: {
       progress: 100,
       detail:
         phase === "PARTIAL"
-          ? "Compressão parcialmente concluída"
+          ? "Alguns arquivos foram compactados"
           : phase === "UNCHANGED"
-            ? "Nenhuma redução obtida"
-            : "Compressão concluída",
+            ? "Os arquivos já estavam bem otimizados"
+            : "Compactação concluída com sucesso",
     },
   } as unknown as ViewModel;
 
@@ -236,8 +236,12 @@ describe("PDF compression workspace interaction regressions", () => {
         outputs: [makeOutput("UNCHANGED")],
       }).model,
     });
-    expect(textContent(unchangedRoot)).toContain("Nenhuma redução obtida");
-    expect(textContent(unchangedRoot)).toContain("O original foi preservado");
+    expect(textContent(unchangedRoot)).toContain(
+      "Os arquivos já estavam bem otimizados",
+    );
+    expect(textContent(unchangedRoot)).toContain(
+      "Mantivemos o original para evitar perda de qualidade",
+    );
 
     const partialRoot = PdfCompressWorkspaceView({
       model: makeModel({
@@ -246,7 +250,7 @@ describe("PDF compression workspace interaction regressions", () => {
       }).model,
     });
     expect(textContent(partialRoot)).toContain(
-      "Compressão parcialmente concluída",
+      "Alguns arquivos foram compactados",
     );
   });
 

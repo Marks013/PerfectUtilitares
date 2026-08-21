@@ -138,17 +138,21 @@ export function usePdfEditorWorkspaceController({
           { job: RecoverableJob } | ApiError;
         if (!response.ok || !("job" in body)) {
           throw new Error(
-            readApiError(body, "Não foi possível recuperar o rascunho."),
+            readApiError(body, "Não foi possível reabrir esta edição."),
           );
         }
         if (body.job.status !== "DRAFT" || body.job.operation !== operation) {
-          throw new Error("Este rascunho não pode mais ser editado.");
+          throw new Error(
+            "Esta edição expirou. Abra o PDF novamente para continuar.",
+          );
         }
         const input = body.job.artifacts.find(
           (artifact) => artifact.kind === "INPUT",
         );
         if (!input)
-          throw new Error("Arquivo original do rascunho não encontrado.");
+          throw new Error(
+            "O PDF original não está mais disponível. Adicione o arquivo novamente.",
+          );
 
         const loadedDocument = await loadPdfDocument(body.job.id, input.id);
         const savedOptions =
@@ -186,7 +190,7 @@ export function usePdfEditorWorkspaceController({
         setError(
           caught instanceof Error
             ? caught.message
-            : "Não foi possível recuperar o rascunho.",
+            : "Não foi possível reabrir esta edição.",
         );
       } finally {
         setRecovering(false);
@@ -352,7 +356,9 @@ export function usePdfEditorWorkspaceController({
       const firstOutput = outputs[0];
 
       if (!firstOutput) {
-        throw new Error("O processamento terminou sem gerar um arquivo.");
+        throw new Error(
+          "Não conseguimos gerar o arquivo. Confira se o PDF abre normalmente e tente novamente.",
+        );
       }
 
       triggerDownload(`/api/pdf/jobs/${jobId}/outputs/${firstOutput.id}`);

@@ -345,10 +345,12 @@ export function ImagesToPdfWorkspace() {
         setDetail(
           body.job.status === "RUNNING"
             ? "Montando páginas"
-            : "Aguardando processamento",
+            : "Aguardando para criar o PDF",
         );
       }
-      throw new Error("A criação do PDF demorou além do esperado.");
+      throw new Error(
+        "A criação está levando mais tempo que o esperado. Tente novamente em instantes ou use menos imagens.",
+      );
     } catch (caught) {
       setPhase("IDLE");
       setProgress(0);
@@ -453,7 +455,7 @@ export function ImagesToPdfWorkspace() {
               ) : (
                 <ImagePlus className="size-4" aria-hidden="true" />
               )}
-              {busy ? "Processando" : "Criar PDF"}
+              {busy ? "Criando PDF" : "Criar PDF"}
             </button>
           </div>
           <DndContext

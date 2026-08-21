@@ -86,9 +86,11 @@ function runLibreOffice(args: string[], profileDirectory: string) {
 
 export async function convertOfficeToPdf({
   jobId,
+  onProgress,
   storageKey,
 }: {
   jobId: string;
+  onProgress?: (progress: number) => Promise<void> | void;
   storageKey: string;
 }) {
   const workKey = `${jobId}/work/${randomUUID()}`;
@@ -97,8 +99,10 @@ export async function convertOfficeToPdf({
   const outputDirectory = path.join(workDirectory, "output");
   await mkdir(profileDirectory, { recursive: true });
   await mkdir(outputDirectory, { recursive: true });
+  await onProgress?.(10);
 
   try {
+    await onProgress?.(20);
     await runLibreOffice(
       [
         "--headless",
@@ -115,6 +119,7 @@ export async function convertOfficeToPdf({
       ],
       profileDirectory,
     );
+    await onProgress?.(70);
     const outputName = (await readdir(outputDirectory)).find((fileName) =>
       fileName.toLowerCase().endsWith(".pdf"),
     );
@@ -127,6 +132,7 @@ export async function convertOfficeToPdf({
     const output = new Uint8Array(
       await readFile(path.join(outputDirectory, outputName)),
     );
+    await onProgress?.(85);
     try {
       const document = await PDFDocument.load(output, { updateMetadata: false });
       if (!document.getPageCount()) throw new Error("PDF sem páginas");
@@ -137,6 +143,7 @@ export async function convertOfficeToPdf({
         error instanceof Error ? error.message : String(error),
       );
     }
+    await onProgress?.(95);
     return output;
   } finally {
     await rm(workDirectory, { force: true, recursive: true }).catch(

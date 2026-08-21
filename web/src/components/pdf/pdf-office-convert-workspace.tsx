@@ -245,7 +245,7 @@ export function PdfOfficeConvertWorkspace({
       }
 
       setPhase("QUEUED");
-      setDetail("Preparando conversão");
+      setDetail("Arquivos recebidos. Preparando a conversão");
       setProgress(48);
       const queueResponse = await fetch(
         `/api/pdf/jobs/${currentJobId}/queue`,
@@ -270,7 +270,10 @@ export function PdfOfficeConvertWorkspace({
           | ApiError;
         if (!response.ok || !("job" in body)) {
           throw new Error(
-            readApiError(body, "Não foi possível acompanhar a conversão."),
+            readApiError(
+              body,
+              "Perdemos a conexão enquanto os arquivos eram preparados. Tente novamente.",
+            ),
           );
         }
         const currentOutputs = body.job.artifacts.filter(
@@ -287,7 +290,7 @@ export function PdfOfficeConvertWorkspace({
         );
         setDetail(
           body.job.status === "QUEUED"
-            ? "Aguardando processamento"
+            ? "Aguardando para converter os arquivos"
             : "Convertendo arquivos",
         );
         setProgress(48 + Math.round(body.job.progress * 0.52));
@@ -319,16 +322,19 @@ export function PdfOfficeConvertWorkspace({
           body.job.status === "EXPIRED"
         ) {
           throw new Error(
-            body.job.errorMessage ?? "Não foi possível concluir a conversão.",
+            body.job.errorMessage ??
+              "A conversão não foi concluída. Confira se o documento abre normalmente e tente novamente.",
           );
         }
       }
-      throw new Error("A conversão demorou mais do que o esperado.");
+      throw new Error(
+        "A conversão está levando mais tempo que o esperado. Tente novamente em instantes ou envie menos arquivos.",
+      );
     } catch (caught) {
       setError(
         caught instanceof Error
           ? caught.message
-          : "Não foi possível concluir a conversão.",
+          : "A conversão não foi concluída. Confira se o documento abre normalmente e tente novamente.",
       );
       setPhase("FAILED");
     }

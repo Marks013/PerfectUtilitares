@@ -64,7 +64,7 @@ export function PdfEditorWorkspaceView({ model }: { model: Model }) {
           {recovering ? (
             <>
               <Loader2 className="size-8 animate-spin" aria-hidden="true" />
-              <strong>Recuperando rascunho</strong>
+              <strong>Reabrindo edição</strong>
               <span>Aguarde enquanto o documento é reaberto.</span>
             </>
           ) : uploadProgress !== null ? (
@@ -302,7 +302,7 @@ export function PdfEditorWorkspaceView({ model }: { model: Model }) {
             {processing.status === "QUEUED" ||
             processing.status === "RUNNING" ? (
               <>
-                <span>Processando documento</span>
+                <span>Aplicando suas alterações</span>
                 <div className="pdf-progress">
                   <span style={{ width: `${processing.progress}%` }} />
                 </div>
