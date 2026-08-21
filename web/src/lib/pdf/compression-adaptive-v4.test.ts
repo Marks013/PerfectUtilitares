@@ -196,6 +196,8 @@ describe("adaptive PDF compression v4.2", () => {
       colorMode: "MONOCHROME",
     });
     expect(args).toContain("--skip-text");
+    expect(args).toContain("--language");
+    expect(args).toContain("por+eng");
     expect(args).toContain("--tesseract-timeout");
     expect(args).toContain("0");
     expect(args).toContain("--output-type");

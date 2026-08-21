@@ -2,7 +2,7 @@
 # PERFECT_PDF_FULL32_V2_2
 # PERFECT_PDF_ADAPTIVE_V4_2
 
-FROM node:24.19.0-alpine AS base
+FROM node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS base
 RUN apk add --no-cache libc6-compat openssl vips
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
@@ -11,6 +11,16 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
 FROM base AS deps
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
+
+FROM base AS migrator-deps
+COPY ops/migrator/package*.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    PRISMA_SKIP_POSTINSTALL_GENERATE=true npm ci --omit=dev
+
+FROM base AS pdf-worker-deps
+COPY ops/pdf-worker/package*.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    PRISMA_SKIP_POSTINSTALL_GENERATE=true npm ci --omit=dev
 
 FROM deps AS prisma-generated
 COPY prisma.config.ts ./
@@ -48,8 +58,8 @@ RUN --mount=type=cache,id=perfectutilitares-next-cache,target=/app/.next/cache,s
 
 FROM base AS migrator
 ENV NODE_ENV=production
-COPY --from=prisma-generated /app/node_modules ./node_modules
-COPY package*.json ./
+COPY --from=migrator-deps /app/node_modules ./node_modules
+COPY ops/migrator/package*.json ./
 COPY prisma.config.ts ./
 COPY tsconfig.json ./
 COPY prisma ./prisma
@@ -68,7 +78,6 @@ COPY prisma.config.ts tsconfig.json ./
 COPY prisma ./prisma
 COPY src ./src
 RUN npm run build:pdf-worker
-RUN npm prune --omit=dev --ignore-scripts
 
 FROM base AS pdf-runtime
 ENV NODE_ENV=production
@@ -82,29 +91,30 @@ RUN apk add --no-cache \
     ocrmypdf \
     poppler-utils \
     postgresql-client \
-    qpdf
+    qpdf \
+    tesseract-ocr-data-eng \
+    tesseract-ocr-data-por
 
 FROM pdf-runtime AS pdf-worker
-ARG SOURCE_REVISION=unknown
-ARG BUILD_DATE=unknown
-LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.created="${BUILD_DATE}"
-ENV SOURCE_REVISION=${SOURCE_REVISION}
-COPY --from=pdf-worker-builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=pdf-worker-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=pdf-worker-builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py
 COPY ops/container-health/pdf-worker-healthcheck /usr/local/bin/pdf-worker-healthcheck
 RUN chmod 0555 /usr/local/bin/pdf-worker-healthcheck
+ARG SOURCE_REVISION=untracked
+ARG BUILD_DATE=1970-01-01T00:00:00Z
+ENV SOURCE_REVISION=${SOURCE_REVISION}
+LABEL org.opencontainers.image.title="PerfectUtilitares PDF Worker" \
+      org.opencontainers.image.description="Processador isolado de PDFs do PerfectUtilitares" \
+      org.opencontainers.image.source="https://github.com/Marks013/PerfectUtilitares" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
 USER node
 HEALTHCHECK --interval=60s --timeout=10s --start-period=45s --retries=3 CMD ["/usr/local/bin/pdf-worker-healthcheck"]
 CMD ["node", "dist/pdf-worker.mjs"]
 
 FROM base AS runner
-ARG SOURCE_REVISION=unknown
-ARG BUILD_DATE=unknown
-LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.created="${BUILD_DATE}"
-ENV SOURCE_REVISION=${SOURCE_REVISION}
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
@@ -120,6 +130,15 @@ COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/standard_font
 COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/wasm ./node_modules/pdfjs-dist/wasm
 COPY ops/container-health/app-readiness /usr/local/bin/app-readiness
 RUN chmod 0555 /usr/local/bin/app-readiness
+ARG SOURCE_REVISION=untracked
+ARG BUILD_DATE=1970-01-01T00:00:00Z
+ENV SOURCE_REVISION=${SOURCE_REVISION}
+LABEL org.opencontainers.image.title="PerfectUtilitares Web" \
+      org.opencontainers.image.description="Aplicacao web do PerfectUtilitares" \
+      org.opencontainers.image.source="https://github.com/Marks013/PerfectUtilitares" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 CMD ["/usr/local/bin/app-readiness"]

@@ -290,6 +290,8 @@ export function buildOcrMyPdfOptimizerArgs({
   const level = ocrMyPdfOptimizationLevel(options, colorMode);
   const args = [
     "--skip-text",
+    "--language",
+    "por+eng",
     "--tesseract-timeout",
     "0",
     "--output-type",

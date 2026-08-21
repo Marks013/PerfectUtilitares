@@ -14,3 +14,10 @@ coverage
 Dockerfile
 docker-compose.yml
 README.md
+e2e
+test-results
+playwright-report
+storage
+.codex-temp
+.codex-tmp
+*.log
