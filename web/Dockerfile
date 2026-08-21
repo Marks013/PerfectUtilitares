@@ -8,6 +8,12 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime-base
+RUN apk add --no-cache ca-certificates libc6-compat libstdc++ openssl vips
+COPY --from=base /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+
 FROM base AS deps
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
@@ -79,7 +85,7 @@ COPY prisma ./prisma
 COPY src ./src
 RUN npm run build:pdf-worker
 
-FROM base AS pdf-runtime
+FROM runtime-base AS pdf-runtime
 ENV NODE_ENV=production
 RUN apk add --no-cache \
     font-dejavu \
@@ -96,9 +102,9 @@ RUN apk add --no-cache \
     tesseract-ocr-data-por
 
 FROM pdf-runtime AS pdf-worker
-COPY --from=pdf-worker-deps --chown=node:node /app/node_modules ./node_modules
-COPY --from=pdf-worker-builder --chown=node:node /app/dist ./dist
-COPY --chown=node:node src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py
+COPY --from=pdf-worker-deps --chown=1001:1001 /app/node_modules ./node_modules
+COPY --from=pdf-worker-builder --chown=1001:1001 /app/dist ./dist
+COPY --chown=1001:1001 src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py
 COPY ops/container-health/pdf-worker-healthcheck /usr/local/bin/pdf-worker-healthcheck
 RUN chmod 0555 /usr/local/bin/pdf-worker-healthcheck
 ARG SOURCE_REVISION=untracked
@@ -110,24 +116,24 @@ LABEL org.opencontainers.image.title="PerfectUtilitares PDF Worker" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
-USER node
+USER 1001:1001
 HEALTHCHECK --interval=60s --timeout=10s --start-period=45s --retries=3 CMD ["/usr/local/bin/pdf-worker-healthcheck"]
 CMD ["node", "dist/pdf-worker.mjs"]
 
-FROM base AS runner
+FROM runtime-base AS runner
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 RUN apk add --no-cache postgresql-client
-COPY --from=builder --chown=node:node /app/.next/standalone ./
-COPY --from=builder --chown=node:node /app/node_modules/@img ./node_modules/@img
-COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-COPY --from=builder --chown=node:node /app/public ./public
-COPY --from=builder --chown=node:node /app/node_modules/pdfkit/js/data ./node_modules/pdfkit/js/data
-COPY --from=builder --chown=node:node /app/node_modules/pdfkit/js/data /ROOT/node_modules/pdfkit/js/data
-COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/cmaps ./node_modules/pdfjs-dist/cmaps
-COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/standard_fonts ./node_modules/pdfjs-dist/standard_fonts
-COPY --from=builder --chown=node:node /app/node_modules/pdfjs-dist/wasm ./node_modules/pdfjs-dist/wasm
+COPY --from=builder --chown=1001:1001 /app/.next/standalone ./
+COPY --from=builder --chown=1001:1001 /app/node_modules/@img ./node_modules/@img
+COPY --from=builder --chown=1001:1001 /app/.next/static ./.next/static
+COPY --from=builder --chown=1001:1001 /app/public ./public
+COPY --from=builder --chown=1001:1001 /app/node_modules/pdfkit/js/data ./node_modules/pdfkit/js/data
+COPY --from=builder --chown=1001:1001 /app/node_modules/pdfkit/js/data /ROOT/node_modules/pdfkit/js/data
+COPY --from=builder --chown=1001:1001 /app/node_modules/pdfjs-dist/cmaps ./node_modules/pdfjs-dist/cmaps
+COPY --from=builder --chown=1001:1001 /app/node_modules/pdfjs-dist/standard_fonts ./node_modules/pdfjs-dist/standard_fonts
+COPY --from=builder --chown=1001:1001 /app/node_modules/pdfjs-dist/wasm ./node_modules/pdfjs-dist/wasm
 COPY ops/container-health/app-readiness /usr/local/bin/app-readiness
 RUN chmod 0555 /usr/local/bin/app-readiness
 ARG SOURCE_REVISION=untracked
@@ -139,7 +145,7 @@ LABEL org.opencontainers.image.title="PerfectUtilitares Web" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
-USER node
+USER 1001:1001
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 CMD ["/usr/local/bin/app-readiness"]
 CMD ["node", "server.js"]
