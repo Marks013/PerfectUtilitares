@@ -50,8 +50,8 @@ try {
       "--force",
       "--filter",
       "until=168h",
-      "--max-used-space=15gb",
     ]);
+    run("docker", ["builder", "prune", "--force", "--max-used-space=15gb"]);
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
