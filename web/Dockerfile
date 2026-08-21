@@ -96,7 +96,6 @@ RUN apk add --no-cache \
     jbig2enc \
     ocrmypdf \
     poppler-utils \
-    postgresql-client \
     qpdf \
     tesseract-ocr-data-eng \
     tesseract-ocr-data-por
@@ -124,7 +123,6 @@ FROM runtime-base AS runner
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-RUN apk add --no-cache postgresql-client
 COPY --from=builder --chown=1001:1001 /app/.next/standalone ./
 COPY --from=builder --chown=1001:1001 /app/node_modules/@img ./node_modules/@img
 COPY --from=builder --chown=1001:1001 /app/.next/static ./.next/static
