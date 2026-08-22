@@ -1,7 +1,9 @@
 import {
   ArrowRight,
+  BadgeDollarSign,
   CheckCircle2,
   Clock3,
+  FileSpreadsheet,
   Files,
   Grip,
   HeartPulse,
@@ -74,6 +76,21 @@ const unimedCard = {
   ],
 } as const;
 
+const salaryAdjustmentCard = {
+  href: "/reajuste-salarial",
+  eyebrow: "Reajuste Salarial",
+  title: "Calcule o retroativo por competência",
+  description:
+    "Agrupe bases da folha, aplique o percentual restante e gere um PDF consolidado por filial.",
+  cta: "Calcular reajuste",
+  tone: "pdf",
+  icon: BadgeDollarSign,
+  details: [
+    { icon: FileSpreadsheet, label: "Até 4 competências" },
+    { icon: ShieldCheck, label: "Somente administradores" },
+  ],
+} as const;
+
 export default async function DashboardPage() {
   const session = await auth();
   const activeSession = session?.user.status !== "ACTIVE" ? null : session;
@@ -90,9 +107,13 @@ export default async function DashboardPage() {
       : null;
   const canSeeUnimed =
     activeSession?.user.role === "ADMIN" || Boolean(unimedGrant);
-  const visibleModuleCards = canSeeUnimed
+  const accessibleModuleCards = canSeeUnimed
     ? [...moduleCards, unimedCard]
     : moduleCards;
+  const visibleModuleCards =
+    activeSession?.user.role === "ADMIN"
+      ? [...accessibleModuleCards, salaryAdjustmentCard]
+      : accessibleModuleCards;
 
   return (
     <div className="dashboard-home">

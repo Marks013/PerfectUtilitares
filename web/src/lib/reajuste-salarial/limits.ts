@@ -1,0 +1,11 @@
+export const MIN_FILES = 1;
+export const MAX_FILES = 4;
+export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+export const MAX_TOTAL_FILE_BYTES = 20 * 1024 * 1024;
+export const MAX_REQUEST_BYTES = MAX_TOTAL_FILE_BYTES + 1024 * 1024;
+export const MAX_ROWS_PER_FILE = 25_000;
+export const MAX_UNIQUE_EMPLOYEES = 5_000;
+export const MAX_DIAGNOSTICS = 25;
+export const RATE_LIMIT = 5;
+export const RATE_WINDOW_MS = 60_000;
+export const PARSER_PROFILE = "folha-inss-v1" as const;
