@@ -8,7 +8,7 @@ import {
 
 export const REAJUSTE_ACCESS_COOKIE =
   "perfectutilitares.reajuste-salarial-access";
-export const REAJUSTE_STANDARD_OPERATOR = "Dp Planalto";
+const REAJUSTE_STANDARD_OPERATOR = "Dp Planalto";
 
 export function reajusteSessionCookieOptions(maxAgeSeconds: number) {
   return unimedSessionCookieOptions(maxAgeSeconds);
