@@ -28,7 +28,12 @@ export function parseMoneyCents(value: unknown): bigint {
   if (typeof value === "number") {
     if (!Number.isFinite(value) || value < 0) return invalidMoney();
     const cents = Math.round(value * 100);
-    if (Math.abs(value * 100 - cents) > 1e-6) return invalidMoney();
+    if (
+      !Number.isSafeInteger(cents) ||
+      Math.abs(value * 100 - cents) > 1e-6
+    ) {
+      return invalidMoney();
+    }
     return BigInt(cents);
   }
   if (typeof value !== "string") return invalidMoney();

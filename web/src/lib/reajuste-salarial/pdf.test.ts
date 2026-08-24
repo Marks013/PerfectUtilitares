@@ -35,4 +35,34 @@ describe("salary adjustment PDF", () => {
       expect(page.getHeight()).toBeCloseTo(595.28, 1);
     }
   });
+
+  it("renders the maximum of four competencies without overflowing A4", async () => {
+    const files = ["06", "07", "08", "09"].map((month, fileIndex) => {
+      const competency = parseCompetencyFileName(`${month}-2026.xlsx`);
+      return {
+        competency,
+        sourceFile: `${month}-2026.xlsx`,
+        sourceSheet: "Plan1",
+        rows: Array.from({ length: 20 }, (_, index) => ({
+          competency,
+          sourceFile: `${month}-2026.xlsx`,
+          sourceSheet: "Plan1",
+          sourceRow: index + 1,
+          branchAlias: "MATRIZ",
+          registration: String(index + 1).padStart(9, "0"),
+          employeeName: `COLABORADOR COM NOME EXTENSO ${String(index + 1).padStart(3, "0")}`,
+          baseCents: 456_084n + BigInt(fileIndex * 10_000),
+        })),
+      };
+    });
+    const bytes = await generateSalaryAdjustmentPdf(
+      consolidatePayrollFiles(files, 442n, new Date("2026-08-24T12:00:00.000Z")),
+    );
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBeGreaterThan(0);
+    for (const page of pdf.getPages()) {
+      expect(page.getWidth()).toBeCloseTo(841.89, 1);
+      expect(page.getHeight()).toBeCloseTo(595.28, 1);
+    }
+  });
 });

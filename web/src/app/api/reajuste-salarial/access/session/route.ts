@@ -5,7 +5,6 @@ import {
   enforcePersistentRateLimit,
   jsonError,
   readJsonBody,
-  requireAdmin,
   requireContentType,
   requireMaxContentLength,
   requireSameOrigin,
@@ -29,8 +28,6 @@ function configuredStandardPasswordHash() {
 }
 
 export async function GET() {
-  const access = await requireAdmin();
-  if (!access.ok) return access.response;
   const session = await getReajusteModuleSession();
   if (!session) {
     return jsonError(
@@ -53,8 +50,6 @@ export async function GET() {
 export async function POST(request: Request) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
-  const access = await requireAdmin();
-  if (!access.ok) return access.response;
 
   const limited = await enforcePersistentRateLimit(request, {
     limit: 5,

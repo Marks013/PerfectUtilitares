@@ -43,6 +43,7 @@ describe("AppShell Jornada navigation", () => {
 
     expect(html).toContain("Validador de Jornada");
     expect(html).toContain("Manutenção de PDFs");
+    expect(html).toContain('href="/reajuste-salarial"');
     expect(html).toContain('href="/jornada/validar"');
     expect(html).not.toContain("<details open");
     expect(html).not.toContain('href="/jornada/regras"');

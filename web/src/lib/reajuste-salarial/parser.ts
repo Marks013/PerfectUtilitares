@@ -179,8 +179,9 @@ export function parsePayrollSheetRows(
         sourceRow,
       );
     }
-    const registration = registrationValue.replace(/\s+/g, "").trim();
-    if (!/^\d+$/.test(registration)) continue;
+    const rawRegistration = registrationValue.replace(/\s+/g, "").trim();
+    if (!/^\d+$/.test(rawRegistration)) continue;
+    const registration = rawRegistration.replace(/^0+(?=\d)/, "");
     const employeeName = text(row[nameColumn]);
     if (!employeeName) {
       structureError(context, "Colaborador sem nome.", sourceRow);

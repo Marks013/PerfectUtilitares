@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  requireAdmin: vi.fn(),
+  auth: vi.fn(),
   requireReajusteAccess: vi.fn(),
   requireSameOrigin: vi.fn(),
   rateLimit: vi.fn(),
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/reajuste-salarial/access.server", () => ({
   requireReajusteAccess: mocks.requireReajusteAccess,
 }));
+vi.mock("@/auth", () => ({ auth: mocks.auth }));
 
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 vi.mock("@/lib/api/security", () => ({
@@ -22,7 +23,6 @@ vi.mock("@/lib/api/security", () => ({
     Response.json({ error: { code, message, details } }, { status }),
   methodNotAllowed: (allowed: string[]) =>
     new Response(null, { status: 405, headers: { Allow: allowed.join(", ") } }),
-  requireAdmin: mocks.requireAdmin,
   requireContentType: vi.fn(() => null),
   requireMaxContentLength: vi.fn(() => null),
   requireSameOrigin: mocks.requireSameOrigin,
@@ -68,10 +68,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireSameOrigin.mockReturnValue(null);
   mocks.rateLimit.mockResolvedValue(null);
-  mocks.requireAdmin.mockResolvedValue({
-    ok: true,
-    session: { user: { id: "admin-1", role: "ADMIN", tenantId: "tenant-1" } },
-  });
+  mocks.auth.mockResolvedValue(null);
   mocks.requireReajusteAccess.mockResolvedValue({
     ok: true,
     moduleSessionId: "module-session-1",
@@ -102,15 +99,6 @@ describe("salary adjustment PDF API", () => {
     expect(GET().headers.get("allow")).toBe("POST");
   });
 
-  it("requires an active admin tenant", async () => {
-    mocks.requireAdmin.mockResolvedValueOnce({
-      ok: true,
-      session: { user: { id: "admin-1", role: "ADMIN", tenantId: null } },
-    });
-    expect((await POST(request([xlsx()]))).status).toBe(403);
-    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
-  });
-
   it("requires the module password session", async () => {
     mocks.requireReajusteAccess.mockResolvedValueOnce({
       ok: false,
@@ -131,7 +119,7 @@ describe("salary adjustment PDF API", () => {
     expect(mocks.prepareArchive).not.toHaveBeenCalled();
   });
 
-  it("generates a static PDF and records only usage metadata", async () => {
+  it("generates a static PDF anonymously after module unlock", async () => {
     const response = await POST(request([xlsx(), xlsx("07-2026.xlsx")]));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/pdf");
@@ -142,7 +130,7 @@ describe("salary adjustment PDF API", () => {
       expect.objectContaining({
         module: "PDF",
         operation: "REAJUSTE_RETROATIVO",
-        userId: "admin-1",
+        userId: undefined,
       }),
     );
   });

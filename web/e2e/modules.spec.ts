@@ -285,7 +285,10 @@ test("salary adjustment uses its own standard lock and keeps dark contrast", asy
     "Isolated Unimed passwords are required",
   );
   await page.setExtraHTTPHeaders({ "x-forwarded-for": "203.0.113.77" });
-  await login(page);
+  await page.goto("/dashboard");
+  await expect(
+    page.getByRole("link", { name: "Reajuste", exact: true }),
+  ).toBeVisible();
   await page.goto("/reajuste-salarial");
   await expect(page).toHaveURL(/\/reajuste-salarial\/acesso(?:\?|$)/);
   await expect(

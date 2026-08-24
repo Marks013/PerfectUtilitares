@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
 import {
   enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
-  requireAdmin,
   requireContentType,
   requireMaxContentLength,
   requireSameOrigin,
@@ -101,17 +101,9 @@ export async function POST(request: Request) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
 
-  const access = await requireAdmin();
-  if (!access.ok) return access.response;
   const moduleAccess = await requireReajusteAccess();
   if (!moduleAccess.ok) return moduleAccess.response;
-  if (!access.session.user.tenantId) {
-    return jsonError(
-      403,
-      "TENANT_REQUIRED",
-      "Sua conta administrativa precisa estar vinculada a uma empresa.",
-    );
-  }
+  const authenticatedSession = await auth();
 
   const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "reajuste-salarial-pdf",
@@ -179,7 +171,7 @@ export async function POST(request: Request) {
     stage = "render";
     const pdf = await generateSalaryAdjustmentPdf(report);
     await recordUserUsage({
-      userId: access.session.user.id,
+      userId: authenticatedSession?.user.id,
       module: "PDF",
       operation: "REAJUSTE_RETROATIVO",
       inputBytes: totalBytes,

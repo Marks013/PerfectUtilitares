@@ -9,6 +9,7 @@ const publicNavItems = [
   { href: "/fotos", label: "Fotos 3x4" },
   { href: "/pdf", label: "Manutenção de PDFs" },
   { href: "/unimed", label: "Unimed" },
+  { href: "/reajuste-salarial", label: "Reajuste" },
 ];
 
 export async function AppShell({ children }: { children: React.ReactNode }) {

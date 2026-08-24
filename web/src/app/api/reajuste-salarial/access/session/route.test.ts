@@ -4,7 +4,6 @@ const mocks = vi.hoisted(() => ({
   compare: vi.fn(),
   createSession: vi.fn(),
   getSession: vi.fn(),
-  requireAdmin: vi.fn(),
   revoke: vi.fn(),
 }));
 
@@ -17,7 +16,6 @@ vi.mock("@/lib/api/security", () => ({
     ok: true,
     data: await request.json(),
   }),
-  requireAdmin: mocks.requireAdmin,
   requireContentType: vi.fn(() => null),
   requireMaxContentLength: vi.fn(() => null),
   requireSameOrigin: vi.fn(() => null),
@@ -41,10 +39,6 @@ import { DELETE, POST } from "./route";
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.UNIMED_ACCESS_STANDARD_PASSWORD_HASH = `$2b$12$${"s".repeat(53)}`;
-  mocks.requireAdmin.mockResolvedValue({
-    ok: true,
-    session: { user: { id: "admin-1", role: "ADMIN", tenantId: "tenant-1" } },
-  });
   mocks.createSession.mockResolvedValue({
     value: "opaque.signed",
     expiresAt: new Date(Date.now() + 60_000),
@@ -66,7 +60,7 @@ function request(password: string) {
 }
 
 describe("salary adjustment access session API", () => {
-  it("uses only the configured standard Unimed password", async () => {
+  it("unlocks without an app login using only the standard Unimed password", async () => {
     mocks.compare.mockResolvedValue(true);
     const response = await POST(request("standard-secret"));
 
@@ -88,17 +82,6 @@ describe("salary adjustment access session API", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.createSession).not.toHaveBeenCalled();
-  });
-
-  it("requires the authenticated administrator before comparing a password", async () => {
-    mocks.requireAdmin.mockResolvedValueOnce({
-      ok: false,
-      response: Response.json({}, { status: 403 }),
-    });
-    const response = await POST(request("standard-secret"));
-
-    expect(response.status).toBe(403);
-    expect(mocks.compare).not.toHaveBeenCalled();
   });
 
   it("revokes the isolated module session and expires its cookie", async () => {

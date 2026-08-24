@@ -33,23 +33,33 @@ describe("payroll XLSX parser", () => {
     const parsed = parsePayrollSheetRows(rows, context);
     expect(parsed).toHaveLength(2);
     expect(parsed[0]).toMatchObject({
-      registration: "000000001",
+      registration: "1",
       branchAlias: "MATRIZ",
       baseCents: 456_084n,
     });
+    expect(parsed[1].registration).toBe("10");
     expect(parsed[1].baseCents).toBe(0n);
   });
 
-  it("rejects duplicate registrations and numeric registrations", () => {
+  it("normalizes leading zeroes before rejecting duplicate registrations", () => {
     expect(() =>
       parsePayrollSheetRows(
         block("MATRIZ", [
           ["0001", "ANA", null, null, "1,00"],
-          ["0001", "ANA", null, null, "1,00"],
+          ["1", "ANA", null, null, "1,00"],
         ]),
         context,
       ),
     ).toThrow(/mais de uma vez/);
+  });
+
+  it("keeps an all-zero registration as zero and rejects numeric registrations", () => {
+    expect(
+      parsePayrollSheetRows(
+        block("MATRIZ", [["000000000", "ANA", null, null, "1,00"]]),
+        context,
+      )[0]?.registration,
+    ).toBe("0");
     expect(() =>
       parsePayrollSheetRows(
         block("MATRIZ", [[1, "ANA", null, null, "1,00"]]),
