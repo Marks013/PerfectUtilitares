@@ -226,10 +226,10 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                           <Search className="absolute left-3 top-2.5 size-4 text-[color:var(--app-subtle)]" />
                           <input type="search" value={model.search} onChange={(event) => model.setSearch(event.target.value)} placeholder="Filtrar por nome, cadastro, cargo ou filial" className="w-full rounded-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] py-2 pl-9 pr-3 text-sm text-[color:var(--app-fg)]" />
                         </label>
-                        <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[color:var(--app-border)] lg:max-h-none lg:overflow-visible">
-                          <table className="w-full min-w-[680px] text-left text-xs">
+                        <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] lg:max-h-none lg:overflow-visible">
+                          <table className="w-full min-w-[680px] bg-[color:var(--app-card)] text-left text-xs">
                             <thead className="sticky top-0 bg-[color:var(--app-surface-strong)] text-[color:var(--app-muted)]">
-                              <tr><th className="px-3 py-2">Usar</th><th className="px-3 py-2">Filial</th><th className="px-3 py-2">Cadastro</th><th className="px-3 py-2">Nome</th><th className="px-3 py-2">Cargo</th><th className="min-w-24 whitespace-nowrap px-3 py-2 text-right">Salário</th></tr>
+                              <tr><th className="px-3 py-2">Usar</th><th className="px-3 py-2">Filial</th><th className="px-3 py-2">Cadastro</th><th className="px-3 py-2">Nome</th><th className="px-3 py-2">Cargo</th><th className="min-w-28 whitespace-nowrap border-l border-[color:var(--app-border)] bg-[color:var(--app-surface-strong)] px-4 py-2 text-right">Salário</th></tr>
                             </thead>
                             <tbody>
                               {visible.map((employee) => {
@@ -237,7 +237,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                                 return (
                                   <tr key={employee.registration} className="border-t border-[color:var(--app-border)] text-[color:var(--app-fg)]">
                                     <td className="px-3 py-2"><input type="checkbox" checked={selected.has(employee.registration)} disabled={locked || model.busy} onChange={() => model.toggleRegistration(rule.id, employee.registration)} aria-label={`Selecionar ${employee.employeeName}`} /></td>
-                                    <td className="px-3 py-2">{employee.branchAlias}</td><td className="px-3 py-2 tabular-nums">{employee.registration}</td><td className="px-3 py-2 font-bold">{employee.employeeName}</td><td className="px-3 py-2">{employee.role}</td><td className="min-w-24 whitespace-nowrap px-3 py-2 text-right font-bold tabular-nums">{formatClientCents(employee.currentSalaryCents)}</td>
+                                    <td className="px-3 py-2">{employee.branchAlias}</td><td className="px-3 py-2 tabular-nums">{employee.registration}</td><td className="px-3 py-2 font-bold">{employee.employeeName}</td><td className="px-3 py-2">{employee.role}</td><td className="min-w-28 whitespace-nowrap border-l border-[color:var(--app-border)] bg-[color:var(--app-surface)] px-4 py-2 text-right font-bold tabular-nums">{formatClientCents(employee.currentSalaryCents)}</td>
                                   </tr>
                                 );
                               })}
