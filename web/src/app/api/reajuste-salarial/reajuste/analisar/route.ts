@@ -23,7 +23,7 @@ import {
 } from "@/lib/reajuste-salarial/limits";
 import { buildSalaryRevisionAnalysis } from "@/lib/reajuste-salarial/salary-revision-rules";
 import { validateSalaryRevisionFile } from "@/lib/reajuste-salarial/salary-revision-request";
-import { tryAcquireReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
+import { runWithReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
 import { hasDeclaredReajusteContentLength } from "@/lib/reajuste-salarial/request-security";
 import {
   prepareXlsxArchive,
@@ -66,8 +66,77 @@ export async function POST(request: Request) {
     multiplier: 4,
   });
   if (capacityError) return capacityError;
-  const releaseProcessingSlot = tryAcquireReajusteProcessingSlot();
-  if (!releaseProcessingSlot) {
+  async function processWorkbook() {
+    let stage = "upload";
+    let inputBytes = 0;
+    try {
+      let formData: FormData;
+      try {
+        formData = await request.formData();
+      } catch {
+        return jsonError(
+          400,
+          "REAJUSTE_WORKBOOK_INVALID",
+          "Não foi possível ler o arquivo enviado.",
+        );
+      }
+      const file = validateSalaryRevisionFile(formData.get("file"));
+      inputBytes = file.size;
+      const uploadedBytes = Buffer.from(await file.arrayBuffer());
+      const fileHash = createHash("sha256").update(uploadedBytes).digest("hex");
+      stage = "security";
+      const bytes = prepareXlsxArchive(uploadedBytes, {
+        strict: true,
+        maxEntryUncompressedBytes: MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES,
+        maxTotalUncompressedBytes: MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES,
+      });
+      stage = "parse";
+      const parsed = await parseFpre131Workbook(bytes, file.name);
+      const analysis = buildSalaryRevisionAnalysis(parsed, fileHash);
+      const payload = { analysis };
+      const outputBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+      await recordUserUsage({
+        userId: authenticatedSession?.user.id,
+        module: "PDF",
+        operation: "REAJUSTE_SALARIAL_ANALISE",
+        inputBytes,
+        outputBytes,
+      });
+      const response = NextResponse.json(payload);
+      response.headers.set("Cache-Control", "no-store");
+      response.headers.set("X-Content-Type-Options", "nosniff");
+      return response;
+    } catch (error) {
+      if (error instanceof SalaryAdjustmentError) {
+        return jsonError(
+          error.status,
+          error.code,
+          error.message,
+          error.diagnostics.length > 0 ? error.diagnostics : undefined,
+        );
+      }
+      if (error instanceof XlsxSecurityError) {
+        return jsonError(
+          400,
+          "REAJUSTE_WORKBOOK_INVALID",
+          `${error.message} Exporte novamente como .xlsx e tente outra vez.`,
+        );
+      }
+      const correlationId = randomUUID();
+      Sentry.captureException(error, {
+        tags: { component: "salary-revision-analysis", stage },
+        extra: { correlationId, inputBytes },
+      });
+      return jsonError(
+        503,
+        "REAJUSTE_ANALYSIS_FAILED",
+        `Não foi possível analisar o arquivo. Código: ${correlationId}`,
+      );
+    }
+  }
+
+  const processing = await runWithReajusteProcessingSlot(processWorkbook);
+  if (processing.status === "busy") {
     const response = jsonError(
       503,
       "REAJUSTE_BUSY",
@@ -76,73 +145,12 @@ export async function POST(request: Request) {
     response.headers.set("Retry-After", "5");
     return response;
   }
-
-  let stage = "upload";
-  let inputBytes = 0;
-  try {
-    let formData: FormData;
-    try {
-      formData = await request.formData();
-    } catch {
-      return jsonError(
-        400,
-        "REAJUSTE_WORKBOOK_INVALID",
-        "Não foi possível ler o arquivo enviado.",
-      );
-    }
-    const file = validateSalaryRevisionFile(formData.get("file"));
-    inputBytes = file.size;
-    const uploadedBytes = Buffer.from(await file.arrayBuffer());
-    const fileHash = createHash("sha256").update(uploadedBytes).digest("hex");
-    stage = "security";
-    const bytes = prepareXlsxArchive(uploadedBytes, {
-      strict: true,
-      maxEntryUncompressedBytes: MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES,
-      maxTotalUncompressedBytes: MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES,
-    });
-    stage = "parse";
-    const parsed = await parseFpre131Workbook(bytes, file.name);
-    const analysis = buildSalaryRevisionAnalysis(parsed, fileHash);
-    const payload = { analysis };
-    const outputBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
-    await recordUserUsage({
-      userId: authenticatedSession?.user.id,
-      module: "PDF",
-      operation: "REAJUSTE_SALARIAL_ANALISE",
-      inputBytes,
-      outputBytes,
-    });
-    const response = NextResponse.json(payload);
-    response.headers.set("Cache-Control", "no-store");
-    response.headers.set("X-Content-Type-Options", "nosniff");
-    return response;
-  } catch (error) {
-    if (error instanceof SalaryAdjustmentError) {
-      return jsonError(
-        error.status,
-        error.code,
-        error.message,
-        error.diagnostics.length > 0 ? error.diagnostics : undefined,
-      );
-    }
-    if (error instanceof XlsxSecurityError) {
-      return jsonError(
-        400,
-        "REAJUSTE_WORKBOOK_INVALID",
-        `${error.message} Exporte novamente como .xlsx e tente outra vez.`,
-      );
-    }
-    const correlationId = randomUUID();
-    Sentry.captureException(error, {
-      tags: { component: "salary-revision-analysis", stage },
-      extra: { correlationId, inputBytes },
-    });
+  if (processing.status === "unavailable") {
     return jsonError(
       503,
-      "REAJUSTE_ANALYSIS_FAILED",
-      `Não foi possível analisar o arquivo. Código: ${correlationId}`,
+      "REAJUSTE_CAPACITY_UNAVAILABLE",
+      "Não foi possível reservar capacidade de processamento agora. Tente novamente em instantes.",
     );
-  } finally {
-    releaseProcessingSlot();
   }
+  return processing.value;
 }

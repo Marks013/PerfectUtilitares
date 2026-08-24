@@ -38,7 +38,7 @@ import { DELETE, POST } from "./route";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.UNIMED_ACCESS_STANDARD_PASSWORD_HASH = `$2b$12$${"s".repeat(53)}`;
+  process.env.REAJUSTE_ACCESS_STANDARD_PASSWORD_HASH = `$2b$12$${"s".repeat(53)}`;
   mocks.createSession.mockResolvedValue({
     value: "opaque.signed",
     expiresAt: new Date(Date.now() + 60_000),
@@ -60,7 +60,7 @@ function request(password: string) {
 }
 
 describe("salary adjustment access session API", () => {
-  it("unlocks without an app login using only the standard Unimed password", async () => {
+  it("unlocks without an app login using the dedicated module password", async () => {
     mocks.compare.mockResolvedValue(true);
     const response = await POST(request("standard-secret"));
 
@@ -68,7 +68,7 @@ describe("salary adjustment access session API", () => {
     expect(mocks.compare).toHaveBeenCalledOnce();
     expect(mocks.compare).toHaveBeenCalledWith(
       "standard-secret",
-      process.env.UNIMED_ACCESS_STANDARD_PASSWORD_HASH,
+      process.env.REAJUSTE_ACCESS_STANDARD_PASSWORD_HASH,
     );
     expect(mocks.createSession).toHaveBeenCalledOnce();
     expect(response.headers.get("set-cookie")).toMatch(/HttpOnly/i);

@@ -32,7 +32,7 @@ import {
   RATE_WINDOW_MS,
 } from "@/lib/reajuste-salarial/limits";
 import { parsePercentageBasisPoints } from "@/lib/reajuste-salarial/money";
-import { tryAcquireReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
+import { runWithReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
 import { hasDeclaredReajusteContentLength } from "@/lib/reajuste-salarial/request-security";
 import { parseSalaryAdvanceWorkbook } from "@/lib/reajuste-salarial/parser";
 import { generateSalaryAdvancePdf } from "@/lib/reajuste-salarial/pdf";
@@ -132,21 +132,11 @@ export async function POST(request: Request) {
     multiplier: 5,
   });
   if (capacityError) return capacityError;
-  const releaseProcessingSlot = tryAcquireReajusteProcessingSlot();
-  if (!releaseProcessingSlot) {
-    const response = jsonError(
-      503,
-      "REAJUSTE_BUSY",
-      "Há dois relatórios sendo processados agora. Aguarde alguns segundos e tente novamente.",
-    );
-    response.headers.set("Retry-After", "5");
-    return response;
-  }
-
-  let fileCount = 0;
-  let totalBytes = 0;
-  let stage = "upload";
-  try {
+  async function processRequest() {
+    let fileCount = 0;
+    let totalBytes = 0;
+    let stage = "upload";
+    try {
     let formData: FormData;
     try {
       formData = await request.formData();
@@ -215,7 +205,7 @@ export async function POST(request: Request) {
         "X-Content-Type-Options": "nosniff",
       },
     });
-  } catch (error) {
+    } catch (error) {
     if (error instanceof SalaryAdjustmentError) {
       return jsonError(
         error.status,
@@ -241,7 +231,25 @@ export async function POST(request: Request) {
       "REAJUSTE_GENERATION_FAILED",
       `Não foi possível gerar o PDF. Código: ${correlationId}`,
     );
-  } finally {
-    releaseProcessingSlot();
+    }
   }
+
+  const processing = await runWithReajusteProcessingSlot(processRequest);
+  if (processing.status === "busy") {
+    const response = jsonError(
+      503,
+      "REAJUSTE_BUSY",
+      "Há dois relatórios sendo processados agora. Aguarde alguns segundos e tente novamente.",
+    );
+    response.headers.set("Retry-After", "5");
+    return response;
+  }
+  if (processing.status === "unavailable") {
+    return jsonError(
+      503,
+      "REAJUSTE_CAPACITY_UNAVAILABLE",
+      "Não foi possível reservar capacidade de processamento agora. Tente novamente em instantes.",
+    );
+  }
+  return processing.value;
 }

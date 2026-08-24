@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   parseWorkbook: vi.fn(),
   prepareArchive: vi.fn((bytes: Buffer) => bytes),
   recordUsage: vi.fn(),
+  runWithGate: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
@@ -35,6 +36,9 @@ vi.mock("@/lib/spreadsheets/xlsx-security", async (importOriginal) => {
 vi.mock("@/lib/reajuste-salarial/fpre131-parser", () => ({
   parseFpre131Workbook: mocks.parseWorkbook,
 }));
+vi.mock("@/lib/reajuste-salarial/processing-gate", () => ({
+  runWithReajusteProcessingSlot: mocks.runWithGate,
+}));
 vi.mock("@/lib/usage/record", () => ({ recordUserUsage: mocks.recordUsage }));
 vi.mock("@/lib/system/resource-capacity", () => ({
   getRequestContentLength: vi.fn(() => 100),
@@ -61,6 +65,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireOrigin.mockReturnValue(null);
   mocks.rateLimit.mockResolvedValue(null);
+  mocks.runWithGate.mockImplementation(async (operation: () => Promise<Response>) => ({
+    status: "acquired",
+    value: await operation(),
+  }));
   mocks.auth.mockResolvedValue(null);
   mocks.requireAccess.mockResolvedValue({ ok: true, moduleSessionId: "module-1" });
   mocks.parseWorkbook.mockResolvedValue({

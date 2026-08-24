@@ -23,7 +23,7 @@ const unlockSchema = z
 const bcryptHash = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
 
 function configuredStandardPasswordHash() {
-  const hash = process.env.UNIMED_ACCESS_STANDARD_PASSWORD_HASH?.trim();
+  const hash = process.env.REAJUSTE_ACCESS_STANDARD_PASSWORD_HASH?.trim();
   return hash && bcryptHash.test(hash) ? hash : null;
 }
 
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     return jsonError(
       401,
       "REAJUSTE_PASSWORD_INCORRECT",
-      "Senha incorreta. Use a senha do usuário padrão da Unimed.",
+      "Senha incorreta. Use a senha padrão do módulo Reajuste.",
     );
   }
 

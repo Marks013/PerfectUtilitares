@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   generatePdf: vi.fn(),
   recordUsage: vi.fn(),
   prepareArchive: vi.fn((bytes: Buffer) => bytes),
+  runWithGate: vi.fn(),
 }));
 
 vi.mock("@/lib/reajuste-salarial/access.server", () => ({
@@ -40,6 +41,9 @@ vi.mock("@/lib/reajuste-salarial/parser", () => ({
 vi.mock("@/lib/reajuste-salarial/pdf", () => ({
   generateSalaryAdvancePdf: mocks.generatePdf,
 }));
+vi.mock("@/lib/reajuste-salarial/processing-gate", () => ({
+  runWithReajusteProcessingSlot: mocks.runWithGate,
+}));
 vi.mock("@/lib/usage/record", () => ({ recordUserUsage: mocks.recordUsage }));
 vi.mock("@/lib/system/resource-capacity", () => ({
   getRequestContentLength: vi.fn(() => 100),
@@ -68,6 +72,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireSameOrigin.mockReturnValue(null);
   mocks.rateLimit.mockResolvedValue(null);
+  mocks.runWithGate.mockImplementation(async (operation: () => Promise<Response>) => ({
+    status: "acquired",
+    value: await operation(),
+  }));
   mocks.auth.mockResolvedValue(null);
   mocks.requireReajusteAccess.mockResolvedValue({
     ok: true,

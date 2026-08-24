@@ -193,6 +193,7 @@ model Tenant {
   pdfJobs                 PdfJob[]
   unimedAccesses          UnimedUserAccess[]
   unimedModuleSessions    UnimedModuleSession[]
+  reajusteSessions        ReajusteSalarialSession[]
   unimedExcelDevices      UnimedExcelDevice[]
   unimedCompetencies      UnimedCompetency[]
   unimedImportBatches     UnimedImportBatch[]
@@ -619,6 +620,20 @@ model UnimedModuleSession {
   revokedAt    DateTime?
   createdAt    DateTime           @default(now())
   emailEvents  UnimedEmailEvent[]
+
+  @@index([tenantId, expiresAt])
+  @@index([expiresAt, revokedAt])
+}
+
+model ReajusteSalarialSession {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tokenHash    String    @unique
+  operatorName String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
 
   @@index([tenantId, expiresAt])
   @@index([expiresAt, revokedAt])

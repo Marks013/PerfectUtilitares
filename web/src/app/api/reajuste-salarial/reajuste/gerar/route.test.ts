@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   generatePdf: vi.fn(),
   prepareArchive: vi.fn((bytes: Buffer) => bytes),
   recordUsage: vi.fn(),
+  runWithGate: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
@@ -39,6 +40,9 @@ vi.mock("@/lib/reajuste-salarial/fpre131-parser", () => ({
 }));
 vi.mock("@/lib/reajuste-salarial/salary-revision-pdf", () => ({
   generateSalaryRevisionPdf: mocks.generatePdf,
+}));
+vi.mock("@/lib/reajuste-salarial/processing-gate", () => ({
+  runWithReajusteProcessingSlot: mocks.runWithGate,
 }));
 vi.mock("@/lib/usage/record", () => ({ recordUserUsage: mocks.recordUsage }));
 vi.mock("@/lib/system/resource-capacity", () => ({
@@ -77,6 +81,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireOrigin.mockReturnValue(null);
   mocks.rateLimit.mockResolvedValue(null);
+  mocks.runWithGate.mockImplementation(async (operation: () => Promise<Response>) => ({
+    status: "acquired",
+    value: await operation(),
+  }));
   mocks.auth.mockResolvedValue(null);
   mocks.requireAccess.mockResolvedValue({ ok: true, moduleSessionId: "module-1" });
   mocks.parseWorkbook.mockResolvedValue({

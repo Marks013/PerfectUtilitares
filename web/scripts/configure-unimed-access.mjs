@@ -31,11 +31,15 @@ try {
     bcrypt.hash(adminPassword, 12),
   ]);
   const cookieSecret = randomBytes(48).toString("base64url");
+  const reajusteCookieSecret = randomBytes(48).toString("base64url");
   const contents = [
     `UNIMED_ACCESS_STANDARD_PASSWORD_HASH=${standardHash}`,
     `UNIMED_ACCESS_ADMIN_PASSWORD_HASH=${adminHash}`,
     `UNIMED_ACCESS_COOKIE_SECRET=${cookieSecret}`,
     "UNIMED_ACCESS_SESSION_TTL_MINUTES=480",
+    `REAJUSTE_ACCESS_STANDARD_PASSWORD_HASH=${standardHash}`,
+    `REAJUSTE_ACCESS_COOKIE_SECRET=${reajusteCookieSecret}`,
+    "REAJUSTE_ACCESS_SESSION_TTL_MINUTES=480",
     "",
   ].join("\n");
 
