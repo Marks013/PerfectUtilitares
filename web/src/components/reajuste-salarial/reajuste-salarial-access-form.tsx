@@ -70,8 +70,9 @@ export function ReajusteSalarialAccessForm({
         </label>
         <input
           id="reajuste-access-password"
+          aria-describedby={error ? "reajuste-access-error" : undefined}
+          aria-invalid={error ? true : undefined}
           autoComplete="current-password"
-          autoFocus
           className="app-input w-full"
           maxLength={72}
           onChange={(event) => setPassword(event.target.value)}
