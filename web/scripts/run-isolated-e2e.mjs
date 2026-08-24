@@ -239,6 +239,7 @@ try {
     E2E_MUTATION: "1",
     E2E_RESEND_CAPTURE_URL: `${mail.baseUrl}/__messages`,
     E2E_UNIMED_ADMIN_PASSWORD: unimedPassword,
+    E2E_UNIMED_STANDARD_PASSWORD: standardPassword,
     RESEND_API_KEY: "re_e2e_local_only",
     RESEND_FROM_EMAIL: "Perfect E2E <no-reply@example.test>",
     RESEND_API_BASE_URL: mail.baseUrl,

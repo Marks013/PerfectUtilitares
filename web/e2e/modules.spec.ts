@@ -9,6 +9,7 @@ const adminEmail = process.env.ADMIN_EMAIL;
 const adminPassword = process.env.ADMIN_PASSWORD;
 const mailCaptureUrl = process.env.E2E_RESEND_CAPTURE_URL;
 const unimedAdminPassword = process.env.E2E_UNIMED_ADMIN_PASSWORD;
+const unimedStandardPassword = process.env.E2E_UNIMED_STANDARD_PASSWORD;
 
 async function login(page: Page) {
   await page.goto("/login");
@@ -274,6 +275,105 @@ test("Jornada navigation collapses after selecting an option", async ({ page }) 
 
   await expect(page).toHaveURL(/\/jornada\/validar(?:\?|$)/);
   await expect(menu).not.toHaveAttribute("open", "");
+});
+
+test("salary adjustment uses its own standard lock and keeps dark contrast", async ({
+  page,
+}) => {
+  test.skip(
+    !unimedAdminPassword || !unimedStandardPassword,
+    "Isolated Unimed passwords are required",
+  );
+  await login(page);
+  await page.goto("/reajuste-salarial");
+  await expect(page).toHaveURL(/\/reajuste-salarial\/acesso(?:\?|$)/);
+  await expect(
+    page.getByRole("heading", { name: "Reajuste salarial", exact: true }),
+  ).toBeVisible();
+
+  const origin = new URL(page.url()).origin;
+  const lockedGeneration = await page.request.post(
+    "/api/reajuste-salarial/gerar",
+    {
+      headers: { origin },
+      multipart: { percentage: "4,42" },
+    },
+  );
+  expect(lockedGeneration.status()).toBe(401);
+
+  const adminPasswordAttempt = await page.request.post(
+    "/api/reajuste-salarial/access/session",
+    {
+      headers: { origin },
+      data: { password: unimedAdminPassword },
+    },
+  );
+  expect(adminPasswordAttempt.status()).toBe(401);
+
+  const unlock = await page.request.post(
+    "/api/reajuste-salarial/access/session",
+    {
+      headers: { origin },
+      data: { password: unimedStandardPassword },
+    },
+  );
+  expect(unlock.status()).toBe(200);
+  await page.goto("/reajuste-salarial");
+  await expect(
+    page.getByRole("heading", {
+      name: "Reajuste salarial retroativo",
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  const visualAudit = await page.evaluate(() => {
+    function luminance(color: string) {
+      const channels = color
+        .match(/[\d.]+/g)
+        ?.slice(0, 3)
+        .map(Number)
+        .map((value) => {
+          const normalized = value / 255;
+          return normalized <= 0.03928
+            ? normalized / 12.92
+            : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+      if (!channels || channels.length !== 3) return 0;
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    }
+    function contrast(foreground: string, background: string) {
+      const lighter = Math.max(luminance(foreground), luminance(background));
+      const darker = Math.min(luminance(foreground), luminance(background));
+      return (lighter + 0.05) / (darker + 0.05);
+    }
+    const heading = document.querySelector("h1");
+    const hero = heading?.closest("header > div");
+    const headingStyle = heading ? getComputedStyle(heading) : null;
+    const heroStyle = hero ? getComputedStyle(hero) : null;
+    const pureWhitePanels = [...document.querySelectorAll("main *")].filter(
+      (element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          rect.width * rect.height > 1_000 &&
+          getComputedStyle(element).backgroundColor === "rgb(255, 255, 255)"
+        );
+      },
+    ).length;
+    return {
+      heroContrast:
+        headingStyle && heroStyle
+          ? contrast(headingStyle.color, heroStyle.backgroundColor)
+          : 0,
+      pureWhitePanels,
+    };
+  });
+  expect(visualAudit.heroContrast).toBeGreaterThanOrEqual(4.5);
+  expect(visualAudit.pureWhitePanels).toBe(0);
+
+  await page.getByRole("button", {
+    name: "Bloquear módulo de reajuste salarial",
+  }).click();
+  await expect(page).toHaveURL(/\/reajuste-salarial\/acesso(?:\?|$)/);
 });
 
 test("Unimed unlock creates a real session and reads configuration", async ({

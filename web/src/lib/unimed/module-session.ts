@@ -23,6 +23,16 @@ export type UnimedModuleSessionContext = {
   expiresAt: Date;
 };
 
+type ModuleSessionAudit = {
+  accessChannel: string;
+  auditEntity: string;
+};
+
+const UNIMED_SESSION_AUDIT: ModuleSessionAudit = {
+  accessChannel: "UNIMED_MODULE_PASSWORD",
+  auditEntity: "UnimedModuleSession",
+};
+
 function cookieSecret() {
   const value = process.env.UNIMED_ACCESS_COOKIE_SECRET?.trim();
   if (!value || value.length < MIN_COOKIE_SECRET_LENGTH) {
@@ -79,6 +89,7 @@ export function unimedSessionCookieOptions(maxAgeSeconds: number) {
 export async function createUnimedModuleSession(
   role: UnimedModuleRole,
   operatorName: string,
+  audit: ModuleSessionAudit = UNIMED_SESSION_AUDIT,
 ) {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: process.env.DEFAULT_TENANT_SLUG?.trim() || "principal" },
@@ -136,10 +147,10 @@ export async function createUnimedModuleSession(
     await tx.auditLog.create({
       data: {
         action: "LOGIN",
-        entity: "UnimedModuleSession",
+        entity: audit.auditEntity,
         entityId: created.id,
         metadata: {
-          accessChannel: "UNIMED_MODULE_PASSWORD",
+          accessChannel: audit.accessChannel,
           accessLevel: level,
           operatorName: normalizedOperatorName,
         },

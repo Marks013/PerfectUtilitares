@@ -20,6 +20,48 @@ function comparePtBr(left: string, right: string) {
   return left.localeCompare(right, "pt-BR", { sensitivity: "base" });
 }
 
+const BRANCH_DISPLAY_ORDER = [
+  "Matriz",
+  "Icaraima",
+  "Big",
+  "Hiper",
+  "Tiradentes",
+  "Atacado",
+  "Castelo",
+  "Multi Atacado",
+  "Anchieta",
+] as const;
+
+const BRANCH_BY_NORMALIZED_NAME = new Map(
+  BRANCH_DISPLAY_ORDER.map((branchAlias, index) => [
+    normalizeComparableText(branchAlias),
+    { branchAlias, index },
+  ]),
+);
+
+function canonicalBranchAlias(value: string) {
+  return (
+    BRANCH_BY_NORMALIZED_NAME.get(normalizeComparableText(value))?.branchAlias ??
+    value.replace(/\s+/g, " ").trim()
+  );
+}
+
+function compareBranchAliases(left: string, right: string) {
+  const leftOrder = BRANCH_BY_NORMALIZED_NAME.get(
+    normalizeComparableText(left),
+  )?.index;
+  const rightOrder = BRANCH_BY_NORMALIZED_NAME.get(
+    normalizeComparableText(right),
+  )?.index;
+  if (leftOrder !== undefined || rightOrder !== undefined) {
+    return (
+      (leftOrder ?? Number.MAX_SAFE_INTEGER) -
+      (rightOrder ?? Number.MAX_SAFE_INTEGER)
+    );
+  }
+  return comparePtBr(left, right);
+}
+
 export function consolidatePayrollFiles(
   files: ParsedPayrollFile[],
   percentageBasisPoints: bigint,
@@ -40,6 +82,7 @@ export function consolidatePayrollFiles(
   for (const file of ordered) {
     for (const row of file.rows) {
       const comparableName = normalizeComparableText(row.employeeName);
+      const branchAlias = canonicalBranchAlias(row.branchAlias);
       const existing = employees.get(row.registration);
       if (existing && existing.comparableName !== comparableName) {
         throw new SalaryAdjustmentError(
@@ -52,13 +95,13 @@ export function consolidatePayrollFiles(
       const employee = existing?.employee ?? {
         registration: row.registration,
         employeeName: row.employeeName,
-        branchAlias: row.branchAlias,
+        branchAlias,
         basesByCompetency: new Map<string, bigint | null>(),
         adjustmentsByCompetency: new Map<string, bigint>(),
         totalAdjustmentCents: 0n,
       };
       employee.employeeName = row.employeeName;
-      employee.branchAlias = row.branchAlias;
+      employee.branchAlias = branchAlias;
       employee.basesByCompetency.set(file.competency.key, row.baseCents);
       employees.set(row.registration, { employee, comparableName });
     }
@@ -93,7 +136,7 @@ export function consolidatePayrollFiles(
   }
 
   const reportGroups = [...groups.entries()]
-    .sort(([left], [right]) => comparePtBr(left, right))
+    .sort(([left], [right]) => compareBranchAliases(left, right))
     .map(([branchAlias, groupEmployees]) => {
       groupEmployees.sort(
         (left, right) =>

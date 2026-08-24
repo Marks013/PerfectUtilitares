@@ -11,6 +11,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/security";
 import { requireResourceCapacity } from "@/lib/api/resource-capacity";
+import { requireReajusteAccess } from "@/lib/reajuste-salarial/access.server";
 import {
   parseCompetencyFileName,
   sortAndValidateCompetencies,
@@ -102,6 +103,8 @@ export async function POST(request: Request) {
 
   const access = await requireAdmin();
   if (!access.ok) return access.response;
+  const moduleAccess = await requireReajusteAccess();
+  if (!moduleAccess.ok) return moduleAccess.response;
   if (!access.session.user.tenantId) {
     return jsonError(
       403,

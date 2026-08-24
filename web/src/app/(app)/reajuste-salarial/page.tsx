@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { ReajusteSalarialWorkspace } from "@/components/reajuste-salarial/reajuste-salarial-workspace";
+import { getReajusteModuleSession } from "@/lib/reajuste-salarial/access-session";
 
 export const metadata: Metadata = {
   title: "Reajuste salarial retroativo",
@@ -19,6 +20,9 @@ export default async function ReajusteSalarialPage() {
     !session.user.tenantId
   ) {
     redirect("/dashboard");
+  }
+  if (!(await getReajusteModuleSession())) {
+    redirect("/reajuste-salarial/acesso");
   }
   return <ReajusteSalarialWorkspace />;
 }

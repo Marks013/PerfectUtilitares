@@ -18,6 +18,7 @@ import {
   fileKey,
 } from "./reajuste-salarial-workspace-model";
 import type { useReajusteSalarialWorkspaceController } from "./reajuste-salarial-workspace";
+import { ReajusteSalarialAccessLogoutButton } from "./reajuste-salarial-access-logout-button";
 
 type Model = ReturnType<typeof useReajusteSalarialWorkspaceController>;
 
@@ -25,7 +26,7 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="overflow-hidden rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] shadow-sm">
-        <div className="bg-[color:var(--app-fg)] px-6 py-7 text-white sm:px-8">
+        <div className="bg-[color:var(--app-canvas)] px-6 py-7 text-white sm:px-8">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-[color:var(--app-lime)]">
@@ -38,9 +39,15 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
                 Importe até quatro competências, informe o percentual ainda devido e gere o relatório consolidado em PDF.
               </p>
             </div>
-            <span className="grid size-14 shrink-0 place-items-center rounded-2xl bg-white/10 text-[color:var(--app-lime)]">
-              <Calculator className="size-7" aria-hidden="true" />
-            </span>
+            <div className="flex shrink-0 items-center gap-3">
+              <span className="text-xs font-bold text-white/75">
+                Perfil padrão
+              </span>
+              <ReajusteSalarialAccessLogoutButton />
+              <span className="grid size-14 place-items-center rounded-2xl border border-white/15 bg-white/10 text-[color:var(--app-lime)]">
+                <Calculator className="size-7" aria-hidden="true" />
+              </span>
+            </div>
           </div>
         </div>
         <div className="flex gap-3 border-t border-[color:var(--app-border)] bg-[color:var(--app-warning-soft)] px-6 py-4 text-sm text-[color:var(--app-fg)] sm:px-8">
@@ -67,7 +74,7 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
             type="file"
             accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             multiple
-            className="sr-only"
+            className="peer sr-only"
             disabled={model.busy}
             onChange={(event) => {
               model.mergeIncoming(Array.from(event.target.files ?? []));
@@ -76,7 +83,7 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
           />
           <label
             htmlFor="salary-adjustment-files"
-            className="mt-5 flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-5 py-6 text-center transition hover:border-[color:var(--app-teal)]"
+            className="mt-5 flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-5 py-6 text-center transition hover:border-[color:var(--app-teal)] peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color:var(--app-teal)]"
           >
             <UploadCloud className="size-7 text-[color:var(--app-teal)]" aria-hidden="true" />
             <span className="mt-2 text-sm font-black text-[color:var(--app-fg)]">Selecionar planilhas</span>
@@ -94,7 +101,7 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
                       Competência {competencyFromFileName(file.name) ?? "não reconhecida"} · {bytesLabel(file.size)}
                     </p>
                   </div>
-                  <button type="button" disabled={model.busy} onClick={() => model.removeFile(fileKey(file))} className="grid size-9 place-items-center rounded-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)]" aria-label={`Remover ${file.name}`}>
+                  <button type="button" disabled={model.busy} onClick={() => model.removeFile(fileKey(file))} className="grid size-9 place-items-center rounded-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]" aria-label={`Remover ${file.name}`}>
                     <Trash2 className="size-4" aria-hidden="true" />
                   </button>
                 </li>
@@ -115,7 +122,7 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
               value={model.percentage}
               disabled={model.busy}
               onChange={(event) => model.setPercentage(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-4 py-3 text-base font-bold text-[color:var(--app-fg)] outline-none transition focus:border-[color:var(--app-teal)]"
+              className="mt-2 w-full rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-4 py-3 text-base font-bold text-[color:var(--app-fg)] outline-none transition focus:border-[color:var(--app-teal)] focus-visible:ring-2 focus-visible:ring-[color:var(--app-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--app-surface)]"
             />
             <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">
               Informe somente o percentual que ainda deve ser pago após descontar eventual antecipação.
@@ -148,10 +155,10 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
           ) : null}
 
           <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-            <button type="button" onClick={model.reset} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] disabled:opacity-50">
+            <button type="button" onClick={model.reset} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
               <RotateCcw className="size-4" /> Limpar
             </button>
-            <button type="button" onClick={model.generate} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-fg)] px-5 py-3 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50">
+            <button type="button" onClick={model.generate} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-canvas)] px-5 py-3 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
               {model.busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Gerar PDF
             </button>
           </div>

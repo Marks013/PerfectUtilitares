@@ -70,4 +70,46 @@ describe("salary adjustment consolidation", () => {
       ),
     ).toThrow(/nomes diferentes/);
   });
+
+  it("uses the required branch order and canonical display names", () => {
+    const inputOrder = [
+      "ANCHIETA",
+      "Loja adicional",
+      "MULTI ATACADO",
+      "CASTELO",
+      "ATACADO",
+      "TIRADENTES",
+      "HIPER",
+      "BIG",
+      "ICARAIMA",
+      "MATRIZ",
+    ];
+    const report = consolidatePayrollFiles(
+      [
+        payrollFile(
+          "06-2026.xlsx",
+          inputOrder.map((branchAlias, index) => [
+            String(index + 1),
+            `COLABORADOR ${index + 1}`,
+            branchAlias,
+            100_000n,
+          ]),
+        ),
+      ],
+      100n,
+    );
+
+    expect(report.groups.map((group) => group.branchAlias)).toEqual([
+      "Matriz",
+      "Icaraima",
+      "Big",
+      "Hiper",
+      "Tiradentes",
+      "Atacado",
+      "Castelo",
+      "Multi Atacado",
+      "Anchieta",
+      "Loja adicional",
+    ]);
+  });
 });

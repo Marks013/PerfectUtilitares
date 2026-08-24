@@ -2,12 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
+  requireReajusteAccess: vi.fn(),
   requireSameOrigin: vi.fn(),
   rateLimit: vi.fn(),
   parseWorkbook: vi.fn(),
   generatePdf: vi.fn(),
   recordUsage: vi.fn(),
   prepareArchive: vi.fn((bytes: Buffer) => bytes),
+}));
+
+vi.mock("@/lib/reajuste-salarial/access.server", () => ({
+  requireReajusteAccess: mocks.requireReajusteAccess,
 }));
 
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
@@ -67,6 +72,12 @@ beforeEach(() => {
     ok: true,
     session: { user: { id: "admin-1", role: "ADMIN", tenantId: "tenant-1" } },
   });
+  mocks.requireReajusteAccess.mockResolvedValue({
+    ok: true,
+    moduleSessionId: "module-session-1",
+    operatorName: "Dp Planalto",
+    tenantId: "tenant-1",
+  });
   mocks.parseWorkbook.mockImplementation(async (_bytes, competency, sourceFile) => ({
     competency,
     sourceFile,
@@ -97,6 +108,18 @@ describe("salary adjustment PDF API", () => {
       session: { user: { id: "admin-1", role: "ADMIN", tenantId: null } },
     });
     expect((await POST(request([xlsx()]))).status).toBe(403);
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
+
+  it("requires the module password session", async () => {
+    mocks.requireReajusteAccess.mockResolvedValueOnce({
+      ok: false,
+      response: Response.json(
+        { error: { code: "REAJUSTE_ACCESS_REQUIRED" } },
+        { status: 401 },
+      ),
+    });
+    expect((await POST(request([xlsx()]))).status).toBe(401);
     expect(mocks.parseWorkbook).not.toHaveBeenCalled();
   });
 
