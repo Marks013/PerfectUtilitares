@@ -39,8 +39,8 @@ export type BranchReportGroup = {
   subtotalCents: bigint;
 };
 
-export type AdjustmentReport = {
-  parserProfile: "folha-inss-v1";
+export type SalaryAdvanceReport = {
+  parserProfile: "antecipacao-inss-v1";
   generatedAt: Date;
   percentageBasisPoints: bigint;
   competencies: Competency[];

@@ -8,11 +8,12 @@ import {
   validateGeneration,
 } from "./reajuste-salarial-workspace-model";
 import { ReajusteSalarialWorkspaceView } from "./reajuste-salarial-workspace-view";
+import { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
 
 function downloadName(header: string | null) {
   const encoded = header?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
   if (encoded) return decodeURIComponent(encoded);
-  return header?.match(/filename="?([^";]+)"?/i)?.[1] ?? "reajuste-salarial.pdf";
+  return header?.match(/filename="?([^";]+)"?/i)?.[1] ?? "antecipacao-salarial.pdf";
 }
 
 async function responseMessages(blob: Blob) {
@@ -31,7 +32,7 @@ async function responseMessages(blob: Blob) {
   }
 }
 
-export function useReajusteSalarialWorkspaceController() {
+export function useSalaryAdvanceWorkspaceController() {
   const inputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<XMLHttpRequest | null>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -139,9 +140,13 @@ export function useReajusteSalarialWorkspaceController() {
 }
 
 export function ReajusteSalarialWorkspace() {
+  const [mode, setMode] = useState<"advance" | "revision">("advance");
   return (
     <ReajusteSalarialWorkspaceView
-      model={useReajusteSalarialWorkspaceController()}
+      advanceModel={useSalaryAdvanceWorkspaceController()}
+      mode={mode}
+      onModeChange={setMode}
+      revisionModel={useSalaryRevisionWorkspaceController()}
     />
   );
 }

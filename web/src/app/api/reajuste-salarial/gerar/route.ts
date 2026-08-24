@@ -16,7 +16,7 @@ import {
   parseCompetencyFileName,
   sortAndValidateCompetencies,
 } from "@/lib/reajuste-salarial/competency";
-import { consolidatePayrollFiles } from "@/lib/reajuste-salarial/consolidator";
+import { consolidateSalaryAdvanceFiles } from "@/lib/reajuste-salarial/consolidator";
 import {
   SalaryAdjustmentError,
 } from "@/lib/reajuste-salarial/errors";
@@ -30,8 +30,8 @@ import {
   RATE_WINDOW_MS,
 } from "@/lib/reajuste-salarial/limits";
 import { parsePercentageBasisPoints } from "@/lib/reajuste-salarial/money";
-import { parsePayrollWorkbook } from "@/lib/reajuste-salarial/parser";
-import { generateSalaryAdjustmentPdf } from "@/lib/reajuste-salarial/pdf";
+import { parseSalaryAdvanceWorkbook } from "@/lib/reajuste-salarial/parser";
+import { generateSalaryAdvancePdf } from "@/lib/reajuste-salarial/pdf";
 import { prepareXlsxArchive, XlsxSecurityError } from "@/lib/spreadsheets/xlsx-security";
 import { getRequestContentLength } from "@/lib/system/resource-capacity";
 import { recordUserUsage } from "@/lib/usage/record";
@@ -106,7 +106,7 @@ export async function POST(request: Request) {
   const authenticatedSession = await auth();
 
   const limited = await enforcePersistentRateLimit(request, {
-    keyPrefix: "reajuste-salarial-pdf",
+    keyPrefix: "antecipacao-salarial-pdf",
     limit: RATE_LIMIT,
     windowMs: RATE_WINDOW_MS,
   });
@@ -160,26 +160,26 @@ export async function POST(request: Request) {
       if (!file) continue;
       const uploadedBytes = Buffer.from(await file.arrayBuffer());
       const bytes = prepareXlsxArchive(uploadedBytes, { strict: true });
-      parsedFiles.push(await parsePayrollWorkbook(bytes, competency, file.name));
+      parsedFiles.push(await parseSalaryAdvanceWorkbook(bytes, competency, file.name));
     }
 
     stage = "consolidate";
-    const report = consolidatePayrollFiles(
+    const report = consolidateSalaryAdvanceFiles(
       parsedFiles,
       percentageBasisPoints,
     );
     stage = "render";
-    const pdf = await generateSalaryAdjustmentPdf(report);
+    const pdf = await generateSalaryAdvancePdf(report);
     await recordUserUsage({
       userId: authenticatedSession?.user.id,
       module: "PDF",
-      operation: "REAJUSTE_RETROATIVO",
+      operation: "ANTECIPACAO_SALARIAL",
       inputBytes: totalBytes,
       outputBytes: pdf.byteLength,
     });
     const first = orderedCompetencies[0].key;
     const last = orderedCompetencies.at(-1)?.key ?? first;
-    const fileName = `reajuste-salarial-retroativo-${first}-a-${last}.pdf`;
+    const fileName = `antecipacao-salarial-${first}-a-${last}.pdf`;
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {
@@ -208,7 +208,7 @@ export async function POST(request: Request) {
     }
     const correlationId = randomUUID();
     Sentry.captureException(error, {
-      tags: { component: "salary-adjustment", stage },
+      tags: { component: "salary-advance", stage },
       extra: { correlationId, fileCount, totalBytes },
     });
     return jsonError(

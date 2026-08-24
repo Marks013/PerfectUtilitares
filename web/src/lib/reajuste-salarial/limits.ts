@@ -8,4 +8,4 @@ export const MAX_UNIQUE_EMPLOYEES = 5_000;
 export const MAX_DIAGNOSTICS = 25;
 export const RATE_LIMIT = 5;
 export const RATE_WINDOW_MS = 60_000;
-export const PARSER_PROFILE = "folha-inss-v1" as const;
+export const PARSER_PROFILE = "antecipacao-inss-v1" as const;

@@ -1,13 +1,13 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { parseCompetencyFileName } from "./competency";
-import { consolidatePayrollFiles } from "./consolidator";
-import { generateSalaryAdjustmentPdf } from "./pdf";
+import { consolidateSalaryAdvanceFiles } from "./consolidator";
+import { generateSalaryAdvancePdf } from "./pdf";
 
 describe("salary adjustment PDF", () => {
   it("generates A4 landscape pages with a valid PDF structure", async () => {
     const competency = parseCompetencyFileName("06-2026.xlsx");
-    const report = consolidatePayrollFiles(
+    const report = consolidateSalaryAdvanceFiles(
       [{
         competency,
         sourceFile: "06-2026.xlsx",
@@ -26,7 +26,7 @@ describe("salary adjustment PDF", () => {
       442n,
       new Date("2026-08-22T12:00:00.000Z"),
     );
-    const bytes = await generateSalaryAdjustmentPdf(report);
+    const bytes = await generateSalaryAdvancePdf(report);
     expect(bytes.subarray(0, 4).toString()).toBe("%PDF");
     const pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBeGreaterThan(1);
@@ -55,8 +55,8 @@ describe("salary adjustment PDF", () => {
         })),
       };
     });
-    const bytes = await generateSalaryAdjustmentPdf(
-      consolidatePayrollFiles(files, 442n, new Date("2026-08-24T12:00:00.000Z")),
+    const bytes = await generateSalaryAdvancePdf(
+      consolidateSalaryAdvanceFiles(files, 442n, new Date("2026-08-24T12:00:00.000Z")),
     );
     const pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBeGreaterThan(0);

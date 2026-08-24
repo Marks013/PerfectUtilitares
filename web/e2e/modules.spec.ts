@@ -325,9 +325,16 @@ test("salary adjustment uses its own standard lock and keeps dark contrast", asy
   await page.goto("/reajuste-salarial");
   await expect(
     page.getByRole("heading", {
-      name: "Reajuste salarial retroativo",
+      name: "Antecipação e Reajuste Salarial",
       exact: true,
     }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Competências da antecipação", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Reajuste Salarial", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Relação de empregados FPRE131", exact: true }),
   ).toBeVisible();
 
   const visualAudit = await page.evaluate(() => {

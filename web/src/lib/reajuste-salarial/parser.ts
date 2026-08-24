@@ -217,7 +217,7 @@ export function parsePayrollSheetRows(
   return parsed;
 }
 
-export async function parsePayrollWorkbook(
+export async function parseSalaryAdvanceWorkbook(
   bytes: Buffer,
   competency: Competency,
   sourceFile: string,

@@ -35,10 +35,10 @@ vi.mock("@/lib/spreadsheets/xlsx-security", async (importOriginal) => {
   return { ...actual, prepareXlsxArchive: mocks.prepareArchive };
 });
 vi.mock("@/lib/reajuste-salarial/parser", () => ({
-  parsePayrollWorkbook: mocks.parseWorkbook,
+  parseSalaryAdvanceWorkbook: mocks.parseWorkbook,
 }));
 vi.mock("@/lib/reajuste-salarial/pdf", () => ({
-  generateSalaryAdjustmentPdf: mocks.generatePdf,
+  generateSalaryAdvancePdf: mocks.generatePdf,
 }));
 vi.mock("@/lib/usage/record", () => ({ recordUserUsage: mocks.recordUsage }));
 vi.mock("@/lib/system/resource-capacity", () => ({
@@ -129,7 +129,7 @@ describe("salary adjustment PDF API", () => {
     expect(mocks.recordUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         module: "PDF",
-        operation: "REAJUSTE_RETROATIVO",
+        operation: "ANTECIPACAO_SALARIAL",
         userId: undefined,
       }),
     );

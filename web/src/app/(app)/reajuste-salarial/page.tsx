@@ -4,8 +4,8 @@ import { ReajusteSalarialWorkspace } from "@/components/reajuste-salarial/reajus
 import { getReajusteModuleSession } from "@/lib/reajuste-salarial/access-session";
 
 export const metadata: Metadata = {
-  title: "Reajuste salarial retroativo",
-  description: "Consolidação de competências e cálculo de reajuste retroativo em PDF.",
+  title: "Antecipação e reajuste salarial",
+  description: "Antecipação por competências e reajuste salarial com regras especiais em PDF.",
   robots: { index: false, follow: false },
 };
 

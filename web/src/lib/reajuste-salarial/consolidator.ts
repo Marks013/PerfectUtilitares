@@ -1,10 +1,15 @@
 import { SalaryAdjustmentError } from "./errors";
 import { MAX_UNIQUE_EMPLOYEES, PARSER_PROFILE } from "./limits";
 import { calculateAdjustmentCents } from "./money";
+import {
+  canonicalBranchAlias,
+  compareBranchAliases,
+  comparePtBr,
+} from "./branches";
 import type {
-  AdjustmentReport,
   ConsolidatedEmployee,
   ParsedPayrollFile,
+  SalaryAdvanceReport,
 } from "./types";
 
 function normalizeComparableText(value: string) {
@@ -16,59 +21,11 @@ function normalizeComparableText(value: string) {
     .toLocaleUpperCase("pt-BR");
 }
 
-function comparePtBr(left: string, right: string) {
-  return left.localeCompare(right, "pt-BR", { sensitivity: "base" });
-}
-
-const BRANCHES = [
-  { branchAlias: "Matriz", aliases: ["Matriz"] },
-  { branchAlias: "Icaraima", aliases: ["Icaraima"] },
-  { branchAlias: "Big", aliases: ["Big"] },
-  { branchAlias: "Hiper", aliases: ["Hiper", "Hipermercado"] },
-  { branchAlias: "Tiradentes", aliases: ["Tiradentes"] },
-  { branchAlias: "Atacado", aliases: ["Atacado"] },
-  { branchAlias: "Castelo", aliases: ["Castelo", "Castelo Branco"] },
-  { branchAlias: "Multi Atacado", aliases: ["Multi Atacado"] },
-  { branchAlias: "Anchieta", aliases: ["Anchieta"] },
-] as const;
-
-const BRANCH_BY_NORMALIZED_NAME = new Map(
-  BRANCHES.flatMap(({ branchAlias, aliases }, index) =>
-    aliases.map((alias) => [
-      normalizeComparableText(alias),
-      { branchAlias, index },
-    ] as const),
-  ),
-);
-
-function canonicalBranchAlias(value: string) {
-  return (
-    BRANCH_BY_NORMALIZED_NAME.get(normalizeComparableText(value))?.branchAlias ??
-    value.replace(/\s+/g, " ").trim()
-  );
-}
-
-function compareBranchAliases(left: string, right: string) {
-  const leftOrder = BRANCH_BY_NORMALIZED_NAME.get(
-    normalizeComparableText(left),
-  )?.index;
-  const rightOrder = BRANCH_BY_NORMALIZED_NAME.get(
-    normalizeComparableText(right),
-  )?.index;
-  if (leftOrder !== undefined || rightOrder !== undefined) {
-    return (
-      (leftOrder ?? Number.MAX_SAFE_INTEGER) -
-      (rightOrder ?? Number.MAX_SAFE_INTEGER)
-    );
-  }
-  return comparePtBr(left, right);
-}
-
-export function consolidatePayrollFiles(
+export function consolidateSalaryAdvanceFiles(
   files: ParsedPayrollFile[],
   percentageBasisPoints: bigint,
   generatedAt = new Date(),
-): AdjustmentReport {
+): SalaryAdvanceReport {
   const ordered = [...files].sort(
     (left, right) => left.competency.order - right.competency.order,
   );

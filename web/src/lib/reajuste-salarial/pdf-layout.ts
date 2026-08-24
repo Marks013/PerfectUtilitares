@@ -32,13 +32,13 @@ export function allocateReportColumns(
       },
       {
         key: `adjustment-${competency.key}`,
-        label: `Reajuste\n${competency.key}`,
+        label: `Antecipação\n${competency.key}`,
         kind: "adjustment" as const,
         competencyKey: competency.key,
         weight: 0.9,
       },
     ]),
-    { key: "total", label: "Total\nRetroativo", kind: "total" as const, weight: 1 },
+    { key: "total", label: "Total\nAntecipação", kind: "total" as const, weight: 1 },
   ];
   const totalWeight = definitions.reduce((sum, item) => sum + item.weight, 0);
   let cursor = tableLeft;

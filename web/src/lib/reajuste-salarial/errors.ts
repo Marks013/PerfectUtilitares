@@ -9,6 +9,7 @@ export type SalaryAdjustmentErrorCode =
   | "REAJUSTE_STRUCTURE_INVALID"
   | "REAJUSTE_REGISTRATION_DUPLICATE"
   | "REAJUSTE_NAME_CONFLICT"
+  | "REAJUSTE_RULE_INVALID"
   | "REAJUSTE_ROW_LIMIT_EXCEEDED";
 
 export class SalaryAdjustmentError extends Error {

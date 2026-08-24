@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCompetencyFileName } from "./competency";
-import { consolidatePayrollFiles } from "./consolidator";
+import { consolidateSalaryAdvanceFiles } from "./consolidator";
 import type { ParsedPayrollFile } from "./types";
 
 function payrollFile(
@@ -27,7 +27,7 @@ function payrollFile(
 
 describe("salary adjustment consolidation", () => {
   it("unifies registrations, uses latest labels and sums rounded months", () => {
-    const report = consolidatePayrollFiles(
+    const report = consolidateSalaryAdvanceFiles(
       [
         payrollFile("06-2026.xlsx", [
           ["000000001", "COLABORADOR EXEMPLO", "MATRIZ", 456_084n],
@@ -61,7 +61,7 @@ describe("salary adjustment consolidation", () => {
 
   it("blocks materially different names for one registration", () => {
     expect(() =>
-      consolidatePayrollFiles(
+      consolidateSalaryAdvanceFiles(
         [
           payrollFile("06-2026.xlsx", [["1", "ANA SILVA", "A", 100n]]),
           payrollFile("07-2026.xlsx", [["1", "MARIA SILVA", "A", 100n]]),
@@ -84,7 +84,7 @@ describe("salary adjustment consolidation", () => {
       "ICARAIMA",
       "MATRIZ",
     ];
-    const report = consolidatePayrollFiles(
+    const report = consolidateSalaryAdvanceFiles(
       [
         payrollFile(
           "06-2026.xlsx",

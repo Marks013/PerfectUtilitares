@@ -7,9 +7,11 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
+  Percent,
   RotateCcw,
   ShieldCheck,
   Trash2,
+  TrendingUp,
   UploadCloud,
 } from "lucide-react";
 import {
@@ -17,12 +19,25 @@ import {
   competencyFromFileName,
   fileKey,
 } from "./reajuste-salarial-workspace-model";
-import type { useReajusteSalarialWorkspaceController } from "./reajuste-salarial-workspace";
+import type { useSalaryAdvanceWorkspaceController } from "./reajuste-salarial-workspace";
 import { ReajusteSalarialAccessLogoutButton } from "./reajuste-salarial-access-logout-button";
+import type { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
+import { SalaryRevisionWorkspaceView } from "./salary-revision-workspace-view";
 
-type Model = ReturnType<typeof useReajusteSalarialWorkspaceController>;
+type AdvanceModel = ReturnType<typeof useSalaryAdvanceWorkspaceController>;
+type RevisionModel = ReturnType<typeof useSalaryRevisionWorkspaceController>;
 
-export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
+export function ReajusteSalarialWorkspaceView({
+  advanceModel: model,
+  mode,
+  onModeChange,
+  revisionModel,
+}: {
+  advanceModel: AdvanceModel;
+  mode: "advance" | "revision";
+  onModeChange: (mode: "advance" | "revision") => void;
+  revisionModel: RevisionModel;
+}) {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="overflow-hidden rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] shadow-sm">
@@ -33,10 +48,10 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
                 Ferramenta administrativa
               </p>
               <h1 className="mt-2 text-2xl font-black sm:text-3xl">
-                Reajuste salarial retroativo
+                Antecipação e Reajuste Salarial
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-white/75">
-                Importe até quatro competências, informe o percentual ainda devido e gere o relatório consolidado em PDF.
+                Escolha a operação, valide os arquivos da folha e gere relatórios exatos em PDF.
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-3">
@@ -52,18 +67,30 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
         </div>
         <div className="flex gap-3 border-t border-[color:var(--app-border)] bg-[color:var(--app-warning-soft)] px-6 py-4 text-sm text-[color:var(--app-fg)] sm:px-8">
           <AlertCircle className="mt-0.5 size-5 shrink-0 text-[color:var(--app-amber)]" aria-hidden="true" />
-          <p><strong>PDF estático.</strong> Para usar outro percentual, gere um novo documento.</p>
+          <p><strong>PDF estático.</strong> Arquivos e cálculos são processados em memória e precisam ser gerados novamente após qualquer mudança.</p>
         </div>
       </header>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
+      <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-2 shadow-sm" role="tablist" aria-label="Operação salarial">
+        <button type="button" role="tab" aria-selected={mode === "advance"} onClick={() => onModeChange("advance")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "advance" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
+          <TrendingUp className="size-4" aria-hidden="true" /> Antecipação Salarial
+        </button>
+        <button type="button" role="tab" aria-selected={mode === "revision"} onClick={() => onModeChange("revision")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "revision" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
+          <Percent className="size-4" aria-hidden="true" /> Reajuste Salarial
+        </button>
+      </div>
+
+      {mode === "revision" ? (
+        <SalaryRevisionWorkspaceView model={revisionModel} />
+      ) : (
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]" role="tabpanel">
         <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm sm:p-7">
           <div className="flex items-start gap-3">
             <span className="grid size-10 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-teal)]">
               <FileSpreadsheet className="size-5" aria-hidden="true" />
             </span>
             <div>
-              <h2 className="font-black text-[color:var(--app-fg)]">Competências da folha</h2>
+              <h2 className="font-black text-[color:var(--app-fg)]">Competências da antecipação</h2>
               <p className="mt-1 text-sm text-[color:var(--app-muted)]">Somente .xlsx no padrão MM-AAAA.xlsx. Limite: quatro arquivos.</p>
             </div>
           </div>
@@ -171,7 +198,7 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
             <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">Planilhas e PDF são processados em memória. Nenhum dado salarial fica salvo no sistema.</p>
           </section>
           <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm">
-            <h2 className="font-black text-[color:var(--app-fg)]">Regra aplicada</h2>
+            <h2 className="font-black text-[color:var(--app-fg)]">Regra da antecipação</h2>
             <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">Cada base mensal é multiplicada pelo percentual restante, arredondada para centavos e somada ao total retroativo do colaborador.</p>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
               <div className="rounded-xl bg-[color:var(--app-surface-strong)] p-3"><dt className="text-[color:var(--app-subtle)]">Arquivos</dt><dd className="mt-1 font-black text-[color:var(--app-fg)]">{model.files.length}/4</dd></div>
@@ -180,6 +207,7 @@ export function ReajusteSalarialWorkspaceView({ model }: { model: Model }) {
           </section>
         </aside>
       </div>
+      )}
     </main>
   );
 }

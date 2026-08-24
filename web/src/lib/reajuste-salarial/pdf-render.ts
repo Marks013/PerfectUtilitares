@@ -7,9 +7,9 @@ import {
   type ReportColumn,
 } from "./pdf-layout";
 import type {
-  AdjustmentReport,
   BranchReportGroup,
   ConsolidatedEmployee,
+  SalaryAdvanceReport,
 } from "./types";
 
 const COLORS = {
@@ -69,13 +69,13 @@ function drawTableHeader(
   return y + TABLE_HEADER_HEIGHT;
 }
 
-function competenciesLabel(report: AdjustmentReport) {
+function competenciesLabel(report: SalaryAdvanceReport) {
   return report.competencies.map((item) => item.key).join(" • ");
 }
 
 function drawPageHeader(
   doc: PDFKit.PDFDocument,
-  report: AdjustmentReport,
+  report: SalaryAdvanceReport,
   firstPage: boolean,
 ) {
   const left = doc.page.margins.left;
@@ -85,7 +85,7 @@ function drawPageHeader(
       .fillColor(COLORS.brand)
       .font("Helvetica-Bold")
       .fontSize(12)
-      .text("Reajuste Salarial Retroativo", left, doc.page.margins.top, { width: 280 });
+      .text("Antecipação Salarial", left, doc.page.margins.top, { width: 280 });
     doc
       .fillColor(COLORS.muted)
       .font("Helvetica")
@@ -106,7 +106,7 @@ function drawPageHeader(
     .fillColor(COLORS.white)
     .font("Helvetica-Bold")
     .fontSize(17)
-    .text("Reajuste Salarial Retroativo", left + 20, top + 13, { width: 330 });
+    .text("Antecipação Salarial", left + 20, top + 13, { width: 330 });
   doc
     .font("Helvetica")
     .fontSize(8)
@@ -233,7 +233,7 @@ function drawEmployeeRow(
   return y + height;
 }
 
-function drawFooters(doc: PDFKit.PDFDocument, report: AdjustmentReport) {
+function drawFooters(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport) {
   const range = doc.bufferedPageRange();
   for (let pageIndex = range.start; pageIndex < range.start + range.count; pageIndex += 1) {
     doc.switchToPage(pageIndex);
@@ -259,9 +259,9 @@ function drawFooters(doc: PDFKit.PDFDocument, report: AdjustmentReport) {
   }
 }
 
-export function drawSalaryAdjustmentReport(
+export function drawSalaryAdvanceReport(
   doc: PDFKit.PDFDocument,
-  report: AdjustmentReport,
+  report: SalaryAdvanceReport,
 ) {
   const left = doc.page.margins.left;
   const usableWidth = doc.page.width - left - doc.page.margins.right;
