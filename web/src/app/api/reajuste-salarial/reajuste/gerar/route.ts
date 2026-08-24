@@ -16,10 +16,14 @@ import { SalaryAdjustmentError } from "@/lib/reajuste-salarial/errors";
 import { parseFpre131Workbook } from "@/lib/reajuste-salarial/fpre131-parser";
 import {
   MAX_FILE_BYTES,
+  MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES,
+  MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES,
   RATE_LIMIT,
   RATE_WINDOW_MS,
 } from "@/lib/reajuste-salarial/limits";
 import { parsePercentageBasisPoints } from "@/lib/reajuste-salarial/money";
+import { tryAcquireReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
+import { hasDeclaredReajusteContentLength } from "@/lib/reajuste-salarial/request-security";
 import { generateSalaryRevisionPdf } from "@/lib/reajuste-salarial/salary-revision-pdf";
 import { applySalaryRevisionRules } from "@/lib/reajuste-salarial/salary-revision-rules";
 import {
@@ -71,6 +75,13 @@ export async function POST(request: Request) {
   if (limited) return limited;
   const contentTypeError = requireContentType(request, ["multipart/form-data"]);
   if (contentTypeError) return contentTypeError;
+  if (!hasDeclaredReajusteContentLength(request)) {
+    return jsonError(
+      411,
+      "CONTENT_LENGTH_REQUIRED",
+      "Não foi possível confirmar o tamanho do envio. Selecione o arquivo novamente e tente outra vez.",
+    );
+  }
   const requestLimit = MAX_FILE_BYTES + MAX_RULES_JSON_BYTES + 1024 * 1024;
   const lengthError = requireMaxContentLength(request, requestLimit);
   if (lengthError) return lengthError;
@@ -79,6 +90,16 @@ export async function POST(request: Request) {
     multiplier: 5,
   });
   if (capacityError) return capacityError;
+  const releaseProcessingSlot = tryAcquireReajusteProcessingSlot();
+  if (!releaseProcessingSlot) {
+    const response = jsonError(
+      503,
+      "REAJUSTE_BUSY",
+      "Há dois relatórios sendo processados agora. Aguarde alguns segundos e tente novamente.",
+    );
+    response.headers.set("Retry-After", "5");
+    return response;
+  }
 
   let stage = "upload";
   let inputBytes = 0;
@@ -104,7 +125,11 @@ export async function POST(request: Request) {
         : 0n;
     const rules = parseSalaryRevisionRules(formData.get("rules"));
     stage = "security";
-    const bytes = prepareXlsxArchive(uploadedBytes, { strict: true });
+    const bytes = prepareXlsxArchive(uploadedBytes, {
+      strict: true,
+      maxEntryUncompressedBytes: MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES,
+      maxTotalUncompressedBytes: MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES,
+    });
     stage = "parse";
     const parsed = await parseFpre131Workbook(bytes, file.name);
     stage = "calculate";
@@ -160,5 +185,7 @@ export async function POST(request: Request) {
       "REAJUSTE_GENERATION_FAILED",
       `Não foi possível gerar o PDF. Código: ${correlationId}`,
     );
+  } finally {
+    releaseProcessingSlot();
   }
 }

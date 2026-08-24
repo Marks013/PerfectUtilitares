@@ -65,4 +65,26 @@ describe("FPRE131 parser", () => {
       ),
     ).toThrow("não corresponde ao relatório FPRE131");
   });
+
+  it("rejects an invalid registration when the row contains an employee", () => {
+    try {
+      parseFpre131SheetRows(
+        [
+          header(),
+          ["01 , MATRIZ"],
+          ["ABC-4", "ANA", null, null, null, 1, "CAIXA", null, null, "2.031,94"],
+        ],
+        context,
+      );
+      throw new Error("Expected the parser to reject the invalid registration");
+    } catch (error) {
+      expect(error).toMatchObject({
+        diagnostics: [
+          expect.objectContaining({
+            message: "Colaborador com cadastro vazio ou inválido.",
+          }),
+        ],
+      });
+    }
+  });
 });

@@ -129,12 +129,21 @@ export function parseFpre131SheetRows(
     ) {
       continue;
     }
-    const parsedRegistration = registration(row[registrationColumn]);
-    if (!parsedRegistration) continue;
     const employeeName = text(row[nameColumn]);
     const role = text(row[roleColumn]);
     const salaryValue = row[salaryColumn];
     const hasSalary = salaryValue !== null && salaryValue !== undefined && salaryValue !== "";
+    const parsedRegistration = registration(row[registrationColumn]);
+    if (!parsedRegistration) {
+      if (employeeName || role) {
+        structureError(
+          context,
+          "Colaborador com cadastro vazio ou inválido.",
+          sourceRow,
+        );
+      }
+      continue;
+    }
     if (employeeName === "-" && !role && !hasSalary) continue;
     if (!employeeName || !role || !hasSalary) {
       structureError(context, "Colaborador com nome, cargo ou salário incompleto.", sourceRow);

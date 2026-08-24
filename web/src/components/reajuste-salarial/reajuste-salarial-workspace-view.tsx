@@ -160,10 +160,10 @@ export function ReajusteSalarialWorkspaceView({
             <div className="mt-5" aria-live="polite">
               <div className="flex justify-between text-xs font-bold text-[color:var(--app-muted)]">
                 <span>{model.state.status === "uploading" ? "Enviando" : "Consolidando e gerando PDF"}</span>
-                <span>{model.state.progress}%</span>
+                 <span>{model.state.status === "uploading" ? `${model.state.progress}%` : "Processando"}</span>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-[color:var(--app-surface-strong)]">
-                <div className="h-full rounded-full bg-[color:var(--app-teal)] transition-all" style={{ width: `${model.state.progress}%` }} />
+                 <div className={`h-full rounded-full bg-[color:var(--app-teal)] transition-all ${model.state.status === "processing" ? "animate-pulse" : ""}`} style={{ width: `${model.state.progress}%` }} />
               </div>
             </div>
           ) : null}

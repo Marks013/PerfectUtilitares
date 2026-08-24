@@ -1,5 +1,8 @@
 import { unzipSync } from "fflate";
 import { SalaryAdjustmentError } from "./errors";
+import { MAX_ROWS_PER_FILE } from "./limits";
+
+const MAX_WORKSHEET_COLUMNS = 512;
 
 export type PayrollWorkbookSheet = {
   sheet: string;
@@ -45,7 +48,16 @@ function columnIndex(reference: string) {
   if (!letters) return -1;
   let result = 0;
   for (const letter of letters) result = result * 26 + letter.charCodeAt(0) - 64;
-  return result - 1;
+  const index = result - 1;
+  if (index >= MAX_WORKSHEET_COLUMNS) {
+    throw new SalaryAdjustmentError(
+      "REAJUSTE_ROW_LIMIT_EXCEEDED",
+      `A planilha ultrapassa o limite seguro de ${MAX_WORKSHEET_COLUMNS} colunas.`,
+      [],
+      413,
+    );
+  }
+  return index;
 }
 
 function richText(source: string) {
@@ -84,6 +96,14 @@ function parseSheet(xml: string, shared: string[]) {
     const rowAttributes = attributes(rowMatch[1]);
     const rowNumber = Number(rowAttributes.get("r"));
     if (!Number.isSafeInteger(rowNumber) || rowNumber < 1) continue;
+    if (rowNumber > MAX_ROWS_PER_FILE) {
+      throw new SalaryAdjustmentError(
+        "REAJUSTE_ROW_LIMIT_EXCEEDED",
+        `A planilha ultrapassa o limite seguro de ${MAX_ROWS_PER_FILE.toLocaleString("pt-BR")} linhas.`,
+        [],
+        413,
+      );
+    }
     const row: unknown[] = [];
     for (const cellMatch of rowMatch[2].matchAll(
       /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g,

@@ -68,7 +68,7 @@ function request(
   form.set("rules", rules);
   return new Request("http://localhost/api/reajuste-salarial/reajuste/gerar", {
     method: "POST",
-    headers: { origin: "http://localhost" },
+    headers: { "content-length": "1024", origin: "http://localhost" },
     body: form,
   });
 }

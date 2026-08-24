@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { downloadBlob } from "./download";
 import {
   fileKey,
   mergeFiles,
@@ -43,6 +44,13 @@ export function useSalaryAdvanceWorkspaceController() {
     [files],
   );
   const busy = state.status === "uploading" || state.status === "processing";
+
+  useEffect(
+    () => () => {
+      requestRef.current?.abort();
+    },
+    [],
+  );
 
   function releaseFiles() {
     setFiles([]);
@@ -93,12 +101,7 @@ export function useSalaryAdvanceWorkspaceController() {
       const contentType = request.getResponseHeader("content-type") ?? "";
       if (request.status >= 200 && request.status < 300 && contentType.includes("application/pdf")) {
         const fileName = downloadName(request.getResponseHeader("content-disposition"));
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = fileName;
-        anchor.click();
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, fileName);
         releaseFiles();
         setState({ status: "success", progress: 100, fileName });
         return;

@@ -53,7 +53,7 @@ function request(files: File[], percentage = "4,42") {
   form.set("percentage", percentage);
   return new Request("http://localhost/api/reajuste-salarial/gerar", {
     method: "POST",
-    headers: { origin: "http://localhost" },
+    headers: { "content-length": "1024", origin: "http://localhost" },
     body: form,
   });
 }

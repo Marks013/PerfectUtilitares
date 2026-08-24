@@ -34,6 +34,14 @@ export function buildSalaryRevisionAnalysis(
   file: ParsedSalaryRevisionFile,
   fileHash: string,
 ): SalaryRevisionAnalysis {
+  if (file.employees.length > MAX_UNIQUE_EMPLOYEES) {
+    throw new SalaryAdjustmentError(
+      "REAJUSTE_ROW_LIMIT_EXCEEDED",
+      `O relatório ultrapassa o limite de ${MAX_UNIQUE_EMPLOYEES.toLocaleString("pt-BR")} colaboradores.`,
+      [],
+      413,
+    );
+  }
   const employees = orderedEmployees(file);
   const salaryCounts = new Map<bigint, number>();
   for (const employee of employees) {

@@ -23,6 +23,15 @@ describe("shared XLSX archive security", () => {
     expect(validateXlsxArchive(workbook()).entryCount).toBe(4);
   });
 
+  it("supports stricter limits for sensitive import routes", () => {
+    expect(() =>
+      validateXlsxArchive(workbook(), {
+        maxEntryUncompressedBytes: 8,
+        maxTotalUncompressedBytes: 32,
+      }),
+    ).toThrow(/limite/);
+  });
+
   it("normalizes legacy Windows separators after validating the archive", () => {
     const legacy = Buffer.from(
       zipSync({

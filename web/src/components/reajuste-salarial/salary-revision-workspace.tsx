@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   SalaryRevisionAnalysis,
   SalaryRevisionScope,
@@ -14,6 +14,7 @@ import {
   validateSalaryRevisionFile,
   validateSalaryRevisionGeneration,
 } from "./salary-revision-workspace-model";
+import { downloadBlob } from "./download";
 
 function downloadName(header: string | null) {
   const encoded = header?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -53,6 +54,13 @@ export function useSalaryRevisionWorkspaceController() {
   const specialCount = useMemo(
     () => new Set(rules.flatMap((rule) => rule.selectedRegistrations)).size,
     [rules],
+  );
+
+  useEffect(
+    () => () => {
+      requestRef.current?.abort();
+    },
+    [],
   );
 
   function setFile(next: File | null) {
@@ -198,7 +206,7 @@ export function useSalaryRevisionWorkspaceController() {
       });
     });
     request.upload.addEventListener("load", () => {
-      setState({ status: "generating", progress: 100 });
+      setState({ status: "generating", progress: 99 });
     });
     request.addEventListener("load", async () => {
       requestRef.current = null;
@@ -206,12 +214,7 @@ export function useSalaryRevisionWorkspaceController() {
       const contentType = request.getResponseHeader("content-type") ?? "";
       if (request.status >= 200 && request.status < 300 && contentType.includes("application/pdf")) {
         const fileName = downloadName(request.getResponseHeader("content-disposition"));
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = fileName;
-        anchor.click();
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, fileName);
         setState({ status: "success", fileName });
         return;
       }
@@ -243,8 +246,14 @@ export function useSalaryRevisionWorkspaceController() {
     search,
     selectRange,
     setFile,
-    setAdjustmentScope,
-    setPercentage,
+    setAdjustmentScope: (scope: SalaryRevisionScope) => {
+      setAdjustmentScope(scope);
+      setState({ status: analysis ? "ready" : "idle" });
+    },
+    setPercentage: (value: string) => {
+      setPercentage(value);
+      setState({ status: analysis ? "ready" : "idle" });
+    },
     setSearch,
     specialCount,
     state,

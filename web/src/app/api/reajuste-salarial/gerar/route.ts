@@ -25,11 +25,15 @@ import {
   MAX_FILES,
   MAX_REQUEST_BYTES,
   MAX_TOTAL_FILE_BYTES,
+  MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES,
+  MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES,
   MIN_FILES,
   RATE_LIMIT,
   RATE_WINDOW_MS,
 } from "@/lib/reajuste-salarial/limits";
 import { parsePercentageBasisPoints } from "@/lib/reajuste-salarial/money";
+import { tryAcquireReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
+import { hasDeclaredReajusteContentLength } from "@/lib/reajuste-salarial/request-security";
 import { parseSalaryAdvanceWorkbook } from "@/lib/reajuste-salarial/parser";
 import { generateSalaryAdvancePdf } from "@/lib/reajuste-salarial/pdf";
 import { prepareXlsxArchive, XlsxSecurityError } from "@/lib/spreadsheets/xlsx-security";
@@ -114,6 +118,13 @@ export async function POST(request: Request) {
 
   const contentTypeError = requireContentType(request, ["multipart/form-data"]);
   if (contentTypeError) return contentTypeError;
+  if (!hasDeclaredReajusteContentLength(request)) {
+    return jsonError(
+      411,
+      "CONTENT_LENGTH_REQUIRED",
+      "Não foi possível confirmar o tamanho do envio. Selecione o arquivo novamente e tente outra vez.",
+    );
+  }
   const lengthError = requireMaxContentLength(request, MAX_REQUEST_BYTES);
   if (lengthError) return lengthError;
   const capacityError = await requireResourceCapacity({
@@ -121,6 +132,16 @@ export async function POST(request: Request) {
     multiplier: 5,
   });
   if (capacityError) return capacityError;
+  const releaseProcessingSlot = tryAcquireReajusteProcessingSlot();
+  if (!releaseProcessingSlot) {
+    const response = jsonError(
+      503,
+      "REAJUSTE_BUSY",
+      "Há dois relatórios sendo processados agora. Aguarde alguns segundos e tente novamente.",
+    );
+    response.headers.set("Retry-After", "5");
+    return response;
+  }
 
   let fileCount = 0;
   let totalBytes = 0;
@@ -159,7 +180,11 @@ export async function POST(request: Request) {
       const file = fileByKey.get(competency.key);
       if (!file) continue;
       const uploadedBytes = Buffer.from(await file.arrayBuffer());
-      const bytes = prepareXlsxArchive(uploadedBytes, { strict: true });
+      const bytes = prepareXlsxArchive(uploadedBytes, {
+        strict: true,
+        maxEntryUncompressedBytes: MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES,
+        maxTotalUncompressedBytes: MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES,
+      });
       parsedFiles.push(await parseSalaryAdvanceWorkbook(bytes, competency, file.name));
     }
 
@@ -216,5 +241,7 @@ export async function POST(request: Request) {
       "REAJUSTE_GENERATION_FAILED",
       `Não foi possível gerar o PDF. Código: ${correlationId}`,
     );
+  } finally {
+    releaseProcessingSlot();
   }
 }

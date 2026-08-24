@@ -136,4 +136,16 @@ describe("salary revision rules", () => {
     expect(analysis.maximumSalaryCents).toBe("203194");
     expect(analysis.distinctSalaryCount).toBe(3);
   });
+
+  it("rejects oversized analyses before sending thousands of employees to the browser", () => {
+    const file = parsedFile();
+    file.employees = Array.from({ length: 5_001 }, (_, index) => ({
+      ...file.employees[0],
+      registration: String(index + 1),
+      employeeName: `COLABORADOR ${index + 1}`,
+    }));
+    expect(() => buildSalaryRevisionAnalysis(file, "a".repeat(64))).toThrow(
+      "5.000 colaboradores",
+    );
+  });
 });

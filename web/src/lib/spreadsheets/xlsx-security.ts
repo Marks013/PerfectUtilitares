@@ -10,6 +10,18 @@ const MAX_TOTAL_EXPANSION_RATIO = 250;
 const MAX_ENTRY_EXPANSION_RATIO = 500;
 const MAX_ENTRY_NAME_BYTES = 512;
 
+export type XlsxSecurityOptions = {
+  strict?: boolean;
+  maxEntryUncompressedBytes?: number;
+  maxTotalUncompressedBytes?: number;
+};
+
+function boundedLimit(value: number | undefined, ceiling: number) {
+  return Number.isSafeInteger(value) && (value ?? 0) > 0
+    ? Math.min(value as number, ceiling)
+    : ceiling;
+}
+
 export class XlsxSecurityError extends Error {
   readonly code = "XLSX_UNSAFE";
 
@@ -75,8 +87,16 @@ function validateStrictProfile(name: string) {
 
 export function validateXlsxArchive(
   bytes: Buffer,
-  options: { strict?: boolean } = {},
+  options: XlsxSecurityOptions = {},
 ) {
+  const maxEntryUncompressedBytes = boundedLimit(
+    options.maxEntryUncompressedBytes,
+    MAX_ENTRY_UNCOMPRESSED_BYTES,
+  );
+  const maxTotalUncompressedBytes = boundedLimit(
+    options.maxTotalUncompressedBytes,
+    MAX_UNCOMPRESSED_BYTES,
+  );
   if (bytes.length < 22 || bytes.readUInt32LE(0) !== LOCAL_FILE_SIGNATURE) {
     invalid("o arquivo não possui uma assinatura ZIP/XLSX válida");
   }
@@ -183,8 +203,8 @@ export function validateXlsxArchive(
     requiredNames.delete(name);
     if (options.strict) validateStrictProfile(name);
 
-    if (uncompressedSize > MAX_ENTRY_UNCOMPRESSED_BYTES) {
-      invalid("um item interno ultrapassa 128 MB descompactado");
+    if (uncompressedSize > maxEntryUncompressedBytes) {
+      invalid("um item interno ultrapassa o limite descompactado permitido");
     }
     if (compressedSize === 0 && uncompressedSize > 0) {
       invalid("um item declara conteúdo sem tamanho compactado");
@@ -226,8 +246,8 @@ export function validateXlsxArchive(
     spans.push({ start: localOffset, end: dataEnd });
     totalCompressed += compressedSize;
     totalUncompressed += uncompressedSize;
-    if (totalUncompressed > MAX_UNCOMPRESSED_BYTES) {
-      invalid("o conteúdo descompactado ultrapassa 256 MB");
+    if (totalUncompressed > maxTotalUncompressedBytes) {
+      invalid("o conteúdo descompactado ultrapassa o limite permitido");
     }
     cursor = entryEnd;
   }
@@ -265,7 +285,7 @@ export function validateXlsxArchive(
 
 export function prepareXlsxArchive(
   bytes: Buffer,
-  options: { strict?: boolean } = {},
+  options: XlsxSecurityOptions = {},
 ) {
   const validation = validateXlsxArchive(bytes, options);
   if (!validation.usesLegacyPathSeparators) return bytes;

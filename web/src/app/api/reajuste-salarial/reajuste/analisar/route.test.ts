@@ -52,7 +52,7 @@ function request() {
   );
   return new Request("http://localhost/api/reajuste-salarial/reajuste/analisar", {
     method: "POST",
-    headers: { origin: "http://localhost" },
+    headers: { "content-length": "1024", origin: "http://localhost" },
     body: form,
   });
 }

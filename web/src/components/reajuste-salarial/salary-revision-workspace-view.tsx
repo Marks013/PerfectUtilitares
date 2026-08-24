@@ -24,6 +24,7 @@ import {
 } from "./salary-revision-workspace-model";
 
 type Model = ReturnType<typeof useSalaryRevisionWorkspaceController>;
+const MAX_VISIBLE_CANDIDATES_PER_RULE = 100;
 
 export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
   const analysis = model.analysis;
@@ -176,6 +177,10 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                 const candidates = candidatesForRule(analysis, rule);
                 const unavailable = selectedByOtherRules(model.rules, rule.id);
                 const visible = candidates.filter((employee) => employeeMatchesSearch(employee, model.search));
+                const visibleCandidates = visible.slice(
+                  0,
+                  MAX_VISIBLE_CANDIDATES_PER_RULE,
+                );
                 const selected = new Set(rule.selectedRegistrations);
                 return (
                   <article key={rule.id} className="rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4 sm:p-5">
@@ -232,7 +237,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                               <tr><th className="px-3 py-2">Usar</th><th className="px-3 py-2">Filial</th><th className="px-3 py-2">Cadastro</th><th className="px-3 py-2">Nome</th><th className="px-3 py-2">Cargo</th><th className="min-w-28 whitespace-nowrap border-l border-[color:var(--app-border)] bg-[color:var(--app-surface-strong)] px-4 py-2 text-right">Salário</th></tr>
                             </thead>
                             <tbody>
-                              {visible.map((employee) => {
+                              {visibleCandidates.map((employee) => {
                                 const locked = unavailable.has(employee.registration);
                                 return (
                                   <tr key={employee.registration} className="border-t border-[color:var(--app-border)] text-[color:var(--app-fg)]">
@@ -244,6 +249,11 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                             </tbody>
                           </table>
                         </div>
+                        {visible.length > visibleCandidates.length ? (
+                          <p className="mt-2 text-xs text-[color:var(--app-muted)]">
+                            Exibindo os primeiros {MAX_VISIBLE_CANDIDATES_PER_RULE.toLocaleString("pt-BR")} de {visible.length.toLocaleString("pt-BR")}. Use o filtro para localizar os demais colaboradores.
+                          </p>
+                        ) : null}
                       </>
                     ) : null}
                   </article>
@@ -263,7 +273,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
           <div className="mt-5 rounded-xl border border-[color:var(--app-lime)]/40 bg-[color:var(--app-success-soft)] p-4 text-sm text-[color:var(--app-fg)]" role="status"><strong>PDF gerado.</strong> Download iniciado: {model.state.fileName}</div>
         ) : null}
         {model.state.status === "generating" ? (
-          <div className="mt-5" aria-live="polite"><div className="flex justify-between text-xs font-bold text-[color:var(--app-muted)]"><span>Validando regras e gerando PDF</span><span>{model.state.progress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[color:var(--app-surface-strong)]"><div className="h-full rounded-full bg-[color:var(--app-teal)]" style={{ width: `${model.state.progress}%` }} /></div></div>
+          <div className="mt-5" aria-live="polite"><div className="flex justify-between text-xs font-bold text-[color:var(--app-muted)]"><span>{model.state.progress < 99 ? "Enviando arquivo" : "Validando regras e gerando PDF"}</span><span>{model.state.progress < 99 ? `${model.state.progress}%` : "Processando"}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[color:var(--app-surface-strong)]"><div className={`h-full rounded-full bg-[color:var(--app-teal)] ${model.state.progress >= 99 ? "animate-pulse" : ""}`} style={{ width: `${model.state.progress}%` }} /></div></div>
         ) : null}
 
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
@@ -287,7 +297,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
           <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">
             {model.adjustmentScope === "all"
               ? "Selecionados recebem o novo salário fixo. Desmarcados e demais colaboradores recebem o percentual geral."
-              : "Somente selecionados em uma ou mais regras recebem o novo salário fixo e aparecem no PDF; demais colaboradores ficam fora do cálculo."} Nenhuma jornada é inferida pelo sistema.
+               : "Somente selecionados em uma ou mais regras recebem o novo salário fixo e aparecem no PDF; demais colaboradores ficam fora do cálculo."}
           </p>
         </section>
       </aside>
