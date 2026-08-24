@@ -38,6 +38,18 @@ const HEADER_HEIGHT = 34;
 const BRANCH_HEIGHT = 22;
 const FOOTER_RESERVE = 18;
 
+function percentageLabel(report: SalaryRevisionReport) {
+  return report.generalPercentageBasisPoints === null
+    ? "não aplicado"
+    : formatPercentage(report.generalPercentageBasisPoints);
+}
+
+function scopeLabel(report: SalaryRevisionReport) {
+  return report.adjustmentScope === "rules_only"
+    ? "Somente selecionados nas regras"
+    : "Todos os colaboradores";
+}
+
 function columns(usableWidth: number, left: number) {
   const definitions = [
     { kind: "branch" as const, label: "Filial", weight: 0.8 },
@@ -76,7 +88,8 @@ function cellValue(
   if (column.kind === "adjustment") return formatCents(employee.adjustmentCents);
   if (column.kind === "new") return formatCents(employee.newSalaryCents);
   if (column.kind === "percentage") {
-    return employee.application.kind === "general"
+    return employee.application.kind === "general" &&
+      report.generalPercentageBasisPoints !== null
       ? formatPercentage(report.generalPercentageBasisPoints)
       : "—";
   }
@@ -131,7 +144,7 @@ function pageHeader(
       .font("Helvetica")
       .fontSize(7.5)
       .text(
-        `${formatPercentage(report.generalPercentageBasisPoints)} geral | ${report.specialEmployeeCount.toLocaleString("pt-BR")} em regras especiais`,
+        `${scopeLabel(report)} | Percentual geral ${percentageLabel(report)} | ${report.specialEmployeeCount.toLocaleString("pt-BR")} em regras especiais`,
         left + 270,
         doc.page.margins.top + 2,
         { width: width - 270, align: "right" },
@@ -151,7 +164,7 @@ function pageHeader(
     .fontSize(8)
     .fillColor("#dbe7e2")
     .text(
-      `Percentual geral: ${formatPercentage(report.generalPercentageBasisPoints)} | Regras especiais: ${report.rules.length.toLocaleString("pt-BR")}`,
+      `Escopo: ${scopeLabel(report)} | Percentual geral: ${percentageLabel(report)} | Regras especiais: ${report.rules.length.toLocaleString("pt-BR")}`,
       left + 20,
       top + 37,
       { width: 480 },
@@ -169,7 +182,7 @@ function pageHeader(
     .fontSize(7.5)
     .fillColor(COLORS.white)
     .text(
-      `${report.employeeCount.toLocaleString("pt-BR")} colaboradores | Nova folha ${formatCents(report.newPayrollCents)}`,
+      `${report.employeeCount.toLocaleString("pt-BR")} colaboradores no escopo | Novo total ${formatCents(report.newPayrollCents)}`,
       left + width - 260,
       top + 38,
       { width: 240, align: "right" },
@@ -225,7 +238,7 @@ function branchBand(
   doc
     .fontSize(7)
     .text(
-      `${group.employeeCount.toLocaleString("pt-BR")} colaboradores | Reajuste ${formatCents(group.adjustmentSubtotalCents)} | Nova folha ${formatCents(group.newPayrollCents)}`,
+      `${group.employeeCount.toLocaleString("pt-BR")} colaboradores | Reajuste ${formatCents(group.adjustmentSubtotalCents)} | Novo total ${formatCents(group.newPayrollCents)}`,
       left + width - 320,
       y + 7,
       { width: 314, align: "right" },

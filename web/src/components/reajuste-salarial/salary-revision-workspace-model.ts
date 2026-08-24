@@ -8,6 +8,7 @@ import {
 import type {
   SalaryRevisionAnalysis,
   SalaryRevisionAnalysisEmployee,
+  SalaryRevisionScope,
 } from "@/lib/reajuste-salarial/salary-revision-types";
 
 export type SalaryRevisionRuleDraft = {
@@ -78,18 +79,32 @@ export function formatClientCents(value: string | bigint) {
   return `R$ ${whole},${(cents % 100n).toString().padStart(2, "0")}`;
 }
 
+export function normalizeMoneyInput(value: string) {
+  if (!value.trim()) return "";
+  try {
+    return formatClientCents(parseMoneyCents(value)).replace(/^R\$\s*/, "");
+  } catch {
+    return value;
+  }
+}
+
 export function validateSalaryRevisionGeneration(
   file: File | null,
   analysis: SalaryRevisionAnalysis | null,
   percentage: string,
   rules: SalaryRevisionRuleDraft[],
+  adjustmentScope: SalaryRevisionScope = "all",
 ) {
   const messages = validateSalaryRevisionFile(file);
   if (!analysis) messages.push("Analise o arquivo antes de gerar o PDF.");
-  try {
-    parsePercentageBasisPoints(percentage);
-  } catch {
-    messages.push("Informe um percentual geral entre 0,01 e 100,00.");
+  if (adjustmentScope === "all") {
+    try {
+      parsePercentageBasisPoints(percentage);
+    } catch {
+      messages.push("Informe um percentual geral entre 0,01 e 100,00.");
+    }
+  } else if (rules.length === 0) {
+    messages.push("Adicione ao menos uma regra para reajustar somente os selecionados.");
   }
   const selectedGlobally = new Set<string>();
   const employeeByRegistration = new Map(

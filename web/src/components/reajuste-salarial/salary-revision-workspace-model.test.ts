@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SalaryRevisionAnalysis } from "@/lib/reajuste-salarial/salary-revision-types";
 import {
   candidatesForRule,
+  normalizeMoneyInput,
   serializeSalaryRevisionRules,
   validateSalaryRevisionGeneration,
 } from "./salary-revision-workspace-model";
@@ -47,6 +48,13 @@ describe("salary revision workspace model", () => {
     }]);
   });
 
+  it("normalizes monetary fields with Brazilian punctuation", () => {
+    expect(normalizeMoneyInput("1300")).toBe("1.300,00");
+    expect(normalizeMoneyInput("2031,94")).toBe("2.031,94");
+    expect(normalizeMoneyInput("2.100,0")).toBe("2.100,00");
+    expect(normalizeMoneyInput("")).toBe("");
+  });
+
   it("accepts a valid generation and blocks overlaps or salary reductions", () => {
     const file = new File(["xlsx"], "FPRE131.xlsx");
     expect(validateSalaryRevisionGeneration(file, analysis, "4,42", [rule])).toEqual([]);
@@ -59,5 +67,23 @@ describe("salary revision workspace model", () => {
         { ...rule, newSalary: "1.300,00" },
       ]),
     ).toContain("O novo salário da regra Categoria é menor que o atual do cadastro 1.");
+  });
+
+  it("allows only selected rules without a general percentage", () => {
+    const file = new File(["xlsx"], "FPRE131.xlsx");
+    expect(
+      validateSalaryRevisionGeneration(
+        file,
+        analysis,
+        "",
+        [rule],
+        "rules_only",
+      ),
+    ).toEqual([]);
+    expect(
+      validateSalaryRevisionGeneration(file, analysis, "", [], "rules_only"),
+    ).toContain(
+      "Adicione ao menos uma regra para reajustar somente os selecionados.",
+    );
   });
 });

@@ -50,7 +50,11 @@ import { GET, POST } from "./route";
 const fileBytes = Buffer.from("xlsx");
 const fileHash = createHash("sha256").update(fileBytes).digest("hex");
 
-function request(hash = fileHash) {
+function request(
+  hash = fileHash,
+  scope: string | null = "all",
+  rules = "[]",
+) {
   const form = new FormData();
   form.set(
     "file",
@@ -59,8 +63,9 @@ function request(hash = fileHash) {
     }),
   );
   form.set("fileHash", hash);
-  form.set("percentage", "4,42");
-  form.set("rules", "[]");
+  if (scope !== null) form.set("scope", scope);
+  if (scope !== "rules_only") form.set("percentage", "4,42");
+  form.set("rules", rules);
   return new Request("http://localhost/api/reajuste-salarial/reajuste/gerar", {
     method: "POST",
     headers: { origin: "http://localhost" },
@@ -77,16 +82,28 @@ beforeEach(() => {
   mocks.parseWorkbook.mockResolvedValue({
     sourceFile: "FPRE131.xlsx",
     sourceSheet: "Plan1",
-    employees: [{
-      sourceFile: "FPRE131.xlsx",
-      sourceSheet: "Plan1",
-      sourceRow: 4,
-      branchAlias: "Matriz",
-      registration: "4",
-      employeeName: "ANA TESTE",
-      role: "CAIXA",
-      currentSalaryCents: 203_194n,
-    }],
+    employees: [
+      {
+        sourceFile: "FPRE131.xlsx",
+        sourceSheet: "Plan1",
+        sourceRow: 4,
+        branchAlias: "Matriz",
+        registration: "4",
+        employeeName: "ANA TESTE",
+        role: "CAIXA",
+        currentSalaryCents: 203_194n,
+      },
+      {
+        sourceFile: "FPRE131.xlsx",
+        sourceSheet: "Plan1",
+        sourceRow: 5,
+        branchAlias: "Matriz",
+        registration: "5",
+        employeeName: "BIA TESTE",
+        role: "CAIXA",
+        currentSalaryCents: 174_570n,
+      },
+    ],
   });
   mocks.generatePdf.mockResolvedValue(Buffer.from("%PDF-test"));
 });
@@ -110,6 +127,56 @@ describe("salary revision PDF API", () => {
 
   it("rejects a file changed after analysis", async () => {
     const response = await POST(request("a".repeat(64)));
+    expect(response.status).toBe(400);
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
+
+  it("generates only selected employees from multiple rules without a percentage", async () => {
+    const rules = JSON.stringify([
+      {
+        id: "rule-1",
+        name: "Categoria",
+        minimumSalaryCents: "203194",
+        maximumSalaryCents: "203194",
+        newSalaryCents: "212000",
+        selectedRegistrations: ["4"],
+      },
+      {
+        id: "rule-2",
+        name: "Categoria reduzida",
+        minimumSalaryCents: "174570",
+        maximumSalaryCents: "174570",
+        newSalaryCents: "180000",
+        selectedRegistrations: ["5"],
+      },
+    ]);
+    const response = await POST(request(fileHash, "rules_only", rules));
+    expect(response.status).toBe(200);
+    expect(mocks.generatePdf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adjustmentScope: "rules_only",
+        generalPercentageBasisPoints: null,
+        employeeCount: 2,
+        generalEmployeeCount: 0,
+        specialEmployeeCount: 2,
+      }),
+    );
+  });
+
+  it("keeps the all-employees behavior when older clients omit scope", async () => {
+    const response = await POST(request(fileHash, null));
+    expect(response.status).toBe(200);
+    expect(mocks.generatePdf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adjustmentScope: "all",
+        generalPercentageBasisPoints: 442n,
+        generalEmployeeCount: 2,
+      }),
+    );
+  });
+
+  it("rejects an unknown adjustment scope before parsing the workbook", async () => {
+    const response = await POST(request(fileHash, "invalid"));
     expect(response.status).toBe(400);
     expect(mocks.parseWorkbook).not.toHaveBeenCalled();
   });

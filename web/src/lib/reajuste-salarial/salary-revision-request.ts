@@ -2,11 +2,25 @@ import { z } from "zod";
 import { SalaryAdjustmentError } from "./errors";
 import { MAX_FILE_BYTES, MAX_UNIQUE_EMPLOYEES } from "./limits";
 import { MAX_SALARY_REVISION_RULES } from "./salary-revision-rules";
-import type { SalaryRevisionRule } from "./salary-revision-types";
+import type {
+  SalaryRevisionRule,
+  SalaryRevisionScope,
+} from "./salary-revision-types";
 
 const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 export const MAX_RULES_JSON_BYTES = 512 * 1024;
+
+export function parseSalaryRevisionScope(
+  value: FormDataEntryValue | null,
+): SalaryRevisionScope {
+  if (value === null || value === "all") return "all";
+  if (value === "rules_only") return "rules_only";
+  throw new SalaryAdjustmentError(
+    "REAJUSTE_RULE_INVALID",
+    "Selecione um escopo de reajuste válido.",
+  );
+}
 
 const centsSchema = z.string().regex(/^(0|[1-9]\d*)$/).max(24);
 const ruleSchema = z

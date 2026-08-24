@@ -24,6 +24,8 @@ export type SalaryRevisionRule = {
   selectedRegistrations: string[];
 };
 
+export type SalaryRevisionScope = "all" | "rules_only";
+
 export type AppliedSalaryRevisionEmployee = ParsedSalaryRevisionEmployee & {
   application:
     | { kind: "general" }
@@ -45,7 +47,8 @@ export type SalaryRevisionReport = {
   parserProfile: "fpre131-reajuste-v1";
   sourceFile: string;
   generatedAt: Date;
-  generalPercentageBasisPoints: bigint;
+  adjustmentScope: SalaryRevisionScope;
+  generalPercentageBasisPoints: bigint | null;
   rules: SalaryRevisionRule[];
   groups: SalaryRevisionBranchGroup[];
   employeeCount: number;

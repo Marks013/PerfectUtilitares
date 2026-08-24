@@ -11,6 +11,7 @@ import type {
   SalaryRevisionAnalysis,
   SalaryRevisionReport,
   SalaryRevisionRule,
+  SalaryRevisionScope,
 } from "./salary-revision-types";
 
 export const MAX_SALARY_REVISION_RULES = 20;
@@ -75,6 +76,7 @@ export function applySalaryRevisionRules(
   generalPercentageBasisPoints: bigint,
   rules: SalaryRevisionRule[],
   generatedAt = new Date(),
+  adjustmentScope: SalaryRevisionScope = "all",
 ): SalaryRevisionReport {
   if (rules.length > MAX_SALARY_REVISION_RULES) {
     invalidRule(`Use no máximo ${MAX_SALARY_REVISION_RULES} regras especiais.`);
@@ -87,14 +89,20 @@ export function applySalaryRevisionRules(
       413,
     );
   }
+  if (adjustmentScope === "rules_only" && rules.length === 0) {
+    invalidRule("Adicione ao menos uma regra no escopo somente selecionados.");
+  }
 
   const employeeByRegistration = new Map(
     file.employees.map((employee) => [employee.registration, employee]),
   );
   const ruleByRegistration = new Map<string, SalaryRevisionRule>();
+  const ruleIds = new Set<string>();
   const normalizedRules = rules.map((rule) => {
     const name = rule.name.replace(/\s+/g, " ").trim();
     if (!name || name.length > 80) invalidRule("Nome de regra especial inválido.");
+    if (ruleIds.has(rule.id)) invalidRule(`O identificador da regra ${name} está duplicado.`);
+    ruleIds.add(rule.id);
     if (
       rule.minimumSalaryCents < 0n ||
       rule.maximumSalaryCents < rule.minimumSalaryCents ||
@@ -136,10 +144,11 @@ export function applySalaryRevisionRules(
     return normalizedRule;
   });
 
-  const applied = orderedEmployees(file).map((employee) => {
+  const applied = orderedEmployees(file).flatMap<AppliedSalaryRevisionEmployee>(
+    (employee) => {
     const rule = ruleByRegistration.get(employee.registration);
     if (rule) {
-      return {
+      return [{
         ...employee,
         application: {
           kind: "special" as const,
@@ -148,19 +157,21 @@ export function applySalaryRevisionRules(
         },
         adjustmentCents: rule.newSalaryCents - employee.currentSalaryCents,
         newSalaryCents: rule.newSalaryCents,
-      };
+      }];
     }
+    if (adjustmentScope === "rules_only") return [];
     const adjustmentCents = calculateAdjustmentCents(
       employee.currentSalaryCents,
       generalPercentageBasisPoints,
     );
-    return {
+    return [{
       ...employee,
       application: { kind: "general" as const },
       adjustmentCents,
       newSalaryCents: employee.currentSalaryCents + adjustmentCents,
-    };
-  });
+    }];
+    },
+  );
 
   const grouped = new Map<string, AppliedSalaryRevisionEmployee[]>();
   for (const employee of applied) {
@@ -200,7 +211,9 @@ export function applySalaryRevisionRules(
     parserProfile: "fpre131-reajuste-v1",
     sourceFile: file.sourceFile,
     generatedAt,
-    generalPercentageBasisPoints,
+    adjustmentScope,
+    generalPercentageBasisPoints:
+      adjustmentScope === "all" ? generalPercentageBasisPoints : null,
     rules: normalizedRules,
     groups,
     employeeCount: applied.length,

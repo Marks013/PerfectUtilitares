@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import type { SalaryRevisionAnalysis } from "@/lib/reajuste-salarial/salary-revision-types";
+import type {
+  SalaryRevisionAnalysis,
+  SalaryRevisionScope,
+} from "@/lib/reajuste-salarial/salary-revision-types";
 import {
   candidatesForRule,
   type SalaryRevisionClientState,
@@ -41,6 +44,8 @@ export function useSalaryRevisionWorkspaceController() {
   const [file, setFileState] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<SalaryRevisionAnalysis | null>(null);
   const [percentage, setPercentage] = useState("");
+  const [adjustmentScope, setAdjustmentScope] =
+    useState<SalaryRevisionScope>("all");
   const [rules, setRules] = useState<SalaryRevisionRuleDraft[]>([]);
   const [search, setSearch] = useState("");
   const [state, setState] = useState<SalaryRevisionClientState>({ status: "idle" });
@@ -62,6 +67,7 @@ export function useSalaryRevisionWorkspaceController() {
   function reset() {
     setFile(null);
     setPercentage("");
+    setAdjustmentScope("all");
     setSearch("");
     if (inputRef.current) inputRef.current.value = "";
   }
@@ -113,7 +119,10 @@ export function useSalaryRevisionWorkspaceController() {
       current.map((rule) => {
         if (rule.id !== id) return rule;
         const rangeChanged =
-          patch.minimumSalary !== undefined || patch.maximumSalary !== undefined;
+          (patch.minimumSalary !== undefined &&
+            patch.minimumSalary !== rule.minimumSalary) ||
+          (patch.maximumSalary !== undefined &&
+            patch.maximumSalary !== rule.maximumSalary);
         return {
           ...rule,
           ...patch,
@@ -162,6 +171,7 @@ export function useSalaryRevisionWorkspaceController() {
       analysis,
       percentage,
       rules,
+      adjustmentScope,
     );
     if (messages.length > 0 || !file || !analysis) {
       setState({ status: "error", messages });
@@ -170,7 +180,10 @@ export function useSalaryRevisionWorkspaceController() {
     const data = new FormData();
     data.set("file", file, file.name);
     data.set("fileHash", analysis.fileHash);
-    data.set("percentage", percentage.trim());
+    data.set("scope", adjustmentScope);
+    if (adjustmentScope === "all") {
+      data.set("percentage", percentage.trim());
+    }
     data.set("rules", serializeSalaryRevisionRules(rules));
     const request = new XMLHttpRequest();
     requestRef.current = request;
@@ -216,6 +229,7 @@ export function useSalaryRevisionWorkspaceController() {
 
   return {
     addRule,
+    adjustmentScope,
     analysis,
     analyze,
     busy,
@@ -229,6 +243,7 @@ export function useSalaryRevisionWorkspaceController() {
     search,
     selectRange,
     setFile,
+    setAdjustmentScope,
     setPercentage,
     setSearch,
     specialCount,

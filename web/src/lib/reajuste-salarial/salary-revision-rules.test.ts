@@ -81,6 +81,50 @@ describe("salary revision rules", () => {
     ).toThrow("menor que o salário atual");
   });
 
+  it("supports multiple rules while excluding every unselected employee", () => {
+    const report = applySalaryRevisionRules(
+      parsedFile(),
+      0n,
+      [
+        specialRule(),
+        specialRule({
+          id: "category-b",
+          name: "Categoria B",
+          minimumSalaryCents: 203_194n,
+          maximumSalaryCents: 203_194n,
+          newSalaryCents: 212_000n,
+          selectedRegistrations: ["3"],
+        }),
+      ],
+      new Date("2026-08-24T12:00:00.000Z"),
+      "rules_only",
+    );
+    expect(report.adjustmentScope).toBe("rules_only");
+    expect(report.generalPercentageBasisPoints).toBeNull();
+    expect(report.generalEmployeeCount).toBe(0);
+    expect(report.specialEmployeeCount).toBe(2);
+    expect(
+      report.groups.flatMap((group) => group.employees).map((employee) => employee.registration),
+    ).toEqual(["1", "3"]);
+    expect(report.currentPayrollCents).toBe(342_056n);
+    expect(report.totalAdjustmentCents).toBe(59_944n);
+    expect(() =>
+      applySalaryRevisionRules(parsedFile(), 0n, [], new Date(), "rules_only"),
+    ).toThrow("ao menos uma regra");
+  });
+
+  it("rejects duplicate rule identifiers", () => {
+    expect(() =>
+      applySalaryRevisionRules(parsedFile(), 442n, [
+        specialRule(),
+        specialRule({
+          name: "Categoria B",
+          selectedRegistrations: ["2"],
+        }),
+      ]),
+    ).toThrow("identificador");
+  });
+
   it("builds an ordered analysis with exact cent strings", () => {
     const analysis = buildSalaryRevisionAnalysis(parsedFile(), "a".repeat(64));
     expect(analysis.employees.map((employee) => employee.employeeName)).toEqual([
