@@ -229,7 +229,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                         <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[color:var(--app-border)] lg:max-h-none lg:overflow-visible">
                           <table className="w-full min-w-[680px] text-left text-xs">
                             <thead className="sticky top-0 bg-[color:var(--app-surface-strong)] text-[color:var(--app-muted)]">
-                              <tr><th className="px-3 py-2">Usar</th><th className="px-3 py-2">Filial</th><th className="px-3 py-2">Cadastro</th><th className="px-3 py-2">Nome</th><th className="px-3 py-2">Cargo</th><th className="px-3 py-2 text-right">Salário</th></tr>
+                              <tr><th className="px-3 py-2">Usar</th><th className="px-3 py-2">Filial</th><th className="px-3 py-2">Cadastro</th><th className="px-3 py-2">Nome</th><th className="px-3 py-2">Cargo</th><th className="min-w-24 whitespace-nowrap px-3 py-2 text-right">Salário</th></tr>
                             </thead>
                             <tbody>
                               {visible.map((employee) => {
@@ -237,7 +237,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                                 return (
                                   <tr key={employee.registration} className="border-t border-[color:var(--app-border)] text-[color:var(--app-fg)]">
                                     <td className="px-3 py-2"><input type="checkbox" checked={selected.has(employee.registration)} disabled={locked || model.busy} onChange={() => model.toggleRegistration(rule.id, employee.registration)} aria-label={`Selecionar ${employee.employeeName}`} /></td>
-                                    <td className="px-3 py-2">{employee.branchAlias}</td><td className="px-3 py-2">{employee.registration}</td><td className="px-3 py-2 font-bold">{employee.employeeName}</td><td className="px-3 py-2">{employee.role}</td><td className="px-3 py-2 text-right font-bold">{formatClientCents(employee.currentSalaryCents)}</td>
+                                    <td className="px-3 py-2">{employee.branchAlias}</td><td className="px-3 py-2 tabular-nums">{employee.registration}</td><td className="px-3 py-2 font-bold">{employee.employeeName}</td><td className="px-3 py-2">{employee.role}</td><td className="min-w-24 whitespace-nowrap px-3 py-2 text-right font-bold tabular-nums">{formatClientCents(employee.currentSalaryCents)}</td>
                                   </tr>
                                 );
                               })}
