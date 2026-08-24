@@ -20,23 +20,25 @@ function comparePtBr(left: string, right: string) {
   return left.localeCompare(right, "pt-BR", { sensitivity: "base" });
 }
 
-const BRANCH_DISPLAY_ORDER = [
-  "Matriz",
-  "Icaraima",
-  "Big",
-  "Hiper",
-  "Tiradentes",
-  "Atacado",
-  "Castelo",
-  "Multi Atacado",
-  "Anchieta",
+const BRANCHES = [
+  { branchAlias: "Matriz", aliases: ["Matriz"] },
+  { branchAlias: "Icaraima", aliases: ["Icaraima"] },
+  { branchAlias: "Big", aliases: ["Big"] },
+  { branchAlias: "Hiper", aliases: ["Hiper", "Hipermercado"] },
+  { branchAlias: "Tiradentes", aliases: ["Tiradentes"] },
+  { branchAlias: "Atacado", aliases: ["Atacado"] },
+  { branchAlias: "Castelo", aliases: ["Castelo", "Castelo Branco"] },
+  { branchAlias: "Multi Atacado", aliases: ["Multi Atacado"] },
+  { branchAlias: "Anchieta", aliases: ["Anchieta"] },
 ] as const;
 
 const BRANCH_BY_NORMALIZED_NAME = new Map(
-  BRANCH_DISPLAY_ORDER.map((branchAlias, index) => [
-    normalizeComparableText(branchAlias),
-    { branchAlias, index },
-  ]),
+  BRANCHES.flatMap(({ branchAlias, aliases }, index) =>
+    aliases.map((alias) => [
+      normalizeComparableText(alias),
+      { branchAlias, index },
+    ] as const),
+  ),
 );
 
 function canonicalBranchAlias(value: string) {
