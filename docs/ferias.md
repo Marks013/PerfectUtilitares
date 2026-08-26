@@ -2,7 +2,7 @@
 
 ## Escopo
 
-Recebe o modelo XLSX mensal de férias e devolve o mesmo documento preenchido nas colunas F:H. Acesso exclusivo a contas ADMIN ativas, limitado ao tenant da sessão. Nenhum arquivo, relatório ou cópia de base é persistido.
+Recebe o modelo XLSX mensal de férias e devolve o mesmo documento preenchido nas colunas F:I: F para dias de destaque, G para Unimed, H como espaçador visual e I para Consignado Digital. Acesso exclusivo a contas ADMIN ativas, limitado ao tenant da sessão. Nenhum arquivo, relatório ou cópia de base é persistido.
 
 O módulo não altera o cálculo de exclusão da Unimed, seus documentos, importadores ou competências. Também não executa o VBS nem utiliza Access ou Office COM.
 
@@ -12,7 +12,7 @@ O módulo não altera o cálculo de exclusão da Unimed, seus documentos, import
 - A mensalidade do titular vem da tabela vigente nessa competência. Somam-se as mensalidades dos dependentes e, separadamente, ADITIVO presente na fatura. Procedimentos de coparticipação, pro-rata, carteirinhas e descontos não integram a coluna de mensalidades do VBS.
 - Consignado independe de haver cadastro Unimed. Somam-se as parcelas publicadas daquele mês, sem recalcular juros ou proporcionalidade.
 - Ausência de benefício em fonte publicada não equivale a fonte ausente. Dados não publicados, identidade inconsistente ou tabela necessária indisponível impedem exportação.
-- Matrícula e nome concordantes permitem identificação do titular. CPF válido permite relacionar empréstimos; uma correspondência somente pelo nome exige confirmação administrativa. Não usar buscas parciais ou valores enviados pelo navegador.
+- Uma matrícula que identifica um único titular, sem candidato nominal concorrente, permite confirmação automática mesmo quando o nome da planilha está abreviado ou difere do cadastro; correspondência somente pelo nome continua exigindo confirmação administrativa. CPF válido ou matrícula única e compatível permitem relacionar Consignado Digital sem seleção manual. Não usar buscas parciais ou valores enviados pelo navegador.
 - Duração é inclusiva em dias corridos, entre 1 e 30 dias. Períodos acima de 30 dias são recusados como provável erro de digitação e nunca são corrigidos automaticamente. Férias inferiores a 30 dias recebem destaque. Para 30 dias, destacar somente quando começarem a partir do segundo dia útil do mês.
 - Sábados, domingos e feriados aplicáveis em Umuarama/PR não são úteis. Ponto facultativo não é automaticamente feriado. O calendário inicial revisado cobre 2026; outros anos exigem atualização versionada e testes.
 
@@ -30,7 +30,7 @@ O módulo não altera o cálculo de exclusão da Unimed, seus documentos, import
 
 A dependência proposta inicialmente, ExcelJS, foi substituída por `@xmldom/xmldom@0.9.12` e o ZIP já existente no projeto. A alteração estruturada apenas das partes necessárias do OOXML evita incorporar a árvore antiga do ExcelJS e reduz transformações no layout original.
 
-Preservar conteúdo A:E, linhas vazias, ordem, numeração, mesclagens, dimensões, margens e impressão. Recalcular F:H, incluindo limpeza de resultados antigos. Estilos de negrito devem ser clonados sem contaminar outras células. Fórmulas, macros, entidades XML externas e relações externas não fazem parte do contrato aceito.
+Preservar conteúdo A:E, linhas vazias, ordem, numeração, mesclagens, margens e impressão. Recalcular F:I, incluindo limpeza de resultados antigos; ajustar apenas a dimensão usada e as larguras de F:I para acomodar os resultados e fechar as bordas corretamente. Estilos de negrito devem ser clonados sem contaminar outras células. Fórmulas, macros, entidades XML externas e relações externas não fazem parte do contrato aceito.
 
 XLSX é a saída desta entrega. PDF permanece evolução opcional pelo worker de conversão existente, condicionada à comparação visual, sem um segundo layout independente.
 

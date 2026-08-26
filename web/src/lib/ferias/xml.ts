@@ -157,7 +157,7 @@ function validPrintReference(node: Element): boolean {
 		if (!ref) return false;
 		if (name === "_xlnm.Print_Area") {
 			const area =
-				/^\$([A-H])\$([1-9]\d{0,3})(?::\$([A-H])\$([1-9]\d{0,3}))?$/.exec(ref);
+				/^\$([A-I])\$([1-9]\d{0,3})(?::\$([A-I])\$([1-9]\d{0,3}))?$/.exec(ref);
 			return Boolean(
 				area &&
 					Number(area[2]) <= 2_000 &&
@@ -171,7 +171,7 @@ function validPrintReference(node: Element): boolean {
 			const rows = /^\$([1-9]\d{0,3}):\$([1-9]\d{0,3})$/.exec(ref);
 			if (rows)
 				return Number(rows[1]) <= Number(rows[2]) && Number(rows[2]) <= 2_000;
-			const cols = /^\$([A-H]):\$([A-H])$/.exec(ref);
+			const cols = /^\$([A-I]):\$([A-I])$/.exec(ref);
 			return Boolean(cols && cols[1] <= cols[2]);
 		}
 		return false;

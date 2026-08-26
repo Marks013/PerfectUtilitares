@@ -22,7 +22,7 @@ const PRINTER_TYPE =
 const textCell = (ref: string, text: string, style = 0) =>
 	`<c r="${ref}" s="${style}" t="inlineStr"><is><t>${text}</t></is></c>`;
 function employee(row: number, period = "03/08/2026 à 01/09/2026") {
-	return `<row r="${row}" ht="15.75" customHeight="1">${textCell(`A${row}`, String(row - 3))}${textCell(`B${row}`, "P")}${textCell(`C${row}`, String(10000 + row))}${textCell(`D${row}`, `Colaborador Exemplo ${row}`)}${textCell(`E${row}`, period)}${textCell(`F${row}`, "antigo")}${textCell(`G${row}`, "Mens.: 999,99")}${textCell(`H${row}`, "Consig.R$ 999,99")}</row>`;
+	return `<row r="${row}" ht="15.75" customHeight="1">${textCell(`A${row}`, String(row - 3))}${textCell(`B${row}`, "P")}${textCell(`C${row}`, String(10000 + row))}${textCell(`D${row}`, `Colaborador Exemplo ${row}`)}${textCell(`E${row}`, period)}${textCell(`F${row}`, "antigo")}${textCell(`G${row}`, "Mens.: 999,99")}${textCell(`H${row}`, "legado")}${textCell(`I${row}`, "Consig.R$ 999,99")}</row>`;
 }
 
 function fixture(rows = employee(4) + employee(5, "04/08/2026 à 02/09/2026")) {
@@ -32,7 +32,7 @@ function fixture(rows = employee(4) + employee(5, "04/08/2026 à 02/09/2026")) {
 		"xl/workbook.xml": `<workbook xmlns="${SHEET_NS}" xmlns:r="${OFFICE_REL_NS}"><bookViews><workbookView activeTab="0"/></bookViews><sheets><sheet name="Plan1" sheetId="1" r:id="r1"/></sheets><definedNames><definedName name="_xlnm.Print_Area" localSheetId="0">Plan1!$A$1:$H$85</definedName></definedNames></workbook>`,
 		"xl/_rels/workbook.xml.rels": `<Relationships xmlns="${REL_NS}"><Relationship Id="r1" Type="${OFFICE_REL_NS}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="r2" Type="${OFFICE_REL_NS}/styles" Target="styles.xml"/></Relationships>`,
 		"xl/styles.xml": `<styleSheet xmlns="${SHEET_NS}"><fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><sz val="11"/><name val="Arial"/><b/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>`,
-		"xl/worksheets/sheet1.xml": `<worksheet xmlns="${SHEET_NS}" xmlns:r="${OFFICE_REL_NS}"><dimension ref="A1:H85"/><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15.75"/><cols><col min="1" max="1" width="3.7109375" customWidth="1"/><col min="2" max="2" width="5.7109375" customWidth="1"/><col min="3" max="3" width="5.85546875" customWidth="1"/><col min="4" max="4" width="41.42578125" customWidth="1"/><col min="5" max="5" width="22.5703125" customWidth="1"/><col min="6" max="6" width="7" customWidth="1"/><col min="7" max="7" width="25.28515625" customWidth="1"/><col min="8" max="8" width="17.42578125" customWidth="1"/></cols><sheetData><row r="1">${textCell("A1", "FÉRIAS - AGOSTO / 2026", 1)}</row><row r="2">${textCell("A2", "Relatório de exemplo", 1)}</row><row r="3">${["Nº", "FILIAL", "CÓD.", "NOME", "PERÍODO DE GOZO"].map((v, i) => textCell(`${String.fromCharCode(65 + i)}3`, v, 1)).join("")}</row>${rows}<row r="2000">${textCell("A2000", "999")}${textCell("G2000", "Mens.: 999,99")}${textCell("H2000", "Consig.R$ 999,99")}</row></sheetData><mergeCells count="2"><mergeCell ref="A1:E1"/><mergeCell ref="A2:E2"/></mergeCells><pageMargins left="0.25" right="0.25" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="portrait" scale="76" fitToHeight="3" r:id="print"/></worksheet>`,
+		"xl/worksheets/sheet1.xml": `<worksheet xmlns="${SHEET_NS}" xmlns:r="${OFFICE_REL_NS}"><dimension ref="A1:E85"/><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15.75"/><cols><col min="1" max="1" width="3.7109375" customWidth="1"/><col min="2" max="2" width="5.7109375" customWidth="1"/><col min="3" max="3" width="5.85546875" customWidth="1"/><col min="4" max="4" width="41.42578125" customWidth="1"/><col min="5" max="5" width="22.5703125" customWidth="1"/></cols><sheetData><row r="1">${textCell("A1", "FÉRIAS - AGOSTO / 2026", 1)}</row><row r="2">${textCell("A2", "Relatório de exemplo", 1)}</row><row r="3">${["Nº", "FILIAL", "CÓD.", "NOME", "PERÍODO DE GOZO"].map((v, i) => textCell(`${String.fromCharCode(65 + i)}3`, v, 1)).join("")}</row>${rows}<row r="2000">${textCell("A2000", "999")}${textCell("G2000", "Mens.: 999,99")}${textCell("H2000", "legado")}${textCell("I2000", "Consig.R$ 999,99")}</row></sheetData><mergeCells count="2"><mergeCell ref="A1:E1"/><mergeCell ref="A2:E2"/></mergeCells><pageMargins left="0.25" right="0.25" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="portrait" scale="76" fitToHeight="3" r:id="print"/></worksheet>`,
 		"xl/worksheets/_rels/sheet1.xml.rels": `<Relationships xmlns="${REL_NS}"><Relationship Id="print" Type="${OFFICE_REL_NS}/printerSettings" Target="../printerSettings/printerSettings1.bin"/></Relationships>`,
 		"xl/printerSettings/printerSettings1.bin": new Uint8Array([0, 1, 4, 5]),
 		"docProps/custom.xml": `<Properties xmlns="urn:test"><value>Preserve exactly</value></Properties>`,
@@ -120,8 +120,6 @@ describe("Ferias workbook", () => {
 		const before = xml(entries["xl/worksheets/sheet1.xml"]);
 		const after = xml(output["xl/worksheets/sheet1.xml"]);
 		for (const name of [
-			"dimension",
-			"cols",
 			"mergeCells",
 			"pageSetup",
 			"pageMargins",
@@ -132,6 +130,18 @@ describe("Ferias workbook", () => {
 				elements(before, name).map(serialize),
 			);
 		}
+		expect(elements(after, "dimension")[0]?.getAttribute("ref")).toBe("A1:I2000");
+		const outputWidths = new Map(
+			elements(after, "col").map((column) => [
+				Number(column.getAttribute("min")),
+				column.getAttribute("width"),
+			]),
+		);
+		expect(outputWidths.get(6)).toBe("7");
+		expect(outputWidths.get(7)).toBe("25.28515625");
+		expect(outputWidths.get(8)).toBe("2.5");
+		expect(outputWidths.get(9)).toBe("17.42578125");
+
 		for (const original of elements(before, "c").filter((c) =>
 			/^[A-E]\d+$/.test(c.getAttribute("r") ?? ""),
 		)) {
@@ -153,12 +163,14 @@ describe("Ferias workbook", () => {
 		expect(values.get("F4")).toBe("");
 		expect(values.get("F5")).toBe("30 dias");
 		expect(values.get("G4")).toBe("Mens.: 61,26 + Adit.: 6,12");
-		expect(values.get("H4")).toBe("Consig.R$ 100,00");
+		expect(values.get("H4")).toBe("");
+		expect(values.get("I4")).toBe("Consig.R$ 100,00");
 		expect(values.get("G2000")).toBe("");
 		expect(values.get("H2000")).toBe("");
+		expect(values.get("I2000")).toBe("");
 		const styles = xml(output["xl/styles.xml"]);
 		for (const rowNumber of [4, 5]) {
-			for (const col of ["F", "G", "H"]) {
+			for (const col of ["F", "G", "H", "I"]) {
 				const c = elements(after, "c").find(
 					(c) => c.getAttribute("r") === `${col}${rowNumber}`,
 				);
@@ -200,7 +212,7 @@ describe("Ferias workbook", () => {
 			elements(doc, "c").find((c) => c.getAttribute("r") === "G4")?.textContent,
 		).toBe("");
 		expect(
-			elements(doc, "c").find((c) => c.getAttribute("r") === "H5")?.textContent,
+			elements(doc, "c").find((c) => c.getAttribute("r") === "I5")?.textContent,
 		).toBe(results[1].loanText);
 	});
 
@@ -219,7 +231,7 @@ describe("Ferias workbook", () => {
 		["wrong header", "PERÍODO DE GOZO", "Outra coluna"],
 		["bad row number", 'r="2000"', 'r="2001"'],
 		["duplicate row", '<row r="5"', '<row r="4"'],
-		["unexpected column", 'r="H4"', 'r="I4"'],
+		["unexpected column", 'r="I4"', 'r="J4"'],
 	])("rejects %s", async (_label, before, after) => {
 		const entries = fixture();
 		replace(entries, "xl/worksheets/sheet1.xml", before, after);
@@ -295,7 +307,7 @@ describe("Ferias workbook", () => {
 		"AnotherSheet!$A$1:$H$85",
 		"Plan1!$A$1:$H$2001",
 		"Plan1!$A$85:$H$1",
-		"Plan1!$A$1:$I$85",
+		"Plan1!$A$1:$J$85",
 	])("rejects nonliteral or invalid print areas: %s", async (area) => {
 		const entries = fixture();
 		replace(entries, "xl/workbook.xml", "Plan1!$A$1:$H$85", area);

@@ -52,6 +52,35 @@ describe("Férias: competência, identidade e valores", () => {
     data.prices[0].employeeAmount = "54.21";
     expect(analyze(data).rows[0].unimedText).toBe("Mens.: 257,92 + Adit.: 6,12");
   });
+  it("auto-confirms a unique registration even when the spreadsheet name is abbreviated", () => {
+    const data = snapshot();
+    data.beneficiaries[0].fullName = "PESSOA EXEMPLO DE OLIVEIRA";
+    const result = analyze(data);
+    expect(result.canExport).toBe(true);
+    expect(result.rows[0]).toMatchObject({
+      holderId: "holder",
+      loanIdentity: "loan",
+      loanText: "Consig.R$ 0,30",
+      issues: [],
+    });
+    expect(result.rows[0].warnings).toContain(
+      "Titular confirmado pela matrícula; o nome na planilha difere do cadastro Unimed.",
+    );
+  });
+  it("auto-confirms a unique Consignado registration when CPF cannot resolve it", () => {
+    const data = snapshot();
+    data.beneficiaries = [];
+    data.invoices = [];
+    for (const loan of data.loans) {
+      loan.cpfNormalized = null;
+      loan.registration = "42";
+    }
+    const result = analyze(data);
+    expect(result.canExport).toBe(true);
+    expect(result.rows[0].loanIdentity).toBe("loan");
+    expect(result.rows[0].loanText).toBe("Consig.R$ 0,30");
+    expect(result.rows[0].issues).toEqual([]);
+  });
   it("requires confirmation for exact-name loans without Unimed", () => {
     const data = snapshot(); data.beneficiaries = []; data.invoices = [];
     const result = analyze(data);

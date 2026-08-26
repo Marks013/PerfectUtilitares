@@ -7,7 +7,7 @@ import { buildIdentityIndex, cpfKey, holderOptions, loanLabel, normalizedName, r
 import { readFeriasSnapshot } from "./repository";
 import type { FeriasInputRow } from "./workbook";
 
-const RULE_REVISION = "ferias-2026-08-26-v2";
+const RULE_REVISION = "ferias-2026-08-26-v3";
 
 function formatCompetency(value: string) {
   return `${value.slice(5)}/${value.slice(0, 4)}`;
@@ -50,7 +50,7 @@ export function buildFeriasAnalysis(
     const nameMatches = identities.holderNames.get(name) ?? [];
     const registrationMatches = identities.holderRegistrations.get(registrationKey(row.registration)) ?? [];
     const holderCandidates = [...new Map([...nameMatches, ...registrationMatches].map((person) => [person.id, person])).values()];
-    const automaticHolder = registrationMatches.length === 1 && normalizedName(registrationMatches[0].fullName) === name
+    const automaticHolder = registrationMatches.length === 1 && holderCandidates.length === 1
       ? registrationMatches[0] : undefined;
     const choice = choicesByRow.get(row.row);
     const holder = unimedSources[0]?.ready
@@ -58,6 +58,9 @@ export function buildFeriasAnalysis(
     if (unimedSources[0]?.ready) {
       result.holderCandidates = holderOptions(holderCandidates);
       result.holderId = holder?.id;
+      if (holder && automaticHolder?.id === holder.id && normalizedName(holder.fullName) !== name) {
+        result.warnings.push("Titular confirmado pela matrícula; o nome na planilha difere do cadastro Unimed.");
+      }
       if (!holder && holderCandidates.length === 1) {
         result.issues.push("A matrícula não confirmou o titular localizado pelo nome. Escolha a pessoa correta na lista Unimed desta linha.");
       } else if (!holder && holderCandidates.length > 1) {
@@ -80,8 +83,19 @@ export function buildFeriasAnalysis(
       const compatible = loanCandidates.filter((group) => !cpf || !group.cpf || group.cpf === cpf);
       if (compatible.length !== loanCandidates.length) result.issues.push("O nome corresponde a um Consignado com CPF diferente do titular. Revise a identificação.");
       result.loanCandidates = compatible.map((group) => ({ id: group.id, label: loanLabel(group) }));
-      const group = selectCandidate(compatible, cpfMatches.length === 1 ? cpfMatches[0] : undefined, choice?.loanIdentity);
+      const rowRegistration = registrationKey(row.registration);
+      const registrationLoanMatches = compatible.filter((group) =>
+        group.loans.some((loan) => registrationKey(loan.registration) === rowRegistration));
+      const automaticLoan = cpfMatches.length === 1
+        ? cpfMatches[0]
+        : compatible.length === 1 && registrationLoanMatches.length === 1
+          ? registrationLoanMatches[0]
+          : undefined;
+      const group = selectCandidate(compatible, automaticLoan, choice?.loanIdentity);
       result.loanIdentity = group?.id;
+      if (group && !cpfMatches.length && registrationLoanMatches.length === 1) {
+        result.warnings.push("Consignado Digital confirmado pela matrícula; não foi necessária seleção manual.");
+      }
       if (group) {
         const benefit = calculateLoanBenefit(group, competency);
         result.loanText = benefit.text;

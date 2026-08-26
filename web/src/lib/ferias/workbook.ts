@@ -154,11 +154,11 @@ function load(buffer: Buffer) {
 		let previousColumn = 0;
 		for (const cell of children(row, "c")) {
 			const ref = cell.getAttribute("r") ?? "";
-			const match = /^([A-H])([1-9]\d*)$/.exec(ref);
+			const match = /^([A-I])([1-9]\d*)$/.exec(ref);
 			const column = match ? match[1].charCodeAt(0) - 64 : 0;
 			if (!match || Number(match[2]) !== number || column <= previousColumn)
 				fail(
-					`Linha ${number}: as colunas devem estar ordenadas entre A e H, sem duplicação.`,
+					`Linha ${number}: as colunas devem estar ordenadas entre A e I, sem duplicação.`,
 				);
 			previousColumn = column;
 			cellNodes.set(ref, cell);
@@ -295,6 +295,52 @@ function setText(cell: Element, text: string) {
 	cell.insertBefore(inline, children(cell, "extLst")[0] ?? null);
 }
 
+const OUTPUT_COLUMN_WIDTHS: ReadonlyArray<readonly [number, string]> = [
+	[6, "7"],
+	[7, "25.28515625"],
+	[8, "2.5"],
+	[9, "17.42578125"],
+];
+
+function ensureOutputLayout(
+	sheet: Document,
+	rowNodes: Map<number, Element>,
+) {
+	const root = sheet.documentElement ?? fail("A estrutura da aba está incompleta.");
+	let cols = children(root, "cols")[0];
+	if (!cols) {
+		cols = spreadsheetElement(root, "cols");
+		const sheetData = children(root, "sheetData")[0] ??
+			fail("A planilha não contém uma área de dados válida.");
+		root.insertBefore(cols, sheetData);
+	}
+
+	for (const [number, width] of OUTPUT_COLUMN_WIDTHS) {
+		let column = children(cols, "col").find(
+			(item) =>
+				Number(item.getAttribute("min")) === number &&
+				Number(item.getAttribute("max")) === number,
+		);
+		if (!column) {
+			column = spreadsheetElement(cols, "col");
+			column.setAttribute("min", String(number));
+			column.setAttribute("max", String(number));
+			const later = children(cols, "col").find(
+				(item) => Number(item.getAttribute("min")) > number,
+			);
+			cols.insertBefore(column, later ?? null);
+		}
+		column.setAttribute("width", width);
+		column.setAttribute("customWidth", "1");
+	}
+
+	const dimension = children(root, "dimension")[0];
+	if (dimension && rowNodes.size) {
+		const lastRow = Math.max(...rowNodes.keys());
+		dimension.setAttribute("ref", `A1:I${lastRow}`);
+	}
+}
+
 export async function writeFeriasWorkbook(
 	buffer: Buffer,
 	results: OutputRow[],
@@ -328,11 +374,13 @@ export async function writeFeriasWorkbook(
 			fail(`Linha ${row.row}: os dados mudaram. Analise a planilha novamente.`);
 	}
 	const styleFor = createStyleWriter(input.styles);
+	ensureOutputLayout(input.sheet, input.rowNodes);
 	const columns = elements(input.sheet, "col");
 	for (const [rowNumber, row] of input.rowNodes) {
 		if (rowNumber < 4) continue;
 		const result = byRow.get(rowNumber);
-		for (let col = 1; col <= 8; col += 1) {
+		if (result) row.setAttribute("spans", "1:9");
+		for (let col = 1; col <= 9; col += 1) {
 			const ref = `${String.fromCharCode(col + 64)}${rowNumber}`;
 			let cell = input.cellNodes.get(ref);
 			if (!cell && (col < 6 || !result)) continue;
@@ -353,7 +401,9 @@ export async function writeFeriasWorkbook(
 							: ""
 						: col === 7
 							? result.unimedText
-							: result.loanText;
+							: col === 9
+								? result.loanText
+								: "";
 				setText(cell, text);
 			}
 			if (!result) continue;
