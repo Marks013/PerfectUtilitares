@@ -7,7 +7,17 @@ import { buildIdentityIndex, cpfKey, holderOptions, loanLabel, normalizedName, r
 import { readFeriasSnapshot } from "./repository";
 import type { FeriasInputRow } from "./workbook";
 
-const RULE_REVISION = "ferias-2026-08-26-v1";
+const RULE_REVISION = "ferias-2026-08-26-v2";
+
+function formatCompetency(value: string) {
+  return `${value.slice(5)}/${value.slice(0, 4)}`;
+}
+
+function previousCompetency(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 2, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
 
 export function buildFeriasAnalysis(
   snapshot: FeriasSnapshot, input: FeriasInputRow[], competency: string,
@@ -20,10 +30,17 @@ export function buildFeriasAnalysis(
   const choicesByRow = new Map(choices.map((choice) => [choice.row, choice]));
   const identities = buildIdentityIndex(snapshot);
   const invoices = buildInvoiceIndex(snapshot.invoices);
-  const issues = snapshot.sources.filter((source) => !source.ready)
-    .map((source) => `${source.name}: a base de ${competency.slice(5)}/${competency.slice(0, 4)} ainda não foi publicada.`);
-  const unimedReady = snapshot.sources[0]?.ready && snapshot.sources[1]?.ready;
-  const loansReady = snapshot.sources[2]?.ready;
+  const unimedSources = snapshot.sources.filter((source) => source.name !== "Consignado Digital");
+  const loanSource = snapshot.sources.find((source) => source.name === "Consignado Digital");
+  const unimedReady = unimedSources.length === 2 && unimedSources.every((source) => source.ready);
+  const loansReady = loanSource?.ready === true;
+  const issues: string[] = [];
+  if (!unimedReady) {
+    issues.push(`Unimed: não há uma base completa em ${formatCompetency(competency)} nem em ${formatCompetency(previousCompetency(competency))}. Publique o cadastro e a fatura/coparticipação de uma dessas competências para continuar.`);
+  }
+  if (!loansReady) {
+    issues.push(`Consignado Digital: a base obrigatória de ${formatCompetency(competency)} ainda não foi publicada. Importe e publique essa competência para continuar; o consignado não usa o mês anterior.`);
+  }
   const rows: FeriasResultRow[] = input.map((row) => {
     const result: FeriasResultRow = { ...row, unimedText: "", loanText: "", issues: [], warnings: [], holderCandidates: [], loanCandidates: [] };
     if (row.start.slice(0, 7) !== competency) throw new FeriasError("FERIAS_MONTH_MISMATCH", "As férias devem começar na mesma competência.");
@@ -36,12 +53,16 @@ export function buildFeriasAnalysis(
     const automaticHolder = registrationMatches.length === 1 && normalizedName(registrationMatches[0].fullName) === name
       ? registrationMatches[0] : undefined;
     const choice = choicesByRow.get(row.row);
-    const holder = snapshot.sources[0]?.ready
+    const holder = unimedSources[0]?.ready
       ? selectCandidate(holderCandidates, automaticHolder, choice?.holderId) : undefined;
-    if (snapshot.sources[0]?.ready) {
+    if (unimedSources[0]?.ready) {
       result.holderCandidates = holderOptions(holderCandidates);
       result.holderId = holder?.id;
-      if (!holder && holderCandidates.length) result.issues.push("Confirme o titular correspondente na base Unimed.");
+      if (!holder && holderCandidates.length === 1) {
+        result.issues.push("A matrícula não confirmou o titular localizado pelo nome. Escolha a pessoa correta na lista Unimed desta linha.");
+      } else if (!holder && holderCandidates.length > 1) {
+        result.issues.push("Há mais de um titular possível na base Unimed. Escolha a pessoa correta nesta linha.");
+      }
     }
     if (holder && unimedReady) {
       const benefit = calculateUnimedBenefit(holder, identities.dependents.get(holder.id) ?? [], invoices, snapshot.prices, competency);
@@ -65,10 +86,14 @@ export function buildFeriasAnalysis(
         const benefit = calculateLoanBenefit(group, competency);
         result.loanText = benefit.text;
         result.issues.push(...benefit.issues);
-      } else if (compatible.length) result.issues.push("Confirme a pessoa correspondente no Consignado Digital.");
+      } else if (compatible.length === 1) {
+        result.issues.push("O Consignado foi localizado somente pelo nome. Confirme a pessoa correta na lista desta linha.");
+      } else if (compatible.length > 1) {
+        result.issues.push("Há mais de uma pessoa possível no Consignado Digital. Escolha o vínculo correto nesta linha.");
+      }
     }
     if (!result.unimedText && !result.loanText && !result.issues.length && !issues.length) {
-      result.warnings.push("Não localizado na competência consultada.");
+      result.warnings.push("Nenhum valor de Unimed ou Consignado foi localizado nas bases informadas acima.");
     }
     return result;
   });

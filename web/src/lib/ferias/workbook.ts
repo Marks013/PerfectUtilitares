@@ -225,11 +225,11 @@ function parseRows(input: ReturnType<typeof load>) {
 		)
 			fail(`Linha ${row}: preencha código, filial e nome válidos.`);
 		const dates =
-			/^(\d{2})\/(\d{2})\/(\d{4})\s*(?:à|a|até|[-–])\s*(\d{2})\/(\d{2})\/(\d{4})$/i.exec(
+			/^(\d{2})\/(\d{2})\/(\d{4})\s*(?:à|á|a|até|[-–])\s*(\d{2})\/(\d{2})\/(\d{4})$/i.exec(
 				period,
 			);
 		if (!dates)
-			fail(`Linha ${row}: informe o período como DD/MM/AAAA à DD/MM/AAAA.`);
+			fail(`Linha ${row}: informe o período como 01/09/2026 a 30/09/2026.`);
 		const start = `${dates[3]}-${dates[2]}-${dates[1]}`;
 		const end = `${dates[6]}-${dates[5]}-${dates[4]}`;
 		try {

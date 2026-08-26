@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   analysisSchema, type FeriasAnalysis, type FeriasChoice,
-  readResponseError, validateVacationFile,
+  operationErrorMessage, readResponseError, validateVacationFile,
 } from "./ferias-contract";
 
 type Phase = "idle" | "analyzing" | "exporting";
@@ -73,7 +73,7 @@ export function useFeriasWorkspace() {
       invalidate();
       setStale(true);
       setPhase("idle");
-      setError("A operação levou mais tempo que o esperado. Tente analisar novamente.");
+      setError("A operação ultrapassou 2 minutos e foi interrompida com segurança. Nenhum arquivo foi alterado; tente novamente.");
     }, 120_000);
     try {
       const body = new FormData();
@@ -116,8 +116,8 @@ export function useFeriasWorkspace() {
         link.click();
         link.remove();
       }
-    } catch {
-      if (current()) setError("Não foi possível concluir. Confira sua conexão e tente novamente.");
+    } catch (caught) {
+      if (current()) setError(operationErrorMessage(caught, operation));
     } finally {
       globalThis.clearTimeout(timeout);
       if (current()) {

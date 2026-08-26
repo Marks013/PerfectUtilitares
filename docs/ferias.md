@@ -8,7 +8,7 @@ O módulo não altera o cálculo de exclusão da Unimed, seus documentos, import
 
 ## Regras
 
-- Todas as fontes usam o mês/ano do início das férias: beneficiários, fatura/coparticipação e Consignado Digital. Não há defasagem mensal nem fallback para a base mais recente.
+- A competência solicitada é sempre o mês/ano do início das férias. Cadastro e fatura/coparticipação da Unimed usam essa competência quando ambas estão publicadas; se a base Unimed estiver incompleta, usam juntas e exclusivamente a competência imediatamente anterior. O Consignado Digital nunca usa fallback: precisa estar publicado exatamente na competência das férias.
 - A mensalidade do titular vem da tabela vigente nessa competência. Somam-se as mensalidades dos dependentes e, separadamente, ADITIVO presente na fatura. Procedimentos de coparticipação, pro-rata, carteirinhas e descontos não integram a coluna de mensalidades do VBS.
 - Consignado independe de haver cadastro Unimed. Somam-se as parcelas publicadas daquele mês, sem recalcular juros ou proporcionalidade.
 - Ausência de benefício em fonte publicada não equivale a fonte ausente. Dados não publicados, identidade inconsistente ou tabela necessária indisponível impedem exportação.
@@ -22,7 +22,7 @@ O módulo não altera o cálculo de exclusão da Unimed, seus documentos, import
 - `/admin/ferias`: upload, prévia, confirmações e download.
 - `POST /api/admin/ferias/analisar`: análise sem persistência.
 - `POST /api/admin/ferias/exportar`: releitura das fontes, validação da revisão e exportação.
-- PostgreSQL: leitura curta em `RepeatableRead`, filtrada por tenant e competência. Consultas em lote, sem N+1. Limite inicial de 20.000 registros por conjunto consultado, com falha explícita acima disso.
+- PostgreSQL: leitura curta em `RepeatableRead`, filtrada por tenant. A competência atual e a anterior são localizadas em uma consulta; Cadastro e Fatura usam sempre a mesma competência selecionada, enquanto Consignado permanece na atual. Consultas em lote, sem N+1. Limite inicial de 20.000 registros por conjunto consultado, com falha explícita acima disso.
 - Revisão SHA-256 vincula fontes, preços, regras/calendário, arquivo e confirmações. Alteração das fontes entre prévia e exportação devolve conflito; o usuário precisa analisar novamente.
 - Capacidade distribuída de duas operações, limites de upload/ZIP/linhas, cancelamento da transformação e proteção global de recursos. Dados pessoais não são registrados em logs.
 

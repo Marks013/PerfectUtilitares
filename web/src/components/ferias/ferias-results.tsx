@@ -74,10 +74,16 @@ export function FeriasResults({ analysis, choices, busy, stale, onChoose }: {
         {analysis.sources.map((source) => (
           <span key={source.name} className="inline-flex items-center gap-2">
             {source.ready ? <Check className="size-4 shrink-0 text-[color:var(--app-teal)]" aria-hidden="true" /> : <AlertTriangle className="size-4 shrink-0 text-[color:var(--app-coral)]" aria-hidden="true" />}
-            {source.name}: {source.ready ? "disponível" : "pendente"}
+            {source.name} · {formatCompetency(source.competency)}: {source.ready ? "disponível" : "pendente"}
           </span>
         ))}
       </div>
+      {unimedSources.some((source) => source.fallback) && unimedSources.every((source) => source.ready) && (
+        <div className="rounded-lg border border-[color:var(--app-warning-border)] bg-[color:var(--app-warning-soft)] p-3 text-sm">
+          <p className="font-semibold">Base alternativa da Unimed · {formatCompetency(unimedSources[0].competency)}</p>
+          <p className="mt-1 text-[color:var(--app-muted)]">A base Unimed de {formatCompetency(analysis.competency)} não estava completa. Cadastro e fatura foram consultados juntos no mês anterior; o Consignado Digital permanece em {formatCompetency(analysis.competency)}.</p>
+        </div>
+      )}
       {analysis.pricePeriods.length > 0 && <p className="text-xs text-[color:var(--app-muted)]">Tabela de preços · início de vigência: {analysis.pricePeriods.map(formatVacationDate).join(", ")}</p>}
       {analysis.issues.length > 0 && (
         <div className="rounded-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-3 text-sm">

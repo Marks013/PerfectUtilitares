@@ -31,7 +31,8 @@ beforeEach(() => {
   mocks.rate.mockResolvedValue(null);
   mocks.capacity.mockResolvedValue(null);
   mocks.worker.mockResolvedValue({ rows: [{ row: 4 }], competency: "2026-09" });
-  mocks.analyze.mockResolvedValue({ revision: "a".repeat(64), canExport: false, rows: [{ row: 4 }], sources: [{ name: "Unimed", ready: false }] });
+    mocks.analyze.mockResolvedValue({ revision: "a".repeat(64), canExport: false, rows: [{ row: 4 }],
+      sources: [{ name: "Unimed", ready: false, competency: "2026-09", fallback: false }] });
 });
 
 describe("POST /api/admin/ferias/analisar", () => {

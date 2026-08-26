@@ -10,8 +10,9 @@ const input: FeriasInputRow[] = [{ row: 4, registration: "0042", branch: "P", na
   start: "2026-09-01", end: "2026-09-30", days: 30, highlight: false }];
 function snapshot(): FeriasSnapshot {
   return {
-    revision: "source-a", sources: [{ name: "Cadastro Unimed", ready: true },
-      { name: "Fatura e coparticipação", ready: true }, { name: "Consignado Digital", ready: true }],
+    revision: "source-a", sources: [{ name: "Cadastro Unimed", ready: true, competency: "2026-09", fallback: false },
+      { name: "Fatura e coparticipação", ready: true, competency: "2026-09", fallback: false },
+      { name: "Consignado Digital", ready: true, competency: "2026-09", fallback: false }],
     beneficiaries: [{ id: "holder", holderId: null, registration: "42", fullName: "PESSOA EXEMPLO",
       cpf: "52998224725", branchId: "branch", category: "HOLDER", birthDate: "1990-01-01", planCode: "1" },
       { id: "dependent", holderId: "holder", registration: null, fullName: "DEPENDENTE EXEMPLO",
@@ -56,6 +57,7 @@ describe("Férias: competência, identidade e valores", () => {
     const result = analyze(data);
     expect(result.canExport).toBe(false);
     expect(result.rows[0].loanCandidates).toHaveLength(1);
+    expect(result.rows[0].issues).toContain("O Consignado foi localizado somente pelo nome. Confirme a pessoa correta na lista desta linha.");
     const confirmed = buildFeriasAnalysis(data, input, "2026-09", [{ row: 4, loanIdentity: "loan" }], "file-hash");
     expect(confirmed.canExport).toBe(true);
     expect(confirmed.rows[0].unimedText).toBe("");
@@ -74,7 +76,7 @@ describe("Férias: competência, identidade e valores", () => {
     const data = snapshot(); data.beneficiaries = []; data.invoices = []; data.loans = []; data.prices = [];
     const result = analyze(data);
     expect(result.canExport).toBe(true);
-    expect(result.rows[0].warnings).toContain("Não localizado na competência consultada.");
+    expect(result.rows[0].warnings).toContain("Nenhum valor de Unimed ou Consignado foi localizado nas bases informadas acima.");
   });
   it("blocks absent table, unlinked dependents and repeated monthly billings", () => {
     const noPrices = snapshot(); noPrices.prices = [];
@@ -84,17 +86,37 @@ describe("Férias: competência, identidade e valores", () => {
     const duplicated = snapshot(); duplicated.invoices.push({ ...duplicated.invoices[1], id: "duplicate" });
     expect(analyze(duplicated).canExport).toBe(false);
   });
-  it("never falls back to the previous month and rejects repeated loan contracts", () => {
+  it("never accepts previous-month loans and rejects repeated loan contracts", () => {
     const oldLoan = snapshot(); oldLoan.loans[0].competence = "2026-08";
     expect(analyze(oldLoan).canExport).toBe(false);
     const duplicate = snapshot(); duplicate.loans[1].contractNumber = "A";
     expect(analyze(duplicate).rows[0].loanText).toBe("");
+  });
+  it("accepts the previous month only for complete Unimed sources", () => {
+    const data = snapshot();
+    data.sources[0] = { ...data.sources[0], competency: "2026-08", fallback: true };
+    data.sources[1] = { ...data.sources[1], competency: "2026-08", fallback: true };
+    const result = analyze(data);
+    expect(result.canExport).toBe(true);
+    expect(result.issues).toEqual([]);
+    expect(result.sources[2]).toMatchObject({ competency: "2026-09", fallback: false });
+  });
+  it("explains incomplete Unimed fallback and blocks missing exact-month loans", () => {
+    const data = snapshot();
+    data.sources[0] = { ...data.sources[0], ready: false, competency: "2026-08", fallback: true };
+    data.sources[1] = { ...data.sources[1], ready: false, competency: "2026-08", fallback: true };
+    data.sources[2].ready = false;
+    const result = analyze(data);
+    expect(result.canExport).toBe(false);
+    expect(result.issues[0]).toContain("09/2026 nem em 08/2026");
+    expect(result.issues[1]).toContain("não usa o mês anterior");
   });
   it("rejects a selection from another tenant/file and requires confirmation for name-only holder", () => {
     expect(() => buildFeriasAnalysis(snapshot(), input, "2026-09", [{ row: 4, holderId: "foreign" }], "f")).toThrow();
     expect(() => buildFeriasAnalysis(snapshot(), input, "2026-09", [{ row: 8, holderId: "holder" }], "f")).toThrow();
     const data = snapshot(); data.beneficiaries[0].registration = "999";
     expect(analyze(data).canExport).toBe(false);
+    expect(analyze(data).rows[0].issues).toContain("A matrícula não confirmou o titular localizado pelo nome. Escolha a pessoa correta na lista Unimed desta linha.");
     expect(buildFeriasAnalysis(data, input, "2026-09", [{ row: 4, holderId: "holder" }], "f").canExport).toBe(true);
   });
   it("blocks a contradictory CPF even for an exact matching name", () => {

@@ -6,7 +6,11 @@ import { FeriasResults } from "./ferias-results";
 function fixture(): FeriasAnalysis {
   return {
     competency: "2026-09", revision: "test", pricePeriods: ["2026-08-01"], issues: [],
-    sources: [{ name: "Cadastro Unimed", ready: true }, { name: "Fatura e coparticipação", ready: true }, { name: "Consignado Digital", ready: true }],
+    sources: [
+      { name: "Cadastro Unimed", ready: true, competency: "2026-09", fallback: false },
+      { name: "Fatura e coparticipação", ready: true, competency: "2026-09", fallback: false },
+      { name: "Consignado Digital", ready: true, competency: "2026-09", fallback: false },
+    ],
     rows: [{
       row: 4, name: "Colaborador", registration: "1234", branch: "MATRIZ", start: "2026-09-01", end: "2026-09-30",
       days: 30, highlight: false, unimedText: "", loanText: "", issues: [], warnings: [],
@@ -49,6 +53,15 @@ describe("Ferias results presentation", () => {
     expect(html).toContain("Colaboradores pendentes");
     expect(html).toContain("Pendências da competência");
     expect(render().match(/Sem valor identificado/g)).toHaveLength(2);
+  });
+
+  it("identifies the Unimed fallback without implying a loan fallback", () => {
+    const data = fixture();
+    data.sources[0] = { ...data.sources[0], competency: "2026-08", fallback: true };
+    data.sources[1] = { ...data.sources[1], competency: "2026-08", fallback: true };
+    const html = render(data);
+    expect(html).toContain("Base alternativa da Unimed · 08/2026");
+    expect(html).toContain("Consignado Digital permanece em 09/2026");
   });
 
   it("renders dates, singular counts and highlighted vacations", () => {

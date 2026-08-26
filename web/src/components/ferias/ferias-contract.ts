@@ -28,7 +28,10 @@ const rowSchema = z.object({
 export const analysisSchema: z.ZodType<FeriasAnalysis> = z.object({
   competency: z.string().regex(/^\d{4}-\d{2}$/),
   revision: z.string().min(1),
-  sources: z.array(z.object({ name: z.string(), ready: z.boolean() })),
+  sources: z.array(z.object({
+    name: z.string(), ready: z.boolean(),
+    competency: z.string().regex(/^\d{4}-\d{2}$/), fallback: z.boolean(),
+  })),
   pricePeriods: z.array(z.string()),
   issues: z.array(z.string()),
   rows: z.array(rowSchema).max(1000),
@@ -61,8 +64,32 @@ export async function readResponseError(response: Response) {
     ? "As bases foram atualizadas. Analise a planilha novamente antes de baixar."
     : response.status === 401 || response.status === 403
       ? "Seu acesso expirou ou não permite esta operação. Entre novamente com uma conta administrativa."
-      : "Não foi possível concluir. Tente novamente em instantes.";
+      : response.status === 413
+        ? "O arquivo ou uma das bases excede o limite seguro desta conferência. Reduza o arquivo ou peça ao administrador para revisar a base."
+        : response.status === 422
+          ? "A planilha precisa de ajustes antes da conferência. Revise as linhas indicadas e envie novamente."
+          : response.status === 429
+            ? "Já existe uma conferência em andamento. Aguarde um instante e tente novamente."
+            : response.status === 503
+              ? "A conferência está temporariamente indisponível. Aguarde alguns instantes e tente novamente."
+              : "Não foi possível concluir. Tente novamente em instantes.";
   const body: unknown = await response.json().catch(() => null);
   const parsed = z.object({ error: z.object({ message: z.string().min(1) }) }).safeParse(body);
   return parsed.success ? parsed.data.error.message : fallback;
+}
+
+export function operationErrorMessage(error: unknown, operation: "analisar" | "exportar") {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "invalid-response") {
+    return "O servidor respondeu em um formato inesperado. Atualize a página e analise a planilha novamente.";
+  }
+  if (code === "invalid-download") {
+    return "O arquivo retornado não é uma planilha válida. Analise novamente antes de baixar.";
+  }
+  if (code === "empty-download") {
+    return "A planilha conferida veio vazia. Analise novamente e tente o download mais uma vez.";
+  }
+  return operation === "analisar"
+    ? "Não foi possível analisar a planilha. Confira sua conexão e tente novamente."
+    : "Não foi possível gerar a planilha conferida. Sua análise foi preservada; tente baixar novamente.";
 }

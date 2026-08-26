@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCompetency, formatVacationDate, readResponseError, validateVacationFile } from "./ferias-contract";
+import { formatCompetency, formatVacationDate, operationErrorMessage, readResponseError, validateVacationFile } from "./ferias-contract";
 
 describe("Ferias client boundary", () => {
   it("keeps dates independent of browser timezone", () => {
@@ -20,6 +20,14 @@ describe("Ferias client boundary", () => {
     expect(await readResponseError(Response.json({ error: { code: "BASE_MISSING", message: "Fatura de setembro não publicada." } }, { status: 422 }))).toBe("Fatura de setembro não publicada.");
     expect(await readResponseError(new Response("<h1>internal stack trace</h1>", { status: 409 }))).toContain("bases foram atualizadas");
     expect(await readResponseError(new Response("", { status: 403 }))).toContain("conta administrativa");
+    expect(await readResponseError(new Response("", { status: 429 }))).toContain("conferência em andamento");
+    expect(await readResponseError(new Response("", { status: 503 }))).toContain("temporariamente indisponível");
     expect(await readResponseError(Response.json({ error: { message: "" } }, { status: 500 }))).toContain("Tente novamente");
+  });
+
+  it("turns client failures into actionable messages", () => {
+    expect(operationErrorMessage(new Error("invalid-response"), "analisar")).toContain("formato inesperado");
+    expect(operationErrorMessage(new Error("invalid-download"), "exportar")).toContain("planilha válida");
+    expect(operationErrorMessage(new TypeError("fetch failed"), "exportar")).toContain("análise foi preservada");
   });
 });

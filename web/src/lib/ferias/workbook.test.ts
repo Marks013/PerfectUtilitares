@@ -98,6 +98,14 @@ describe("Ferias workbook", () => {
 		]);
 	});
 
+	it("accepts the acute-accent period separator used by the production workbook", async () => {
+		const entries = fixture(employee(4, "01/09/2026 á 30/09/2026"));
+		replace(entries, "xl/worksheets/sheet1.xml", "AGOSTO", "SETEMBRO");
+		const result = await parseFeriasWorkbook(pack(entries));
+		expect(result.competency).toBe("2026-09");
+		expect(result.rows[0]).toMatchObject({ start: "2026-09-01", end: "2026-09-30", days: 30 });
+	});
+
 	it("preserves other package parts byte-for-byte and all layout metadata", async () => {
 		const entries = fixture();
 		const buffer = pack(entries);

@@ -41,7 +41,8 @@ vi.mock("react", () => runtime);
 import { useFeriasWorkspace } from "./use-ferias-workspace";
 
 const analysis = {
-  competency: "2026-09", revision: "revision-1", sources: [{ name: "Unimed", ready: true }],
+  competency: "2026-09", revision: "revision-1",
+  sources: [{ name: "Unimed", ready: true, competency: "2026-09", fallback: false }],
   pricePeriods: ["2026-09"], issues: [], rows: [],
   summary: { total: 1, unimed: 1, loans: 0, pending: 0, highlighted: 0 }, canExport: true,
 };
@@ -164,7 +165,7 @@ describe("Ferias UI request lifecycle", () => {
     const pending = select().run("analisar");
     await vi.advanceTimersByTimeAsync(120_000);
     expect(render().phase).toBe("idle");
-    expect(render().error).toContain("mais tempo");
+    expect(render().error).toContain("2 minutos");
     resolve(Response.json(analysis));
     await pending;
     expect(render().analysis).toBeNull();

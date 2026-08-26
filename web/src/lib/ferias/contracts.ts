@@ -11,6 +11,12 @@ export const choicesSchema = z.array(z.object({
 );
 export type FeriasChoice = z.infer<typeof choicesSchema>[number];
 export type FeriasCandidate = { id: string; label: string };
+type FeriasSource = {
+  name: string;
+  ready: boolean;
+  competency: string;
+  fallback: boolean;
+};
 export type FeriasResultRow = FeriasInputRow & {
   unimedText: string;
   loanText: string;
@@ -24,7 +30,7 @@ export type FeriasResultRow = FeriasInputRow & {
 export type FeriasAnalysis = {
   competency: string;
   revision: string;
-  sources: { name: string; ready: boolean }[];
+  sources: FeriasSource[];
   pricePeriods: string[];
   issues: string[];
   rows: FeriasResultRow[];
@@ -56,7 +62,7 @@ export type FeriasPrice = {
 };
 export type FeriasSnapshot = {
   revision: string;
-  sources: { name: string; ready: boolean }[];
+  sources: FeriasSource[];
   beneficiaries: FeriasBeneficiary[];
   invoices: FeriasInvoice[];
   loans: FeriasLoan[];

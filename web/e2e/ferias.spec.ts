@@ -4,7 +4,7 @@ const adminEmail = process.env.ADMIN_EMAIL;
 const adminPassword = process.env.ADMIN_PASSWORD;
 const fixture = {
   competency: "2026-09", revision: "revision-1",
-  sources: [{ name: "Cadastro Unimed", ready: true }, { name: "Fatura e coparticipação", ready: true }, { name: "Consignado Digital", ready: true }],
+  sources: [{ name: "Cadastro Unimed", ready: true, competency: "2026-09", fallback: false }, { name: "Fatura e coparticipação", ready: true, competency: "2026-09", fallback: false }, { name: "Consignado Digital", ready: true, competency: "2026-09", fallback: false }],
   pricePeriods: ["2026-08-01"], issues: [],
   rows: [{
     row: 4, registration: "1234", branch: "MATRIZ", name: "Colaboradora de teste",
