@@ -44,6 +44,7 @@ const validInput = {
   reasonCode: 8,
   exclusionDate: "2026-07-22",
   planEnrollmentDate: "2022-01-22",
+  billingClosure: "AUTOMATIC_DAY_25",
 };
 
 function calculationRequest(
@@ -358,6 +359,33 @@ describe("Unimed calculation API", () => {
       error: {
         code: "UNIMED_CALCULATION_INVALID",
         details: [{ path: "dependentIds" }],
+      },
+    });
+  });
+
+  it("honors fatura aberta selected in the calculation", async () => {
+    const response = await POST(
+      calculationRequest({
+        ...validInput,
+        exclusionDate: "2026-08-25",
+        billingClosure: "OPEN",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.getUnimedCalculationConfiguration).toHaveBeenCalledTimes(1);
+
+    await expect(response.json()).resolves.toMatchObject({
+      pricingCompetencies: {
+        current: "2026-08",
+        next: null,
+      },
+      officialInput: {
+        billingClosure: "OPEN",
+      },
+      calculation: {
+        cutoffApplied: false,
+        nextCompetency: null,
       },
     });
   });

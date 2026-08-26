@@ -53,6 +53,7 @@ const calculationRequestSchema = z
     reasonCode: z.number().int().min(1).max(9_999),
     exclusionDate: dateOnlySchema,
     planEnrollmentDate: dateOnlySchema.optional(),
+    billingClosure: z.enum(["OPEN", "AUTOMATIC_DAY_25"]),
   })
   .strict()
   .superRefine((value, context) => {
@@ -428,7 +429,7 @@ export async function POST(request: Request) {
     }
 
     const cutoffApplied =
-      configuration.billing.closure === "AUTOMATIC_DAY_25" &&
+      parsed.data.billingClosure === "AUTOMATIC_DAY_25" &&
       referenceDate.getUTCDate() >= 25;
     const nextReferenceDate = nextCompetencyReference(referenceDate);
     let nextMoney: OfficialMoneySetResult | null = null;
@@ -470,7 +471,7 @@ export async function POST(request: Request) {
       reasonCode: parsed.data.reasonCode,
       exclusionDate: parsed.data.exclusionDate,
       planEnrollmentDate: holderEnrollmentDate,
-      billingClosure: configuration.billing.closure,
+      billingClosure: parsed.data.billingClosure,
       holder: currentMoney.holder,
       dependents: currentDependents,
       ...(nextMoney?.status === "RESOLVED"

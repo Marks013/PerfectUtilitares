@@ -82,6 +82,7 @@ describe("Unimed automatic calculation state model", () => {
       reasonCode: 3,
       exclusionDate: "2026-08-20",
       planEnrollmentDate: "2026-08-01",
+      billingClosure: "OPEN",
     });
   });
 

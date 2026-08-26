@@ -35,6 +35,7 @@ export function buildUnimedCalculationRequest(
     reasonCode: Number(form.reasonCode),
     exclusionDate: form.exclusionDate,
     planEnrollmentDate: form.planEnrollmentDate,
+    billingClosure: form.billingClosure,
   };
 }
 

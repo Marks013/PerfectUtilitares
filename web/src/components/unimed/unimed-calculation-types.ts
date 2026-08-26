@@ -79,6 +79,7 @@ export type UnimedCalculationRequest = {
   reasonCode: number;
   exclusionDate: string;
   planEnrollmentDate: string;
+  billingClosure: UnimedCalculationInput["billingClosure"];
 };
 
 export type UnimedCalculationApiResponse = {
