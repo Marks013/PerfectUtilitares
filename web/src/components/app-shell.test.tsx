@@ -7,8 +7,9 @@ const state = vi.hoisted(() => ({
       id: string;
       email: string;
       name: string;
-      role: "ADMIN";
-      status: "ACTIVE";
+      role: "ADMIN" | "USER";
+      status: "ACTIVE" | "BLOCKED";
+      tenantId?: string;
     };
   },
 }));
@@ -49,6 +50,7 @@ describe("AppShell Jornada navigation", () => {
     expect(html).not.toContain('href="/jornada/regras"');
     expect(html).not.toContain('href="/jornada/codigos"');
     expect(html).not.toContain('href="/jornada/historico"');
+    expect(html).not.toContain('href="/admin/ferias"');
   });
 
   it("shows administrative Jornada options only to an active administrator", async () => {
@@ -59,6 +61,7 @@ describe("AppShell Jornada navigation", () => {
         name: "Administrador",
         role: "ADMIN",
         status: "ACTIVE",
+        tenantId: "tenant-test",
       },
     };
 
@@ -67,5 +70,17 @@ describe("AppShell Jornada navigation", () => {
     expect(html).toContain('href="/jornada/regras"');
     expect(html).toContain('href="/jornada/codigos"');
     expect(html).toContain('href="/jornada/historico"');
+    expect(html).toContain('href="/admin/ferias"');
+  });
+
+  it.each([
+    { role: "USER" as const, status: "ACTIVE" as const, tenantId: "tenant-test" },
+    { role: "ADMIN" as const, status: "BLOCKED" as const, tenantId: "tenant-test" },
+    { role: "ADMIN" as const, status: "ACTIVE" as const, tenantId: undefined },
+  ])("hides Ferias without an active tenant administrator: %j", async (access) => {
+    state.session = {
+      user: { id: "user-test", name: "Usuário", email: "user@example.test", ...access },
+    };
+    expect(await renderShell()).not.toContain('href="/admin/ferias"');
   });
 });

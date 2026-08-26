@@ -31,6 +31,9 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
     ...(activeSession?.user.role === "ADMIN"
       ? [
           { href: "/admin/presencas", label: "Eventos" },
+          ...(activeSession.user.tenantId
+            ? [{ href: "/admin/ferias", label: "Férias" }]
+            : []),
           { href: "/admin/seo", label: "Visibilidade" },
           { href: "/admin/usuarios", label: "Usuários" },
         ]

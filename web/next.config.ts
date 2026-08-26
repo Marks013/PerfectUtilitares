@@ -77,6 +77,9 @@ const faceDetectionFrameHeaders = [
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR?.trim() || ".next",
   output: "standalone",
+  outputFileTracingIncludes: {
+    "/api/admin/ferias/*": ["./dist/ferias-workbook-worker.cjs"],
+  },
   serverExternalPackages: [
     "@prisma/adapter-pg",
     "archiver",

@@ -61,7 +61,7 @@ RUN --mount=type=cache,id=perfectutilitares-next-cache,target=/app/.next/cache,s
     if [ -f /run/secrets/sentry_auth_token ]; then \
       export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; \
     fi; \
-    npm run setup:env && npm run sync:check && npm run sync:pdfjs && npm exec -- next build && npm run postbuild && \
+    npm run setup:env && npm run sync:check && npm run sync:pdfjs && npm run build:ferias-worker && npm exec -- next build && npm run postbuild && \
     find /app/.next/standalone -maxdepth 1 -type f \
       \( -name '.env' -o -name '.env.*' \) -delete
 
@@ -135,6 +135,7 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 COPY --from=builder --chown=1001:1001 /app/.next/standalone ./
+COPY --from=builder --chown=1001:1001 /app/dist/ferias-workbook-worker.cjs ./dist/ferias-workbook-worker.cjs
 COPY --from=builder --chown=1001:1001 /app/node_modules/@img ./node_modules/@img
 COPY --from=builder --chown=1001:1001 /app/.next/static ./.next/static
 COPY --from=builder --chown=1001:1001 /app/public ./public

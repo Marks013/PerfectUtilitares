@@ -3,6 +3,9 @@ import { expect, test, type Page } from "@playwright/test";
 const enabled = process.env.E2E_MUTATION === "1";
 const adminEmail = process.env.ADMIN_EMAIL;
 const adminPassword = process.env.ADMIN_PASSWORD;
+let adminCookies: Awaited<
+  ReturnType<ReturnType<Page["context"]>["cookies"]>
+> = [];
 
 async function login(page: Page) {
   await page.goto("/login");
@@ -12,15 +15,25 @@ async function login(page: Page) {
   await expect(page).toHaveURL(/\/dashboard(?:\?|$)/);
 }
 
-test.beforeEach(() => {
+test.beforeAll(async ({ browser }) => {
+  if (!enabled || !adminEmail || !adminPassword) return;
+
+  const page = await browser.newPage();
+  await login(page);
+  adminCookies = await page.context().cookies();
+  await page.close();
+});
+
+test.beforeEach(async ({ page }) => {
   test.skip(!enabled, "Mutation E2E runs only against an isolated database");
   test.skip(!adminEmail || !adminPassword, "Admin credentials are required");
+  await page.context().addCookies(adminCookies);
+  await page.goto("/dashboard");
 });
 
 test("administrative and Jornada writes are observable through subsequent reads", async ({
   page,
 }) => {
-  await login(page);
   const origin = new URL(page.url()).origin;
   const suffix = Date.now().toString(36);
 
@@ -74,7 +87,6 @@ test("administrative and Jornada writes are observable through subsequent reads"
 test("a PDF draft persists and is readable through its resource endpoint", async ({
   page,
 }) => {
-  await login(page);
   const origin = new URL(page.url()).origin;
 
   const createResponse = await page.request.post("/api/pdf/jobs", {
