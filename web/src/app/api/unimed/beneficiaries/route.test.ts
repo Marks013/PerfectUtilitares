@@ -104,13 +104,98 @@ describe("Unimed beneficiary search API", () => {
     expect(mocks.findMany).not.toHaveBeenCalled();
   });
 
-  it("rejects search terms outside the 2 to 100 character limit", async () => {
-    const tooShort = await GET(searchRequest("a"));
-    const tooLong = await GET(searchRequest("a".repeat(101)));
+  it.each(["", " ", "a", " a ", ".", "a".repeat(101), "5".repeat(101)])(
+    "rejects empty, short non-numeric or overlong search terms: %s",
+    async (term) => {
+      const response = await GET(searchRequest(term));
 
-    expect(tooShort.status).toBe(400);
-    expect(tooLong.status).toBe(400);
-    expect(mocks.findMany).not.toHaveBeenCalled();
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: { code: "UNIMED_SEARCH_INVALID" },
+      });
+      expect(mocks.findMany).not.toHaveBeenCalled();
+      expect(mocks.getUnimedConfiguration).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["5", " 5 "])(
+    "returns the exact single-digit registration with pricing for q=%s",
+    async (term) => {
+      mocks.findMany.mockResolvedValue([
+        {
+          id: "beneficiary-test-5",
+          registration: "5",
+          fullName: "Titular Teste",
+          cpf: null,
+          birthDate: new Date("1990-01-01T00:00:00.000Z"),
+          inclusionDate: null,
+          category: "HOLDER",
+          relationship: null,
+          planCode: "TEST",
+          planName: "Plano Teste",
+          accommodation: null,
+          hasAddon: false,
+          branch: null,
+          holder: null,
+          dependents: [],
+          address: { city: "Cidade Teste" },
+        },
+      ]);
+      mocks.getUnimedConfiguration.mockResolvedValue({
+        ageBrackets: [{ code: "ADULT", minAge: 18, maxAge: null }],
+        planPrices: [
+          {
+            planCode: "TEST",
+            ageBracket: { code: "ADULT" },
+            companyAmount: { toFixed: () => "100.00" },
+            employeeAmount: { toFixed: () => "25.00" },
+          },
+        ],
+        addonPrices: [],
+        billing: null,
+      });
+
+      const response = await GET(searchRequest(term, "2026-08-04"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(mocks.findMany).toHaveBeenCalledOnce();
+      const query = mocks.findMany.mock.calls[0][0];
+      expect(query.where).toEqual({
+        tenantId: "tenant-12345678",
+        competencyId: "competency-2026-07",
+        category: "HOLDER",
+        registration: "5",
+        address: { isNot: null },
+      });
+      expect(query.take).toBe(20);
+      expect(body.searchMode).toBe("REGISTRATION");
+      expect(body.beneficiaries).toHaveLength(1);
+      expect(body.beneficiaries[0]).toMatchObject({
+        id: "beneficiary-test-5",
+        registration: "5",
+        pricing: {
+          status: "RESOLVED",
+          companyAmount: "100.00",
+          employeeAmount: "25.00",
+        },
+      });
+      expect(body.pricingContext).toMatchObject({
+        referenceDate: "2026-08-04",
+        dataCompetency: { year: 2026, month: 7 },
+      });
+    },
+  );
+
+  it("accepts a two-character name without treating it as registration", async () => {
+    const response = await GET(searchRequest("Al"));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).searchMode).toBe("NAME");
+    expect(mocks.findMany.mock.calls[0][0].where.OR[0]).toEqual({
+      fullName: { contains: "Al", mode: "insensitive" },
+    });
   });
 
   it("rejects an invalid pricing reference date", async () => {

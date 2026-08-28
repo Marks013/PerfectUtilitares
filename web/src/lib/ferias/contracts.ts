@@ -42,6 +42,7 @@ export type FeriasBeneficiary = {
   id: string; holderId: string | null; registration: string | null;
   fullName: string; cpf: string | null; branchId: string | null;
   branchLabel?: string;
+  branchCode?: string;
   category: string; birthDate: string | null; planCode: string | null;
 };
 export type FeriasInvoice = {
@@ -62,6 +63,7 @@ export type FeriasPrice = {
 };
 export type FeriasSnapshot = {
   revision: string;
+  branches?: Array<{ code: string; cnpj: string | null }>;
   sources: FeriasSource[];
   beneficiaries: FeriasBeneficiary[];
   invoices: FeriasInvoice[];

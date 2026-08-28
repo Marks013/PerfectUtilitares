@@ -278,8 +278,10 @@ function setText(cell: Element, text: string) {
 	for (const name of ["v", "is", "f"]) {
 		for (const child of children(cell, name)) cell.removeChild(child);
 	}
-	cell.removeAttribute("t");
-	if (!text) return;
+	if (!text) {
+		cell.removeAttribute("t");
+		return;
+	}
 	cell.setAttribute("t", "inlineStr");
 	const inline = spreadsheetElement(cell, "is");
 	const value = spreadsheetElement(cell, "t");
@@ -298,8 +300,7 @@ function setText(cell: Element, text: string) {
 const OUTPUT_COLUMN_WIDTHS: ReadonlyArray<readonly [number, string]> = [
 	[6, "7"],
 	[7, "25.28515625"],
-	[8, "2.5"],
-	[9, "17.42578125"],
+	[8, "17.42578125"],
 ];
 
 function ensureOutputLayout(
@@ -315,6 +316,24 @@ function ensureOutputLayout(
 		root.insertBefore(cols, sheetData);
 	}
 
+	// Split grouped definitions to preserve inherited styles without overlapping columns.
+	for (const column of children(cols, "col")) {
+		const min = Number(column.getAttribute("min"));
+		const max = Number(column.getAttribute("max"));
+		if (max < 6 || min > 9) continue;
+		const ranges: Array<[number, number]> = [];
+		if (min < 6) ranges.push([min, 5]);
+		for (let number = Math.max(min, 6); number <= Math.min(max, 8); number++)
+			ranges.push([number, number]);
+		if (max > 9) ranges.push([10, max]);
+		for (const [start, end] of ranges) {
+			const copy = column.cloneNode(true) as Element;
+			copy.setAttribute("min", String(start));
+			copy.setAttribute("max", String(end));
+			cols.insertBefore(copy, column);
+		}
+		cols.removeChild(column);
+	}
 	for (const [number, width] of OUTPUT_COLUMN_WIDTHS) {
 		let column = children(cols, "col").find(
 			(item) =>
@@ -337,7 +356,7 @@ function ensureOutputLayout(
 	const dimension = children(root, "dimension")[0];
 	if (dimension && rowNodes.size) {
 		const lastRow = Math.max(...rowNodes.keys());
-		dimension.setAttribute("ref", `A1:I${lastRow}`);
+		dimension.setAttribute("ref", `A1:H${lastRow}`);
 	}
 }
 
@@ -379,8 +398,11 @@ export async function writeFeriasWorkbook(
 	for (const [rowNumber, row] of input.rowNodes) {
 		if (rowNumber < 4) continue;
 		const result = byRow.get(rowNumber);
-		if (result) row.setAttribute("spans", "1:9");
-		for (let col = 1; col <= 9; col += 1) {
+		const legacyLoan = input.cellNodes.get(`I${rowNumber}`);
+		if (legacyLoan) row.removeChild(legacyLoan);
+		if (result || row.getAttribute("spans") === "1:9")
+			row.setAttribute("spans", "1:8");
+		for (let col = 1; col <= 8; col += 1) {
 			const ref = `${String.fromCharCode(col + 64)}${rowNumber}`;
 			let cell = input.cellNodes.get(ref);
 			if (!cell && (col < 6 || !result)) continue;
@@ -401,7 +423,7 @@ export async function writeFeriasWorkbook(
 							: ""
 						: col === 7
 							? result.unimedText
-							: col === 9
+							: col === 8
 								? result.loanText
 								: "";
 				setText(cell, text);

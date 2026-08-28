@@ -3,6 +3,7 @@ import { readFeriasSnapshot } from "./repository";
 
 const mocks = vi.hoisted(() => {
   const tx = {
+    unimedBranch: { findMany: vi.fn() },
     unimedCompetency: { findMany: vi.fn() },
     unimedImportSnapshot: { findMany: vi.fn() },
     unimedImportBatch: { findMany: vi.fn() },
@@ -26,6 +27,7 @@ const snapshot = (competencyId: string, source: string) => ({ competencyId, sour
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.transaction.mockImplementation((operation) => operation(mocks.tx));
+  mocks.tx.unimedBranch.findMany.mockResolvedValue([]);
   mocks.tx.unimedCompetency.findMany.mockResolvedValue([september]);
   mocks.tx.unimedImportSnapshot.findMany.mockResolvedValue([]);
   mocks.tx.unimedImportBatch.findMany.mockResolvedValue([publication(september.id, "PAYROLL_LOANS")]);
@@ -36,6 +38,14 @@ beforeEach(() => {
 });
 
 describe("Férias: leitura consistente e isolada", () => {
+  it("scopes branch identity evidence to the tenant and fingerprints changes", async () => {
+    mocks.tx.unimedBranch.findMany.mockResolvedValue([{ code: "MATRIZ", cnpj: "76361807000898" }]);
+    const first = await readFeriasSnapshot("tenant-a", "2026-09");
+    expect(first.branches).toEqual([{ code: "MATRIZ", cnpj: "76361807000898" }]);
+    expect(mocks.tx.unimedBranch.findMany.mock.calls[0][0].where).toEqual({ tenantId: "tenant-a" });
+    mocks.tx.unimedBranch.findMany.mockResolvedValue([{ code: "MATRIZ", cnpj: "76361807000111" }]);
+    expect((await readFeriasSnapshot("tenant-a", "2026-09")).revision).not.toBe(first.revision);
+  });
   it("uses the previous month only for Unimed and keeps loans on the requested month", async () => {
     const result = await readFeriasSnapshot("tenant-a", "2026-09");
     expect(result.sources).toEqual([

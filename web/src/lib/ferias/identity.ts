@@ -1,9 +1,11 @@
 import { isValidCpf } from "@/lib/unimed/importer-shared";
+import { formatUnimedBranchForPdf } from "@/lib/unimed/print-format";
 import type { FeriasBeneficiary, FeriasCandidate, FeriasLoan, FeriasSnapshot } from "./contracts";
 import { FeriasError } from "./errors";
 
 export function normalizedName(value: string) {
-  return value.normalize("NFD").replace(/\p{M}/gu, "").trim().replace(/\s+/g, " ").toUpperCase();
+  return value.normalize("NFD").replace(/\p{M}/gu, "").replace(/[.'’]/g, "")
+    .replace(/[-‐–—]/g, " ").trim().replace(/\s+/g, " ").toUpperCase();
 }
 export function searchName(value: string) {
   return normalizedName(value.replace(/\s*\(\d+\s+ABONO\)\s*$/i, ""));
@@ -43,11 +45,59 @@ export function buildIdentityIndex(snapshot: FeriasSnapshot) {
   }
   const loanNames = new Map<string, LoanGroup[]>();
   const loanCpfs = new Map<string, LoanGroup[]>();
+  const loanRegistrations = new Map<string, LoanGroup[]>();
   for (const group of grouped.values()) {
     for (const name of new Set(group.loans.map((loan) => normalizedName(loan.employeeName)))) appendIndex(loanNames, name, group);
     appendIndex(loanCpfs, group.cpf, group);
+    for (const registration of new Set(group.loans.map((loan) => registrationKey(loan.registration)))) {
+      appendIndex(loanRegistrations, registration, group);
+    }
   }
-  return { holderNames, holderRegistrations, dependents, loanNames, loanCpfs };
+  return { holderNames, holderRegistrations, dependents, loanNames, loanCpfs, loanRegistrations };
+}
+
+export function resolveHolder(
+  identities: ReturnType<typeof buildIdentityIndex>, registration: string, name: string, branch: string,
+) {
+  const names = identities.holderNames.get(name) ?? [];
+  const registrations = identities.holderRegistrations.get(registrationKey(registration)) ?? [];
+  const candidates = [...new Map([...names, ...registrations].map((person) => [person.id, person])).values()];
+  const branchKey = normalizedName(formatUnimedBranchForPdf(branch));
+  const sameBranch = (person: FeriasBeneficiary) => !!person.branchCode &&
+    normalizedName(formatUnimedBranchForPdf(person.branchCode)) === branchKey;
+  const compatible = registrations.filter((person) => !person.branchCode || sameBranch(person));
+  const exact = compatible.filter((person) => normalizedName(person.fullName) === name);
+  const exactBranch = exact.filter(sameBranch);
+  const automatic = exactBranch.length === 1 ? exactBranch[0]
+    : exact.length === 1 ? exact[0]
+    : compatible.length === 1 && candidates.length === 1 ? compatible[0]
+    : names.length === 1 && !registrationKey(names[0].registration) && sameBranch(names[0]) ? names[0]
+    : undefined;
+  return { candidates, automatic };
+}
+
+export function branchCompany(branches: FeriasSnapshot["branches"], branch: string) {
+  const code = normalizedName(formatUnimedBranchForPdf(branch));
+  const companies = (branches ?? []).filter(item => normalizedName(formatUnimedBranchForPdf(item.code)) === code);
+  const cnpj = companies.length === 1 ? companies[0].cnpj?.replace(/\D/g, "") : "";
+  if (cnpj?.length !== 14 || /^(\d)\1+$/.test(cnpj)) return undefined;
+  return cnpj;
+}
+
+export function contradictsCompany(group: LoanGroup, cnpj: string | undefined) {
+  return !!cnpj && group.loans.some(loan => loan.companyCnpj && loan.companyCnpj.replace(/\D/g, "") !== cnpj);
+}
+
+export function matchLoanCompany(
+  groups: LoanGroup[], cnpj: string | undefined, name: string, registration: string,
+) {
+  if (!cnpj) return undefined;
+  const matches = groups.filter(group => group.loans.every(loan => {
+    const bankRegistration = registrationKey(loan.registration);
+    return normalizedName(loan.employeeName) === name && loan.companyCnpj?.replace(/\D/g, "") === cnpj &&
+      (!/^\d+$/.test(bankRegistration) || bankRegistration === registrationKey(registration));
+  }));
+  return matches.length === 1 && matches[0].cpf ? matches[0] : undefined;
 }
 
 function candidateLabel(name: string, cpf: string | null) {

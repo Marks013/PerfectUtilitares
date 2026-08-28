@@ -7,6 +7,7 @@ import {
 } from "@/lib/api/security";
 import { prisma } from "@/lib/prisma";
 import { requireUnimedAccess } from "@/lib/unimed/access.server";
+import { isValidUnimedBeneficiaryQuery } from "@/lib/unimed/beneficiary-search-query";
 import { findWithPreviousCompetencyFallback } from "@/lib/unimed/competency-fallback";
 import { getUnimedConfiguration } from "@/lib/unimed/configuration";
 import { resolveUnimedPlanPrice } from "@/lib/unimed/pricing";
@@ -15,7 +16,9 @@ import { dateOnlySchema, zodIssueDetails } from "@/lib/unimed/schema";
 export const runtime = "nodejs";
 
 const searchSchema = z.object({
-  q: z.string().trim().min(2).max(100),
+  q: z.string().trim().max(100).refine(isValidUnimedBeneficiaryQuery, {
+    message: "Informe uma matrícula numérica ou ao menos dois caracteres do nome.",
+  }),
   referenceDate: dateOnlySchema.optional(),
 });
 
@@ -65,7 +68,7 @@ export async function GET(request: Request) {
     return jsonError(
       400,
       "UNIMED_SEARCH_INVALID",
-      "Informe ao menos dois caracteres para pesquisar.",
+      "Informe uma matrícula numérica ou ao menos dois caracteres do nome.",
       zodIssueDetails(parsed.error),
     );
   }

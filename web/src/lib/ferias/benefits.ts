@@ -2,23 +2,26 @@ import { Prisma } from "@/generated/prisma/client";
 import { resolveUnimedPlanPrice } from "@/lib/unimed/pricing";
 import type { FeriasBeneficiary, FeriasInvoice, FeriasPrice } from "./contracts";
 import { appendIndex, normalizedName, type LoanGroup } from "./identity";
+import { buildFamilyIndex, reconcileFamilyInvoices } from "./invoice-family";
 
-type Benefit = { text: string; issues: string[] };
+type Benefit = { text: string; issues: string[]; warnings?: string[] };
 
 function money(value: Prisma.Decimal) {
   return value.toFixed(2).replace(".", ",");
 }
 
-export function buildInvoiceIndex(invoices: FeriasInvoice[]) {
+export function buildInvoiceIndex(invoices: FeriasInvoice[], beneficiaries: FeriasBeneficiary[]) {
   const byBeneficiary = new Map<string, FeriasInvoice[]>();
   const byHolder = new Map<string, FeriasInvoice[]>();
+  const unlinkedNames = new Map<string, FeriasInvoice[]>();
   for (const invoice of invoices) {
     if (!["MENSALIDADE", "ADITIVO"].includes(normalizedName(invoice.itemDescription))) continue;
     if (invoice.beneficiaryId) appendIndex(byBeneficiary, invoice.beneficiaryId, invoice);
+    else if (!invoice.holderName?.trim()) appendIndex(unlinkedNames, normalizedName(invoice.beneficiaryName), invoice);
     const name = invoice.holderName || (invoice.category === "HOLDER" ? invoice.beneficiaryName : "");
     appendIndex(byHolder, normalizedName(name), invoice);
   }
-  return { byBeneficiary, byHolder };
+  return { byBeneficiary, byHolder, unlinkedNames, people: buildFamilyIndex(beneficiaries) };
 }
 
 export function calculateUnimedBenefit(
@@ -31,14 +34,18 @@ export function calculateUnimedBenefit(
   const family = new Set([holder.id, ...dependents.map((person) => person.id)]);
   const invoices = new Map<string, FeriasInvoice>();
   for (const id of family) for (const item of index.byBeneficiary.get(id) ?? []) invoices.set(item.id, item);
+  for (const person of [holder, ...dependents]) {
+    for (const item of index.unlinkedNames.get(normalizedName(person.fullName)) ?? []) {
+      if (!item.branchId || !holder.branchId || item.branchId === holder.branchId) invoices.set(item.id, item);
+    }
+  }
   for (const item of index.byHolder.get(normalizedName(holder.fullName)) ?? []) {
     if (item.branchId && holder.branchId && item.branchId !== holder.branchId) continue;
     invoices.set(item.id, item);
   }
-  const items = [...invoices.values()];
-  if (items.some((item) => !item.beneficiaryId || !family.has(item.beneficiaryId))) {
-    return { text: "", issues: ["Há mensalidades ou acessórios sem vínculo familiar confirmado na fatura. Revise a base Unimed."] };
-  }
+  const reconciled = reconcileFamilyInvoices(holder, dependents, [...invoices.values()], index.people);
+  if (reconciled.issue) return { text: "", issues: [reconciled.issue] };
+  const items = reconciled.items;
   const monthly = items.filter((item) => normalizedName(item.itemDescription) === "MENSALIDADE");
   const holderMonthly = monthly.filter((item) => item.beneficiaryId === holder.id);
   if (!holderMonthly.length) {
@@ -70,7 +77,8 @@ export function calculateUnimedBenefit(
     if (normalizedName(item.itemDescription) === "ADITIVO") addonTotal = addonTotal.plus(item.amount);
     else if (item.beneficiaryId !== holder.id) monthlyTotal = monthlyTotal.plus(item.amount);
   }
-  return { text: `Mens.: ${money(monthlyTotal)}${addonTotal.gt(0) ? ` + Adit.: ${money(addonTotal)}` : ""}`, issues: [] };
+  return { text: `Mens.: ${money(monthlyTotal)}${addonTotal.gt(0) ? ` + Adit.: ${money(addonTotal)}` : ""}`, issues: [],
+    warnings: reconciled.reconciled ? ["Cobranças de dependentes conciliadas pela fatura, pelo titular e pela filial. Os valores foram incluídos sem alterar o cadastro Unimed."] : [] };
 }
 
 export function calculateLoanBenefit(group: LoanGroup, competency: string): Benefit {

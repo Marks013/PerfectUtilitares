@@ -130,7 +130,7 @@ describe("Ferias workbook", () => {
 				elements(before, name).map(serialize),
 			);
 		}
-		expect(elements(after, "dimension")[0]?.getAttribute("ref")).toBe("A1:I2000");
+		expect(elements(after, "dimension")[0]?.getAttribute("ref")).toBe("A1:H2000");
 		const outputWidths = new Map(
 			elements(after, "col").map((column) => [
 				Number(column.getAttribute("min")),
@@ -139,8 +139,8 @@ describe("Ferias workbook", () => {
 		);
 		expect(outputWidths.get(6)).toBe("7");
 		expect(outputWidths.get(7)).toBe("25.28515625");
-		expect(outputWidths.get(8)).toBe("2.5");
-		expect(outputWidths.get(9)).toBe("17.42578125");
+		expect(outputWidths.get(8)).toBe("17.42578125");
+		expect(outputWidths.has(9)).toBe(false);
 
 		for (const original of elements(before, "c").filter((c) =>
 			/^[A-E]\d+$/.test(c.getAttribute("r") ?? ""),
@@ -163,14 +163,14 @@ describe("Ferias workbook", () => {
 		expect(values.get("F4")).toBe("");
 		expect(values.get("F5")).toBe("30 dias");
 		expect(values.get("G4")).toBe("Mens.: 61,26 + Adit.: 6,12");
-		expect(values.get("H4")).toBe("");
-		expect(values.get("I4")).toBe("Consig.R$ 100,00");
+		expect(values.get("H4")).toBe("Consig.R$ 100,00");
+		expect(values.has("I4")).toBe(false);
 		expect(values.get("G2000")).toBe("");
 		expect(values.get("H2000")).toBe("");
-		expect(values.get("I2000")).toBe("");
+		expect(values.has("I2000")).toBe(false);
 		const styles = xml(output["xl/styles.xml"]);
 		for (const rowNumber of [4, 5]) {
-			for (const col of ["F", "G", "H", "I"]) {
+			for (const col of ["F", "G", "H"]) {
 				const c = elements(after, "c").find(
 					(c) => c.getAttribute("r") === `${col}${rowNumber}`,
 				);
@@ -212,8 +212,86 @@ describe("Ferias workbook", () => {
 			elements(doc, "c").find((c) => c.getAttribute("r") === "G4")?.textContent,
 		).toBe("");
 		expect(
-			elements(doc, "c").find((c) => c.getAttribute("r") === "I5")?.textContent,
+			elements(doc, "c").find((c) => c.getAttribute("r") === "H5")?.textContent,
 		).toBe(results[1].loanText);
+		expect(
+			elements(doc, "c").find((c) => c.getAttribute("r") === "H4")?.textContent,
+		).toBe("");
+		expect(elements(doc, "c").some((c) => /^I\d+$/.test(c.getAttribute("r") ?? ""))).toBe(false);
+	});
+
+	it.each([false, true])("writes loans in H without a redundant I column (grouped columns: %s)", async (grouped) => {
+		const entries = fixture();
+		const source = xml(entries["xl/worksheets/sheet1.xml"]);
+		for (const row of elements(source, "row")) row.setAttribute("spans", "1:9");
+		const cols = elements(source, "cols")[0];
+		for (const [min, max, width] of grouped
+			? [[6, 9, "2.5"]] as const
+			: [[6, 6, "7"], [7, 7, "25.28515625"], [8, 8, "2.5"], [9, 9, "17.42578125"]] as const) {
+			const column = source.createElementNS(SHEET_NS, "col");
+			for (const [key, value] of Object.entries({ min, max, width, style: "1", hidden: "0", customWidth: "1" }))
+				column.setAttribute(key, String(value));
+			cols.appendChild(column);
+		}
+		entries["xl/worksheets/sheet1.xml"] = strToU8(serialize(source));
+		const buffer = pack(entries);
+		const output = unzipSync(await writeFeriasWorkbook(buffer, await makeResults(buffer)));
+		const sheet = xml(output["xl/worksheets/sheet1.xml"]);
+		expect(output["xl/workbook.xml"]).toEqual(entries["xl/workbook.xml"]);
+		expect(elements(sheet, "dimension")[0].getAttribute("ref")).toBe("A1:H2000");
+		expect(elements(sheet, "c").some((cell) => /^I\d+$/.test(cell.getAttribute("r") ?? ""))).toBe(false);
+		for (const row of elements(sheet, "row").filter((row) => Number(row.getAttribute("r")) >= 4))
+			expect(row.getAttribute("spans")).toBe("1:8");
+		const columns = elements(sheet, "col");
+		expect(columns).toHaveLength(8);
+		for (let number = 6; number <= 8; number++) {
+			const matching = columns.filter((column) => Number(column.getAttribute("min")) <= number && Number(column.getAttribute("max")) >= number);
+			expect(matching).toHaveLength(1);
+			expect(matching[0].getAttribute("style")).toBe("1");
+			expect(matching[0].getAttribute("hidden")).toBe("0");
+		}
+		expect(columns[7].getAttribute("width")).toBe("17.42578125");
+		expect(elements(sheet, "c").find((cell) => cell.getAttribute("r") === "H4")?.textContent).toBe("Consig.R$ 100,00");
+		const once = pack(output);
+		const twice = unzipSync(await writeFeriasWorkbook(once, await makeResults(once)));
+		for (const name of Object.keys(output)) expect(twice[name]).toEqual(output[name]);
+	});
+
+	it.skipIf(!process.env.FERIAS_H_LAYOUT_SAMPLE)("exports the September sample through H and preserves its source layout", async () => {
+		const sample = process.env.FERIAS_H_LAYOUT_SAMPLE;
+		if (!sample) throw new Error("FERIAS_H_LAYOUT_SAMPLE must point to a server-only sample");
+		const original = readFileSync(sample);
+		const input = unzipSync(original);
+		const parsed = await parseFeriasWorkbook(original);
+		expect(parsed.competency).toBe("2026-09");
+		const output = unzipSync(await writeFeriasWorkbook(original, await makeResults(original)));
+		const before = xml(input["xl/worksheets/sheet1.xml"]);
+		const after = xml(output["xl/worksheets/sheet1.xml"]);
+		for (const name of Object.keys(input)) {
+			if (!["xl/worksheets/sheet1.xml", "xl/styles.xml"].includes(name)) expect(output[name]).toEqual(input[name]);
+		}
+		for (const name of ["mergeCells", "pageSetup", "pageMargins", "sheetViews", "sheetFormatPr", "f"])
+			expect(elements(after, name).map(serialize)).toEqual(elements(before, name).map(serialize));
+		const columns = elements(after, "col");
+		expect(columns.slice(0, 5).map(serialize)).toEqual(elements(before, "col").map(serialize));
+		expect(columns).toHaveLength(8);
+		expect(columns[7].getAttribute("width")).toBe("17.42578125");
+		expect(elements(after, "dimension")[0].getAttribute("ref")).toBe("A1:H85");
+		expect(elements(after, "c").some((cell) => /^I\d+$/.test(cell.getAttribute("r") ?? ""))).toBe(false);
+		for (const source of elements(before, "c")) {
+			const cell = elements(after, "c").find((cell) => cell.getAttribute("r") === source.getAttribute("r"));
+			if (!cell) throw new Error("An original input cell disappeared");
+			cell.removeAttribute("s");
+			source.removeAttribute("s");
+			expect(serialize(cell) === serialize(source)).toBe(true);
+		}
+		for (const row of parsed.rows)
+			expect(elements(after, "c").find((cell) => cell.getAttribute("r") === `H${row.row}`)?.textContent).toBe("Consig.R$ 100,00");
+		const once = pack(output);
+		expect((await parseFeriasWorkbook(once)).rows).toEqual(parsed.rows);
+		const twice = unzipSync(await writeFeriasWorkbook(once, await makeResults(once)));
+		for (const name of Object.keys(output)) expect(twice[name]).toEqual(output[name]);
+		expect(readFileSync(sample).equals(original)).toBe(true);
 	});
 
 	it.each([

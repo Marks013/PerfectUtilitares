@@ -58,6 +58,9 @@ export async function readFeriasSnapshot(tenantId: string, competency: string): 
     const unimedFallback = !currentUnimedReady;
     const unimedScope = { tenantId, competencyId: unimedCompetence?.id ?? "" };
     const loanScope = { tenantId, competencyId: currentCompetence?.id ?? "" };
+    const branches = await tx.unimedBranch.findMany({
+      where: { tenantId }, select: { code: true, cnpj: true }, orderBy: { id: "asc" }, take: MAX_SOURCE_ROWS + 1,
+    });
     const beneficiaries = await tx.unimedBeneficiary.findMany({
       where: unimedScope, take: MAX_SOURCE_ROWS + 1, orderBy: { id: "asc" },
       select: { id: true, holderId: true, registration: true, fullName: true, cpf: true,
@@ -84,15 +87,16 @@ export async function readFeriasSnapshot(tenantId: string, competency: string): 
         validFrom: true, validTo: true, updatedAt: true,
         ageBracket: { select: { code: true, minAge: true, maxAge: true } } },
     });
-    if ([beneficiaries, invoices, loans, prices].some((rows) => rows.length > MAX_SOURCE_ROWS)) {
+    if ([branches, beneficiaries, invoices, loans, prices].some((rows) => rows.length > MAX_SOURCE_ROWS)) {
       throw new FeriasError("FERIAS_SOURCE_LIMIT", "A base excede o limite desta conferência. Solicite a revisão do limite ao administrador.", 413);
     }
     const revision = createHash("sha256").update(JSON.stringify({
       tenantId, competency, previous: previous.value, competencies, snapshots, publications,
-      unimedCompetency, beneficiaries, invoices, loans, prices,
+      unimedCompetency, branches, beneficiaries, invoices, loans, prices,
     })).digest("hex");
     return {
       revision,
+      branches,
       sources: [
         { name: "Cadastro Unimed", ready: sourceReady(unimedCompetence, "BENEFICIARIES"),
           competency: unimedCompetency, fallback: unimedFallback },
@@ -102,6 +106,7 @@ export async function readFeriasSnapshot(tenantId: string, competency: string): 
           competency, fallback: false },
       ],
       beneficiaries: beneficiaries.map(({ branch, ...row }) => ({ ...row,
+        branchCode: branch?.code,
         branchLabel: branch ? `${branch.code} - ${branch.name}` : undefined,
         birthDate: row.birthDate?.toISOString().slice(0, 10) ?? null })),
       invoices: invoices.map((row) => ({ ...row, amount: row.amount.toFixed(2) })),

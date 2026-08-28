@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { isValidUnimedBeneficiaryQuery } from "@/lib/unimed/beneficiary-search-query";
 
 type UnimedResolvedPricing = {
   status:
@@ -135,7 +136,7 @@ export function UnimedBeneficiarySearch({
   const search = useCallback(
     async (requestedQuery = query) => {
       const normalizedQuery = requestedQuery.trim();
-      if (normalizedQuery.length < 2) return;
+      if (!isValidUnimedBeneficiaryQuery(normalizedQuery)) return;
 
       requestController.current?.abort();
       const controller = new AbortController();
@@ -185,7 +186,7 @@ export function UnimedBeneficiarySearch({
 
   useEffect(() => {
     const normalizedQuery = query.trim();
-    if (normalizedQuery.length < 2) {
+    if (!isValidUnimedBeneficiaryQuery(normalizedQuery)) {
       requestSequence.current += 1;
       requestController.current?.abort();
       requestController.current = null;
@@ -253,7 +254,7 @@ export function UnimedBeneficiarySearch({
         <button
           type="button"
           onClick={() => void search(query)}
-          disabled={query.trim().length < 2 || isSearching}
+          disabled={!isValidUnimedBeneficiaryQuery(query) || isSearching}
           className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[color:var(--app-action-blue)] px-5 py-2.5 text-sm font-black text-[color:var(--app-action-text)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSearching ? (

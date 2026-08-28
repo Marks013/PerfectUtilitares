@@ -3,11 +3,11 @@ import { buildInvoiceIndex, calculateLoanBenefit, calculateUnimedBenefit } from 
 import { FERIAS_CALENDAR_VERSION, vacationHighlight } from "./calendar";
 import type { FeriasAnalysis, FeriasChoice, FeriasResultRow, FeriasSnapshot } from "./contracts";
 import { FeriasError } from "./errors";
-import { buildIdentityIndex, cpfKey, holderOptions, loanLabel, normalizedName, registrationKey, searchName, selectCandidate } from "./identity";
+import { branchCompany, buildIdentityIndex, contradictsCompany, cpfKey, holderOptions, loanLabel, matchLoanCompany, normalizedName, registrationKey, resolveHolder, searchName, selectCandidate } from "./identity";
 import { readFeriasSnapshot } from "./repository";
 import type { FeriasInputRow } from "./workbook";
 
-const RULE_REVISION = "ferias-2026-08-26-v3";
+const RULE_REVISION = "ferias-2026-08-27-v4";
 
 function formatCompetency(value: string) {
   return `${value.slice(5)}/${value.slice(0, 4)}`;
@@ -29,7 +29,7 @@ export function buildFeriasAnalysis(
   }
   const choicesByRow = new Map(choices.map((choice) => [choice.row, choice]));
   const identities = buildIdentityIndex(snapshot);
-  const invoices = buildInvoiceIndex(snapshot.invoices);
+  const invoices = buildInvoiceIndex(snapshot.invoices, snapshot.beneficiaries);
   const unimedSources = snapshot.sources.filter((source) => source.name !== "Consignado Digital");
   const loanSource = snapshot.sources.find((source) => source.name === "Consignado Digital");
   const unimedReady = unimedSources.length === 2 && unimedSources.every((source) => source.ready);
@@ -47,11 +47,9 @@ export function buildFeriasAnalysis(
     if (vacationHighlight(row.start, row.end).nonBusinessStart) result.warnings.push("O início informado não é dia útil. Confira a data.");
     const name = searchName(row.name);
     if (name !== normalizedName(row.name)) result.warnings.push("A observação de abono foi preservada no nome e desconsiderada apenas na busca.");
-    const nameMatches = identities.holderNames.get(name) ?? [];
-    const registrationMatches = identities.holderRegistrations.get(registrationKey(row.registration)) ?? [];
-    const holderCandidates = [...new Map([...nameMatches, ...registrationMatches].map((person) => [person.id, person])).values()];
-    const automaticHolder = registrationMatches.length === 1 && holderCandidates.length === 1
-      ? registrationMatches[0] : undefined;
+    const { candidates: holderCandidates, automatic: automaticHolder } = resolveHolder(
+      identities, row.registration, name, row.branch,
+    );
     const choice = choicesByRow.get(row.row);
     const holder = unimedSources[0]?.ready
       ? selectCandidate(holderCandidates, automaticHolder, choice?.holderId) : undefined;
@@ -71,14 +69,20 @@ export function buildFeriasAnalysis(
       const benefit = calculateUnimedBenefit(holder, identities.dependents.get(holder.id) ?? [], invoices, snapshot.prices, competency);
       result.unimedText = benefit.text;
       result.issues.push(...benefit.issues);
+      result.warnings.push(...(benefit.warnings ?? []));
     } else if (unimedReady && !holderCandidates.length && invoices.byHolder.has(name)) {
       result.issues.push("Há itens de fatura para esse nome, mas o titular não foi localizado no cadastro Unimed.");
     }
     if (loansReady) {
       const cpf = cpfKey(holder?.cpf ?? null);
       const cpfMatches = cpf ? identities.loanCpfs.get(cpf) ?? [] : [];
-      const names = identities.loanNames.get(name) ?? [];
-      const loanCandidates = [...new Map([...cpfMatches, ...names].map((group) => [group.id, group])).values()];
+      const identityNames = new Set([name, normalizedName(holder?.fullName ?? row.name)]);
+      const names = [...new Map([...identityNames].flatMap(value => identities.loanNames.get(value) ?? [])
+        .map(group => [group.id, group])).values()];
+      const company = branchCompany(snapshot.branches, row.branch);
+      const registrationLoans = (identities.loanRegistrations.get(registrationKey(row.registration)) ?? [])
+        .filter(group => !contradictsCompany(group, company) || (!!cpf && group.cpf === cpf) || names.some(match => match.id === group.id));
+      const loanCandidates = [...new Map([...cpfMatches, ...names, ...registrationLoans].map((group) => [group.id, group])).values()];
       // A name match never silently overrides a contradictory CPF.
       const compatible = loanCandidates.filter((group) => !cpf || !group.cpf || group.cpf === cpf);
       if (compatible.length !== loanCandidates.length) result.issues.push("O nome corresponde a um Consignado com CPF diferente do titular. Revise a identificação.");
@@ -86,22 +90,40 @@ export function buildFeriasAnalysis(
       const rowRegistration = registrationKey(row.registration);
       const registrationLoanMatches = compatible.filter((group) =>
         group.loans.some((loan) => registrationKey(loan.registration) === rowRegistration));
+      const companyLoan = matchLoanCompany(compatible, company, name, row.registration);
       const automaticLoan = cpfMatches.length === 1
         ? cpfMatches[0]
-        : compatible.length === 1 && registrationLoanMatches.length === 1
+        : compatible.length === 1 && registrationLoanMatches.length === 1 &&
+          names.some((group) => group.id === registrationLoanMatches[0].id)
           ? registrationLoanMatches[0]
-          : undefined;
+          : companyLoan;
       const group = selectCandidate(compatible, automaticLoan, choice?.loanIdentity);
       result.loanIdentity = group?.id;
-      if (group && !cpfMatches.length && registrationLoanMatches.length === 1) {
+      const companyConflict = !!group && contradictsCompany(group, company);
+      const selectedCompanies = new Set(group?.loans.map(loan => loan.companyCnpj?.replace(/\D/g, "")));
+      const selectedCompany = company ?? (selectedCompanies.size === 1 ? [...selectedCompanies][0] : undefined);
+      const incompleteParcels = !!group && compatible.some(other => other.id !== group.id && (!group.cpf || !other.cpf) && !contradictsCompany(other, selectedCompany) &&
+        other.loans.some(loan => identityNames.has(normalizedName(loan.employeeName))));
+      if (companyConflict) {
+        result.issues.push("O CNPJ do Consignado não corresponde à filial da planilha. Confira a empresa responsável por essas parcelas antes de exportar.");
+      }
+      if (incompleteParcels) {
+        result.issues.push("Há outras parcelas para esse nome sem CPF confirmado. Revise o cadastro do Consignado para que nenhuma parcela fique de fora.");
+      }
+      if (group && !companyConflict && !incompleteParcels && !cpfMatches.length && registrationLoanMatches.length === 1) {
         result.warnings.push("Consignado Digital confirmado pela matrícula; não foi necessária seleção manual.");
+      } else if (group && !companyConflict && !incompleteParcels && !cpfMatches.length && companyLoan?.id === group.id) {
+        result.warnings.push("Consignado Digital confirmado pelo nome completo e CNPJ da filial, com CPF único na base. A identificação bancária não foi confundida com a matrícula do RH.");
       }
       if (group) {
-        const benefit = calculateLoanBenefit(group, competency);
-        result.loanText = benefit.text;
-        result.issues.push(...benefit.issues);
+        if (!companyConflict && !incompleteParcels) {
+          const benefit = calculateLoanBenefit(group, competency);
+          result.loanText = benefit.text;
+          result.issues.push(...benefit.issues);
+        }
       } else if (compatible.length === 1) {
-        result.issues.push("O Consignado foi localizado somente pelo nome. Confirme a pessoa correta na lista desta linha.");
+        result.issues.push(names.length ? "O Consignado foi localizado somente pelo nome. Confirme a pessoa correta na lista desta linha."
+          : "A matrícula localizou um Consignado com nome diferente. Confirme a pessoa correta na lista desta linha.");
       } else if (compatible.length > 1) {
         result.issues.push("Há mais de uma pessoa possível no Consignado Digital. Escolha o vínculo correto nesta linha.");
       }
