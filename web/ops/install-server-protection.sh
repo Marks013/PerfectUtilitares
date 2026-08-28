@@ -9,9 +9,10 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if ! command -v node >/dev/null 2>&1; then
+if ! command -v node >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 ||
+  ! command -v curl >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1; then
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs jq curl util-linux
 fi
 
 if ! swapon --show=NAME --noheadings | grep -Fxq /swapfile; then

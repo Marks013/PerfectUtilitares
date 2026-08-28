@@ -2,7 +2,7 @@
 set -eu
 
 CONFIG_FILE=${RESOURCE_GUARD_CONFIG:-/etc/server-resource-guard.conf}
-STATE_DIR=/var/lib/server-resource-guard
+STATE_DIR=${RESOURCE_GUARD_STATE_DIR:-/var/lib/server-resource-guard}
 STATUS_FILE="$STATE_DIR/status.json"
 LAST_SEVERITY_FILE="$STATE_DIR/last-severity"
 TEST_ALERT=0
@@ -16,19 +16,112 @@ if [ -f "$CONFIG_FILE" ]; then
   . "$CONFIG_FILE"
 fi
 
-DISK_WARN_PERCENT=${DISK_WARN_PERCENT:-70}
-DISK_BLOCK_PERCENT=${DISK_BLOCK_PERCENT:-80}
+DISK_WARN_PERCENT=${DISK_WARN_PERCENT:-78}
+DISK_CLEANUP_PERCENT=${DISK_CLEANUP_PERCENT:-80}
+DISK_RESUME_PERCENT=${DISK_RESUME_PERCENT:-80}
+DISK_BLOCK_PERCENT=${DISK_BLOCK_PERCENT:-85}
 DISK_CRITICAL_PERCENT=${DISK_CRITICAL_PERCENT:-90}
 DISK_BLOCK_FREE_GIB=${DISK_BLOCK_FREE_GIB:-30}
+DISK_RESUME_FREE_GIB=${DISK_RESUME_FREE_GIB:-35}
 DISK_CRITICAL_FREE_GIB=${DISK_CRITICAL_FREE_GIB:-15}
 INODE_WARN_PERCENT=${INODE_WARN_PERCENT:-70}
 MEMORY_WARN_MIB=${MEMORY_WARN_MIB:-4096}
 MEMORY_BLOCK_MIB=${MEMORY_BLOCK_MIB:-3072}
 MEMORY_CRITICAL_MIB=${MEMORY_CRITICAL_MIB:-1536}
 ALERT_CONFIG=${ALERT_CONFIG:-/etc/reboot-required-email-notifier/config}
+MEMORY_RESUME_MIB=${MEMORY_RESUME_MIB:-4096}
+ALERT_WARNING_SECONDS=${ALERT_WARNING_SECONDS:-900}
+ALERT_BLOCKED_SECONDS=${ALERT_BLOCKED_SECONDS:-240}
+ALERT_RECOVERY_SECONDS=${ALERT_RECOVERY_SECONDS:-1800}
+ALERT_MIN_INTERVAL_SECONDS=${ALERT_MIN_INTERVAL_SECONDS:-14400}
+ALERT_REMINDER_SECONDS=${ALERT_REMINDER_SECONDS:-86400}
+ALERT_CRITICAL_REMINDER_SECONDS=${ALERT_CRITICAL_REMINDER_SECONDS:-21600}
+ALERT_RETRY_SECONDS=${ALERT_RETRY_SECONDS:-600}
+ALERT_MAX_SAMPLE_GAP_SECONDS=${ALERT_MAX_SAMPLE_GAP_SECONDS:-600}
+ALERT_QUIET_START_HOUR=${ALERT_QUIET_START_HOUR:-18}
+ALERT_QUIET_END_HOUR=${ALERT_QUIET_END_HOUR:-8}
+ALERT_TIMEZONE=${ALERT_TIMEZONE:-America/Sao_Paulo}
+
+validate_integer() {
+  name=$1
+  value=$2
+  case "$value" in
+    ''|*[!0-9]*|0[0-9]*)
+      logger -t server-resource-guard "configuracao invalida: ${name}=${value}"
+      exit 2
+      ;;
+  esac
+  if [ "${#value}" -gt 10 ] || [ "$value" -gt 2147483647 ]; then
+    logger -t server-resource-guard "limite fora da faixa: ${name}"
+    exit 2
+  fi
+}
+
+for pair in \
+  "DISK_WARN_PERCENT:$DISK_WARN_PERCENT" \
+  "DISK_CLEANUP_PERCENT:$DISK_CLEANUP_PERCENT" \
+  "DISK_RESUME_PERCENT:$DISK_RESUME_PERCENT" \
+  "DISK_BLOCK_PERCENT:$DISK_BLOCK_PERCENT" \
+  "DISK_CRITICAL_PERCENT:$DISK_CRITICAL_PERCENT" \
+  "DISK_BLOCK_FREE_GIB:$DISK_BLOCK_FREE_GIB" \
+  "DISK_RESUME_FREE_GIB:$DISK_RESUME_FREE_GIB" \
+  "DISK_CRITICAL_FREE_GIB:$DISK_CRITICAL_FREE_GIB" \
+  "INODE_WARN_PERCENT:$INODE_WARN_PERCENT" \
+  "MEMORY_WARN_MIB:$MEMORY_WARN_MIB" \
+  "MEMORY_BLOCK_MIB:$MEMORY_BLOCK_MIB" \
+  "MEMORY_CRITICAL_MIB:$MEMORY_CRITICAL_MIB" \
+  "MEMORY_RESUME_MIB:$MEMORY_RESUME_MIB" \
+  "ALERT_WARNING_SECONDS:$ALERT_WARNING_SECONDS" \
+  "ALERT_BLOCKED_SECONDS:$ALERT_BLOCKED_SECONDS" \
+  "ALERT_RECOVERY_SECONDS:$ALERT_RECOVERY_SECONDS" \
+  "ALERT_MIN_INTERVAL_SECONDS:$ALERT_MIN_INTERVAL_SECONDS" \
+  "ALERT_REMINDER_SECONDS:$ALERT_REMINDER_SECONDS" \
+  "ALERT_CRITICAL_REMINDER_SECONDS:$ALERT_CRITICAL_REMINDER_SECONDS" \
+  "ALERT_RETRY_SECONDS:$ALERT_RETRY_SECONDS" \
+  "ALERT_MAX_SAMPLE_GAP_SECONDS:$ALERT_MAX_SAMPLE_GAP_SECONDS" \
+  "ALERT_QUIET_START_HOUR:$ALERT_QUIET_START_HOUR" \
+  "ALERT_QUIET_END_HOUR:$ALERT_QUIET_END_HOUR"; do
+  validate_integer "${pair%%:*}" "${pair#*:}"
+done
+
+if [ "$DISK_WARN_PERCENT" -gt "$DISK_CLEANUP_PERCENT" ] ||
+  [ "$DISK_CLEANUP_PERCENT" -gt "$DISK_RESUME_PERCENT" ] ||
+  [ "$DISK_RESUME_PERCENT" -ge "$DISK_BLOCK_PERCENT" ] ||
+  [ "$DISK_BLOCK_PERCENT" -ge "$DISK_CRITICAL_PERCENT" ] ||
+  [ "$DISK_CRITICAL_FREE_GIB" -ge "$DISK_BLOCK_FREE_GIB" ] ||
+  [ "$DISK_BLOCK_FREE_GIB" -ge "$DISK_RESUME_FREE_GIB" ]; then
+  logger -t server-resource-guard 'ordem de limites de disco invalida'
+  exit 2
+fi
+
+if [ "$DISK_CRITICAL_PERCENT" -gt 100 ] || [ "$INODE_WARN_PERCENT" -gt 100 ] ||
+  [ "$MEMORY_CRITICAL_MIB" -ge "$MEMORY_BLOCK_MIB" ] ||
+  [ "$MEMORY_BLOCK_MIB" -ge "$MEMORY_RESUME_MIB" ] ||
+  [ "$MEMORY_RESUME_MIB" -gt "$MEMORY_WARN_MIB" ] ||
+  [ "$ALERT_QUIET_START_HOUR" -gt 23 ] || [ "$ALERT_QUIET_END_HOUR" -gt 23 ] ||
+  [ "$ALERT_RETRY_SECONDS" -eq 0 ] || [ "$ALERT_MAX_SAMPLE_GAP_SECONDS" -eq 0 ] ||
+  [ "$ALERT_REMINDER_SECONDS" -lt "$ALERT_MIN_INTERVAL_SECONDS" ]; then
+  logger -t server-resource-guard 'limites de memoria ou notificacao invalidos'
+  exit 2
+fi
+case "$ALERT_TIMEZONE" in
+  /*|*..*) printf '%s\n' 'Fuso horario invalido.' >&2; exit 2 ;;
+esac
+[ -f "/usr/share/zoneinfo/$ALERT_TIMEZONE" ] || exit 2
 
 mkdir -p "$STATE_DIR"
 chmod 755 "$STATE_DIR"
+umask 077
+exec 9>"$STATE_DIR/monitor.lock"
+flock -n 9 || exit 0
+
+previous_disk_blocked=false
+previous_memory_blocked=false
+if [ -r "$STATUS_FILE" ]; then
+  # jq's // operator also replaces false. Persist each resource independently.
+  previous_disk_blocked=$(jq -r 'if (.policy.disk.blocked | type) == "boolean" then .policy.disk.blocked else (.acceptingHeavyJobs == false and any(.reasons[]?; test("disco|margem para liberar"; "i"))) end' "$STATUS_FILE" 2>/dev/null || printf 'false')
+  previous_memory_blocked=$(jq -r '.policy.memory.blocked == true' "$STATUS_FILE" 2>/dev/null || printf 'false')
+fi
 
 set -- $(df -P -B1 / | awk 'NR == 2 {print $2, $4, $5}')
 disk_total_bytes=$1
@@ -41,11 +134,13 @@ swap_total_kib=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
 swap_free_kib=$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)
 swap_total_bytes=$((swap_total_kib * 1024))
 swap_used_bytes=$(((swap_total_kib - swap_free_kib) * 1024))
-disk_available_gib=$((disk_available_bytes / 1024 / 1024 / 1024))
+disk_available_gib=$(awk -v bytes="$disk_available_bytes" 'BEGIN {printf "%.2f", bytes / 1073741824}')
 unhealthy_containers=$(docker ps --filter health=unhealthy --format '{{.Names}}' 2>/dev/null || true)
 
 severity=ok
 accepting_heavy_jobs=true
+disk_blocked=false
+memory_blocked=false
 reasons=""
 
 add_reason() {
@@ -58,28 +153,44 @@ $1"
 }
 
 if [ "$disk_used_percent" -ge "$DISK_CRITICAL_PERCENT" ] ||
-  [ "$disk_available_gib" -le "$DISK_CRITICAL_FREE_GIB" ]; then
+  [ "$disk_available_bytes" -le "$((DISK_CRITICAL_FREE_GIB * 1073741824))" ]; then
   severity=critical
   accepting_heavy_jobs=false
+  disk_blocked=true
   add_reason "Disco raiz em nivel critico: ${disk_used_percent}% usado, ${disk_available_gib} GiB livres."
 elif [ "$disk_used_percent" -ge "$DISK_BLOCK_PERCENT" ] ||
-  [ "$disk_available_gib" -le "$DISK_BLOCK_FREE_GIB" ]; then
+  [ "$disk_available_bytes" -le "$((DISK_BLOCK_FREE_GIB * 1073741824))" ]; then
   severity=blocked
   accepting_heavy_jobs=false
+  disk_blocked=true
   add_reason "Novos trabalhos pesados bloqueados: ${disk_used_percent}% do disco usado, ${disk_available_gib} GiB livres."
+elif [ "$previous_disk_blocked" = "true" ] &&
+  { [ "$disk_used_percent" -gt "$DISK_RESUME_PERCENT" ] ||
+    [ "$disk_available_bytes" -lt "$((DISK_RESUME_FREE_GIB * 1073741824))" ]; }; then
+  severity=blocked
+  accepting_heavy_jobs=false
+  disk_blocked=true
+  add_reason "Aguardando margem para liberar trabalhos: meta <= ${DISK_RESUME_PERCENT}% usado e >= ${DISK_RESUME_FREE_GIB} GiB livres."
 elif [ "$disk_used_percent" -ge "$DISK_WARN_PERCENT" ]; then
   severity=warning
-  add_reason "Uso de disco em alerta: ${disk_used_percent}%."
+  add_reason "Uso de disco em alerta: ${disk_used_percent}%. Limpeza automatica a partir de ${DISK_CLEANUP_PERCENT}%."
 fi
 
 if [ "$memory_available_mib" -le "$MEMORY_CRITICAL_MIB" ]; then
   severity=critical
   accepting_heavy_jobs=false
+  memory_blocked=true
   add_reason "Memoria disponivel critica: ${memory_available_mib} MiB."
 elif [ "$memory_available_mib" -le "$MEMORY_BLOCK_MIB" ]; then
   if [ "$severity" != "critical" ]; then severity=blocked; fi
   accepting_heavy_jobs=false
+  memory_blocked=true
   add_reason "Novos trabalhos pesados bloqueados por memoria: ${memory_available_mib} MiB disponiveis."
+elif [ "$previous_memory_blocked" = "true" ] && [ "$memory_available_mib" -lt "$MEMORY_RESUME_MIB" ]; then
+  if [ "$severity" != "critical" ]; then severity=blocked; fi
+  accepting_heavy_jobs=false
+  memory_blocked=true
+  add_reason "Aguardando memoria disponivel >= ${MEMORY_RESUME_MIB} MiB para liberar trabalhos."
 elif [ "$memory_available_mib" -le "$MEMORY_WARN_MIB" ]; then
   if [ "$severity" = "ok" ]; then severity=warning; fi
   add_reason "Memoria disponivel em alerta: ${memory_available_mib} MiB."
@@ -110,6 +221,15 @@ jq -n \
   --argjson memoryAvailableBytes "$((memory_available_kib * 1024))" \
   --argjson swapTotalBytes "$swap_total_bytes" \
   --argjson swapUsedBytes "$swap_used_bytes" \
+  --argjson diskWarnPercent "$DISK_WARN_PERCENT" \
+  --argjson diskCleanupPercent "$DISK_CLEANUP_PERCENT" \
+  --argjson diskResumePercent "$DISK_RESUME_PERCENT" \
+  --argjson diskBlockPercent "$DISK_BLOCK_PERCENT" \
+  --argjson diskBlockFreeGiB "$DISK_BLOCK_FREE_GIB" \
+  --argjson diskResumeFreeGiB "$DISK_RESUME_FREE_GIB" \
+  --argjson diskBlocked "$disk_blocked" \
+  --argjson memoryBlocked "$memory_blocked" \
+  --argjson memoryResumeMiB "$MEMORY_RESUME_MIB" \
   --argjson reasons "$reasons_json" \
   --argjson unhealthyContainers "$unhealthy_json" \
   '{
@@ -122,6 +242,18 @@ jq -n \
       availableBytes: $diskAvailableBytes,
       usedPercent: $diskUsedPercent
     },
+    policy: {
+      disk: {
+        warnPercent: $diskWarnPercent,
+        cleanupPercent: $diskCleanupPercent,
+        resumePercent: $diskResumePercent,
+        blockPercent: $diskBlockPercent,
+        blockFreeGiB: $diskBlockFreeGiB,
+        resumeFreeGiB: $diskResumeFreeGiB,
+        blocked: $diskBlocked
+      },
+      memory: {blocked: $memoryBlocked, resumeMiB: $memoryResumeMiB}
+    },
     inodes: {usedPercent: $inodeUsedPercent},
     memory: {availableBytes: $memoryAvailableBytes},
     swap: {totalBytes: $swapTotalBytes, usedBytes: $swapUsedBytes},
@@ -131,12 +263,11 @@ jq -n \
 chmod 644 "$status_tmp"
 mv "$status_tmp" "$STATUS_FILE"
 
-last_severity=$(cat "$LAST_SEVERITY_FILE" 2>/dev/null || printf 'unknown')
 printf '%s\n' "$severity" > "$LAST_SEVERITY_FILE"
 chmod 640 "$LAST_SEVERITY_FILE"
 
 send_alert() {
-  [ -f "$ALERT_CONFIG" ] || return 0
+  [ -f "$ALERT_CONFIG" ] || return 1
   # shellcheck disable=SC1090
   . "$ALERT_CONFIG"
 
@@ -144,25 +275,22 @@ send_alert() {
   TO_EMAIL=${TO_EMAIL:-}
   FROM_EMAIL=${FROM_EMAIL:-}
   SERVER_NAME=${SERVER_NAME:-$(hostname)}
-  [ -n "$TO_EMAIL" ] && [ -n "$FROM_EMAIL" ] || return 0
+  [ -n "$TO_EMAIL" ] && [ -n "$FROM_EMAIL" ] || return 1
 
   resend_api_key=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null |
     tail -n 1 | cut -d= -f2- |
     sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true)
   if [ -z "$resend_api_key" ]; then
     logger -t server-resource-guard "RESEND_API_KEY nao encontrado em $ENV_FILE"
-    return 0
+    return 1
   fi
 
   if [ "$TEST_ALERT" -eq 1 ]; then
     subject="Teste do monitor de recursos - ${SERVER_NAME}"
     headline="O monitor de disco, memoria, swap e containers esta ativo."
-  elif [ "$severity" = "ok" ]; then
-    subject="Recursos normalizados - ${SERVER_NAME}"
-    headline="O servidor voltou ao estado normal e liberou novos trabalhos pesados."
   else
     subject="Alerta de recursos ${severity} - ${SERVER_NAME}"
-    headline="O servidor mudou para o estado ${severity}."
+    headline="O monitor confirmou uma condicao ${severity} no servidor compartilhado."
   fi
 
   body=$(cat <<BODY
@@ -175,6 +303,12 @@ Memoria disponivel: ${memory_available_mib} MiB
 Swap em uso: $((swap_used_bytes / 1024 / 1024)) MiB de $((swap_total_bytes / 1024 / 1024)) MiB
 Aceitando trabalhos pesados: ${accepting_heavy_jobs}
 
+Este disco e compartilhado pelos projetos. O alerta nao comprova uso do PerfectUtilitares.
+Uma restricao pode pausar novas operacoes que exigem recursos. O monitor nao apaga dados.
+Verifique os motivos abaixo e o status em /var/lib/server-resource-guard/status.json.
+Disco: bloqueio em ${DISK_BLOCK_PERCENT}% ou <= ${DISK_BLOCK_FREE_GIB} GiB livres;
+liberacao em <= ${DISK_RESUME_PERCENT}% e >= ${DISK_RESUME_FREE_GIB} GiB livres.
+
 Motivos:
 ${reasons:-Nenhum alerta ativo.}
 BODY
@@ -185,22 +319,133 @@ BODY
     --arg subject "$subject" \
     --arg text "$body" \
     '{from:$from,to:[$to],subject:$subject,text:$text}')
-  if response=$(curl -fsS -X POST 'https://api.resend.com/emails' \
-    -H "Authorization: Bearer ${resend_api_key}" \
+  # A provider retry must carry the identical payload for its idempotency key.
+  pending_payload_file="$STATE_DIR/pending-alert.json"
+  saved_payload=$(jq -cer --arg key "$alert_idempotency_key" 'select(.key == $key) | .payload' "$pending_payload_file" 2>/dev/null || true)
+  if [ -n "$saved_payload" ]; then
+    payload=$saved_payload
+  else
+    pending_tmp=$(mktemp "$STATE_DIR/pending-alert.XXXXXX")
+    jq -n --arg key "$alert_idempotency_key" --argjson payload "$payload" '{key:$key,payload:$payload}' > "$pending_tmp"
+    chmod 600 "$pending_tmp"
+    mv "$pending_tmp" "$pending_payload_file"
+  fi
+  # Credentials travel on stdin, not in the process argument list.
+  if response=$(printf 'header = "Authorization: Bearer %s"\n' "$resend_api_key" |
+    curl --config - -fsS --connect-timeout 5 --max-time 20 -X POST 'https://api.resend.com/emails' \
+    -H "Idempotency-Key: ${alert_idempotency_key}" \
     -H 'Content-Type: application/json' \
-    --data "$payload"); then
+    --data "$payload" 2>/dev/null) &&
+    printf '%s' "$response" | jq -e '.id | type == "string" and length > 0' >/dev/null 2>&1; then
     printf '%s\n' "$response" > "$STATE_DIR/last-alert-response.json"
     chmod 640 "$STATE_DIR/last-alert-response.json"
-    logger -t server-resource-guard "alerta ${severity} enviado para ${TO_EMAIL}"
+    logger -t server-resource-guard "alerta ${severity} enviado (${alert_reason})"
+    return 0
   else
     logger -t server-resource-guard "falha ao enviar alerta ${severity}"
+    return 1
   fi
 }
 
-if [ "$TEST_ALERT" -eq 1 ] ||
-  { [ "$last_severity" != "unknown" ] && [ "$severity" != "$last_severity" ]; }; then
-  send_alert
+# Notification state is independent from admission. A partial improvement does
+# not open a new incident. Only a stable recovery clears the highest severity sent.
+ALERT_STATE_FILE="$STATE_DIR/notification-state.json"
+now=$(date -u +%s)
+alert_hour=$(TZ="$ALERT_TIMEZONE" date +%H | sed 's/^0//')
+observed=unknown
+observed_since=$now
+sampled_at=0
+notified=ok
+last_sent=0
+retry_after=0
+pending_severity=none
+pending_epoch=0
+if [ -r "$ALERT_STATE_FILE" ]; then
+  values=$(jq -er '
+    select(.version == 1) |
+    select(.observed | IN("unknown", "ok", "warning", "blocked", "critical")) |
+    select(.notified | IN("ok", "warning", "blocked", "critical")) |
+    select(.pendingSeverity | IN("none", "ok", "warning", "blocked", "critical")) |
+    select([.observedSince,.sampledAt,.lastSent,.retryAfter,.pendingEpoch] | all(type == "number" and . >= 0 and . <= 9999999999 and floor == .)) |
+    [.observed,.observedSince,.sampledAt,.notified,.lastSent,.retryAfter,.pendingSeverity,.pendingEpoch] | @tsv
+  ' "$ALERT_STATE_FILE" 2>/dev/null || true)
+  if [ -n "$values" ]; then
+    set -- $values
+    observed=$1 observed_since=$2 sampled_at=$3 notified=$4 last_sent=$5
+    retry_after=$6 pending_severity=$7 pending_epoch=$8
+  else
+    logger -t server-resource-guard 'estado de notificacao invalido; reiniciando confirmacao'
+  fi
 fi
+if [ "$observed" != "$severity" ] || [ "$now" -lt "$sampled_at" ] ||
+  [ "$((now - sampled_at))" -gt "$ALERT_MAX_SAMPLE_GAP_SECONDS" ]; then
+  observed=$severity
+  observed_since=$now
+fi
+sampled_at=$now
+case "$severity" in
+  ok) confirmation=$ALERT_RECOVERY_SECONDS; rank=0 ;;
+  warning) confirmation=$ALERT_WARNING_SECONDS; rank=1 ;;
+  blocked) confirmation=$ALERT_BLOCKED_SECONDS; rank=2 ;;
+  critical) confirmation=0; rank=3 ;;
+esac
+case "$notified" in
+  ok) notified_rank=0 ;; warning) notified_rank=1 ;; blocked) notified_rank=2 ;; critical) notified_rank=3 ;;
+esac
+quiet=0
+if [ "$ALERT_QUIET_START_HOUR" -gt "$ALERT_QUIET_END_HOUR" ]; then
+  if [ "$alert_hour" -ge "$ALERT_QUIET_START_HOUR" ] || [ "$alert_hour" -lt "$ALERT_QUIET_END_HOUR" ]; then quiet=1; fi
+elif [ "$ALERT_QUIET_START_HOUR" -lt "$ALERT_QUIET_END_HOUR" ]; then
+  if [ "$alert_hour" -ge "$ALERT_QUIET_START_HOUR" ] && [ "$alert_hour" -lt "$ALERT_QUIET_END_HOUR" ]; then quiet=1; fi
+fi
+reminder=$ALERT_REMINDER_SECONDS
+[ "$severity" != critical ] || reminder=$ALERT_CRITICAL_REMINDER_SECONDS
+alert_candidate=0
+alert_reason=filtered
+if [ "$((now - observed_since))" -ge "$confirmation" ]; then
+  if [ "$severity" = ok ]; then
+    if [ "$notified" != ok ]; then logger -t server-resource-guard 'incidente recuperado; sem email de normalizacao'; fi
+    notified=ok
+    pending_severity=none pending_epoch=0 retry_after=0
+  elif [ "$rank" -gt "$notified_rank" ] ||
+    { [ "$rank" -eq "$notified_rank" ] && [ "$((now - last_sent))" -ge "$reminder" ]; }; then
+    if [ "$severity" = critical ] ||
+      { [ "$quiet" -eq 0 ] && [ "$((now - last_sent))" -ge "$ALERT_MIN_INTERVAL_SECONDS" ]; }; then
+      if [ "$now" -ge "$retry_after" ] ||
+        { [ "$severity" = critical ] && [ "$pending_severity" != critical ]; }; then
+        alert_candidate=1
+        alert_reason=confirmed
+      fi
+    fi
+  fi
+fi
+
+save_notification_state() {
+  notification_tmp=$(mktemp "$STATE_DIR/notification.XXXXXX")
+  jq -n --arg observed "$observed" --arg notified "$notified" --arg pendingSeverity "$pending_severity" \
+    --argjson observedSince "$observed_since" --argjson sampledAt "$sampled_at" \
+    --argjson lastSent "$last_sent" --argjson retryAfter "$retry_after" --argjson pendingEpoch "$pending_epoch" \
+    '{version:1,observed:$observed,observedSince:$observedSince,sampledAt:$sampledAt,notified:$notified,lastSent:$lastSent,retryAfter:$retryAfter,pendingSeverity:$pendingSeverity,pendingEpoch:$pendingEpoch}' > "$notification_tmp"
+  chmod 600 "$notification_tmp"
+  mv "$notification_tmp" "$ALERT_STATE_FILE"
+}
+
+if [ "$TEST_ALERT" -eq 1 ]; then
+  alert_idempotency_key="guard-test-$(cat /proc/sys/kernel/random/uuid)"
+  alert_reason=test
+  send_alert || true
+elif [ "$alert_candidate" -eq 1 ]; then
+  if [ "$pending_severity" != "$severity" ] || [ "$pending_epoch" -eq 0 ]; then
+    pending_severity=$severity pending_epoch=$now
+  fi
+  alert_idempotency_key="guard-$(hostname)-${pending_severity}-${pending_epoch}"
+  retry_after=$((now + ALERT_RETRY_SECONDS))
+  save_notification_state
+  if send_alert; then
+    notified=$severity last_sent=$now retry_after=0 pending_epoch=0 pending_severity=none
+  fi
+fi
+save_notification_state
 
 logger -t server-resource-guard \
   "severity=${severity} disk=${disk_used_percent}% free=${disk_available_gib}GiB memory=${memory_available_mib}MiB accepting=${accepting_heavy_jobs}"
