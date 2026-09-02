@@ -585,12 +585,14 @@ model AuditLog {
 
 model SeoWebVital {
   id             String   @id @default(cuid())
+  metricId       String?  @unique
   path           String
   metric         String
   value          Float
   rating         String
   navigationType String?
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([createdAt])
   @@index([path, metric, createdAt])

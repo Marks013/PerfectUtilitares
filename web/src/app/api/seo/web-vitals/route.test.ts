@@ -5,12 +5,12 @@ import {
   type TestRouteHandler,
 } from "@/test/api-route-contract";
 
-const mocks = vi.hoisted(() => ({ create: vi.fn() }));
+const mocks = vi.hoisted(() => ({ upsert: vi.fn() }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => null) }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { seoWebVital: { create: mocks.create } },
+  prisma: { seoWebVital: { upsert: mocks.upsert } },
 }));
 
 import { GET, POST } from "./route";
@@ -37,6 +37,7 @@ describe("/api/seo/web-vitals route", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          id: "v5-navigation-lcp",
           path: "/pdf/comprimir",
           metric: "LCP",
           value: 1240,
@@ -47,8 +48,17 @@ describe("/api/seo/web-vitals route", () => {
     );
 
     expect(response.status).toBe(204);
-    expect(mocks.create).toHaveBeenCalledWith({
-      data: {
+    expect(mocks.upsert).toHaveBeenCalledWith({
+      where: { metricId: "v5-navigation-lcp" },
+      update: {
+        path: "/pdf/comprimir",
+        metric: "LCP",
+        value: 1240,
+        rating: "good",
+        navigationType: "navigate",
+      },
+      create: {
+        metricId: "v5-navigation-lcp",
         path: "/pdf/comprimir",
         metric: "LCP",
         value: 1240,
@@ -67,6 +77,7 @@ describe("/api/seo/web-vitals route", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          id: "v5-sensitive-cls",
           path: "/convite/private-token",
           metric: "CLS",
           value: 0.01,
@@ -76,7 +87,7 @@ describe("/api/seo/web-vitals route", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("returns 405 for GET", async () => {

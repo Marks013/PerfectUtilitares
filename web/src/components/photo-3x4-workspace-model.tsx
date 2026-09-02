@@ -67,7 +67,7 @@ export type FaceDetectionFrameMessage = {
   error?: string;
 };
 
-export const PHOTO_SETTINGS_STORAGE_KEY = "photo-3x4:settings:v2";
+export const PHOTO_SETTINGS_STORAGE_KEY = "photo-3x4:settings:v3";
 export const PHOTO_ASPECT = PHOTO_DEFAULTS.width / PHOTO_DEFAULTS.height;
 const FACE_DETECTION_FRAME_SRC = "/mediapipe/face-detection-frame.html";
 const DEFAULT_EDITOR_STATE: EditorState = {

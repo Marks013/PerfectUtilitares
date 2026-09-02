@@ -36,7 +36,7 @@ export async function getWebVitalsSnapshot(days = 28) {
 
   await prisma.seoWebVital.deleteMany({ where: { createdAt: { lt: retention } } });
   const samples = await prisma.seoWebVital.findMany({
-    where: { createdAt: { gte: since } },
+    where: { createdAt: { gte: since }, metricId: { not: null } },
     select: { metric: true, value: true, path: true },
     orderBy: { createdAt: "desc" },
     take: 50_000,

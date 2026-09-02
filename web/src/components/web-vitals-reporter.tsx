@@ -1,6 +1,8 @@
 "use client";
 
 import { useReportWebVitals } from "next/web-vitals";
+import { usePathname } from "next/navigation";
+import { useRef } from "react";
 
 const PUBLIC_PATHS = new Set([
   "/dashboard",
@@ -19,15 +21,25 @@ export function isPublicPerformancePath(pathname: string) {
   return PUBLIC_PATHS.has(pathname) || pathname.startsWith("/pdf/");
 }
 
+export function isStablePerformancePath(initialPath: string, currentPath: string) {
+  return initialPath === currentPath && isPublicPerformancePath(initialPath);
+}
+
 export function WebVitalsReporter() {
+  const pathname = usePathname();
+  const initialPath = useRef(pathname);
+
   useReportWebVitals((metric) => {
-    const pathname = window.location.pathname;
-    if (!isPublicPerformancePath(pathname) || !TRACKED_METRICS.has(metric.name)) {
+    if (
+      !isStablePerformancePath(initialPath.current, window.location.pathname) ||
+      !TRACKED_METRICS.has(metric.name)
+    ) {
       return;
     }
 
     const body = JSON.stringify({
-      path: pathname,
+      id: metric.id,
+      path: initialPath.current,
       metric: metric.name,
       value: metric.value,
       rating: metric.rating,

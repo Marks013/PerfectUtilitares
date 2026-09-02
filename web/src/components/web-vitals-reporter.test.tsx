@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isPublicPerformancePath } from "./web-vitals-reporter";
+import {
+  isPublicPerformancePath,
+  isStablePerformancePath,
+} from "./web-vitals-reporter";
 
 describe("isPublicPerformancePath", () => {
   it.each([
@@ -18,4 +21,10 @@ describe("isPublicPerformancePath", () => {
       expect(isPublicPerformancePath(path)).toBe(false);
     },
   );
+
+  it("accepts only the original public route for one navigation", () => {
+    expect(isStablePerformancePath("/dashboard", "/dashboard")).toBe(true);
+    expect(isStablePerformancePath("/dashboard", "/fotos")).toBe(false);
+    expect(isStablePerformancePath("/admin/seo", "/admin/seo")).toBe(false);
+  });
 });

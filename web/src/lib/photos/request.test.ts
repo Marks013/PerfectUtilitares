@@ -14,6 +14,7 @@ describe("parsePhotoSettings", () => {
 
     expect(settings.width).toBe(PHOTO_DEFAULTS.width);
     expect(settings.height).toBe(PHOTO_DEFAULTS.height);
+    expect(settings.addBorder).toBe(true);
     expect(settings.replaceOriginal).toBe(true);
   });
 });

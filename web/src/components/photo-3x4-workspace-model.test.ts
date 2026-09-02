@@ -25,7 +25,7 @@ describe("photo 3x4 workspace model helpers", () => {
 
   it("builds stable storage/file keys and compares names case-insensitively", () => {
     expect(getPhotoSettingsStorageKey("user-1")).toBe(
-      "photo-3x4:settings:v2:user-1",
+      "photo-3x4:settings:v3:user-1",
     );
     expect(getFileKey({ name: "Minha Foto.JPG" } as File)).toBe(
       "Minha Foto.JPG",

@@ -7,7 +7,7 @@ export const PHOTO_DEFAULTS = {
   format: "jpeg",
   contrast: 1,
   brightness: 1,
-  addBorder: false,
+  addBorder: true,
   borderWidth: 5,
   borderColor: "black",
   replaceOriginal: true,

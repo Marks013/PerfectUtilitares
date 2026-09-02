@@ -11,6 +11,12 @@ import {
 import { prisma } from "@/lib/prisma";
 
 const bodySchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .regex(/^[A-Za-z0-9._-]+$/),
   path: z
     .string()
     .trim()
@@ -50,7 +56,12 @@ export async function POST(request: Request) {
     );
   }
 
-  await prisma.seoWebVital.create({ data: parsed.data });
+  const { id: metricId, ...metric } = parsed.data;
+  await prisma.seoWebVital.upsert({
+    where: { metricId },
+    update: metric,
+    create: { ...metric, metricId },
+  });
 
   return new NextResponse(null, {
     status: 204,

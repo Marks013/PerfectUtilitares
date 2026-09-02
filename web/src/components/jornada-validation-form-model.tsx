@@ -9,7 +9,7 @@ import {
   formatarHorariosEntrada,
 } from "@/lib/jornada/input-format";
 import { validarJornadaManual } from "@/lib/jornada/validator";
-export const AUTO_FORMAT_KEY = "jornada:auto-formatar";
+export const AUTO_FORMAT_KEY = "jornada:auto-formatar:v2";
 export const HISTORY_PAGE_SIZE = 10;
 export const INTERJORNADA_HELP_TEXT =
   "O intervalo interjornada é o período mínimo de descanso de 11 horas entre o fim de uma jornada de trabalho e o início da seguinte, garantindo saúde, segurança e bem-estar do trabalhador.";
