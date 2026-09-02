@@ -1,28 +1,9 @@
-import { withSentryConfig } from "@sentry/nextjs";
+import { withSentryConfig } from "@sentry/nextjs/config";
 import type { NextConfig } from "next";
 
 type SecurityHeaderOptions = {
   xFrameOptions?: "DENY" | "SAMEORIGIN";
 };
-
-function createApplicationContentSecurityPolicy() {
-  const directives = [
-    "default-src 'self'",
-    "base-uri 'self'",
-    "frame-ancestors 'none'",
-    "object-src 'none'",
-    "form-action 'self'",
-    "img-src 'self' data: blob: https:",
-    "font-src 'self' data:",
-    "style-src 'self' 'unsafe-inline'",
-    "script-src 'self' 'unsafe-inline'",
-    "script-src-attr 'none'",
-    "worker-src 'self' blob:",
-    "connect-src 'self' https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
-  ];
-
-  return directives.join("; ");
-}
 
 function createFaceDetectionContentSecurityPolicy() {
   return [
@@ -56,18 +37,12 @@ function createSecurityHeaders({
       key: "Permissions-Policy",
       value: "camera=(), microphone=(), geolocation=()",
     },
-    {
-      key: "Content-Security-Policy-Report-Only",
-      value: createApplicationContentSecurityPolicy(),
-    },
   ];
 }
 
 const securityHeaders = createSecurityHeaders();
 const faceDetectionFrameHeaders = [
-  ...createSecurityHeaders({
-    xFrameOptions: "SAMEORIGIN",
-  }).filter((header) => header.key !== "Content-Security-Policy-Report-Only"),
+  ...createSecurityHeaders({ xFrameOptions: "SAMEORIGIN" }),
   {
     key: "Content-Security-Policy",
     value: createFaceDetectionContentSecurityPolicy(),

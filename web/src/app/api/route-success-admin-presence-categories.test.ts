@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
+vi.mock("@/lib/api/security", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/security")>()),
+  enforcePersistentRateLimit: vi.fn(async () => null),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     presenceEvent: {

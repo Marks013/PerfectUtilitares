@@ -277,7 +277,7 @@ export function requireMaxContentLength(
   return null;
 }
 
-export function enforceRateLimit(
+export function enforceLocalRateLimit(
   request: Request,
   options: { limit: number; windowMs: number; keyPrefix: string },
 ): NextResponse | null {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     return guard.response;
   }
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "jornada-historico",
     limit: 120,
     windowMs: 60_000,
@@ -89,7 +89,7 @@ export async function DELETE(request: Request) {
     return originError;
   }
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "jornada-historico-delete",
     limit: 10,
     windowMs: 60_000,

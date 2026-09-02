@@ -267,6 +267,7 @@ test("photo endpoint processes real image bytes and dimensions", async ({ page }
 
 test("Jornada navigation collapses after selecting an option", async ({ page }) => {
   await page.goto("/dashboard");
+  await page.waitForLoadState("networkidle");
   const menu = page.locator("details").filter({ hasText: "Validador de Jornada" });
 
   await menu.locator("summary").click();

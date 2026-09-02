@@ -16,66 +16,18 @@ import {
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { presenceCover } from "@/lib/presence/cover";
 import {
-  type PresenceCover,
-  presenceCover,
-} from "@/lib/presence/cover";
+  presenceConfirmationContractSchema,
+  presenceErrorContractSchema,
+  presenceStateContractSchema,
+  type PresenceStateContract,
+} from "@/lib/presence/public-contract";
 import styles from "./presence-invitation.module.css";
 
-type PresenceState = {
-  revision: number;
-  event: {
-    title: string;
-    description: string | null;
-    startsAt: string;
-    venueName: string | null;
-    venueAddress: string | null;
-    confirmationDeadline: string;
-    timeZone: string;
-    status: "DRAFT" | "PUBLISHED" | "CLOSED" | "ARCHIVED";
-    confirmationOpen: boolean;
-    theme: {
-      preset: "CELEBRATION" | "ELEGANT" | "GARDEN" | "NIGHT";
-      cover: PresenceCover;
-      accent: "CORAL" | "BLUE" | "GREEN" | "GOLD";
-      welcomeTitle: string | null;
-    };
-  };
-  guest: {
-    name: string;
-    rsvpStatus: "PENDING" | "CONFIRMED" | "DECLINED";
-    adultCount: number;
-    childCount: number;
-  };
-  gifts: Array<{
-    id: string;
-    emoji: string;
-    category: {
-      id: string;
-      name: string;
-      emoji: string;
-      position: number;
-    } | null;
-    title: string;
-    description: string | null;
-    externalUrl: string | null;
-    quantity: number | null;
-    reservedCount: number;
-    availableCount: number | null;
-    unlimited: boolean;
-    reserved: boolean;
-    reservedByMe: boolean;
-  }>;
-};
-
 type Props = { eventSlug: string; guestSlug: string };
-type RequestError = { error?: { message?: string } };
-type ConfirmationResult = {
-  revision: number;
-  rsvpStatus: "CONFIRMED" | "DECLINED";
-  adultCount: number;
-  childCount: number;
-};
+const MIN_POLL_DELAY_MS = 10_000;
+const MAX_POLL_DELAY_MS = 30_000;
 
 function formatDate(value: string, timeZone: string) {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -96,12 +48,14 @@ function safeExternalUrl(value: string | null) {
 }
 
 async function errorMessage(response: Response, fallback: string) {
-  const body = (await response.json().catch(() => null)) as RequestError | null;
-  return body?.error?.message ?? fallback;
+  const parsed = presenceErrorContractSchema.safeParse(
+    await response.json().catch(() => null),
+  );
+  return parsed.success ? parsed.data.error.message : fallback;
 }
 
 export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
-  const [state, setState] = useState<PresenceState | null>(null);
+  const [state, setState] = useState<PresenceStateContract | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -110,37 +64,50 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const etagRef = useRef<string | null>(null);
   const attendanceDirtyRef = useRef(false);
+  const pollDelayRef = useRef(MIN_POLL_DELAY_MS);
 
   const stateUrl = `/api/presenca/${eventSlug}/${guestSlug}/estado`;
 
   const loadState = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, signal?: AbortSignal) => {
       const response = await fetch(stateUrl, {
         cache: "no-store",
         headers: etagRef.current ? { "If-None-Match": etagRef.current } : {},
+        signal,
       });
-      if (response.status === 304) return;
+      if (response.status === 304) return false;
       if (!response.ok) {
         if (!quiet) {
           throw new Error(
             await errorMessage(response, "Não foi possível abrir este convite."),
           );
         }
-        return;
+        return false;
       }
-      const nextState = (await response.json()) as PresenceState;
+      const parsedState = presenceStateContractSchema.safeParse(
+        await response.json(),
+      );
+      if (!parsedState.success) {
+        if (!quiet) {
+          throw new Error("O convite recebeu uma resposta inválida. Tente novamente.");
+        }
+        return false;
+      }
+      const nextState = parsedState.data;
       etagRef.current = response.headers.get("etag");
       setState(nextState);
       if (!attendanceDirtyRef.current) {
         setAdultCount(nextState.guest.adultCount);
         setChildCount(nextState.guest.childCount);
       }
+      return true;
     },
     [stateUrl],
   );
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     async function start() {
       try {
         const token = window.location.hash.slice(1);
@@ -157,7 +124,7 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
           }
           window.history.replaceState(null, "", window.location.pathname);
         }
-        await loadState();
+        await loadState(false, controller.signal);
       } catch (caught) {
         if (active) {
           setError(
@@ -173,18 +140,51 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
     void start();
     return () => {
       active = false;
+      controller.abort();
     };
   }, [eventSlug, guestSlug, loadState]);
 
   useEffect(() => {
     if (!state) return;
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void loadState(true);
+    let stopped = false;
+    let inFlight = false;
+    let timer: number | undefined;
+    let controller: AbortController | null = null;
+
+    const refresh = async (resetDelay = false) => {
+      if (document.visibilityState !== "visible" || inFlight) return;
+      if (resetDelay) pollDelayRef.current = MIN_POLL_DELAY_MS;
+
+      inFlight = true;
+      controller = new AbortController();
+      try {
+        const changed = await loadState(true, controller.signal);
+        pollDelayRef.current = changed
+          ? MIN_POLL_DELAY_MS
+          : Math.min(pollDelayRef.current * 2, MAX_POLL_DELAY_MS);
+      } catch {
+        pollDelayRef.current = MAX_POLL_DELAY_MS;
+      } finally {
+        inFlight = false;
+      }
     };
-    const timer = window.setInterval(refreshWhenVisible, 5_000);
+
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        await refresh();
+        if (!stopped) schedule();
+      }, pollDelayRef.current);
+    };
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh(true);
+    };
+    schedule();
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
-      window.clearInterval(timer);
+      stopped = true;
+      controller?.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadState, state]);
@@ -216,8 +216,16 @@ export function PresenceInvitation({ eventSlug, guestSlug }: Props) {
           await errorMessage(response, "Não foi possível salvar sua resposta."),
         );
       } else {
-        const result = (await response.json()) as ConfirmationResult;
+        const parsedResult = presenceConfirmationContractSchema.safeParse(
+          await response.json(),
+        );
+        if (!parsedResult.success) {
+          setError("A confirmação foi recebida em um formato inválido. Atualize a página.");
+          return;
+        }
+        const result = parsedResult.data;
         etagRef.current = null;
+        pollDelayRef.current = MIN_POLL_DELAY_MS;
         setState((current) =>
           current
             ? {

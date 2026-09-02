@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -35,7 +35,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const originError = requireSameOrigin(request);
   if (originError) return originError;
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "admin-presence-deliveries-create",
     limit: 10,
     windowMs: 60_000,

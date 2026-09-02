@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Script from "next/script";
 import "./globals.css";
 import { WebVitalsReporter } from "@/components/web-vitals-reporter";
@@ -39,16 +40,18 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <html lang="pt-BR" className="dark" data-theme="dark" suppressHydrationWarning>
       <body>
-        <Script src="/global.js" strategy="beforeInteractive" />
-        <WebVitalsReporter />
+        <Script src="/global.js" strategy="beforeInteractive" nonce={nonce} />
+        {process.env.E2E_MUTATION === "1" ? null : <WebVitalsReporter />}
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -10,6 +10,10 @@ const { authMock, deliverMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: authMock }));
+vi.mock("@/lib/api/security", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/security")>()),
+  enforcePersistentRateLimit: vi.fn(async () => null),
+}));
 vi.mock("@/lib/presence/delivery", () => ({
   deliverPresenceInvitations: deliverMock,
 }));

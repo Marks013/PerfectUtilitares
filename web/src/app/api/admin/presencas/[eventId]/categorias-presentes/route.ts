@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -44,7 +44,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!guard.ok) return guard.response;
   const tenantId = guard.session.user.tenantId;
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gift-categories-create", limit: 60, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gift-categories-create", limit: 60, windowMs: 60_000 });
   if (limited) return limited;
   const body = await input(request);
   if (!body.ok) return body.response;
@@ -84,7 +84,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!guard.ok) return guard.response;
   const tenantId = guard.session.user.tenantId;
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gift-categories-order", limit: 60, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gift-categories-order", limit: 60, windowMs: 60_000 });
   if (limited) return limited;
   const body = await input(request);
   if (!body.ok) return body.response;

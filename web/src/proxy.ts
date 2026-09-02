@@ -15,6 +15,9 @@ function nonce() {
 }
 
 function contentSecurityPolicy(value: string) {
+  const developmentEval =
+    process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+
   return [
     "default-src 'self'",
     "base-uri 'self'",
@@ -24,11 +27,11 @@ function contentSecurityPolicy(value: string) {
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
-    `script-src 'self' 'nonce-${value}' 'strict-dynamic' blob:`,
+    `script-src 'self' 'nonce-${value}' 'strict-dynamic' blob:${developmentEval}`,
     "script-src-attr 'none'",
     "worker-src 'self' blob:",
     "frame-src 'self' blob:",
-    "connect-src 'self' https://*.sentry.io",
+    "connect-src 'self' https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
   ].join("; ");
 }
 

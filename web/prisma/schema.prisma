@@ -200,6 +200,7 @@ model Tenant {
   unimedImportSnapshots   UnimedImportSnapshot[]
   unimedBranches          UnimedBranch[]
   unimedBeneficiaries     UnimedBeneficiary[]
+  unimedInvoiceItems      UnimedInvoiceItem[]
   unimedPayrollLoans      UnimedPayrollLoan[]
   unimedAgeBrackets       UnimedAgeBracket[]
   unimedPlanPrices        UnimedPlanPriceVersion[]
@@ -673,6 +674,7 @@ model UnimedCompetency {
   payrollLoans    UnimedPayrollLoan[]
 
   @@unique([tenantId, year, month])
+  @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, activatedAt])
 }
@@ -682,7 +684,7 @@ model UnimedImportBatch {
   tenantId          String
   tenant            Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   competencyId      String
-  competency        UnimedCompetency           @relation(fields: [competencyId], references: [id], onDelete: Cascade)
+  competency        UnimedCompetency           @relation(fields: [tenantId, competencyId], references: [tenantId, id], onDelete: Cascade)
   requestedById     String?
   requestedBy       User?                      @relation("UnimedImportRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
   publishedById     String?
@@ -702,6 +704,7 @@ model UnimedImportBatch {
   payrollLoans      UnimedPayrollLoan[]
 
   @@unique([tenantId, idempotencyKey])
+  @@unique([tenantId, id])
   @@index([competencyId, status])
   @@index([requestedById, createdAt])
   @@index([publishedById])
@@ -728,7 +731,7 @@ model UnimedImportSnapshot {
   tenantId     String
   tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   competencyId String
-  competency   UnimedCompetency   @relation(fields: [competencyId], references: [id], onDelete: Cascade)
+  competency   UnimedCompetency   @relation(fields: [tenantId, competencyId], references: [tenantId, id], onDelete: Cascade)
   source       UnimedImportSource
   checksum     String
   rowCount     Int
@@ -745,11 +748,11 @@ model UnimedPayrollLoan {
   tenantId          String
   tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   competencyId      String
-  competency        UnimedCompetency   @relation(fields: [competencyId], references: [id], onDelete: Cascade)
+  competency        UnimedCompetency   @relation(fields: [tenantId, competencyId], references: [tenantId, id], onDelete: Cascade)
   importBatchId     String?
-  importBatch       UnimedImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  importBatch       UnimedImportBatch? @relation(fields: [tenantId, importBatchId], references: [tenantId, id], onDelete: Restrict)
   beneficiaryId     String?
-  beneficiary       UnimedBeneficiary? @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
+  beneficiary       UnimedBeneficiary? @relation(fields: [tenantId, beneficiaryId], references: [tenantId, id], onDelete: Restrict)
   sourceKey         String
   sourceRow         Int
   competence        String
@@ -803,6 +806,7 @@ model UnimedBranch {
 
   @@unique([tenantId, code])
   @@unique([tenantId, cnpj])
+  @@unique([tenantId, id])
   @@index([tenantId, active])
 }
 
@@ -811,11 +815,11 @@ model UnimedBeneficiary {
   tenantId      String
   tenant        Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   competencyId  String
-  competency    UnimedCompetency          @relation(fields: [competencyId], references: [id], onDelete: Cascade)
+  competency    UnimedCompetency          @relation(fields: [tenantId, competencyId], references: [tenantId, id], onDelete: Cascade)
   branchId      String?
-  branch        UnimedBranch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branch        UnimedBranch?             @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   holderId      String?
-  holder        UnimedBeneficiary?        @relation("UnimedDependents", fields: [holderId], references: [id], onDelete: SetNull)
+  holder        UnimedBeneficiary?        @relation("UnimedDependents", fields: [tenantId, holderId], references: [tenantId, id], onDelete: Restrict)
   dependents    UnimedBeneficiary[]       @relation("UnimedDependents")
   sourceKey     String
   registration  String?
@@ -838,6 +842,7 @@ model UnimedBeneficiary {
   payrollLoans  UnimedPayrollLoan[]
 
   @@unique([competencyId, sourceKey])
+  @@unique([tenantId, id])
   @@index([tenantId, competencyId, fullName])
   @@index([fullName(ops: raw("gin_trgm_ops"))], type: Gin, map: "UnimedBeneficiary_fullName_trgm_idx")
   @@index([competencyId, cpf])
@@ -864,12 +869,14 @@ model UnimedAddress {
 
 model UnimedInvoiceItem {
   id              String                    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   competencyId    String
-  competency      UnimedCompetency          @relation(fields: [competencyId], references: [id], onDelete: Cascade)
+  competency      UnimedCompetency          @relation(fields: [tenantId, competencyId], references: [tenantId, id], onDelete: Cascade)
   branchId        String?
-  branch          UnimedBranch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branch          UnimedBranch?             @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   beneficiaryId   String?
-  beneficiary     UnimedBeneficiary?        @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
+  beneficiary     UnimedBeneficiary?        @relation(fields: [tenantId, beneficiaryId], references: [tenantId, id], onDelete: Restrict)
   sourceKey       String
   beneficiaryName String
   holderName      String?
@@ -882,6 +889,7 @@ model UnimedInvoiceItem {
   createdAt       DateTime                  @default(now())
 
   @@unique([competencyId, sourceKey])
+  @@index([tenantId, competencyId])
   @@index([competencyId, beneficiaryName])
   @@index([competencyId, holderName])
   @@index([beneficiaryId])
@@ -904,6 +912,7 @@ model UnimedAgeBracket {
 
   @@unique([tenantId, code])
   @@unique([tenantId, sortOrder])
+  @@unique([tenantId, id])
   @@index([tenantId, active])
 }
 
@@ -912,7 +921,7 @@ model UnimedPlanPriceVersion {
   tenantId       String
   tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   ageBracketId   String
-  ageBracket     UnimedAgeBracket @relation(fields: [ageBracketId], references: [id], onDelete: Restrict)
+  ageBracket     UnimedAgeBracket @relation(fields: [tenantId, ageBracketId], references: [tenantId, id], onDelete: Restrict)
   planCode       String
   companyAmount  Decimal          @db.Decimal(14, 2)
   employeeAmount Decimal          @db.Decimal(14, 2)

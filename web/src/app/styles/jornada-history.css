@@ -1,0 +1,381 @@
+.jornada-history-panel {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 2.2vw, 1.4rem);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-card) 86%, transparent),
+      color-mix(in srgb, var(--app-card) 72%, transparent)
+    ),
+    radial-gradient(
+      circle at 10% 0,
+      color-mix(in srgb, var(--app-coral) 10%, transparent),
+      transparent 34%
+    );
+}
+
+.jornada-batch-panel {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 2.2vw, 1.4rem);
+}
+
+.jornada-batch-panel:not([open]) {
+  gap: 0;
+  padding: 0.95rem clamp(1rem, 2.2vw, 1.25rem);
+}
+
+.jornada-batch-summary {
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.jornada-batch-summary::-webkit-details-marker {
+  display: none;
+}
+
+.jornada-batch-summary p {
+  margin: 0.2rem 0 0;
+  color: var(--app-muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.jornada-batch-panel[open] .jornada-batch-summary {
+  padding-bottom: 0.2rem;
+}
+
+.jornada-batch-summary .jornada-status::after {
+  content: " abrir";
+  color: var(--app-subtle);
+  font-weight: 800;
+}
+
+.jornada-batch-panel[open] .jornada-batch-summary .jornada-status::after {
+  content: " aberto";
+}
+
+.jornada-batch-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(18rem, 1.05fr);
+  gap: 1rem;
+}
+
+.jornada-batch-import,
+.jornada-batch-help,
+.jornada-batch-options,
+.jornada-batch-results {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.jornada-batch-instructions p {
+  margin: 0.85rem 0 0;
+  color: var(--app-fg);
+  font-size: 0.95rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.jornada-batch-instructions ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--app-muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.jornada-batch-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.jornada-batch-stats div {
+  border-radius: 0.95rem;
+  background: color-mix(in srgb, var(--app-surface) 74%, transparent);
+  padding: 0.8rem;
+}
+
+.jornada-batch-stats dt {
+  color: var(--app-subtle);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.jornada-batch-stats dd {
+  margin: 0.2rem 0 0;
+  color: var(--app-fg);
+  font-size: 1.45rem;
+  font-weight: 950;
+}
+
+.jornada-batch-table-wrap {
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
+  border-radius: 1rem;
+}
+
+.jornada-batch-table {
+  width: 100%;
+  min-width: 46rem;
+  border-collapse: collapse;
+  color: var(--app-fg);
+  font-size: 0.84rem;
+}
+
+.jornada-batch-table th,
+.jornada-batch-table td {
+  border-bottom: 1px solid color-mix(in srgb, var(--app-fg) 9%, transparent);
+  padding: 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.jornada-batch-table th {
+  background: color-mix(in srgb, var(--app-surface-strong) 78%, transparent);
+  color: var(--app-muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.jornada-batch-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.jornada-batch-repeated {
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.jornada-batch-repeated span,
+.jornada-batch-repeated strong {
+  border: 1px solid color-mix(in srgb, var(--app-teal) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-teal) 10%, transparent);
+  color: var(--app-fg);
+  padding: 0.4rem 0.62rem;
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.jornada-batch-repeated strong {
+  border-color: color-mix(in srgb, var(--app-lime) 35%, transparent);
+  background: color-mix(in srgb, var(--app-lime) 12%, transparent);
+}
+
+.jornada-history-panel__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+}
+
+.jornada-history-title {
+  gap: 0.5rem;
+}
+
+.jornada-history-summary {
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.jornada-pdf-editor {
+  display: grid;
+  gap: 0.8rem;
+  max-height: 35rem;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--app-teal) 28%, var(--app-border));
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--app-teal) 9%, var(--app-surface));
+  padding: 1rem;
+}
+
+.jornada-pdf-editor__card {
+  border: 1px solid color-mix(in srgb, var(--app-fg) 11%, transparent);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--app-card) 76%, transparent);
+  padding: 0.9rem;
+}
+
+.jornada-pdf-editor__card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.jornada-pdf-editor__card-head p {
+  margin: 0;
+  color: var(--app-fg);
+  font-size: 0.95rem;
+  font-weight: 850;
+}
+
+.jornada-pdf-editor__card-head small {
+  display: block;
+  margin-top: 0.18rem;
+  color: var(--app-muted);
+}
+
+.jornada-pdf-people {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.85rem;
+}
+
+.jornada-pdf-person {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.2fr) minmax(8rem, 0.55fr) minmax(9rem, 0.65fr)
+    auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.jornada-pdf-person label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--app-muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.jornada-history-list {
+  max-height: 36rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
+  border-radius: 1.2rem;
+  background: color-mix(in srgb, var(--app-canvas) 20%, transparent);
+}
+
+.jornada-history-select-all,
+.jornada-history-item {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.jornada-history-select-all {
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
+  padding: 0.85rem 1rem;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.jornada-history-item {
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-fg) 8%, transparent);
+  color: var(--app-muted);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.jornada-history-item:last-child {
+  border-bottom: 0;
+}
+
+.jornada-history-item:hover {
+  background: color-mix(in srgb, var(--app-fg) 4%, transparent);
+}
+
+.jornada-history-item[data-valid="true"] {
+  border-left: 3px solid color-mix(in srgb, var(--app-lime) 70%, transparent);
+}
+
+.jornada-history-item[data-valid="false"] {
+  border-left: 3px solid color-mix(in srgb, var(--app-danger) 72%, transparent);
+}
+
+.jornada-history-item > input {
+  margin-top: 0.25rem;
+}
+
+.jornada-history-item__body {
+  display: grid;
+  min-width: 0;
+  gap: 0.4rem;
+  flex: 1;
+}
+
+.jornada-history-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+}
+
+.jornada-history-item__meta span {
+  color: var(--app-subtle);
+}
+
+.jornada-history-item__meta strong {
+  color: var(--app-fg);
+  font-size: 0.86rem;
+  letter-spacing: 0.01em;
+}
+
+.jornada-history-item__message {
+  gap: 0.5rem;
+  color: var(--app-danger);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.jornada-history-item[data-valid="true"] .jornada-history-item__message {
+  color: var(--app-lime);
+}
+
+.jornada-history-details {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.jornada-history-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--app-fg);
+  font-weight: 800;
+}
+
+.jornada-history-details ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+  line-height: 1.45;
+}
+
+.jornada-history-item__note {
+  color: var(--app-subtle);
+  font-size: 0.76rem;
+}
+
+.jornada-history-pagination {
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
+  color: var(--app-muted);
+  font-size: 0.84rem;
+}
+
+.jornada-history-empty {
+  margin: 0;
+  border: 1px dashed color-mix(in srgb, var(--app-fg) 12%, transparent);
+  border-radius: 1rem;
+  padding: 1rem;
+  color: var(--app-muted);
+}

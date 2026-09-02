@@ -1,0 +1,191 @@
+/* PDF hub summary */
+.pdf-hub__summary {
+  display: grid;
+  max-width: 36rem;
+  justify-items: end;
+  gap: 0.65rem;
+}
+
+.pdf-hub__summary > p {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .pdf-hub__summary {
+    justify-items: start;
+  }
+}
+
+/* PDF Office converters */
+.pdf-convert-dropzone {
+  min-height: 11rem;
+  flex-direction: column;
+}
+
+.pdf-convert-files {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.pdf-convert-files > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.pdf-convert-files > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.pdf-convert-files h2 {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.pdf-convert-files > header span {
+  color: var(--app-subtle);
+  font-size: 0.68rem;
+}
+
+.pdf-convert-files > header button {
+  display: inline-flex;
+  min-height: 2.2rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--app-danger-border);
+  border-radius: 6px;
+  background: var(--app-danger-soft);
+  padding: 0 0.6rem;
+  color: var(--app-danger);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.pdf-convert-files > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: 0.55rem;
+}
+
+.pdf-convert-files article {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  background: var(--app-card);
+  padding: 0.6rem;
+}
+
+.pdf-convert-file__icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-teal) 11%, var(--app-surface));
+  color: var(--app-teal);
+}
+
+.pdf-convert-files article > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.pdf-convert-files article strong {
+  overflow: hidden;
+  font-size: 0.73rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-convert-files article small {
+  color: var(--app-subtle);
+  font-size: 0.65rem;
+}
+
+.pdf-convert-files article > button {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--app-danger);
+}
+
+.pdf-convert-files button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.pdf-convert-progress {
+  display: grid;
+  gap: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--app-teal) 38%, var(--app-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-teal) 7%, var(--app-surface));
+  padding: 0.8rem;
+}
+
+.pdf-convert-progress > div:first-child,
+.pdf-convert-progress > div:first-child > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.pdf-convert-progress > div:first-child {
+  gap: 0.55rem;
+  color: var(--app-teal);
+}
+
+.pdf-convert-progress > div:first-child > span {
+  flex: 1;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.pdf-convert-progress strong {
+  color: var(--app-fg);
+  font-size: 0.75rem;
+}
+
+.pdf-convert-progress small {
+  color: var(--app-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.pdf-progress {
+  overflow: hidden;
+  height: 0.48rem;
+  border-radius: 999px;
+  background: var(--app-surface-strong);
+}
+
+.pdf-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--app-teal), var(--app-lime));
+  transition: width 180ms ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pdf-progress > span {
+    background-size: 200% 100%;
+    animation: pdf-progress-flow 1.8s linear infinite;
+  }
+}
+
+@keyframes pdf-progress-flow {
+  to {
+    background-position: -200% 0;
+  }
+}

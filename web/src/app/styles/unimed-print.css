@@ -1,0 +1,195 @@
+@media screen {
+  .unimed-sheet-workspace {
+    --app-fg: #17251e;
+    --app-muted: #526158;
+    --app-subtle: #6d7c73;
+    --app-card: #ffffff;
+    --app-surface: #f3f7f3;
+    --app-surface-strong: #dfebe2;
+    --app-input: #ffffff;
+    --app-border: #a9b8ae;
+    --app-border-strong: #789184;
+    --app-teal: #17664f;
+    --app-teal-soft: #e3f0e8;
+    --app-success-soft: #e7f3e9;
+    --app-success-border: #88aa92;
+    --app-warning-soft: #fff2cf;
+    --app-danger-soft: #fde9e6;
+    --app-danger-border: #dfa09a;
+    --app-gold: #956300;
+    --app-coral: #b8443c;
+    --app-lime: #568f16;
+    --app-action-blue: #20b8ad;
+    --app-action-text: #062d29;
+    --app-shadow: 0 8px 24px rgba(0, 0, 0, 0.13);
+    overflow: hidden;
+    max-width: 98rem;
+    margin-inline: auto;
+    border: 1px solid #37453d;
+    background: #151a17;
+    color: var(--app-fg);
+    color-scheme: light;
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
+  }
+
+  .unimed-sheet-header {
+    border-width: 0 0 1px;
+    border-color: #124e3d;
+    background: #17664f;
+    color: #ffffff;
+  }
+
+  .unimed-sheet-header h1,
+  .unimed-sheet-header p {
+    color: #ffffff;
+  }
+
+  .unimed-sheet-header p {
+    opacity: 0.86;
+  }
+
+  .unimed-sheet-column-bar {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.15fr 0.85fr;
+    border-bottom: 1px solid #527060;
+    background: #202922;
+    color: #e7efe9;
+    font-size: 0.67rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+  }
+
+  .unimed-sheet-column-bar span {
+    border-right: 1px solid #527060;
+    padding: 0.55rem 0.8rem;
+    text-align: center;
+  }
+
+  .unimed-sheet-column-bar span:last-child {
+    border-right: 0;
+  }
+
+  .unimed-sheet-form {
+    display: block;
+    padding: 0.8rem;
+    background: #202620;
+  }
+
+  .unimed-sheet-input-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 1px;
+    border: 1px solid #789184;
+    background: #789184;
+  }
+
+  .unimed-sheet-input-grid > section:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .unimed-sheet-output-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 0.65fr);
+    gap: 1px;
+    margin-top: 0.8rem;
+    border: 1px solid #789184;
+    background: #789184;
+  }
+
+  .unimed-sheet-panel {
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: var(--app-shadow);
+  }
+
+  .unimed-sheet-panel > div:first-child {
+    margin: -1rem -1rem 1rem;
+    border-bottom: 1px solid #789184;
+    background: #dce9df;
+    padding: 0.65rem 1rem;
+  }
+
+  .unimed-sheet-panel > div:first-child > span:first-child {
+    border: 1px solid #9bb0a2;
+    border-radius: 4px;
+    background: #ffffff;
+  }
+
+  .unimed-sheet-panel input:not([type="radio"]),
+  .unimed-sheet-panel select,
+  .unimed-sheet-panel button,
+  .unimed-sheet-panel label,
+  .unimed-sheet-panel [class*="rounded-xl"],
+  .unimed-sheet-panel [class*="rounded-2xl"] {
+    border-radius: 4px;
+  }
+
+  .unimed-sheet-panel dl > div {
+    border-radius: 3px;
+  }
+
+  .unimed-sheet-panel input[aria-invalid="true"],
+  .unimed-sheet-panel select[aria-invalid="true"],
+  .unimed-sheet-panel textarea[aria-invalid="true"] {
+    border-color: var(--app-coral);
+    box-shadow: 0 0 0 2px var(--app-danger-soft);
+  }
+
+  .unimed-notice-toast {
+    animation: unimed-notice-in 180ms ease-out;
+  }
+
+  @keyframes unimed-notice-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem);
+    }
+  }
+
+  @media (min-width: 640px) {
+    .unimed-sheet-panel > div:first-child {
+      margin: -1.25rem -1.25rem 1.25rem;
+      padding-inline: 1.25rem;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .unimed-sheet-column-bar {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .unimed-sheet-column-bar span:nth-child(2) {
+      border-right: 0;
+    }
+
+    .unimed-sheet-column-bar span:nth-child(-n + 2) {
+      border-bottom: 1px solid #527060;
+    }
+
+    .unimed-sheet-input-grid,
+    .unimed-sheet-output-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .unimed-sheet-input-grid > section:nth-child(3) {
+      grid-column: auto;
+    }
+  }
+
+  @media (max-width: 639px) {
+    .unimed-sheet-form {
+      padding: 0;
+    }
+
+    .unimed-sheet-input-grid,
+    .unimed-sheet-output-grid {
+      margin: 0;
+      border-width: 0 0 1px;
+    }
+
+    .unimed-sheet-output-grid {
+      margin-top: 0.65rem;
+    }
+  }
+}

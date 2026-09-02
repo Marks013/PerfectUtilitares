@@ -3,7 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { compare, hash } from "bcryptjs";
 import { z } from "zod";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -67,7 +67,7 @@ export async function PATCH(request: Request) {
     return originError;
   }
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "account-update",
     limit: 20,
     windowMs: 60_000,
@@ -183,7 +183,7 @@ export async function DELETE(request: Request) {
     return originError;
   }
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "account-delete",
     limit: 5,
     windowMs: 60_000,

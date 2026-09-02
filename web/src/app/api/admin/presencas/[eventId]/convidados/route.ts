@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import { normalizeEmail } from "@/lib/auth/email";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -48,7 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "admin-presence-guests-create",
     limit: 60,
     windowMs: 60_000,

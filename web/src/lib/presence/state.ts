@@ -67,17 +67,20 @@ export async function readPresenceState(
       eventSlug: event.eventSlug,
       title: event.title,
       description: event.description,
-      startsAt: event.startsAt,
+      startsAt: event.startsAt.toISOString(),
       venueName: event.venueName,
       venueAddress: event.venueAddress,
-      confirmationDeadline: event.confirmationDeadline,
+      confirmationDeadline: event.confirmationDeadline.toISOString(),
       timeZone: event.timeZone,
       status: event.status,
       theme: parsePresenceTheme(event.theme),
       confirmationOpen:
         event.status === "PUBLISHED" && event.confirmationDeadline >= now,
     },
-    guest,
+    guest: {
+      ...guest,
+      respondedAt: guest.respondedAt?.toISOString() ?? null,
+    },
     gifts: event.gifts.map(({ reservations, _count, reservedManually, ...gift }) => {
       const reservedCount =
         _count.reservations + (reservedManually ? 1 : 0);

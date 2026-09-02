@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     return originError;
   }
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "jornada-historico-exportar",
     limit: 20,
     windowMs: 60_000,

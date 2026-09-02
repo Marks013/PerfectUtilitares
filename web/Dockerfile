@@ -2,7 +2,7 @@
 # PERFECT_PDF_FULL32_V2_2
 # PERFECT_PDF_ADAPTIVE_V4_2
 
-FROM node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS base
+FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS base
 RUN apk add --no-cache libc6-compat openssl vips
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
@@ -103,6 +103,7 @@ RUN apk add --no-cache \
     font-liberation \
     libreoffice-calc \
     libreoffice-writer \
+    'giflib>=5.2.2-r2' \
     ghostscript \
     jbig2enc \
     ocrmypdf \

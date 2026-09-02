@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -32,7 +32,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
   const originError = requireSameOrigin(request);
   if (originError) return originError;
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gift-categories-update", limit: 60, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gift-categories-update", limit: 60, windowMs: 60_000 });
   if (limited) return limited;
   const typeError = requireContentType(request, ["application/json"]);
   if (typeError) return typeError;
@@ -71,7 +71,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
   const originError = requireSameOrigin(request);
   if (originError) return originError;
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gift-categories-delete", limit: 30, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gift-categories-delete", limit: 30, windowMs: 60_000 });
   if (limited) return limited;
   const { eventId, categoryId } = await context.params;
   if (!(await ownedCategory(eventId, categoryId, tenantId))) return jsonError(404, "GIFT_CATEGORY_NOT_FOUND", "Categoria não encontrada.");

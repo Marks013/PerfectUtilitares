@@ -20,6 +20,7 @@ const session = {
 };
 
 vi.mock("@/lib/api/security", () => ({
+  enforcePersistentRateLimit: async () => null,
   enforceRateLimit: () => null,
   jsonError: (
     status: number,

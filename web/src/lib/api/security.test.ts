@@ -1,16 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  enforcePersistentRateLimit,
   readJsonBody,
   requireContentType,
   requireMaxContentLength,
   requireSameOrigin,
 } from "@/lib/api/security";
+import { SharedRateLimitUnavailableError } from "@/lib/api/rate-limit";
+
+const rateLimitMocks = vi.hoisted(() => ({
+  checkSharedRateLimit: vi.fn(),
+}));
+
+vi.mock("@/lib/api/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/rate-limit")>()),
+  checkSharedRateLimit: rateLimitMocks.checkSharedRateLimit,
+}));
 
 vi.mock("@/auth", () => ({
   auth: vi.fn(),
 }));
 
 afterEach(() => {
+  rateLimitMocks.checkSharedRateLimit.mockReset();
   vi.unstubAllEnvs();
 });
 
@@ -133,5 +145,53 @@ describe("api security", () => {
     const result = await readJsonBody(request);
 
     expect(result).toEqual({ ok: true, data: { value: "ok" } });
+  });
+
+  it("allows requests while the persistent bucket has capacity", async () => {
+    rateLimitMocks.checkSharedRateLimit.mockResolvedValue({
+      limited: false,
+      remaining: 2,
+      resetAt: Date.now() + 60_000,
+    });
+
+    const response = await enforcePersistentRateLimit(
+      new Request("http://localhost/api/test"),
+      { keyPrefix: "test", limit: 3, windowMs: 60_000 },
+    );
+
+    expect(response).toBeNull();
+    expect(rateLimitMocks.checkSharedRateLimit).toHaveBeenCalledOnce();
+  });
+
+  it("returns retry guidance when the persistent bucket is exhausted", async () => {
+    rateLimitMocks.checkSharedRateLimit.mockResolvedValue({
+      limited: true,
+      remaining: 0,
+      resetAt: Date.now() + 30_000,
+    });
+
+    const response = await enforcePersistentRateLimit(
+      new Request("http://localhost/api/test"),
+      { keyPrefix: "test", limit: 3, windowMs: 60_000 },
+    );
+
+    expect(response?.status).toBe(429);
+    expect(Number(response?.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+
+  it("fails closed when the persistent bucket is unavailable", async () => {
+    rateLimitMocks.checkSharedRateLimit.mockRejectedValue(
+      new SharedRateLimitUnavailableError({
+        cause: new Error("database unavailable"),
+      }),
+    );
+
+    const response = await enforcePersistentRateLimit(
+      new Request("http://localhost/api/test"),
+      { keyPrefix: "test", limit: 3, windowMs: 60_000 },
+    );
+
+    expect(response?.status).toBe(503);
+    expect(response?.headers.get("retry-after")).toBe("30");
   });
 });

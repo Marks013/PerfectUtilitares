@@ -48,18 +48,23 @@ export async function GET(request: Request, context: RouteContext) {
     );
   }
 
+  const confirmationState = session.confirmationOpen ? "open" : "closed";
+  const etag = `W/"presence-${session.publicRevision}-${confirmationState}"`;
+  if (request.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, { status: 304, headers: privateHeaders(etag) });
+  }
+
   const state = await readPresenceState(session);
   if (!state) {
     return jsonError(404, "INVITATION_NOT_FOUND", "Convite não encontrado.");
   }
 
-  const confirmationState = state.event.confirmationOpen ? "open" : "closed";
-  const etag = `W/"presence-${state.revision}-${confirmationState}"`;
-  if (request.headers.get("if-none-match") === etag) {
-    return new NextResponse(null, { status: 304, headers: privateHeaders(etag) });
-  }
+  const responseConfirmationState = state.event.confirmationOpen
+    ? "open"
+    : "closed";
+  const responseEtag = `W/"presence-${state.revision}-${responseConfirmationState}"`;
 
-  return NextResponse.json(state, { headers: privateHeaders(etag) });
+  return NextResponse.json(state, { headers: privateHeaders(responseEtag) });
 }
 
 export function POST() {

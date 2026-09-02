@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -42,7 +42,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!guard.ok) return guard.response;
   const tenantId = guard.session.user.tenantId;
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gifts-create", limit: 120, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gifts-create", limit: 120, windowMs: 60_000 });
   if (limited) return limited;
   const input = await mutationInput(request);
   if (!input.ok) return input.response;
@@ -129,7 +129,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!guard.ok) return guard.response;
   const tenantId = guard.session.user.tenantId;
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gifts-order", limit: 120, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gifts-order", limit: 120, windowMs: 60_000 });
   if (limited) return limited;
   const input = await mutationInput(request);
   if (!input.ok) return input.response;

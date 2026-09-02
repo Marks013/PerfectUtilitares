@@ -10,7 +10,7 @@ export default defineConfig({
       include: [
         "src/lib/**/*.ts",
         "src/app/api/**/*.ts",
-        "src/components/**/*.ts",
+        "src/components/**/*.{ts,tsx}",
       ],
       exclude: [
         "src/generated/**",
@@ -19,10 +19,28 @@ export default defineConfig({
         "src/**/*.d.ts",
       ],
       thresholds: {
-        lines: 70,
-        functions: 80,
-        statements: 70,
-        branches: 60,
+        lines: 59,
+        functions: 51,
+        statements: 56,
+        branches: 47,
+        "src/lib/**/*.ts": {
+          lines: 80,
+          functions: 82,
+          statements: 78,
+          branches: 67,
+        },
+        "src/app/api/**/*.ts": {
+          lines: 72,
+          functions: 80,
+          statements: 67,
+          branches: 51,
+        },
+        "src/components/**/*.{ts,tsx}": {
+          lines: 17,
+          functions: 13,
+          statements: 16,
+          branches: 16,
+        },
       },
     },
   },

@@ -38,6 +38,8 @@ describe("presence state route", () => {
       sessionId: "session-1",
       eventId: "event-1",
       guestId: "guest-1",
+      publicRevision: 3,
+      confirmationOpen: true,
     });
     readPresenceStateMock.mockResolvedValue({
       revision: 3,
@@ -73,11 +75,34 @@ describe("presence state route", () => {
     expect(response.status).toBe(404);
   });
 
+  it("returns 304 before loading the complete state", async () => {
+    resolvePresenceSessionMock.mockResolvedValue({
+      sessionId: "session-1",
+      eventId: "event-1",
+      guestId: "guest-1",
+      publicRevision: 3,
+      confirmationOpen: true,
+    });
+
+    const response = await GET(
+      new Request(
+        "http://localhost/api/presenca/casamento-ana-e-joao/maico-rafael/estado",
+        { headers: { "If-None-Match": 'W/"presence-3-open"' } },
+      ),
+      { params },
+    );
+
+    expect(response.status).toBe(304);
+    expect(readPresenceStateMock).not.toHaveBeenCalled();
+  });
+
   it("does not return 304 when the confirmation deadline closes", async () => {
     resolvePresenceSessionMock.mockResolvedValue({
       sessionId: "session-1",
       eventId: "event-1",
       guestId: "guest-1",
+      publicRevision: 3,
+      confirmationOpen: false,
     });
     readPresenceStateMock.mockResolvedValue({
       revision: 3,

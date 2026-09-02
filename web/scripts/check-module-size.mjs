@@ -4,9 +4,10 @@ import path from "node:path";
 const ROOTS = [
   path.resolve("src/lib"),
   path.resolve("src/components"),
+  path.resolve("src/app/styles"),
 ];
 const BASELINE_PATH = path.resolve("module-size-baseline.json");
-const extensions = new Set([".ts", ".tsx"]);
+const extensions = new Set([".css", ".ts", ".tsx"]);
 const entries = [];
 
 const baseline = JSON.parse(await readFile(BASELINE_PATH, "utf8"));

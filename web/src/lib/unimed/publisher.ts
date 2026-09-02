@@ -527,6 +527,7 @@ export async function publishUnimedImport(
       if (reconciliation.invoiceItems.length > 0) {
         await tx.unimedInvoiceItem.createMany({
           data: reconciliation.invoiceItems.map((item) => ({
+            tenantId: input.tenantId,
             competencyId: competency.id,
             branchId: branchIds.get(item.branchCode) ?? null,
             beneficiaryId: item.beneficiarySourceKey

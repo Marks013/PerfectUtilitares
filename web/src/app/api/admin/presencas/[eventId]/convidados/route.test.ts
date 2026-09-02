@@ -11,6 +11,10 @@ const { authMock, eventFindMock, guestCreateMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: authMock }));
+vi.mock("@/lib/api/security", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/security")>()),
+  enforcePersistentRateLimit: vi.fn(async () => null),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     presenceEvent: { findFirst: eventFindMock },

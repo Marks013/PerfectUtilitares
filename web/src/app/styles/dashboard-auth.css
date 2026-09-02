@@ -1,0 +1,532 @@
+.dashboard-home {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.dashboard-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+  gap: clamp(1.25rem, 4vw, 3rem);
+  align-items: center;
+  border-radius: 2rem;
+  padding: clamp(1.6rem, 4vw, 3rem);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--app-card-raised) 88%, transparent),
+      color-mix(in srgb, var(--app-teal) 12%, var(--app-card))
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-coral) 18%, transparent),
+      transparent
+    );
+  border: 1px solid color-mix(in srgb, var(--app-fg) 10%, transparent);
+  box-shadow: var(--app-shadow);
+}
+
+.dashboard-hero h1 {
+  max-width: 18ch;
+  margin: 0;
+  color: var(--app-fg);
+  font-size: clamp(2.6rem, 5.4vw, 5rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.dashboard-hero p {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--app-muted);
+  font-size: clamp(1rem, 2vw, 1.15rem);
+  line-height: 1.7;
+}
+
+.dashboard-kicker {
+  margin: 0 0 0.9rem !important;
+  color: var(--app-gold) !important;
+  font-size: 0.78rem !important;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+
+.module-card {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-height: 31rem;
+  gap: clamp(0.9rem, 2.2vw, 1.35rem);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 12%, transparent);
+  border-radius: 2.25rem;
+  padding: clamp(1.35rem, 3vw, 2rem);
+  color: white;
+  box-shadow: var(--app-shadow);
+  transform: translateY(0);
+  transition:
+    border-color 220ms ease,
+    box-shadow 220ms ease,
+    transform 220ms ease;
+}
+
+.module-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background: linear-gradient(135deg, #1c1715, #33271f 42%, #14524e);
+}
+
+.module-card[data-tone="journey"]::before {
+  background: linear-gradient(135deg, #171913, #353019 44%, #793725);
+}
+
+.module-card[data-tone="pdf"]::before {
+  background: linear-gradient(135deg, #171822, #243249 44%, #14635c);
+}
+
+.module-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -10% -28% -10%;
+  z-index: -1;
+  height: 56%;
+  background:
+    linear-gradient(
+      110deg,
+      transparent 0 25%,
+      rgb(255 255 255 / 0.16) 25% 33%,
+      transparent 33%
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-teal) 60%, transparent),
+      color-mix(in srgb, var(--app-coral) 62%, transparent)
+    );
+  filter: saturate(1.22);
+  transform: skewY(-8deg);
+  transition: transform 260ms ease;
+}
+
+.module-card[data-tone="journey"]::after {
+  background:
+    linear-gradient(
+      110deg,
+      transparent 0 25%,
+      rgb(255 255 255 / 0.15) 25% 33%,
+      transparent 33%
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-gold) 64%, transparent),
+      color-mix(in srgb, var(--app-coral) 60%, transparent)
+    );
+}
+
+.module-card[data-tone="pdf"]::after {
+  background:
+    linear-gradient(
+      110deg,
+      transparent 0 25%,
+      rgb(255 255 255 / 0.16) 25% 33%,
+      transparent 33%
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, #60a5fa 68%, transparent),
+      color-mix(in srgb, var(--app-teal) 62%, transparent)
+    );
+}
+
+.module-card:hover {
+  border-color: rgb(255 255 255 / 0.34);
+  box-shadow: 0 30px 90px rgb(0 0 0 / 0.38);
+  transform: translateY(-6px);
+}
+
+.module-card:hover::after {
+  transform: skewY(-8deg) translateY(-1rem);
+}
+
+.module-card__shine {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    115deg,
+    transparent 0 34%,
+    rgb(255 255 255 / 0.18) 45%,
+    transparent 56%
+  );
+  opacity: 0.44;
+  transform: translateX(-38%);
+  animation: card-sheen 7s ease-in-out infinite;
+}
+
+.module-card__topline,
+.module-card__details,
+.module-card__cta {
+  display: flex;
+  align-items: center;
+}
+
+.module-card__topline {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.module-card__icon {
+  display: grid;
+  width: 4.6rem;
+  height: 4.6rem;
+  place-items: center;
+  border-radius: 1.55rem;
+  background: rgb(255 255 255 / 0.2);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.3),
+    0 16px 34px rgb(0 0 0 / 0.22);
+}
+
+.module-card__eyebrow {
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  background: rgb(18 16 15 / 0.5);
+  padding: 0.58rem 0.82rem;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.18);
+}
+
+.module-card__content {
+  display: grid;
+  align-self: end;
+  gap: 0.85rem;
+  margin-bottom: 0.2rem;
+}
+
+.module-card__title {
+  max-width: 11ch;
+  font-size: clamp(2.1rem, 4vw, 4.1rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.96;
+  text-wrap: balance;
+}
+
+.module-card__description {
+  max-width: 34rem;
+  color: rgb(255 255 255 / 0.9);
+  font-size: 1rem;
+  line-height: 1.55;
+  text-shadow: 0 2px 14px rgb(0 0 0 / 0.36);
+}
+
+.module-card__details {
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-self: end;
+}
+
+.module-card__details span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgb(255 255 255 / 0.24);
+  border-radius: 999px;
+  background: rgb(18 16 15 / 0.52);
+  padding: 0.62rem 0.82rem;
+  color: rgb(255 255 255 / 0.96);
+  font-size: 0.84rem;
+  font-weight: 800;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.13),
+    0 10px 24px rgb(0 0 0 / 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.module-card__cta {
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 1.15rem;
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.11), transparent),
+    rgb(18 16 15 / 0.64);
+  padding: 0.9rem 1rem;
+  color: var(--app-gold);
+  font-size: 1rem;
+  font-weight: 950;
+  text-shadow: 0 1px 12px rgb(0 0 0 / 0.34);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.13),
+    0 16px 36px rgb(0 0 0 / 0.28);
+  backdrop-filter: blur(12px);
+}
+
+.module-card__cta svg {
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--app-teal), var(--app-coral));
+  color: white;
+  padding: 0.18rem;
+  box-sizing: content-box;
+}
+
+.empty-access-panel {
+  border: 1px solid var(--app-border);
+  border-radius: 1.6rem;
+  background: color-mix(in srgb, var(--app-card) 78%, transparent);
+  padding: 1.25rem;
+  box-shadow: var(--app-shadow);
+}
+
+.empty-access-panel h2,
+.empty-access-panel p {
+  margin: 0;
+}
+
+.empty-access-panel h2 {
+  color: var(--app-fg);
+  font-size: 1.15rem;
+}
+
+.empty-access-panel p {
+  margin-top: 0.35rem;
+  color: var(--app-muted);
+}
+
+.empty-access-panel__action {
+  display: inline-flex;
+  margin-top: 1rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--app-teal) 52%, transparent);
+  border-radius: 0.8rem;
+  background: var(--app-teal);
+  padding: 0.65rem 1rem;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 800;
+  transition:
+    filter 160ms ease,
+    transform 160ms ease;
+}
+
+.empty-access-panel__action:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.login-gateway {
+  position: relative;
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 38rem) minmax(20rem, 24rem);
+  gap: clamp(2rem, 4vw, 4.25rem);
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--app-teal) 18%, transparent),
+      transparent 34%
+    ),
+    linear-gradient(
+      25deg,
+      transparent 52%,
+      color-mix(in srgb, var(--app-coral) 18%, transparent)
+    ),
+    linear-gradient(180deg, var(--app-bg), var(--app-bg-2));
+}
+
+.login-gateway::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-fg) 5%, transparent) 0 1px,
+      transparent 1px 96px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--app-fg) 4%, transparent) 0 1px,
+      transparent 1px 96px
+    );
+  mask-image: linear-gradient(90deg, black, transparent 72%);
+}
+
+.login-gateway__intro,
+.login-gateway__form {
+  position: relative;
+  z-index: 1;
+}
+
+.login-gateway__intro {
+  max-width: 38rem;
+  justify-self: end;
+  color: var(--app-fg);
+}
+
+.login-gateway__form {
+  justify-self: start;
+}
+
+.login-gateway__brand {
+  display: grid;
+  width: 4rem;
+  height: 4rem;
+  place-items: center;
+  border-radius: 1.35rem;
+  background: linear-gradient(135deg, var(--app-coral), var(--app-teal));
+  color: white;
+  font-weight: 950;
+  box-shadow: 0 18px 44px rgb(0 0 0 / 0.24);
+}
+
+.login-gateway__intro h1 {
+  max-width: 12.5ch;
+  margin: 1rem 0;
+  font-size: clamp(2.75rem, 5.2vw, 4.7rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.login-gateway__intro > p:not(.dashboard-kicker) {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.login-gateway__features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1.5rem;
+}
+
+.login-gateway__features span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--app-fg) 14%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-card) 52%, transparent);
+  padding: 0.65rem 0.85rem;
+  color: var(--app-muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.auth-gateway {
+  overflow: hidden;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--app-teal) 18%, transparent),
+      transparent 34%
+    ),
+    linear-gradient(
+      25deg,
+      transparent 52%,
+      color-mix(in srgb, var(--app-coral) 18%, transparent)
+    ),
+    linear-gradient(180deg, var(--app-bg), var(--app-bg-2));
+}
+
+.auth-gateway::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-fg) 5%, transparent) 0 1px,
+      transparent 1px 96px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--app-fg) 4%, transparent) 0 1px,
+      transparent 1px 96px
+    ),
+    linear-gradient(
+      115deg,
+      transparent 0 34%,
+      color-mix(in srgb, var(--app-teal) 14%, transparent) 34% 42%,
+      transparent 42%
+    );
+  mask-image: linear-gradient(180deg, black, transparent 84%);
+}
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  border-color: color-mix(in srgb, var(--app-fg) 14%, transparent);
+  background: color-mix(in srgb, var(--app-card) 88%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    var(--app-shadow);
+}
+
+.auth-card .text-neutral-950,
+.auth-card .text-neutral-900,
+.auth-card .text-neutral-800,
+.auth-card .text-neutral-700 {
+  color: var(--app-fg);
+}
+
+.auth-card .text-neutral-600,
+.auth-card .text-neutral-500 {
+  color: var(--app-muted);
+}
+
+.auth-card .border-neutral-200,
+.auth-card .border-neutral-300 {
+  border-color: color-mix(in srgb, var(--app-fg) 14%, transparent);
+}
+
+.auth-card .hover\:bg-neutral-50:hover {
+  background-color: color-mix(in srgb, var(--app-fg) 7%, var(--app-card));
+}
+
+.progress-track {
+  height: 0.65rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--app-surface-strong);
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--app-action-green);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left;
+  animation: progress-in 650ms ease-out both;
+}
+
+.progress-fill[data-tone="blue"] {
+  background: var(--app-action-blue);
+}
+
+.progress-fill[data-tone="red"] {
+  background: var(--app-danger);
+}

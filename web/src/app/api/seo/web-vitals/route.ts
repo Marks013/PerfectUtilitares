@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  enforceRateLimit,
+  enforceLocalRateLimit,
   methodNotAllowed,
   readJsonBody,
   requireContentType,
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
 
-  const limited = enforceRateLimit(request, {
+  const limited = enforceLocalRateLimit(request, {
     keyPrefix: "seo-web-vitals",
     limit: 150,
     windowMs: 60_000,

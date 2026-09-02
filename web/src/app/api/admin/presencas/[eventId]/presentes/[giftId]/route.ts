@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -36,7 +36,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
   const originError = requireSameOrigin(request);
   if (originError) return originError;
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gifts-update", limit: 120, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gifts-update", limit: 120, windowMs: 60_000 });
   if (limited) return limited;
   const contentTypeError = requireContentType(request, ["application/json"]);
   if (contentTypeError) return contentTypeError;
@@ -164,7 +164,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   if (!tenantId) return jsonError(403, "ADMIN_TENANT_REQUIRED", "Administrador sem empresa vinculada.");
   const originError = requireSameOrigin(request);
   if (originError) return originError;
-  const limited = enforceRateLimit(request, { keyPrefix: "admin-presence-gifts-delete", limit: 60, windowMs: 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "admin-presence-gifts-delete", limit: 60, windowMs: 60_000 });
   if (limited) return limited;
   const { eventId, giftId } = await context.params;
   const gift = await ownedGift(eventId, giftId, tenantId);

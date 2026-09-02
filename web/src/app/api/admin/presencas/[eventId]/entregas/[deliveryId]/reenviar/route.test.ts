@@ -9,6 +9,10 @@ const { authMock, retryMock } = vi.hoisted(() => ({
   retryMock: vi.fn(),
 }));
 vi.mock("@/auth", () => ({ auth: authMock }));
+vi.mock("@/lib/api/security", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/security")>()),
+  enforcePersistentRateLimit: vi.fn(async () => null),
+}));
 vi.mock("@/lib/presence/delivery", () => ({ retryPresenceInvitation: retryMock }));
 
 import { DELETE, GET, PATCH, POST } from "./route";

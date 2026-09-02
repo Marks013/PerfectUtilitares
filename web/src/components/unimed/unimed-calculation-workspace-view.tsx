@@ -1,6 +1,7 @@
 "use client";
 
 import type { useUnimedCalculationWorkspaceController } from "./unimed-calculation-workspace";
+import { UnimedEmailFeedback } from "./unimed-email-feedback";
 
 type Model = ReturnType<typeof useUnimedCalculationWorkspaceController>;
 
@@ -328,6 +329,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
                   : "Selecione um beneficiário na pesquisa para liberar o envio."}
               </p>
             ) : null}
+            <UnimedEmailFeedback sent={emailConfirmed} error={emailError} />
           </section>
         </aside>
       </form>

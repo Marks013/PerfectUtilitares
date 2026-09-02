@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "npm@11.17.0",
+  "packageManager": "npm@11.19.0",
   "scripts": {
     "prisma:seed": "tsx prisma/seed.ts",
     "db:deploy": "prisma migrate deploy && npm run prisma:seed"
@@ -13,20 +13,22 @@
     "npm": ">=11 <13"
   },
   "dependencies": {
-    "@prisma/adapter-pg": "7.9.1",
-    "@prisma/client": "7.9.1",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
     "bcryptjs": "3.0.3",
     "dotenv": "17.4.2",
     "pg": "8.23.0",
-    "prisma": "7.9.1",
-    "tsx": "4.23.11"
+    "prisma": "7.10.0",
+    "tsx": "4.23.13"
   },
   "overrides": {
-    "deepmerge-ts": "8.0.1"
+    "deepmerge-ts": "8.0.1",
+    "mysql2": "3.22.0"
   },
   "allowScripts": {
-    "@prisma/engines@7.9.1": true,
     "esbuild@0.28.2": true,
-    "prisma@7.9.1": true
+    "prisma@7.10.0": true,
+    "@prisma/engines@7.10.0": true,
+    "@prisma/client@7.10.0": true
   }
 }

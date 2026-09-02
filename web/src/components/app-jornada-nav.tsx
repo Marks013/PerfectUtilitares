@@ -2,6 +2,8 @@
 
 import { ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 
 type JornadaNavItem = {
   href: string;
@@ -15,8 +17,19 @@ export function closeJornadaMenu(
 }
 
 export function JornadaNavMenu({ items }: { items: JornadaNavItem[] }) {
+  const pathname = usePathname();
+  const menuRef = useRef<HTMLDetailsElement>(null);
+  const previousPathnameRef = useRef(pathname);
+
+  useEffect(() => {
+    if (previousPathnameRef.current !== pathname && menuRef.current) {
+      closeJornadaMenu(menuRef.current);
+    }
+    previousPathnameRef.current = pathname;
+  }, [pathname]);
+
   return (
-    <details className="group relative">
+    <details ref={menuRef} className="group relative">
       <summary className="app-nav-link flex cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
         Validador de Jornada
         <ChevronDown
@@ -30,7 +43,11 @@ export function JornadaNavMenu({ items }: { items: JornadaNavItem[] }) {
             key={item.href}
             href={item.href}
             className="app-nav-link whitespace-nowrap"
-            onClick={(event) => closeJornadaMenu(event.currentTarget)}
+            onClick={
+              pathname === item.href
+                ? (event) => closeJornadaMenu(event.currentTarget)
+                : undefined
+            }
           >
             {item.label}
           </Link>

@@ -49,6 +49,8 @@ export async function resolvePresenceSession(
               id: true,
               eventSlug: true,
               status: true,
+              publicRevision: true,
+              confirmationDeadline: true,
             },
           },
         },
@@ -82,6 +84,10 @@ export async function resolvePresenceSession(
     guestId: session.guest.id,
     eventId: session.guest.event.id,
     eventStatus: session.guest.event.status,
+    publicRevision: session.guest.event.publicRevision,
+    confirmationOpen:
+      session.guest.event.status === "PUBLISHED" &&
+      session.guest.event.confirmationDeadline >= now,
     expiresAt: session.expiresAt,
   };
 }

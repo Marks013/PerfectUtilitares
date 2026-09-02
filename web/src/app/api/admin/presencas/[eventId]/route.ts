@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
@@ -218,7 +218,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "admin-presence-events-update",
     limit: 60,
     windowMs: 60_000,
@@ -373,7 +373,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   const originError = requireSameOrigin(request);
   if (originError) return originError;
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "admin-presence-events-delete",
     limit: 10,
     windowMs: 60_000,

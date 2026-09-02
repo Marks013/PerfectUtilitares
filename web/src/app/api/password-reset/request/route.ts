@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
-  enforceRateLimit,
+  enforcePersistentRateLimit,
   methodNotAllowed,
   readJsonBody,
   requireContentType,
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     return originError;
   }
 
-  const limited = enforceRateLimit(request, {
+  const limited = await enforcePersistentRateLimit(request, {
     keyPrefix: "password-reset-request",
     limit: 8,
     windowMs: 60_000,
