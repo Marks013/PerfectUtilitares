@@ -10,6 +10,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/security";
 import { normalizeEmail } from "@/lib/auth/email";
+import { getSecurityStamp } from "@/lib/auth/security-stamp";
 import { getAppUrl, sendPasswordResetEmail } from "@/lib/email/resend";
 import { prisma } from "@/lib/prisma";
 
@@ -65,6 +66,9 @@ export async function POST(request: Request) {
   const user = await prisma.user.findUnique({
     where: { email: normalizeEmail(parsed.data.email) },
     select: {
+      id: true,
+      passwordHash: true,
+      updatedAt: true,
       tenantId: true,
       email: true,
       name: true,
@@ -81,6 +85,9 @@ export async function POST(request: Request) {
   const resetUrl = `${getAppUrl(request)}/convite/${token}`;
   const invitation = await prisma.userInvitation.create({
     data: {
+      purpose: "PASSWORD_RESET",
+      resetUserId: user.id,
+      resetStamp: getSecurityStamp(user),
       tenantId: user.tenantId,
       email: user.email,
       name: user.name,

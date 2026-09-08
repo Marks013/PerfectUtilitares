@@ -5,6 +5,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/auth/email";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
+import { getSecurityStamp } from "@/lib/auth/security-stamp";
+import { checkSharedRateLimit, getClientIp, getHashedRateLimitKey } from "@/lib/api/rate-limit";
 
 type AppRole = "ADMIN" | "OPERATOR";
 type AppUserStatus = "ACTIVE" | "BLOCKED" | "BANNED";
@@ -33,6 +35,7 @@ declare module "next-auth" {
   }
 
   interface User {
+    securityStamp: string;
     tenantId?: string | null;
     role: AppRole;
     status: AppUserStatus;
@@ -64,14 +67,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Senha", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         const parsed = credentialsSchema.safeParse(credentials);
         if (!parsed.success) {
           return null;
         }
 
+        const email = normalizeEmail(parsed.data.email);
+        const clientIp = getClientIp(request.headers);
+        // Both the form action and direct Auth.js callback enter this boundary.
+        const limits = await Promise.all([
+          checkSharedRateLimit(getHashedRateLimitKey("login", `${clientIp}\0${email}`), {
+            limit: 8, windowMs: 15 * 60_000,
+          }),
+          checkSharedRateLimit(getHashedRateLimitKey("login-ip", clientIp), {
+            limit: 80, windowMs: 15 * 60_000,
+          }),
+        ]);
+        if (limits.some((limit) => limit.limited)) return null;
+
         const user = await prisma.user.findUnique({
-          where: { email: normalizeEmail(parsed.data.email) },
+          where: { email },
         });
 
         if (user?.status !== "ACTIVE") {
@@ -88,6 +104,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
 
         return {
+          securityStamp: getSecurityStamp(user),
           id: user.id,
           tenantId: user.tenantId,
           email: user.email,
@@ -125,6 +142,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async jwt({ token, user }) {
       if (user) {
+        token.securityStamp = user.securityStamp;
         token.id = user.id;
         token.tenantId = user.tenantId;
         token.role = user.role;
@@ -132,23 +150,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       } else if (token.id) {
         const currentUser = await prisma.user.findUnique({
           where: { id: String(token.id) },
-          select: {
-            email: true,
-            name: true,
-            role: true,
-            tenantId: true,
-            status: true,
-          },
         });
 
-        if (currentUser) {
+        if (currentUser && token.securityStamp === getSecurityStamp(currentUser)) {
           token.email = currentUser.email;
           token.name = currentUser.name;
           token.role = currentUser.role;
           token.tenantId = currentUser.tenantId;
           token.status = currentUser.status;
         } else {
-          token.status = "BANNED";
+          return null;
         }
       }
 

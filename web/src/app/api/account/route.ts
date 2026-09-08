@@ -12,7 +12,7 @@ import {
   requireSameOrigin,
   requireSession,
 } from "@/lib/api/security";
-import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
+import { BCRYPT_PASSWORD_MAX_LENGTH, fitsBcryptPassword } from "@/lib/auth/password";
 import { removePdfJobFiles } from "@/lib/pdf/storage";
 import { prisma } from "@/lib/prisma";
 import { deleteAccountWithAdminInvariant } from "@/lib/users/account-mutations";
@@ -32,6 +32,7 @@ const accountPatchSchema = z
       .string()
       .min(8, "A nova senha deve ter pelo menos 8 caracteres.")
       .max(BCRYPT_PASSWORD_MAX_LENGTH, "A nova senha deve ter no máximo 72 caracteres.")
+      .refine(fitsBcryptPassword, "A nova senha deve ter no máximo 72 bytes em UTF-8; acentos e emojis ocupam mais de um byte.")
       .optional(),
   })
   .superRefine((value, ctx) => {
@@ -154,7 +155,7 @@ export async function PATCH(request: Request) {
   }
 
   const updatedUser = await prisma.user.update({
-    where: { id: userId },
+    where: { id: userId, passwordHash: user.passwordHash },
     data,
     select: { id: true, name: true, email: true },
   });

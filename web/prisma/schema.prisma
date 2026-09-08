@@ -218,6 +218,9 @@ model Tenant {
 }
 
 model UserInvitation {
+  purpose     String    @default("INVITATION")
+  resetUserId String?
+  resetStamp  String?
   id          String    @id @default(cuid())
   tenantId    String
   tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)

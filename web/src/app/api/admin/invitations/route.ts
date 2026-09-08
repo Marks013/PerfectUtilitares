@@ -113,6 +113,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const existingUser = await prisma.user.findUnique({ where: { email: parsed.data.email }, select: { id: true } });
+  if (existingUser) {
+    return jsonError(409, "USER_EMAIL_EXISTS", "Este e-mail já está cadastrado. Use a recuperação de senha; altere permissões pela administração de usuários.");
+  }
+
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const inviteUrl = `${getAppUrl(request)}/convite/${token}`;

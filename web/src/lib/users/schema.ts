@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
+import { BCRYPT_PASSWORD_MAX_LENGTH, fitsBcryptPassword } from "@/lib/auth/password";
 
 const userRoleSchema = z.enum(["ADMIN", "OPERATOR"]);
 const userStatusSchema = z.enum(["ACTIVE", "BLOCKED", "BANNED"]);
@@ -36,7 +36,8 @@ const passwordSchema = z
   .string()
   .min(1, "Informe a senha.")
   .min(8, "A senha deve ter pelo menos 8 caracteres.")
-  .max(BCRYPT_PASSWORD_MAX_LENGTH, "A senha deve ter no máximo 72 caracteres.");
+  .max(BCRYPT_PASSWORD_MAX_LENGTH, "A senha deve ter no máximo 72 bytes em UTF-8.")
+  .refine(fitsBcryptPassword, "A senha deve ter no máximo 72 bytes em UTF-8; acentos e emojis ocupam mais de um byte.");
 
 export const userCreateSchema = z.object({
   tenantId: tenantIdSchema,

@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/security";
 import { invitationAcceptSchema, zodIssueDetails } from "@/lib/users/schema";
 import { prisma } from "@/lib/prisma";
+import { getSecurityStamp } from "@/lib/auth/security-stamp";
 
 export const runtime = "nodejs";
 
@@ -76,7 +77,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (invitation.expiresAt < new Date()) {
+  if (invitation.expiresAt <= new Date()) {
     return jsonError(
       410,
       "INVITATION_EXPIRED",
@@ -85,21 +86,34 @@ export async function POST(request: Request) {
   }
 
   try {
+    const passwordHash = await hash(parsed.data.password, 12);
     const user = await prisma.$transaction(async (tx) => {
-      const passwordHash = await hash(parsed.data.password, 12);
+      // Always lock the account before token rows, including concurrent sibling links.
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "email" = ${invitation.email} FOR UPDATE`;
       const existingUser = await tx.user.findUnique({
         where: { email: invitation.email },
-        select: { id: true },
       });
-      const createdUser = existingUser
+      const isRecovery = invitation.purpose === "PASSWORD_RESET";
+      if (isRecovery && (!existingUser || existingUser.status !== "ACTIVE" ||
+        existingUser.id !== invitation.resetUserId ||
+        getSecurityStamp(existingUser) !== invitation.resetStamp)) {
+        throw new Error("RECOVERY_INVALIDATED");
+      }
+      if (!isRecovery && (invitation.purpose !== "INVITATION" || existingUser)) {
+        throw new Error("INVITATION_ACCOUNT_EXISTS");
+      }
+
+      const claimed = await tx.userInvitation.updateMany({
+        where: { id: invitation.id, acceptedAt: null, expiresAt: { gt: new Date() } },
+        data: { acceptedAt: new Date() },
+      });
+      if (claimed.count !== 1) throw new Error("TOKEN_ALREADY_USED");
+
+      const createdUser = isRecovery && existingUser
         ? await tx.user.update({
             where: { id: existingUser.id },
             data: {
-              tenantId: invitation.tenantId,
-              name: invitation.name,
               passwordHash,
-              role: invitation.role,
-              status: "ACTIVE",
             },
             select: {
               id: true,
@@ -127,15 +141,15 @@ export async function POST(request: Request) {
         },
           });
 
-      await tx.userInvitation.update({
-        where: { id: invitation.id },
+      await tx.userInvitation.updateMany({
+        where: { email: invitation.email, acceptedAt: null },
         data: { acceptedAt: new Date() },
       });
 
       await tx.auditLog.create({
         data: {
           userId: createdUser.id,
-          action: existingUser ? "RESET_ACCESS_BY_INVITATION" : "ACCEPT_INVITATION",
+          action: isRecovery ? "RESET_PASSWORD" : "ACCEPT_INVITATION",
           entity: "UserInvitation",
           entityId: invitation.id,
           metadata: {
@@ -151,6 +165,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json(user, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && ["RECOVERY_INVALIDATED", "TOKEN_ALREADY_USED", "INVITATION_ACCOUNT_EXISTS"].includes(error.message)) {
+      return jsonError(410, "TOKEN_INVALIDATED", "Link inválido, utilizado ou invalidado por uma alteração na conta. Solicite um novo link.");
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
