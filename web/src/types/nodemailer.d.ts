@@ -1,4 +1,4 @@
-declare module "nodemailer" {
+declare module "@perfectutilitares/smtp" {
   export type SentMessageInfo = { messageId?: string; accepted?: unknown[]; rejected?: unknown[] };
   export type Transporter = {
     sendMail(message: {

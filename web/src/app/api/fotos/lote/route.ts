@@ -10,6 +10,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/security";
 import { requireResourceCapacity } from "@/lib/api/resource-capacity";
+import { readMultipartBody } from "@/lib/api/multipart";
 import { prisma } from "@/lib/prisma";
 import {
   buildPhotoZip,
@@ -97,7 +98,9 @@ export async function POST(request: Request) {
   if (capacityError) return capacityError;
 
   try {
-    const formData = await request.formData();
+    const parsedForm = await readMultipartBody(request, MAX_BATCH_BYTES + 96_000);
+    if (!parsedForm.ok) return parsedForm.response;
+    const formData = parsedForm.data;
     const files = formData.getAll("files").filter(isUploadedFile);
 
     if (files.length === 0) {

@@ -10,6 +10,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/security";
 import { requireResourceCapacity } from "@/lib/api/resource-capacity";
+import { readMultipartBody } from "@/lib/api/multipart";
 import { prisma } from "@/lib/prisma";
 import {
   MAX_IMAGE_BYTES,
@@ -89,7 +90,9 @@ export async function POST(request: Request) {
   if (capacityError) return capacityError;
 
   try {
-    const formData = await request.formData();
+    const parsedForm = await readMultipartBody(request, MAX_IMAGE_BYTES + 64_000);
+    if (!parsedForm.ok) return parsedForm.response;
+    const formData = parsedForm.data;
     const file = formData.get("file");
 
     if (!isUploadedFile(file)) {

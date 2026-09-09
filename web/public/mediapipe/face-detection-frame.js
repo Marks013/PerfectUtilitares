@@ -1,4 +1,4 @@
-const FACE_DETECTION_ASSET_PATH = "/mediapipe/face_detection/";
+import { FaceDetector, FilesetResolver } from "/mediapipe/tasks-vision/vision_bundle.mjs";
 
 function postResult(source, origin, requestId, payload) {
   source.postMessage(
@@ -7,13 +7,13 @@ function postResult(source, origin, requestId, payload) {
   );
 }
 
-function normalizeDetections(detections) {
+function normalizeDetections(detections, width, height) {
   return (detections || []).map((detection) => ({
     boundingBox: {
-      xCenter: detection.boundingBox.xCenter,
-      yCenter: detection.boundingBox.yCenter,
-      width: detection.boundingBox.width,
-      height: detection.boundingBox.height,
+      xCenter: (detection.boundingBox.originX + detection.boundingBox.width / 2) / width,
+      yCenter: (detection.boundingBox.originY + detection.boundingBox.height / 2) / height,
+      width: detection.boundingBox.width / width,
+      height: detection.boundingBox.height / height,
     },
   }));
 }
@@ -60,37 +60,21 @@ async function drawFileToCanvas(file) {
 
 async function detectFace(file) {
   const canvas = await drawFileToCanvas(file);
-  const detector = new FaceDetection({
-    locateFile: (asset) => `${FACE_DETECTION_ASSET_PATH}${asset}`,
+  const vision = await FilesetResolver.forVisionTasks("/mediapipe/tasks-vision/wasm");
+  const detector = await FaceDetector.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: "/mediapipe/models/blaze_face_short_range.tflite", delegate: "CPU" },
+    runningMode: "IMAGE",
+    minDetectionConfidence: 0.55,
   });
-  detector.setOptions({ model: "short", minDetectionConfidence: 0.55 });
   try {
-    const results = await new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(
-        () =>
-          reject(
-            new Error(
-              "Deteccao demorou demais. Tente novamente ou use o recorte manual.",
-            ),
-          ),
-        12000,
-      );
-      detector.onResults((nextResults) => {
-        window.clearTimeout(timeout);
-        resolve(nextResults);
-      });
-      detector.send({ image: canvas }).catch((error) => {
-        window.clearTimeout(timeout);
-        reject(error);
-      });
-    });
+    const results = detector.detect(canvas);
     return {
-      detections: normalizeDetections(results.detections),
+      detections: normalizeDetections(results.detections, canvas.width, canvas.height),
       imageWidth: canvas.width,
       imageHeight: canvas.height,
     };
   } finally {
-    await detector.close().catch(() => {});
+    detector.close();
   }
 }
 

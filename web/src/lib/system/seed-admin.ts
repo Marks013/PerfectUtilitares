@@ -1,6 +1,6 @@
 import { hash } from "bcryptjs";
 import type { PrismaClient } from "@/generated/prisma/client";
-import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
+import { BCRYPT_PASSWORD_MAX_LENGTH, fitsBcryptPassword } from "@/lib/auth/password";
 
 const BOOTSTRAP_ADMIN_PASSWORD_MIN_LENGTH = 20;
 
@@ -20,10 +20,10 @@ export function validateBootstrapAdminPassword(value: string | undefined) {
 
   if (
     value.length < BOOTSTRAP_ADMIN_PASSWORD_MIN_LENGTH ||
-    value.length > BCRYPT_PASSWORD_MAX_LENGTH
+    value.length > BCRYPT_PASSWORD_MAX_LENGTH || !fitsBcryptPassword(value)
   ) {
     throw new Error(
-      `ADMIN_PASSWORD deve ter entre ${BOOTSTRAP_ADMIN_PASSWORD_MIN_LENGTH} e ${BCRYPT_PASSWORD_MAX_LENGTH} caracteres.`,
+      `ADMIN_PASSWORD deve ter pelo menos ${BOOTSTRAP_ADMIN_PASSWORD_MIN_LENGTH} caracteres e no máximo ${BCRYPT_PASSWORD_MAX_LENGTH} bytes em UTF-8.`,
     );
   }
 

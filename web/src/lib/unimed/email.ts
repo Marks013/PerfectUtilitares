@@ -1,5 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
-import nodemailer, { type Transporter } from "nodemailer";
+import nodemailer, { type Transporter } from "@perfectutilitares/smtp";
 import { applicationTimeZone, periodGreeting } from "@/lib/email/greeting";
 import { escapeHtml, formatCpf } from "@/lib/email/html";
 import { prisma } from "@/lib/prisma";

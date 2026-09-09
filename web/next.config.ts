@@ -56,6 +56,7 @@ const nextConfig: NextConfig = {
     "/api/admin/ferias/*": ["./dist/ferias-workbook-worker.cjs"],
   },
   serverExternalPackages: [
+    "@perfectutilitares/smtp",
     "@prisma/adapter-pg",
     "archiver",
     "pdfjs-dist",
@@ -75,7 +76,7 @@ const nextConfig: NextConfig = {
         headers: securityHeaders,
       },
       {
-        source: "/mediapipe/face_detection/:path*",
+        source: "/mediapipe/tasks-vision/:path*",
         headers: [
           {
             key: "Cache-Control",

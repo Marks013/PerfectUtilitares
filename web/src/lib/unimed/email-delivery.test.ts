@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
 }));
 
-vi.mock("nodemailer", () => ({
+vi.mock("@perfectutilitares/smtp", () => ({
   default: { createTransport: mocks.createTransport },
 }));
 

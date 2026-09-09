@@ -18,6 +18,7 @@ async function startPdfQueue() {
     connectionString,
     application_name: "perfect-utilitares-pdf",
     useListenNotify: true,
+    createSchema: false,
   });
 
   boss.on("error", (error) => {
