@@ -36,13 +36,15 @@
 @media (max-width: 900px) {
   .login-gateway {
     grid-template-columns: 1fr;
-    align-content: center;
+    align-content: start;
     justify-items: center;
   }
 
   .dashboard-hero {
     grid-template-columns: 1fr;
   }
+
+  .login-gateway__form { order: -1; }
 
   .login-gateway__intro,
   .login-gateway__form {
@@ -65,45 +67,21 @@
     min-height: 28rem;
   }
 
-  .photo-studio {
-    grid-template-columns: 1fr;
-  }
-
-  .jornada-command {
-    grid-template-columns: 1fr;
-  }
-
-  .jornada-command__intro,
-  .jornada-validator-panel,
-  .jornada-result-panel {
-    min-height: auto;
-  }
-
-  .jornada-command__intro h1 {
-    max-width: 13ch;
-  }
-
-  .jornada-result-details,
-  .jornada-batch-grid,
-  .jornada-batch-stats,
-  .jornada-history-panel__header,
-  .jornada-pdf-person {
-    grid-template-columns: 1fr;
-  }
-
-  .jornada-history-panel__header {
-    justify-items: start;
-  }
 }
 
 @media (max-width: 540px) {
   .login-gateway {
-    padding-top: 3rem;
+    padding-top: 1rem;
+    gap: 1.5rem;
   }
 
   .login-gateway__intro h1 {
     font-size: 2.65rem;
   }
+
+  .dashboard-hero { padding: 1.25rem; gap: 1rem; }
+  .dashboard-hero h1 { font-size: 2rem; max-width: 18ch; line-height: 1.1; }
+  .dashboard-hero p { font-size: 0.95rem; line-height: 1.5; }
 
   .dashboard-hero h1,
   .module-card__title {
@@ -120,35 +98,6 @@
     flex-direction: column;
   }
 
-  .photo-workbench,
-  .photo-controls-panel {
-    border-radius: 1.35rem;
-  }
-
-  .photo-workbench__header h1 {
-    font-size: 2.55rem;
-  }
-
-  .jornada-command,
-  .jornada-history-panel {
-    border-radius: 1.35rem;
-  }
-
-  .jornada-command__intro h1 {
-    font-size: 2.45rem;
-  }
-
-  .jornada-history-pagination,
-  .jornada-pdf-editor__card-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .jornada-secondary-button,
-  .jornada-danger-button,
-  .jornada-ghost-button {
-    width: 100%;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -103,7 +103,3 @@ export function calcularDuracaoEntrada(value: string): {
     horariosNormalizado,
   };
 }
-
-export function isJornadaOitoHoras(value: string): boolean {
-  return calcularDuracaoEntrada(value)?.duracaoMinutos === 480;
-}

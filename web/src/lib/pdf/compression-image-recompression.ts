@@ -336,21 +336,6 @@ async function ocrMyPdfOptimizeCandidate({
   await validateSemanticCandidate(originalPath, outputPath);
 }
 
-export function shouldUseJbig2PostOptimization(
-  profile: PdfCompressionProfile,
-  options: PdfCompressionEffectiveOptions,
-) {
-  const targetMode = resolveSafeGhostscriptColorMode(options, profile);
-  if (targetMode !== "MONOCHROME" || !profile.hasSelectableText) return false;
-  const needsDownsample =
-    profile.sourceDpi !== null && options.dpi < profile.sourceDpi;
-  return (
-    needsDownsample ||
-    profile.predominantImageEncoding !== "JBIG2" ||
-    profile.optimizationClass !== "OPTIMIZED_MONO"
-  );
-}
-
 export function resolveAdaptiveMonoXObjectTargetDpi(
   profile: PdfCompressionProfile,
   options: PdfCompressionEffectiveOptions,

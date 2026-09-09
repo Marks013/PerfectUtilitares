@@ -1,15 +1,5 @@
 @import "tailwindcss" source(none);
 @import "./styles/foundation.css";
 @import "./styles/dashboard-auth.css";
-@import "./styles/photo-studio.css";
-@import "./styles/jornada-core.css";
-@import "./styles/jornada-history.css";
 @import "./styles/motion-utilities.css";
-@import "./styles/pdf-workspace.css";
-@import "./styles/pdf-compression-settings.css";
-@import "./styles/pdf-compression-results.css";
-@import "./styles/pdf-responsive.css";
-@import "./styles/pdf-editor.css";
-@import "./styles/pdf-converters.css";
-@import "./styles/unimed-print.css";
 @source "..";

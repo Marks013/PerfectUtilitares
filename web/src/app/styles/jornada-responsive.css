@@ -1,0 +1,14 @@
+@media (max-width: 900px) {
+  .jornada-command { grid-template-columns: 1fr; }
+  .jornada-command__intro, .jornada-validator-panel, .jornada-result-panel { min-height: auto; }
+  .jornada-command__intro h1 { max-width: 13ch; }
+  .jornada-result-details, .jornada-batch-grid, .jornada-batch-stats,
+  .jornada-history-panel__header, .jornada-pdf-person { grid-template-columns: 1fr; }
+  .jornada-history-panel__header { justify-items: start; }
+}
+@media (max-width: 540px) {
+  .jornada-command, .jornada-history-panel { border-radius: 1.35rem; }
+  .jornada-command__intro h1 { font-size: 2.45rem; }
+  .jornada-history-pagination, .jornada-pdf-editor__card-head { align-items: stretch; flex-direction: column; }
+  .jornada-secondary-button, .jornada-danger-button, .jornada-ghost-button { width: 100%; }
+}

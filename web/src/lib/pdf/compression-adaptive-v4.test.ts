@@ -9,7 +9,6 @@ import {
   resolveAdaptiveMonoXObjectTargetDpi,
   resolveAdaptiveMonoXObjectThreshold,
   resolveSafeGhostscriptColorMode,
-  shouldUseJbig2PostOptimization,
 } from "./compression-image-recompression";
 import type { PdfCompressionProfile } from "./compression-analyzer";
 import type { PdfCompressionEffectiveOptions } from "./compression-types";
@@ -65,7 +64,6 @@ describe("adaptive PDF compression v4.2", () => {
   it("faz downsample P&B e prepara pós-otimização JBIG2 lossless", () => {
     const opts = options();
     const source = profile();
-    expect(shouldUseJbig2PostOptimization(source, opts)).toBe(true);
     const args = buildGhostscriptImageArgs({
       inputPath: "/tmp/in.pdf",
       outputPath: "/tmp/out.pdf",
@@ -132,7 +130,6 @@ describe("adaptive PDF compression v4.2", () => {
       optimizationClass: "RECOMPRESSIBLE_JPEG",
     });
     expect(resolveSafeGhostscriptColorMode(options(), source)).toBe("GRAYSCALE");
-    expect(shouldUseJbig2PostOptimization(source, options())).toBe(false);
   });
 
   it("força DCT/JPEG e downsample efetivo para tons de cinza", () => {

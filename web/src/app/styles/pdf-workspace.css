@@ -144,18 +144,6 @@ a.pdf-tool-item:hover {
   line-height: 1.35;
 }
 
-.pdf-tool-item__status {
-  grid-column: 2;
-  width: fit-content;
-  border-radius: 999px;
-  background: var(--app-surface-strong);
-  padding: 0.18rem 0.42rem;
-  color: var(--app-subtle);
-  font-size: 0.58rem;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
 .pdf-workspace__title {
   display: flex;
   align-items: center;

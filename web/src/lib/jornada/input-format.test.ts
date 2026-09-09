@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   calcularDuracaoEntrada,
   formatarHorariosEntrada,
-  isJornadaOitoHoras,
   temTrabalhoNoturno,
 } from "./input-format";
 
@@ -19,8 +18,7 @@ describe("formatarHorariosEntrada", () => {
     );
   });
 
-  it("detecta jornada de 8 horas para solicitar sabado", () => {
-    expect(isJornadaOitoHoras("0800 1200 1400 1800")).toBe(true);
+  it("calcula duração da entrada", () => {
     expect(calcularDuracaoEntrada("0800 1200 1500 1820")).toMatchObject({
       duracaoFormatada: "07:20",
       duracaoMinutos: 440,

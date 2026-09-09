@@ -39,15 +39,6 @@ const passwordSchema = z
   .max(BCRYPT_PASSWORD_MAX_LENGTH, "A senha deve ter no máximo 72 bytes em UTF-8.")
   .refine(fitsBcryptPassword, "A senha deve ter no máximo 72 bytes em UTF-8; acentos e emojis ocupam mais de um byte.");
 
-export const userCreateSchema = z.object({
-  tenantId: tenantIdSchema,
-  email: emailSchema,
-  name: nameSchema,
-  password: passwordSchema,
-  role: userRoleSchema.default("OPERATOR"),
-  status: userStatusSchema.default("ACTIVE"),
-});
-
 export const userPatchSchema = z
   .object({
     email: emailSchema.optional(),

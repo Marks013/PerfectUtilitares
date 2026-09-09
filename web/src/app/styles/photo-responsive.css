@@ -1,0 +1,7 @@
+@media (max-width: 900px) {
+  .photo-studio { grid-template-columns: 1fr; }
+}
+@media (max-width: 540px) {
+  .photo-workbench, .photo-controls-panel { border-radius: 1.35rem; }
+  .photo-workbench__header h1 { font-size: 2.55rem; }
+}

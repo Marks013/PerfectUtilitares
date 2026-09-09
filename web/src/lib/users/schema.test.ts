@@ -2,29 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   invitationAcceptSchema,
   invitationCreateSchema,
-  userCreateSchema,
   userPatchSchema,
 } from "@/lib/users/schema";
 
 describe("user schemas", () => {
-  it("normalizes email and string boolean values on create", () => {
-    const parsed = userCreateSchema.parse({
-      tenantId: "cltenant001",
-      email: " Admin@Local.Test ",
-      name: "Administrador",
-      password: "admin123",
-      role: "ADMIN",
-      status: "BLOCKED",
-    });
-
-    expect(parsed).toMatchObject({
-      tenantId: "cltenant001",
-      email: "admin@local.test",
-      role: "ADMIN",
-      status: "BLOCKED",
-    });
-  });
-
   it("normalizes invitation email", () => {
     const parsed = invitationCreateSchema.parse({
       tenantId: "cltenant001",

@@ -1,18 +1,3 @@
-export async function findInLatestTwoCompetencies<
-  TCompetency extends { id: string },
-  TItem,
->(
-  competencies: readonly TCompetency[],
-  load: (competencyId: string) => Promise<TItem[]>,
-): Promise<{ competency: TCompetency | null; items: TItem[] }> {
-  const candidates = competencies.slice(0, 2);
-  for (const competency of candidates) {
-    const items = await load(competency.id);
-    if (items.length > 0) return { competency, items };
-  }
-  return { competency: candidates[0] ?? null, items: [] };
-}
-
 export async function findWithPreviousCompetencyFallback<
   TCompetency extends { id: string },
   TItem,
