@@ -241,13 +241,13 @@ export function UnimedExcelDevices() {
             Código exibido somente agora
           </div>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-[color:var(--app-input)] px-3 py-2.5 text-xs text-[color:var(--app-fg)]">
+            <code className="min-w-0 flex-1 overflow-x-auto app-radius-lg bg-[color:var(--app-input)] px-3 py-2.5 text-xs text-[color:var(--app-fg)]">
               {token}
             </code>
             <button
               type="button"
               onClick={() => void copyToken()}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[color:var(--app-action-green)] px-4 text-sm font-black text-[color:var(--app-action-text)]"
+              className="inline-flex min-h-10 items-center justify-center gap-2 app-radius-lg bg-[color:var(--app-action-green)] px-4 text-sm font-black text-[color:var(--app-action-text)]"
             >
               {copied ? (
                 <Check className="size-4" aria-hidden="true" />

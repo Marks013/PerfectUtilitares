@@ -13,7 +13,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
           <div>
             <p className="photo-workbench__kicker">Editor de fotos</p>
             <h1>Fotos 3x4</h1>
-            <p className="mt-1 text-sm text-neutral-600">
+            <p className="mt-1 text-sm app-text-muted">
               Saída fixa 3x4 para uma foto ou lote selecionado.
             </p>
           </div>
@@ -46,10 +46,10 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
             <div className="space-y-4">
               <div className="photo-current-file">
                 <div>
-                  <p className="text-xs font-semibold uppercase text-neutral-500">
+                  <p className="text-xs font-semibold uppercase app-text-muted">
                     Editando
                   </p>
-                  <p className="max-w-[320px] truncate text-sm font-semibold text-neutral-950">
+                  <p className="max-w-[320px] truncate text-sm font-semibold app-text">
                     {selectedFile?.name}
                   </p>
                 </div>
@@ -63,7 +63,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
                     >
                       <ChevronLeft className="size-4" aria-hidden="true" />
                     </button>
-                    <span className="min-w-16 text-center text-sm font-medium text-neutral-700">
+                    <span className="min-w-16 text-center text-sm font-medium app-text-muted">
                       {selectedIndex + 1}/{files.length}
                     </span>
                     <button
@@ -130,7 +130,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
                   </button>
                 ) : null}
               </div>
-              <p className="text-xs text-neutral-500">
+              <p className="text-xs app-text-muted">
                 {cropModeDescription}
               </p>
 
@@ -174,7 +174,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
                     <img
                       src={workPreview.url}
                       alt=""
-                      className="max-h-full max-w-full rounded-md object-contain shadow-xl"
+                      className="max-h-full max-w-full app-radius-md object-contain shadow-xl"
                       style={{ filter: previewFilter }}
                     />
                   </div>
@@ -233,7 +233,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
                 ) : previewUrl ? (
                   <div className="flex h-full items-center justify-center p-6">
                     <div
-                      className="overflow-hidden rounded-md border border-white/70 shadow-xl"
+                      className="overflow-hidden app-radius-md border border-white/70 shadow-xl"
                       style={{
                         aspectRatio: `${PHOTO_DEFAULTS.width} / ${PHOTO_DEFAULTS.height}`,
                         backgroundColor: previewBorderColor,
@@ -252,14 +252,14 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex h-full items-center justify-center text-neutral-400">
+                  <div className="flex h-full items-center justify-center app-text-subtle">
                     <ImageIcon className="size-10" aria-hidden="true" />
                   </div>
                 )}
               </div>
 
               {selectedEditor.cropMode === "manual" ? (
-                <label className="block text-sm font-medium text-neutral-800">
+                <label className="block text-sm font-medium app-text">
                   Zoom
                   <input
                     type="range"
@@ -278,7 +278,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
 
               <div className="photo-file-list">
                 <div className="photo-file-list__header">
-                  <span className="text-sm font-semibold text-neutral-900">
+                  <span className="text-sm font-semibold app-text">
                     Arquivos
                   </span>
                   <button
@@ -318,7 +318,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
                           className={
                             index === selectedIndex
                               ? "photo-file-row__meta text-neutral-200"
-                              : "photo-file-row__meta text-neutral-500"
+                              : "photo-file-row__meta app-text-muted"
                           }
                         >
                           {hasFaceCrop ? <small>Rosto detectado</small> : null}
@@ -401,19 +401,19 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
           </div>
 
           {faceStatus ? (
-            <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
+            <p className="app-radius-md border app-border app-bg-surface p-3 text-sm app-text-muted">
               {faceStatus}
             </p>
           ) : null}
 
           {singlePhotoMutation.isError ? (
-            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <p className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
               {singlePhotoMutation.error.message}
             </p>
           ) : null}
 
           {zipMutation.isError ? (
-            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <p className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
               {zipMutation.error.message}
             </p>
           ) : null}
@@ -421,7 +421,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
       </section>
 
       <aside className="photo-controls-panel">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-950">
+        <h2 className="flex items-center gap-2 text-sm font-semibold app-text">
           <SlidersHorizontal className="size-4" aria-hidden="true" />
           Saída
         </h2>
@@ -429,26 +429,26 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
           <button
             type="button"
             onClick={resetAdjustments}
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+            className="inline-flex items-center justify-center gap-2 app-radius-md border app-border px-4 py-2 text-sm font-medium app-text app-hover-surface"
           >
             <RotateCcw className="size-4" aria-hidden="true" />
             {hasFiles ? "Resetar foto atual" : "Resetar ajustes"}
           </button>
 
-          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
-            <p className="text-xs font-semibold uppercase text-neutral-500">
+          <div className="app-radius-md border app-border app-bg-surface p-3">
+            <p className="text-xs font-semibold uppercase app-text-muted">
               Tamanho final
             </p>
-            <p className="mt-1 text-lg font-semibold text-neutral-950">
+            <p className="mt-1 text-lg font-semibold app-text">
               3x4 · {PHOTO_DEFAULTS.width}x{PHOTO_DEFAULTS.height}px
             </p>
           </div>
 
-          <label className="block text-sm font-medium text-neutral-800">
+          <label className="block text-sm font-medium app-text">
             Formato
             <select
               {...form.register("format")}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+              className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             >
               <option value="jpeg">JPG</option>
               <option value="png">PNG</option>
@@ -456,7 +456,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
             </select>
           </label>
 
-          <label className="block text-sm font-medium text-neutral-800">
+          <label className="block text-sm font-medium app-text">
             Contraste
             <input
               type="range"
@@ -469,12 +469,12 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
               }
               className="mt-2 w-full"
             />
-            <span className="mt-1 block text-xs text-neutral-500">
+            <span className="mt-1 block text-xs app-text-muted">
               {Number(selectedEditor.contrast || PHOTO_DEFAULTS.contrast).toFixed(2)}
             </span>
           </label>
 
-          <label className="block text-sm font-medium text-neutral-800">
+          <label className="block text-sm font-medium app-text">
             Brilho
             <input
               type="range"
@@ -487,37 +487,37 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
               }
               className="mt-2 w-full"
             />
-            <span className="mt-1 block text-xs text-neutral-500">
+            <span className="mt-1 block text-xs app-text-muted">
               {Number(selectedEditor.brightness || PHOTO_DEFAULTS.brightness).toFixed(2)}
             </span>
           </label>
 
-          <label className="flex items-center gap-2 text-sm font-medium text-neutral-800">
+          <label className="flex items-center gap-2 text-sm font-medium app-text">
             <input
               type="checkbox"
               {...form.register("addBorder")}
-              className="size-4 rounded border-neutral-300"
+              className="size-4 rounded app-border"
             />
             Adicionar borda
           </label>
 
           {watchedAddBorder ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm font-medium text-neutral-800">
+              <label className="block text-sm font-medium app-text">
                 Borda
                 <input
                   type="number"
                   min={1}
                   max={80}
                   {...form.register("borderWidth", { valueAsNumber: true })}
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                  className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                 />
               </label>
-              <label className="block text-sm font-medium text-neutral-800">
+              <label className="block text-sm font-medium app-text">
                 Cor
                 <select
                   {...form.register("borderColor")}
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                  className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                 >
                   <option value="black">Preta</option>
                   <option value="white">Branca</option>
@@ -526,7 +526,7 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
             </div>
           ) : null}
 
-          <label className="block text-sm font-medium text-neutral-800">
+          <label className="block text-sm font-medium app-text">
             Qualidade
             <input
               type="range"
@@ -536,14 +536,14 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
               {...form.register("quality", { valueAsNumber: true })}
               className="mt-2 w-full"
             />
-            <span className="mt-1 block text-xs text-neutral-500">
+            <span className="mt-1 block text-xs app-text-muted">
               {Number(watchedQuality || PHOTO_DEFAULTS.quality)}
             </span>
           </label>
         </div>
 
         {Object.values(form.formState.errors).length ? (
-          <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
             <p className="font-medium">Revise as configurações da foto:</p>
             <ul className="mt-2 list-disc space-y-1 pl-5">
               {getPhotoFormErrorMessages(form.formState.errors).map((message) => (

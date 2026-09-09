@@ -61,8 +61,8 @@ export default async function RegrasPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold text-neutral-950">Regras</h1>
-        <p className="mt-1 text-sm text-neutral-600">
+        <h1 className="text-2xl font-semibold app-text">Regras</h1>
+        <p className="mt-1 text-sm app-text-muted">
           Jornadas usadas na validação manual.
         </p>
       </div>

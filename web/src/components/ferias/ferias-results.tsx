@@ -7,7 +7,7 @@ import {
   formatCompetency, formatVacationDate,
 } from "./ferias-contract";
 
-const fieldClass = "mt-1 min-h-11 w-full min-w-0 rounded-lg border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 text-sm text-[color:var(--app-fg)] focus-visible:outline-2 focus-visible:outline-[color:var(--app-teal)] disabled:opacity-50";
+const fieldClass = "mt-1 min-h-11 w-full min-w-0 app-radius-lg border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 text-sm text-[color:var(--app-fg)] focus-visible:outline-2 focus-visible:outline-[color:var(--app-teal)] disabled:opacity-50";
 const iconButtonClass = "app-icon-button disabled:opacity-40";
 
 function RowChoices({ row, choice, busy, onChoose }: {
@@ -79,14 +79,14 @@ export function FeriasResults({ analysis, choices, busy, stale, onChoose }: {
         ))}
       </div>
       {unimedSources.some((source) => source.fallback) && unimedSources.every((source) => source.ready) && (
-        <div className="rounded-lg border border-[color:var(--app-warning-border)] bg-[color:var(--app-warning-soft)] p-3 text-sm">
+        <div className="app-radius-lg border border-[color:var(--app-warning-border)] bg-[color:var(--app-warning-soft)] p-3 text-sm">
           <p className="font-semibold">Base alternativa da Unimed · {formatCompetency(unimedSources[0].competency)}</p>
           <p className="mt-1 text-[color:var(--app-muted)]">A base Unimed de {formatCompetency(analysis.competency)} não estava completa. Cadastro e fatura foram consultados juntos no mês anterior; o Consignado Digital permanece em {formatCompetency(analysis.competency)}.</p>
         </div>
       )}
       {analysis.pricePeriods.length > 0 && <p className="text-xs text-[color:var(--app-muted)]">Tabela de preços · início de vigência: {analysis.pricePeriods.map(formatVacationDate).join(", ")}</p>}
       {analysis.issues.length > 0 && (
-        <div className="rounded-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-3 text-sm">
+        <div className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-3 text-sm">
           <p className="font-semibold">Pendências da competência</p>
           <ul className="mt-1 list-disc space-y-1 pl-5">{analysis.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
         </div>

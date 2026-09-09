@@ -384,7 +384,7 @@ export function UnimedCalculationValuesSection({
                               ),
                             )
                           }
-                          className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[color:var(--app-danger-border)] px-3 text-xs font-black text-[color:var(--app-coral)] transition hover:bg-[color:var(--app-danger-soft)]"
+                          className="inline-flex min-h-9 items-center gap-2 app-radius-lg border border-[color:var(--app-danger-border)] px-3 text-xs font-black text-[color:var(--app-coral)] transition hover:bg-[color:var(--app-danger-soft)]"
                           aria-label={`Remover dependente ${index + 1}`}
                         >
                           <Trash2 className="size-4" aria-hidden="true" />

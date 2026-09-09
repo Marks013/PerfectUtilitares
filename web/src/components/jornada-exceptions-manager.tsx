@@ -136,27 +136,27 @@ export function JornadaExceptionsManager({
   const submit = form.handleSubmit((values) => createMutation.mutate(values));
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+    <section className="app-radius-lg border app-border app-bg-card p-5 app-shadow">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-neutral-950">
+          <h2 className="text-base font-semibold app-text">
             Exceções autorizadas
           </h2>
-          <p className="mt-1 max-w-3xl text-sm text-neutral-600">
+          <p className="mt-1 max-w-3xl text-sm app-text-muted">
             Autorize um horário exato para um usuário específico. A validação só
             passa quando a escala digitada bater exatamente com a exceção ativa.
           </p>
         </div>
-        <ShieldCheck className="size-5 text-neutral-500" aria-hidden="true" />
+        <ShieldCheck className="size-5 app-text-muted" aria-hidden="true" />
       </div>
 
       <form onSubmit={submit} className="mt-5 grid gap-3 lg:grid-cols-6">
-        <label className="block text-sm font-medium text-neutral-800 lg:col-span-2">
+        <label className="block text-sm font-medium app-text lg:col-span-2">
           Usuário autorizado
           <select
             {...form.register("userId")}
             disabled={!activeUsers.length}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
           >
             {activeUsers.map((user) => (
               <option key={user.value} value={user.value}>
@@ -165,42 +165,42 @@ export function JornadaExceptionsManager({
             ))}
           </select>
         </label>
-        <label className="block text-sm font-medium text-neutral-800 lg:col-span-2">
+        <label className="block text-sm font-medium app-text lg:col-span-2">
           Nome da exceção
           <input
             {...form.register("nome")}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             placeholder="Ex.: escala autorizada gerência"
           />
         </label>
-        <label className="block text-sm font-medium text-neutral-800 lg:col-span-2">
+        <label className="block text-sm font-medium app-text lg:col-span-2">
           Segunda a sexta
           <input
             {...form.register("horarios")}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             placeholder="08:00 11:30 13:30 18:00"
           />
         </label>
-        <label className="block text-sm font-medium text-neutral-800 lg:col-span-2">
+        <label className="block text-sm font-medium app-text lg:col-span-2">
           Sábado opcional
           <input
             {...form.register("sabadoHorarios")}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             placeholder="08:00 12:00"
           />
         </label>
-        <label className="flex items-center gap-2 self-end text-sm font-medium text-neutral-800">
+        <label className="flex items-center gap-2 self-end text-sm font-medium app-text">
           <input
             type="checkbox"
             {...form.register("active")}
-            className="size-4 rounded border-neutral-300"
+            className="size-4 rounded app-border"
           />
           Ativa
         </label>
         <button
           type="submit"
           disabled={!activeUsers.length || createMutation.isPending}
-          className="inline-flex items-center justify-center gap-2 self-end rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+          className="inline-flex items-center justify-center gap-2 self-end app-radius-md app-action-fill px-4 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
         >
           <ShieldCheck className="size-4" aria-hidden="true" />
           {createMutation.isPending ? "Salvando..." : "Autorizar"}
@@ -208,24 +208,24 @@ export function JornadaExceptionsManager({
       </form>
 
       {Object.values(form.formState.errors).length ? (
-        <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <p className="mt-3 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
           Revise usuário e horários da exceção.
         </p>
       ) : null}
       {createMutation.isError ? (
-        <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <p className="mt-3 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
           {createMutation.error.message}
         </p>
       ) : null}
       {deactivateMutation.isError ? (
-        <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <p className="mt-3 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
           {deactivateMutation.error.message}
         </p>
       ) : null}
 
-      <div className="mt-5 overflow-hidden rounded-lg border border-neutral-200">
+      <div className="mt-5 overflow-hidden app-radius-lg border app-border">
         <table className="w-full text-left text-sm">
-          <thead className="bg-neutral-50 text-neutral-600">
+          <thead className="app-bg-surface app-text-muted">
             <tr>
               <th className="px-4 py-3">Usuário</th>
               <th className="px-4 py-3">Horário</th>
@@ -236,18 +236,18 @@ export function JornadaExceptionsManager({
           </thead>
           <tbody>
             {exceptions.map((exception) => (
-              <tr key={exception.id} className="border-t border-neutral-100">
+              <tr key={exception.id} className="border-t app-border">
                 <td className="px-4 py-3">
-                  <div className="font-medium text-neutral-900">
+                  <div className="font-medium app-text">
                     {userLabel(exception.user)}
                   </div>
                   {exception.nome ? (
-                    <div className="text-xs text-neutral-500">
+                    <div className="text-xs app-text-muted">
                       {exception.nome}
                     </div>
                   ) : null}
                 </td>
-                <td className="px-4 py-3 font-medium text-neutral-900">
+                <td className="px-4 py-3 font-medium app-text">
                   {exception.horariosNormalizado}
                 </td>
                 <td className="px-4 py-3">
@@ -257,8 +257,8 @@ export function JornadaExceptionsManager({
                   <span
                     className={
                       exception.active
-                        ? "inline-flex items-center gap-1 text-green-700"
-                        : "text-neutral-500"
+                        ? "inline-flex items-center gap-1 app-text-success"
+                        : "app-text-muted"
                     }
                   >
                     {exception.active ? (
@@ -272,7 +272,7 @@ export function JornadaExceptionsManager({
                     type="button"
                     onClick={() => deactivateMutation.mutate(exception)}
                     disabled={!exception.active || deactivateMutation.isPending}
-                    className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50"
+                    className="inline-flex items-center gap-2 app-radius-md border app-border px-3 py-2 text-sm font-medium app-text app-hover-surface disabled:opacity-50"
                   >
                     <Trash2 className="size-4" aria-hidden="true" />
                     Desativar
@@ -282,7 +282,7 @@ export function JornadaExceptionsManager({
             ))}
             {exceptions.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-neutral-500">
+                <td colSpan={5} className="px-4 py-6 app-text-muted">
                   Nenhuma exceção cadastrada.
                 </td>
               </tr>
@@ -293,4 +293,3 @@ export function JornadaExceptionsManager({
     </section>
   );
 }
-

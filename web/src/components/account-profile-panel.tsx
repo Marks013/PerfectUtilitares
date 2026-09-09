@@ -119,40 +119,40 @@ export function AccountProfilePanel({
         onSubmit={profileForm.handleSubmit((values) =>
           profileMutation.mutate(values),
         )}
-        className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm"
+        className="app-radius-lg border app-border app-bg-card p-5 app-shadow"
       >
         <div className="flex items-start gap-3">
-          <span className="grid size-11 place-items-center rounded-lg bg-neutral-100 text-neutral-800">
+          <span className="grid size-11 place-items-center app-radius-lg app-bg-surface app-text">
             <UserRound className="size-5" aria-hidden="true" />
           </span>
           <div>
-            <h2 className="text-base font-semibold text-neutral-950">Perfil</h2>
-            <p className="mt-1 text-sm text-neutral-600">{email}</p>
-            <p className="mt-1 text-xs font-medium uppercase text-neutral-500">
+            <h2 className="text-base font-semibold app-text">Perfil</h2>
+            <p className="mt-1 text-sm app-text-muted">{email}</p>
+            <p className="mt-1 text-xs font-medium uppercase app-text-muted">
               {role === "ADMIN" ? "Administrador" : "Operador"}
             </p>
           </div>
         </div>
 
-        <label className="mt-5 block text-sm font-medium text-neutral-800">
+        <label className="mt-5 block text-sm font-medium app-text">
           Nome do usuário
           <input
             {...profileForm.register("name")}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
           />
         </label>
         {profileForm.formState.errors.name ? (
-          <p className="mt-1 text-xs text-red-700">
+          <p className="mt-1 text-xs app-text-danger">
             {profileForm.formState.errors.name.message}
           </p>
         ) : null}
         {profileMutation.isError ? (
-          <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <p className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
             {profileMutation.error.message}
           </p>
         ) : null}
         {profileMutation.isSuccess ? (
-          <p className="mt-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+          <p className="mt-4 app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
             Nome atualizado.
           </p>
         ) : null}
@@ -160,7 +160,7 @@ export function AccountProfilePanel({
         <button
           type="submit"
           disabled={profileMutation.isPending}
-          className="mt-5 inline-flex items-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+          className="mt-5 inline-flex items-center gap-2 app-radius-md app-action-fill px-4 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
         >
           <Save className="size-4" aria-hidden="true" />
           {profileMutation.isPending ? "Salvando..." : "Salvar nome"}
@@ -171,75 +171,75 @@ export function AccountProfilePanel({
         onSubmit={passwordForm.handleSubmit((values) =>
           passwordMutation.mutate(values),
         )}
-        className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm"
+        className="app-radius-lg border app-border app-bg-card p-5 app-shadow"
       >
         <div className="flex items-start gap-3">
-          <span className="grid size-11 place-items-center rounded-lg bg-neutral-100 text-neutral-800">
+          <span className="grid size-11 place-items-center app-radius-lg app-bg-surface app-text">
             <KeyRound className="size-5" aria-hidden="true" />
           </span>
           <div>
-            <h2 className="text-base font-semibold text-neutral-950">Senha</h2>
-            <p className="mt-1 text-sm text-neutral-600">
+            <h2 className="text-base font-semibold app-text">Senha</h2>
+            <p className="mt-1 text-sm app-text-muted">
               Confirme sua senha atual antes de trocar.
             </p>
           </div>
         </div>
 
-        <label className="mt-5 block text-sm font-medium text-neutral-800">
+        <label className="mt-5 block text-sm font-medium app-text">
           Senha atual
           <input
             type="password"
             autoComplete="current-password"
             maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             {...passwordForm.register("currentPassword")}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
           />
         </label>
         {passwordForm.formState.errors.currentPassword ? (
-          <p className="mt-1 text-xs text-red-700">
+          <p className="mt-1 text-xs app-text-danger">
             {passwordForm.formState.errors.currentPassword.message}
           </p>
         ) : null}
 
-        <label className="mt-4 block text-sm font-medium text-neutral-800">
+        <label className="mt-4 block text-sm font-medium app-text">
           Nova senha
           <input
             type="password"
             autoComplete="new-password"
             maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             {...passwordForm.register("newPassword")}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
           />
         </label>
         {passwordForm.formState.errors.newPassword ? (
-          <p className="mt-1 text-xs text-red-700">
+          <p className="mt-1 text-xs app-text-danger">
             {passwordForm.formState.errors.newPassword.message}
           </p>
         ) : null}
 
-        <label className="mt-4 block text-sm font-medium text-neutral-800">
+        <label className="mt-4 block text-sm font-medium app-text">
           Confirmar nova senha
           <input
             type="password"
             autoComplete="new-password"
             maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             {...passwordForm.register("confirmPassword")}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
           />
         </label>
         {passwordForm.formState.errors.confirmPassword ? (
-          <p className="mt-1 text-xs text-red-700">
+          <p className="mt-1 text-xs app-text-danger">
             {passwordForm.formState.errors.confirmPassword.message}
           </p>
         ) : null}
 
         {passwordMutation.isError ? (
-          <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <p className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
             {passwordMutation.error.message}
           </p>
         ) : null}
         {passwordMutation.isSuccess ? (
-          <p className="mt-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+          <p className="mt-4 app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
             Senha atualizada.
           </p>
         ) : null}
@@ -247,7 +247,7 @@ export function AccountProfilePanel({
         <button
           type="submit"
           disabled={passwordMutation.isPending}
-          className="mt-5 inline-flex items-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+          className="mt-5 inline-flex items-center gap-2 app-radius-md app-action-fill px-4 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
         >
           <KeyRound className="size-4" aria-hidden="true" />
           {passwordMutation.isPending ? "Atualizando..." : "Trocar senha"}

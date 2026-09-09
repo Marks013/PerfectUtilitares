@@ -2,4 +2,5 @@
 @import "./styles/foundation.css";
 @import "./styles/dashboard-auth.css";
 @import "./styles/motion-utilities.css";
+@import "./styles/theme-utilities.css";
 @source "..";

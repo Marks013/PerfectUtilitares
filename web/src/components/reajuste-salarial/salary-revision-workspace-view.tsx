@@ -30,7 +30,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
   const analysis = model.analysis;
   return (
     <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(290px,0.7fr)]">
-      <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm sm:p-7">
+      <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow sm:p-7">
         <div className="flex items-start gap-3">
           <span className="grid size-10 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-teal)]">
             <FileSpreadsheet className="size-5" aria-hidden="true" />
@@ -73,7 +73,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
               type="button"
               onClick={model.analyze}
               disabled={model.busy}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-[color:var(--app-teal)] px-4 py-2 text-xs font-black text-white disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 app-radius-lg bg-[color:var(--app-teal)] px-4 py-2 text-xs font-black text-white disabled:opacity-50"
             >
               {model.state.status === "analyzing" ? <Loader2 className="size-4 animate-spin" /> : <FileSearch className="size-4" />}
               Analisar arquivo
@@ -187,9 +187,9 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <label htmlFor={`rule-name-${rule.id}`} className="text-xs font-black text-[color:var(--app-muted)]">Nome da regra</label>
-                        <input id={`rule-name-${rule.id}`} value={rule.name} onChange={(event) => model.updateRule(rule.id, { name: event.target.value })} className="mt-1 w-full rounded-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 font-bold text-[color:var(--app-fg)]" />
+                        <input id={`rule-name-${rule.id}`} value={rule.name} onChange={(event) => model.updateRule(rule.id, { name: event.target.value })} className="mt-1 w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 font-bold text-[color:var(--app-fg)]" />
                       </div>
-                      <button type="button" onClick={() => model.removeRule(rule.id)} aria-label={`Excluir ${rule.name}`} className="grid size-9 place-items-center rounded-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)]">
+                      <button type="button" onClick={() => model.removeRule(rule.id)} aria-label={`Excluir ${rule.name}`} className="grid size-9 place-items-center app-radius-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)]">
                         <Trash2 className="size-4" />
                       </button>
                     </div>
@@ -211,7 +211,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                               placeholder={placeholder}
                               onChange={(event) => model.updateRule(rule.id, { [field]: event.target.value })}
                               onBlur={(event) => model.updateRule(rule.id, { [field]: normalizeMoneyInput(event.target.value) })}
-                              className="w-full rounded-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] py-2 pl-10 pr-3 font-bold text-[color:var(--app-fg)]"
+                              className="w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] py-2 pl-10 pr-3 font-bold text-[color:var(--app-fg)]"
                             />
                           </span>
                         </label>
@@ -220,8 +220,8 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                     <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-xs text-[color:var(--app-muted)]">{candidates.length.toLocaleString("pt-BR")} na faixa · {selected.size.toLocaleString("pt-BR")} selecionados</p>
                       <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => model.updateRule(rule.id, { selectedRegistrations: [] })} className="rounded-lg border border-[color:var(--app-border-strong)] px-3 py-2 text-xs font-black text-[color:var(--app-fg)]">Desmarcar tudo</button>
-                        <button type="button" onClick={() => model.selectRange(rule.id)} className="rounded-lg bg-[color:var(--app-teal)] px-3 py-2 text-xs font-black text-white">Selecionar faixa</button>
+                        <button type="button" onClick={() => model.updateRule(rule.id, { selectedRegistrations: [] })} className="app-radius-lg border border-[color:var(--app-border-strong)] px-3 py-2 text-xs font-black text-[color:var(--app-fg)]">Desmarcar tudo</button>
+                        <button type="button" onClick={() => model.selectRange(rule.id)} className="app-radius-lg bg-[color:var(--app-teal)] px-3 py-2 text-xs font-black text-white">Selecionar faixa</button>
                       </div>
                     </div>
                     {candidates.length > 0 ? (
@@ -229,7 +229,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                         <label className="relative mt-4 block">
                           <span className="sr-only">Filtrar candidatos de {rule.name}</span>
                           <Search className="absolute left-3 top-2.5 size-4 text-[color:var(--app-subtle)]" />
-                          <input type="search" value={model.search} onChange={(event) => model.setSearch(event.target.value)} placeholder="Filtrar por nome, cadastro, cargo ou filial" className="w-full rounded-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] py-2 pl-9 pr-3 text-sm text-[color:var(--app-fg)]" />
+                          <input type="search" value={model.search} onChange={(event) => model.setSearch(event.target.value)} placeholder="Filtrar por nome, cadastro, cargo ou filial" className="w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] py-2 pl-9 pr-3 text-sm text-[color:var(--app-fg)]" />
                         </label>
                         <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] lg:max-h-none lg:overflow-visible">
                           <table className="w-full min-w-[680px] bg-[color:var(--app-card)] text-left text-xs">
@@ -283,7 +283,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
       </section>
 
       <aside className="space-y-4">
-        <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm">
+        <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow">
           <Users className="size-6 text-[color:var(--app-teal)]" />
           <h2 className="mt-3 font-black text-[color:var(--app-fg)]">Distribuição atual</h2>
           <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
@@ -291,7 +291,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
             <div className="rounded-xl bg-[color:var(--app-surface-strong)] p-3"><dt className="text-[color:var(--app-subtle)]">Regras especiais</dt><dd className="mt-1 font-black text-[color:var(--app-fg)]">{model.specialCount.toLocaleString("pt-BR")}</dd></div>
           </dl>
         </section>
-        <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm">
+        <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow">
           <AlertCircle className="size-6 text-[color:var(--app-amber)]" />
           <h2 className="mt-3 font-black text-[color:var(--app-fg)]">Regra de cálculo</h2>
           <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">

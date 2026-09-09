@@ -486,26 +486,6 @@
     var(--app-shadow);
 }
 
-.auth-card .text-neutral-950,
-.auth-card .text-neutral-900,
-.auth-card .text-neutral-800,
-.auth-card .text-neutral-700 {
-  color: var(--app-fg);
-}
-
-.auth-card .text-neutral-600,
-.auth-card .text-neutral-500 {
-  color: var(--app-muted);
-}
-
-.auth-card .border-neutral-200,
-.auth-card .border-neutral-300 {
-  border-color: color-mix(in srgb, var(--app-fg) 14%, transparent);
-}
-
-.auth-card .hover\:bg-neutral-50:hover {
-  background-color: color-mix(in srgb, var(--app-fg) 7%, var(--app-card));
-}
 
 .progress-track {
   height: 0.65rem;

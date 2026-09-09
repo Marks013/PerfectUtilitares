@@ -67,28 +67,28 @@ export default async function HistoricoPage({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold text-neutral-950">Histórico</h1>
-        <p className="mt-1 text-sm text-neutral-600">
+        <h1 className="text-2xl font-semibold app-text">Histórico</h1>
+        <p className="mt-1 text-sm app-text-muted">
           Histórico global de validações.
         </p>
       </div>
 
-      <form className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm md:grid-cols-[1fr_180px_auto]">
-        <label className="block text-sm font-medium text-neutral-800">
+      <form className="grid gap-3 app-radius-lg border app-border app-bg-card p-4 app-shadow md:grid-cols-[1fr_180px_auto]">
+        <label className="block text-sm font-medium app-text">
           Busca
           <input
             name="q"
             defaultValue={busca}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             placeholder="Horário, código ou mensagem"
           />
         </label>
-        <label className="block text-sm font-medium text-neutral-800">
+        <label className="block text-sm font-medium app-text">
           Status
           <select
             name="status"
             defaultValue={status}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
           >
             <option value="todos">Todos</option>
             <option value="validas">Válidas</option>
@@ -97,13 +97,13 @@ export default async function HistoricoPage({
         </label>
         <button
           type="submit"
-          className="self-end rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+          className="self-end app-radius-md app-action-fill px-4 py-2 text-sm font-medium text-white app-hover-action"
         >
           Filtrar
         </button>
       </form>
 
-      <div className="text-sm text-neutral-600">
+      <div className="text-sm app-text-muted">
         Exibindo {historico.length} de {totalFiltrado} registros filtrados.
       </div>
 

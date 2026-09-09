@@ -24,6 +24,9 @@ html[data-theme="dark"] {
   --app-action-green: #84cc16;
   --app-action-green-hover: #65a30d;
   --app-danger: #fb7185;
+  --app-danger-text: #fda4af;
+  --app-success-text: #bef264;
+  --app-warning-text: #fde68a;
   --app-danger-hover: #f43f5e;
   --app-danger-soft: #3c1f25;
   --app-danger-border: #9f4050;
@@ -163,6 +166,9 @@ html[data-theme="light"] {
   --app-action-green: #4d7c0f;
   --app-action-green-hover: #3f6212;
   --app-danger: #be123c;
+  --app-danger-text: var(--app-danger);
+  --app-success-text: var(--app-action-green);
+  --app-warning-text: #92400e;
   --app-danger-hover: #9f1239;
   --app-danger-soft: #ffe4e6;
   --app-danger-border: #fecdd3;
@@ -203,11 +209,11 @@ html[data-theme="light"] {
   background: var(--app-card);
   box-shadow: var(--app-shadow);
 }
-@media (min-width: 1024px) {
-  .app-navigation { margin-left: 0; }
-  .app-navigation .app-menu-toggle { display: none; }
-  .app-navigation-panel,
-  .app-navigation[data-open="true"] .app-navigation-panel {
+@media (min-width: 1280px) {
+  .app-navigation:not([data-compact="true"]) { margin-left: 0; }
+  .app-navigation:not([data-compact="true"]) .app-menu-toggle { display: none; }
+  .app-navigation:not([data-compact="true"]) .app-navigation-panel,
+  .app-navigation:not([data-compact="true"])[data-open="true"] .app-navigation-panel {
     display: block; position: static; max-height: none; overflow: visible;
     padding: 0; border: 0; background: transparent; box-shadow: none;
   }
@@ -334,39 +340,6 @@ table {
   overflow-x: hidden;
 }
 
-.app-frame .bg-white,
-.app-frame .bg-neutral-50,
-.app-frame .bg-neutral-100 {
-  background-color: color-mix(in srgb, var(--app-card) 90%, transparent);
-}
-
-.app-frame .text-neutral-950,
-.app-frame .text-neutral-900,
-.app-frame .text-neutral-800,
-.app-frame .text-neutral-700 {
-  color: var(--app-fg);
-}
-
-.app-frame .text-neutral-600,
-.app-frame .text-neutral-500 {
-  color: var(--app-muted);
-}
-
-.app-frame .border-neutral-200,
-.app-frame .border-neutral-300 {
-  border-color: color-mix(in srgb, var(--app-fg) 14%, transparent);
-}
-
-.app-frame .shadow-sm {
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
-    0 18px 44px rgb(0 0 0 / 0.18);
-}
-
-.app-frame .hover\:bg-neutral-50:hover,
-.app-frame .hover\:bg-neutral-100:hover {
-  background-color: color-mix(in srgb, var(--app-fg) 7%, var(--app-card));
-}
 
 .app-ambient {
   position: fixed;

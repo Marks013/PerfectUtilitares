@@ -105,8 +105,8 @@ export function ResultMetric({
     <div
       className={
         emphasis
-          ? "rounded-lg border border-[color:var(--app-success-border)] bg-[color:var(--app-success-soft)] p-3"
-          : "rounded-lg border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3"
+          ? "app-radius-lg border border-[color:var(--app-success-border)] bg-[color:var(--app-success-soft)] p-3"
+          : "app-radius-lg border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-3"
       }
     >
       <dt className="text-xs font-bold tracking-wide text-[color:var(--app-muted)] uppercase">

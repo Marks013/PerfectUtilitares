@@ -1,0 +1,97 @@
+/* Explicit theme classes. Tailwind color and sizing utilities keep their own meaning. */
+.app-radius-md {
+  border-radius: var(--app-radius-md);
+}
+
+.app-radius-lg {
+  border-radius: var(--app-radius-lg);
+}
+
+.app-bg-card {
+  background-color: var(--app-card);
+}
+
+.app-bg-surface {
+  background-color: var(--app-surface);
+}
+
+.app-bg-surface-strong {
+  background-color: var(--app-surface-strong);
+}
+
+.app-border {
+  border-color: var(--app-border);
+}
+
+.app-text {
+  color: var(--app-fg);
+}
+
+.app-text-muted {
+  color: var(--app-muted);
+}
+
+.app-text-subtle {
+  color: var(--app-subtle);
+}
+
+.app-hover-surface:hover {
+  background-color: var(--app-surface-strong);
+}
+
+.app-action-fill {
+  background-color: var(--app-action-blue);
+  color: var(--app-action-text);
+}
+
+.app-hover-action:hover {
+  background-color: var(--app-action-blue-hover);
+}
+
+.app-bg-danger {
+  background-color: var(--app-danger);
+}
+
+.app-bg-success-soft {
+  background-color: var(--app-success-soft);
+}
+
+.app-bg-warning-soft {
+  background-color: var(--app-warning-soft);
+}
+
+.app-bg-danger-soft {
+  background-color: var(--app-danger-soft);
+}
+
+.app-border-danger {
+  border-color: var(--app-danger-border);
+}
+
+.app-border-success {
+  border-color: var(--app-success-border);
+}
+
+.app-text-danger {
+  color: var(--app-danger-text);
+}
+
+.app-text-success {
+  color: var(--app-success-text);
+}
+
+.app-text-warning {
+  color: var(--app-warning-text);
+}
+
+.app-focus-border:focus {
+  border-color: var(--app-action-blue);
+}
+
+.app-disabled-surface:disabled {
+  background-color: var(--app-surface-strong);
+}
+
+.app-shadow {
+  box-shadow: var(--app-shadow);
+}

@@ -78,58 +78,58 @@ export function AcceptInvitationForm({ token }: { token: string }) {
   return (
     <form
       onSubmit={submit}
-      className="auth-card w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
+      className="auth-card w-full max-w-sm app-radius-lg border app-border app-bg-card p-6 app-shadow"
     >
       <div className="flex items-center gap-2">
-        <KeyRound className="size-5 text-neutral-500" aria-hidden="true" />
-        <h1 className="text-xl font-semibold text-neutral-950">Definir senha</h1>
+        <KeyRound className="size-5 app-text-muted" aria-hidden="true" />
+        <h1 className="text-xl font-semibold app-text">Definir senha</h1>
       </div>
-      <p className="mt-1 text-sm text-neutral-600">
+      <p className="mt-1 text-sm app-text-muted">
         Crie ou redefina sua senha para acessar o sistema.
       </p>
 
-      <label className="mt-5 block text-sm font-medium text-neutral-800">
+      <label className="mt-5 block text-sm font-medium app-text">
         Senha
         <input
           type="password"
           autoComplete="new-password"
           maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
           {...form.register("password")}
-          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+          className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none focus:border-neutral-900"
           placeholder="Mínimo de 8 caracteres"
         />
       </label>
       {form.formState.errors.password ? (
-        <p className="mt-1 text-xs text-red-700">
+        <p className="mt-1 text-xs app-text-danger">
           {form.formState.errors.password.message}
         </p>
       ) : null}
 
-      <label className="mt-4 block text-sm font-medium text-neutral-800">
+      <label className="mt-4 block text-sm font-medium app-text">
         Confirmar senha
         <input
           type="password"
           autoComplete="new-password"
           maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
           {...form.register("confirmPassword")}
-          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+          className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none focus:border-neutral-900"
           placeholder="Repita a senha"
         />
       </label>
       {form.formState.errors.confirmPassword ? (
-        <p className="mt-1 text-xs text-red-700">
+        <p className="mt-1 text-xs app-text-danger">
           {form.formState.errors.confirmPassword.message}
         </p>
       ) : null}
 
       {mutation.isError ? (
-        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft px-3 py-2 text-sm app-text-danger">
           {mutation.error.message}
         </p>
       ) : null}
 
       {mutation.isSuccess ? (
-        <p className="mt-4 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+        <p className="mt-4 flex items-center gap-2 app-radius-md border app-border-success app-bg-success-soft px-3 py-2 text-sm app-text-success">
           <CheckCircle2 className="size-4" aria-hidden="true" />
           Senha definida.
         </p>
@@ -138,14 +138,14 @@ export function AcceptInvitationForm({ token }: { token: string }) {
       <button
         type="submit"
         disabled={mutation.isPending}
-        className="mt-5 w-full rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+        className="mt-5 w-full app-radius-md app-action-fill px-3 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
       >
         {mutation.isPending ? "Salvando..." : "Salvar senha"}
       </button>
 
       <Link
         href="/login"
-        className="mt-3 inline-flex w-full justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+        className="mt-3 inline-flex w-full justify-center app-radius-md border app-border px-3 py-2 text-sm font-medium app-text-muted app-hover-surface"
       >
         Voltar ao login
       </Link>

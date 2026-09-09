@@ -233,43 +233,43 @@ export function UsersManager({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+      <section className="app-radius-lg border app-border app-bg-card p-5 app-shadow">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-neutral-950">
+            <h2 className="text-base font-semibold app-text">
               Convidar usuário
             </h2>
-            <p className="mt-1 max-w-2xl text-sm text-neutral-600">
+            <p className="mt-1 max-w-2xl text-sm app-text-muted">
               O administrador define perfil e módulos. A senha é criada pelo
               próprio usuário no link de convite. Para recuperar acesso de uma
               conta já cadastrada, envie um novo convite para o mesmo e-mail.
             </p>
           </div>
-          <MailPlus className="size-5 text-neutral-500" aria-hidden="true" />
+          <MailPlus className="size-5 app-text-muted" aria-hidden="true" />
         </div>
 
         <form onSubmit={submitInvitation} className="mt-5 grid gap-3 lg:grid-cols-6">
-          <label className="block text-sm font-medium text-neutral-800 lg:col-span-2">
+          <label className="block text-sm font-medium app-text lg:col-span-2">
             Nome
             <input
               {...invitationForm.register("name")}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+              className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             />
           </label>
-          <label className="block text-sm font-medium text-neutral-800 lg:col-span-2">
+          <label className="block text-sm font-medium app-text lg:col-span-2">
             E-mail
             <input
               type="email"
               {...invitationForm.register("email")}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+              className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             />
           </label>
-          <label className="block text-sm font-medium text-neutral-800">
+          <label className="block text-sm font-medium app-text">
             Empresa
             <select
               {...invitationForm.register("tenantId")}
               disabled={!tenantOptions.length}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+              className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
             >
               {tenantOptions.map((tenant) => (
                 <option key={tenant.value} value={tenant.value}>
@@ -278,11 +278,11 @@ export function UsersManager({
               ))}
             </select>
           </label>
-          <label className="block text-sm font-medium text-neutral-800">
+          <label className="block text-sm font-medium app-text">
             Perfil
             <select
               {...invitationForm.register("role")}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+              className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
             >
               <option value="OPERATOR">Operador</option>
               <option value="ADMIN">Administrador</option>
@@ -291,14 +291,14 @@ export function UsersManager({
           <button
             type="submit"
             disabled={inviteMutation.isPending || !tenantOptions.length}
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 app-radius-md app-action-fill px-4 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
           >
             <MailPlus className="size-4" aria-hidden="true" />
             {inviteMutation.isPending ? "Gerando..." : "Gerar convite"}
           </button>
         </form>
         {getFormErrorMessages(invitationForm.formState.errors).length ? (
-          <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mt-3 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
             <p className="font-medium">Revise os dados do convite:</p>
             <ul className="mt-1 list-disc space-y-1 pl-5">
               {getFormErrorMessages(invitationForm.formState.errors).map(
@@ -311,7 +311,7 @@ export function UsersManager({
         ) : null}
 
         {inviteSent ? (
-          <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+          <div className="mt-4 app-radius-md border app-border-success app-bg-success-soft p-3 text-sm text-emerald-800">
             <div className="flex items-start gap-2">
               <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <div className="min-w-0 flex-1">
@@ -320,19 +320,19 @@ export function UsersManager({
                 </p>
                 {inviteSent.inviteUrl ? (
                   <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                    <code className="min-w-0 select-all truncate rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs text-neutral-800 shadow-sm">
+                    <code className="min-w-0 select-all truncate app-radius-md border app-border-success app-bg-card px-3 py-2 text-xs app-text app-shadow">
                       {inviteSent.inviteUrl}
                     </code>
                     <button
                       type="button"
                       onClick={copyInviteLink}
-                      className="inline-flex items-center justify-center gap-1 rounded-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800"
+                      className="inline-flex items-center justify-center gap-1 app-radius-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800"
                     >
                       <Copy className="size-3.5" aria-hidden="true" />
                       {copiedInvite ? "Copiado" : "Copiar link"}
                     </button>
                     {copyInviteError ? (
-                      <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:col-span-2">
+                      <p className="app-radius-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:col-span-2">
                         {copyInviteError}
                       </p>
                     ) : null}
@@ -343,28 +343,28 @@ export function UsersManager({
           </div>
         ) : null}
         {inviteMutation.isError ? (
-          <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <p className="mt-3 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
             {inviteMutation.error.message}
           </p>
         ) : null}
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3">
+        <section className="overflow-hidden app-radius-lg border app-border app-bg-card app-shadow">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b app-border px-4 py-3">
             <div>
-              <h2 className="text-base font-semibold text-neutral-950">Usuários</h2>
-              <p className="mt-1 text-sm text-neutral-600">
+              <h2 className="text-base font-semibold app-text">Usuários</h2>
+              <p className="mt-1 text-sm app-text-muted">
                 Edite cadastro, empresa e status. Senha fica com o usuário.
               </p>
             </div>
-            <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-700">
+            <span className="rounded-full app-bg-surface px-3 py-1 text-xs font-medium app-text-muted">
               {users.length} cadastro(s)
             </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="bg-neutral-50 text-neutral-600">
+              <thead className="app-bg-surface app-text-muted">
                 <tr>
                   <th className="px-4 py-3">Usuário</th>
                   <th className="px-4 py-3">Empresa</th>
@@ -375,15 +375,15 @@ export function UsersManager({
               </thead>
               <tbody>
                 {users.map((user) => (
-                  <tr key={user.id} className="border-t border-neutral-100">
+                  <tr key={user.id} className="border-t app-border">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <UserRound className="size-4 text-neutral-500" aria-hidden="true" />
+                        <UserRound className="size-4 app-text-muted" aria-hidden="true" />
                         <div>
-                          <div className="font-medium text-neutral-900">
+                          <div className="font-medium app-text">
                             {user.name}
                           </div>
-                          <div className="text-xs text-neutral-500">{user.email}</div>
+                          <div className="text-xs app-text-muted">{user.email}</div>
                         </div>
                       </div>
                     </td>
@@ -404,7 +404,7 @@ export function UsersManager({
                         <button
                           type="button"
                           onClick={() => editUser(user)}
-                          className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                          className="inline-flex items-center gap-1 app-radius-md border app-border px-3 py-2 text-sm font-medium app-text app-hover-surface"
                         >
                           <Pencil className="size-4" aria-hidden="true" />
                           Editar
@@ -414,7 +414,7 @@ export function UsersManager({
                             <button
                               type="button"
                               disabled={deleteMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+                              className="inline-flex items-center gap-1 app-radius-md border app-border-danger px-3 py-2 text-sm font-medium app-text-danger hover:bg-red-50 disabled:opacity-60"
                             >
                               <Trash2 className="size-4" aria-hidden="true" />
                               Excluir
@@ -429,12 +429,12 @@ export function UsersManager({
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
-                              <AlertDialogCancel className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50">
+                              <AlertDialogCancel className="app-radius-md border app-border px-4 py-2 text-sm font-medium app-text app-hover-surface">
                                 Cancelar
                               </AlertDialogCancel>
                               <AlertDialogAction
                                 onClick={() => deleteMutation.mutate(user)}
-                                className="rounded-md bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-600"
+                                className="app-radius-md app-bg-danger px-4 py-2 text-sm font-medium text-white hover:bg-red-600"
                               >
                                 Excluir
                               </AlertDialogAction>
@@ -449,20 +449,20 @@ export function UsersManager({
             </table>
           </div>
           {deleteMutation.isError ? (
-            <p className="border-t border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <p className="border-t border-red-100 app-bg-danger-soft px-4 py-3 text-sm app-text-danger">
               {deleteMutation.error.message}
             </p>
           ) : null}
         </section>
 
         <aside className="space-y-4">
-          <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+          <section className="app-radius-lg border app-border app-bg-card p-5 app-shadow">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-neutral-950">
+                <h2 className="text-base font-semibold app-text">
                   Editar usuário
                 </h2>
-                <p className="mt-1 text-sm text-neutral-600">
+                <p className="mt-1 text-sm app-text-muted">
                   {editingUser
                     ? "Ajuste os dados e o status da conta."
                     : "Selecione um usuário na tabela."}
@@ -472,7 +472,7 @@ export function UsersManager({
                 <button
                   type="button"
                   onClick={() => setEditingUser(null)}
-                  className="grid size-9 place-items-center rounded-md border border-neutral-300 text-neutral-700 hover:bg-neutral-50"
+                  className="grid size-9 place-items-center app-radius-md border app-border app-text-muted app-hover-surface"
                   title="Fechar edição"
                 >
                   <X className="size-4" aria-hidden="true" />
@@ -482,27 +482,27 @@ export function UsersManager({
 
             {editingUser ? (
               <form onSubmit={submitEdit} className="mt-5 space-y-4">
-                <label className="block text-sm font-medium text-neutral-800">
+                <label className="block text-sm font-medium app-text">
                   Nome
                   <input
                     {...editForm.register("name")}
-                    className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                    className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                   />
                 </label>
-                <label className="block text-sm font-medium text-neutral-800">
+                <label className="block text-sm font-medium app-text">
                   E-mail
                   <input
                     type="email"
                     {...editForm.register("email")}
-                    className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                    className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                   />
                 </label>
-                <label className="block text-sm font-medium text-neutral-800">
+                <label className="block text-sm font-medium app-text">
                   Empresa
                   <select
                     {...editForm.register("tenantId")}
                     disabled={!tenantOptions.length}
-                    className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                    className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
                   >
                     {tenantOptions.map((tenant) => (
                       <option key={tenant.value} value={tenant.value}>
@@ -512,21 +512,21 @@ export function UsersManager({
                   </select>
                 </label>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block text-sm font-medium text-neutral-800">
+                  <label className="block text-sm font-medium app-text">
                     Perfil
                     <select
                       {...editForm.register("role")}
-                      className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                      className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                     >
                       <option value="OPERATOR">Operador</option>
                       <option value="ADMIN">Administrador</option>
                     </select>
                   </label>
-                  <label className="block text-sm font-medium text-neutral-800">
+                  <label className="block text-sm font-medium app-text">
                     Status
                     <select
                       {...editForm.register("status")}
-                      className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                      className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                     >
                       <option value="ACTIVE">Ativo</option>
                       <option value="BLOCKED">Bloqueado temporariamente</option>
@@ -534,15 +534,15 @@ export function UsersManager({
                     </select>
                   </label>
                 </div>
-                <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
+                <p className="app-radius-md border app-border app-bg-surface p-3 text-xs app-text-muted">
                   Para senha ou primeiro acesso, gere um convite para o e-mail do usuário.
                 </p>
-                <p className="text-xs text-neutral-600">
+                <p className="text-xs app-text-muted">
                   Bloquear suspende o acesso temporariamente. Banir impede novos acessos até
                   que um administrador altere o status.
                 </p>
                 {getFormErrorMessages(editForm.formState.errors).length ? (
-                  <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <div className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
                     <p className="font-medium">Revise o cadastro do usuário:</p>
                     <ul className="mt-1 list-disc space-y-1 pl-5">
                       {getFormErrorMessages(editForm.formState.errors).map(
@@ -554,19 +554,19 @@ export function UsersManager({
                   </div>
                 ) : null}
                 {saveMutation.isError ? (
-                  <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <p className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
                     {saveMutation.error.message}
                   </p>
                 ) : null}
                 {saveMutation.isSuccess ? (
-                  <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                  <p className="app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
                     Usuário atualizado.
                   </p>
                 ) : null}
                 <button
                   type="submit"
                   disabled={saveMutation.isPending}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+                  className="inline-flex w-full items-center justify-center gap-2 app-radius-md app-action-fill px-4 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
                 >
                   <Save className="size-4" aria-hidden="true" />
                   {saveMutation.isPending ? "Salvando..." : "Salvar alterações"}
@@ -575,13 +575,13 @@ export function UsersManager({
             ) : null}
           </section>
 
-          <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+          <section className="app-radius-lg border app-border app-bg-card p-5 app-shadow">
             <div className="flex items-center gap-2">
-              <Building2 className="size-4 text-neutral-500" aria-hidden="true" />
-              <h2 className="text-base font-semibold text-neutral-950">Empresas</h2>
+              <Building2 className="size-4 app-text-muted" aria-hidden="true" />
+              <h2 className="text-base font-semibold app-text">Empresas</h2>
             </div>
             <form onSubmit={submitTenant} className="mt-4 space-y-3">
-              <label className="block text-sm font-medium text-neutral-800">
+              <label className="block text-sm font-medium app-text">
                 Nome
                 <input
                   {...tenantForm.register("name", {
@@ -593,18 +593,18 @@ export function UsersManager({
                       }
                     },
                   })}
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                  className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                 />
               </label>
-              <label className="block text-sm font-medium text-neutral-800">
+              <label className="block text-sm font-medium app-text">
                 Apelido curto
                 <input
                   {...tenantForm.register("slug")}
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+                  className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
                 />
               </label>
               {getFormErrorMessages(tenantForm.formState.errors).length ? (
-                <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <div className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
                   <p className="font-medium">Revise os dados da empresa:</p>
                   <ul className="mt-1 list-disc space-y-1 pl-5">
                     {getFormErrorMessages(tenantForm.formState.errors).map(
@@ -616,24 +616,24 @@ export function UsersManager({
                 </div>
               ) : null}
               {tenantMutation.isError ? (
-                <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <p className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
                   {tenantMutation.error.message}
                 </p>
               ) : null}
               <button
                 type="submit"
                 disabled={tenantMutation.isPending}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+                className="inline-flex w-full items-center justify-center gap-2 app-radius-md border app-border px-4 py-2 text-sm font-medium app-text app-hover-surface disabled:opacity-60"
               >
                 <Plus className="size-4" aria-hidden="true" />
                 {tenantMutation.isPending ? "Criando..." : "Criar empresa"}
               </button>
             </form>
-            <div className="mt-4 divide-y divide-neutral-100 rounded-md border border-neutral-200">
+            <div className="mt-4 divide-y divide-neutral-100 app-radius-md border app-border">
               {tenants.map((tenant) => (
                 <div key={tenant.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                  <span className="font-medium text-neutral-900">{tenant.name}</span>
-                  <span className="text-neutral-500">{tenant.slug}</span>
+                  <span className="font-medium app-text">{tenant.name}</span>
+                  <span className="app-text-muted">{tenant.slug}</span>
                 </div>
               ))}
             </div>
@@ -641,14 +641,14 @@ export function UsersManager({
         </aside>
       </div>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+      <section className="app-radius-lg border app-border app-bg-card p-5 app-shadow">
         <div className="flex items-center gap-2">
-          <MailPlus className="size-4 text-neutral-500" aria-hidden="true" />
-          <h2 className="text-base font-semibold text-neutral-950">Convites recentes</h2>
+          <MailPlus className="size-4 app-text-muted" aria-hidden="true" />
+          <h2 className="text-base font-semibold app-text">Convites recentes</h2>
         </div>
-        <div className="mt-4 overflow-hidden rounded-md border border-neutral-200">
+        <div className="mt-4 overflow-hidden app-radius-md border app-border">
           <table className="w-full text-left text-sm">
-            <thead className="bg-neutral-50 text-neutral-600">
+            <thead className="app-bg-surface app-text-muted">
               <tr>
                 <th className="px-3 py-2">E-mail</th>
                 <th className="px-3 py-2">Empresa</th>
@@ -658,10 +658,10 @@ export function UsersManager({
             </thead>
             <tbody>
               {invitations.map((invitation) => (
-                <tr key={invitation.id} className="border-t border-neutral-100">
+                <tr key={invitation.id} className="border-t app-border">
                   <td className="px-3 py-2">
-                    <div className="font-medium text-neutral-900">{invitation.name}</div>
-                    <div className="text-xs text-neutral-500">{invitation.email}</div>
+                    <div className="font-medium app-text">{invitation.name}</div>
+                    <div className="text-xs app-text-muted">{invitation.email}</div>
                   </td>
                   <td className="px-3 py-2">{invitation.tenant.name}</td>
                   <td className="px-3 py-2">{formatDate(invitation.createdAt)}</td>
@@ -672,7 +672,7 @@ export function UsersManager({
               ))}
               {invitations.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-6 text-neutral-500" colSpan={4}>
+                  <td className="px-3 py-6 app-text-muted" colSpan={4}>
                     Nenhum convite enviado ainda.
                   </td>
                 </tr>

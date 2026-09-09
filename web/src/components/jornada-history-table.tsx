@@ -75,7 +75,7 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="text-sm text-neutral-600">
+        <div className="text-sm app-text-muted">
           {items.length} validação(ões) exibida(s)
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -83,7 +83,7 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
             type="button"
             onClick={clearEverything}
             disabled={items.length === 0 || isClearingAll}
-            className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+            className="inline-flex items-center gap-2 app-radius-md border app-border-danger app-bg-danger-soft px-4 py-2 text-sm font-medium app-text-danger hover:bg-red-50 disabled:opacity-60"
           >
             {isClearingAll ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -96,19 +96,19 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
       </div>
 
       {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
           {error}
         </div>
       ) : null}
       {notice ? (
-        <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+        <div className="app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
           {notice}
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+      <div className="overflow-hidden app-radius-lg border app-border app-bg-card app-shadow">
         <table className="w-full text-left text-sm">
-          <thead className="bg-neutral-50 text-neutral-600">
+          <thead className="app-bg-surface app-text-muted">
             <tr>
               <th className="px-4 py-3">Data</th>
               <th className="px-4 py-3">Horários</th>
@@ -119,17 +119,17 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={item.id} className="border-t border-neutral-100">
+              <tr key={item.id} className="border-t app-border">
                 <td className="px-4 py-3">{formatDate(item.createdAt)}</td>
                 <td className="px-4 py-3">{item.horariosNormalizado}</td>
                 <td className="px-4 py-3">
                   <span
-                    className={item.valido ? "text-green-700" : "text-red-700"}
+                    className={item.valido ? "app-text-success" : "app-text-danger"}
                   >
                     {item.mensagem}
                   </span>
                   {!item.valido ? (
-                    <div className="mt-1 text-xs text-neutral-500">
+                    <div className="mt-1 text-xs app-text-muted">
                       Jornada inválida não pode ser exportada.
                     </div>
                   ) : null}
@@ -142,7 +142,7 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
             ))}
             {items.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-neutral-500" colSpan={5}>
+                <td className="px-4 py-6 app-text-muted" colSpan={5}>
                   Nenhuma validação encontrada.
                 </td>
               </tr>

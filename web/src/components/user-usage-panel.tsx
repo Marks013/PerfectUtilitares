@@ -73,19 +73,19 @@ export function UserUsagePanel() {
     usage.data?.users.reduce((total, user) => total + user.total, 0) ?? 0;
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-4 border-b border-neutral-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <section className="app-radius-lg border app-border app-bg-card app-shadow">
+      <div className="flex flex-col gap-4 border-b app-border p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <Activity className="size-5 text-blue-600" aria-hidden="true" />
-            <h2 className="font-semibold text-neutral-950">Uso por usuário</h2>
+            <h2 className="font-semibold app-text">Uso por usuário</h2>
           </div>
-          <p className="mt-1 text-sm text-neutral-600">
+          <p className="mt-1 text-sm app-text-muted">
             Contagem de operações concluídas, sem armazenar o conteúdo dos arquivos.
           </p>
         </div>
 
-        <fieldset className="inline-flex w-fit rounded-md border border-neutral-300 bg-neutral-50 p-1">
+        <fieldset className="inline-flex w-fit app-radius-md border app-border app-bg-surface p-1">
           <legend className="sr-only">Período de uso</legend>
           {periods.map((item) => (
             <button
@@ -95,8 +95,8 @@ export function UserUsagePanel() {
               aria-pressed={period === item.value}
               className={`rounded px-3 py-1.5 text-sm font-medium transition ${
                 period === item.value
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-neutral-600 hover:bg-neutral-200 hover:text-neutral-950"
+                  ? "app-action-fill text-white app-shadow"
+                  : "app-text-muted hover:bg-neutral-200 hover:text-neutral-950"
               }`}
             >
               {item.label}
@@ -105,29 +105,29 @@ export function UserUsagePanel() {
         </fieldset>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-neutral-200 px-4 py-3 text-sm text-neutral-600">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b app-border px-4 py-3 text-sm app-text-muted">
         <span className="inline-flex items-center gap-1.5">
           <CalendarDays className="size-4" aria-hidden="true" />
           {periods.find((item) => item.value === period)?.label}
         </span>
-        <span className="font-medium text-neutral-900">
+        <span className="font-medium app-text">
           {totalOperations.toLocaleString("pt-BR")} operações
         </span>
       </div>
 
       {usage.isPending ? (
-        <div className="flex min-h-36 items-center justify-center gap-2 text-sm text-neutral-600">
+        <div className="flex min-h-36 items-center justify-center gap-2 text-sm app-text-muted">
           <TimerReset className="size-4 animate-spin" aria-hidden="true" />
           Atualizando os números...
         </div>
       ) : usage.isError ? (
-        <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="m-4 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
           {usage.error.message}
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
-            <thead className="bg-neutral-50 text-neutral-600">
+            <thead className="app-bg-surface app-text-muted">
               <tr>
                 <th className="px-4 py-3">Usuário</th>
                 <th className="px-4 py-3">Status</th>
@@ -140,10 +140,10 @@ export function UserUsagePanel() {
             </thead>
             <tbody>
               {usage.data.users.map((user) => (
-                <tr key={user.id} className="border-t border-neutral-100">
+                <tr key={user.id} className="border-t app-border">
                   <td className="px-4 py-3">
-                    <div className="font-medium text-neutral-900">{user.name}</div>
-                    <div className="text-xs text-neutral-500">
+                    <div className="font-medium app-text">{user.name}</div>
+                    <div className="text-xs app-text-muted">
                       {user.email} · {user.tenant?.name ?? "Sem empresa"}
                     </div>
                   </td>
@@ -157,10 +157,10 @@ export function UserUsagePanel() {
                   <td className="px-4 py-3 text-right">
                     {user.modules.PDF.toLocaleString("pt-BR")}
                   </td>
-                  <td className="px-4 py-3 text-right font-semibold text-neutral-950">
+                  <td className="px-4 py-3 text-right font-semibold app-text">
                     {user.total.toLocaleString("pt-BR")}
                   </td>
-                  <td className="px-4 py-3 text-right text-neutral-600">
+                  <td className="px-4 py-3 text-right app-text-muted">
                     <span className="inline-flex items-center justify-end gap-1">
                       {user.modules.PDF > 0 ? (
                         <FileText className="size-3.5" aria-hidden="true" />
@@ -183,4 +183,3 @@ export function UserUsagePanel() {
     </section>
   );
 }
-

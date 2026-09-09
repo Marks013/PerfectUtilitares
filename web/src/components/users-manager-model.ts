@@ -145,9 +145,9 @@ export function userStatusLabel(status: UserStatus) {
 
 export function userStatusClass(status: UserStatus) {
   return {
-    ACTIVE: "border-green-200 bg-green-50 text-green-700",
+    ACTIVE: "app-border-success app-bg-success-soft app-text-success",
     BLOCKED: "border-amber-200 bg-amber-50 text-amber-800",
-    BANNED: "border-red-200 bg-red-50 text-red-700",
+    BANNED: "app-border-danger app-bg-danger-soft app-text-danger",
   }[status];
 }
 

@@ -36,37 +36,37 @@ export function ForgotPasswordForm() {
   return (
     <form
       onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
-      className="auth-card w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
+      className="auth-card w-full max-w-sm app-radius-lg border app-border app-bg-card p-6 app-shadow"
     >
       <div className="flex items-center gap-2">
-        <Mail className="size-5 text-neutral-500" aria-hidden="true" />
-        <h1 className="text-xl font-semibold text-neutral-950">
+        <Mail className="size-5 app-text-muted" aria-hidden="true" />
+        <h1 className="text-xl font-semibold app-text">
           Recuperar senha
         </h1>
       </div>
-      <p className="mt-1 text-sm text-neutral-600">
+      <p className="mt-1 text-sm app-text-muted">
         Enviaremos um link para você definir uma nova senha.
       </p>
 
-      <label className="mt-5 block text-sm font-medium text-neutral-800">
+      <label className="mt-5 block text-sm font-medium app-text">
         E-mail
         <input
           type="email"
           autoComplete="username"
           maxLength={254}
           {...form.register("email")}
-          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950"
+          className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
           placeholder="nome@empresa.com"
         />
       </label>
       {form.formState.errors.email ? (
-        <p className="mt-1 text-xs text-red-700">
+        <p className="mt-1 text-xs app-text-danger">
           {form.formState.errors.email.message}
         </p>
       ) : null}
 
       {mutation.isSuccess ? (
-        <p className="mt-4 flex items-center gap-2 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+        <p className="mt-4 flex items-center gap-2 app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
           <CheckCircle2 className="size-4" aria-hidden="true" />
           Se o e-mail estiver cadastrado e ativo, enviaremos um link para redefinir a senha.
         </p>
@@ -75,13 +75,13 @@ export function ForgotPasswordForm() {
       <button
         type="submit"
         disabled={mutation.isPending}
-        className="mt-5 w-full rounded-md bg-neutral-950 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+        className="mt-5 w-full app-radius-md app-action-fill px-3 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
       >
         {mutation.isPending ? "Enviando..." : "Enviar link"}
       </button>
       <Link
         href="/login"
-        className="mt-3 inline-flex w-full justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+        className="mt-3 inline-flex w-full justify-center app-radius-md border app-border px-3 py-2 text-sm font-medium app-text-muted app-hover-surface"
       >
         Voltar ao login
       </Link>

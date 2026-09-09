@@ -324,7 +324,7 @@ export function UnimedBeneficiarySearch({
                       : "border-[color:var(--app-border)] bg-[color:var(--app-card)] hover:border-[color:var(--app-teal)]"
                   }`}
                 >
-                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[color:var(--app-surface-strong)] text-[color:var(--app-teal)]">
+                  <span className="grid size-9 shrink-0 place-items-center app-radius-lg bg-[color:var(--app-surface-strong)] text-[color:var(--app-teal)]">
                     {isSelected ? (
                       <Check className="size-4" aria-hidden="true" />
                     ) : (
@@ -383,7 +383,7 @@ export function UnimedBeneficiarySearch({
             <button
               type="button"
               onClick={onClear}
-              className="grid size-9 shrink-0 place-items-center rounded-lg border border-[color:var(--app-border)] text-[color:var(--app-muted)] transition hover:border-[color:var(--app-coral)] hover:text-[color:var(--app-coral)]"
+              className="grid size-9 shrink-0 place-items-center app-radius-lg border border-[color:var(--app-border)] text-[color:var(--app-muted)] transition hover:border-[color:var(--app-coral)] hover:text-[color:var(--app-coral)]"
               aria-label="Remover beneficiário selecionado"
             >
               <X className="size-4" aria-hidden="true" />

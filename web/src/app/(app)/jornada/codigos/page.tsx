@@ -26,8 +26,8 @@ export default async function CodigosPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold text-neutral-950">Códigos</h1>
-        <p className="mt-1 text-sm text-neutral-600">
+        <h1 className="text-2xl font-semibold app-text">Códigos</h1>
+        <p className="mt-1 text-sm app-text-muted">
           Banco de códigos de horários.
         </p>
       </div>

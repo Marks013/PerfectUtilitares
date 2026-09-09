@@ -152,7 +152,7 @@ function EmojiPicker({
             <button
               key={`${emoji}-${optionLabel}`}
               type="button"
-              className={`grid min-h-11 place-items-center rounded-lg border text-xl transition duration-150 ${
+              className={`grid min-h-11 place-items-center app-radius-lg border text-xl transition duration-150 ${
                 value === emoji
                   ? "border-[color:var(--app-action-blue)] bg-[color:var(--app-surface)]"
                   : "border-transparent hover:border-[color:var(--app-border)]"
@@ -506,18 +506,18 @@ export function PresenceGiftManager({
       <div className="mt-6 space-y-5">
         {categoryGroups.map((group) => (
           <section key={group.id} aria-labelledby={`admin-gift-category-${group.id}`}>
-            <div className="mb-2 flex items-center gap-2"><span className="grid size-9 place-items-center rounded-lg bg-[color:var(--app-surface)] text-xl" aria-hidden="true">{group.emoji}</span><h3 id={`admin-gift-category-${group.id}`} className="font-bold">{group.name}</h3><span className="text-xs tabular-nums text-[color:var(--app-muted)]">{group.gifts.length}</span></div>
+            <div className="mb-2 flex items-center gap-2"><span className="grid size-9 place-items-center app-radius-lg bg-[color:var(--app-surface)] text-xl" aria-hidden="true">{group.emoji}</span><h3 id={`admin-gift-category-${group.id}`} className="font-bold">{group.name}</h3><span className="text-xs tabular-nums text-[color:var(--app-muted)]">{group.gifts.length}</span></div>
             <div className="space-y-2">
               {group.gifts.map((gift, index) => (
                 <div
                   key={gift.id}
                   className={`rounded-xl border p-3 transition ${
                     giftHasSelections(gift)
-                      ? "border-2 border-[color:var(--app-action-green)] bg-[color:var(--app-card)] shadow-sm"
+                      ? "border-2 border-[color:var(--app-action-green)] bg-[color:var(--app-card)] app-shadow"
                       : "border-[color:var(--app-border)] bg-[color:var(--app-surface)]"
                   }`}
                 >
-                  <div className="flex flex-wrap items-center gap-3"><div className="flex gap-1"><button type="button" className={secondary} aria-label={`Mover ${gift.title} para cima`} disabled={index === 0 || busy === "gift-order"} onClick={() => void moveGift(gift, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${gift.title} para baixo`} disabled={index === group.gifts.length - 1 || busy === "gift-order"} onClick={() => void moveGift(gift, 1)}><ChevronDown className="size-4" /></button></div><span className="grid size-11 place-items-center rounded-lg bg-[color:var(--app-card)] text-2xl" aria-hidden="true">{gift.emoji}</span><div className="min-w-48 flex-1">
+                  <div className="flex flex-wrap items-center gap-3"><div className="flex gap-1"><button type="button" className={secondary} aria-label={`Mover ${gift.title} para cima`} disabled={index === 0 || busy === "gift-order"} onClick={() => void moveGift(gift, -1)}><ChevronUp className="size-4" /></button><button type="button" className={secondary} aria-label={`Mover ${gift.title} para baixo`} disabled={index === group.gifts.length - 1 || busy === "gift-order"} onClick={() => void moveGift(gift, 1)}><ChevronDown className="size-4" /></button></div><span className="grid size-11 place-items-center app-radius-lg bg-[color:var(--app-card)] text-2xl" aria-hidden="true">{gift.emoji}</span><div className="min-w-48 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className={`font-bold ${gift.active ? "" : "line-through opacity-60"}`}>{gift.title}</p>
                       {giftHasSelections(gift) && (

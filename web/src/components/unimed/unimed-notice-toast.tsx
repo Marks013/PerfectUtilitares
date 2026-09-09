@@ -57,7 +57,7 @@ export function UnimedNoticeToast({
       <button
         type="button"
         onClick={onClose}
-        className="grid size-8 shrink-0 place-items-center rounded-lg text-[color:var(--app-muted)] hover:bg-black/10"
+        className="grid size-8 shrink-0 place-items-center app-radius-lg text-[color:var(--app-muted)] hover:bg-black/10"
         aria-label="Fechar aviso"
       >
         <X className="size-4" aria-hidden="true" />

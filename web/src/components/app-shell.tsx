@@ -65,7 +65,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
 
-          <AppNavigation>
+          <AppNavigation compact={navItems.length > 5}>
           <nav aria-label="Navegação principal" className="flex max-w-full flex-wrap items-center gap-2 lg:justify-center">
             <Link href="/dashboard" className="app-nav-link">
               Início

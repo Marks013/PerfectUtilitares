@@ -172,13 +172,13 @@ export function JornadaRulesManager({
 
   return (
     <div className="grid gap-4 xl:grid-cols-[400px_minmax(0,1fr)]">
-      <section className="rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+      <section className="app-radius-lg border app-border app-bg-card p-5 app-shadow">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-neutral-950">
+            <h2 className="text-base font-semibold app-text">
               {editingRule ? "Editar regra" : "Nova regra"}
             </h2>
-            <p className="mt-1 text-sm text-neutral-600">
+            <p className="mt-1 text-sm app-text-muted">
               {canManage
                 ? "Configuração usada pela validação manual."
                 : "Somente administradores alteram regras."}
@@ -188,7 +188,7 @@ export function JornadaRulesManager({
             <button
               type="button"
               onClick={newRule}
-              className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+              className="inline-flex items-center gap-2 app-radius-md border app-border px-3 py-2 text-sm font-medium app-text app-hover-surface"
             >
               <Plus className="size-4" aria-hidden="true" />
               Nova
@@ -197,17 +197,17 @@ export function JornadaRulesManager({
         </div>
 
         <form onSubmit={submit} className="mt-5 space-y-4">
-          <label className="block text-sm font-medium text-neutral-800">
+          <label className="block text-sm font-medium app-text">
             Nome
             <input
               {...form.register("nome")}
               disabled={!canManage}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+              className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
             />
           </label>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-neutral-800">
+            <label className="block text-sm font-medium app-text">
               Duração
               <input
                 type="number"
@@ -215,10 +215,10 @@ export function JornadaRulesManager({
                 max={720}
                 {...form.register("duracaoMinutos", { valueAsNumber: true })}
                 disabled={!canManage}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
               />
             </label>
-            <label className="block text-sm font-medium text-neutral-800">
+            <label className="block text-sm font-medium app-text">
               Horas semanais
               <input
                 type="number"
@@ -226,10 +226,10 @@ export function JornadaRulesManager({
                 max={168}
                 {...form.register("horasSemanais", { valueAsNumber: true })}
                 disabled={!canManage}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
               />
             </label>
-            <label className="block text-sm font-medium text-neutral-800">
+            <label className="block text-sm font-medium app-text">
               Horas mensais
               <input
                 type="number"
@@ -238,15 +238,15 @@ export function JornadaRulesManager({
                 {...form.register("horasMensais", { valueAsNumber: true })}
                 disabled={!canManage}
                 readOnly
-                className="mt-1 w-full rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                className="mt-1 w-full app-radius-md border app-border app-bg-surface px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
               />
             </label>
-            <label className="block text-sm font-medium text-neutral-800">
+            <label className="block text-sm font-medium app-text">
               Status
               <select
                 {...form.register("active")}
                 disabled={!canManage}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
               >
                 <option value="true">Ativa</option>
                 <option value="false">Inativa</option>
@@ -255,7 +255,7 @@ export function JornadaRulesManager({
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-neutral-800">
+            <label className="block text-sm font-medium app-text">
               Intervalo mínimo
               <input
                 type="number"
@@ -263,10 +263,10 @@ export function JornadaRulesManager({
                 max={720}
                 {...form.register("intervaloMin", { valueAsNumber: true })}
                 disabled={!canManage}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
               />
             </label>
-            <label className="block text-sm font-medium text-neutral-800">
+            <label className="block text-sm font-medium app-text">
               Intervalo máximo
               <input
                 type="number"
@@ -274,10 +274,10 @@ export function JornadaRulesManager({
                 max={720}
                 {...form.register("intervaloMax", { valueAsNumber: true })}
                 disabled={!canManage}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
               />
             </label>
-            <label className="block text-sm font-medium text-neutral-800 sm:col-span-2">
+            <label className="block text-sm font-medium app-text sm:col-span-2">
               Limite por período antes/depois do intervalo (minutos)
               <input
                 type="number"
@@ -287,23 +287,23 @@ export function JornadaRulesManager({
                   valueAsNumber: true,
                 })}
                 disabled={!canManage}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-950 disabled:bg-neutral-100"
+                className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border app-disabled-surface"
               />
-              <span className="mt-1 block text-xs font-normal text-neutral-500">
+              <span className="mt-1 block text-xs font-normal app-text-muted">
                 Ex.: 240 = 04:00; 300 = 05:00. Vale para cada bloco trabalhado.
               </span>
             </label>
           </div>
 
           <fieldset disabled={!canManage} className="space-y-2">
-            <legend className="text-sm font-medium text-neutral-800">
+            <legend className="text-sm font-medium app-text">
               Dias válidos
             </legend>
             <div className="grid gap-2 sm:grid-cols-2">
               {diasValidos.map((dia) => (
                 <label
                   key={dia.value}
-                  className="flex items-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm text-neutral-800"
+                  className="flex items-center gap-2 app-radius-md border app-border px-3 py-2 text-sm app-text"
                 >
                   <input
                     type="checkbox"
@@ -317,13 +317,13 @@ export function JornadaRulesManager({
           </fieldset>
 
           {Object.values(form.formState.errors).length ? (
-            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <p className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
               Revise os campos da regra antes de salvar.
             </p>
           ) : null}
 
           {saveMutation.isError ? (
-            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <p className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
               {saveMutation.error.message}
             </p>
           ) : null}
@@ -331,7 +331,7 @@ export function JornadaRulesManager({
           <button
             type="submit"
             disabled={!canManage || saveMutation.isPending}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-950 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-2 app-radius-md app-action-fill px-4 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
           >
             <Save className="size-4" aria-hidden="true" />
             {saveMutation.isPending ? "Salvando..." : "Salvar"}
@@ -339,9 +339,9 @@ export function JornadaRulesManager({
         </form>
       </section>
 
-      <section className="overflow-x-auto rounded-lg border border-neutral-200 bg-white shadow-sm">
+      <section className="overflow-x-auto app-radius-lg border app-border app-bg-card app-shadow">
         <table className="w-full text-left text-sm">
-          <thead className="bg-neutral-50 text-neutral-600">
+          <thead className="app-bg-surface app-text-muted">
             <tr>
               <th className="px-4 py-3">Nome</th>
               <th className="px-4 py-3">Duração</th>
@@ -354,8 +354,8 @@ export function JornadaRulesManager({
           </thead>
           <tbody>
             {rules.map((rule) => (
-              <tr key={rule.id} className="border-t border-neutral-100">
-                <td className="px-4 py-3 font-medium text-neutral-900">
+              <tr key={rule.id} className="border-t app-border">
+                <td className="px-4 py-3 font-medium app-text">
                   {rule.nome}
                 </td>
                 <td className="px-4 py-3">{rule.duracaoMinutos} min</td>
@@ -368,8 +368,8 @@ export function JornadaRulesManager({
                   <span
                     className={
                       rule.active
-                        ? "inline-flex items-center gap-1 text-green-700"
-                        : "inline-flex items-center gap-1 text-neutral-500"
+                        ? "inline-flex items-center gap-1 app-text-success"
+                        : "inline-flex items-center gap-1 app-text-muted"
                     }
                   >
                     {rule.active ? (
@@ -385,7 +385,7 @@ export function JornadaRulesManager({
                     <button
                       type="button"
                       onClick={() => editRule(rule)}
-                      className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                      className="inline-flex items-center gap-1 app-radius-md border app-border px-3 py-2 text-sm font-medium app-text app-hover-surface"
                     >
                       <Pencil className="size-4" aria-hidden="true" />
                       Editar
@@ -394,7 +394,7 @@ export function JornadaRulesManager({
                       type="button"
                       onClick={() => deactivateMutation.mutate(rule)}
                       disabled={!canManage || !rule.active || deactivateMutation.isPending}
-                      className="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 app-radius-md border app-border-danger px-3 py-2 text-sm font-medium app-text-danger hover:bg-red-50 disabled:opacity-50"
                     >
                       <Power className="size-4" aria-hidden="true" />
                       Inativar
@@ -407,7 +407,7 @@ export function JornadaRulesManager({
         </table>
 
         {deactivateMutation.isError ? (
-          <p className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <p className="m-4 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
             {deactivateMutation.error.message}
           </p>
         ) : null}

@@ -67,24 +67,24 @@ export default async function LoginPage({
       </section>
       <form
         action={loginAction}
-        className="login-gateway__form w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
+        className="login-gateway__form w-full max-w-sm app-radius-lg border app-border app-bg-card p-6 app-shadow"
       >
         <div className="flex items-center gap-2">
-          <KeyRound className="size-5 text-neutral-500" aria-hidden="true" />
-          <h2 className="text-xl font-semibold text-neutral-950">Entrar</h2>
+          <KeyRound className="size-5 app-text-muted" aria-hidden="true" />
+          <h2 className="text-xl font-semibold app-text">Entrar</h2>
         </div>
-        <p className="mt-1 text-sm text-neutral-600">
+        <p className="mt-1 text-sm app-text-muted">
           Use seu e-mail e senha para acessar seu histórico.
         </p>
         <input type="hidden" name="callbackUrl" value={callbackUrl} />
 
         {errorMessage ? (
-          <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft px-3 py-2 text-sm app-text-danger">
             {errorMessage}
           </div>
         ) : null}
 
-        <label className="mt-5 block text-sm font-medium text-neutral-800">
+        <label className="mt-5 block text-sm font-medium app-text">
           E-mail
           <input
             name="email"
@@ -92,12 +92,12 @@ export default async function LoginPage({
             autoComplete="username"
             maxLength={254}
             required
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none focus:border-neutral-900"
             placeholder="nome@empresa.com"
           />
         </label>
 
-        <label className="mt-4 block text-sm font-medium text-neutral-800">
+        <label className="mt-4 block text-sm font-medium app-text">
           Senha
           <input
             name="password"
@@ -105,26 +105,26 @@ export default async function LoginPage({
             autoComplete="current-password"
             maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             required
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none focus:border-neutral-900"
             placeholder="Digite sua senha"
           />
         </label>
 
         <button
           type="submit"
-          className="app-primary-button mt-5 w-full rounded-md px-3 py-2 text-sm font-medium"
+          className="app-primary-button mt-5 w-full app-radius-md px-3 py-2 text-sm font-medium"
         >
           Entrar
         </button>
         <Link
           href="/esqueci-senha"
-          className="mt-3 inline-flex w-full justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+          className="mt-3 inline-flex w-full justify-center app-radius-md border app-border px-3 py-2 text-sm font-medium app-text-muted app-hover-surface"
         >
           Esqueci minha senha
         </Link>
         <Link
           href="/dashboard"
-          className="mt-3 inline-flex w-full justify-center rounded-md border border-emerald-300 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+          className="mt-3 inline-flex w-full justify-center app-radius-md border border-emerald-300 px-3 py-2 text-sm font-medium app-text-success hover:bg-emerald-50"
         >
           Continuar sem entrar
         </Link>

@@ -184,7 +184,7 @@ export function FileGroup({
           {files.map((file) => (
             <li
               key={fileKey(file)}
-              className="flex items-center gap-3 rounded-lg border border-[color:var(--app-border)] bg-[color:var(--app-card)] px-3 py-2"
+              className="flex items-center gap-3 app-radius-lg border border-[color:var(--app-border)] bg-[color:var(--app-card)] px-3 py-2"
             >
               <Check className="size-4 shrink-0 text-[color:var(--app-lime)]" />
               <span className="min-w-0 flex-1 truncate text-xs font-bold text-[color:var(--app-fg)]">
@@ -196,7 +196,7 @@ export function FileGroup({
               <button
                 type="button"
                 onClick={() => onRemove(fileKey(file))}
-                className="grid size-8 shrink-0 place-items-center rounded-lg text-[color:var(--app-coral)] transition hover:bg-[color:var(--app-danger-soft)]"
+                className="grid size-8 shrink-0 place-items-center app-radius-lg text-[color:var(--app-coral)] transition hover:bg-[color:var(--app-danger-soft)]"
                 aria-label={`Remover ${file.name}`}
               >
                 <Trash2 className="size-4" aria-hidden="true" />

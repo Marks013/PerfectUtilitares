@@ -19,7 +19,7 @@ export function AlertDialogContent({
       <AlertDialogPrimitive.Overlay className="fixed inset-0 z-40 bg-neutral-950/40" />
       <AlertDialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-neutral-200 bg-white p-5 shadow-lg outline-none",
+          "fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 app-radius-lg border app-border app-bg-card p-5 app-shadow outline-none",
           className,
         )}
         {...props}
@@ -53,7 +53,7 @@ export function AlertDialogTitle({
 }: React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Title>) {
   return (
     <AlertDialogPrimitive.Title
-      className={cn("text-base font-semibold text-neutral-950 text-balance", className)}
+      className={cn("text-base font-semibold app-text text-balance", className)}
       {...props}
     />
   );
@@ -65,7 +65,7 @@ export function AlertDialogDescription({
 }: React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Description>) {
   return (
     <AlertDialogPrimitive.Description
-      className={cn("text-sm text-neutral-600 text-pretty", className)}
+      className={cn("text-sm app-text-muted text-pretty", className)}
       {...props}
     />
   );

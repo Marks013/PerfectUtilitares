@@ -40,7 +40,7 @@ export function ReajusteSalarialWorkspaceView({
 }) {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="overflow-hidden rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] shadow-sm">
+      <header className="overflow-hidden rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] app-shadow">
         <div className="bg-[color:var(--app-canvas)] px-6 py-7 text-white sm:px-8">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -71,7 +71,7 @@ export function ReajusteSalarialWorkspaceView({
         </div>
       </header>
 
-      <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-2 shadow-sm" role="tablist" aria-label="Operação salarial">
+      <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-2 app-shadow" role="tablist" aria-label="Operação salarial">
         <button type="button" role="tab" aria-selected={mode === "advance"} onClick={() => onModeChange("advance")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "advance" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
           <TrendingUp className="size-4" aria-hidden="true" /> Antecipação Salarial
         </button>
@@ -84,7 +84,7 @@ export function ReajusteSalarialWorkspaceView({
         <SalaryRevisionWorkspaceView model={revisionModel} />
       ) : (
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]" role="tabpanel">
-        <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm sm:p-7">
+        <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow sm:p-7">
           <div className="flex items-start gap-3">
             <span className="grid size-10 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-teal)]">
               <FileSpreadsheet className="size-5" aria-hidden="true" />
@@ -128,7 +128,7 @@ export function ReajusteSalarialWorkspaceView({
                       Competência {competencyFromFileName(file.name) ?? "não reconhecida"} · {bytesLabel(file.size)}
                     </p>
                   </div>
-                  <button type="button" disabled={model.busy} onClick={() => model.removeFile(fileKey(file))} className="grid size-9 place-items-center rounded-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]" aria-label={`Remover ${file.name}`}>
+                  <button type="button" disabled={model.busy} onClick={() => model.removeFile(fileKey(file))} className="grid size-9 place-items-center app-radius-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]" aria-label={`Remover ${file.name}`}>
                     <Trash2 className="size-4" aria-hidden="true" />
                   </button>
                 </li>
@@ -192,12 +192,12 @@ export function ReajusteSalarialWorkspaceView({
         </section>
 
         <aside className="space-y-4">
-          <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm">
+          <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow">
             <ShieldCheck className="size-6 text-[color:var(--app-teal)]" aria-hidden="true" />
             <h2 className="mt-3 font-black text-[color:var(--app-fg)]">Processamento protegido</h2>
             <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">Planilhas e PDF são processados em memória. Nenhum dado salarial fica salvo no sistema.</p>
           </section>
-          <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm">
+          <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow">
             <h2 className="font-black text-[color:var(--app-fg)]">Regra da antecipação</h2>
             <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">Cada base mensal é multiplicada pelo percentual restante, arredondada para centavos e somada ao total retroativo do colaborador.</p>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">

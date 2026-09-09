@@ -18,8 +18,8 @@ export default async function ContaPage() {
   return (
     <div className="max-w-4xl space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold text-neutral-950">Conta</h1>
-        <p className="mt-1 text-sm text-neutral-600">
+        <h1 className="text-2xl font-semibold app-text">Conta</h1>
+        <p className="mt-1 text-sm app-text-muted">
           Gerencie seu perfil, senha e acesso à plataforma.
         </p>
       </div>
