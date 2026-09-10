@@ -52,13 +52,11 @@ export type DeleteAccountResult =
   | { ok: true; user: DeletedUser; pdfJobIds: string[] }
   | { ok: false; reason: "USER_NOT_FOUND" | "LAST_ACTIVE_ADMIN" };
 
-async function lockActiveAdminInvariant(
-  transaction: Prisma.TransactionClient,
-) {
+async function lockActiveAdminInvariant(transaction: Prisma.TransactionClient) {
   await transaction.$queryRaw`
     SELECT pg_advisory_xact_lock(
       hashtext('perfectutilitares:active-admin-mutation')
-    )
+    )::text AS "lock"
   `;
 }
 
