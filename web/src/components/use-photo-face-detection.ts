@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Area } from "react-easy-crop";
 import { getPendingFaceCropInitialization } from "@/lib/photos/editor-crop";
 import { createFaceCropArea } from "@/lib/photos/face-crop";
@@ -43,6 +43,19 @@ export function usePhotoFaceDetection({
   } = editor;
   const [isDetectingFace, setIsDetectingFace] = useState(false);
   const [isDetectingBatchFaces, setIsDetectingBatchFaces] = useState(false);
+  const operation = useRef(0);
+  useEffect(
+    () => () => {
+      operation.current += 1;
+    },
+    [],
+  );
+
+  function cancelDetection() {
+    operation.current += 1;
+    setIsDetectingFace(false);
+    setIsDetectingBatchFaces(false);
+  }
   function waitForPaint() {
     return new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -123,6 +136,7 @@ export function usePhotoFaceDetection({
       return;
     }
 
+    const operationId = ++operation.current;
     setIsDetectingFace(true);
     setWorkPreview(selectedPreview ?? null);
     setWorkProgress({
@@ -137,12 +151,14 @@ export function usePhotoFaceDetection({
     const detectionFile = selectedFile;
     const detectionPreviewUrl = previewUrl;
     await waitForPaint();
+    if (operationId !== operation.current) return;
 
     try {
       const area = await createFaceDetectionCrop(
         detectionFile,
         detectionPreviewUrl,
       );
+      if (operationId !== operation.current) return;
       clearResults();
       setEditorStateForKey(
         detectionKey,
@@ -157,6 +173,7 @@ export function usePhotoFaceDetection({
       });
       setFaceStatus("Rosto detectado. O recorte foi ajustado automaticamente.");
     } catch (error) {
+      if (operationId !== operation.current) return;
       setWorkProgress(null);
       setWorkPreview(null);
       setFaceStatus(
@@ -165,8 +182,10 @@ export function usePhotoFaceDetection({
           : "Falha ao detectar rosto automaticamente.",
       );
     } finally {
-      setWorkPreview(null);
-      setIsDetectingFace(false);
+      if (operationId === operation.current) {
+        setWorkPreview(null);
+        setIsDetectingFace(false);
+      }
     }
   }
 
@@ -179,6 +198,7 @@ export function usePhotoFaceDetection({
       return;
     }
 
+    const operationId = ++operation.current;
     clearResults();
     setIsDetectingBatchFaces(true);
     const nextEditorStates: Record<string, EditorState> = { ...editorStates };
@@ -191,6 +211,7 @@ export function usePhotoFaceDetection({
       detail: "Preparando fotos",
     });
     await waitForPaint();
+    if (operationId !== operation.current) return;
 
     let detectedCount = 0;
     const failedNames: string[] = [];
@@ -214,16 +235,19 @@ export function usePhotoFaceDetection({
 
         try {
           const area = await createFaceDetectionCrop(file, previewForFile?.url);
+          if (operationId !== operation.current) return;
           nextEditorStates[key] = {
             ...getEditorState(nextEditorStates, key),
             ...createDetectedEditorState(key, area),
           };
           detectedCount += 1;
         } catch {
+          if (operationId !== operation.current) return;
           failedNames.push(file.name);
         }
       }
 
+      if (operationId !== operation.current) return;
       setEditorStates(nextEditorStates);
       setFaceStatus(
         failedNames.length
@@ -238,8 +262,10 @@ export function usePhotoFaceDetection({
         detail: `${detectedCount}/${files.length} foto${files.length > 1 ? "s" : ""} ajustada${detectedCount !== 1 ? "s" : ""}`,
       });
     } finally {
-      setWorkPreview(null);
-      setIsDetectingBatchFaces(false);
+      if (operationId === operation.current) {
+        setWorkPreview(null);
+        setIsDetectingBatchFaces(false);
+      }
     }
   }
 
@@ -248,7 +274,6 @@ export function usePhotoFaceDetection({
     detectFacesInBatch,
     isDetectingFace,
     isDetectingBatchFaces,
-    setIsDetectingFace,
-    setIsDetectingBatchFaces,
+    cancelDetection,
   };
 }

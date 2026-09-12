@@ -14,7 +14,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import Cropper from "react-easy-crop";
 import { PHOTO_DEFAULTS } from "@/lib/photos/schema";
 import {
@@ -79,8 +79,7 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
     detectFacesInBatch,
     isDetectingFace,
     isDetectingBatchFaces,
-    setIsDetectingFace,
-    setIsDetectingBatchFaces,
+    cancelDetection,
   } = usePhotoFaceDetection({
     editor,
     clearResults,
@@ -90,9 +89,19 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
 
   function resetWork() {
     processing.clearResults();
+    cancelDetection();
+    setFaceStatus(null);
     setWorkProgress(null);
     setWorkPreview(null);
   }
+
+  const onSettingsChange = useEffectEvent(resetWork);
+  useEffect(() => {
+    const subscription = form.watch((_values, { name }) => {
+      if (name) onSettingsChange();
+    });
+    return () => subscription.unsubscribe();
+  }, [form]);
 
   const visibleEditor = workPreview
     ? getEditorState(editorStates, workPreview.key)
@@ -119,10 +128,8 @@ export function usePhoto3x4WorkspaceController({ userId }: { userId: string }) {
     : 0;
 
   function resetAdjustments() {
-    clearResults();
+    resetWork();
     setFaceStatus(null);
-    setIsDetectingFace(false);
-    setIsDetectingBatchFaces(false);
     setWorkProgress(null);
     setCropGeometry({ key: null, mediaSize: null, cropSize: null });
 

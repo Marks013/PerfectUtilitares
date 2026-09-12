@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Area } from "react-easy-crop";
 import type { PhotoSettings } from "@/lib/photos/schema";
 import {
@@ -36,7 +36,24 @@ export function usePhotoProcessing({
   );
   const [singleResult, setSingleResult] = useState<ResultFile | null>(null);
   const [zipResult, setZipResult] = useState<ResultFile | null>(null);
+  const operation = useRef(0);
+  const request = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      operation.current += 1;
+      request.current?.abort();
+    },
+    [],
+  );
+
   function clearResults() {
+    operation.current += 1;
+    request.current?.abort();
+    request.current = null;
+    singlePhotoMutation.reset();
+    zipMutation.reset();
+    setProcessingFileKey(null);
     setSingleResult(null);
     setZipResult(null);
   }
@@ -45,6 +62,7 @@ export function usePhotoProcessing({
     file: File,
     values: PhotoSettings,
     cropArea?: Area | null,
+    signal?: AbortSignal,
   ) {
     const formData = new FormData();
     formData.set("file", file);
@@ -57,6 +75,7 @@ export function usePhotoProcessing({
     const response = await fetch("/api/fotos/processar", {
       method: "POST",
       body: formData,
+      signal,
     });
 
     if (!response.ok) {
@@ -71,7 +90,7 @@ export function usePhotoProcessing({
     };
   }
 
-  async function processBatchZip(values: PhotoSettings) {
+  async function processBatchZip(values: PhotoSettings, signal: AbortSignal) {
     const formData = new FormData();
     files.forEach((file) => {
       formData.append("files", file);
@@ -82,6 +101,7 @@ export function usePhotoProcessing({
     const response = await fetch("/api/fotos/lote", {
       method: "POST",
       body: formData,
+      signal,
     });
 
     if (!response.ok) {
@@ -100,10 +120,16 @@ export function usePhotoProcessing({
     mutationFn: async ({
       file,
       values,
+      operationId,
+      signal,
     }: {
       file: File;
       values: PhotoSettings;
+      operationId: number;
+      signal: AbortSignal;
     }) => {
+      if (operationId !== operation.current)
+        throw new Error("Operação cancelada.");
       setWorkPreview(getPreviewForFile(file));
       setWorkProgress({
         kind: "process",
@@ -121,9 +147,11 @@ export function usePhotoProcessing({
           brightness: state.brightness,
         },
         state.croppedArea,
+        signal,
       );
     },
-    onSuccess(result) {
+    onSuccess(result, { operationId }) {
+      if (operationId !== operation.current) return;
       setWorkPreview(null);
       setWorkProgress({
         kind: "process",
@@ -135,17 +163,30 @@ export function usePhotoProcessing({
       setSingleResult(result);
       downloadResult(result);
     },
-    onError() {
+    onError(_error, { operationId }) {
+      if (operationId !== operation.current) return;
       setWorkProgress(null);
       setWorkPreview(null);
     },
-    onSettled() {
+    onSettled(_data, _error, { operationId }) {
+      if (operationId !== operation.current) return;
+      request.current = null;
       setProcessingFileKey(null);
     },
   });
 
   const zipMutation = useMutation({
-    mutationFn: async (values: PhotoSettings) => {
+    mutationFn: async ({
+      values,
+      operationId,
+      signal,
+    }: {
+      values: PhotoSettings;
+      operationId: number;
+      signal: AbortSignal;
+    }) => {
+      if (operationId !== operation.current)
+        throw new Error("Operação cancelada.");
       if (!hasFiles) {
         throw new Error("Selecione ao menos uma foto JPG, PNG ou WEBP.");
       }
@@ -158,7 +199,7 @@ export function usePhotoProcessing({
         label: "Preparando ZIP",
         detail: `${files.length} foto${files.length > 1 ? "s" : ""}`,
       });
-      const zip = await processBatchZip(values);
+      const zip = await processBatchZip(values, signal);
 
       return {
         blob: zip.blob,
@@ -166,7 +207,8 @@ export function usePhotoProcessing({
         label: zip.label,
       };
     },
-    onSuccess(result) {
+    onSuccess(result, { operationId }) {
+      if (operationId !== operation.current) return;
       setWorkPreview(null);
       setZipResult(result);
       setWorkProgress({
@@ -178,26 +220,49 @@ export function usePhotoProcessing({
       });
       downloadResult(result);
     },
-    onError() {
+    onError(_error, { operationId }) {
+      if (operationId !== operation.current) return;
       setWorkProgress(null);
       setWorkPreview(null);
     },
+    onSettled(_data, _error, { operationId }) {
+      if (operationId === operation.current) request.current = null;
+    },
   });
 
-  const processZip = form.handleSubmit((values) => {
-    clearResults();
-    zipMutation.mutate(values);
-  });
+  function processZip(
+    event?: Parameters<ReturnType<typeof form.handleSubmit>>[0],
+  ) {
+    const submittedOperation = operation.current;
+    return form.handleSubmit((values) => {
+      if (submittedOperation !== operation.current) return;
+      clearResults();
+      request.current = new AbortController();
+      zipMutation.mutate({
+        values,
+        operationId: operation.current,
+        signal: request.current.signal,
+      });
+    })(event);
+  }
 
   function processPhotoFile(file: File | null) {
     if (!file || singlePhotoMutation.isPending) {
       return;
     }
 
+    const submittedOperation = operation.current;
     void form.handleSubmit((values) => {
+      if (submittedOperation !== operation.current) return;
       clearResults();
+      request.current = new AbortController();
       setProcessingFileKey(getFileKey(file));
-      singlePhotoMutation.mutate({ file, values });
+      singlePhotoMutation.mutate({
+        file,
+        values,
+        operationId: operation.current,
+        signal: request.current.signal,
+      });
     })();
   }
 

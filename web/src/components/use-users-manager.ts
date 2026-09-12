@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import type {
   InvitationFormValues,
@@ -42,7 +42,15 @@ export function useUsersManager({
   const [users, setUsers] = useState(() => sortUsers(initialUsers));
   const [tenants, setTenants] = useState(() => sortTenants(initialTenants));
   const [invitations, setInvitations] = useState(initialInvitations);
-  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [editingUser, setEditingUserState] = useState<ManagedUser | null>(null);
+  const editingContext = useRef(0);
+  const activeUser = useRef<ManagedUser | null>(null);
+  function setEditingUser(user: ManagedUser | null) {
+    editingContext.current += 1;
+    activeUser.current = user;
+    setEditingUserState(user);
+    saveMutation.reset();
+  }
   const [inviteSent, setInviteSent] = useState<Invitation | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [copyInviteError, setCopyInviteError] = useState<string | null>(null);
@@ -73,14 +81,27 @@ export function useUsersManager({
   });
 
   const saveMutation = useMutation({
-    mutationFn: (values: UserEditValues) =>
-      saveManagedUser(editingUser, values),
-    onSuccess(user) {
+    mutationFn: ({
+      user,
+      values,
+    }: {
+      user: ManagedUser;
+      values: UserEditValues;
+      context: number;
+      submittedFields: string;
+    }) => saveManagedUser(user, values),
+    onSuccess(user, { context, submittedFields }) {
       setUsers((current) =>
         sortUsers(current.map((item) => (item.id === user.id ? user : item))),
       );
-      setEditingUser(user);
-      editForm.reset(userEditDefaults(user, firstTenantId));
+      if (
+        context === editingContext.current &&
+        JSON.stringify(editForm.getValues()) === submittedFields
+      ) {
+        activeUser.current = user;
+        setEditingUserState(user);
+        editForm.reset(userEditDefaults(user, firstTenantId));
+      }
       void queryClient.invalidateQueries({ queryKey: ["admin", "usage"] });
     },
   });
@@ -95,7 +116,7 @@ export function useUsersManager({
 
       setUsers((current) => current.filter((item) => item.id !== user.id));
       void queryClient.invalidateQueries({ queryKey: ["admin", "usage"] });
-      if (editingUser?.id === user.id) {
+      if (activeUser.current?.id === user.id) {
         setEditingUser(null);
       }
     },
@@ -143,9 +164,17 @@ export function useUsersManager({
     }
   }
 
-  const submitEdit = editForm.handleSubmit((values) =>
-    saveMutation.mutate(values),
-  );
+  function submitEdit(
+    event?: Parameters<ReturnType<typeof editForm.handleSubmit>>[0],
+  ) {
+    const user = activeUser.current;
+    const context = editingContext.current;
+    const submittedFields = JSON.stringify(editForm.getValues());
+    return editForm.handleSubmit((values) => {
+      if (!user || context !== editingContext.current) return;
+      saveMutation.mutate({ user, values, context, submittedFields });
+    })(event);
+  }
   const submitInvitation = invitationForm.handleSubmit((values) => {
     setInviteSent(null);
     inviteMutation.mutate(values);
