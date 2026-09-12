@@ -3,6 +3,7 @@ import {
   exerciseProductionPhoto,
 } from "./architecture-browser-flows.mjs";
 import assert from "node:assert/strict";
+import { exerciseRaceFlows } from "./race-browser-flows.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -259,7 +260,11 @@ try {
     }
   }
   if (authenticated) {
-    await exerciseArchitectureFlows(authenticated, database, baseURL);
+    if (process.argv.includes("--race-only")) {
+      await exerciseRaceFlows(authenticated, database, baseURL);
+    } else {
+      await exerciseArchitectureFlows(authenticated, database, baseURL);
+    }
     console.log("Photo and user management behavior validated");
   } else {
     await exerciseProductionPhoto(anonymous, baseURL);
@@ -271,6 +276,19 @@ try {
   assert.equal(await menu.getAttribute("aria-expanded"), "true");
   await anonymous.keyboard.press("Escape");
   assert.equal(await menu.getAttribute("aria-expanded"), "false");
+  await menu.click();
+  const panelId = await menu.getAttribute("aria-controls");
+  const firstLink = anonymous
+    .locator(`[id=${JSON.stringify(panelId)}] a`)
+    .first();
+  await firstLink.focus();
+  await firstLink.press("Enter");
+  await anonymous.waitForFunction(
+    () =>
+      document
+        .querySelector(".app-menu-toggle")
+        ?.getAttribute("aria-expanded") === "false",
+  );
   await anonymous.goto(baseURL + "/login", { waitUntil: "networkidle" });
   await anonymous.evaluate(() => {
     document.documentElement.dataset.theme = "light";
