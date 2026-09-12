@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     select: {
       id: true,
       passwordHash: true,
-      updatedAt: true,
+      securityVersion: true,
       tenantId: true,
       email: true,
       name: true,

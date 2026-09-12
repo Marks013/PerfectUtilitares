@@ -94,7 +94,7 @@ export async function POST(request: Request) {
         where: { email: invitation.email },
       });
       const isRecovery = invitation.purpose === "PASSWORD_RESET";
-      if (isRecovery && (!existingUser || existingUser.status !== "ACTIVE" ||
+      if (isRecovery && (existingUser?.status !== "ACTIVE" ||
         existingUser.id !== invitation.resetUserId ||
         getSecurityStamp(existingUser) !== invitation.resetStamp)) {
         throw new Error("RECOVERY_INVALIDATED");

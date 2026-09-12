@@ -7,10 +7,11 @@ type SecurityState = {
   role: string;
   status: string;
   tenantId: string | null;
-  updatedAt: Date;
+  securityVersion: number;
 };
 
-// Never expose the password hash in a token. Account mutations invalidate this stamp.
+// Never expose the password hash in a token. The database advances securityVersion
+// for security changes, including changes later reverted; cosmetic edits preserve it.
 export function getSecurityStamp(user: SecurityState) {
   const secret = process.env.AUTH_SECRET;
   if (!secret && process.env.NODE_ENV === "production") {
@@ -19,7 +20,7 @@ export function getSecurityStamp(user: SecurityState) {
   return createHmac("sha256", secret ?? "local-security-stamp")
     .update(JSON.stringify([
       user.id, user.passwordHash, user.email, user.role, user.status,
-      user.tenantId, user.updatedAt.toISOString(),
+      user.tenantId, user.securityVersion,
     ]))
     .digest("hex");
 }

@@ -165,6 +165,7 @@ model User {
   email                  String              @unique
   name                   String
   passwordHash           String
+  securityVersion        Int                 @default(0)
   role                   UserRole            @default(OPERATOR)
   status                 UserStatus          @default(ACTIVE)
   validations            JornadaValidation[]
