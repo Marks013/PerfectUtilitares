@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   calls: [] as string[],
   overrides: new Map<string, unknown>(),
+  queryRaw: vi.fn(async (_query: TemplateStringsArray, ..._values: unknown[]) => []),
 }));
 
 const session = {
@@ -193,6 +194,12 @@ vi.mock("@/lib/prisma", () => {
     {},
     {
       get: (_target, property) => {
+        if (property === "$queryRaw") {
+          return (...args: Parameters<typeof mocks.queryRaw>) => {
+            mocks.calls.push("$queryRaw");
+            return mocks.queryRaw(...args);
+          };
+        }
         if (property === "$transaction") {
           return async (work: unknown) => {
             if (typeof work === "function") {
@@ -339,23 +346,42 @@ const cases: FunctionalRouteCase[] = [
     route: "src/app/api/invitations/accept/route.ts",
     expectedStatus: 201,
     persistence: "user.create",
-    run: () => {
+    run: async () => {
       mocks.overrides.set("userInvitation.findUnique", {
         id: "invite-id",
         tenantId: "test-tenant-id",
         email: "invited@example.test",
         name: "Usuario Convidado",
         role: "OPERATOR",
+        purpose: "INVITATION",
         acceptedAt: null,
         expiresAt: new Date("2099-01-01T00:00:00.000Z"),
       });
       mocks.overrides.set("user.findUnique", null);
-      return acceptInvitation(
+      mocks.overrides.set("userInvitation.updateMany", { count: 1 });
+      const response = await acceptInvitation(
         jsonRequest("/api/invitations/accept", {
           token: "a".repeat(48),
           password: "StrongPassword!123",
         }),
       );
+      expect(mocks.queryRaw).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          'SELECT "id" FROM "User" WHERE "email" = ',
+          " FOR UPDATE",
+        ]),
+        "invited@example.test",
+      );
+      expect(mocks.calls).toEqual([
+        "userInvitation.findUnique",
+        "$queryRaw",
+        "user.findUnique",
+        "userInvitation.updateMany",
+        "user.create",
+        "userInvitation.updateMany",
+        "auditLog.create",
+      ]);
+      return response;
     },
   },
   {
@@ -606,6 +632,7 @@ describe("functional success paths for account, admin and Jornada routes", () =>
   beforeEach(() => {
     mocks.calls.length = 0;
     mocks.overrides.clear();
+    mocks.queryRaw.mockClear();
     delete process.env.JORNADA_EXCEL_API_KEY;
     delete process.env.RESEND_API_KEY;
     delete process.env.RESEND_FROM_EMAIL;

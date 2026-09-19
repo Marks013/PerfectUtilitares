@@ -54,6 +54,8 @@ export type ApiErrorBody = {
 
 export type GeneratedDocument = {
   beneficiaryId: string;
+  blob: Blob;
+  fileName: string;
   previewUrl: string;
   reasonCode: number;
 };

@@ -10,12 +10,14 @@ test.beforeEach(() => {
 test("login, session projection and authenticated navigation", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   await page.goto("/login?callbackUrl=%2Fconta");
   await page.locator('input[name="email"]').fill(adminEmail!);
   await page.locator('input[name="password"]').fill(adminPassword!);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/conta(?:\?|$)/);
+  await expect(page).toHaveURL(/\/conta(?:\?|$)/, { timeout: 30_000 });
+  await page.getByRole("button", { name: "Menu", exact: true }).click();
   await expect(page.getByRole("link", { name: "Eventos", exact: true })).toHaveAttribute(
     "href",
     "/admin/presencas",

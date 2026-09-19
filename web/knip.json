@@ -1,17 +1,22 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "src/workers/ferias-workbook-worker.ts"
+    "src/workers/ferias-workbook-worker.ts",
+    "ops/audit-backup.mjs",
+    "ops/configure-audit-ingress.mjs",
+    "ops/provision-runtime-database.mjs"
   ],
   "ignoreFiles": [
+    "verification/*.mjs",
+    "verification/*vitest.config.ts",
     "ops/validate-observability-env.mjs",
     "public/global.js",
     "public/mediapipe/face-detection-console-filter.js",
     "public/mediapipe/face-detection-frame.js",
-    "public/mediapipe/face_detection/**"
+    "public/mediapipe/tasks-vision/**"
   ],
   "ignoreDependencies": [
-    "@mediapipe/face_detection",
+    "@mediapipe/tasks-vision",
     "@prisma/client"
   ],
   "ignoreBinaries": [

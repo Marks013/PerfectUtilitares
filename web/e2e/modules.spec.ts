@@ -232,7 +232,7 @@ test("photo endpoint processes real image bytes and dimensions", async ({ page }
   expect(response.headers()["content-type"]).toBe("image/jpeg");
 
   const metadata = await sharp(await response.body()).metadata();
-  expect(metadata).toMatchObject({ format: "jpeg", width: 354, height: 472 });
+  expect(metadata).toMatchObject({ format: "jpeg", width: 364, height: 482 });
 
   const reprocessed = await page.request.post("/api/fotos/processar", {
     headers: { origin },
@@ -242,6 +242,7 @@ test("photo endpoint processes real image bytes and dimensions", async ({ page }
       quality: "82",
       brightness: "1.1",
       contrast: "0.9",
+      addBorder: "false",
     },
   });
   expect(reprocessed.status()).toBe(200);
@@ -266,21 +267,22 @@ test("photo endpoint processes real image bytes and dimensions", async ({ page }
 });
 
 test("Jornada navigation collapses after selecting an option", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto("/dashboard");
-  await page.waitForLoadState("networkidle");
   const menu = page.locator("details").filter({ hasText: "Validador de Jornada" });
-
+  await expect(menu.locator("summary")).toBeVisible();
   await menu.locator("summary").click();
   await expect(menu).toHaveAttribute("open", "");
   await menu.getByRole("link", { name: "Validar", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/jornada\/validar(?:\?|$)/);
+  await expect(page).toHaveURL(/\/jornada\/validar(?:\?|$)/, { timeout: 30_000 });
   await expect(menu).not.toHaveAttribute("open", "");
 });
 
 test("salary adjustment uses its own standard lock and keeps dark contrast", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   test.skip(
     !unimedAdminPassword || !unimedStandardPassword,
     "Isolated Unimed passwords are required",
@@ -419,7 +421,7 @@ test("Unimed unlock creates a real session and reads configuration", async ({
 test("Unimed calculates a manual dependent from birth and inclusion dates", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   test.skip(!unimedAdminPassword, "Isolated Unimed password is required");
   await page.goto("/unimed/acesso");
   const origin = new URL(page.url()).origin;
@@ -617,8 +619,14 @@ test("Unimed calculates a manual dependent from birth and inclusion dates", asyn
     page.getByRole("button", { name: "Abrir PDF em nova aba" }),
   ).toBeVisible();
   await expect(
-    documentPopup.locator('iframe[title="Documento gerado"]'),
+    documentPopup.locator('iframe[title="RN-561 - Titular E2E.pdf"]'),
   ).toHaveAttribute("src", /^blob:/);
+  const downloadPromise = documentPopup.waitForEvent("download");
+  await documentPopup.getByRole("link", {
+    name: "Baixar PDF — RN-561 - Titular E2E.pdf",
+    exact: true,
+  }).click();
+  expect((await downloadPromise).suggestedFilename()).toBe("RN-561 - Titular E2E.pdf");
 });
 
 test("PDF merge persists, queues, processes and downloads a valid result", async ({

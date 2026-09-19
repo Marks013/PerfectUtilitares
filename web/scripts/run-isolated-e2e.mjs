@@ -258,6 +258,14 @@ try {
   await run("npx", ["prisma", "generate"], env);
   await run("npx", ["prisma", "migrate", "deploy"], env);
   await run("npm", ["run", "prisma:seed"], env);
+  const queueDatabase = new Client({ connectionString: testUrl.toString() });
+  try {
+    await queueDatabase.connect();
+    // Production provisions this schema before the runtime starts (createSchema: false).
+    await queueDatabase.query("CREATE SCHEMA IF NOT EXISTS pgboss");
+  } finally {
+    await queueDatabase.end().catch(() => undefined);
+  }
   app = start("npx", ["next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], env);
   worker = start("npx", ["tsx", "src/workers/pdf-worker.ts"], env);
   await waitForApp(`${appUrl}/login`, app);
