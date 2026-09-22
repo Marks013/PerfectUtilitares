@@ -17,6 +17,7 @@ import type {
   MouseEvent,
 } from "react";
 import { PdfPageThumbnail } from "@/components/pdf/pdf-page-thumbnail";
+import { bindPdfUploadAbort } from "./pdf-upload-abort";
 import {
   configurePdfJsClient,
   pdfJsClientUrlOptions,
@@ -192,8 +193,9 @@ export function triggerDownload(url: string) {
   link.remove();
 }
 
-export async function createOrganizerJob(operation: StructuralPdfOperation) {
+export async function createOrganizerJob(operation: StructuralPdfOperation, signal?: AbortSignal) {
   const response = await fetch("/api/pdf/jobs", {
+    signal,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ operation }),
@@ -211,6 +213,7 @@ export function uploadPdf(
   jobId: string,
   file: File,
   onProgress: (progress: number) => void,
+  signal?: AbortSignal,
 ) {
   return new Promise<string>((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -256,16 +259,30 @@ export function uploadPdf(
       reject(new Error("A conexão foi interrompida durante o envio."));
     });
 
+    bindPdfUploadAbort(request, signal, reject);
     request.send(file);
   });
 }
 
-export async function loadPdfDocument(jobId: string, artifactId: string) {
+export async function loadPdfDocument(jobId: string, artifactId: string, signal?: AbortSignal) {
   const pdfjs = await import("pdfjs-dist");
+  signal?.throwIfAborted();
   configurePdfJsClient(pdfjs);
-  return pdfjs.getDocument(
+  const task = pdfjs.getDocument(
     pdfJsClientUrlOptions(`/api/pdf/jobs/${jobId}/inputs/${artifactId}`),
-  ).promise;
+  );
+  const abort = () => { void task.destroy(); };
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const document = await task.promise;
+    if (signal?.aborted) {
+      await document.loadingTask.destroy();
+      signal.throwIfAborted();
+    }
+    return document;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
 export function nextRotation(rotation: PageRotation): PageRotation {

@@ -13,12 +13,18 @@ import {
   Upload,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
+import { PdfWorkspaceResetBoundary } from "./pdf-workspace-reset-boundary";
+import { bindPdfUploadAbort } from "./pdf-upload-abort";
 
 type OfficeOperation =
   | "WORD_TO_PDF"
   | "EXCEL_TO_PDF";
+
+export function PdfOfficeConvertWorkspace(props: { operation: OfficeOperation }) {
+  return <PdfWorkspaceResetBoundary><PdfOfficeConvertWorkspaceSession {...props} /></PdfWorkspaceResetBoundary>;
+}
 type ApiError = { error?: { message?: string } };
 type OutputArtifact = {
   id: string;
@@ -105,8 +111,9 @@ function triggerDownload(url: string) {
   link.remove();
 }
 
-async function createJob(operation: OfficeOperation) {
+async function createJob(operation: OfficeOperation, signal: AbortSignal) {
   const response = await fetch("/api/pdf/jobs", {
+    signal,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ operation }),
@@ -126,12 +133,14 @@ function uploadFile({
   mimeType,
   onProgress,
   route,
+  signal,
 }: {
   file: File;
   jobId: string;
   mimeType: string;
   onProgress: (progress: number) => void;
   route: "documents" | "files";
+  signal: AbortSignal;
 }) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -163,15 +172,18 @@ function uploadFile({
     request.addEventListener("error", () => {
       reject(new Error("A conexão foi interrompida durante o envio."));
     });
+    bindPdfUploadAbort(request, signal, reject);
     request.send(file);
   });
 }
 
-export function PdfOfficeConvertWorkspace({
+function PdfOfficeConvertWorkspaceSession({
   operation,
 }: {
   operation: OfficeOperation;
 }) {
+  const processingAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => processingAbort.current?.abort(), []);
   const converter = CONVERTERS[operation];
   const [files, setFiles] = useState<File[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -219,17 +231,23 @@ export function PdfOfficeConvertWorkspace({
 
   async function convert() {
     if (!files.length) return;
+    processingAbort.current?.abort();
+    const controller = new AbortController();
+    processingAbort.current = controller;
+    const { signal } = controller;
     setError(null);
     setOutputs([]);
     setPhase("UPLOADING");
     setProgress(0);
 
     try {
-      const currentJobId = await createJob(operation);
+      const currentJobId = await createJob(operation, signal);
+      signal.throwIfAborted();
       setJobId(currentJobId);
       for (const [index, file] of files.entries()) {
         setDetail(`Enviando ${file.name}`);
         await uploadFile({
+          signal,
           file,
           jobId: currentJobId,
           mimeType: converter.mimeType,
@@ -249,7 +267,7 @@ export function PdfOfficeConvertWorkspace({
       setProgress(48);
       const queueResponse = await fetch(
         `/api/pdf/jobs/${currentJobId}/queue`,
-        { method: "POST" },
+        { method: "POST", signal },
       );
       const queueBody = (await queueResponse.json()) as
         | { job: JobResult }
@@ -262,7 +280,9 @@ export function PdfOfficeConvertWorkspace({
 
       for (let attempt = 0; attempt < 360; attempt += 1) {
         await wait(1_000);
+        signal.throwIfAborted();
         const response = await fetch(`/api/pdf/jobs/${currentJobId}`, {
+          signal,
           cache: "no-store",
         });
         const body = (await response.json()) as
@@ -279,6 +299,7 @@ export function PdfOfficeConvertWorkspace({
         const currentOutputs = body.job.artifacts.filter(
           (artifact): artifact is OutputArtifact => artifact.kind === "OUTPUT",
         );
+        signal.throwIfAborted();
         setPhase(
           body.job.status === "QUEUED"
             ? "QUEUED"
@@ -331,6 +352,7 @@ export function PdfOfficeConvertWorkspace({
         "A conversão está levando mais tempo que o esperado. Tente novamente em instantes ou envie menos arquivos.",
       );
     } catch (caught) {
+      if (signal.aborted) return;
       setError(
         caught instanceof Error
           ? caught.message

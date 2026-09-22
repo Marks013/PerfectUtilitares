@@ -48,9 +48,10 @@ import {
 import { useDropzone } from "react-dropzone";
 import { isAbortError, pollPdfJob } from "@/components/pdf/pdf-job-polling";
 import { PdfVisualCropEditor } from "@/components/pdf/pdf-visual-crop-editor";
+import { cropWorkspacePages } from "./pdf-organizer-crop";
+import { PdfWorkspaceResetBoundary } from "./pdf-workspace-reset-boundary";
 import {
   combinePageRotation,
-  displayMarginsToSource,
   sourceMarginsToDisplay,
 } from "@/lib/pdf/geometry";
 import {
@@ -83,6 +84,8 @@ export function usePdfOrganizerWorkspaceController({
   const documents = useRef(new Map<string, PDFDocumentProxy>());
   const recoveryStarted = useRef(false);
   const processingAbort = useRef<AbortController | null>(null);
+  const lifetime = useRef(new AbortController());
+  const manifestSave = useRef<Promise<void>>(Promise.resolve());
   const past = useRef<WorkspacePage[][]>([]);
   const future = useRef<WorkspacePage[][]>([]);
   const lastSelectedIndex = useRef<number | null>(null);
@@ -108,7 +111,10 @@ export function usePdfOrganizerWorkspaceController({
     top: 0,
   });
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [cropPending, setCropPending] = useState(false);
+  const [applyingCrop, setApplyingCrop] = useState(false);
   const processingLocked =
+    applyingCrop ||
     processing.status === "QUEUED" ||
     processing.status === "RUNNING" ||
     processing.status === "SUCCEEDED";
@@ -123,12 +129,15 @@ export function usePdfOrganizerWorkspaceController({
     }),
   );
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    if (lifetime.current.signal.aborted) lifetime.current = new AbortController();
+    return () => {
+      lifetime.current.abort();
       processingAbort.current?.abort();
-    },
-    [],
-  );
+      for (const document of documents.current.values()) void document.loadingTask.destroy();
+      documents.current.clear();
+    };
+  }, []);
 
   const commitPages = useCallback(
     (update: (current: WorkspacePage[]) => WorkspacePage[]) => {
@@ -151,6 +160,7 @@ export function usePdfOrganizerWorkspaceController({
       "job",
     );
     if (!recoveredJobId) return;
+    const signal = lifetime.current.signal;
 
     async function recoverDraft() {
       setUpload({ fileName: "Reabrindo organização", progress: 0 });
@@ -158,6 +168,7 @@ export function usePdfOrganizerWorkspaceController({
       try {
         const response = await fetch(`/api/pdf/jobs/${recoveredJobId}`, {
           cache: "no-store",
+          signal,
         });
         const body = (await response.json()) as
           { job: RecoverableJob } | ApiError;
@@ -197,10 +208,12 @@ export function usePdfOrganizerWorkspaceController({
             fileName: input.originalName,
             progress: Math.round((index / inputs.length) * 100),
           });
-          documents.current.set(
-            input.id,
-            await loadPdfDocument(body.job.id, input.id),
-          );
+          const document = await loadPdfDocument(body.job.id, input.id, signal);
+          if (signal.aborted) {
+            void document.loadingTask.destroy();
+            return;
+          }
+          documents.current.set(input.id, document);
         }
 
         const recoveredPages = await Promise.all(
@@ -236,43 +249,53 @@ export function usePdfOrganizerWorkspaceController({
             };
           }),
         );
+        if (signal.aborted) return;
         setJobId(body.job.id);
         setPages(recoveredPages);
         setSelectedIds(new Set());
         setSaveState("saved");
         setProcessing({ outputs: [], progress: 0, status: "IDLE" });
       } catch (caught) {
+        if (signal.aborted) return;
         setError(
           caught instanceof Error
             ? caught.message
             : "Não foi possível reabrir esta organização.",
         );
       } finally {
-        setUpload(null);
+        if (!signal.aborted) setUpload(null);
       }
     }
 
     void recoverDraft();
+    return () => { recoveryStarted.current = false; };
   }, [operation]);
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
       if (!acceptedFiles.length) return;
+      const signal = lifetime.current.signal;
       setError(null);
+      setUpload({ fileName: acceptedFiles[0].name, progress: 0 });
 
       try {
         let currentJobId = jobId;
         if (!currentJobId) {
-          currentJobId = await createOrganizerJob(operation);
+          currentJobId = await createOrganizerJob(operation, signal);
+          if (signal.aborted) return;
           setJobId(currentJobId);
         }
 
         for (const file of acceptedFiles) {
           setUpload({ fileName: file.name, progress: 0 });
           const artifactId = await uploadPdf(currentJobId, file, (progress) =>
-            setUpload({ fileName: file.name, progress }),
-          );
-          const document = await loadPdfDocument(currentJobId, artifactId);
+            setUpload({ fileName: file.name, progress }), signal);
+          if (signal.aborted) return;
+          const document = await loadPdfDocument(currentJobId, artifactId, signal);
+          if (signal.aborted) {
+            void document.loadingTask.destroy();
+            return;
+          }
           documents.current.set(artifactId, document);
 
           const importedPages = Array.from(
@@ -289,13 +312,14 @@ export function usePdfOrganizerWorkspaceController({
           commitPages((current) => [...current, ...importedPages]);
         }
       } catch (caught) {
+        if (signal.aborted) return;
         setError(
           caught instanceof Error
             ? caught.message
             : "Não foi possível abrir os arquivos selecionados.",
         );
       } finally {
-        setUpload(null);
+        if (!signal.aborted) setUpload(null);
       }
     },
     [commitPages, jobId, operation],
@@ -320,18 +344,21 @@ export function usePdfOrganizerWorkspaceController({
     );
   }, [fileRejections]);
 
-  const persistManifest = useCallback(async () => {
-    if (!jobId || !pages.length) {
+  const persistManifest = useCallback(async (pagesToSave = pages) => {
+    // Keep the final snapshot after any autosave already in flight.
+    const save = manifestSave.current.catch(() => undefined).then(async () => {
+    if (!jobId || !pagesToSave.length) {
       throw new Error("Adicione ao menos uma página ao documento.");
     }
     setSaveState("saving");
     const response = await fetch(`/api/pdf/jobs/${jobId}`, {
       method: "PATCH",
+      signal: lifetime.current.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         manifest: {
           version: 1,
-          pages: pages.map((page) => ({
+          pages: pagesToSave.map((page) => ({
             id: page.id,
             artifactId: page.artifactId,
             sourcePage: page.sourcePage,
@@ -351,12 +378,16 @@ export function usePdfOrganizerWorkspaceController({
     }
 
     setSaveState("saved");
+    });
+    manifestSave.current = save;
+    return save;
   }, [jobId, pages]);
 
   useEffect(() => {
     if (!jobId || !pages.length || processingLocked) return;
 
     const timer = window.setTimeout(() => {
+      if (processingAbort.current || lifetime.current.signal.aborted) return;
       void persistManifest().catch(() => undefined);
     }, 700);
 
@@ -389,6 +420,7 @@ export function usePdfOrganizerWorkspaceController({
     lastSelectedIndex.current = index;
     setMenuPageId(null);
     if (operation === "CROP") {
+      setCropPending(false);
       setCropMargins(
         pages[index]?.cropMargins ?? { bottom: 0, left: 0, right: 0, top: 0 },
       );
@@ -430,60 +462,12 @@ export function usePdfOrganizerWorkspaceController({
   }
 
   async function applyCrop(ids: Set<string>) {
-    if (!ids.size) {
-      setError("Selecione ao menos uma página para aplicar o recorte.");
-      return;
-    }
-
+    setApplyingCrop(true);
     try {
-      const crops = new Map<string, NonNullable<WorkspacePage["crop"]>>();
-      for (const page of pages) {
-        if (!ids.has(page.id)) continue;
-        const document = documents.current.get(page.artifactId);
-        if (!document) {
-          throw new Error(
-            `A página de “${page.fileName}” não está disponível.`,
-          );
-        }
-        const sourcePage = await document.getPage(page.sourcePage);
-        const sourceRotation = combinePageRotation(
-          sourcePage.rotate,
-          page.rotation,
-        );
-        const sourceMargins = displayMarginsToSource(
-          sourceRotation,
-          cropMargins,
-        );
-        const sourceWidth = sourcePage.view[2] - sourcePage.view[0];
-        const sourceHeight = sourcePage.view[3] - sourcePage.view[1];
-        const width =
-          sourceWidth * (1 - (sourceMargins.left + sourceMargins.right) / 100);
-        const height =
-          sourceHeight * (1 - (sourceMargins.top + sourceMargins.bottom) / 100);
-        if (width <= 0 || height <= 0) {
-          throw new Error(
-            "A área mantida precisa ter largura e altura maiores que zero.",
-          );
-        }
-        crops.set(page.id, {
-          x: sourceWidth * (sourceMargins.left / 100),
-          y: sourceHeight * (sourceMargins.bottom / 100),
-          width,
-          height,
-        });
-      }
-
-      commitPages((current) =>
-        current.map((page) =>
-          ids.has(page.id)
-            ? {
-                ...page,
-                crop: crops.get(page.id),
-                cropMargins: { ...cropMargins },
-              }
-            : page,
-        ),
-      );
+      const cropped = await cropWorkspacePages(pages, ids, cropMargins, documents.current);
+      if (lifetime.current.signal.aborted) return;
+      commitPages(() => cropped);
+      setCropPending(false);
       setError(null);
     } catch (caught) {
       setError(
@@ -491,12 +475,16 @@ export function usePdfOrganizerWorkspaceController({
           ? caught.message
           : "Não foi possível aplicar o recorte. Tente novamente.",
       );
+    } finally {
+      setApplyingCrop(false);
     }
   }
 
   function undo() {
+    setCropPending(false);
     const previous = past.current.at(-1);
     if (!previous) return;
+    setCropMargins(previous[0]?.cropMargins ?? { bottom: 0, left: 0, right: 0, top: 0 });
     setPages((current) => {
       future.current = [current, ...future.current.slice(0, 39)];
       return previous;
@@ -507,8 +495,10 @@ export function usePdfOrganizerWorkspaceController({
   }
 
   function redo() {
+    setCropPending(false);
     const next = future.current[0];
     if (!next) return;
+    setCropMargins(next[0]?.cropMargins ?? { bottom: 0, left: 0, right: 0, top: 0 });
     setPages((current) => {
       past.current = [...past.current.slice(-39), current];
       return next;
@@ -545,13 +535,28 @@ export function usePdfOrganizerWorkspaceController({
     setProcessing({ status: "QUEUED", progress: 0, outputs: [] });
 
     try {
-      await persistManifest();
+      const finalPages = operation === "CROP" && cropPending
+        ? await cropWorkspacePages(pages,
+            selectedIds.size ? selectedIds : new Set([pages[0].id]),
+            cropMargins, documents.current)
+        : pages;
+      if (operation === "CROP" && !finalPages.some((page) => page.crop)) {
+        throw new Error("Ajuste a área de recorte antes de salvar o PDF.");
+      }
+      if (controller.signal.aborted || lifetime.current.signal.aborted) return;
+      if (finalPages !== pages) {
+        commitPages(() => finalPages);
+        setCropPending(false);
+      }
+      await persistManifest(finalPages);
+      if (controller.signal.aborted) return;
       const queueResponse = await fetch(`/api/pdf/jobs/${jobId}/queue`, {
         method: "POST",
         signal: controller.signal,
       });
       const queueBody = (await queueResponse.json()) as
         { job: PdfJobResult } | ApiError;
+      if (controller.signal.aborted) return;
 
       if (!queueResponse.ok || !("job" in queueBody)) {
         throw new Error(
@@ -607,7 +612,7 @@ export function usePdfOrganizerWorkspaceController({
           : `/api/pdf/jobs/${jobId}/outputs/${firstOutput.id}`;
       triggerDownload(downloadUrl);
     } catch (caught) {
-      if (isAbortError(caught)) return;
+      if (isAbortError(caught) || controller.signal.aborted) return;
       setProcessing((current) => ({
         ...current,
         status: "FAILED",
@@ -631,9 +636,18 @@ export function usePdfOrganizerWorkspaceController({
   const activePage = pages.find((page) => page.id === activeId);
   const cropPreviewPage = selected[0] ?? pages[0];
 
-    return { Archive, ArrowLeft, Check, Copy, Crop, DndContext, Download, DragOverlay, GripVertical, Link, Loader2, PdfVisualCropEditor, Redo2, RotateCw, Save, SortableContext, SortablePage, Trash2, Undo2, Upload, X, activePage, applyCrop, closestCenter, copy, cropMargins, cropPreviewPage, documents, duplicate, error, finalizePdf, future, getInputProps, getRootProps, handleDragEnd, handleDragStart, handleSelect, historyVersion, isDragActive, jobId, menuPageId, operation, pages, past, processing, processingLocked, rectSortingStrategy, redo, remove, rotate, saveState, selected, selectedIds, sensors, setActiveId, setCropMargins, setError, setMenuPageId, setSelectedIds, undo, upload };
+  function updateCropMargins(margins: typeof cropMargins) {
+    setCropMargins(margins);
+    setCropPending(true);
+  }
+
+    return { Archive, ArrowLeft, Check, Copy, Crop, DndContext, Download, DragOverlay, GripVertical, Link, Loader2, PdfVisualCropEditor, Redo2, RotateCw, Save, SortableContext, SortablePage, Trash2, Undo2, Upload, X, activePage, applyCrop, closestCenter, copy, cropMargins, cropPending, cropPreviewPage, documents, duplicate, error, finalizePdf, future, getInputProps, getRootProps, handleDragEnd, handleDragStart, handleSelect, historyVersion, isDragActive, jobId, menuPageId, operation, pages, past, processing, processingLocked, rectSortingStrategy, redo, remove, rotate, saveState, selected, selectedIds, sensors, setActiveId, setCropMargins: updateCropMargins, setError, setMenuPageId, setSelectedIds, undo, upload };
+}
+
+function OrganizerContent(props: Parameters<typeof usePdfOrganizerWorkspaceController>[0]) {
+  return <PdfOrganizerWorkspaceView model={usePdfOrganizerWorkspaceController(props)} />;
 }
 
 export function PdfOrganizerWorkspace(props: Parameters<typeof usePdfOrganizerWorkspaceController>[0]) {
-  return <PdfOrganizerWorkspaceView model={usePdfOrganizerWorkspaceController(props)} />;
+  return <PdfWorkspaceResetBoundary><OrganizerContent {...props} /></PdfWorkspaceResetBoundary>;
 }

@@ -43,6 +43,7 @@ import {
 } from "./pdf-editor-workspace-model";
 export * from "./pdf-editor-workspace-model";
 import { PdfEditorWorkspaceView } from "./pdf-editor-workspace-view";
+import { PdfWorkspaceResetBoundary } from "./pdf-workspace-reset-boundary";
 
 export function usePdfEditorWorkspaceController({
   operation,
@@ -51,6 +52,8 @@ export function usePdfEditorWorkspaceController({
 }) {
   const recoveryStarted = useRef(false);
   const processingAbort = useRef<AbortController | null>(null);
+  const lifetimeAbort = useRef<AbortController | null>(null);
+  const documentRef = useRef<PDFDocumentProxy | null>(null);
   const past = useRef<PdfAnnotation[][]>([]);
   const future = useRef<PdfAnnotation[][]>([]);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -98,12 +101,16 @@ export function usePdfEditorWorkspaceController({
     [annotations, selectedPage],
   );
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    lifetimeAbort.current = new AbortController();
+    return () => {
+      lifetimeAbort.current?.abort();
       processingAbort.current?.abort();
-    },
-    [],
-  );
+      void documentRef.current?.loadingTask.destroy();
+      documentRef.current = null;
+      recoveryStarted.current = false;
+    };
+  }, []);
 
   const commitAnnotations = useCallback(
     (update: (current: PdfAnnotation[]) => PdfAnnotation[]) => {
@@ -128,10 +135,12 @@ export function usePdfEditorWorkspaceController({
     if (!recoveredJobId) return;
 
     async function recoverDraft() {
+      const signal = lifetimeAbort.current?.signal;
       setRecovering(true);
       setError(null);
       try {
         const response = await fetch(`/api/pdf/jobs/${recoveredJobId}`, {
+          signal,
           cache: "no-store",
         });
         const body = (await response.json()) as
@@ -154,7 +163,9 @@ export function usePdfEditorWorkspaceController({
             "O PDF original não está mais disponível. Adicione o arquivo novamente.",
           );
 
-        const loadedDocument = await loadPdfDocument(body.job.id, input.id);
+        const loadedDocument = await loadPdfDocument(body.job.id, input.id, signal);
+        if (signal?.aborted) { void loadedDocument.loadingTask.destroy(); return; }
+        documentRef.current = loadedDocument;
         const savedOptions =
           body.job.options && typeof body.job.options === "object"
             ? (body.job.options as {
@@ -187,6 +198,7 @@ export function usePdfEditorWorkspaceController({
         setAnnotations(savedOptions.annotations ?? []);
         setSaveState("saved");
       } catch (caught) {
+        if (signal?.aborted) return;
         setError(
           caught instanceof Error
             ? caught.message
@@ -202,19 +214,25 @@ export function usePdfEditorWorkspaceController({
 
   const onDrop = useCallback(
     async (files: File[]) => {
+      const signal = lifetimeAbort.current?.signal;
       const file = files[0];
       if (!file) return;
       setError(null);
       setUploadProgress(0);
 
       try {
-        const currentJobId = await createJob(operation);
+        const currentJobId = await createJob(operation, signal);
+        signal?.throwIfAborted();
         const artifactId = await uploadPdf(
           currentJobId,
           file,
           setUploadProgress,
+          signal,
         );
-        const loadedDocument = await loadPdfDocument(currentJobId, artifactId);
+        const loadedDocument = await loadPdfDocument(currentJobId, artifactId, signal);
+        if (signal?.aborted) { void loadedDocument.loadingTask.destroy(); return; }
+        void documentRef.current?.loadingTask.destroy();
+        documentRef.current = loadedDocument;
         const importedPages = Array.from(
           { length: loadedDocument.numPages },
           (_, index): EditorPage => ({
@@ -235,6 +253,7 @@ export function usePdfEditorWorkspaceController({
         future.current = [];
         setProcessing({ output: null, progress: 0, status: "IDLE" });
       } catch (caught) {
+        if (signal?.aborted) return;
         setError(
           caught instanceof Error
             ? caught.message
@@ -250,7 +269,7 @@ export function usePdfEditorWorkspaceController({
   const { fileRejections, getInputProps, getRootProps, isDragActive } =
     useDropzone({
       accept: { "application/pdf": [".pdf"] },
-      disabled: Boolean(uploadProgress) || locked,
+      disabled: uploadProgress !== null || recovering || locked,
       maxFiles: 1,
       maxSize: 100 * 1024 * 1024,
       multiple: false,
@@ -272,6 +291,7 @@ export function usePdfEditorWorkspaceController({
     }
     setSaveState("saving");
     const response = await fetch(`/api/pdf/jobs/${jobId}`, {
+      signal: lifetimeAbort.current?.signal,
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -307,6 +327,7 @@ export function usePdfEditorWorkspaceController({
     setError(null);
     try {
       await persist();
+      controller.signal.throwIfAborted();
       const queueResponse = await fetch(`/api/pdf/jobs/${jobId}/queue`, {
         method: "POST",
         signal: controller.signal,
@@ -361,6 +382,7 @@ export function usePdfEditorWorkspaceController({
         );
       }
 
+      controller.signal.throwIfAborted();
       triggerDownload(`/api/pdf/jobs/${jobId}/outputs/${firstOutput.id}`);
     } catch (caught) {
       if (isAbortError(caught)) return;
@@ -402,6 +424,10 @@ export function usePdfEditorWorkspaceController({
     return { ArrowLeft, Check, Download, EditorCanvas, Eraser, Link, Loader2, PdfPageThumbnail, Redo2, Save, TOOL_OPTIONS, Trash2, Undo2, Upload, annotations, color, commitAnnotations, document, error, fileName, finish, fontSize, future, getInputProps, getRootProps, historyVersion, isDragActive, jobId, lineWidth, locked, opacity, operation, pageAnnotations, pages, past, processing, recovering, redo, saveState, selectedPage, setColor, setFontSize, setLineWidth, setOpacity, setSelectedPageId, setText, setTool, text, tool, triggerDownload, undo, uploadProgress };
 }
 
-export function PdfEditorWorkspace(props: Parameters<typeof usePdfEditorWorkspaceController>[0]) {
+function PdfEditorWorkspaceSession(props: Parameters<typeof usePdfEditorWorkspaceController>[0]) {
   return <PdfEditorWorkspaceView model={usePdfEditorWorkspaceController(props)} />;
+}
+
+export function PdfEditorWorkspace(props: Parameters<typeof usePdfEditorWorkspaceController>[0]) {
+  return <PdfWorkspaceResetBoundary><PdfEditorWorkspaceSession {...props} /></PdfWorkspaceResetBoundary>;
 }

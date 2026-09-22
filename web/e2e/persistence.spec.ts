@@ -1,34 +1,13 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { loginAsAdmin } from "./admin-session";
 
 const enabled = process.env.E2E_MUTATION === "1";
 const adminEmail = process.env.ADMIN_EMAIL;
 const adminPassword = process.env.ADMIN_PASSWORD;
-let adminCookies: Awaited<
-  ReturnType<ReturnType<Page["context"]>["cookies"]>
-> = [];
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.locator('input[name="email"]').fill(adminEmail!);
-  await page.locator('input[name="password"]').fill(adminPassword!);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\?|$)/);
-}
-
-test.beforeAll(async ({ browser }) => {
-  if (!enabled || !adminEmail || !adminPassword) return;
-
-  const page = await browser.newPage();
-  await login(page);
-  adminCookies = await page.context().cookies();
-  await page.close();
-});
-
 test.beforeEach(async ({ page }) => {
   test.skip(!enabled, "Mutation E2E runs only against an isolated database");
   test.skip(!adminEmail || !adminPassword, "Admin credentials are required");
-  await page.context().addCookies(adminCookies);
-  await page.goto("/dashboard");
+  await loginAsAdmin(page);
 });
 
 test("administrative and Jornada writes are observable through subsequent reads", async ({

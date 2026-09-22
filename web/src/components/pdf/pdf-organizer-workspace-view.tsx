@@ -134,7 +134,9 @@ export function PdfOrganizerWorkspaceView({ model }: { model: Model }) {
               <strong>Área que será mantida</strong>
               <small>
                 Ajuste com o mouse, toque, teclado ou campos numéricos. A área
-                escura será removida.
+                escura ficará fora da área visível. Ao salvar, o ajuste será aplicado
+                às páginas selecionadas ou à página exibida. Para repetir o recorte
+                no documento inteiro, use “Aplicar em todas”.
               </small>
             </div>
             <div>

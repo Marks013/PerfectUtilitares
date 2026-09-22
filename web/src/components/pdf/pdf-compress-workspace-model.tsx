@@ -9,6 +9,7 @@ import type {
   PdfCompressionAnalysis,
 } from "@/lib/pdf/client-compression-analysis";
 import { PDF_COMPRESSION_PRESETS } from "@/lib/pdf/compression-policy";
+import { bindPdfUploadAbort } from "./pdf-upload-abort";
 
 export type CompressionQuality = "SOURCE" | "SCREEN" | "BALANCED" | "PRINT";
 export type CompressionColorPolicy = "KEEP_DETECTED" | CompressionColorMode;
@@ -283,6 +284,7 @@ export function uploadPdf(
   jobId: string,
   file: File,
   onProgress: (progress: number) => void,
+  signal?: AbortSignal,
 ) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -307,6 +309,7 @@ export function uploadPdf(
     request.addEventListener("error", () => {
       reject(new Error(`A conexão foi interrompida ao enviar ${file.name}.`));
     });
+    bindPdfUploadAbort(request, signal, reject);
     request.send(file);
   });
 }

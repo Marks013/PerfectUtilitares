@@ -39,21 +39,22 @@ describe("AppShell Jornada navigation", () => {
     state.session = null;
   });
 
-  it("keeps the Jornada submenu collapsed and public options compatible", async () => {
+  it("opens Jornada directly in Validar without a dropdown", async () => {
     const html = await renderShell();
 
     expect(html).toContain("Validador de Jornada");
     expect(html).toContain("Manutenção de PDFs");
     expect(html).toContain('href="/reajuste-salarial"');
     expect(html).toContain('href="/jornada/validar"');
-    expect(html).not.toContain("<details open");
+    expect(html).toMatch(/<a[^>]+href="\/jornada\/validar"[^>]*>Validador de Jornada<\/a>/);
+    expect(html).not.toContain("<summary");
     expect(html).not.toContain('href="/jornada/regras"');
     expect(html).not.toContain('href="/jornada/codigos"');
     expect(html).not.toContain('href="/jornada/historico"');
     expect(html).not.toContain('href="/admin/ferias"');
   });
 
-  it("shows administrative Jornada options only to an active administrator", async () => {
+  it("keeps administrative navigation while Jornada options live inside the module", async () => {
     state.session = {
       user: {
         id: "admin-id",
@@ -67,9 +68,10 @@ describe("AppShell Jornada navigation", () => {
 
     const html = await renderShell();
 
-    expect(html).toContain('href="/jornada/regras"');
-    expect(html).toContain('href="/jornada/codigos"');
-    expect(html).toContain('href="/jornada/historico"');
+    expect(html).toContain('href="/jornada/validar"');
+    expect(html).not.toContain('href="/jornada/regras"');
+    expect(html).not.toContain('href="/jornada/codigos"');
+    expect(html).not.toContain('href="/jornada/historico"');
     expect(html).toContain('href="/admin/ferias"');
   });
 

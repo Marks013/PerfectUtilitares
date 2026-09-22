@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { strToU8, zipSync } from "fflate";
@@ -7,7 +7,9 @@ import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PdfStorageError,
+  commitPdfOutput,
   readPdfStorageFile,
+  reservePdfOutput,
   sanitizePdfFileName,
   writeBinaryOutput,
   writeOfficeOutput,
@@ -33,6 +35,38 @@ describe("pdf storage", () => {
       "Folha.pdf",
     );
     expect(() => sanitizePdfFileName(null)).toThrow(PdfStorageError);
+    expect(sanitizePdfFileName(encodeURIComponent("C:\\arquivos\\Débitos.PDF"))).toBe(
+      "Débitos.PDF",
+    );
+  });
+
+  it.each([".pdf", ".PDF", ""])(
+    "accepts long PDF names and reserves their %s extension",
+    (extension) => {
+      const name = `${"a".repeat(220)}${extension}`;
+      expect(sanitizePdfFileName(encodeURIComponent(name))).toBe(
+        `${"a".repeat(176)}${extension || ".pdf"}`,
+      );
+    },
+  );
+
+  it("preserves Unicode characters when shortening names at the boundary", () => {
+    const name = `${"á".repeat(175)}😀relatório.pdf`;
+    expect(sanitizePdfFileName(encodeURIComponent(name))).toBe(
+      `${"á".repeat(175)}.pdf`,
+    );
+    expect(sanitizePdfFileName(encodeURIComponent(`${"a".repeat(176)}.pdf`))).toBe(
+      `${"a".repeat(176)}.pdf`,
+    );
+  });
+
+  it("returns actionable errors for empty or malformed names", () => {
+    expect(() => sanitizePdfFileName("%00%20")).toThrow(
+      "O nome do arquivo enviado está vazio. Renomeie o PDF e tente novamente.",
+    );
+    expect(() => sanitizePdfFileName("%ZZ.pdf")).toThrow(
+      "O nome do arquivo enviado é inválido.",
+    );
   });
 
   it("streams a valid PDF and calculates its digest", async () => {
@@ -100,17 +134,40 @@ describe("pdf storage", () => {
 
     const output = await writePdfOutput(
       "job-output-123",
-      "../documento final.pdf",
+      `../${"documento final ".repeat(20)}.pdf`,
       bytes,
     );
 
-    expect(output.originalName).toBe("documento final.pdf");
+    expect(output.originalName).toBe(`${"documento final ".repeat(20).slice(0, 176)}.pdf`);
     expect(output.sizeBytes).toBe(BigInt(bytes.byteLength));
     expect(output.sha256).toHaveLength(64);
     await expect(readPdfStorageFile(output.storageKey)).resolves.toEqual(
       Buffer.from(bytes),
     );
   });
+
+  it.each(["Débitos 100%-recortado.pdf", "Débitos%20literal.pdf"])(
+    "preserves literal percent characters in direct and reserved outputs: %s",
+    async (fileName) => {
+      temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));
+      process.env.PDF_STORAGE_DIR = temporaryDirectory;
+      const document = await PDFDocument.create();
+      document.addPage([200, 300]);
+      const bytes = await document.save();
+
+      const direct = await writePdfOutput("job-percent-direct", fileName, bytes);
+      const reservation = await reservePdfOutput("job-percent-reserved", fileName);
+      await writeFile(reservation.temporaryPath, bytes);
+      const reserved = await commitPdfOutput(reservation);
+
+      for (const output of [direct, reserved]) {
+        expect(output.originalName).toBe(fileName);
+        await expect(readPdfStorageFile(output.storageKey)).resolves.toEqual(
+          Buffer.from(bytes),
+        );
+      }
+    },
+  );
 
   it("rejects generated outputs that cannot validate themselves", async () => {
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-"));

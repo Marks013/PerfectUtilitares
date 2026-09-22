@@ -57,6 +57,7 @@ import {
 export * from "./pdf-compress-workspace-model";
 import { PdfCompressWorkspaceView } from "./pdf-compress-workspace-view";
 import { pollPdfJob } from "./pdf-job-polling";
+import { PdfWorkspaceResetBoundary } from "./pdf-workspace-reset-boundary";
 
 async function mapClientWithConcurrency<T, R>(
   items: readonly T[],
@@ -91,6 +92,10 @@ export function usePdfCompressWorkspaceController() {
   const analysisRunRef = useRef(0);
   const analysisCacheRef = useRef(new WeakMap<File, PdfCompressionAnalysis>());
   const pollAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    analysisRunRef.current += 1;
+    pollAbortRef.current?.abort();
+  }, []);
   const [jobId, setJobId] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<PdfOutput[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -336,6 +341,7 @@ export function usePdfCompressWorkspaceController() {
 
     try {
       const createResponse = await fetch("/api/pdf/jobs", {
+        signal: pollController.signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -363,6 +369,7 @@ export function usePdfCompressWorkspaceController() {
       }
 
       const currentJobId = createBody.job.id;
+      pollController.signal.throwIfAborted();
       setJobId(currentJobId);
 
       const uploadProgress = new Map<number, number>();
@@ -387,11 +394,12 @@ export function usePdfCompressWorkspaceController() {
             progress: Math.round(totalProgress / files.length),
             detail: `Enviando ${file.name}`,
           });
-        });
+        }, pollController.signal);
         uploadProgress.set(index, 100);
       });
 
       const queueResponse = await fetch(`/api/pdf/jobs/${currentJobId}/queue`, {
+        signal: pollController.signal,
         method: "POST",
       });
       const queueBody = (await queueResponse.json()) as
@@ -453,6 +461,7 @@ export function usePdfCompressWorkspaceController() {
         },
       });
 
+      pollController.signal.throwIfAborted();
       setOutputs(nextOutputs);
       const completion = resolveCompressionCompletion(
         nextOutputs,
@@ -477,6 +486,7 @@ export function usePdfCompressWorkspaceController() {
         );
       }
     } catch (caught) {
+      if (pollController.signal.aborted) return;
       setWork({ phase: "IDLE", progress: 0, detail: "" });
       setError(
         caught instanceof Error
@@ -493,6 +503,10 @@ export function usePdfCompressWorkspaceController() {
     return { Archive, ArrowLeft, ChevronDown, COLOR_OPTIONS, Check, Download, FileSearch, FileText, Gauge, Link, Loader2, METHOD_OPTIONS, Minimize2, Palette, Printer, QUALITY_OPTIONS, ScanLine, ShieldCheck, SlidersHorizontal, Sparkles, Upload, X, analyses, analysisProgress, analysisSummary, analyzing, applyDocumentRecommendation, applyPreset, busy, error, files, formatBytes, getColorModeLabel, getContentKindLabel, getDetectedDpiLabel, getFileKey, getInputProps, getRootProps, inputBytes, isDragActive, jobId, outputBytes, outputs, processFiles, removeFile, savedPercent, setError, setWarning, settings, updateSettings, warning, work };
 }
 
-export function PdfCompressWorkspace() {
+function PdfCompressWorkspaceSession() {
   return <PdfCompressWorkspaceView model={usePdfCompressWorkspaceController()} />;
+}
+
+export function PdfCompressWorkspace() {
+  return <PdfWorkspaceResetBoundary><PdfCompressWorkspaceSession /></PdfWorkspaceResetBoundary>;
 }

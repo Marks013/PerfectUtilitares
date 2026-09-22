@@ -3,6 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import { calculateUnimed } from "../src/lib/unimed/calculation";
 import type { UnimedCalculationInput } from "../src/lib/unimed/types";
+import { loginAsAdmin } from "./admin-session";
 
 const enabled = process.env.E2E_MUTATION === "1";
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -12,11 +13,7 @@ const unimedAdminPassword = process.env.E2E_UNIMED_ADMIN_PASSWORD;
 const unimedStandardPassword = process.env.E2E_UNIMED_STANDARD_PASSWORD;
 
 async function login(page: Page) {
-  await page.goto("/login");
-  await page.locator('input[name="email"]').fill(adminEmail!);
-  await page.locator('input[name="password"]').fill(adminPassword!);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\?|$)/);
+  await loginAsAdmin(page);
 }
 
 test.beforeEach(() => {
@@ -266,17 +263,31 @@ test("photo endpoint processes real image bytes and dimensions", async ({ page }
   expect((await batch.body()).byteLength).toBeGreaterThan(0);
 });
 
-test("Jornada navigation collapses after selecting an option", async ({ page }) => {
+test("Jornada opens validation directly and preserves administrative tabs", async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto("/dashboard");
-  const menu = page.locator("details").filter({ hasText: "Validador de Jornada" });
-  await expect(menu.locator("summary")).toBeVisible();
-  await menu.locator("summary").click();
-  await expect(menu).toHaveAttribute("open", "");
-  await menu.getByRole("link", { name: "Validar", exact: true }).click();
-
+  const entry = page.getByRole("link", { name: "Validador de Jornada", exact: true });
+  if (!await entry.isVisible()) await page.getByRole("button", { name: "Menu", exact: true }).click();
+  await entry.click();
   await expect(page).toHaveURL(/\/jornada\/validar(?:\?|$)/, { timeout: 30_000 });
-  await expect(menu).not.toHaveAttribute("open", "");
+  const tabs = page.getByRole("navigation", { name: "Ferramentas de Jornada" });
+  await expect(tabs.getByRole("link", { name: "Validar", exact: true })).toHaveAttribute("aria-current", "page");
+  for (const name of ["Regras", "Códigos", "Histórico"]) {
+    await expect(tabs.getByRole("link", { name, exact: true })).toHaveCount(0);
+  }
+  await loginAsAdmin(page);
+  await page.goto("/jornada/validar");
+  for (const name of ["Validar", "Regras", "Códigos", "Histórico"]) {
+    await expect(tabs.getByRole("link", { name, exact: true })).toBeVisible();
+  }
+  await tabs.getByRole("link", { name: "Regras", exact: true }).click();
+  await expect(page).toHaveURL(/\/jornada\/regras(?:\?|$)/);
+  await expect(tabs.getByRole("link", { name: "Regras", exact: true })).toHaveAttribute("aria-current", "page");
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const name of ["Validar", "Regras", "Códigos", "Histórico"]) {
+    await expect(tabs.getByRole("link", { name, exact: true })).toBeVisible();
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test("salary adjustment uses its own standard lock and keeps dark contrast", async ({

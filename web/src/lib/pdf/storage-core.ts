@@ -138,18 +138,27 @@ export function sanitizePdfFileName(value: string | null) {
     );
   }
 
-  const fileName = stripFileNameControlCharacters(path.basename(decoded)).trim();
+  const fileName = stripFileNameControlCharacters(
+    path.basename(decoded.replaceAll("\\", "/")),
+  ).trim();
 
-  if (!fileName || fileName.length > 180) {
+  if (!fileName) {
     throw new PdfStorageError(
       "INVALID_FILE_NAME",
-      "Use um nome de arquivo com até 180 caracteres.",
+      "O nome do arquivo enviado está vazio. Renomeie o PDF e tente novamente.",
     );
   }
 
-  return fileName.toLowerCase().endsWith(".pdf")
-    ? fileName
-    : `${fileName}.pdf`;
+  const hasExtension = fileName.toLowerCase().endsWith(".pdf");
+  const extension = hasExtension ? fileName.slice(-4) : ".pdf";
+  const baseName = hasExtension ? fileName.slice(0, -4) : fileName;
+  // Reserve the extension and avoid splitting a Unicode character at the limit.
+  let shortenedName = "";
+  for (const character of baseName) {
+    if (shortenedName.length + character.length > 176) break;
+    shortenedName += character;
+  }
+  return `${shortenedName}${extension}`;
 }
 
 export const IMAGE_FORMATS = {
@@ -289,4 +298,3 @@ export function sanitizeOfficeFileName(
     fileName.replace(/\.(?:docx|xlsx)$/i, "").slice(0, 170) || "documento";
   return `${baseName}.${extension}`;
 }
-

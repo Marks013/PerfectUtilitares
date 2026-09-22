@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { loginAsAdmin } from "./admin-session";
 
 const adminEmail = process.env.ADMIN_EMAIL;
 const adminPassword = process.env.ADMIN_PASSWORD;
@@ -16,15 +17,6 @@ const fixture = {
   canExport: true,
 };
 
-async function login(page: Page) {
-  await page.goto("/login?callbackUrl=%2Fadmin%2Fferias");
-  await page.locator('input[name="email"]').fill(adminEmail!);
-  await page.locator('input[name="password"]').fill(adminPassword!);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
-  await expect(page).toHaveURL(/\/admin\/ferias(?:\?|$)/);
-  await expect(page.getByRole("heading", { name: "Férias", exact: true })).toBeVisible();
-}
-
 async function upload(page: Page) {
   await page.getByLabel("Arquivo de férias", { exact: true }).setInputFiles({
     name: "ferias.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -40,26 +32,13 @@ test("Ferias is inaccessible without an administrative session", async ({ page }
 });
 
 test.describe("Ferias administrative UI with isolated mocked operations", () => {
-  let adminCookies: Awaited<
-    ReturnType<ReturnType<Page["context"]>["cookies"]>
-  > = [];
-
-  test.beforeAll(async ({ browser }) => {
-    if (!adminEmail || !adminPassword) return;
-
-    const page = await browser.newPage();
-    await login(page);
-    adminCookies = await page.context().cookies();
-    await page.close();
-  });
-
   test.beforeEach(async ({ page }) => {
     test.skip(!adminEmail || !adminPassword, "Admin credentials are required");
     // Interception guarantees fixtures cannot reach real calculation endpoints.
     await page.route("**/api/admin/ferias/**", (route) => route.fulfill({
       status: 500, json: { error: { code: "UNMOCKED", message: "Operação não configurada no teste." } },
     }));
-    await page.context().addCookies(adminCookies);
+    await loginAsAdmin(page);
     await page.goto("/admin/ferias");
     await expect(page.getByRole("heading", { name: "Férias", exact: true })).toBeVisible();
   });

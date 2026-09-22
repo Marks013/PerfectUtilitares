@@ -27,7 +27,7 @@ export async function writePdfOutput(
 ) {
   await validateGeneratedPdf(contents);
   const artifactId = randomUUID();
-  const safeFileName = sanitizePdfFileName(fileName);
+  const safeFileName = sanitizePdfFileName(encodeURIComponent(fileName));
   const relativeKey = `${jobId}/output/${artifactId}.pdf`;
   const finalPath = resolveInsideStorage(relativeKey);
   const temporaryPath = `${finalPath}.part`;
@@ -131,7 +131,7 @@ export async function writeOfficeOutput(
 
 export async function reservePdfOutput(jobId: string, fileName: string) {
   const artifactId = randomUUID();
-  const originalName = sanitizePdfFileName(fileName);
+  const originalName = sanitizePdfFileName(encodeURIComponent(fileName));
   const storageKey = `${jobId}/output/${artifactId}.pdf`;
   const finalPath = resolveInsideStorage(storageKey);
   const temporaryPath = `${finalPath}.part`;

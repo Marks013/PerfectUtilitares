@@ -2,7 +2,6 @@ import { LogIn, LogOut } from "lucide-react";
 import Link from "next/link";
 import { logoutAction } from "@/app/login/actions";
 import { auth } from "@/auth";
-import { JornadaNavMenu } from "@/components/app-jornada-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppNavigation } from "@/components/app-navigation";
 
@@ -16,16 +15,6 @@ const publicNavItems = [
 export async function AppShell({ children }: { children: React.ReactNode }) {
   const session = await auth();
   const activeSession = session?.user.status !== "ACTIVE" ? null : session;
-  const jornadaNavItems = [
-    { href: "/jornada/validar", label: "Validar" },
-    ...(activeSession?.user.role === "ADMIN"
-      ? [
-          { href: "/jornada/regras", label: "Regras" },
-          { href: "/jornada/codigos", label: "Códigos" },
-          { href: "/jornada/historico", label: "Histórico" },
-        ]
-      : []),
-  ];
   const navItems = [
     ...publicNavItems,
     ...(activeSession ? [{ href: "/conta", label: "Conta" }] : []),
@@ -70,7 +59,9 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             <Link href="/dashboard" className="app-nav-link">
               Início
             </Link>
-            <JornadaNavMenu items={jornadaNavItems} />
+            <Link href="/jornada/validar" className="app-nav-link">
+              Validador de Jornada
+            </Link>
             {navItems.map((item) => (
               <Link key={item.href} href={item.href} className="app-nav-link">
                 {item.label}

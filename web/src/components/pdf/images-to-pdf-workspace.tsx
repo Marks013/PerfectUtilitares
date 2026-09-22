@@ -31,6 +31,8 @@ import {
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
+import { PdfWorkspaceResetBoundary } from "./pdf-workspace-reset-boundary";
+import { bindPdfUploadAbort } from "./pdf-upload-abort";
 
 type ImageItem = {
   id: string;
@@ -67,6 +69,7 @@ function uploadImage(
   jobId: string,
   file: File,
   onProgress: (progress: number) => void,
+  signal: AbortSignal,
 ) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -94,6 +97,7 @@ function uploadImage(
     request.addEventListener("error", () =>
       reject(new Error(`A conexão foi interrompida ao enviar ${file.name}.`)),
     );
+    bindPdfUploadAbort(request, signal, reject);
     request.send(file);
   });
 }
@@ -152,7 +156,8 @@ function SortableImage({
   );
 }
 
-export function ImagesToPdfWorkspace() {
+function ImagesToPdfWorkspaceSession() {
+  const processingAbort = useRef<AbortController | null>(null);
   const [items, setItems] = useState<ImageItem[]>([]);
   const itemsRef = useRef<ImageItem[]>([]);
   const [pageSize, setPageSize] = useState<"A4" | "IMAGE">("A4");
@@ -184,6 +189,7 @@ export function ImagesToPdfWorkspace() {
 
   useEffect(
     () => () => {
+      processingAbort.current?.abort();
       itemsRef.current.forEach((item) => {
         URL.revokeObjectURL(item.url);
       });
@@ -255,10 +261,15 @@ export function ImagesToPdfWorkspace() {
 
   async function createPdf() {
     if (!items.length || busy) return;
+    processingAbort.current?.abort();
+    const controller = new AbortController();
+    processingAbort.current = controller;
+    const { signal } = controller;
     setError(null);
 
     try {
       const createResponse = await fetch("/api/pdf/jobs", {
+        signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -275,6 +286,7 @@ export function ImagesToPdfWorkspace() {
         );
       }
       const currentJobId = createBody.job.id;
+      signal.throwIfAborted();
       setJobId(currentJobId);
 
       for (const [index, item] of items.entries()) {
@@ -286,12 +298,13 @@ export function ImagesToPdfWorkspace() {
               ((index + fileProgress / 100) / items.length) * 100,
             ),
           ),
+          signal,
         );
       }
 
       const queueResponse = await fetch(
         `/api/pdf/jobs/${currentJobId}/queue`,
-        { method: "POST" },
+        { method: "POST", signal },
       );
       const queueBody = (await queueResponse.json()) as
         | { job: JobResponse }
@@ -307,7 +320,9 @@ export function ImagesToPdfWorkspace() {
 
       for (let attempt = 0; attempt < 600; attempt += 1) {
         await wait(1_000);
+        signal.throwIfAborted();
         const response = await fetch(`/api/pdf/jobs/${currentJobId}`, {
+          signal,
           cache: "no-store",
         });
         const body = (await response.json()) as
@@ -321,6 +336,7 @@ export function ImagesToPdfWorkspace() {
         const result = body.job.artifacts.find(
           (artifact): artifact is JobOutput => artifact.kind === "OUTPUT",
         );
+        signal.throwIfAborted();
         if (body.job.status === "SUCCEEDED" && result) {
           setOutput(result);
           setPhase("SUCCEEDED");
@@ -352,6 +368,7 @@ export function ImagesToPdfWorkspace() {
         "A criação está levando mais tempo que o esperado. Tente novamente em instantes ou use menos imagens.",
       );
     } catch (caught) {
+      if (signal.aborted) return;
       setPhase("IDLE");
       setProgress(0);
       setError(
@@ -521,4 +538,8 @@ export function ImagesToPdfWorkspace() {
       ) : null}
     </div>
   );
+}
+
+export function ImagesToPdfWorkspace() {
+  return <PdfWorkspaceResetBoundary><ImagesToPdfWorkspaceSession /></PdfWorkspaceResetBoundary>;
 }
