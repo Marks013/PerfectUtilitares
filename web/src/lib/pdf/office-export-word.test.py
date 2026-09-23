@@ -34,6 +34,7 @@ def make_pdf(path, pages):
             commands.append(f"BT /{font} {size} Tf {x} {y} Td ({escaped}) Tj ET")
         for x1, y1, x2, y2 in page.get("lines", []):
             commands.append(f"{x1} {y1} m {x2} {y2} l S")
+        commands.extend(page.get("commands", []))
         if page.get("image"):
             commands.append("q 60 0 0 40 40 620 cm /Im1 Do Q")
         stream = "\n".join(commands).encode("latin1")
@@ -150,6 +151,52 @@ class WordExportTests(unittest.TestCase):
         self.assertEqual(count, 2)
         self.assertEqual(text.count("Page1"), 48)
         self.assertEqual(text.count("Page2"), 48)
+
+    def test_decorative_page_keeps_editable_text_and_background(self):
+        document, metrics, path = self.convert([{
+            "texts": [(65, 650, "Editable poster", "F2", 40), (65, 560, "Birthday schedule", "F1", 24)],
+            "commands": ["0 0 1 RG 10 10 m 10 790 l 590 780 l 590 10 l h S"],
+            "image": True,
+        }])
+        self.assertEqual(metrics["pages"], 1)
+        self.assertIn("Editable poster", " ".join(p.text for p in document.paragraphs))
+        self.assertTrue(document.element.xpath("//wp:anchor[@behindDoc='1']"))
+        self.assertEqual(len(document.element.xpath("//w:framePr")), 2)
+        count, text = self.render(path)
+        self.assertEqual(count, 1)
+        self.assertEqual(text.count("Editable poster"), 1)
+        self.assertEqual(text.count("Birthday schedule"), 1)
+
+    def test_table_holes_preserve_external_row_labels(self):
+        lines = [(80, y, 360, y) for y in [740, 725, 710, 695]]
+        lines += [(x, 695, x, 740) for x in [80, 230, 360]]
+        # Partial extension creates holes within the detected table rectangle.
+        lines += [(40, 740, 80, 740), (40, 725, 80, 725), (40, 725, 40, 740)]
+        document, _, path = self.convert([{"lines": lines, "texts": [
+            (45, 730, "ID"), (85, 730, "Item"), (235, 730, "Value"),
+            (45, 715, "001"), (85, 715, "Alpha"), (235, 715, "10,50"),
+            (45, 700, "002"), (85, 700, "Beta"), (235, 700, "20,50"),
+            (390, 715, "Accepted"), (390, 700, "Pending"),
+        ]}])
+        text = " ".join(document.element.xpath("//w:t/text()"))
+        for value in ["001", "002", "Alpha", "Beta", "Accepted", "Pending"]:
+            self.assertEqual(text.count(value), 1)
+        count, rendered = self.render(path)
+        self.assertEqual(count, 1)
+        self.assertIn("Accepted", rendered)
+
+    def test_narrow_multiline_cells_remain_visible(self):
+        lines = [(40, y, 220, y) for y in [740, 700, 660]] + [(x, 660, x, 740) for x in [40, 125, 220]]
+        _, _, path = self.convert([{"lines": lines, "texts": [
+            (42, 725, "Descrição", "F2", 11), (127, 725, "Informações", "F2", 11),
+            (42, 710, "Segunda linha", "F1", 10), (127, 710, "Conversão", "F1", 10),
+            (42, 685, "Ação editável", "F1", 10), (127, 685, "Pagamento", "F1", 10),
+            (42, 670, "Conteúdo final", "F1", 10), (127, 670, "12,50", "F1", 10),
+        ]}])
+        count, text = self.render(path)
+        self.assertEqual(count, 1)
+        for phrase in ["Descrição", "Informações", "Segunda linha", "Conversão", "Ação editável", "Pagamento", "Conteúdo final", "12,50"]:
+            self.assertIn(phrase, text)
 
 
 if __name__ == "__main__":

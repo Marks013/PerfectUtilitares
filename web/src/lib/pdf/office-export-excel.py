@@ -4,6 +4,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -84,13 +85,15 @@ def _tables(page, words):
     return sorted(ruled, key=lambda table: (table.bbox[1], table.bbox[0]))
 
 
-def _write_table(sheet, start, table):
+def _write_table(sheet, start, table, adjacent=()):
     data = table.extract(x_tolerance=2, y_tolerance=3)
     boundaries = sorted(set(round(cell[0], 2) for cell in table.cells) | set(round(cell[2], 2) for cell in table.cells))
     row_number = start
     first = True
+    placed = set()
     for source_row, cells in zip(table.rows, data):
-        if not any(value and value.strip() for value in cells):
+        row_words = [word for word in adjacent if source_row.bbox[1] <= (word["top"]+word["bottom"])/2 < source_row.bbox[3]]
+        if not any(value and value.strip() for value in cells) and not row_words:
             continue
         # Coordinates, rather than None values, identify genuine spanning cells.
         for rectangle, text in zip(source_row.cells, cells):
@@ -102,9 +105,20 @@ def _write_table(sheet, start, table):
             _write(sheet, row_number, column, text, header=first)
             if right > left + 1:
                 sheet.merge_cells(start_row=row_number, end_row=row_number, start_column=column, end_column=right)
+        fields = {}
+        for word in row_words:
+            center = (word["x0"]+word["x1"])/2
+            column = next((index+1 for index in range(len(boundaries)-1) if boundaries[index] <= center < boundaries[index+1]), len(boundaries))
+            fields.setdefault(column, []).append(word)
+        for column, words in fields.items():
+            while isinstance(sheet.cell(row_number, column), MergedCell) or sheet.cell(row_number, column).value is not None:
+                column = max(column + 1, len(boundaries))
+            _write(sheet, row_number, column, "\n".join(" ".join(w["text"] for w in line) for line in _rows(words)))
+            placed.update(id(word) for word in words)
         first = False
         row_number += 1
-    return row_number
+    # Irregular table geometry must never make unmatched annotations disappear.
+    return _write_text(sheet, row_number, [word for word in adjacent if id(word) not in placed])
 
 
 def _write_text(sheet, start, words):
@@ -136,13 +150,23 @@ def export_excel(pdf, output_path):
             words = page.extract_words(x_tolerance=2, y_tolerance=3)
             tables = _tables(page, words)
             table_count += len(tables)
-            outside = [word for word in words if not any(_inside(word, table.bbox) for table in tables)]
+            # A detected table may have holes (row labels beside partial borders).
+            # Exclude only occupied cells, before grouping characters into words.
+            cells = [cell for table in tables for cell in table.cells]
+            outside_page = page.filter(lambda obj: obj.get("object_type") != "char" or not any(
+                cell[0] <= (obj["x0"]+obj["x1"])/2 <= cell[2]
+                and cell[1] <= (obj["top"]+obj["bottom"])/2 <= cell[3] for cell in cells))
+            outside = outside_page.extract_words(x_tolerance=2, y_tolerance=3)
             row = 1
             for table in tables:
                 before = [word for word in outside if word["top"] < table.bbox[1]]
                 outside = [word for word in outside if word["top"] >= table.bbox[1]]
                 row = _write_text(sheet, row, before)
-                row = _write_table(sheet, row, table) + 1
+                # Preserve row labels in table holes and annotations beside their
+                # corresponding records, rather than appending orphaned rows.
+                adjacent = [word for word in outside if table.bbox[1] <= (word["top"]+word["bottom"])/2 < table.bbox[3]]
+                outside = [word for word in outside if word not in adjacent]
+                row = _write_table(sheet, row, table, adjacent) + 1
             _write_text(sheet, row, outside)
             if not words and not tables:
                 _write(sheet, 1, 1, "Página sem texto reconhecível.")
@@ -153,6 +177,11 @@ def export_excel(pdf, output_path):
                     sheet.column_dimensions[get_column_letter(column[0].column)].width = min(70, max(12, width + 2))
             sheet.freeze_panes = "A2"
             sheet.sheet_view.showGridLines = True
+            sheet.sheet_properties.pageSetUpPr.fitToPage = True
+            sheet.page_setup.fitToWidth = 1
+            sheet.page_setup.fitToHeight = 0
+            sheet.page_setup.orientation = "landscape" if page.width > page.height else "portrait"
+            sheet.print_area = sheet.calculate_dimension()
         finally:
             page.close()
             if page is not original:

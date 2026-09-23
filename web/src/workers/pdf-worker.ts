@@ -33,6 +33,16 @@ Sentry.init({
 });
 
 const boss = await getPdfQueue();
+const nonRetryableConversionErrors = new Set([
+  "PDF_OFFICE_PAGE_LIMIT",
+  "PDF_OFFICE_PAGE_TOO_LARGE",
+  "PDF_OFFICE_PAGE_TOO_COMPLEX",
+  "PDF_OFFICE_OCR_NO_TEXT",
+  "PDF_OFFICE_OUTPUT_TOO_LARGE",
+  "PDF_OFFICE_BATCH_LIMIT",
+  "PDF_IMAGE_TOO_LARGE",
+  "INVALID_IMAGE_OPTIONS",
+]);
 const readWorkerLimit = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 8
@@ -104,7 +114,10 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
         );
       }
     } catch (error) {
-      const willRetry = job.retryCount < job.retryLimit;
+      const errorCode = error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code : "PDF_PROCESSING_FAILED";
+      const nonRetryable = nonRetryableConversionErrors.has(errorCode);
+      const willRetry = !nonRetryable && job.retryCount < job.retryLimit;
       await prisma.pdfJob.updateMany({
         where: {
           id: job.data.jobId,
@@ -116,7 +129,7 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
         },
         data: {
           completedAt: willRetry ? null : new Date(),
-          errorCode: "PDF_PROCESSING_FAILED",
+          errorCode,
           errorMessage:
             error instanceof Error
               ? error.message
@@ -131,6 +144,8 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
         },
       });
       await Sentry.flush(2_000);
+      // Acknowledge the queue delivery; the user-facing job remains FAILED.
+      if (nonRetryable) return;
       throw error;
     }
 

@@ -10,6 +10,14 @@ Páginas digitalizadas sem texto passam pelo OCRmyPDF/Tesseract já instalado, e
 
 JPG aplica o mesmo recorte e rotação do editor, preserva CropBox, usa subamostragem 4:4:4 e grava os DPI no arquivo. O padrão é 200 DPI/90%, com controles de resolução e qualidade salvos no rascunho. O processamento mantém somente uma página rasterizada por vez.
 
+### Ajustes da auditoria de setembro de 2026
+
+Cartazes com decoração cobrindo a página mantêm a arte como fundo e o texto nativo como quadros editáveis. PDFium desativa os objetos de texto apenas na cópia em memória usada para renderizar o fundo; o PDF original permanece intacto. Fontes incorporadas com nomes anônimos recebem uma substituição disponível. A largura dos caracteres é ajustada pelas métricas do PDF, mas fontes decorativas não disponíveis podem manter diferenças visuais.
+
+Tabelas Word preservam a altura das linhas e eliminam parágrafos vazios criados por mesclas. Texto ao lado de tabelas mantém sua posição em quadros editáveis. A extração considera as células efetivas, preservando identificadores presentes em lacunas da grade. No Excel, esses identificadores e as anotações permanecem associados às linhas; colisões e geometria irregular possuem alternativa que preserva o conteúdo. A impressão usa a orientação da página de origem e uma página de largura.
+
+JPG reserva espaço para a numeração de páginas antes de limitar nomes longos. Erros determinísticos de limite ou ausência de texto reconhecido encerram o trabalho com seu código específico, sem repetir conversões que não podem melhorar com uma nova tentativa. Falhas transitórias continuam elegíveis às tentativas existentes.
+
 ## Dependências, cache e limites
 
 - `ops/pdf-worker/office-requirements.txt` fixa 13 dependências diretas e transitivas com SHA256 dos wheels da plataforma atual: ARM64, musl e Python 3.14. Outra plataforma exige regenerar e verificar o lock.
@@ -19,6 +27,7 @@ JPG aplica o mesmo recorte e rotação do editor, preserva CropBox, usa subamost
 - Cada conversão usa diretório privado em `job/work/UUID`; cache de fontes e temporários ficam nesse diretório e são removidos ao concluir ou falhar.
 - Limites Office: 5 PDFs por lote, 100 páginas por arquivo, 100.000 caracteres por página, 40 megapixels na análise gráfica, 1,5 GiB de espaço de endereçamento do subprocesso e até 8 minutos por lote. OCR usa um processo, até 45 segundos por página e 240 segundos no total. Saída máxima: 100 MB.
 - Timeout encerra o grupo de processos, incluindo OCR, antes da limpeza. O paralelismo e os limites existentes do worker permanecem em vigor.
+- Métricas de fontes usam cache limitado a 64 combinações por subprocesso. A auditoria não adiciona dependências nem altera limites de CPU, memória ou concorrência.
 - JPG recusa imagens acima de 40 megapixels ou 8192 pixels por dimensão, com orientação para reduzir DPI ou recortar. Não reduz a resolução silenciosamente.
 
 ## Verificação reproduzível
@@ -43,3 +52,5 @@ Os testes Vitest cobrem o subprocesso, timeout/limpeza, persistência dos arquiv
 - [python-docx: texto e parágrafos](https://python-docx.readthedocs.io/en/latest/user/text.html)
 - [python-docx: seções](https://python-docx.readthedocs.io/en/latest/user/sections.html)
 - [OCRmyPDF: processamento por páginas e limites do OCR](https://ocrmypdf.readthedocs.io/en/stable/cookbook.html)
+- [PDFium: estado de objetos da página](https://pdfium.googlesource.com/pdfium/+/main/public/fpdf_edit.h)
+- [Open XML: quadros editáveis e posicionamento](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.frameproperties?view=openxml-3.0.1)

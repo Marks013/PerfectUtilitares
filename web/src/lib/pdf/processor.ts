@@ -402,9 +402,12 @@ export async function processPdfJob(jobId: string) {
         quality: options.quality,
         onProgress: (progress) => updateProgress(job.id, progress),
         async onOutput(_instruction, bytes, outputIndex) {
+          const suffix = `-pagina-${String(outputIndex + 1).padStart(3, "0")}`;
+          // Storage caps the base at 170 UTF-16 units; reserve the page number.
+          const pageBase = baseName.slice(0, 170 - suffix.length).replace(/[\uD800-\uDBFF]$/, "");
           const output = await writeBinaryOutput(
             job.id,
-            `${baseName}-pagina-${String(outputIndex + 1).padStart(3, "0")}.jpg`,
+            `${pageBase}${suffix}.jpg`,
             "jpg",
             bytes,
           );

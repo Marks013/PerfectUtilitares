@@ -1,10 +1,11 @@
 import importlib.util
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 import pdfplumber
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 spec = importlib.util.spec_from_file_location("excel_export", Path(__file__).with_name("office-export-excel.py"))
 engine = importlib.util.module_from_spec(spec)
@@ -97,6 +98,35 @@ class ExcelExportTests(unittest.TestCase):
     def test_rotated_page_keeps_text(self):
         sheet, _ = self.convert([(40, 750, "Rotation")], page_options="/Rotate 90")
         self.assertIn("Rotation", [cell.value for row in sheet for cell in row])
+
+    def test_table_holes_preserve_row_identifiers(self):
+        lines = [(80, y, 360, y) for y in [740, 725, 710, 695]]
+        lines += [(x, 695, x, 740) for x in [80, 230, 360]]
+        lines += [(40, 740, 80, 740), (40, 725, 80, 725), (40, 725, 40, 740)]
+        sheet, _ = self.convert([
+            (45, 730, "ID"), (85, 730, "Item"), (235, 730, "Value"),
+            (45, 715, "001"), (85, 715, "Alpha"), (235, 715, "10,50"),
+            (45, 700, "002"), (85, 700, "Beta"), (235, 700, "20,50"),
+        ], lines)
+        text = " ".join(str(cell.value) for row in sheet for cell in row if cell.value is not None)
+        for value in ["001", "002", "Alpha", "Beta"]:
+            self.assertEqual(text.count(value), 1)
+        self.assertEqual(sheet['A2'].value, '001')
+        self.assertEqual(sheet['B2'].value, 'Alpha')
+        self.assertEqual(sheet['A3'].value, '002')
+        self.assertEqual(sheet['B3'].value, 'Beta')
+
+    def test_irregular_table_keeps_colliding_and_unmatched_annotations(self):
+        sheet = Workbook().active
+        table = SimpleNamespace(cells=[(10, 10, 90, 30)],
+            rows=[SimpleNamespace(bbox=(10, 10, 90, 30), cells=[(10, 10, 90, 30)])],
+            extract=lambda **_: [['Occupied']])
+        words = [dict(x0=20, x1=40, top=12, bottom=22, text='Annotation'),
+                 dict(x0=20, x1=40, top=35, bottom=45, text='Unmatched')]
+        engine._write_table(sheet, 1, table, words)
+        self.assertEqual(sheet['A1'].value, 'Occupied')
+        self.assertEqual(sheet['B1'].value, 'Annotation')
+        self.assertEqual(sheet['A2'].value, 'Unmatched')
 
 
 if __name__ == "__main__":

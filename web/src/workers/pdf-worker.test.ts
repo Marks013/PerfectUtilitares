@@ -87,6 +87,35 @@ const queueJob = (retryCount = 0): QueueJob => ({
 });
 
 describe("PDF worker idempotency", () => {
+  it.each(["PDF_OFFICE_PAGE_LIMIT", "PDF_IMAGE_TOO_LARGE", "PDF_OFFICE_OCR_NO_TEXT"])(
+    "keeps %s terminal without repeating an unchanged conversion",
+    async (code) => {
+      mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
+      mocks.processJob.mockRejectedValueOnce(Object.assign(new Error("Confira o PDF."), { code }));
+
+      await expect(handleJobs([queueJob()])).resolves.toBeUndefined();
+
+      expect(mocks.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ status: "FAILED", errorCode: code,
+          errorMessage: "Confira o PDF.", completedAt: expect.any(Date) }),
+      }));
+      expect(mocks.cleanupInputs).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([0, 2])("preserves transient error codes and retry policy at attempt %i", async (retryCount) => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
+    const error = Object.assign(new Error("Converter temporarily unavailable"), { code: "OFFICE_TOOL_UNAVAILABLE" });
+    mocks.processJob.mockRejectedValueOnce(error);
+
+    await expect(handleJobs([queueJob(retryCount)])).rejects.toBe(error);
+
+    expect(mocks.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: retryCount < 2 ? "QUEUED" : "FAILED",
+        errorCode: "OFFICE_TOOL_UNAVAILABLE", completedAt: retryCount < 2 ? null : expect.any(Date) }),
+    }));
+  });
+
   it("ignores a duplicate delivery after the job left QUEUED", async () => {
     mocks.updateMany.mockResolvedValueOnce({ count: 0 });
 
