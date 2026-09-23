@@ -1,15 +1,31 @@
 import { createCanvas } from "@napi-rs/canvas";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, PDFNumber } from "pdf-lib";
 import sharp from "sharp";
 import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import type { PdfManifest } from "@/lib/pdf/schema";
 import { ensureServerLocalStorage } from "@/lib/pdf/server-runtime";
-import { resolvePdfStorageKey } from "@/lib/pdf/storage";
-import { PdfStructureError } from "@/lib/pdf/structural";
+import { buildStructuralPdf } from "@/lib/pdf/structural";
+
+const MAX_JPEG_PIXELS = 40_000_000;
+const MAX_JPEG_DIMENSION = 8_192;
+
+function assertJpegDimensions(width: number, height: number) {
+  if (
+    !Number.isFinite(width) || !Number.isFinite(height) ||
+    width <= 0 || height <= 0 ||
+    width > MAX_JPEG_DIMENSION || height > MAX_JPEG_DIMENSION ||
+    width * height > MAX_JPEG_PIXELS
+  ) {
+    throw new PdfRenderError(
+      "PDF_IMAGE_TOO_LARGE",
+      "A página excede o limite de 40 megapixels ou 8192 pixels por lado. Reduza a resolução (DPI) ou recorte a página antes de converter.",
+    );
+  }
+}
 
 type RenderInput = {
   id: string;
@@ -96,18 +112,23 @@ async function renderPdfPageWithPdfJs({
   dpi,
   inputPath,
   pageNumber,
+  enforceJpegLimits,
 }: RenderPdfPageOptions) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const document = await pdfjs.getDocument(
+  const loadingTask = pdfjs.getDocument(
     pdfJsServerDocumentOptions(
       new Uint8Array(await readFile(inputPath)),
     ),
-  ).promise;
+  );
+  const document = await loadingTask.promise;
 
   try {
     const page = await document.getPage(pageNumber);
     try {
       const viewport = page.getViewport({ scale: dpi / 72 });
+      if (enforceJpegLimits) {
+        assertJpegDimensions(Math.ceil(viewport.width), Math.ceil(viewport.height));
+      }
       const canvas = createCanvas(
         Math.max(1, Math.ceil(viewport.width)),
         Math.max(1, Math.ceil(viewport.height)),
@@ -124,7 +145,7 @@ async function renderPdfPageWithPdfJs({
       page.cleanup();
     }
   } finally {
-    await document.cleanup();
+    await loadingTask.destroy();
   }
 }
 
@@ -132,6 +153,8 @@ type RenderPdfPageOptions = {
   dpi: number;
   inputPath: string;
   pageNumber: number;
+  cropBox?: boolean;
+  enforceJpegLimits?: boolean;
 };
 
 export async function renderPdfPageToPng(options: RenderPdfPageOptions) {
@@ -146,6 +169,7 @@ export async function renderPdfPageToPng(options: RenderPdfPageOptions) {
 
   try {
     await runPoppler([
+      ...(options.cropBox ? ["-cropbox"] : []),
       "-f",
       String(options.pageNumber),
       "-l",
@@ -273,8 +297,8 @@ export async function renderPdfPagesToJpeg({
   manifest,
   onOutput,
   onProgress,
-  quality = 82,
-  dpi = 150,
+  quality = 90,
+  dpi = 200,
 }: {
   inputs: Map<string, RenderInput>;
   manifest: PdfManifest;
@@ -288,51 +312,39 @@ export async function renderPdfPagesToJpeg({
   onProgress?: (progress: number) => Promise<void> | void;
 }) {
   ensureServerLocalStorage();
-  const pageCounts = new Map<string, number>();
-
-  for (const [index, instruction] of manifest.pages.entries()) {
-      const input = inputs.get(instruction.artifactId);
-      if (!input) {
-        throw new PdfStructureError(
-          "INVALID_PAGE_SOURCE",
-          "Uma página referencia um arquivo que não pertence ao trabalho.",
-        );
-      }
-
-      let pageCount = pageCounts.get(input.id);
-      if (!pageCount) {
-        try {
-          const document = await PDFDocument.load(
-            await readFile(resolvePdfStorageKey(input.storageKey)),
-            { updateMetadata: false },
-          );
-          pageCount = document.getPageCount();
-          pageCounts.set(input.id, pageCount);
-        } catch {
-          throw new PdfStructureError(
-            "PDF_OPEN_FAILED",
-            `Não foi possível abrir ${input.originalName}.`,
-          );
-        }
-      }
-
-      if (instruction.sourcePage > pageCount) {
-        throw new PdfStructureError(
-          "PAGE_NOT_FOUND",
-          `A página ${instruction.sourcePage} não existe em ${input.originalName}.`,
-        );
-      }
-
+  if (!Number.isFinite(dpi) || dpi < 72 || dpi > 300 ||
+      !Number.isInteger(quality) || quality < 1 || quality > 100) {
+    throw new PdfRenderError("INVALID_IMAGE_OPTIONS", "Selecione uma resolução entre 72 e 300 DPI e uma qualidade entre 1 e 100.");
+  }
+  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "perfect-pdf-jpeg-"));
+  const inputPath = path.join(temporaryDirectory, "page.pdf");
+  try {
+    // Reuse the editor's crop/rotation contract, reading each source only once.
+    const preparedBytes = await buildStructuralPdf({ inputs, manifest });
+    const preparedDocument = await PDFDocument.load(preparedBytes);
+    for (const page of preparedDocument.getPages()) {
+      const box = page.getCropBox();
+      const userUnit = page.node.lookupMaybe(PDFName.of("UserUnit"), PDFNumber)?.asNumber() ?? 1;
+      assertJpegDimensions(
+        Math.ceil(box.width * dpi / 72 * userUnit),
+        Math.ceil(box.height * dpi / 72 * userUnit),
+      );
+    }
+    await writeFile(inputPath, preparedBytes);
+    // Only one raster page is held at a time, even for long documents.
+    for (const [index, instruction] of manifest.pages.entries()) {
       const pngBytes = await renderPdfPageToPng({
         dpi,
-        inputPath: resolvePdfStorageKey(input.storageKey),
-        pageNumber: instruction.sourcePage,
+        inputPath,
+        pageNumber: index + 1,
+        cropBox: true,
+        enforceJpegLimits: true,
       });
-      const bytes = await sharp(pngBytes, { failOn: "error" })
-        .rotate(instruction.rotation)
+      const bytes = await sharp(pngBytes, { failOn: "error", limitInputPixels: MAX_JPEG_PIXELS })
         .flatten({ background: "#FFFFFF" })
+        .withMetadata({ density: dpi })
         .jpeg({
-          chromaSubsampling: "4:2:0",
+          chromaSubsampling: "4:4:4",
           force: true,
           mozjpeg: true,
           optimiseCoding: true,
@@ -341,5 +353,8 @@ export async function renderPdfPagesToJpeg({
         .toBuffer();
       await onOutput(instruction, bytes, index);
       await onProgress?.(10 + ((index + 1) / manifest.pages.length) * 80);
+    }
+  } finally {
+    await rm(temporaryDirectory, { force: true, recursive: true });
   }
 }

@@ -37,6 +37,29 @@ export function PdfOrganizerWorkspaceView({ model }: { model: Model }) {
         </div>
       </header>
 
+      {operation === "PDF_TO_JPG" ? (
+        <fieldset className="flex flex-wrap items-center gap-4 rounded-xl border border-[var(--app-border)] p-4" disabled={processingLocked || Boolean(upload)}>
+          <legend className="px-2 text-sm font-semibold">Qualidade das imagens</legend>
+          <label className="flex items-center gap-2 text-sm">
+            Resolução
+            <select aria-label="Resolução JPG" className="rounded border border-[var(--app-border)] bg-[var(--app-surface)] p-2" value={model.jpgOptions.dpi}
+              onChange={(event) => model.setJpgOptions((value) => ({ ...value, dpi: Number(event.target.value) }))}>
+              <option value={96}>96 DPI · arquivo leve</option>
+              <option value={150}>150 DPI · leitura</option>
+              <option value={200}>200 DPI · equilibrado</option>
+              <option value={300}>300 DPI · impressão</option>
+              {![96, 150, 200, 300].includes(model.jpgOptions.dpi) ? <option value={model.jpgOptions.dpi}>{model.jpgOptions.dpi} DPI</option> : null}
+            </select>
+          </label>
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            Qualidade JPG: {model.jpgOptions.quality}%
+            <input type="range" min={40} max={100} step={1} value={model.jpgOptions.quality}
+              onChange={(event) => model.setJpgOptions((value) => ({ ...value, quality: Number(event.target.value) }))} />
+          </label>
+          <p className="w-full text-sm">Maior resolução preserva detalhes e aumenta o arquivo. Páginas muito grandes podem exigir menos DPI.</p>
+        </fieldset>
+      ) : null}
+
       <div className="pdf-workspace__toolbar">
         <div className="pdf-toolbar-group">
           <button

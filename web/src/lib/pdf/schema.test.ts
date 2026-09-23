@@ -27,9 +27,9 @@ describe("pdf schemas", () => {
   });
 
   it.each(["PDF_TO_WORD", "PDF_TO_EXCEL"])(
-    "rejects disabled lossy office export %s",
+    "accepts local structured office export %s",
     (operation) => {
-      expect(pdfJobCreateSchema.safeParse({ operation }).success).toBe(false);
+      expect(pdfJobCreateSchema.safeParse({ operation }).success).toBe(true);
     },
   );
 

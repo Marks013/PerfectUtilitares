@@ -110,6 +110,20 @@ const toolGroups = [
     tone: "export",
     tools: [
       {
+        label: "PDF para Word",
+        description: "Reconstrua textos, tabelas e imagens em Word editável.",
+        href: "/pdf/para-word",
+        icon: FileText,
+        available: true,
+      },
+      {
+        label: "PDF para Excel",
+        description: "Organize tabelas e colunas em planilhas editáveis.",
+        href: "/pdf/para-excel",
+        icon: Sheet,
+        available: true,
+      },
+      {
         label: "PDF para JPG",
         description: "Exporte páginas como imagens.",
         href: "/pdf/para-jpg",

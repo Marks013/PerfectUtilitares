@@ -112,7 +112,22 @@ RUN apk add --no-cache \
     tesseract-ocr-data-eng \
     tesseract-ocr-data-por
 
+FROM pdf-runtime AS pdf-office-deps
+USER root
+RUN apk add --no-cache py3-pip
+COPY ops/pdf-worker/office-requirements.txt /tmp/office-requirements.txt
+RUN --mount=type=cache,id=perfectutilitares-office-pip-py314-arm64,target=/root/.cache/pip,sharing=locked \
+    python3 -m venv /opt/pdf-office \
+    && /opt/pdf-office/bin/pip install --require-hashes --only-binary=:all: -r /tmp/office-requirements.txt \
+    && /opt/pdf-office/bin/pip check
+
 FROM pdf-runtime AS pdf-worker
+ENV PDF_OFFICE_PYTHON=/opt/pdf-office/bin/python3 \
+    PDF_OFFICE_SCRIPT=/app/pdf-office/office-export.py \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+COPY --from=pdf-office-deps /opt/pdf-office /opt/pdf-office
+COPY src/lib/pdf/office-export.py src/lib/pdf/office-export-word.py src/lib/pdf/office-export-excel.py /app/pdf-office/
 COPY --from=pdf-worker-deps --chown=1001:1001 /app/node_modules ./node_modules
 COPY --from=pdf-worker-builder --chown=1001:1001 /app/dist ./dist
 COPY --chown=1001:1001 src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py

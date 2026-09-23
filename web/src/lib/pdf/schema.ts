@@ -16,6 +16,8 @@ const pdfOperationSchema = z.enum([
   "CROP",
   "PDF_TO_JPG",
   "JPG_TO_PDF",
+  "PDF_TO_WORD",
+  "PDF_TO_EXCEL",
   "WORD_TO_PDF",
   "EXCEL_TO_PDF",
 ]);
@@ -95,8 +97,8 @@ export const pdfCompressionOptionsSchema = z
   });
 
 export const pdfToJpgOptionsSchema = z.object({
-  dpi: z.number().int().min(96).max(300).default(150),
-  quality: z.number().int().min(40).max(100).default(82),
+  dpi: z.number().int().min(96).max(300).default(200),
+  quality: z.number().int().min(40).max(100).default(90),
 });
 
 export const jpgToPdfOptionsSchema = z.object({
@@ -192,6 +194,7 @@ export const pdfAnnotationsSchema = z.array(pdfAnnotationSchema).max(5_000);
 export const pdfJobUpdateSchema = z.object({
   manifest: pdfManifestSchema,
   annotations: pdfAnnotationsSchema.default([]),
+  jpg: pdfToJpgOptionsSchema.optional(),
 });
 
 export type PdfManifest = z.infer<typeof pdfManifestSchema>;

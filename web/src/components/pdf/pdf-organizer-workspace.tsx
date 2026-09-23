@@ -113,6 +113,7 @@ export function usePdfOrganizerWorkspaceController({
   const [historyVersion, setHistoryVersion] = useState(0);
   const [cropPending, setCropPending] = useState(false);
   const [applyingCrop, setApplyingCrop] = useState(false);
+  const [jpgOptions, setJpgOptions] = useState({ dpi: 200, quality: 90 });
   const processingLocked =
     applyingCrop ||
     processing.status === "QUEUED" ||
@@ -186,6 +187,7 @@ export function usePdfOrganizerWorkspaceController({
         const options =
           body.job.options && typeof body.job.options === "object"
             ? (body.job.options as {
+                jpg?: { dpi: number; quality: number };
                 manifest?: {
                   version: 1;
                   pages: Array<Omit<WorkspacePage, "cropMargins" | "fileName">>;
@@ -250,6 +252,10 @@ export function usePdfOrganizerWorkspaceController({
           }),
         );
         if (signal.aborted) return;
+        if (options.jpg && Number.isInteger(options.jpg.dpi) && options.jpg.dpi >= 96 && options.jpg.dpi <= 300
+          && Number.isInteger(options.jpg.quality) && options.jpg.quality >= 40 && options.jpg.quality <= 100) {
+          setJpgOptions(options.jpg);
+        }
         setJobId(body.job.id);
         setPages(recoveredPages);
         setSelectedIds(new Set());
@@ -356,6 +362,7 @@ export function usePdfOrganizerWorkspaceController({
       signal: lifetime.current.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        ...(operation === "PDF_TO_JPG" ? { jpg: jpgOptions } : {}),
         manifest: {
           version: 1,
           pages: pagesToSave.map((page) => ({
@@ -381,7 +388,7 @@ export function usePdfOrganizerWorkspaceController({
     });
     manifestSave.current = save;
     return save;
-  }, [jobId, pages]);
+  }, [jobId, pages, operation, jpgOptions]);
 
   useEffect(() => {
     if (!jobId || !pages.length || processingLocked) return;
@@ -641,7 +648,7 @@ export function usePdfOrganizerWorkspaceController({
     setCropPending(true);
   }
 
-    return { Archive, ArrowLeft, Check, Copy, Crop, DndContext, Download, DragOverlay, GripVertical, Link, Loader2, PdfVisualCropEditor, Redo2, RotateCw, Save, SortableContext, SortablePage, Trash2, Undo2, Upload, X, activePage, applyCrop, closestCenter, copy, cropMargins, cropPending, cropPreviewPage, documents, duplicate, error, finalizePdf, future, getInputProps, getRootProps, handleDragEnd, handleDragStart, handleSelect, historyVersion, isDragActive, jobId, menuPageId, operation, pages, past, processing, processingLocked, rectSortingStrategy, redo, remove, rotate, saveState, selected, selectedIds, sensors, setActiveId, setCropMargins: updateCropMargins, setError, setMenuPageId, setSelectedIds, undo, upload };
+    return { jpgOptions, setJpgOptions, Archive, ArrowLeft, Check, Copy, Crop, DndContext, Download, DragOverlay, GripVertical, Link, Loader2, PdfVisualCropEditor, Redo2, RotateCw, Save, SortableContext, SortablePage, Trash2, Undo2, Upload, X, activePage, applyCrop, closestCenter, copy, cropMargins, cropPending, cropPreviewPage, documents, duplicate, error, finalizePdf, future, getInputProps, getRootProps, handleDragEnd, handleDragStart, handleSelect, historyVersion, isDragActive, jobId, menuPageId, operation, pages, past, processing, processingLocked, rectSortingStrategy, redo, remove, rotate, saveState, selected, selectedIds, sensors, setActiveId, setCropMargins: updateCropMargins, setError, setMenuPageId, setSelectedIds, undo, upload };
 }
 
 function OrganizerContent(props: Parameters<typeof usePdfOrganizerWorkspaceController>[0]) {

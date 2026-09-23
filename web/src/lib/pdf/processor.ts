@@ -4,6 +4,7 @@ import { getPdfWorkingSetMultiplier } from "@/lib/pdf/capacity";
 import { compressPdfFile, PdfToolError } from "@/lib/pdf/compression";
 import { mapWithConcurrency } from "@/lib/pdf/compression-concurrency";
 import { buildPdfFromImages } from "@/lib/pdf/images-to-pdf";
+import { convertPdfToOffice } from "@/lib/pdf/office-export";
 import {
   convertOfficeToPdf,
   PdfOfficeError,
@@ -28,6 +29,7 @@ import {
 import {
   removePdfStorageKey,
   writeBinaryOutput,
+  writeOfficeOutput,
   writePdfOutput,
 } from "@/lib/pdf/storage";
 import { PdfRenderError, renderPdfPagesToJpeg } from "@/lib/pdf/render";
@@ -277,10 +279,39 @@ export async function processPdfJob(jobId: string) {
       job.operation === "PDF_TO_WORD" ||
       job.operation === "PDF_TO_EXCEL"
     ) {
-      throw new PdfProcessingError(
-        "PDF_OFFICE_EXPORT_DISABLED",
-        "PDF para Word/Excel foi desativado porque não preservava layout, imagens e tabelas com fidelidade.",
-      );
+      if (inputArtifacts.length > 5) {
+        throw new PdfProcessingError("PDF_OFFICE_BATCH_LIMIT", "Converta até 5 PDFs por vez.");
+      }
+      const extension = job.operation === "PDF_TO_WORD" ? "docx" : "xlsx";
+      const mimeType = extension === "docx"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      const outputs: Array<Awaited<ReturnType<typeof writeOfficeOutput>>> = [];
+      const deadline = Date.now() + 480_000;
+      for (const [index, input] of inputArtifacts.entries()) {
+        const bytes = await convertPdfToOffice({
+          jobId: job.id, storageKey: input.storageKey, extension,
+          timeoutMs: deadline - Date.now(),
+          onProgress: (progress) => updateProgress(job.id, 5 + ((index + progress / 100) / inputArtifacts.length) * 90),
+        });
+        const baseName = input.originalName.replace(/\.pdf$/i, "") || "documento";
+        const output = await writeOfficeOutput(job.id, `${baseName}.${extension}`, extension, bytes);
+        outputs.push(output);
+        writtenStorageKeys.push(output.storageKey);
+      }
+      await prisma.$transaction([
+        prisma.pdfArtifact.createMany({ data: outputs.map((output) => ({
+          id: output.artifactId, jobId: job.id, kind: "OUTPUT", mimeType,
+          originalName: output.originalName, sha256: output.sha256,
+          sizeBytes: output.sizeBytes, storageKey: output.storageKey,
+        })) }),
+        prisma.pdfJob.update({ where: { id: job.id }, data: {
+          completedAt: new Date(), errorCode: null, errorMessage: null,
+          outputBytes: outputs.reduce((sum, output) => sum + output.sizeBytes, BigInt(0)),
+          progress: 100, status: "SUCCEEDED",
+        } }),
+      ]);
+      return;
     }
 
     if (
@@ -356,7 +387,9 @@ export async function processPdfJob(jobId: string) {
     }
 
     if (job.operation === "PDF_TO_JPG") {
-      const options = pdfToJpgOptionsSchema.parse(job.options ?? {});
+      const savedOptions = job.options && typeof job.options === "object" && !Array.isArray(job.options)
+        ? job.options : {};
+      const options = pdfToJpgOptionsSchema.parse(savedOptions.jpg ?? savedOptions);
       const outputs: Array<Awaited<ReturnType<typeof writeBinaryOutput>>> = [];
       const firstInput = requireFirstInput(inputArtifacts);
       const baseName =

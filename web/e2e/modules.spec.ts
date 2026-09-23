@@ -281,7 +281,8 @@ test("Jornada opens validation directly and preserves administrative tabs", asyn
     await expect(tabs.getByRole("link", { name, exact: true })).toBeVisible();
   }
   await tabs.getByRole("link", { name: "Regras", exact: true }).click();
-  await expect(page).toHaveURL(/\/jornada\/regras(?:\?|$)/);
+  // The isolated development server compiles this route on its first visit.
+  await expect(page).toHaveURL(/\/jornada\/regras(?:\?|$)/, { timeout: 30_000 });
   await expect(tabs.getByRole("link", { name: "Regras", exact: true })).toHaveAttribute("aria-current", "page");
   await page.setViewportSize({ width: 390, height: 844 });
   for (const name of ["Validar", "Regras", "Códigos", "Histórico"]) {

@@ -19,6 +19,8 @@ import { PdfWorkspaceResetBoundary } from "./pdf-workspace-reset-boundary";
 import { bindPdfUploadAbort } from "./pdf-upload-abort";
 
 type OfficeOperation =
+  | "PDF_TO_WORD"
+  | "PDF_TO_EXCEL"
   | "WORD_TO_PDF"
   | "EXCEL_TO_PDF";
 
@@ -52,6 +54,28 @@ const CONVERTERS: Record<
     uploadRoute: "documents" | "files";
   }
 > = {
+  PDF_TO_WORD: {
+    accept: { "application/pdf": [".pdf"] },
+    description:
+      "Transforme o PDF em Word editável, reconstruindo textos, tabelas e imagens com atenção à aparência original.",
+    extension: ".pdf",
+    inputLabel: "PDF",
+    mimeType: "application/pdf",
+    outputLabel: "Word",
+    title: "PDF para Word",
+    uploadRoute: "files",
+  },
+  PDF_TO_EXCEL: {
+    accept: { "application/pdf": [".pdf"] },
+    description:
+      "Transforme tabelas e colunas do PDF em planilhas Excel editáveis.",
+    extension: ".pdf",
+    inputLabel: "PDF",
+    mimeType: "application/pdf",
+    outputLabel: "Excel",
+    title: "PDF para Excel",
+    uploadRoute: "files",
+  },
   WORD_TO_PDF: {
     accept: {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
@@ -185,6 +209,8 @@ function PdfOfficeConvertWorkspaceSession({
   const processingAbort = useRef<AbortController | null>(null);
   useEffect(() => () => processingAbort.current?.abort(), []);
   const converter = CONVERTERS[operation];
+  const exportingPdf = converter.inputLabel === "PDF";
+  const maxFiles = exportingPdf ? 5 : 20;
   const [files, setFiles] = useState<File[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
   const [phase, setPhase] = useState<
@@ -198,23 +224,27 @@ function PdfOfficeConvertWorkspaceSession({
     phase === "UPLOADING" || phase === "QUEUED" || phase === "RUNNING";
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (!acceptedFiles.length) return;
+    const existing = new Set(files.map(fileKey));
+    const next = [
+      ...files,
+      ...acceptedFiles.filter((file) => !existing.has(fileKey(file))),
+    ];
+    if (next.length > maxFiles) {
+      setError(`Selecione no máximo ${maxFiles} arquivos por conversão.`);
+      return;
+    }
     setError(null);
     setOutputs([]);
     setPhase("IDLE");
-    setFiles((current) => {
-      const existing = new Set(current.map(fileKey));
-      return [
-        ...current,
-        ...acceptedFiles.filter((file) => !existing.has(fileKey(file))),
-      ].slice(0, 20);
-    });
-  }, []);
+    setFiles(next);
+  }, [files, maxFiles]);
 
   const { fileRejections, getInputProps, getRootProps, isDragActive } =
     useDropzone({
       accept: converter.accept,
       disabled: locked,
-      maxFiles: 20,
+      maxFiles,
       maxSize: 100 * 1024 * 1024,
       multiple: true,
       onDrop,
@@ -225,9 +255,11 @@ function PdfOfficeConvertWorkspaceSession({
     setError(
       fileRejections[0]?.errors[0]?.code === "file-too-large"
         ? "Cada arquivo pode ter no máximo 100 MB."
-        : `Selecione arquivos ${converter.extension} válidos.`,
+        : fileRejections[0]?.errors[0]?.code === "too-many-files"
+          ? `Selecione no máximo ${maxFiles} arquivos por conversão.`
+          : `Selecione arquivos ${converter.extension} válidos.`,
     );
-  }, [converter.extension, fileRejections]);
+  }, [converter.extension, fileRejections, maxFiles]);
 
   async function convert() {
     if (!files.length) return;
@@ -278,7 +310,7 @@ function PdfOfficeConvertWorkspaceSession({
         );
       }
 
-      for (let attempt = 0; attempt < 360; attempt += 1) {
+      for (let attempt = 0; attempt < (exportingPdf ? 600 : 360); attempt += 1) {
         await wait(1_000);
         signal.throwIfAborted();
         const response = await fetch(`/api/pdf/jobs/${currentJobId}`, {
@@ -388,6 +420,14 @@ function PdfOfficeConvertWorkspaceSession({
         <p>{converter.description}</p>
       </header>
 
+      {exportingPdf ? (
+        <p>
+          Até 100 páginas por PDF. Páginas sem texto selecionável usam
+          reconhecimento de texto (OCR) em português e inglês. Revise o resultado,
+          especialmente em digitalizações e layouts complexos.
+        </p>
+      ) : null}
+
       <div
         {...getRootProps()}
         className="pdf-dropzone pdf-convert-dropzone"
@@ -398,7 +438,7 @@ function PdfOfficeConvertWorkspaceSession({
         <strong>
           Solte {converter.inputLabel === "PDF" ? "os PDFs" : "os arquivos"} aqui
         </strong>
-        <span>ou selecione até 20 arquivos {converter.extension}</span>
+        <span>ou selecione até {maxFiles} arquivos {converter.extension}</span>
       </div>
 
       {files.length ? (
@@ -406,7 +446,7 @@ function PdfOfficeConvertWorkspaceSession({
           <header>
             <div>
               <h2>Arquivos selecionados</h2>
-              <span>{files.length} de 20</span>
+              <span>{files.length} de {maxFiles}</span>
             </div>
             <button type="button" disabled={locked} onClick={() => setFiles([])}>
               <Trash2 className="size-4" aria-hidden="true" />

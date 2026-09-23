@@ -13,6 +13,8 @@ test.beforeEach(async ({ page }) => {
 test("administrative and Jornada writes are observable through subsequent reads", async ({
   page,
 }) => {
+  // Several routes compile on demand in the isolated development server.
+  test.setTimeout(120_000);
   const origin = new URL(page.url()).origin;
   const suffix = Date.now().toString(36);
 
