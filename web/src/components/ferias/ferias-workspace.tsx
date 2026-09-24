@@ -9,6 +9,7 @@ const buttonClass = "inline-flex min-h-11 items-center justify-center gap-2 app-
 export function FeriasWorkspace() {
   const model = useFeriasWorkspace();
   const canExport = Boolean(model.analysis?.canExport && !model.stale && !model.busy);
+  const canFinish = Boolean(model.analysis && !model.busy && (model.stale || model.analysis.canExport));
 
   return (
     <div className="mx-auto min-w-0 max-w-6xl space-y-6 text-[color:var(--app-fg)]">
@@ -35,7 +36,7 @@ export function FeriasWorkspace() {
           </button>
           {model.busy && <button type="button" onClick={model.cancel} className={`${buttonClass} border border-[color:var(--app-border)]`}><X className="size-4" aria-hidden="true" />Cancelar</button>}
           <div role="status" aria-live="polite" aria-atomic="true" className="min-w-0 text-sm text-[color:var(--app-muted)]">
-            {model.busy ? <span className="inline-flex items-center gap-2"><LoaderCircle className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" />{model.phase === "analyzing" ? "Conferindo planilha e benefícios…" : "Preparando sua planilha…"}</span> : model.stale && model.analysis ? "A conferência precisa ser atualizada. Analise novamente." : model.download ? "Planilha pronta. Download iniciado." : model.analysis ? "Análise concluída." : null}
+            {model.busy ? <span className="inline-flex items-center gap-2"><LoaderCircle className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" />{model.phase === "analyzing" ? "Conferindo planilha e benefícios…" : "Preparando sua planilha…"}</span> : model.stale && model.analysis ? "Correções prontas para validar." : model.download ? "Planilha pronta. Download iniciado." : model.analysis ? "Análise concluída." : null}
           </div>
         </div>
         {model.error && <div role="alert" className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-3 text-sm">{model.error}</div>}
@@ -43,11 +44,14 @@ export function FeriasWorkspace() {
       {model.analysis && <FeriasResults analysis={model.analysis} choices={model.choices} busy={model.busy} stale={model.stale} onChoose={model.choose} />}
       {model.analysis && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--app-border)] pt-4">
-          <p className="text-sm text-[color:var(--app-muted)]">{model.stale ? "Uma nova análise é necessária." : model.analysis.canExport ? "Conferência concluída. Planilha liberada." : "Resolva as pendências antes de baixar."}</p>
+          <p className="text-sm text-[color:var(--app-muted)]">{model.stale ? "Aplique as correções para concluir a conferência." : model.analysis.canExport ? "Conferência concluída. Planilha liberada." : "Resolva as pendências antes de baixar."}</p>
           {model.download && canExport ? (
             <a className={`${buttonClass} bg-[color:var(--app-teal)] text-[color:var(--app-canvas)]`} href={model.download.url} download={model.download.name}><Download className="size-4" aria-hidden="true" />Baixar novamente</a>
           ) : (
-            <button type="button" disabled={!canExport} onClick={() => void model.run("exportar")} className={`${buttonClass} bg-[color:var(--app-teal)] text-[color:var(--app-canvas)]`}><Download className="size-4" aria-hidden="true" />Baixar planilha</button>
+            <button type="button" disabled={!canFinish} onClick={() => void model.finish()} className={`${buttonClass} bg-[color:var(--app-teal)] text-[color:var(--app-canvas)]`}>
+              {model.stale ? <RefreshCw className="size-4" aria-hidden="true" /> : <Download className="size-4" aria-hidden="true" />}
+              {model.stale ? "Aplicar correções e baixar" : "Baixar planilha"}
+            </button>
           )}
         </div>
       )}

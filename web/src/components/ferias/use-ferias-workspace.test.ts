@@ -96,6 +96,31 @@ describe("Ferias UI request lifecycle", () => {
     expect(form.get("choices")).toContain("loan-1");
   });
 
+  it("reanalisa as correções e baixa automaticamente quando não restam pendências", async () => {
+    const pending = { ...analysis, revision: "revision-pending", summary: { ...analysis.summary, pending: 1 }, canExport: false };
+    fetchMock.mockResolvedValueOnce(Response.json(pending));
+    await select().run("analisar");
+
+    render().choose(4, "holderId", "holder-1");
+    expect(render().stale).toBe(true);
+
+    const resolved = { ...analysis, revision: "revision-resolved" };
+    fetchMock.mockResolvedValueOnce(Response.json(resolved));
+    fetchMock.mockResolvedValueOnce(new Response("PK-test", {
+      headers: { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    }));
+
+    await render().finish();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const reanalysisForm = fetchMock.mock.calls[1][1]?.body as FormData;
+    expect(reanalysisForm.get("choices")).toContain("holder-1");
+    const exportForm = fetchMock.mock.calls[2][1]?.body as FormData;
+    expect(exportForm.get("revision")).toBe("revision-resolved");
+    expect(render().download).toEqual({ url: "blob:ferias", name: "FERIAS-09-2026-CONFERIDO.xlsx" });
+    expect(click).toHaveBeenCalledOnce();
+  });
+
   it("discards a late response when the file changes", async () => {
     let resolve: (value: Response) => void = () => undefined;
     fetchMock.mockReturnValueOnce(new Promise((done) => { resolve = done; }));

@@ -57,8 +57,10 @@ export function useFeriasWorkspace() {
     setPhase("idle");
   }
 
-  async function run(operation: "analisar" | "exportar") {
-    if (!file || busy || (operation === "exportar" && (!analysis?.canExport || stale))) return;
+  async function run(operation: "analisar" | "exportar", analysisOverride?: FeriasAnalysis): Promise<FeriasAnalysis | null> {
+    const effectiveAnalysis = analysisOverride ?? analysis;
+    const effectiveStale = analysisOverride ? false : stale;
+    if (!file || busy || (operation === "exportar" && (!effectiveAnalysis?.canExport || effectiveStale))) return null;
     invalidate();
     const controller = new AbortController();
     const id = request.current.id;
@@ -79,34 +81,35 @@ export function useFeriasWorkspace() {
       const body = new FormData();
       body.set("file", file);
       body.set("choices", JSON.stringify(choices));
-      if (operation === "exportar" && analysis) body.set("revision", analysis.revision);
+      if (operation === "exportar" && effectiveAnalysis) body.set("revision", effectiveAnalysis.revision);
       const response = await fetch(`/api/admin/ferias/${operation}`, {
         method: "POST", body, signal: controller.signal, cache: "no-store",
       });
-      if (!current()) return;
+      if (!current()) return null;
       if (!response.ok) {
         const message = await readResponseError(response);
         if (current()) {
           setError(message);
           if (response.status === 409 || response.status === 401 || response.status === 403) setStale(true);
         }
-        return;
+        return null;
       }
       if (operation === "analisar") {
         const parsed = analysisSchema.safeParse(await response.json());
-        if (!current()) return;
+        if (!current()) return null;
         if (!parsed.success) throw new Error("invalid-response");
         setAnalysis(parsed.data);
         setStale(false);
+        return parsed.data;
       } else {
         if (!response.headers.get("content-type")?.includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) {
           throw new Error("invalid-download");
         }
         const blob = await response.blob();
-        if (!current()) return;
+        if (!current()) return null;
         if (!blob.size) throw new Error("empty-download");
-        if (!analysis) return;
-        const [year, month] = analysis.competency.split("-");
+        if (!effectiveAnalysis) return null;
+        const [year, month] = effectiveAnalysis.competency.split("-");
         const result = { url: URL.createObjectURL(blob), name: `FERIAS-${month}-${year}-CONFERIDO.xlsx` };
         setDownload(result);
         const link = document.createElement("a");
@@ -115,9 +118,11 @@ export function useFeriasWorkspace() {
         document.body.append(link);
         link.click();
         link.remove();
+        return effectiveAnalysis;
       }
     } catch (caught) {
       if (current()) setError(operationErrorMessage(caught, operation));
+      return null;
     } finally {
       globalThis.clearTimeout(timeout);
       if (current()) {
@@ -127,11 +132,26 @@ export function useFeriasWorkspace() {
     }
   }
 
+
+  async function finish() {
+    if (!file || busy || !analysis) return;
+    let confirmed = analysis;
+
+    if (stale || !confirmed.canExport) {
+      const refreshed = await run("analisar");
+      if (!refreshed) return;
+      confirmed = refreshed;
+    }
+
+    if (!confirmed.canExport) return;
+    await run("exportar", confirmed);
+  }
+
   function cancel() {
     invalidate();
     setPhase("idle");
     setError(null);
   }
 
-  return { file, analysis, choices, phase, busy, stale, error, download, selectFile, choose, run, cancel };
+  return { file, analysis, choices, phase, busy, stale, error, download, selectFile, choose, run, finish, cancel };
 }
