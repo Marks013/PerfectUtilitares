@@ -405,6 +405,8 @@ test("salary adjustment uses its own standard lock and keeps dark contrast", asy
 test("Unimed unlock creates a real session and reads configuration", async ({
   page,
 }) => {
+  // The isolated runner compiles these four routes on first access.
+  if (process.env.E2E_MUTATION === "1") test.setTimeout(120_000);
   test.skip(!unimedAdminPassword, "Isolated Unimed password is required");
   await page.goto("/unimed/acesso");
   const origin = new URL(page.url()).origin;

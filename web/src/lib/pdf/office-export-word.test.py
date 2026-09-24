@@ -4,11 +4,13 @@ import re
 import subprocess
 import tempfile
 import unittest
+import io
 from pathlib import Path
 
 import pdfplumber
 from docx import Document
 from docx.oxml.ns import qn
+from PIL import Image
 
 spec = importlib.util.spec_from_file_location("word_export", Path(__file__).with_name("office-export-word.py"))
 engine = importlib.util.module_from_spec(spec)
@@ -26,7 +28,7 @@ def make_pdf(path, pages):
     image = add(b"<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 12 >>\nstream\n" + bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0]) + b"\nendstream")
     page_ids = []
     for page in pages:
-        commands = []
+        commands = list(page.get("backgrounds", []))
         for x, y, text, *style in page.get("texts", []):
             font = style[0] if style else "F1"
             size = style[1] if len(style) > 1 else 10
@@ -55,6 +57,26 @@ def make_pdf(path, pages):
 
 
 class WordExportTests(unittest.TestCase):
+    def test_table_image_does_not_duplicate_overlapping_editable_text(self):
+        lines = [(40, y, 400, y) for y in [740, 710, 600]] + [(x, 600, x, 740) for x in [40, 200, 400]]
+        document, _, _ = self.convert([{
+            "backgrounds": ["q 60 0 0 40 50 650 cm /Im1 Do Q"],
+            "texts": [(55, 670, "EDITABLE"), (45, 725, "Header")], "lines": lines,
+        }])
+        self.assertEqual(len(document.inline_shapes), 1)
+        self.assertIn("EDITABLE", " ".join(c.text for t in document.tables for r in t.rows for c in r.cells))
+        relation = document.inline_shapes[0]._inline.graphic.graphicData.pic.blipFill.blip.embed
+        with Image.open(io.BytesIO(document.part.related_parts[relation].blob)) as image:
+            self.assertFalse(any(max(pixel[:3]) < 50 for pixel in image.convert("RGB").getdata()))
+
+    def test_scanned_background_not_reinserted_when_table_has_small_image(self):
+        lines = [(40, y, 560, y) for y in [740, 400, 60]] + [(x, 60, x, 740) for x in [40, 300, 560]]
+        document, _, _ = self.convert([{
+            "backgrounds": ["q 600 0 0 800 0 0 cm /Im1 Do Q", "q 60 0 0 40 50 650 cm /Im1 Do Q"],
+            "texts": [(55, 620, "OCR text"), (320, 620, "Right")], "lines": lines,
+        }])
+        self.assertEqual(len(document.inline_shapes), 1)
+
     def convert(self, pages):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -197,6 +219,31 @@ class WordExportTests(unittest.TestCase):
         self.assertEqual(count, 1)
         for phrase in ["Descrição", "Informações", "Segunda linha", "Conversão", "Ação editável", "Pagamento", "Conteúdo final", "12,50"]:
             self.assertIn(phrase, text)
+
+    def test_table_preserves_shading_and_image_inside_cell(self):
+        lines = [(30, y, 300, y) for y in [680, 610, 580]] + [(x, 580, x, 680) for x in [30, 150, 300]]
+        document, metrics, path = self.convert([{
+            "lines": lines, "image": True,
+            "backgrounds": ["q 0.8 1 0.8 rg 150 610 150 70 re f Q"],
+            "texts": [(160, 650, "Image record"), (40, 590, "00123"), (160, 590, "12,50")],
+        }])
+        self.assertEqual(metrics["tables"], 1)
+        table = document.tables[0]
+        self.assertEqual(len(table.cell(0, 0)._tc.xpath('.//w:drawing')), 1)
+        self.assertEqual(len(document.element.xpath('//w:drawing')), 1)
+        shade = table.cell(0, 1)._tc.tcPr.find(qn('w:shd'))
+        self.assertEqual(shade.get(qn('w:fill')), 'CCFFCC')
+        count, text = self.render(path)
+        self.assertEqual(count, 1)
+        self.assertIn('00123', text)
+        self.assertIn('Image record', text)
+
+    def test_borderless_table_does_not_invent_grid_lines(self):
+        texts = [(40, 750-i*25, label) for i, label in enumerate(['Item', 'Alpha', 'Beta', 'Gamma'])]
+        texts += [(240, 750-i*25, value) for i, value in enumerate(['Value', '12,50', '25,00', '30,00'])]
+        document, metrics, _ = self.convert([{'texts': texts}])
+        self.assertEqual(metrics['tables'], 1)
+        self.assertEqual(document.tables[0].style.name, 'Normal Table')
 
 
 if __name__ == "__main__":

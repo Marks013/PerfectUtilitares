@@ -44,6 +44,7 @@ import {
 export * from "./pdf-editor-workspace-model";
 import { PdfEditorWorkspaceView } from "./pdf-editor-workspace-view";
 import { PdfWorkspaceResetBoundary } from "./pdf-workspace-reset-boundary";
+import { createEditorPersistenceQueue, saveEditorDraft } from "./pdf-editor-persistence";
 
 export function usePdfEditorWorkspaceController({
   operation,
@@ -51,6 +52,10 @@ export function usePdfEditorWorkspaceController({
   operation: EditorOperation;
 }) {
   const recoveryStarted = useRef(false);
+  const saveQueue = useRef(createEditorPersistenceQueue());
+  const saveVersion = useRef(0);
+  const finishingRef = useRef(false);
+  const [finishing, setFinishing] = useState(false);
   const processingAbort = useRef<AbortController | null>(null);
   const lifetimeAbort = useRef<AbortController | null>(null);
   const documentRef = useRef<PDFDocumentProxy | null>(null);
@@ -86,6 +91,7 @@ export function usePdfEditorWorkspaceController({
   const [historyVersion, setHistoryVersion] = useState(0);
 
   const locked =
+    finishing ||
     processing.status === "QUEUED" ||
     processing.status === "RUNNING" ||
     processing.status === "SUCCEEDED";
@@ -114,6 +120,7 @@ export function usePdfEditorWorkspaceController({
 
   const commitAnnotations = useCallback(
     (update: (current: PdfAnnotation[]) => PdfAnnotation[]) => {
+      if (locked || finishingRef.current) return;
       setAnnotations((current) => {
         const next = update(current);
         if (next === current) return current;
@@ -123,7 +130,7 @@ export function usePdfEditorWorkspaceController({
         return next;
       });
     },
-    [],
+    [locked],
   );
 
   useEffect(() => {
@@ -289,38 +296,39 @@ export function usePdfEditorWorkspaceController({
     if (!jobId || !pages.length) {
       throw new Error("Adicione um PDF antes de salvar.");
     }
-    setSaveState("saving");
-    const response = await fetch(`/api/pdf/jobs/${jobId}`, {
-      signal: lifetimeAbort.current?.signal,
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const version = ++saveVersion.current;
+    const body = JSON.stringify({
         annotations,
         manifest: { pages, version: 1 },
-      }),
-    });
-    if (!response.ok) {
-      setSaveState("error");
-      throw new Error(
-        readApiError(
-          await response.json(),
-          "Não foi possível salvar suas alterações.",
-        ),
-      );
+      });
+    const signal = lifetimeAbort.current?.signal;
+    setSaveState("saving");
+    try {
+      await saveQueue.current(() => saveEditorDraft(jobId, body, signal));
+      if (!signal?.aborted && version === saveVersion.current) {
+        setSaveState("saved");
+      }
+    } catch (caught) {
+      if (!signal?.aborted && version === saveVersion.current) {
+        setSaveState("error");
+      }
+      throw caught;
     }
-    setSaveState("saved");
   }, [annotations, jobId, pages]);
 
   useEffect(() => {
     if (!jobId || !pages.length || locked) return;
     const timer = window.setTimeout(() => {
+      if (finishingRef.current) return;
       void persist().catch(() => undefined);
     }, 700);
     return () => window.clearTimeout(timer);
   }, [jobId, locked, pages, persist]);
 
   async function finish() {
-    if (!jobId) return;
+    if (!jobId || locked || finishingRef.current) return;
+    finishingRef.current = true;
+    setFinishing(true);
     processingAbort.current?.abort();
     const controller = new AbortController();
     processingAbort.current = controller;
@@ -393,6 +401,8 @@ export function usePdfEditorWorkspaceController({
       );
       setProcessing((current) => ({ ...current, status: "FAILED" }));
     } finally {
+      finishingRef.current = false;
+      setFinishing(false);
       if (processingAbort.current === controller) {
         processingAbort.current = null;
       }
@@ -400,6 +410,7 @@ export function usePdfEditorWorkspaceController({
   }
 
   function undo() {
+    if (locked || finishingRef.current) return;
     const previous = past.current.at(-1);
     if (!previous) return;
     setAnnotations((current) => {
@@ -411,6 +422,7 @@ export function usePdfEditorWorkspaceController({
   }
 
   function redo() {
+    if (locked || finishingRef.current) return;
     const next = future.current[0];
     if (!next) return;
     setAnnotations((current) => {

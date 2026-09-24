@@ -1,0 +1,7 @@
+# Build validation only: CI has no access to production runtime credentials.
+# Explicitly selected by the Docker job; never loaded by production deployment.
+services:
+  app:
+    env_file: !reset []
+  pdf-worker:
+    env_file: !reset []

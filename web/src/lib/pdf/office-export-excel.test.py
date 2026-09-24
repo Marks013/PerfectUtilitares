@@ -61,6 +61,8 @@ class ExcelExportTests(unittest.TestCase):
         self.assertEqual(sheet["A4"].value, "12345678901")
         self.assertEqual(sheet["B4"].value, -12.5)
         self.assertIn("Observacao final", [cell.value for row in sheet for cell in row])
+        self.assertEqual(sheet.freeze_panes, "A3")
+        self.assertEqual(sheet.print_title_rows, "$2:$2")
 
     def test_formula_text_never_executes_and_prose_is_preserved(self):
         sheet, metrics = self.convert([(40, 750, '=HYPERLINK("https://example.org")'),
@@ -89,6 +91,41 @@ class ExcelExportTests(unittest.TestCase):
     def test_ambiguous_numbers_stay_text(self):
         for text in ["000123", "012,34", "1234567890123456,00", "123.456.789-01", "=1+1", "12345", "1.234"]:
             self.assertEqual(engine._value(text), (text, None))
+
+    def test_vertical_merge_preserves_records_and_side_annotations(self):
+        lines = [(40, y, 400, y) for y in [740, 710, 650]]
+        lines += [(160, 680, 400, 680)]
+        lines += [(x, 650, x, 740) for x in [40, 160, 280, 400]]
+        sheet, metrics = self.convert([
+            (45, 725, "Grupo"), (165, 725, "Codigo"), (285, 725, "Valor"),
+            (45, 695, "Equipe"), (165, 695, "00123"), (285, 695, "10,50"),
+            (165, 665, "00456"), (285, 665, "20,50"),
+            (420, 695, "Primeiro"), (420, 665, "Segundo"),
+        ], lines)
+        self.assertEqual(metrics["tables"], 1)
+        self.assertIn("A2:A3", [str(item) for item in sheet.merged_cells.ranges])
+        self.assertEqual(sheet["A2"].value, "Equipe")
+        self.assertEqual(sheet["B2"].value, "00123")
+        self.assertEqual(sheet["B3"].value, "00456")
+        self.assertEqual(sheet["C3"].value, 20.5)
+        self.assertEqual(sheet["D2"].value, "Primeiro")
+        self.assertEqual(sheet["D3"].value, "Segundo")
+        self.assertEqual(sheet["B2"].alignment.horizontal, "left")
+        self.assertEqual(sheet["C2"].alignment.horizontal, "right")
+
+    def test_rectangular_merge_retains_empty_covered_row(self):
+        lines = [(40, y, 400, y) for y in [740, 710, 650]]
+        lines += [(280, 680, 400, 680)]
+        lines += [(x, 650, x, 740) for x in [40, 280, 400]]
+        lines += [(160, 710, 160, 740)]
+        sheet, _ = self.convert([
+            (45, 725, "Grupo"), (165, 725, "Codigo"), (285, 725, "Valor"),
+            (45, 695, "=1+1"), (285, 695, "12,50"),
+        ], lines)
+        self.assertIn("A2:B3", [str(item) for item in sheet.merged_cells.ranges])
+        self.assertEqual(sheet["A2"].value, "=1+1")
+        self.assertEqual(sheet["A2"].data_type, "s")
+        self.assertIsNone(sheet["C3"].value)
 
     def test_cropbox_excludes_hidden_text(self):
         sheet, _ = self.convert([(40, 750, "Visible"), (350, 750, "Hidden")], page_options="/CropBox [0 0 300 800]")

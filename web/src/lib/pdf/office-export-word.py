@@ -113,12 +113,13 @@ def find_tables(page):
         rows = [r for r in table.extract() if any(r)]
         values = [v for r in rows for v in r if v and v.strip()]
         numeric = sum(bool(re.fullmatch(r"(?:R\$\s*)?[-+]?\d[\d., ]*%?", v.strip())) for v in values)
-        if len(rows) >= 3 and len(table.columns) >= 2 and numeric >= len(rows) and len(values) >= len(rows) * 2:
+        if len(rows) >= 3 and len(table.columns) >= 2 and numeric >= max(3, len(rows)-1) and len(values) >= len(rows) * 2:
+            table._office_borderless = True
             tables.append(table)
     return tables
 
 
-def put_table(parent, event, page, scale):
+def put_table(parent, event, page, scale, page_image=None):
     source = event["table"]
     rows = source.rows
     xs = sorted({round(c[0], 2) for c in source.cells} | {round(c[2], 2) for c in source.cells})
@@ -126,7 +127,7 @@ def put_table(parent, event, page, scale):
     table = parent.add_table(rows=len(ys)-1, cols=len(xs)-1)
     table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
-    table.style = "Table Grid"
+    table.style = "Normal Table" if getattr(source, "_office_borderless", False) else "Table Grid"
     indent = OxmlElement("w:tblInd")
     indent.set(qn("w:w"), "0")
     indent.set(qn("w:type"), "dxa")
@@ -165,14 +166,45 @@ def put_table(parent, event, page, scale):
             if not empty.text:
                 empty._p.getparent().remove(empty._p)
         used.update((r, c) for r in range(r0, r1) for c in range(c0, c1))
+        backgrounds = [rect for rect in page.rects if rect.get("fill")
+                       and rect["x0"] <= box[0]+1 and rect["x1"] >= box[2]-1
+                       and rect["top"] <= box[1]+1 and rect["bottom"] >= box[3]-1]
+        if backgrounds:
+            background = min(backgrounds, key=lambda rect: rect["width"]*rect["height"])
+            color = background.get("non_stroking_color")
+            if isinstance(color, (tuple, list)) and len(color) == 3:
+                shading = OxmlElement("w:shd")
+                shading.set(qn("w:fill"), "".join(f"{max(0, min(255, round(v*255))):02X}" for v in color))
+                cell._tc.get_or_add_tcPr().append(shading)
         cropped = page.filter(lambda obj: obj.get("object_type") != "char" or inside(obj, box))
         lines = text_lines(cropped, [])
         for index, line in enumerate(sorted(lines, key=lambda v: (v["top"], v["x0"]))):
             p = cell.paragraphs[0] if index == 0 else cell.add_paragraph()
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing = Pt(max(w["size"] for w in line["words"]) * scale)
+            if abs((line["x0"]+line["x1"])-(box[0]+box[2])) < 4:
+                p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            elif box[2]-line["x1"] < 3 and line["x0"]-box[0] > 5:
+                p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.RIGHT
             for j, word in enumerate(line["words"]):
                 font_run(p, (" " if j else "") + word["text"], word["chars"], scale)
+        if page_image is not None:
+            for image in page.images:
+                if is_scanned_background(page, image) or not contains_box(box, (image["x0"], image["top"], image["x1"], image["bottom"])):
+                    continue
+                image_box = (max(box[0], image["x0"]), max(box[1], image["top"]),
+                             min(box[2], image["x1"]), min(box[3], image["bottom"]))
+                if image_box[2]-image_box[0] <= 3 or image_box[3]-image_box[1] <= 3:
+                    continue
+                stream = io.BytesIO()
+                region = page_image.crop(tuple(round((v-page.bbox[i % 2])*2) for i, v in enumerate(image_box)))
+                region.save(stream, format="PNG")
+                region.close()
+                stream.seek(0)
+                paragraph = cell.paragraphs[0] if not lines else cell.add_paragraph()
+                paragraph.paragraph_format.line_spacing = Pt((image_box[3]-image_box[1])*scale)
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.add_run().add_picture(stream, width=Pt((image_box[2]-image_box[0])*scale), height=Pt((image_box[3]-image_box[1])*scale))
     if rows:
         header_chars = [c for c in page.chars if inside(c, (source.bbox[0], ys[0], source.bbox[2], ys[1]))]
         if header_chars and sum("bold" in c.get("fontname", "").lower() for c in header_chars) > len(header_chars)/2:
@@ -208,8 +240,8 @@ def positioned_text(document, lines, page, scale):
             font_run(p, (" " if index else "") + word["text"], word["chars"], scale)
 
 
-def artwork_background(document, page, scale):
-    """Render artwork alone, retaining native PDF text as editable Word frames."""
+def artwork_image(page):
+    """Render graphics without native text, for backgrounds and table images."""
     stream = page.pdf.stream
     offset = stream.tell()
     stream.seek(0)
@@ -222,10 +254,7 @@ def artwork_background(document, page, scale):
                     raise RuntimeError("Cannot separate artwork from text")
             bitmap = pdf_page.render(scale=2, draw_annots=False)
             try:
-                image = bitmap.to_pil()
-                data = io.BytesIO()
-                image.save(data, format="PNG")
-                image.close()
+                image = bitmap.to_pil().copy()
             finally:
                 bitmap.close()
         finally:
@@ -233,6 +262,17 @@ def artwork_background(document, page, scale):
     finally:
         source.close()
         stream.seek(offset)
+    return image
+
+
+def artwork_background(document, page, scale):
+    """Render artwork alone, retaining native PDF text as editable Word frames."""
+    image = artwork_image(page)
+    data = io.BytesIO()
+    try:
+        image.save(data, format="PNG")
+    finally:
+        image.close()
     data.seek(0)
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.line_spacing = Pt(1)
@@ -258,11 +298,19 @@ def artwork_background(document, page, scale):
     inline.getparent().replace(inline, anchor)
 
 
+def contains_box(outer, inner):
+    return outer[0] <= inner[0] and outer[1] <= inner[1] and outer[2] >= inner[2] and outer[3] >= inner[3]
+
+
+def is_scanned_background(page, image):
+    return (image["x1"]-image["x0"])*(image["bottom"]-image["top"]) > page.width*page.height*.7 and bool(page.chars)
+
+
 def graphics(page, tables):
     boxes = []
     for image in page.images:
         box = (image["x0"], image["top"], image["x1"], image["bottom"])
-        if (box[2]-box[0])*(box[3]-box[1]) > page.width*page.height*.7 and page.chars:
+        if is_scanned_background(page, image):
             # Scanned background is replaced by editable OCR text, not duplicated.
             continue
         if box[2]-box[0] > 3 and box[3]-box[1] > 3:
@@ -281,7 +329,7 @@ def graphics(page, tables):
     return merged
 
 
-def emit(parent, events, page, left, right, scale, page_image):
+def emit(parent, events, page, left, right, scale, page_image, cell_image=None):
     previous = None
     paragraph = None
     for event in sorted(events, key=lambda e: (round(e["top"] / 3), e["x0"])):
@@ -292,7 +340,7 @@ def emit(parent, events, page, left, right, scale, page_image):
                 spacer.paragraph_format.space_after = Pt(0)
                 spacer.paragraph_format.line_spacing = Pt(max(1, gap * scale))
                 spacer.add_run().font.size = Pt(1)
-            put_table(parent, event, page, scale)
+            put_table(parent, event, page, scale, cell_image)
             paragraph = None
         elif event["kind"] == "image":
             p = parent.add_paragraph()
@@ -327,20 +375,20 @@ def emit(parent, events, page, left, right, scale, page_image):
         previous = event
 
 
-def emit_columns(document, events, page, left, middle, right, scale, page_image):
+def emit_columns(document, events, page, left, middle, right, scale, page_image, cell_image=None):
     if not events:
         return
     left_events = [e for e in events if e["x1"] <= middle]
     right_events = [e for e in events if e["x0"] >= middle]
     if not left_events or not right_events:
-        emit(document, events, page, left, right, scale, page_image)
+        emit(document, events, page, left, right, scale, page_image, cell_image)
         return
     columns = document.add_table(rows=1, cols=2)
     columns.autofit = False
     for cell, items, a, b in [(columns.cell(0, 0), left_events, left, middle),
                               (columns.cell(0, 1), right_events, middle, right)]:
         cell.width = Pt((b-a)*scale)
-        emit(cell, items, page, a, b, scale, page_image)
+        emit(cell, items, page, a, b, scale, page_image, cell_image)
         first = cell.paragraphs[0]
         if not first.text:
             first._element.getparent().remove(first._element)
@@ -367,6 +415,10 @@ def export_word(pdf, output_path):
         section.page_height = Pt(page.height * scale)
         tables = find_tables(page)
         boxes = graphics(page, tables)
+        cell_images = [box for box in boxes if any(
+            contains_box(cell, box)
+            for table in tables for cell in table.cells)]
+        boxes = [box for box in boxes if box not in cell_images]
         # Decorative frames spanning a page must not swallow editable text.
         artwork = not tables and page.chars and any((b[2]-b[0])*(b[3]-b[1]) > page.width*page.height*.6 for b in boxes)
         if artwork:
@@ -391,6 +443,7 @@ def export_word(pdf, output_path):
         section.top_margin = Pt(max(0, top-page.bbox[1])*scale)
         section.bottom_margin = Pt(8)
         page_image = page.to_image(resolution=144).original if boxes else None
+        cell_image = artwork_image(page) if cell_images else None
         # A stable central gutter becomes two independently editable columns.
         middle = (left+right)/2
         cross = [e for e in events if e["x0"] < middle < e["x1"]]
@@ -399,7 +452,7 @@ def export_word(pdf, output_path):
         if tables and any(any(e["top"] < t.bbox[3] and e["bottom"] > t.bbox[1] for t in tables) for e in lines):
             # Floating tables and text frames preserve parallel annotations.
             for t in tables:
-                table = put_table(document, {"table": t}, page, scale)
+                table = put_table(document, {"table": t}, page, scale, cell_image)
                 position = OxmlElement("w:tblpPr")
                 for key, value in {"horzAnchor":"page", "vertAnchor":"page", "tblpX":str(round((t.bbox[0]-page.bbox[0])*scale*20)), "tblpY":str(round((t.bbox[1]-page.bbox[1])*scale*20)), "leftFromText":"0", "rightFromText":"0", "topFromText":"0", "bottomFromText":"0"}.items():
                     position.set(qn("w:"+key), value)
@@ -411,14 +464,16 @@ def export_word(pdf, output_path):
             for spanning in sorted(cross, key=lambda e: e["top"]):
                 band = [e for e in remaining if e["top"] < spanning["top"]]
                 remaining = [e for e in remaining if e["top"] >= spanning["top"]]
-                emit_columns(document, band, page, left, middle, right, scale, page_image)
-                emit(document, [spanning], page, left, right, scale, page_image)
-            emit_columns(document, remaining, page, left, middle, right, scale, page_image)
+                emit_columns(document, band, page, left, middle, right, scale, page_image, cell_image)
+                emit(document, [spanning], page, left, right, scale, page_image, cell_image)
+            emit_columns(document, remaining, page, left, middle, right, scale, page_image, cell_image)
         else:
-            emit(document, events, page, left, right, scale, page_image)
+            emit(document, events, page, left, right, scale, page_image, cell_image)
         count += len(tables)
         if page_image:
             page_image.close()
+        if cell_image:
+            cell_image.close()
         if page is not original:
             page.close()
         original.close()

@@ -33,6 +33,9 @@ export function PdfEditorWorkspaceView({ model }: { model: Model }) {
                   ? "Falha ao salvar"
                   : "Rascunho automático"}
           </span>
+          {saveState === "error" ? (
+            <span role="alert">Alterações não salvas. Use Salvar PDF para tentar novamente.</span>
+          ) : null}
           <button
             type="button"
             className="pdf-icon-button"
@@ -137,6 +140,7 @@ export function PdfEditorWorkspaceView({ model }: { model: Model }) {
             </div>
             <div className="pdf-editor-stage__scroll">
               <EditorCanvas
+                locked={locked}
                 annotations={pageAnnotations}
                 color={color}
                 document={document}

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import fontkit from "@pdf-lib/fontkit";
 import {
   degrees,
@@ -46,7 +47,9 @@ export async function applyPdfAnnotations({
   if (needsFont) {
     try {
       const fontPath =
-        process.env.PDF_FONT_PATH ?? "/usr/share/fonts/dejavu/DejaVuSans.ttf";
+        process.env.PDF_FONT_PATH ?? path.join(
+          process.cwd(), "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
+        );
       document.registerFontkit(fontkit);
       annotationFont = await document.embedFont(await readFile(fontPath), {
         subset: true,
@@ -77,7 +80,7 @@ export async function applyPdfAnnotations({
           x: annotation.x,
           y: Math.min(
             1,
-            annotation.y + annotation.fontSize / visibleSize.height,
+            annotation.y + (annotationFont?.heightAtSize(annotation.fontSize, { descender: false }) ?? annotation.fontSize) / visibleSize.height,
           ),
         },
         visibleBox,
@@ -87,7 +90,8 @@ export async function applyPdfAnnotations({
         color,
         font: annotationFont,
         maxWidth: Math.max(1, visibleSize.width * (1 - annotation.x)),
-        rotate: degrees((360 - rotation) % 360),
+        lineHeight: annotation.fontSize * 1.15,
+        rotate: degrees(rotation),
         size: annotation.fontSize,
         x: position.x,
         y: position.y,

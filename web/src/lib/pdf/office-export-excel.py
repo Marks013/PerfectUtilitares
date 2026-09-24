@@ -1,6 +1,7 @@
 """Reconstruct editable worksheets without interpreting PDF text as formulas."""
 
 import re
+from bisect import bisect_left
 from decimal import Decimal, InvalidOperation
 
 from openpyxl import Workbook
@@ -32,7 +33,7 @@ def _write(sheet, row, column, text, header=False):
         cell.data_type = "s"
     if number_format:
         cell.number_format = number_format
-    cell.alignment = Alignment(vertical="top", wrap_text=True)
+    cell.alignment = Alignment(horizontal="right" if number_format else "left", vertical="top", wrap_text=True)
     if header:
         cell.font = Font(bold=True, color="17365D")
         cell.fill = PatternFill("solid", fgColor="E8EFF7")
@@ -91,10 +92,22 @@ def _write_table(sheet, start, table, adjacent=()):
     row_number = start
     first = True
     placed = set()
-    for source_row, cells in zip(table.rows, data):
-        row_words = [word for word in adjacent if source_row.bbox[1] <= (word["top"]+word["bottom"])/2 < source_row.bbox[3]]
-        if not any(value and value.strip() for value in cells) and not row_words:
+    source_rows = list(zip(table.rows, data))
+    row_tops = [source_row.bbox[1] for source_row, _ in source_rows]
+    row_bottom = max(cell[3] for cell in table.cells)
+    retained = []
+    for index, (source_row, cells) in enumerate(source_rows):
+        top = row_tops[index]
+        bottom = row_tops[index + 1] if index + 1 < len(row_tops) else row_bottom
+        # A spanning cell makes source_row.bbox taller than its logical row.
+        # Use consecutive row origins so side annotations stay on their record.
+        row_words = [word for word in adjacent if top <= (word["top"]+word["bottom"])/2 < bottom]
+        covered = any(cell[1] < top and cell[3] > top for cell in table.cells)
+        if not any(value and value.strip() for value in cells) and not row_words and not covered:
             continue
+        retained.append((source_row, cells, row_words))
+    retained_tops = [row.bbox[1] for row, _, _ in retained]
+    for source_row, cells, row_words in retained:
         # Coordinates, rather than None values, identify genuine spanning cells.
         for rectangle, text in zip(source_row.cells, cells):
             if rectangle is None:
@@ -103,8 +116,9 @@ def _write_table(sheet, start, table, adjacent=()):
             right = min(range(len(boundaries)), key=lambda index: abs(boundaries[index] - rectangle[2]))
             column = left + 1
             _write(sheet, row_number, column, text, header=first)
-            if right > left + 1:
-                sheet.merge_cells(start_row=row_number, end_row=row_number, start_column=column, end_column=right)
+            last_row = start + bisect_left(retained_tops, rectangle[3] - .01) - 1
+            if right > left + 1 or last_row > row_number:
+                sheet.merge_cells(start_row=row_number, end_row=max(row_number, last_row), start_column=column, end_column=right)
         fields = {}
         for word in row_words:
             center = (word["x0"]+word["x1"])/2
@@ -158,10 +172,13 @@ def export_excel(pdf, output_path):
                 and cell[1] <= (obj["top"]+obj["bottom"])/2 <= cell[3] for cell in cells))
             outside = outside_page.extract_words(x_tolerance=2, y_tolerance=3)
             row = 1
+            first_table_row = None
             for table in tables:
                 before = [word for word in outside if word["top"] < table.bbox[1]]
                 outside = [word for word in outside if word["top"] >= table.bbox[1]]
                 row = _write_text(sheet, row, before)
+                if first_table_row is None:
+                    first_table_row = row
                 # Preserve row labels in table holes and annotations beside their
                 # corresponding records, rather than appending orphaned rows.
                 adjacent = [word for word in outside if table.bbox[1] <= (word["top"]+word["bottom"])/2 < table.bbox[3]]
@@ -175,7 +192,10 @@ def export_excel(pdf, output_path):
                 if populated:
                     width = max(max(len(line) for line in str(cell.value).splitlines() or [""]) for cell in populated)
                     sheet.column_dimensions[get_column_letter(column[0].column)].width = min(70, max(12, width + 2))
-            sheet.freeze_panes = "A2"
+            sheet.freeze_panes = f"A{first_table_row + 1}" if first_table_row is not None else "A2"
+            # Repeating one table's header on other tables mislabels their data.
+            if len(tables) == 1 and first_table_row is not None:
+                sheet.print_title_rows = f"{first_table_row}:{first_table_row}"
             sheet.sheet_view.showGridLines = True
             sheet.sheet_properties.pageSetUpPr.fitToPage = True
             sheet.page_setup.fitToWidth = 1

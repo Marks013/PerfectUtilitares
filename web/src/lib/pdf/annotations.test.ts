@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { degrees, PDFDocument } from "pdf-lib";
 import { applyPdfAnnotations } from "@/lib/pdf/annotations";
+import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import type { PdfManifest } from "@/lib/pdf/schema";
 
 async function createPdf() {
@@ -22,6 +23,45 @@ const manifest: PdfManifest = {
 };
 
 describe("applyPdfAnnotations", () => {
+  it.each([0, 90, 180, 270])("keeps text upright, positioned and evenly spaced at %s degrees", async (rotation) => {
+    const source = await PDFDocument.create();
+    const page = source.addPage([500, 700]);
+    page.setCropBox(30, 40, 420, 600);
+    page.setRotation(degrees(rotation));
+    const bytes = await applyPdfAnnotations({
+      manifest,
+      pdfBytes: await source.save(),
+      annotations: [{
+        id: "text-geometry", pageId: "page-1", type: "TEXT",
+        text: "Primeira linha\nSegunda linha", color: "#123456", fontSize: 18,
+        x: 0.2, y: 0.25,
+      }],
+    });
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const loadingTask = pdfjs.getDocument(pdfJsServerDocumentOptions(bytes));
+    const document = await loadingTask.promise;
+    try {
+      const result = await document.getPage(1);
+      const viewport = result.getViewport({ scale: 1 });
+      const content = await result.getTextContent();
+      const items = content.items.filter((item) => "str" in item && item.str.trim());
+      expect(items.map((item) => "str" in item ? item.str : "")).toEqual(["Primeira linha", "Segunda linha"]);
+      const matrices = items.map((item) => {
+        if (!("transform" in item)) throw new Error("Missing text geometry");
+        return pdfjs.Util.transform(viewport.transform, item.transform);
+      });
+      for (const matrix of matrices) {
+        expect(matrix[0]).toBeGreaterThan(0);
+        expect(matrix[1]).toBeCloseTo(0, 5);
+        expect(matrix[4]).toBeCloseTo(viewport.width * 0.2, 1);
+      }
+      expect(matrices[0][5]).toBeGreaterThan(viewport.height * 0.25);
+      expect(matrices[0][5]).toBeLessThan(viewport.height * 0.25 + 18);
+      expect(matrices[1][5] - matrices[0][5]).toBeCloseTo(18 * 1.15, 1);
+    } finally {
+      await loadingTask.destroy();
+    }
+  });
   it("keeps page geometry while applying supported annotations", async () => {
     const bytes = await applyPdfAnnotations({
       manifest,

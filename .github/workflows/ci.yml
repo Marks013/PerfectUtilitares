@@ -70,6 +70,9 @@ jobs:
       - name: Install Chromium for browser tests
         run: npx playwright install --with-deps chromium
 
+      - name: Install PDF rendering tools for regression tests
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y poppler-utils
+
       - name: Validate dependency tree
         run: npm ls --all
 
@@ -104,8 +107,12 @@ jobs:
 
   docker:
     name: Docker images
-    runs-on: ubuntu-latest
+    # Match production and the hashed CPython/Alpine ARM64 wheels.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
+
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
 
     steps:
       - name: Checkout

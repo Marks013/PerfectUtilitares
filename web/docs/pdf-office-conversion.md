@@ -18,6 +18,10 @@ Tabelas Word preservam a altura das linhas e eliminam parágrafos vazios criados
 
 JPG reserva espaço para a numeração de páginas antes de limitar nomes longos. Erros determinísticos de limite ou ausência de texto reconhecido encerram o trabalho com seu código específico, sem repetir conversões que não podem melhorar com uma nova tentativa. Falhas transitórias continuam elegíveis às tentativas existentes.
 
+O refinamento preserva preenchimentos e imagens nas células Word, sem criar linhas em tabelas detectadas sem bordas. Excel preserva mesclas verticais e retangulares, distingue alinhamento de identificadores e valores decimais, congela a região abaixo do cabeçalho detectado e repete esse cabeçalho na impressão de páginas com uma única tabela.
+
+O editor salva rascunhos em sequência e aguarda a última gravação antes de processar. Falhas de rede ou sessão são exibidas e permitem nova tentativa. A área de anotação fica bloqueada durante a finalização e após a conclusão. Fonte e espessura acompanham a escala da prévia; a exportação mantém a orientação do texto em páginas giradas e o espaçamento de múltiplas linhas. As anotações são sobrepostas ao PDF; não substituem o texto original do documento.
+
 ## Dependências, cache e limites
 
 - `ops/pdf-worker/office-requirements.txt` fixa 13 dependências diretas e transitivas com SHA256 dos wheels da plataforma atual: ARM64, musl e Python 3.14. Outra plataforma exige regenerar e verificar o lock.
@@ -45,6 +49,8 @@ docker run --rm --network none --read-only --memory 2g --cpus 2 \
 ```
 
 Os testes Vitest cobrem o subprocesso, timeout/limpeza, persistência dos arquivos, tipos MIME, rollback e renderização real JPG. Os testes Playwright cobrem seleção, limites de lote, reset e persistência das opções JPG.
+
+O CI instala Poppler para os testes de renderização. O job Docker usa um runner ARM64 e `docker-compose.ci.yml`, que remove apenas a referência aos arquivos de ambiente de produção durante a validação de build. A publicação continua usando o Compose de produção e seus arquivos protegidos.
 
 ## Referências técnicas
 

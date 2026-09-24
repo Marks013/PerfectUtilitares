@@ -188,6 +188,7 @@ export function EditorCanvas({
   document,
   fontSize,
   lineWidth,
+  locked = false,
   onAdd,
   opacity,
   page,
@@ -199,6 +200,7 @@ export function EditorCanvas({
   document: PDFDocumentProxy;
   fontSize: number;
   lineWidth: number;
+  locked?: boolean;
   onAdd: (annotation: PdfAnnotation) => void;
   opacity: number;
   page: EditorPage;
@@ -206,6 +208,9 @@ export function EditorCanvas({
   tool: EditorTool;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [displayWidth, setDisplayWidth] = useState(600);
+  const [pageSize, setPageSize] = useState({ width: 600, height: 800 });
   const startRef = useRef<Point | null>(null);
   const pointsRef = useRef<Point[]>([]);
   const [aspectRatio, setAspectRatio] = useState(Math.SQRT1_2);
@@ -216,6 +221,24 @@ export function EditorCanvas({
     y: number;
   } | null>(null);
   const [drawPreview, setDrawPreview] = useState<Point[]>([]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setDisplayWidth(entry.contentRect.width);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: changing page, tool or lock must cancel an unfinished gesture.
+  useEffect(() => {
+    startRef.current = null;
+    pointsRef.current = [];
+    setAreaPreview(null);
+    setDrawPreview([]);
+  }, [locked, page.id, tool]);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,6 +257,7 @@ export function EditorCanvas({
         rotation: displayRotation,
       });
       const scale = Math.min(2, 1_400 / base.width);
+      setPageSize({ width: base.width / sourcePage.userUnit, height: base.height / sourcePage.userUnit });
       const viewport = sourcePage.getViewport({
         scale,
         rotation: displayRotation,
@@ -264,8 +288,11 @@ export function EditorCanvas({
   }, [document, page.rotation, page.sourcePage]);
 
   function finishPointer(event: ReactPointerEvent<HTMLDivElement>) {
+    if (locked) return;
     if (!startRef.current) return;
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
 
     if (tool === "DRAW") {
       if (pointsRef.current.length >= 2) {
@@ -300,12 +327,12 @@ export function EditorCanvas({
   }
 
   return (
-    <div className="pdf-editor-canvas" data-tool={tool} style={{ aspectRatio }}>
+    <div ref={containerRef} className="pdf-editor-canvas" data-tool={tool} data-locked={locked} style={{ aspectRatio }}>
       <canvas ref={canvasRef} aria-label={`Página ${page.sourcePage}`} />
       <div
         className="pdf-editor-canvas__overlay"
         onPointerDown={(event) => {
-          if (tool === "SELECT") return;
+          if (locked || tool === "SELECT") return;
           const point = pointFromEvent(event);
 
           if (tool === "TEXT") {
@@ -332,7 +359,7 @@ export function EditorCanvas({
           }
         }}
         onPointerMove={(event) => {
-          if (!startRef.current) return;
+          if (locked || !startRef.current) return;
           const point = pointFromEvent(event);
           if (tool === "DRAW") {
             const previous = pointsRef.current.at(-1);
@@ -356,7 +383,12 @@ export function EditorCanvas({
           });
         }}
         onPointerUp={finishPointer}
-        onPointerCancel={finishPointer}
+        onPointerCancel={() => {
+          startRef.current = null;
+          pointsRef.current = [];
+          setAreaPreview(null);
+          setDrawPreview([]);
+        }}
       >
         {annotations.map((annotation) => {
           if (annotation.type === "TEXT") {
@@ -366,8 +398,9 @@ export function EditorCanvas({
                 className="pdf-editor-annotation pdf-editor-annotation--text"
                 style={{
                   color: annotation.color,
-                  fontSize: `${annotation.fontSize}px`,
+                  fontSize: `${annotation.fontSize * displayWidth / pageSize.width}px`,
                   left: `${annotation.x * 100}%`,
+                  maxWidth: `${(1 - annotation.x) * 100}%`,
                   top: `${annotation.y * 100}%`,
                 }}
               >
@@ -381,19 +414,19 @@ export function EditorCanvas({
                 key={annotation.id}
                 aria-hidden="true"
                 className="pdf-editor-annotation pdf-editor-annotation--draw"
-                viewBox="0 0 1 1"
+                viewBox={`0 0 ${pageSize.width} ${pageSize.height}`}
                 preserveAspectRatio="none"
               >
                 <polyline
                   fill="none"
                   opacity={annotation.opacity}
                   points={annotation.points
-                    .map((point) => `${point.x},${point.y}`)
+                    .map((point) => `${point.x * pageSize.width},${point.y * pageSize.height}`)
                     .join(" ")}
                   stroke={annotation.color}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={annotation.width / 600}
+                  strokeWidth={annotation.width}
                 />
               </svg>
             );
@@ -404,6 +437,7 @@ export function EditorCanvas({
               className={`pdf-editor-annotation pdf-editor-annotation--${annotation.type.toLowerCase()}`}
               style={{
                 borderColor: annotation.color,
+                borderWidth: `${2 * displayWidth / pageSize.width}px`,
                 backgroundColor:
                   annotation.type === "HIGHLIGHT"
                     ? annotation.color
@@ -422,6 +456,7 @@ export function EditorCanvas({
             className={`pdf-editor-annotation pdf-editor-annotation--preview pdf-editor-annotation--${tool.toLowerCase()}`}
             style={{
               borderColor: color,
+              borderWidth: `${2 * displayWidth / pageSize.width}px`,
               backgroundColor: tool === "HIGHLIGHT" ? color : "transparent",
               height: `${areaPreview.height * 100}%`,
               left: `${areaPreview.x * 100}%`,
@@ -435,19 +470,19 @@ export function EditorCanvas({
           <svg
             aria-hidden="true"
             className="pdf-editor-annotation pdf-editor-annotation--draw"
-            viewBox="0 0 1 1"
+            viewBox={`0 0 ${pageSize.width} ${pageSize.height}`}
             preserveAspectRatio="none"
           >
             <polyline
               fill="none"
               opacity={opacity}
               points={drawPreview
-                .map((point) => `${point.x},${point.y}`)
+                .map((point) => `${point.x * pageSize.width},${point.y * pageSize.height}`)
                 .join(" ")}
               stroke={color}
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={lineWidth / 600}
+              strokeWidth={lineWidth}
             />
           </svg>
         ) : null}

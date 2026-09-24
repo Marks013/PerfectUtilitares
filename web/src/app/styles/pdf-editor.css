@@ -1,4 +1,11 @@
 /* PDF editor */
+@font-face {
+  font-family: PerfectPdfAnnotation;
+  src: url("/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
 .pdf-editor-workspace {
   min-height: calc(100dvh - 8rem);
 }
@@ -213,7 +220,8 @@
   user-select: none;
 }
 
-.pdf-editor-canvas[data-tool="SELECT"] .pdf-editor-canvas__overlay {
+.pdf-editor-canvas[data-tool="SELECT"] .pdf-editor-canvas__overlay,
+.pdf-editor-canvas[data-locked="true"] .pdf-editor-canvas__overlay {
   cursor: default;
 }
 
@@ -224,7 +232,8 @@
 .pdf-editor-annotation--text {
   max-width: calc(100% - 0.5rem);
   color: #111827;
-  font-family: Arial, sans-serif;
+  font-family: PerfectPdfAnnotation, Arial, sans-serif;
+  font-weight: 400;
   line-height: 1.15;
   white-space: pre-wrap;
 }
