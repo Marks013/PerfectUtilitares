@@ -65,22 +65,35 @@ test.describe("Ferias administrative UI with isolated mocked operations", () => 
     await expect(page.getByRole("button", { name: "Baixar planilha", exact: true })).toBeDisabled();
     await expect(page.getByLabel("Titular Unimed · linha 4")).toHaveValue("");
     await page.getByLabel("Titular Unimed · linha 4").selectOption("holder-test");
-    await expect(page.getByText("Uma nova análise é necessária.")).toBeVisible();
-    await page.getByRole("button", { name: "Analisar novamente", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Baixar planilha", exact: true })).toBeEnabled();
+    await expect(page.getByText("Correções prontas para validar.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Baixar planilha", exact: true })).toHaveCount(0);
     const download = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Baixar planilha", exact: true }).click();
+    await page.getByRole("button", { name: "Aplicar correções e baixar", exact: true }).click();
     expect((await download).suggestedFilename()).toBe("FERIAS-09-2026-CONFERIDO.xlsx");
+    expect(analyses).toBe(2);
     await expect(page.getByRole("link", { name: "Baixar novamente", exact: true })).toBeVisible();
   });
 
   test("blocks stale exports and clears results when the upload changes", async ({ page }) => {
-    await page.route("**/api/admin/ferias/analisar", (route) => route.fulfill({ json: fixture }));
-    await page.route("**/api/admin/ferias/exportar", (route) => route.fulfill({ status: 409, json: { error: { code: "STALE", message: "As bases foram atualizadas. Analise novamente." } } }));
+    let analyses = 0;
+    let exports = 0;
+    await page.route("**/api/admin/ferias/analisar", (route) => {
+      analyses++;
+      return route.fulfill({ json: { ...fixture, canExport: analyses === 1 } });
+    });
+    await page.route("**/api/admin/ferias/exportar", (route) => {
+      exports++;
+      return route.fulfill({ status: 409, json: { error: { code: "STALE", message: "As bases foram atualizadas. Analise novamente." } } });
+    });
     await upload(page);
     await page.getByRole("button", { name: "Baixar planilha", exact: true }).click();
     await expect(page.getByRole("region", { name: "Planilha do mês" }).getByRole("alert")).toContainText("As bases foram atualizadas");
+    await expect(page.getByRole("button", { name: "Baixar planilha", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Baixar novamente", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Aplicar correções e baixar", exact: true }).click();
     await expect(page.getByRole("button", { name: "Baixar planilha", exact: true })).toBeDisabled();
+    expect(analyses).toBe(2);
+    expect(exports).toBe(1);
     await page.getByRole("button", { name: "Remover planilha", exact: true }).click();
     await expect(page.getByTestId("ferias-row-4")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Analisar planilha", exact: true })).toBeDisabled();

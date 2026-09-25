@@ -266,6 +266,9 @@ try {
   } finally {
     await queueDatabase.end().catch(() => undefined);
   }
+  // Direct next dev does not invoke npm's lifecycle hooks. Fresh checkouts need
+  // the same generated browser assets and workers as the documented dev command.
+  await run("npm", ["run", "predev"], env);
   app = start("npx", ["next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], env);
   worker = start("npx", ["tsx", "src/workers/pdf-worker.ts"], env);
   await waitForApp(`${appUrl}/login`, app);
