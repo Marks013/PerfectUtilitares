@@ -97,9 +97,9 @@ jobs:
         run: npm run build:pdf-worker
 
       - name: Run browser and persistence E2E
-        run: npm run test:e2e
+        run: npm run test:e2e:isolated
         env:
-          E2E_MUTATION: "1"
+          E2E_PRODUCTION: "1"
 
       - name: Ensure build did not modify tracked files
         working-directory: .

@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import pg from "pg";
 
 const { Client } = pg;
 const cwd = process.cwd();
+const productionBuild = process.env.E2E_PRODUCTION === "1";
 dotenv.config({ path: path.join(cwd, ".env"), quiet: true });
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
 
@@ -135,9 +137,41 @@ function startMailServer() {
   });
 }
 
-function start(command, args, env) {
+async function startSecureProxy(port, directory) {
+  const keyPath = path.join(directory, "localhost.key");
+  const certificatePath = path.join(directory, "localhost.crt");
+  capture("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", keyPath, "-out", certificatePath, "-days", "1",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"]);
+  const server = https.createServer({
+    key: await readFile(keyPath), cert: await readFile(certificatePath),
+  }, (request, response) => {
+    const upstream = http.request({
+      hostname: "127.0.0.1", port, path: request.url, method: request.method,
+      headers: { ...request.headers, "x-forwarded-proto": "https" },
+    }, (result) => {
+      response.writeHead(result.statusCode ?? 502, result.headers);
+      result.pipe(response);
+    });
+    upstream.on("error", () => response.writeHead(502).end());
+    request.pipe(upstream);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return {
+    baseUrl: `https://127.0.0.1:${server.address().port}`,
+    close: () => new Promise((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections();
+    }),
+  };
+}
+
+function start(command, args, env, workingDirectory = cwd) {
   const child = spawn(command, args, {
-    cwd, detached: true, env, stdio: ["ignore", "pipe", "pipe"],
+    cwd: workingDirectory, detached: true, env, stdio: ["ignore", "pipe", "pipe"],
   });
   const output = [];
   const collect = (chunk) => {
@@ -185,6 +219,22 @@ async function waitForApp(url, current) {
   throw new Error(`App readiness timeout.\n${current.output.join("")}`);
 }
 
+async function waitForWorker(file, current) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (current.child.exitCode !== null) {
+      throw new Error(`PDF worker stopped early.\n${current.output.join("")}`);
+    }
+    try {
+      const heartbeat = JSON.parse(await readFile(file, "utf8"));
+      if (typeof heartbeat.pid === "number" &&
+          Date.now() - Date.parse(heartbeat.updatedAt) < 30_000) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`PDF worker heartbeat timeout.\n${current.output.join("")}`);
+}
+
 const name = `perfectutilitares_e2e_${process.pid}_${Date.now()}`;
 const database = databaseHost();
 const adminUrl = databaseUrl("postgres", database);
@@ -192,12 +242,14 @@ adminUrl.searchParams.delete("schema");
 const testUrl = databaseUrl(name, database);
 const temp = await mkdtemp(path.join(os.tmpdir(), "perfectutilitares-e2e-"));
 await mkdir(path.join(temp, "pdf-storage"), { recursive: true });
+const runtimeCwd = productionBuild ? path.join(cwd, ".next", "standalone") : cwd;
 const pdfWorkerHeartbeatPath = path.join(
-  cwd,
+  runtimeCwd,
   "data",
   "pdf-jobs",
   `pdf-worker-heartbeat-${process.pid}`,
 );
+await mkdir(path.dirname(pdfWorkerHeartbeatPath), { recursive: true });
 const nextDistDir = `.next-e2e-${process.pid}-${Date.now()}`;
 const nextEnvPath = path.join(cwd, "next-env.d.ts");
 const originalNextEnv = await readFile(nextEnvPath, "utf8");
@@ -208,13 +260,17 @@ const standardPassword = randomBytes(18).toString("base64url");
 const unimedPassword = randomBytes(18).toString("base64url");
 const mail = await startMailServer();
 const port = await freePort();
-const appUrl = `http://127.0.0.1:${port}`;
+const internalUrl = `http://127.0.0.1:${port}`;
+let secureProxy;
 const databaseAdmin = new Client({ connectionString: adminUrl.toString() });
 let app;
 let worker;
 let created = false;
 
 try {
+  // Production module cookies require HTTPS; keep that security behavior intact.
+  if (productionBuild) secureProxy = await startSecureProxy(port, temp);
+  const appUrl = secureProxy?.baseUrl ?? internalUrl;
   await databaseAdmin.connect();
   await databaseAdmin.query(`CREATE DATABASE "${name}"`);
   created = true;
@@ -224,8 +280,8 @@ try {
   ]);
   const env = {
     ...process.env,
-    NEXT_DIST_DIR: nextDistDir,
-    NODE_ENV: "development",
+    NEXT_DIST_DIR: productionBuild ? ".next" : nextDistDir,
+    NODE_ENV: productionBuild ? "production" : "development",
     DATABASE_URL: testUrl.toString(),
     APP_URL: appUrl,
     AUTH_URL: appUrl,
@@ -266,12 +322,36 @@ try {
   } finally {
     await queueDatabase.end().catch(() => undefined);
   }
-  // Direct next dev does not invoke npm's lifecycle hooks. Fresh checkouts need
-  // the same generated browser assets and workers as the documented dev command.
-  await run("npm", ["run", "predev"], env);
-  app = start("npx", ["next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], env);
-  worker = start("npx", ["tsx", "src/workers/pdf-worker.ts"], env);
-  await waitForApp(`${appUrl}/login`, app);
+  if (productionBuild) {
+    // Match the standalone image layout without changing the production service.
+    // The existing build and compiled worker must be supplied by the caller.
+    const standalone = path.join(cwd, ".next", "standalone");
+    await access(path.join(standalone, "server.js"));
+    await access(path.join(cwd, "dist", "pdf-worker.mjs"));
+    for (const relative of [
+      "public", ".next/static", "dist/ferias-workbook-worker.cjs",
+      "node_modules/@img", "node_modules/pdfkit/js/data",
+      "node_modules/pdfjs-dist/cmaps", "node_modules/pdfjs-dist/standard_fonts",
+      "node_modules/pdfjs-dist/wasm",
+    ]) {
+      const destination = path.join(standalone, relative);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await cp(path.join(cwd, relative), destination, { recursive: true });
+    }
+    app = start("node", [path.join(standalone, "server.js")], {
+      ...env, PORT: String(port), HOSTNAME: "127.0.0.1",
+    });
+    // Both runtimes resolve the heartbeat relative to their cwd, as in Docker.
+    worker = start("node", [path.join(cwd, "dist", "pdf-worker.mjs")], env, runtimeCwd);
+  } else {
+    // Direct next dev does not invoke npm's lifecycle hooks. Fresh checkouts need
+    // the same generated browser assets and workers as the documented dev command.
+    await run("npm", ["run", "predev"], env);
+    app = start("npx", ["next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], env);
+    worker = start("npx", ["tsx", "src/workers/pdf-worker.ts"], env);
+  }
+  await waitForApp(`${internalUrl}/login`, app);
+  await waitForWorker(pdfWorkerHeartbeatPath, worker);
   await run("npx", ["playwright", "test", ...process.argv.slice(2)], env);
 } catch (error) {
   if (app?.output?.length) console.error(app.output.join("").split(/\r?\n/).slice(-30).join("\n"));
@@ -279,6 +359,7 @@ try {
   throw error;
 } finally {
   await Promise.all([stop(app), stop(worker)]);
+  await secureProxy?.close().catch(() => undefined);
   await mail.close().catch(() => undefined);
   if (created) {
     await databaseAdmin.query(
