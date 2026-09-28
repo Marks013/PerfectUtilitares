@@ -228,13 +228,12 @@ export function useUnimedCalculationWorkspaceController({
   }
 
   async function runCalculation(options?: {
-    formElement?: HTMLFormElement;
     silent?: boolean;
   }) {
     const allErrors = validateForm(form);
     const nextErrors = Object.fromEntries(
       Object.entries(allErrors).filter(([field]) =>
-        ["reasonCode", "exclusionDate", "planEnrollmentDate"].includes(field) ||
+        ["reasonCode", "dependents", "exclusionDate", "planEnrollmentDate"].includes(field) ||
         field.startsWith("dependent-"),
       ),
     ) as typeof allErrors;
@@ -252,17 +251,6 @@ export function useUnimedCalculationWorkspaceController({
     }
 
     if (Object.keys(nextErrors).length > 0) {
-      if (!options?.silent) {
-        setApiError(
-          Object.values(nextErrors).find(
-            (message): message is string => typeof message === "string",
-          ) ?? "Revise os dados informados.",
-        );
-      }
-      const firstInvalid = options?.formElement?.querySelector<HTMLElement>(
-        '[aria-invalid="true"]',
-      );
-      firstInvalid?.focus();
       return;
     }
     if (!selectedBeneficiary) {
@@ -328,9 +316,7 @@ export function useUnimedCalculationWorkspaceController({
     event.preventDefault();
     lastAutomaticCalculationFingerprint.current =
       automaticCalculationFingerprint;
-    await runCalculation({
-      formElement: event.currentTarget,
-    });
+    await runCalculation();
   }
 
   useEffect(() => {

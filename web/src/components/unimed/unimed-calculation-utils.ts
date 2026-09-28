@@ -165,7 +165,7 @@ export function validateForm(form: FormValues) {
     form.reasonCode === "1" &&
     !form.dependents.some((dependent) => dependent.selected)
   ) {
-    errors.reasonCode = "Marque ao menos um dependente para esta exclusão.";
+    errors.dependents = "Marque ao menos um dependente para esta exclusão.";
   }
   if (!form.exclusionDate) {
     errors.exclusionDate = "Informe a data de exclusão.";

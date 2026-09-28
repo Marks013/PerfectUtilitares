@@ -182,6 +182,15 @@ export function useUnimedCalculationState({
     if (field in errors) {
       setErrors((current) => ({ ...current, [field]: undefined }));
     }
+    if (field === "reasonCode" || field === "dependents") {
+      setErrors((current) => ({ ...current, dependents: undefined }));
+    }
+    if (field === "dependents") {
+      const retained = new Set((value as DependentValues[]).map((item) => `dependent-${item.id}`));
+      setErrors((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith("dependent-") || retained.has(key)),
+      ));
+    }
   }
 
   function updateHolder(field: MoneyField, value: string) {
@@ -201,7 +210,10 @@ export function useUnimedCalculationState({
     field: keyof Omit<DependentValues, "id">,
     value: DependentValues[keyof Omit<DependentValues, "id">],
   ) {
-    invalidateCalculation();
+    // CPF is required for the document, but is not a pricing input.
+    // Cancelling here would leave no new fingerprint to restart the request.
+    const affectsCalculation = field !== "cpf";
+    if (affectsCalculation) invalidateCalculation();
     invalidateDocument();
     setForm((current) => ({
       ...current,
@@ -212,8 +224,12 @@ export function useUnimedCalculationState({
     setErrors((current) => ({
       ...current,
       [`dependent-${id}`]: undefined,
+      dependents: field === "selected" ? undefined : current.dependents,
     }));
-    setResult(null);
+    if (affectsCalculation) {
+      setApiError(null);
+      setResult(null);
+    }
     setEmailConfirmed(false);
     setEmailError(null);
   }

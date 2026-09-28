@@ -17,6 +17,13 @@ import {
 } from "./unimed-calculation-utils";
 
 describe("unimed calculation utilities", () => {
+  it("attaches an empty exclusion selection to dependents, not the reason", () => {
+    const form = { ...INITIAL_FORM, reasonCode: "1", dependents: [{ ...createDependent(), selected: false }] };
+    expect(validateForm(form).dependents).toBe("Marque ao menos um dependente para esta exclusão.");
+    expect(validateForm(form).reasonCode).toBeUndefined();
+    expect(validateForm({ ...form, reasonCode: "8" }).dependents).toBeUndefined();
+    expect(validateForm({ ...form, dependents: [{ ...form.dependents[0], selected: true }] }).dependents).toBeUndefined();
+  });
   it("normalizes, parses and formats real-world monetary input", () => {
     expect(normalizeMoney("R$ 1.234,56")).toBe("1.234,56");
     expect(parseMoney("1.234,56")).toBe(1234.56);

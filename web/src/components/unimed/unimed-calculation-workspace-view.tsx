@@ -1,11 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import type { useUnimedCalculationWorkspaceController } from "./unimed-calculation-workspace";
+import { UnimedCalculationFeedback } from "./unimed-calculation-feedback";
 import { UnimedEmailFeedback } from "./unimed-email-feedback";
 
 type Model = ReturnType<typeof useUnimedCalculationWorkspaceController>;
 
 export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
+  const [focusRequest, setFocusRequest] = useState(0);
   const { AlertCircle, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, ArrowRight, Building2, Calculator, CircleDollarSign, FileText, Loader2, Mail, Printer, ResultMetric, RotateCcw, UnimedCalculationIdentificationSection, UnimedCalculationMovementSection, UnimedCalculationValuesSection, UnimedPrintSummary, apiError, blurDependentMoney, blurMoney, calculate, clearSelectedBeneficiary, dataCompetency, documentError, documentNotice, documentProgress, documentReady, documentRequired, emailConfirmed, emailDialogOpen, emailError, errors, form, formId, formatCompetencyResult, formatMoneyResult, generateDocument, includePayrollLoans, isCalculating, isGeneratingDocument, isSendingEmail, openGeneratedDocument, payrollLoans, reasons, resetWorkspace, result, selectBeneficiary, selectedBeneficiary, selectedReason, sendEmail, setEmailDialogOpen, updateDependent, updateExclusionDate, updateForm, updateHolder, updatePayrollLoansPrintPreference } = model;
   const activeError = apiError ?? documentError ?? emailError;
   const documentProgressLabel =
@@ -54,7 +57,10 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
 
       <form
         id={formId}
-        onSubmit={calculate}
+        onSubmit={async (event) => {
+          await calculate(event);
+          setFocusRequest((current) => current + 1);
+        }}
         noValidate
         className="unimed-sheet-form grid items-start xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.65fr)]"
       >
@@ -80,6 +86,7 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
             form={form}
             errors={errors}
             selectedBeneficiary={selectedBeneficiary}
+            isCalculating={isCalculating}
             updateForm={updateForm}
             updateHolder={updateHolder}
             blurMoney={blurMoney}
@@ -203,6 +210,11 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
             </div>
 
             <div className="mt-5 grid gap-3">
+              <UnimedCalculationFeedback
+                errors={errors}
+                message={apiError ?? documentError}
+                focusRequest={focusRequest}
+              />
               <button
                 type="submit"
                 disabled={
@@ -248,12 +260,13 @@ export function UnimedCalculationWorkspaceView({ model }: { model: Model }) {
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (documentReady) {
                     openGeneratedDocument();
                     return;
                   }
-                  void generateDocument();
+                  await generateDocument();
+                  setFocusRequest((current) => current + 1);
                 }}
                 disabled={
                   !result ||

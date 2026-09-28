@@ -39,6 +39,7 @@ export type FieldErrors = Partial<
     | "employeeName"
     | "cpf"
     | "reasonCode"
+    | "dependents"
     | "exclusionDate"
     | "planEnrollmentDate"
     | MoneyField

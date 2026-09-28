@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import type { UnimedBeneficiary } from "./unimed-beneficiary-search";
 import {
+  FieldError,
   FieldLabel,
   MoneyInput,
 } from "./unimed-calculation-fields";
@@ -25,6 +26,7 @@ type ValuesSectionProps = {
   form: FormValues;
   errors: FieldErrors;
   selectedBeneficiary: UnimedBeneficiary | null;
+  isCalculating: boolean;
   updateForm: <K extends keyof FormValues>(
     field: K,
     value: FormValues[K],
@@ -46,6 +48,7 @@ export function UnimedCalculationValuesSection({
   form,
   errors,
   selectedBeneficiary,
+  isCalculating,
   updateForm,
   updateHolder,
   blurMoney,
@@ -118,7 +121,14 @@ export function UnimedCalculationValuesSection({
         </details>
       ) : null}
 
-      <div className="mt-7 border-t border-[color:var(--app-border)] pt-6">
+      <fieldset
+        id="unimed-dependents"
+        aria-label="Dependentes"
+        tabIndex={-1}
+        aria-invalid={Boolean(errors.dependents)}
+        aria-describedby={errors.dependents ? "unimed-dependents-error" : undefined}
+        className="mt-7 scroll-mt-24 rounded-xl border-t border-[color:var(--app-border)] pt-6 focus-visible:outline-2 focus-visible:outline-[color:var(--app-coral)]"
+      >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <UsersRound
@@ -150,6 +160,8 @@ export function UnimedCalculationValuesSection({
           </button>
         </div>
 
+        <FieldError id="unimed-dependents-error" message={errors.dependents} />
+
         {form.dependents.length === 0 ? (
           <div className="mt-5 rounded-xl border border-dashed border-[color:var(--app-border-strong)] bg-[color:var(--app-surface)] px-4 py-5 text-center text-sm text-[color:var(--app-muted)]">
             Nenhum dependente incluído neste cálculo.
@@ -172,8 +184,8 @@ export function UnimedCalculationValuesSection({
                     className="mt-1 size-5 shrink-0 accent-[color:var(--app-teal)]"
                     aria-label={`Incluir ${dependent.name || `dependente ${index + 1}`} no cálculo`}
                   />
-                  <details className="group min-w-0 flex-1">
-                    <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-3 marker:hidden">
+                  <details id={`dependent-${dependent.id}`} className="group min-w-0 flex-1">
+                    <summary aria-invalid={Boolean(dependentError)} aria-describedby={dependentError ? `dependent-${dependent.id}-error` : undefined} className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-3 marker:hidden">
                       <div className="min-w-0">
                         <h4 className="truncate text-sm font-black text-[color:var(--app-fg)]">
                           {dependent.name || `Dependente ${index + 1}`}
@@ -190,6 +202,7 @@ export function UnimedCalculationValuesSection({
                         Recolher
                       </span>
                     </summary>
+                    <FieldError id={`dependent-${dependent.id}-error`} message={dependentError} />
                     <div className="mt-3 grid gap-4 border-t border-[color:var(--app-border)] pt-3 md:grid-cols-2 xl:grid-cols-4">
                     <div>
                       <FieldLabel
@@ -302,12 +315,26 @@ export function UnimedCalculationValuesSection({
                             id={`dependent-${dependent.id}-invoice`}
                             type="text"
                             value={dependent.invoicePlanAmount}
-                            placeholder="Calculado automaticamente"
+                            placeholder={isCalculating ? "Consultando mensalidade…" : "Calculado automaticamente"}
+                            aria-busy={isCalculating}
+                            aria-describedby={`dependent-${dependent.id}-pricing-hint`}
                             readOnly
                             className="min-h-11 w-full cursor-default rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2.5 text-sm font-semibold text-[color:var(--app-fg)] opacity-75"
                           />
-                          <p className="mt-1 text-xs text-[color:var(--app-muted)]">
-                            Conforme nascimento e tabela vigente.
+                          <p id={`dependent-${dependent.id}-pricing-hint`} className="mt-1 text-xs text-[color:var(--app-muted)]" role="status">
+                            {!dependent.selected
+                              ? "Marque este dependente para calcular sua mensalidade."
+                              : !selectedBeneficiary
+                                ? "Selecione o titular na pesquisa para consultar a tabela do plano."
+                                : !form.reasonCode || !form.exclusionDate || !form.planEnrollmentDate
+                                  ? "Informe o motivo, a data de exclusão e a inclusão do titular no plano."
+                                  : !dependent.birthDate || dependent.name.trim().length < 2
+                                    ? "Preencha nome e nascimento para consultar a mensalidade."
+                                    : isCalculating
+                                      ? "Consultando a mensalidade na tabela vigente…"
+                                      : !dependent.invoicePlanAmount
+                                        ? "Mensalidade pendente. Clique em Calcular exclusão para verificar o que falta."
+                                        : "Mensalidade conforme nascimento, plano do titular e tabela vigente."}
                           </p>
                         </div>
                         <div>
@@ -398,7 +425,7 @@ export function UnimedCalculationValuesSection({
             })}
           </div>
         )}
-      </div>
+      </fieldset>
     </section>
   );
 }

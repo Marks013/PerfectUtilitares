@@ -95,6 +95,52 @@ beforeEach(() => {
 });
 
 describe("useUnimedCalculationState", () => {
+  it("keeps pending pricing and its result when only a dependent CPF changes", () => {
+    let state = TestState();
+    state.updateForm("dependents", [dependent()]);
+    state = TestState();
+    const abort = vi.fn();
+    state.calculationAbortController.current = { abort } as unknown as AbortController;
+    state.setIsCalculating(true);
+    state.lastAutomaticCalculationFingerprint.current = "pending-pricing";
+    state.updateDependent("dependent-1", "cpf", "111.444.777-35");
+    state = TestState();
+    expect(abort).not.toHaveBeenCalled();
+    expect(state.isCalculating).toBe(true);
+    expect(state.lastAutomaticCalculationFingerprint.current).toBe("pending-pricing");
+    state.setResult({ invoiceRefund: "150.00" } as never);
+    state.updateDependent("dependent-1", "cpf", "529.982.247-25");
+    state = TestState();
+    expect(state.result?.invoiceRefund).toBe("150.00");
+    expect(state.form.dependents[0].cpf).toBe("529.982.247-25");
+    state.updateDependent("dependent-1", "birthDate", "2011-01-01");
+    state = TestState();
+    expect(abort).toHaveBeenCalledOnce();
+    expect(state.result).toBeNull();
+  });
+  it("clears selection and removed-dependent errors while preserving other pending fields", () => {
+    let state = TestState();
+    state.updateForm("dependents", [dependent(), { ...dependent(), id: "retained" }]);
+    state.setErrors({
+      dependents: "Selecione um dependente",
+      "dependent-dependent-1": "Informe o nome",
+      "dependent-retained": "Informe o nascimento",
+      exclusionDate: "Informe a data",
+    });
+    state = TestState();
+    state.updateForm("dependents", [state.form.dependents[1]]);
+    state = TestState();
+    expect(state.errors["dependent-dependent-1"]).toBeUndefined();
+    expect(state.errors.dependents).toBeUndefined();
+    expect(state.errors["dependent-retained"]).toBe("Informe o nascimento");
+    expect(state.errors.exclusionDate).toBe("Informe a data");
+    state.setErrors({ dependents: "Selecione um dependente" });
+    state.setApiError("Erro anterior");
+    state.updateDependent("retained", "selected", true);
+    state = TestState();
+    expect(state.errors.dependents).toBeUndefined();
+    expect(state.apiError).toBeNull();
+  });
   it("updates, normalizes and resets the calculation state", () => {
     storage.set(PAYROLL_LOANS_PRINT_STORAGE_KEY, "false");
     let state = TestState();
