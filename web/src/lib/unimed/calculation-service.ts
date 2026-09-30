@@ -1,10 +1,7 @@
 import { calculateUnimed } from "./calculation";
 import { getUnimedCalculationConfiguration } from "./configuration";
 import type { UnimedCalculationInput } from "./types";
-import {
-  isManualDependentExclusion,
-  type UnimedCalculationRequest,
-} from "./calculation-request";
+import type { UnimedCalculationRequest } from "./calculation-request";
 import {
   loadUnimedCalculationContext,
   loadUnimedPayrollLoans,
@@ -26,20 +23,13 @@ export async function runUnimedCalculation(
   input: UnimedCalculationRequest,
 ) {
   const referenceDate = new Date(`${input.exclusionDate}T00:00:00.000Z`);
-  const { reason, competency, configuration, beneficiary } =
+  const { reason, configuration, beneficiary } =
     await loadUnimedCalculationContext(tenantId, input, referenceDate);
   if (!reason) {
     return failure(
       422,
       "UNIMED_REASON_NOT_FOUND",
       "O motivo selecionado não está ativo. Atualize a página.",
-    );
-  }
-  if (!competency && !isManualDependentExclusion(input)) {
-    return failure(
-      422,
-      "UNIMED_COMPETENCY_NOT_FOUND",
-      "Não existe uma base de beneficiários vigente para a data informada.",
     );
   }
   if (!configuration.billing) {
@@ -92,6 +82,13 @@ export async function runUnimedCalculation(
     typeof holderEnrollmentSource === "string"
       ? holderEnrollmentSource
       : dateOnly(holderEnrollmentSource);
+  if (holderEnrollmentDate > input.exclusionDate) {
+    return failure(
+      422,
+      "UNIMED_ENROLLMENT_DATE_INVALID",
+      "A inclusão no plano não pode ocorrer após a exclusão. Confira as datas informadas.",
+    );
+  }
   const dependentWithInvalidEnrollment = selectedDependents.find(
     (dependent) =>
       dependent.inclusionDate &&

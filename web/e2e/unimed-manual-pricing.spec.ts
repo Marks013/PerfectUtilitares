@@ -71,6 +71,28 @@ test("manual dependent calculates through the real API without a beneficiary bas
     await page.getByRole("button", { name: "Limpar formulário" }).click();
     await expect(page.locator("#unimed-exclusion")).toHaveValue("");
     await expect(page.getByText("Dependente sintético manual", { exact: true })).toHaveCount(0);
+
+    // The latest imported base may be newer than the requested exclusion date.
+    await db.unimedCompetency.update({ where: { id }, data: { month: 10 } });
+    await db.unimedBeneficiary.update({ where: { id: holderId }, data: {
+      birthDate: date("1999-02-23"), hasAddon: false,
+    } });
+    await page.locator("#unimed-reason").selectOption("5");
+    await page.locator("#unimed-exclusion").fill("2026-09-30");
+    await page.getByLabel("Pesquisar beneficiário").fill("Titular sintético manual");
+    await page.getByRole("button", { name: "Buscar agora" }).click();
+    await page.getByRole("button", { name: /Titular sintético manual/ }).click();
+    const resigned = page.waitForResponse((result) => result.url().endsWith("/api/unimed/calculation") &&
+      result.request().postDataJSON()?.reasonCode === 5);
+    await page.getByRole("button", { name: "Calcular exclusão", exact: true }).click();
+    const resignationResponse = await resigned;
+    expect(resignationResponse.status()).toBe(200);
+    expect(await resignationResponse.json()).toMatchObject({ calculation: {
+      invoiceTotal: "341.00", usedProrata: "341.00", currentCompetencyRefund: "0.00",
+      nextCompetencyRefund: "341.00",
+    } });
+    await expect(page.getByRole("alert", { name: "Não foi possível concluir" })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("resignation-newer-base.png") });
   } finally {
     await db.unimedPlanPriceVersion.deleteMany({ where: { id: { in: [`aug-${id}`, `sep-${id}`] } } });
     await db.unimedAgeBracket.deleteMany({ where: { id } });

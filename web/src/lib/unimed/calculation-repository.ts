@@ -1,10 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getUnimedCalculationConfiguration } from "./configuration";
-import {
-  isManualDependentExclusion,
-  type UnimedCalculationRequest,
-} from "./calculation-request";
+import type { UnimedCalculationRequest } from "./calculation-request";
 
 function normalizeCpf(value: string | null) {
   return value?.replace(/\D/g, "") ?? "";
@@ -15,10 +12,7 @@ export async function loadUnimedCalculationContext(
   input: UnimedCalculationRequest,
   referenceDate: Date,
 ) {
-  const referenceYear = referenceDate.getUTCFullYear();
-  const referenceMonth = referenceDate.getUTCMonth() + 1;
-  const manualOnly = isManualDependentExclusion(input);
-  const [reason, competency, configuration, beneficiary] = await Promise.all([
+  const [reason, configuration, beneficiary] = await Promise.all([
     prisma.unimedExclusionReason.findFirst({
       where: {
         tenantId: tenantId,
@@ -27,19 +21,6 @@ export async function loadUnimedCalculationContext(
       },
       select: { documentKind: true },
     }),
-    manualOnly ? Promise.resolve(null) : prisma.unimedCompetency.findFirst({
-      where: {
-        tenantId: tenantId,
-        status: { in: ["ACTIVE", "PREVIOUS"] },
-        beneficiaries: { some: {} },
-        OR: [
-          { year: { lt: referenceYear } },
-          { year: referenceYear, month: { lte: referenceMonth } },
-        ],
-      },
-      orderBy: [{ year: "desc" }, { month: "desc" }],
-      select: { id: true },
-    }),
     getUnimedCalculationConfiguration(tenantId, referenceDate),
     prisma.unimedBeneficiary.findFirst({
       where: {
@@ -47,14 +28,6 @@ export async function loadUnimedCalculationContext(
         tenantId: tenantId,
         competency: {
           status: { in: ["ACTIVE", "PREVIOUS"] },
-          ...(!manualOnly
-            ? {
-                OR: [
-                  { year: { lt: referenceYear } },
-                  { year: referenceYear, month: { lte: referenceMonth } },
-                ],
-              }
-            : {}),
         },
         category: "HOLDER",
       },
@@ -78,7 +51,7 @@ export async function loadUnimedCalculationContext(
       },
     }),
   ]);
-  return { reason, competency, configuration, beneficiary };
+  return { reason, configuration, beneficiary };
 }
 
 export async function loadUnimedPayrollLoans(

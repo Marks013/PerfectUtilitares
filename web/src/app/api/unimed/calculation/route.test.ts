@@ -5,7 +5,6 @@ import { Prisma } from "@/generated/prisma/client";
 const mocks = vi.hoisted(() => ({
   requireUnimedAccess: vi.fn(),
   findReason: vi.fn(),
-  findCompetency: vi.fn(),
   findBeneficiary: vi.fn(),
   findPayrollCompetence: vi.fn(),
   findPayrollLoans: vi.fn(),
@@ -15,7 +14,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     unimedExclusionReason: { findFirst: mocks.findReason },
-    unimedCompetency: { findFirst: mocks.findCompetency },
     unimedBeneficiary: { findFirst: mocks.findBeneficiary },
     unimedPayrollLoan: {
       findFirst: mocks.findPayrollCompetence,
@@ -75,7 +73,6 @@ function calculationRequest(
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findReason.mockResolvedValue({ documentKind: "INACTIVE_TERM" });
-  mocks.findCompetency.mockResolvedValue({ id: "competency-2026-07" });
   mocks.findBeneficiary.mockResolvedValue({
     cpf: "52998224725",
     birthDate: new Date("1990-01-01T00:00:00.000Z"),
@@ -133,6 +130,25 @@ beforeEach(() => {
 });
 
 describe("Unimed calculation API", () => {
+  it("explains an exclusion before the holder enrollment inherited from the base", async () => {
+    mocks.findBeneficiary.mockResolvedValue({
+      inclusionDate: new Date("2026-10-01T00:00:00.000Z"),
+      dependents: [],
+    });
+    const response = await POST(calculationRequest({
+      ...validInput,
+      reasonCode: 5,
+      exclusionDate: "2026-09-30",
+      planEnrollmentDate: undefined,
+      dependentIds: [],
+    }));
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "UNIMED_ENROLLMENT_DATE_INVALID" },
+    });
+    expect(mocks.findPayrollLoans).not.toHaveBeenCalled();
+  });
+
   it("accepts only POST", async () => {
     const response = GET();
 
@@ -277,7 +293,6 @@ describe("Unimed calculation API", () => {
   it.each(["OPEN", "AUTOMATIC_DAY_25"])(
     "prices manual dependents using their dates without a dated beneficiary base (%s)",
     async (billingClosure) => {
-      mocks.findCompetency.mockResolvedValue(null);
       mocks.findBeneficiary.mockImplementation(async ({ where }) =>
         where.competency.OR ? null : {
           cpf: null,
@@ -313,7 +328,6 @@ describe("Unimed calculation API", () => {
         }],
       }));
       expect(response.status).toBe(200);
-      expect(mocks.findCompetency).not.toHaveBeenCalled();
       expect(mocks.findBeneficiary).toHaveBeenCalledWith(expect.objectContaining({
         where: {
           id: validInput.beneficiaryId, tenantId: "tenant-12345678", category: "HOLDER",
@@ -335,15 +349,36 @@ describe("Unimed calculation API", () => {
     },
   );
 
-  it("keeps beneficiary-base validation when official dependents are selected", async () => {
-    mocks.findCompetency.mockResolvedValue(null);
-    const response = await POST(calculationRequest({ ...validInput, reasonCode: 1 }));
-    expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: "UNIMED_COMPETENCY_NOT_FOUND" } });
-  });
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])(
+    "uses the available holder base and the exclusion-month prices for reason %i",
+    async (reasonCode) => {
+      mocks.findBeneficiary.mockImplementation(async ({ where }) =>
+        where.competency.OR ? null : {
+          cpf: null, birthDate: new Date("1990-01-01T00:00:00.000Z"),
+          inclusionDate: new Date("2022-01-22T00:00:00.000Z"), planCode: "HOLDER", hasAddon: false,
+          dependents: [{ id: "dependent-12345678", birthDate: new Date("2015-01-01T00:00:00.000Z"),
+            inclusionDate: new Date("2022-01-22T00:00:00.000Z"), planCode: "DEPENDENT", hasAddon: false }],
+        },
+      );
+      const response = await POST(calculationRequest({
+        ...validInput, reasonCode, exclusionDate: "2026-09-30",
+      }));
+      expect(response.status).toBe(200);
+      expect(mocks.findBeneficiary).toHaveBeenCalledWith(expect.objectContaining({ where: {
+        id: validInput.beneficiaryId, tenantId: "tenant-12345678", category: "HOLDER",
+        competency: { status: { in: ["ACTIVE", "PREVIOUS"] } },
+      } }));
+      expect(mocks.getUnimedCalculationConfiguration).toHaveBeenNthCalledWith(
+        1, "tenant-12345678", new Date("2026-09-30T00:00:00.000Z"),
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        pricingCompetencies: { current: "2026-09", next: "2026-10" },
+        calculation: { invoiceTotal: reasonCode === 1 ? "82.97" : "282.97" },
+      });
+    },
+  );
 
   it.each(["holder", "price"])("still validates the %s for manual dependents", async (missing) => {
-    mocks.findCompetency.mockResolvedValue(null);
     mocks.findBeneficiary.mockResolvedValue(missing === "holder" ? null : {
       cpf: null, birthDate: null, inclusionDate: new Date("2022-01-22T00:00:00.000Z"),
       planCode: "UNCONFIGURED", hasAddon: false, dependents: [],
@@ -598,10 +633,6 @@ describe("Unimed calculation API", () => {
         tenantId: "tenant-12345678",
         competency: {
           status: { in: ["ACTIVE", "PREVIOUS"] },
-          OR: [
-            { year: { lt: 2026 } },
-            { year: 2026, month: { lte: 8 } },
-          ],
         },
         category: "HOLDER",
       },
