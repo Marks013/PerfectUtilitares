@@ -81,10 +81,9 @@ test("manual dependent calculates through the real API without a beneficiary bas
     await page.locator("#unimed-exclusion").fill("2026-09-30");
     await page.getByLabel("Pesquisar beneficiário").fill("Titular sintético manual");
     await page.getByRole("button", { name: "Buscar agora" }).click();
-    await page.getByRole("button", { name: /Titular sintético manual/ }).click();
     const resigned = page.waitForResponse((result) => result.url().endsWith("/api/unimed/calculation") &&
       result.request().postDataJSON()?.reasonCode === 5);
-    await page.getByRole("button", { name: "Calcular exclusão", exact: true }).click();
+    await page.getByRole("button", { name: /Titular sintético manual/ }).click();
     const resignationResponse = await resigned;
     expect(resignationResponse.status()).toBe(200);
     expect(await resignationResponse.json()).toMatchObject({ calculation: {
