@@ -274,6 +274,91 @@ describe("Unimed calculation API", () => {
     });
   });
 
+  it.each(["OPEN", "AUTOMATIC_DAY_25"])(
+    "prices manual dependents using their dates without a dated beneficiary base (%s)",
+    async (billingClosure) => {
+      mocks.findCompetency.mockResolvedValue(null);
+      mocks.findBeneficiary.mockImplementation(async ({ where }) =>
+        where.competency.OR ? null : {
+          cpf: null,
+          birthDate: null,
+          inclusionDate: new Date("2022-08-01T00:00:00.000Z"),
+          planCode: "HOLDER",
+          hasAddon: true,
+          dependents: [],
+        },
+      );
+      mocks.getUnimedCalculationConfiguration.mockImplementation(
+        async (_tenantId: string, referenceDate: Date) => ({
+          ageBrackets: [{ code: "27", minAge: 27, maxAge: 27 }],
+          planPrices: [{
+            planCode: "HOLDER",
+            ageBracket: { code: "27" },
+            companyAmount: new Prisma.Decimal(referenceDate.getUTCMonth() === 8 ? "341" : "310"),
+            employeeAmount: new Prisma.Decimal("310"),
+          }],
+          addonPrices: [],
+          billing: { closure: "AUTOMATIC_DAY_25" },
+          rules: null, email: null, reasons: [],
+        }),
+      );
+      const response = await POST(calculationRequest({
+        ...validInput,
+        dependentIds: [], reasonCode: 1,
+        exclusionDate: "2026-08-26", planEnrollmentDate: "2022-08-01",
+        billingClosure,
+        manualDependents: [{
+          clientId: "manual-dependent-123", fullName: "Dependente manual",
+          birthDate: "1999-02-23", inclusionDate: "2026-08-13", hasAddon: false,
+        }],
+      }));
+      expect(response.status).toBe(200);
+      expect(mocks.findCompetency).not.toHaveBeenCalled();
+      expect(mocks.findBeneficiary).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          id: validInput.beneficiaryId, tenantId: "tenant-12345678", category: "HOLDER",
+          competency: { status: { in: ["ACTIVE", "PREVIOUS"] } },
+        },
+      }));
+      await expect(response.json()).resolves.toMatchObject({
+        officialInput: {
+          holder: { invoicePlanAmount: 0, payrollPlanAmount: 0, addonAmount: 0 },
+          dependents: [{ invoicePlanAmount: 310, planEnrollmentDate: "2026-08-13" }],
+        },
+        calculation: {
+          invoiceTotal: "310.00", usedProrata: "140.00",
+          currentCompetencyRefund: "170.00",
+          nextCompetencyRefund: billingClosure === "OPEN" ? "0.00" : "341.00",
+          dependentUsage: [{ clientId: "manual-dependent-123", usedDays: 14 }],
+        },
+      });
+    },
+  );
+
+  it("keeps beneficiary-base validation when official dependents are selected", async () => {
+    mocks.findCompetency.mockResolvedValue(null);
+    const response = await POST(calculationRequest({ ...validInput, reasonCode: 1 }));
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "UNIMED_COMPETENCY_NOT_FOUND" } });
+  });
+
+  it.each(["holder", "price"])("still validates the %s for manual dependents", async (missing) => {
+    mocks.findCompetency.mockResolvedValue(null);
+    mocks.findBeneficiary.mockResolvedValue(missing === "holder" ? null : {
+      cpf: null, birthDate: null, inclusionDate: new Date("2022-01-22T00:00:00.000Z"),
+      planCode: "UNCONFIGURED", hasAddon: false, dependents: [],
+    });
+    const response = await POST(calculationRequest({
+      ...validInput, reasonCode: 1, dependentIds: [],
+      manualDependents: [{ clientId: "manual-dependent-123", fullName: "Dependente manual",
+        birthDate: "1999-02-23", inclusionDate: "2026-07-11", hasAddon: false }],
+    }));
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ error: {
+      code: missing === "holder" ? "UNIMED_BENEFICIARY_NOT_CURRENT" : "UNIMED_PRICE_NOT_CONFIGURED",
+    } });
+  });
+
   it("preserves a holder inclusion date edited by the user", async () => {
     const response = await POST(
       calculationRequest({

@@ -17,7 +17,7 @@ import {
   Upload,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import {
   calcularDuracaoEntrada,
@@ -61,6 +61,11 @@ export * from "./jornada-validation-form-model";
 import { JornadaValidationFormView } from "./jornada-validation-form-view";
 
 export function useJornadaValidationFormController({ userId }: { userId: string }) {
+  const sessionRequest = useRef(new AbortController());
+  useEffect(() => {
+    sessionRequest.current = new AbortController();
+    return () => sessionRequest.current.abort();
+  }, []);
   const queryClient = useQueryClient();
   const hasAccount = userId !== "public";
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
@@ -382,7 +387,7 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
         throw new Error("Informe nome e data de alteração para gerar o PDF.");
       }
 
-      await downloadPdf(entries);
+      await downloadPdf(entries, sessionRequest.current.signal);
     } catch (exception) {
       setExportError(
         exception instanceof Error ? exception.message : "Falha ao exportar PDF",
@@ -417,6 +422,7 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
           };
 
       const response = await fetch("/api/jornada/validar", {
+        signal: sessionRequest.current.signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -429,6 +435,7 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
       return (await response.json()) as ValidationResponse;
     },
     onSuccess: () => {
+      if (sessionRequest.current.signal.aborted) return;
       queryClient.invalidateQueries({ queryKey: historyQueryKey });
       setSelectedKeys([]);
       setPdfPeopleByKey({});
@@ -436,7 +443,8 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
   });
 
   const batchMutation = useMutation({
-    mutationFn: validateBatchSpreadsheet,
+    mutationFn: (values: Parameters<typeof validateBatchSpreadsheet>[0]) =>
+      validateBatchSpreadsheet(values, sessionRequest.current.signal),
   });
 
   function submitBatchValidation() {
@@ -465,7 +473,7 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
         validarIntervalos: batchValidarIntervalos,
         usarHorariosAgrupados: batchUsarHorariosAgrupados,
         pdfDetalhado: batchPdfDetalhado,
-      });
+      }, sessionRequest.current.signal);
     } catch (exception) {
       setBatchPdfError(
         exception instanceof Error
@@ -565,6 +573,18 @@ export function useJornadaValidationFormController({ userId }: { userId: string 
     return { AlertTriangle, CheckCircle2, Clock3, Download, FileSpreadsheet, History, INTERJORNADA_HELP_TEXT, Info, Link, Loader2, ResultCard, RotateCcw, TableProperties, Trash2, Upload, addPdfPerson, allVisibleSelected, batchFile, batchMutation, batchPdfDetalhado, batchPdfError, batchRepeated, batchTopErrors, batchUsarHorariosAgrupados, batchValidarIntervalos, batchValidarJornada, batchValidarPeriodos, bulkSelectionMode, canShowSabado, clearHistoryMutation, createPdfPerson, duracaoPrincipal, duracaoSegundaJornada, exportError, exportSelected, filteredHistorico, form, formatDate, formatField, getCombinedMonthlyHours, getCombinedWeeklyHours, getPrimaryMessage, getSecondaryMessages, hasAccount, hideInvalidHistory, historico, historicoQuery, historyPage, historyPageCount, horariosField, interjornadaAtiva, isBatchPdfExporting, isCombinedResponse, isExporting, joinCodigos, mutation, pdfPeopleByKey, removePdfPerson, sabadoField, segundaJornadaField, selectableVisibleHistorico, selectedDeleteMutation, selectedErrorCount, selectedHistoryIds, selectedItemCount, selectedSet, selectedValidCount, selectionMode, setBatchFile, setBatchPdfDetalhado, setBatchPdfError, setBatchUsarHorariosAgrupados, setBatchValidarIntervalos, setBatchValidarJornada, setBatchValidarPeriodos, setHideInvalidHistory, setHistoryPage, submitBatchPdfExport, submitBatchValidation, submitValidation, sumDurations, temJornadaNoturna, toggleAllVisible, toggleOne, totalErrorCount, totalValidCount, updatePdfPerson, visibleHistorico };
 }
 
-export function JornadaValidationForm(props: Parameters<typeof useJornadaValidationFormController>[0]) {
+function JornadaValidationSession(props: Parameters<typeof useJornadaValidationFormController>[0]) {
   return <JornadaValidationFormView model={useJornadaValidationFormController(props)} />;
+}
+
+export function JornadaValidationForm(props: Parameters<typeof useJornadaValidationFormController>[0]) {
+  const [session, setSession] = useState(0);
+  return <>
+    <div className="flex justify-end px-4 pt-4">
+      <button type="button" className="jornada-secondary-button" onClick={() => setSession((value) => value + 1)}>
+        <RotateCcw className="size-4" aria-hidden="true" /> Limpar dados
+      </button>
+    </div>
+    <JornadaValidationSession key={session} {...props} />
+  </>;
 }

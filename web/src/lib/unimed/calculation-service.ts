@@ -1,7 +1,10 @@
 import { calculateUnimed } from "./calculation";
 import { getUnimedCalculationConfiguration } from "./configuration";
 import type { UnimedCalculationInput } from "./types";
-import type { UnimedCalculationRequest } from "./calculation-request";
+import {
+  isManualDependentExclusion,
+  type UnimedCalculationRequest,
+} from "./calculation-request";
 import {
   loadUnimedCalculationContext,
   loadUnimedPayrollLoans,
@@ -32,7 +35,7 @@ export async function runUnimedCalculation(
       "O motivo selecionado não está ativo. Atualize a página.",
     );
   }
-  if (!competency) {
+  if (!competency && !isManualDependentExclusion(input)) {
     return failure(
       422,
       "UNIMED_COMPETENCY_NOT_FOUND",
@@ -122,6 +125,7 @@ export async function runUnimedCalculation(
   ];
 
   const currentMoney = officialMoneySet({
+    includeHolder: input.reasonCode !== 1,
     holder: beneficiary,
     dependents: dependentPricingInputs.map((dependent) => dependent.person),
     configuration,
@@ -153,6 +157,7 @@ export async function runUnimedCalculation(
       nextReferenceDate,
     );
     nextMoney = officialMoneySet({
+      includeHolder: input.reasonCode !== 1,
       holder: beneficiary,
       dependents: dependentPricingInputs.map((dependent) => dependent.person),
       configuration: nextConfiguration,

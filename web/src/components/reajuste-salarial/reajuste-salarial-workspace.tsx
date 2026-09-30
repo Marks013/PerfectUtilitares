@@ -86,6 +86,7 @@ export function useSalaryAdvanceWorkspaceController() {
     request.responseType = "blob";
     setState({ status: "uploading", progress: 0 });
     request.upload.addEventListener("progress", (event) => {
+      if (requestRef.current !== request) return;
       if (!event.lengthComputable) return;
       setState({
         status: "uploading",
@@ -93,23 +94,29 @@ export function useSalaryAdvanceWorkspaceController() {
       });
     });
     request.upload.addEventListener("load", () => {
+      if (requestRef.current !== request) return;
       setState({ status: "processing", progress: 100 });
     });
     request.addEventListener("load", async () => {
-      requestRef.current = null;
+      if (requestRef.current !== request) return;
       const blob = request.response as Blob;
       const contentType = request.getResponseHeader("content-type") ?? "";
       if (request.status >= 200 && request.status < 300 && contentType.includes("application/pdf")) {
         const fileName = downloadName(request.getResponseHeader("content-disposition"));
         downloadBlob(blob, fileName);
+        requestRef.current = null;
         releaseFiles();
         setState({ status: "success", progress: 100, fileName });
         return;
       }
+      const messages = await responseMessages(blob);
+      if (requestRef.current !== request) return;
+      requestRef.current = null;
       releaseFiles();
-      setState({ status: "error", progress: 0, messages: await responseMessages(blob) });
+      setState({ status: "error", progress: 0, messages });
     });
     request.addEventListener("error", () => {
+      if (requestRef.current !== request) return;
       requestRef.current = null;
       releaseFiles();
       setState({

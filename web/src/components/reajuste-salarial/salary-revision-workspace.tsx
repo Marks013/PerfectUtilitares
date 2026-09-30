@@ -42,6 +42,7 @@ async function responseMessages(response: Response | Blob) {
 export function useSalaryRevisionWorkspaceController() {
   const inputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<XMLHttpRequest | null>(null);
+  const analysisRequest = useRef<AbortController | null>(null);
   const [file, setFileState] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<SalaryRevisionAnalysis | null>(null);
   const [percentage, setPercentage] = useState("");
@@ -59,11 +60,13 @@ export function useSalaryRevisionWorkspaceController() {
   useEffect(
     () => () => {
       requestRef.current?.abort();
+      analysisRequest.current?.abort();
     },
     [],
   );
 
   function setFile(next: File | null) {
+    analysisRequest.current?.abort();
     requestRef.current?.abort();
     requestRef.current = null;
     setFileState(next);
@@ -89,20 +92,27 @@ export function useSalaryRevisionWorkspaceController() {
     setState({ status: "analyzing" });
     const data = new FormData();
     data.set("file", file, file.name);
+    analysisRequest.current?.abort();
+    const controller = new AbortController();
+    analysisRequest.current = controller;
     try {
       const response = await fetch("/api/reajuste-salarial/reajuste/analisar", {
         method: "POST",
         body: data,
+        signal: controller.signal,
       });
       if (!response.ok) {
-        setState({ status: "error", messages: await responseMessages(response) });
+        const messages = await responseMessages(response);
+        if (!controller.signal.aborted) setState({ status: "error", messages });
         return;
       }
       const body = (await response.json()) as { analysis: SalaryRevisionAnalysis };
+      if (controller.signal.aborted) return;
       setAnalysis(body.analysis);
       setRules([]);
       setState({ status: "ready" });
     } catch {
+      if (controller.signal.aborted) return;
       setState({ status: "error", messages: ["Falha de conexão durante a análise."] });
     }
   }
@@ -199,6 +209,7 @@ export function useSalaryRevisionWorkspaceController() {
     request.responseType = "blob";
     setState({ status: "generating", progress: 0 });
     request.upload.addEventListener("progress", (event) => {
+      if (requestRef.current !== request) return;
       if (!event.lengthComputable) return;
       setState({
         status: "generating",
@@ -206,21 +217,27 @@ export function useSalaryRevisionWorkspaceController() {
       });
     });
     request.upload.addEventListener("load", () => {
+      if (requestRef.current !== request) return;
       setState({ status: "generating", progress: 99 });
     });
     request.addEventListener("load", async () => {
-      requestRef.current = null;
+      if (requestRef.current !== request) return;
       const blob = request.response as Blob;
       const contentType = request.getResponseHeader("content-type") ?? "";
       if (request.status >= 200 && request.status < 300 && contentType.includes("application/pdf")) {
         const fileName = downloadName(request.getResponseHeader("content-disposition"));
         downloadBlob(blob, fileName);
+        requestRef.current = null;
         setState({ status: "success", fileName });
         return;
       }
-      setState({ status: "error", messages: await responseMessages(blob) });
+      const messages = await responseMessages(blob);
+      if (requestRef.current !== request) return;
+      requestRef.current = null;
+      setState({ status: "error", messages });
     });
     request.addEventListener("error", () => {
+      if (requestRef.current !== request) return;
       requestRef.current = null;
       setState({ status: "error", messages: ["Falha de conexão durante a geração."] });
     });

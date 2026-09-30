@@ -88,3 +88,11 @@ export const calculationRequestSchema = z
 export type UnimedCalculationRequest = z.output<
   typeof calculationRequestSchema
 >;
+
+export function isManualDependentExclusion(input: UnimedCalculationRequest) {
+  return (
+    input.reasonCode === 1 &&
+    input.dependentIds.length === 0 &&
+    input.manualDependents.length > 0
+  );
+}

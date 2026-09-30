@@ -395,11 +395,12 @@ export function createPdfPerson(): PdfPerson {
   };
 }
 
-export async function downloadPdf(entries: PdfExportEntry[]) {
+export async function downloadPdf(entries: PdfExportEntry[], signal?: AbortSignal) {
   const response = await fetch("/api/jornada/historico/exportar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ entries }),
+    signal,
   });
 
   if (!response.ok) {
@@ -407,6 +408,7 @@ export async function downloadPdf(entries: PdfExportEntry[]) {
   }
 
   const blob = await response.blob();
+  signal?.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -455,7 +457,7 @@ export async function validateBatchSpreadsheet({
   validarJornada: boolean;
   validarIntervalos: boolean;
   usarHorariosAgrupados: boolean;
-}) {
+}, signal?: AbortSignal) {
   const formData = createBatchFormData({
     file,
     validarPeriodos,
@@ -467,6 +469,7 @@ export async function validateBatchSpreadsheet({
   const response = await fetch("/api/jornada/validar-lote", {
     method: "POST",
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
@@ -512,7 +515,7 @@ export async function downloadBatchReportPdf({
   validarIntervalos: boolean;
   usarHorariosAgrupados: boolean;
   pdfDetalhado?: boolean;
-}) {
+}, signal?: AbortSignal) {
   const formData = createBatchFormData({
     file,
     validarPeriodos,
@@ -526,6 +529,7 @@ export async function downloadBatchReportPdf({
   const response = await fetch("/api/jornada/validar-lote", {
     method: "POST",
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
@@ -533,6 +537,7 @@ export async function downloadBatchReportPdf({
   }
 
   const blob = await response.blob();
+  signal?.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

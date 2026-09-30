@@ -35,6 +35,7 @@ export function FeriasWorkspace() {
             <RefreshCw className="size-4 shrink-0" aria-hidden="true" />{model.analysis ? "Analisar novamente" : "Analisar planilha"}
           </button>
           {model.busy && <button type="button" onClick={model.cancel} className={`${buttonClass} border border-[color:var(--app-border)]`}><X className="size-4" aria-hidden="true" />Cancelar</button>}
+          <button type="button" onClick={() => model.selectFile(null)} className={`${buttonClass} border border-[color:var(--app-border)]`}><Trash2 className="size-4" aria-hidden="true" />Limpar dados</button>
           <div role="status" aria-live="polite" aria-atomic="true" className="min-w-0 text-sm text-[color:var(--app-muted)]">
             {model.busy ? <span className="inline-flex items-center gap-2"><LoaderCircle className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" />{model.phase === "analyzing" ? "Conferindo planilha e benefícios…" : "Preparando sua planilha…"}</span> : model.stale && model.analysis ? "Correções prontas para validar." : model.download ? "Planilha pronta. Download iniciado." : model.analysis ? "Análise concluída." : null}
           </div>

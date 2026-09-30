@@ -182,7 +182,7 @@ export function ReajusteSalarialWorkspaceView({
           ) : null}
 
           <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-            <button type="button" onClick={model.reset} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
+            <button type="button" onClick={model.reset} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
               <RotateCcw className="size-4" /> Limpar
             </button>
             <button type="button" onClick={model.generate} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-canvas)] px-5 py-3 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">

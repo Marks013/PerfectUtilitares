@@ -24,6 +24,7 @@ test.beforeEach(() => {
 test("presence event customization, private invitation and report work together", async ({
   page,
 }) => {
+  test.skip(process.env.EVENTS_ENABLED !== "true", "Events is temporarily disabled");
   test.setTimeout(120_000);
   await login(page);
   const origin = new URL(page.url()).origin;
@@ -175,6 +176,17 @@ test("presence event customization, private invitation and report work together"
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("disabled Events blocks access and hides the administrator menu", async ({ page }) => {
+  test.skip(process.env.EVENTS_ENABLED === "true", "Events is explicitly enabled");
+  await login(page);
+  await expect(page.getByRole("link", { name: "Eventos", exact: true })).toHaveCount(0);
+  for (const path of ["/admin/presencas", "/api/admin/presencas", "/presenca/teste/convidado", "/p/teste", "/api/webhooks/resend"]) {
+    const response = await page.request.get(path);
+    expect(response.status()).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "EVENTS_DISABLED" });
+  }
 });
 
 test("password reset reaches the isolated email transport", async ({ page }) => {

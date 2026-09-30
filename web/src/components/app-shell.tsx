@@ -4,6 +4,7 @@ import { logoutAction } from "@/app/login/actions";
 import { auth } from "@/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppNavigation } from "@/components/app-navigation";
+import { isEventsEnabled } from "@/lib/presence/feature";
 
 const publicNavItems = [
   { href: "/fotos", label: "Fotos 3x4" },
@@ -20,7 +21,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
     ...(activeSession ? [{ href: "/conta", label: "Conta" }] : []),
     ...(activeSession?.user.role === "ADMIN"
       ? [
-          { href: "/admin/presencas", label: "Eventos" },
+          ...(isEventsEnabled() ? [{ href: "/admin/presencas", label: "Eventos" }] : []),
           ...(activeSession.user.tenantId
             ? [{ href: "/admin/ferias", label: "Férias" }]
             : []),

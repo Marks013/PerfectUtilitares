@@ -77,18 +77,12 @@ export async function GET(request: Request) {
   const referenceDate = parsed.data.referenceDate
     ? new Date(`${parsed.data.referenceDate}T00:00:00.000Z`)
     : currentUtcDate();
-  const referenceYear = referenceDate.getUTCFullYear();
-  const referenceMonth = referenceDate.getUTCMonth() + 1;
   const [initialCompetency, configuration] = await Promise.all([
     prisma.unimedCompetency.findFirst({
       where: {
         tenantId: access.tenantId,
         status: { in: ["ACTIVE", "PREVIOUS"] },
         beneficiaries: { some: {} },
-        OR: [
-          { year: { lt: referenceYear } },
-          { year: referenceYear, month: { lte: referenceMonth } },
-        ],
       },
       orderBy: [{ year: "desc" }, { month: "desc" }],
       select: { id: true, year: true, month: true },
@@ -191,10 +185,6 @@ export async function GET(request: Request) {
             status: { in: ["ACTIVE", "PREVIOUS"] },
             beneficiaries: { some: {} },
             id: { not: currentCompetency.id },
-            OR: [
-              { year: { lt: referenceYear } },
-              { year: referenceYear, month: { lte: referenceMonth } },
-            ],
           },
           orderBy: [{ year: "desc" }, { month: "desc" }],
           select: { id: true, year: true, month: true },

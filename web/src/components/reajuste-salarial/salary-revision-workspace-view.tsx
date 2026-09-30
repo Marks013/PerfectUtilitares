@@ -277,7 +277,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
         ) : null}
 
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <button type="button" onClick={model.reset} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] disabled:opacity-50"><RotateCcw className="size-4" /> Limpar</button>
+          <button type="button" onClick={model.reset} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)]"><RotateCcw className="size-4" /> Limpar</button>
           <button type="button" onClick={model.generate} disabled={model.busy || !model.analysis} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-canvas)] px-5 py-3 text-sm font-black text-white disabled:opacity-50">{model.busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Gerar PDF de reajuste</button>
         </div>
       </section>

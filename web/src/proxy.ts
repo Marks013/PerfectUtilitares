@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isEventsEnabled, isEventsPath } from "@/lib/presence/feature";
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -44,9 +45,12 @@ export function proxy(request: NextRequest) {
   requestHeaders.set("x-nonce", requestNonce);
   requestHeaders.set("x-request-id", requestId);
 
-  const response = NextResponse.next({
-    request: { headers: requestHeaders },
-  });
+  const response = !isEventsEnabled() && isEventsPath(request.nextUrl.pathname)
+    ? NextResponse.json(
+        { error: "O módulo Eventos está temporariamente desativado.", code: "EVENTS_DISABLED" },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      )
+    : NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("Content-Security-Policy", policy);
   response.headers.set("x-request-id", requestId);
   response.headers.delete("Server");
@@ -56,6 +60,12 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/admin/presencas/:path*",
+    "/api/admin/presencas/:path*",
+    "/presenca/:path*",
+    "/api/presenca/:path*",
+    "/p/:path*",
+    "/api/webhooks/resend/:path*",
     "/((?!api/pdf/jobs/[^/]+/(?:files|images|documents)(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|mediapipe/face-detection-frame.html|.*\\.(?:css|js|map|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|wasm)$).*)",
   ],
 };

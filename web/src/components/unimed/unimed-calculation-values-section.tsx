@@ -66,7 +66,7 @@ export function UnimedCalculationValuesSection({
             3. Valores do plano
           </h2>
           <p className="mt-1 text-sm text-[color:var(--app-muted)]">
-            Nenhum preço é presumido. Use valores da competência ativa.
+            Mensalidades pela tabela vigente na data da exclusão.
           </p>
         </div>
       </div>

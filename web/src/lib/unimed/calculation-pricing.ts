@@ -54,6 +54,7 @@ function addonAmountFor(
 }
 
 export function officialMoneySet(input: {
+  includeHolder?: boolean;
   holder: PersonForPricing;
   dependents: PersonForPricing[];
   configuration: Configuration;
@@ -63,19 +64,20 @@ export function officialMoneySet(input: {
     input.configuration,
     input.referenceDate,
   );
-  const holderPricing = resolvePricing(input.holder);
+  const includeHolder = input.includeHolder !== false;
+  const holderPricing = includeHolder ? resolvePricing(input.holder) : null;
   const dependentPricing = input.dependents.map((dependent) => ({
     dependent,
     pricing: resolvePricing(dependent),
   }));
   if (
-    holderPricing.status !== "RESOLVED" ||
+    (holderPricing !== null && holderPricing.status !== "RESOLVED") ||
     dependentPricing.some(({ pricing }) => pricing.status !== "RESOLVED")
   ) {
     return { status: "PRICE_MISSING" as const };
   }
   const addonAmount = addonAmountFor(input.configuration, [
-    input.holder,
+    ...(includeHolder ? [input.holder] : []),
     ...input.dependents,
   ]);
   if (addonAmount === null) {
@@ -84,9 +86,9 @@ export function officialMoneySet(input: {
   return {
     status: "RESOLVED" as const,
     holder: {
-      invoicePlanAmount: Number(holderPricing.companyAmount),
-      payrollPlanAmount: Number(holderPricing.employeeAmount),
-      addonAmount: input.holder.hasAddon ? addonAmount : 0,
+      invoicePlanAmount: holderPricing ? Number(holderPricing.companyAmount) : 0,
+      payrollPlanAmount: holderPricing ? Number(holderPricing.employeeAmount) : 0,
+      addonAmount: includeHolder && input.holder.hasAddon ? addonAmount : 0,
     },
     dependents: dependentPricing.map(({ dependent, pricing }) => ({
       invoicePlanAmount: Number(pricing.companyAmount),

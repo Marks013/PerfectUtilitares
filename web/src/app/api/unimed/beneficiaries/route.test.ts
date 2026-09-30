@@ -121,6 +121,11 @@ describe("Unimed beneficiary search API", () => {
   it.each(["5", " 5 "])(
     "returns the exact single-digit registration with pricing for q=%s",
     async (term) => {
+      mocks.findCompetency.mockResolvedValue({
+        id: "competency-2026-09",
+        year: 2026,
+        month: 9,
+      });
       mocks.findMany.mockResolvedValue([
         {
           id: "beneficiary-test-5",
@@ -164,7 +169,7 @@ describe("Unimed beneficiary search API", () => {
       const query = mocks.findMany.mock.calls[0][0];
       expect(query.where).toEqual({
         tenantId: "tenant-12345678",
-        competencyId: "competency-2026-07",
+        competencyId: "competency-2026-09",
         category: "HOLDER",
         registration: "5",
         address: { isNot: null },
@@ -183,8 +188,17 @@ describe("Unimed beneficiary search API", () => {
       });
       expect(body.pricingContext).toMatchObject({
         referenceDate: "2026-08-04",
-        dataCompetency: { year: 2026, month: 7 },
+        dataCompetency: { year: 2026, month: 9 },
       });
+      expect(mocks.findCompetency.mock.calls[0][0].where).toEqual({
+        tenantId: "tenant-12345678",
+        status: { in: ["ACTIVE", "PREVIOUS"] },
+        beneficiaries: { some: {} },
+      });
+      expect(mocks.getUnimedConfiguration).toHaveBeenCalledWith(
+        "tenant-12345678",
+        new Date("2026-08-04T00:00:00.000Z"),
+      );
     },
   );
 
@@ -206,7 +220,7 @@ describe("Unimed beneficiary search API", () => {
     expect(mocks.getUnimedConfiguration).not.toHaveBeenCalled();
   });
 
-  it("uses the latest valid competency at or before the reference date", async () => {
+  it("searches the latest available beneficiary competency independently of the pricing date", async () => {
     const response = await GET(searchRequest("  Maria Silva  ", "2026-08-04"));
 
     expect(response.status).toBe(200);
@@ -215,7 +229,6 @@ describe("Unimed beneficiary search API", () => {
         tenantId: "tenant-12345678",
         status: { in: ["ACTIVE", "PREVIOUS"] },
         beneficiaries: { some: {} },
-        OR: [{ year: { lt: 2026 } }, { year: 2026, month: { lte: 8 } }],
       },
       orderBy: [{ year: "desc" }, { month: "desc" }],
       select: { id: true, year: true, month: true },
@@ -247,6 +260,47 @@ describe("Unimed beneficiary search API", () => {
     });
     expect(query.orderBy).toEqual({ fullName: "asc" });
     expect(query.take).toBe(20);
+  });
+
+  it("falls back to the previous available base even when both bases follow the pricing date", async () => {
+    mocks.findCompetency
+      .mockResolvedValueOnce({ id: "competency-2026-10", year: 2026, month: 10 })
+      .mockResolvedValueOnce({ id: "competency-2026-09", year: 2026, month: 9 });
+    mocks.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "holder-previous",
+        fullName: "Titular Teste",
+        birthDate: null,
+        planCode: null,
+        dependents: [],
+      },
+    ]);
+
+    const response = await GET(searchRequest("Titular Teste", "2026-08-26"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.beneficiaries[0].id).toBe("holder-previous");
+    expect(body.pricingContext).toMatchObject({
+      referenceDate: "2026-08-26",
+      dataCompetency: { year: 2026, month: 9 },
+    });
+    expect(mocks.findCompetency).toHaveBeenNthCalledWith(2, {
+      where: {
+        tenantId: "tenant-12345678",
+        status: { in: ["ACTIVE", "PREVIOUS"] },
+        beneficiaries: { some: {} },
+        id: { not: "competency-2026-10" },
+      },
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+      select: { id: true, year: true, month: true },
+    });
+    expect(mocks.findMany.mock.calls.map(([query]) => query.where.competencyId))
+      .toEqual(["competency-2026-10", "competency-2026-09"]);
+    expect(mocks.getUnimedConfiguration).toHaveBeenCalledWith(
+      "tenant-12345678",
+      new Date("2026-08-26T00:00:00.000Z"),
+    );
   });
 
   it("uses exact registration for short numeric terms", async () => {

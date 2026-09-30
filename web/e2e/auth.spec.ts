@@ -18,10 +18,12 @@ test("login, session projection and authenticated navigation", async ({
 
   await expect(page).toHaveURL(/\/conta(?:\?|$)/, { timeout: 30_000 });
   await page.getByRole("button", { name: "Menu", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Eventos", exact: true })).toHaveAttribute(
-    "href",
-    "/admin/presencas",
-  );
+  const events = page.getByRole("link", { name: "Eventos", exact: true });
+  if (process.env.EVENTS_ENABLED === "true") {
+    await expect(events).toHaveAttribute("href", "/admin/presencas");
+  } else {
+    await expect(events).toHaveCount(0);
+  }
   await expect(page.locator("body")).not.toContainText("Credenciais inválidas");
 
   const cookies = await page.context().cookies();

@@ -18,11 +18,7 @@ import {
   cleanupCompletedPdfJobInputs,
   cleanupExpiredPdfJobs,
 } from "@/lib/pdf/retention";
-import {
-  processDuePresenceReminders,
-  retryDuePresenceDeliveries,
-} from "@/lib/presence/delivery";
-import { cleanupPresenceData } from "@/lib/presence/retention";
+import { isEventsEnabled } from "@/lib/presence/feature";
 // PERFECT_PDF_FULL32_V2_2
 
 Sentry.init({
@@ -217,11 +213,14 @@ function runRetentionCleanup() {
 }
 
 function runPresenceMaintenance() {
+  if (!isEventsEnabled()) return Promise.resolve();
   if (presenceMaintenancePromise) return presenceMaintenancePromise;
   const baseUrl = process.env.APP_URL;
   if (!baseUrl) return Promise.resolve();
 
   presenceMaintenancePromise = (async () => {
+    const { processDuePresenceReminders, retryDuePresenceDeliveries } = await import("@/lib/presence/delivery");
+    const { cleanupPresenceData } = await import("@/lib/presence/retention");
     const now = new Date();
     await processDuePresenceReminders({ baseUrl, now });
     await retryDuePresenceDeliveries({ baseUrl, now });
@@ -242,7 +241,7 @@ function runPresenceMaintenance() {
 }
 
 void runRetentionCleanup();
-void runPresenceMaintenance();
+if (isEventsEnabled()) void runPresenceMaintenance();
 await refreshWorkerHeartbeat();
 const heartbeatTimer = setInterval(() => void refreshWorkerHeartbeat(), 15_000);
 heartbeatTimer.unref();
@@ -251,17 +250,17 @@ const retentionTimer = setInterval(
   5 * 60 * 1_000,
 );
 retentionTimer.unref();
-const presenceMaintenanceTimer = setInterval(
+const presenceMaintenanceTimer = isEventsEnabled() ? setInterval(
   () => void runPresenceMaintenance(),
   60_000,
-);
-presenceMaintenanceTimer.unref();
+) : null;
+presenceMaintenanceTimer?.unref();
 
 async function shutdown(signal: string) {
   console.info(`[pdf-worker] encerrando por ${signal}`);
   clearInterval(heartbeatTimer);
   clearInterval(retentionTimer);
-  clearInterval(presenceMaintenanceTimer);
+  if (presenceMaintenanceTimer) clearInterval(presenceMaintenanceTimer);
   await heartbeatPromise;
   await cleanupPromise;
   await presenceMaintenancePromise;
