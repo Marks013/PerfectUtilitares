@@ -23,6 +23,8 @@ import type { useSalaryAdvanceWorkspaceController } from "./reajuste-salarial-wo
 import { ReajusteSalarialAccessLogoutButton } from "./reajuste-salarial-access-logout-button";
 import type { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
 import { SalaryRevisionWorkspaceView } from "./salary-revision-workspace-view";
+import type { useEventAdjustmentWorkspaceController } from "./event-adjustment-workspace";
+import { EventAdjustmentWorkspaceView } from "./event-adjustment-workspace-view";
 
 type AdvanceModel = ReturnType<typeof useSalaryAdvanceWorkspaceController>;
 type RevisionModel = ReturnType<typeof useSalaryRevisionWorkspaceController>;
@@ -32,11 +34,13 @@ export function ReajusteSalarialWorkspaceView({
   mode,
   onModeChange,
   revisionModel,
+  eventModel,
 }: {
   advanceModel: AdvanceModel;
-  mode: "advance" | "revision";
-  onModeChange: (mode: "advance" | "revision") => void;
+  mode: "advance" | "revision" | "events";
+  onModeChange: (mode: "advance" | "revision" | "events") => void;
   revisionModel: RevisionModel;
+  eventModel: ReturnType<typeof useEventAdjustmentWorkspaceController>;
 }) {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -71,16 +75,21 @@ export function ReajusteSalarialWorkspaceView({
         </div>
       </header>
 
-      <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-2 app-shadow" role="tablist" aria-label="Operação salarial">
+      <div className="mt-5 grid grid-cols-1 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-2 app-shadow sm:grid-cols-3" role="tablist" aria-label="Operação salarial">
         <button type="button" role="tab" aria-selected={mode === "advance"} onClick={() => onModeChange("advance")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "advance" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
           <TrendingUp className="size-4" aria-hidden="true" /> Antecipação Salarial
         </button>
         <button type="button" role="tab" aria-selected={mode === "revision"} onClick={() => onModeChange("revision")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "revision" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
           <Percent className="size-4" aria-hidden="true" /> Reajuste Salarial
         </button>
+        <button type="button" role="tab" aria-selected={mode === "events"} onClick={() => onModeChange("events")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "events" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
+          <Calculator className="size-4" aria-hidden="true" /> Eventos 565 e 901
+        </button>
       </div>
 
-      {mode === "revision" ? (
+      {mode === "events" ? (
+        <EventAdjustmentWorkspaceView key={eventModel.datasetVersion} model={eventModel} />
+      ) : mode === "revision" ? (
         <SalaryRevisionWorkspaceView model={revisionModel} />
       ) : (
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]" role="tabpanel">

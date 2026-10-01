@@ -10,6 +10,7 @@ import {
 } from "./reajuste-salarial-workspace-model";
 import { ReajusteSalarialWorkspaceView } from "./reajuste-salarial-workspace-view";
 import { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
+import { useEventAdjustmentWorkspaceController } from "./event-adjustment-workspace";
 
 function downloadName(header: string | null) {
   const encoded = header?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -150,13 +151,14 @@ export function useSalaryAdvanceWorkspaceController() {
 }
 
 export function ReajusteSalarialWorkspace() {
-  const [mode, setMode] = useState<"advance" | "revision">("advance");
+  const [mode, setMode] = useState<"advance" | "revision" | "events">("advance");
   return (
     <ReajusteSalarialWorkspaceView
       advanceModel={useSalaryAdvanceWorkspaceController()}
       mode={mode}
       onModeChange={setMode}
       revisionModel={useSalaryRevisionWorkspaceController()}
+      eventModel={useEventAdjustmentWorkspaceController(mode === "events")}
     />
   );
 }
