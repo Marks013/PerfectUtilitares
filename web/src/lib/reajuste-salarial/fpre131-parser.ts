@@ -129,6 +129,8 @@ export function parseFpre131SheetRows(
     ) {
       continue;
     }
+    const rowLabel = comparable(row[registrationColumn]);
+    if (rowLabel === "TOTAL" || rowLabel === "TOTAL GERAL") continue;
     const employeeName = text(row[nameColumn]);
     const role = text(row[roleColumn]);
     const salaryValue = row[salaryColumn];

@@ -8,6 +8,21 @@ function header() {
 }
 
 describe("FPRE131 parser", () => {
+  it("skips branch and report totals without importing them as employees", () => {
+    const parsed = parseFpre131SheetRows([
+      header(),
+      ["08 , TIRADENTES"],
+      [1, "ANA", null, null, null, 1, "CAIXA", null, null, "2.143,70"],
+      ["Total", "08 , TIRADENTES", null, null, null, null, "00001", null, null, "2.143,70"],
+      ["16 , MULTI ATACADO"],
+      [2, "BIA", null, null, null, 1, "CAIXA", null, null, "2.143,70"],
+      ["Total", "16 , MULTI ATACADO", null, null, null, null, "00001", null, null, "2.143,70"],
+      ["Total Geral", null, null, null, null, null, "00002", null, null, "4.287,40"],
+    ], context);
+    expect(parsed.map(employee => employee.registration)).toEqual(["1", "2"]);
+    expect(parsed.map(employee => employee.branchAlias)).toEqual(["Tiradentes", "Multi Atacado"]);
+  });
+
   it("reads numeric and padded registrations across repeated headers", () => {
     const rows = [
       [1, "-", "EMPRESA"],

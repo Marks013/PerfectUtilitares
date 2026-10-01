@@ -35,6 +35,7 @@ function valueAfter(row: unknown[], index: number) {
 }
 
 function sheetLooksCompatible(rows: unknown[][]) {
+  if (sheetLooksMonthly(rows)) return true;
   let hasAlias = false;
   let hasRegistration = false;
   let hasName = false;
@@ -49,6 +50,73 @@ function sheetLooksCompatible(rows: unknown[][]) {
   return false;
 }
 
+function sheetLooksMonthly(rows: unknown[][]) {
+  return rows.some((row) => findLabel(row, "FOLHA DE PAGAMENTO") >= 0)
+    && rows.some((row) => findLabel(row, "COLABORADOR:") >= 0);
+}
+
+function parseMonthlyPayrollRows(rows: unknown[][], context: ParserContext): ParsedPayrollRow[] {
+  const parsed: ParsedPayrollRow[] = [];
+  const registrations = new Set<string>();
+  let branchAlias = "";
+  let employee: Omit<ParsedPayrollRow, "baseCents"> | undefined;
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] ?? [];
+    const sourceRow = index + 1;
+    const localIndex = findLabel(row, "LOCAL:");
+    if (localIndex >= 0) {
+      const alias = valueAfter(row, localIndex).replace(/^\d+\s+(?:-\s*)?/, "").trim();
+      if (!alias || (employee && alias !== employee.branchAlias)) {
+        structureError(context, "Local vazio ou alterado antes do fechamento do colaborador.", sourceRow);
+      }
+      branchAlias = alias;
+      continue;
+    }
+
+    const employeeIndex = findLabel(row, "COLABORADOR:");
+    if (employeeIndex >= 0) {
+      if (employee) {
+        structureError(context, "Colaborador sem fechamento de Base INSS Proc.", employee.sourceRow);
+      }
+      const match = /^(\d+)\s*-\s*(.+)$/.exec(valueAfter(row, employeeIndex));
+      if (!branchAlias || !match) {
+        structureError(context, "Local ou identificação do colaborador inválidos.", sourceRow);
+      }
+      const registration = match[1].replace(/^0+(?=\d)/, "");
+      if (registrations.has(registration)) {
+        throw new SalaryAdjustmentError(
+          "REAJUSTE_REGISTRATION_DUPLICATE",
+          `O cadastro ${registration} aparece mais de uma vez em ${context.sourceFile}.`,
+          [{ file: context.sourceFile, sheet: context.sourceSheet, row: sourceRow, message: "Cadastro duplicado na competência." }],
+        );
+      }
+      registrations.add(registration);
+      employee = { ...context, sourceRow, branchAlias, registration, employeeName: match[2].trim() };
+      continue;
+    }
+
+    const baseIndex = findLabel(row, "INSS PROC:");
+    if (baseIndex >= 0) {
+      if (!employee) {
+        structureError(context, "Base INSS Proc sem colaborador correspondente.", sourceRow);
+      }
+      let baseCents: bigint;
+      try {
+        // The monthly closing base is distinct from salary, earnings and INSS withheld.
+        baseCents = parseMoneyCents(row[baseIndex + 1]);
+      } catch {
+        structureError(context, "Base INSS Proc vazia ou inválida.", sourceRow);
+      }
+      parsed.push({ ...employee, baseCents });
+      employee = undefined;
+    }
+  }
+  if (employee) structureError(context, "Colaborador sem fechamento de Base INSS Proc.", employee.sourceRow);
+  if (parsed.length === 0) structureError(context, "Nenhum colaborador válido foi encontrado.");
+  return parsed;
+}
+
 function structureError(
   context: ParserContext,
   message: string,
@@ -56,7 +124,7 @@ function structureError(
 ): never {
   throw new SalaryAdjustmentError(
     "REAJUSTE_STRUCTURE_INVALID",
-    `A estrutura de ${context.sourceFile} não corresponde ao relatório de INSS esperado.`,
+    `A estrutura de ${context.sourceFile} não corresponde ao relatório de INSS ou à folha mensal esperados.`,
     [{ file: context.sourceFile, sheet: context.sourceSheet, row, message }],
   );
 }
@@ -73,6 +141,8 @@ export function parsePayrollSheetRows(
       413,
     );
   }
+
+  if (sheetLooksMonthly(rows)) return parseMonthlyPayrollRows(rows, context);
 
   const parsed: ParsedPayrollRow[] = [];
   const registrations = new Set<string>();
@@ -249,7 +319,7 @@ export async function parseSalaryAdvanceWorkbook(
       "REAJUSTE_WORKBOOK_INVALID",
       compatible.length > 1
         ? `${sourceFile} possui mais de uma aba compatível; mantenha somente uma aba do relatório.`
-        : `${sourceFile} não possui uma aba compatível com o relatório de INSS.`,
+        : `${sourceFile} não possui uma aba compatível com o relatório de INSS ou a folha mensal.`,
     );
   }
 

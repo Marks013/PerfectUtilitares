@@ -137,7 +137,17 @@ function sheetPath(target: string) {
 }
 
 export function readPayrollWorkbookSheets(bytes: Buffer): PayrollWorkbookSheet[] {
-  const entries = unzipSync(bytes);
+  const entries: Record<string, Uint8Array> = Object.create(null);
+  for (const [name, content] of Object.entries(unzipSync(bytes))) {
+    const path = name.replaceAll("\\", "/");
+    if (entries[path]) {
+      throw new SalaryAdjustmentError(
+        "REAJUSTE_WORKBOOK_INVALID",
+        "A planilha possui nomes internos duplicados após normalização.",
+      );
+    }
+    entries[path] = content;
+  }
   const workbookXml = xmlText(entries["xl/workbook.xml"], "xl/workbook.xml");
   const relationsXml = xmlText(
     entries["xl/_rels/workbook.xml.rels"],
