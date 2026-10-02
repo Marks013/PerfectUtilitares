@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { EventAdjustmentReport } from "@/lib/reajuste-salarial/event-adjustment-types";
+import { MAX_FILES } from "@/lib/reajuste-salarial/limits";
 import { downloadBlob } from "./download";
-import { fileKey, mergeFiles } from "./reajuste-salarial-workspace-model";
-import { initialEventSettings, validateEventInputs, type EventSettings, type HistoricOverride } from "./event-adjustment-workspace-model";
+import { fileKey } from "./reajuste-salarial-workspace-model";
+import { appendEventSettings, initialEventSettings, validateEventInputs, type EventSettings, type HistoricOverride } from "./event-adjustment-workspace-model";
 
-export function useEventAdjustmentWorkspaceController(active: boolean) {
+export function useEventAdjustmentWorkspaceController(active: boolean, externalFiles?: File[]) {
   const inputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const versionRef = useRef(0);
-  const [files, setFiles] = useState<File[]>([]);
+  const [internalFiles, setFiles] = useState<File[]>([]);
+  const files = externalFiles ?? internalFiles;
+  const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
   const [datasetVersion, setDatasetVersion] = useState(0);
   const [settings, setSettings] = useState<EventSettings>({ ...initialEventSettings });
   const [overrides, setOverrides] = useState<HistoricOverride[]>([]);
@@ -20,9 +23,15 @@ export function useEventAdjustmentWorkspaceController(active: boolean) {
   function cancel() { versionRef.current++; requestRef.current?.abort(); requestRef.current = null; }
   useEffect(() => { if (!active) { versionRef.current++; requestRef.current?.abort(); requestRef.current = null; setStatus("idle"); } }, [active]);
   useEffect(() => () => { versionRef.current++; requestRef.current?.abort(); }, []);
+  useEffect(() => {
+    if (!externalFiles) return;
+    versionRef.current++; requestRef.current?.abort(); requestRef.current = null;
+    setReport(null); setMessages([]); setStatus("idle"); setDatasetVersion(current => current + 1);
+    setOverrides(current => current.filter(row => externalFiles.some(file => file.name.replace(/\.xlsx$/i, "") === row.competencyKey)));
+  }, [externalFiles]);
   function invalidate() { cancel(); setReport(null); setMessages([]); setStatus("idle"); }
   function reset() {
-    invalidate(); setDatasetVersion(current => current + 1); setFiles([]); setSettings({ ...initialEventSettings }); setOverrides([]);
+    invalidate(); setDatasetVersion(current => current + 1); setFiles([]); setFileSelectionError(null); setSettings({ ...initialEventSettings }); setOverrides([]);
     if (inputRef.current) inputRef.current.value = "";
   }
   async function run(pdf = false) {
@@ -33,8 +42,7 @@ export function useEventAdjustmentWorkspaceController(active: boolean) {
     cancel(); const version = versionRef.current; const controller = new AbortController(); requestRef.current = controller;
     const data = new FormData();
     for (const file of files) data.append("files", file, file.name);
-    for (const [key, value] of Object.entries(settings)) data.set(key, value.trim());
-    data.set("historicOverrides", JSON.stringify(overrides.filter(row => row.bonusOldValue.trim() || row.sundayOldValue.trim()).map(row => ({ competencyKey: row.competencyKey, bonusOldValue: row.bonusOldValue.trim() || settings.bonusOldValue.trim(), sundayOldValue: row.sundayOldValue.trim() || settings.sundayOldValue.trim() }))));
+    appendEventSettings(data, settings, overrides);
     setMessages([]); setStatus(pdf ? "generating" : "analyzing");
     try {
       const response = await fetch(`/api/reajuste-salarial/eventos/${pdf ? "gerar" : "analisar"}`, { method: "POST", body: data, signal: controller.signal });
@@ -60,12 +68,20 @@ export function useEventAdjustmentWorkspaceController(active: boolean) {
       setMessages([error instanceof Error && error.message === "Resposta PDF inválida." ? error.message : "Falha de conexão. Tente novamente."]); setStatus("error");
     } finally { if (version === versionRef.current) requestRef.current = null; }
   }
-  return { files, datasetVersion, settings, overrides, report, status, messages, inputRef, reset,
+  return { files, fileSelectionError, datasetVersion, settings, overrides, report, status, messages, inputRef, reset,
     busy: status === "analyzing" || status === "generating",
     canGenerate: Boolean(report && report.issueCount === 0 && (settings.bonusNewValue.trim() || settings.sundayNewValue.trim())),
     analyze: () => run(), generate: () => run(true),
-    mergeIncoming: (incoming: File[]) => { invalidate(); setDatasetVersion(current => current + 1); setFiles(current => mergeFiles(current, incoming)); },
-    removeFile: (key: string) => { invalidate(); setDatasetVersion(current => current + 1); setFiles(current => current.filter(file => fileKey(file) !== key)); setOverrides(current => current.filter(row => !files.some(file => fileKey(file) === key && file.name.replace(/\.xlsx$/i, "") === row.competencyKey))); },
+    mergeIncoming: (incoming: File[]) => {
+      const merged = new Map(files.map(file => [fileKey(file), file]));
+      for (const file of incoming) merged.set(fileKey(file), file);
+      if (merged.size > MAX_FILES) {
+        setFileSelectionError(`Seleção não adicionada: o limite é de ${MAX_FILES} bases. Remova uma base antes de incluir outra; os arquivos e a apuração anteriores foram preservados.`);
+        return;
+      }
+      invalidate(); setFileSelectionError(null); setDatasetVersion(current => current + 1); setFiles([...merged.values()]);
+    },
+    removeFile: (key: string) => { invalidate(); setFileSelectionError(null); setDatasetVersion(current => current + 1); setFiles(current => current.filter(file => fileKey(file) !== key)); setOverrides(current => current.filter(row => !files.some(file => fileKey(file) === key && file.name.replace(/\.xlsx$/i, "") === row.competencyKey))); },
     updateSetting: (key: keyof EventSettings, value: string) => { invalidate(); setSettings(current => ({ ...current, [key]: value })); },
     updateOverride: (competencyKey: string, key: "bonusOldValue" | "sundayOldValue", value: string) => { invalidate(); setOverrides(current => { const existing = current.find(row => row.competencyKey === competencyKey); return [...current.filter(row => row.competencyKey !== competencyKey), { competencyKey, bonusOldValue: "", sundayOldValue: "", ...existing, [key]: value }]; }); },
   };

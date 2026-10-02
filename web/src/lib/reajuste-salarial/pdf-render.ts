@@ -159,8 +159,9 @@ function drawBranchBand(
     .fillColor(COLORS.brand)
     .font("Helvetica-Bold")
     .fontSize(8)
-    .text(`${group.branchAlias}${continuation ? " (continuação)" : ""}`, left + 6, y + 7, {
+    .text(`${group.branchAlias.replace(/\s+/g, " ")}${continuation ? " (continuação)" : ""}`, left + 6, y + 7, {
       width: width - 250,
+      height: BRANCH_HEIGHT - 10,
       ellipsis: true,
     });
   doc
@@ -178,9 +179,9 @@ function employeeCellValue(
   employee: ConsolidatedEmployee,
   column: ReportColumn,
 ) {
-  if (column.kind === "branch") return employee.branchAlias;
+  if (column.kind === "branch") return employee.branchAlias.replace(/\s+/g, " ");
   if (column.kind === "registration") return employee.registration;
-  if (column.kind === "name") return employee.employeeName;
+  if (column.kind === "name") return employee.employeeName.replace(/\s+/g, " ");
   if (column.kind === "total") return formatCents(employee.totalAdjustmentCents);
   const key = column.competencyKey ?? "";
   if (column.kind === "base") {
@@ -262,6 +263,7 @@ function drawFooters(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport) {
 export function drawSalaryAdvanceReport(
   doc: PDFKit.PDFDocument,
   report: SalaryAdvanceReport,
+  includeFooter = true,
 ) {
   const left = doc.page.margins.left;
   const usableWidth = doc.page.width - left - doc.page.margins.right;
@@ -290,5 +292,5 @@ export function drawSalaryAdvanceReport(
     }
   }
 
-  drawFooters(doc, report);
+  if (includeFooter) drawFooters(doc, report);
 }

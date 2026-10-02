@@ -2,6 +2,7 @@ import { SalaryAdjustmentError } from "./errors";
 import { parseMoneyCents } from "./money";
 import { readPayrollWorkbookSheets } from "./ooxml-reader";
 import { parsePayrollSheetRows } from "./parser";
+import { MAX_EVENT_IDENTITY_LENGTH } from "./limits";
 import type { Competency } from "./types";
 import type { ParsedSalaryEventFile, ParsedSalaryEventEmployee } from "./event-adjustment-types";
 
@@ -36,19 +37,25 @@ export async function parseSalaryEventWorkbook(bytes: Buffer, competency: Compet
   const { data, sheet: sourceSheet } = compatible[0];
   const payroll = parsePayrollSheetRows(data, { competency, sourceFile, sourceSheet });
   const rows: ParsedSalaryEventEmployee[] = payroll.map(({ registration, employeeName, branchAlias }) => ({ registration, employeeName, branchAlias, events: { "565": [], "901": [] } }));
+  if (rows.some(({ registration, employeeName, branchAlias }) => [registration, employeeName, branchAlias].some((value) => value.length > MAX_EVENT_IDENTITY_LENGTH))) {
+    structural(`A identificação do colaborador ou da filial ultrapassa ${MAX_EVENT_IDENTITY_LENGTH} caracteres. Confira o conteúdo da folha antes de reenviar.`, sourceFile, sourceSheet);
+  }
   const byRegistration = new Map(rows.map((row) => [row.registration, row]));
   const companies = new Map<string, string>();
   let employee: ParsedSalaryEventEmployee | undefined;
   for (let index = 0; index < data.length; index += 1) {
     const row = data[index] ?? [];
     // Repeated page headers preserve the active employee but must belong to one company.
-    if (row.some((cell) => /^PAG\.?\s*:$/.test(normalized(cell))) && /^\d+$/.test(text(row[0])) && text(row[1])) {
+    if (row.some((cell) => /^PAG(?:INA)?\.?\s*:$/.test(normalized(cell)))) {
+      if (!/^\d+$/.test(text(row[0])) || !text(row[1])) structural("O cabeçalho não identifica a empresa. Reenvie a folha completa com código e nome da empresa.", sourceFile, sourceSheet, index + 1);
       const company = `${text(row[0]).replace(/^0+(?=\d)/, "")} - ${text(row[1])}`;
+      if (company.length > MAX_EVENT_IDENTITY_LENGTH) structural(`A identificação da empresa ultrapassa ${MAX_EVENT_IDENTITY_LENGTH} caracteres. Confira o cabeçalho da folha.`, sourceFile, sourceSheet, index + 1);
       companies.set(normalized(company), company);
       if (companies.size > 1) structural("A folha contém empresas diferentes; separe os arquivos por empresa.", sourceFile, sourceSheet, index + 1);
     }
     const collaborator = row.findIndex((cell) => normalized(cell) === "COLABORADOR:");
     if (collaborator >= 0) {
+      if (!companies.size) structural("A empresa não foi identificada antes dos colaboradores. Reenvie a folha completa com o cabeçalho da empresa.", sourceFile, sourceSheet, index + 1);
       const identification = row.slice(collaborator + 1).find((cell) => text(cell));
       const registration = /^(\d+)\s*-/.exec(text(identification))?.[1].replace(/^0+(?=\d)/, "");
       employee = registration ? byRegistration.get(registration) : undefined;
@@ -73,5 +80,7 @@ export async function parseSalaryEventWorkbook(bytes: Buffer, competency: Compet
       employee.events[code].push({ paidCents: paidCents.toString(), reference: text(row[referenceColumn]), sourceRow: index + 1 });
     }
   }
-  return { competency, sourceFile, sourceSheet, company: companies.values().next().value ?? null, rows };
+  const company = companies.values().next().value;
+  if (!company) structural("A empresa não foi identificada. Reenvie a folha completa com o cabeçalho da empresa.", sourceFile, sourceSheet);
+  return { competency, sourceFile, sourceSheet, company, rows };
 }

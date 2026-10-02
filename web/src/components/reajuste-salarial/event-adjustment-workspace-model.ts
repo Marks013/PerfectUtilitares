@@ -1,4 +1,4 @@
-import type { EventAdjustmentReport } from "@/lib/reajuste-salarial/event-adjustment-types";
+import type { EventAdjustmentEmployee, EventAdjustmentReport } from "@/lib/reajuste-salarial/event-adjustment-types";
 import { formatCents, parseMoneyCents } from "@/lib/reajuste-salarial/money";
 import { validateGeneration } from "./reajuste-salarial-workspace-model";
 
@@ -6,6 +6,10 @@ export type EventSettings = { bonusOldValue: string; bonusNewValue: string; sund
 export type HistoricOverride = { competencyKey: string; bonusOldValue: string; sundayOldValue: string };
 export const initialEventSettings: EventSettings = { bonusOldValue: "80,00", bonusNewValue: "", sundayOldValue: "85,00", sundayNewValue: "" };
 export const eventMoney = (value: string | null) => value === null ? "Não configurado" : formatCents(BigInt(value));
+export function appendEventSettings(data: FormData, settings: EventSettings, overrides: HistoricOverride[]) {
+  for (const [key, value] of Object.entries(settings)) data.set(key, value.trim());
+  data.set("historicOverrides", JSON.stringify(overrides.filter(row => row.bonusOldValue.trim() || row.sundayOldValue.trim()).map(row => ({ competencyKey: row.competencyKey, bonusOldValue: row.bonusOldValue.trim() || settings.bonusOldValue.trim(), sundayOldValue: row.sundayOldValue.trim() || settings.sundayOldValue.trim() }))));
+}
 export function validateEventInputs(files: File[], settings: EventSettings, overrides: HistoricOverride[]) {
   const messages = validateGeneration(files, "1");
   const fields = [
@@ -23,6 +27,12 @@ export function validateEventInputs(files: File[], settings: EventSettings, over
   return messages;
 }
 export type EventFilters = { search: string; competency: string; event: "all" | "bonus-received" | "bonus-missing" | "sunday-received" | "sunday-missing" | "issues" };
+export function displayedEventDifference(employee: EventAdjustmentEmployee, competency: string) {
+  return employee.months
+    .filter(month => !competency || month.competency.key === competency)
+    .reduce((total, month) => total + BigInt(month.bonus565.differenceCents) + BigInt(month.indemnity901.differenceCents), 0n)
+    .toString();
+}
 export function filterEventEmployees(report: EventAdjustmentReport, filters: EventFilters) {
   const term = filters.search.trim().toLocaleLowerCase("pt-BR");
   return report.employees.filter(employee => {

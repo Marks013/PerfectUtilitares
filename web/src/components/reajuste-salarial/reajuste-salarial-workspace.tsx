@@ -4,13 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadBlob } from "./download";
 import {
   fileKey,
-  mergeFiles,
   type GenerationState,
   validateGeneration,
 } from "./reajuste-salarial-workspace-model";
 import { ReajusteSalarialWorkspaceView } from "./reajuste-salarial-workspace-view";
 import { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
 import { useEventAdjustmentWorkspaceController } from "./event-adjustment-workspace";
+import { appendEventSettings, validateEventInputs } from "./event-adjustment-workspace-model";
+import { MAX_FILES } from "@/lib/reajuste-salarial/limits";
 
 function downloadName(header: string | null) {
   const encoded = header?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -34,17 +35,27 @@ async function responseMessages(blob: Blob) {
   }
 }
 
-export function useSalaryAdvanceWorkspaceController() {
+export function useSalaryAdvanceWorkspaceController(active = true) {
   const inputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<XMLHttpRequest | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [percentage, setPercentage] = useState("");
+  const [includeEvents, setIncludeEvents] = useState(false);
+  const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
+  const eventModel = useEventAdjustmentWorkspaceController(active && includeEvents, files);
   const [state, setState] = useState<GenerationState>({ status: "idle", progress: 0 });
   const totalBytes = useMemo(
     () => files.reduce((sum, file) => sum + file.size, 0),
     [files],
   );
-  const busy = state.status === "uploading" || state.status === "processing";
+  const busy = state.status === "uploading" || state.status === "processing" || eventModel.busy;
+  const canGenerate = !includeEvents || eventModel.canGenerate;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Changes to any generation input invalidate the pending PDF, even while its body is being read.
+  useEffect(() => {
+    requestRef.current?.abort(); requestRef.current = null;
+    setState(current => current.status === "uploading" || current.status === "processing" ? { status: "idle", progress: 0 } : current);
+  }, [active, includeEvents, files, percentage, eventModel.settings, eventModel.overrides]);
 
   useEffect(
     () => () => {
@@ -63,16 +74,26 @@ export function useSalaryAdvanceWorkspaceController() {
     requestRef.current = null;
     releaseFiles();
     setPercentage("");
+    setIncludeEvents(false);
+    setFileSelectionError(null);
+    eventModel.reset();
     setState({ status: "idle", progress: 0 });
   }
 
   function removeFile(key: string) {
+    requestRef.current?.abort(); requestRef.current = null;
+    setFileSelectionError(null);
     setFiles((current) => current.filter((file) => fileKey(file) !== key));
     setState({ status: "idle", progress: 0 });
   }
 
   function generate() {
+    if (!active || busy) return;
     const messages = validateGeneration(files, percentage);
+    if (includeEvents) {
+      messages.push(...validateEventInputs(files, eventModel.settings, eventModel.overrides));
+      if (!eventModel.canGenerate) messages.push("Apure os eventos sem pendências e configure pelo menos um novo valor antes de gerar o PDF único.");
+    }
     if (messages.length > 0) {
       setState({ status: "error", progress: 0, messages });
       return;
@@ -81,6 +102,10 @@ export function useSalaryAdvanceWorkspaceController() {
     const data = new FormData();
     for (const file of files) data.append("files", file, file.name);
     data.set("percentage", percentage.trim());
+    if (includeEvents) {
+      data.set("includeEvents", "true");
+      appendEventSettings(data, eventModel.settings, eventModel.overrides);
+    }
     const request = new XMLHttpRequest();
     requestRef.current = request;
     request.open("POST", "/api/reajuste-salarial/gerar");
@@ -127,18 +152,31 @@ export function useSalaryAdvanceWorkspaceController() {
       });
     });
     request.addEventListener("abort", () => {
-      requestRef.current = null;
+      if (requestRef.current === request) requestRef.current = null;
     });
     request.send(data);
   }
 
   return {
     busy,
+    canGenerate,
+    eventModel,
+    includeEvents,
+    setIncludeEvents,
+    fileSelectionError,
     files,
     generate,
     inputRef,
     mergeIncoming: (incoming: File[]) => {
-      setFiles((current) => mergeFiles(current, incoming));
+      const merged = new Map(files.map(file => [fileKey(file), file]));
+      for (const file of incoming) merged.set(fileKey(file), file);
+      if (merged.size > MAX_FILES) {
+        setFileSelectionError(`Seleção não adicionada: o limite é de ${MAX_FILES} bases. Remova uma base antes de incluir outra; os arquivos e a apuração anteriores foram preservados.`);
+        return;
+      }
+      requestRef.current?.abort(); requestRef.current = null;
+      setFileSelectionError(null);
+      setFiles([...merged.values()]);
       setState({ status: "idle", progress: 0 });
     },
     percentage,
@@ -151,14 +189,14 @@ export function useSalaryAdvanceWorkspaceController() {
 }
 
 export function ReajusteSalarialWorkspace() {
-  const [mode, setMode] = useState<"advance" | "revision" | "events">("advance");
+  const [mode, setMode] = useState<"advance" | "revision">("advance");
+  const advanceModel = useSalaryAdvanceWorkspaceController(mode === "advance");
   return (
     <ReajusteSalarialWorkspaceView
-      advanceModel={useSalaryAdvanceWorkspaceController()}
+      advanceModel={advanceModel}
       mode={mode}
       onModeChange={setMode}
       revisionModel={useSalaryRevisionWorkspaceController()}
-      eventModel={useEventAdjustmentWorkspaceController(mode === "events")}
     />
   );
 }

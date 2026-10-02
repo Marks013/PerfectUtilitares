@@ -12,6 +12,10 @@ import {
 } from "@/lib/api/security";
 import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import { requireReajusteAccess } from "@/lib/reajuste-salarial/access.server";
+import { buildIntegratedAdvanceSummary, parseOptionalAdvanceEventSettings } from "@/lib/reajuste-salarial/advance-events";
+import { buildEventAdjustmentReport } from "@/lib/reajuste-salarial/event-adjustments";
+import { parseSalaryEventWorkbook } from "@/lib/reajuste-salarial/event-parser";
+import type { ParsedSalaryEventFile } from "@/lib/reajuste-salarial/event-adjustment-types";
 import {
   parseCompetencyFileName,
   sortAndValidateCompetencies,
@@ -153,6 +157,7 @@ export async function POST(request: Request) {
     const percentageBasisPoints = parsePercentageBasisPoints(
       String(formData.get("percentage") ?? ""),
     );
+    const eventSettings = parseOptionalAdvanceEventSettings(formData);
     const withCompetency = validated.files.map((file) => ({
       file,
       competency: parseCompetencyFileName(file.name),
@@ -166,6 +171,7 @@ export async function POST(request: Request) {
 
     stage = "parse";
     const parsedFiles = [];
+    const eventFiles: ParsedSalaryEventFile[] = [];
     for (const competency of orderedCompetencies) {
       const file = fileByKey.get(competency.key);
       if (!file) continue;
@@ -176,6 +182,7 @@ export async function POST(request: Request) {
         maxTotalUncompressedBytes: MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES,
       });
       parsedFiles.push(await parseSalaryAdvanceWorkbook(bytes, competency, file.name));
+      if (eventSettings) eventFiles.push(await parseSalaryEventWorkbook(bytes, competency, file.name));
     }
 
     stage = "consolidate";
@@ -183,8 +190,13 @@ export async function POST(request: Request) {
       parsedFiles,
       percentageBasisPoints,
     );
+    const eventReport = eventSettings ? buildEventAdjustmentReport(eventFiles, eventSettings, report.generatedAt) : undefined;
+    if (eventReport?.issueCount) {
+      return jsonError(409, "REAJUSTE_EVENTS_PENDING", "Há pendências nos eventos 565 ou 901. Confira os valores históricos, as referências e as rubricas antes de gerar o PDF.");
+    }
+    if (eventReport) buildIntegratedAdvanceSummary(report, eventReport);
     stage = "render";
-    const pdf = await generateSalaryAdvancePdf(report);
+    const pdf = await generateSalaryAdvancePdf(report, eventReport);
     await recordUserUsage({
       userId: authenticatedSession?.user.id,
       module: "PDF",
@@ -222,9 +234,9 @@ export async function POST(request: Request) {
       );
     }
     const correlationId = randomUUID();
-    Sentry.captureException(error, {
+    Sentry.captureException(new Error("Falha inesperada ao gerar antecipação salarial."), {
       tags: { component: "salary-advance", stage },
-      extra: { correlationId, fileCount, totalBytes },
+      extra: { correlationId, fileCount, totalBytes, errorType: error instanceof Error ? error.name : typeof error },
     });
     return jsonError(
       503,

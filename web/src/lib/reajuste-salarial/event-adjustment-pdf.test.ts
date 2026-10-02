@@ -3,6 +3,7 @@ import PDFDocument from "pdfkit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateEventAdjustmentPdf } from "./event-adjustment-pdf";
 import type { EventAdjustmentReport, EventAdjustmentResult } from "./event-adjustment-types";
+import { MAX_EVENT_IDENTITY_LENGTH } from "./limits";
 
 function result(paidCents: string, quantity: number, targetCents: string, differenceCents: string): EventAdjustmentResult {
   return { received: true, paidCents, quantity, targetCents, differenceCents, quantitySource: "amount", issue: null };
@@ -28,6 +29,28 @@ function fixture(count = 1): EventAdjustmentReport {
 afterEach(() => vi.restoreAllMocks());
 
 describe("event adjustment PDF", () => {
+  it("keeps the largest accepted identities inside controlled pages", async () => {
+    const text = vi.spyOn(PDFDocument.prototype, "text");
+    const report = fixture(3);
+    for (const employee of report.employees) {
+      employee.registration = "1".repeat(MAX_EVENT_IDENTITY_LENGTH);
+      employee.employeeName = "COLABORADOR FICTICIO ".repeat(30).slice(0, MAX_EVENT_IDENTITY_LENGTH);
+      employee.branchAlias = "FILIAL FICTICIA ".repeat(40).slice(0, MAX_EVENT_IDENTITY_LENGTH);
+    }
+    const pdf = await LoadedPdf.load(await generateEventAdjustmentPdf(report));
+    expect(text.mock.calls.filter((call) => call[0] === "Apuração de diferenças — eventos 565 e 901")).toHaveLength(pdf.getPageCount());
+    expect(text.mock.calls.filter((call) => /^Página \d+ de \d+$/.test(String(call[0])))).toHaveLength(pdf.getPageCount());
+    const bodyCalls = text.mock.calls.filter((call) => !String(call[0]).startsWith("PerfectUtilitares |") && !/^Página \d+ de \d+$/.test(String(call[0])));
+    expect(bodyCalls.filter((call) => typeof call[2] === "number" && call[2] > 549.28)).toEqual([]);
+    for (const field of ["registration", "employeeName", "branchAlias"] as const) {
+      expect(text.mock.calls.some((call) => String(call[0]).includes(report.employees[0][field]))).toBe(true);
+    }
+  });
+  it("rejects an oversized identity before PDFKit can paginate it implicitly", async () => {
+    const report = fixture();
+    report.employees[0].employeeName = "COLABORADOR FICTICIO ".repeat(600);
+    await expect(generateEventAdjustmentPdf(report)).rejects.toMatchObject({ code: "REAJUSTE_STRUCTURE_INVALID" });
+  });
   it("generates real landscape PDF with audit values, sources, months and totals", async () => {
     const text = vi.spyOn(PDFDocument.prototype, "text");
     const report = fixture();

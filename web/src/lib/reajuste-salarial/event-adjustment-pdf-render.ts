@@ -48,7 +48,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
   }
 
   function identity(employee: EventAdjustmentEmployee, continued = false) {
-    const label = `Filial: ${employee.branchAlias} | Cadastro: ${employee.registration} | ${employee.employeeName}${continued ? " (continuação)" : ""}`;
+    const label = `Filial: ${employee.branchAlias} | Cadastro: ${employee.registration} | ${employee.employeeName}${continued ? " (continuação)" : ""}`.replace(/\s+/g, " ");
     const height = textHeight(label, width - 12, 9, true) + 12;
     doc.rect(left, y, width, height).fill("#e7efec");
     doc.font("Helvetica-Bold").fontSize(9).fillColor(COLORS.brand)
@@ -74,6 +74,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
   }
 
   function paragraph(value: string, bold = false) {
+    value = value.replace(/\s+/g, " ").trim();
     const height = textHeight(value, width, 8, bold) + 7;
     ensure(height);
     text(value, y, 8, bold);
@@ -90,6 +91,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
   }
   paragraph("Método: quantidade validada pela referência da folha ou pelo valor pago dividido pelo unitário histórico. Novo total = quantidade × novo unitário. Adicional = máximo de zero e novo total menos pago. Valor novo menor não gera desconto.");
   paragraph("Ausência do evento não presume direito. Sem folha significa competência sem registro para o colaborador. Não reajustado significa valor novo não configurado. Este relatório não aplica percentual sobre INSS.");
+  paragraph("Agrupamento por filial: considera a última competência em que cada colaborador consta nas bases importadas, inclusive quando houve transferência entre filiais.");
   paragraph(`Total geral: ${money(report.grandTotalCents)} | Bônus: ${money(report.bonusTotalCents)} | Domingos: ${money(report.sundayTotalCents)}`, true);
 
   const groups = new Map<string, EventAdjustmentEmployee[]>();
@@ -109,7 +111,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
   for (const employees of groups.values()) {
     for (const employee of employees) {
       activeEmployee = null;
-      const label = `Filial: ${employee.branchAlias} | Cadastro: ${employee.registration} | ${employee.employeeName}`;
+      const label = `Filial: ${employee.branchAlias} | Cadastro: ${employee.registration} | ${employee.employeeName}`.replace(/\s+/g, " ");
       ensure(textHeight(label, width - 12, 9, true) + 64);
       identity(employee);
       activeEmployee = employee;

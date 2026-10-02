@@ -1,5 +1,7 @@
 "use client";
 
+import type { KeyboardEvent } from "react";
+
 import {
   AlertCircle,
   Calculator,
@@ -23,7 +25,6 @@ import type { useSalaryAdvanceWorkspaceController } from "./reajuste-salarial-wo
 import { ReajusteSalarialAccessLogoutButton } from "./reajuste-salarial-access-logout-button";
 import type { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
 import { SalaryRevisionWorkspaceView } from "./salary-revision-workspace-view";
-import type { useEventAdjustmentWorkspaceController } from "./event-adjustment-workspace";
 import { EventAdjustmentWorkspaceView } from "./event-adjustment-workspace-view";
 
 type AdvanceModel = ReturnType<typeof useSalaryAdvanceWorkspaceController>;
@@ -34,14 +35,24 @@ export function ReajusteSalarialWorkspaceView({
   mode,
   onModeChange,
   revisionModel,
-  eventModel,
 }: {
   advanceModel: AdvanceModel;
-  mode: "advance" | "revision" | "events";
-  onModeChange: (mode: "advance" | "revision" | "events") => void;
+  mode: "advance" | "revision";
+  onModeChange: (mode: "advance" | "revision") => void;
   revisionModel: RevisionModel;
-  eventModel: ReturnType<typeof useEventAdjustmentWorkspaceController>;
 }) {
+  function handleTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const modes = ["advance", "revision"] as const;
+    const index = modes.indexOf(mode);
+    const nextIndex = event.key === "ArrowRight" ? (index + 1) % modes.length
+      : event.key === "ArrowLeft" ? (index + modes.length - 1) % modes.length
+      : event.key === "Home" ? 0 : event.key === "End" ? modes.length - 1 : null;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextMode = modes[nextIndex];
+    onModeChange(nextMode);
+    event.currentTarget.querySelector<HTMLButtonElement>(`#salary-tab-${nextMode}`)?.focus();
+  }
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="overflow-hidden rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] app-shadow">
@@ -75,24 +86,23 @@ export function ReajusteSalarialWorkspaceView({
         </div>
       </header>
 
-      <div className="mt-5 grid grid-cols-1 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-2 app-shadow sm:grid-cols-3" role="tablist" aria-label="Operação salarial">
-        <button type="button" role="tab" aria-selected={mode === "advance"} onClick={() => onModeChange("advance")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "advance" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
+      <div className="mt-5 grid grid-cols-1 gap-2 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-2 app-shadow sm:grid-cols-2" role="tablist" aria-label="Operação salarial" onKeyDown={handleTabKeyDown}>
+        <button id="salary-tab-advance" type="button" role="tab" aria-controls="salary-panel-advance" tabIndex={mode === "advance" ? 0 : -1} aria-selected={mode === "advance"} onClick={() => onModeChange("advance")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "advance" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
           <TrendingUp className="size-4" aria-hidden="true" /> Antecipação Salarial
         </button>
-        <button type="button" role="tab" aria-selected={mode === "revision"} onClick={() => onModeChange("revision")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "revision" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
+        <button id="salary-tab-revision" type="button" role="tab" aria-controls="salary-panel-revision" tabIndex={mode === "revision" ? 0 : -1} aria-selected={mode === "revision"} onClick={() => onModeChange("revision")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "revision" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
           <Percent className="size-4" aria-hidden="true" /> Reajuste Salarial
-        </button>
-        <button type="button" role="tab" aria-selected={mode === "events"} onClick={() => onModeChange("events")} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] ${mode === "events" ? "bg-[color:var(--app-canvas)] text-white" : "text-[color:var(--app-muted)] hover:bg-[color:var(--app-surface-strong)]"}`}>
-          <Calculator className="size-4" aria-hidden="true" /> Eventos 565 e 901
         </button>
       </div>
 
-      {mode === "events" ? (
-        <EventAdjustmentWorkspaceView key={eventModel.datasetVersion} model={eventModel} />
-      ) : mode === "revision" ? (
+      {mode === "revision" ? (
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: WAI-ARIA tab panels receive focus after the tab list.
+        <div id="salary-panel-revision" role="tabpanel" aria-labelledby="salary-tab-revision" tabIndex={0}>
         <SalaryRevisionWorkspaceView model={revisionModel} />
+        </div>
       ) : (
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]" role="tabpanel">
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: WAI-ARIA tab panels receive focus after the tab list.
+      <div id="salary-panel-advance" className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]" role="tabpanel" aria-labelledby="salary-tab-advance" tabIndex={0}>
         <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow sm:p-7">
           <div className="flex items-start gap-3">
             <span className="grid size-10 place-items-center rounded-xl bg-[color:var(--app-surface-strong)] text-[color:var(--app-teal)]">
@@ -145,6 +155,8 @@ export function ReajusteSalarialWorkspaceView({
             </ul>
           ) : null}
 
+          {model.fileSelectionError ? <p role="alert" className="mt-4 rounded-xl bg-[color:var(--app-danger-soft)] p-3 text-sm text-[color:var(--app-fg)]">{model.fileSelectionError}</p> : null}
+
           <div className="mt-6">
             <label htmlFor="salary-adjustment-percentage" className="text-sm font-black text-[color:var(--app-fg)]">
               Percentual restante a pagar (%)
@@ -164,6 +176,15 @@ export function ReajusteSalarialWorkspaceView({
               Informe somente o percentual que ainda deve ser pago após descontar eventual antecipação.
             </p>
           </div>
+
+          <div className="mt-6 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4">
+            <label className="flex cursor-pointer items-start gap-3 text-sm font-black text-[color:var(--app-fg)]">
+              <input type="checkbox" checked={model.includeEvents} onChange={event => model.setIncludeEvents(event.target.checked)} aria-controls="advance-optional-events" className="mt-0.5 size-4 shrink-0 accent-[color:var(--app-teal)]" />
+              Incluir diferenças de bônus e domingos
+            </label>
+            <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">Opcional. Usa as mesmas folhas mensais e inclui eventos 565 e 901 no PDF da antecipação, com total consolidado por colaborador.</p>
+          </div>
+          {model.includeEvents ? <div id="advance-optional-events"><EventAdjustmentWorkspaceView key={model.eventModel.datasetVersion} model={model.eventModel} embedded disabled={model.state.status === "uploading" || model.state.status === "processing"} /></div> : null}
 
           {(model.state.status === "uploading" || model.state.status === "processing") ? (
             <div className="mt-5" aria-live="polite">
@@ -194,7 +215,7 @@ export function ReajusteSalarialWorkspaceView({
             <button type="button" onClick={model.reset} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
               <RotateCcw className="size-4" /> Limpar
             </button>
-            <button type="button" onClick={model.generate} disabled={model.busy} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-canvas)] px-5 py-3 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
+            <button type="button" onClick={model.generate} disabled={model.busy || !model.canGenerate} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-canvas)] px-5 py-3 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
               {model.busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Gerar PDF
             </button>
           </div>

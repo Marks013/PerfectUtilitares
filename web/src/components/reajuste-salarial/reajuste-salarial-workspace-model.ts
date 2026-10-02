@@ -25,12 +25,6 @@ export function competencyFromFileName(fileName: string) {
     : null;
 }
 
-export function mergeFiles(current: File[], incoming: File[]) {
-  const merged = new Map(current.map((file) => [fileKey(file), file]));
-  for (const file of incoming) merged.set(fileKey(file), file);
-  return [...merged.values()].slice(0, MAX_FILES);
-}
-
 export function validateGeneration(files: File[], percentage: string) {
   const messages: string[] = [];
   if (files.length < MIN_FILES || files.length > MAX_FILES) {

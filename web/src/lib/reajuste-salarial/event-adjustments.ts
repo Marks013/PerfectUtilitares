@@ -1,6 +1,6 @@
 import { SalaryAdjustmentError } from "./errors";
 import { parseCompetencyFileName, sortAndValidateCompetencies } from "./competency";
-import { MAX_UNIQUE_EMPLOYEES } from "./limits";
+import { MAX_UNIQUE_EMPLOYEES, MAX_EVENT_IDENTITY_LENGTH } from "./limits";
 import type { Competency } from "./types";
 import type { EventAdjustmentSettings, EventAdjustmentResult, EventAdjustmentReport, ParsedSalaryEvent, ParsedSalaryEventFile } from "./event-adjustment-types";
 
@@ -97,11 +97,19 @@ export function buildEventAdjustmentReport(files: ParsedSalaryEventFile[], setti
     if (!competencies.some(({ key }) => key === override.competencyKey) || overrides.has(override.competencyKey)) invalid("O histórico possui competência desconhecida ou repetida.");
     overrides.set(override.competencyKey, { bonus: cents(override.bonusOldValueCents, true), sunday: cents(override.sundayOldValueCents, true) });
   }
-  const companies = new Set(files.map(({ company }) => company ? normalize(company) : null).filter((company) => company !== null));
+  const companies = new Set(files.map(({ company }) => {
+    if (typeof company !== "string" || !company.trim() || company.length > MAX_EVENT_IDENTITY_LENGTH) {
+      throw new SalaryAdjustmentError("REAJUSTE_STRUCTURE_INVALID", `A identificação da empresa é obrigatória e deve conter até ${MAX_EVENT_IDENTITY_LENGTH} caracteres. Reenvie a folha completa com o cabeçalho da empresa.`);
+    }
+    return normalize(company);
+  }));
   if (companies.size > 1) throw new SalaryAdjustmentError("REAJUSTE_STRUCTURE_INVALID", "As folhas pertencem a empresas diferentes. Apure cada empresa separadamente.");
   const employees = new Map<string, { registration: string; employeeName: string; branchAlias: string; entries: Map<string, ParsedSalaryEventFile["rows"][number]> }>();
   for (const file of [...files].sort((a, b) => a.competency.order - b.competency.order)) for (const row of file.rows) {
     if (!/^\d+$/.test(row.registration) || !row.employeeName.trim() || !row.branchAlias.trim()) invalid("Identificação de colaborador inválida.");
+    if ([row.registration, row.employeeName, row.branchAlias].some((value) => value.length > MAX_EVENT_IDENTITY_LENGTH)) {
+      throw new SalaryAdjustmentError("REAJUSTE_STRUCTURE_INVALID", `A identificação do colaborador ou da filial ultrapassa ${MAX_EVENT_IDENTITY_LENGTH} caracteres. Confira o conteúdo da folha antes de reenviar.`);
+    }
     const registration = row.registration.replace(/^0+(?=\d)/, "");
     const existing = employees.get(registration);
     if (existing && normalize(existing.employeeName) !== normalize(row.employeeName)) throw new SalaryAdjustmentError("REAJUSTE_NAME_CONFLICT", `O cadastro ${registration} possui nomes conflitantes entre as folhas.`);

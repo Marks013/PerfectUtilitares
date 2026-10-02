@@ -1,8 +1,13 @@
 import PDFDocument from "pdfkit";
 import { drawEventAdjustmentReport } from "./event-adjustment-pdf-render";
 import type { EventAdjustmentReport } from "./event-adjustment-types";
+import { SalaryAdjustmentError } from "./errors";
+import { MAX_EVENT_IDENTITY_LENGTH } from "./limits";
 
 export async function generateEventAdjustmentPdf(report: EventAdjustmentReport): Promise<Buffer> {
+  if (report.employees.some(({ registration, employeeName, branchAlias }) => [registration, employeeName, branchAlias].some((value) => value.length > MAX_EVENT_IDENTITY_LENGTH))) {
+    throw new SalaryAdjustmentError("REAJUSTE_STRUCTURE_INVALID", `A identificação do colaborador ou da filial ultrapassa ${MAX_EVENT_IDENTITY_LENGTH} caracteres. Confira a folha antes de gerar o PDF.`);
+  }
   if (report.issueCount > 0 || report.employees.some((employee) => employee.months.some(
     (month) => month.bonus565.issue || month.indemnity901.issue,
   ))) {

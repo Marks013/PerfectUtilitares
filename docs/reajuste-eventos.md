@@ -1,6 +1,8 @@
-# Apuração dos eventos 565 e 901
+# Bônus e domingos opcionais na Antecipação Salarial
 
-A aba **Eventos 565 e 901**, no módulo Reajuste, importa de uma a quatro folhas mensais detalhadas no padrão `MM-AAAA.xlsx`. A análise identifica quem recebeu cada evento, os meses com pagamento, os meses sem o evento e as competências em que o colaborador não aparece na folha. As bases INSS e FPRE131 continuam nos fluxos próprios do módulo.
+Na aba **Antecipação Salarial** do módulo Reajuste, a opção **Incluir diferenças de bônus e domingos** permite apurar os eventos 565 e 901 a partir das mesmas folhas mensais já importadas. A opção começa desativada e não modifica a operação normal da antecipação. Não existe uma terceira aba para os eventos.
+
+Importe de uma a quatro folhas detalhadas no padrão `MM-AAAA.xlsx`, informe o percentual restante da antecipação e, se desejar os adicionais, ative a opção e configure os valores. A conferência identifica quem recebeu cada evento, os meses com pagamento, os meses sem o evento e as competências em que o colaborador não aparece na folha. Relatórios tabulares de INSS continuam aceitos na antecipação sem a opção; quando os eventos são incluídos, são necessárias folhas detalhadas com rubricas. O FPRE131 continua na aba Reajuste Salarial.
 
 ## Configuração e cálculo
 
@@ -32,12 +34,16 @@ Os códigos 565 e 901 são identificados numericamente dentro do bloco individua
 
 Divisão inexata, referência incompatível, quantidade fracionária, lançamento duplicado ou excesso de domingos ficam como pendências, sem diferença calculada para o item. A prévia continua disponível para conferência. O PDF só é liberado sem pendências e com ao menos um novo valor informado. Sugestões de valores anteriores mostram sua evidência e precisam ser aplicadas pelo usuário: o menor pagamento ou divisor comum pode representar vários domingos e não prova o valor unitário.
 
-A prévia possui busca, filtros por filial, competência e presença do evento, além de paginação. O PDF apresenta configurações, quantidades, valores pagos/recalculados, diferenças por mês, subtotais por filial e total geral. Trocar arquivos ou valores invalida a prévia; Limpar e a mudança de aba cancelam requisições em andamento.
+A prévia dos eventos possui busca, filtros por filial, competência e presença do evento, além de paginação. A diferença exibida por colaborador soma somente as competências visíveis; os cartões gerais identificam expressamente os totais dos eventos em todas as bases. A filial de agrupamento corresponde à última competência em que o colaborador consta nas bases, inclusive quando houve transferência. Trocar arquivos ou valores invalida a prévia; Limpar e a mudança de aba cancelam requisições em andamento.
 
-Os arquivos ficam limitados a 10 MB cada, 20 MB no conjunto e quatro competências; os limites de expansão XLSX, linhas e 5.000 colaboradores únicos também são aplicados. Autorização do módulo, origem, limites de requisição e capacidade de processamento são verificados nas duas APIs. Não há gravação das planilhas ou dos nomes em uma nova base de dados.
+Após **Apurar eventos**, o único botão **Gerar PDF** produz um documento com três seções: resumo consolidado por colaborador, detalhamento da antecipação e detalhamento dos eventos. O total a pagar é a antecipação mais somente as diferenças de bônus e domingos; os pagamentos antigos não são somados novamente. O documento contém todas as bases e colaboradores, independentemente dos filtros da conferência, e possui numeração única do começo ao fim. O servidor recalcula a apuração completa, confrontando competências, matrículas, nomes, presença mensal e totais antes da geração.
+
+Os arquivos ficam limitados a 10 MB cada, 20 MB no conjunto e quatro competências; os limites de expansão XLSX, linhas e 5.000 colaboradores únicos também são aplicados. A seleção que excede quatro arquivos é recusada integralmente com aviso, preservando as bases e a apuração anteriores. O cabeçalho precisa identificar a empresa antes dos colaboradores; folhas de empresas diferentes não podem ser combinadas. Código, nome, empresa e filial aceitam até 512 caracteres por identificador, para manter importação e paginação previsíveis, sem truncamento silencioso. Autorização do módulo, origem, limites de requisição e capacidade de processamento são verificados nas duas APIs. Não há gravação das planilhas ou dos nomes em uma nova base de dados.
 
 ## Fundamentação técnica
 
 O leiaute oficial [eSocial S-1200, itens de remuneração](https://www.gov.br/esocial/pt-br/documentacao-tecnica/leiautes-esocial-versao-s-1-3-nt-06-2026/index.html#r_1200_dmDev_infoPerApur_ideEstabLot_remunPerApur_itensRemun) distingue quantidade, fator e valor total da rubrica. A apuração preserva essa distinção; os códigos de evento locais não definem, por si, o número de domingos.
 
 A [especificação ECMAScript, divisão BigInt](https://tc39.es/ecma262/2026/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-bigint-divide) define divisão inteira. Por isso, o cálculo verifica o resto antes de aceitar a quantidade e evita arredondar pagamentos incompatíveis.
+
+As duas abas usam associação entre `tab` e `tabpanel`, foco na aba ativa e navegação por setas, Home e End, conforme o [padrão de abas WAI-ARIA do W3C](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/). Quebras de linha e espaços repetidos em identificações são normalizados na apresentação do PDF para manter os blocos dentro da área útil.

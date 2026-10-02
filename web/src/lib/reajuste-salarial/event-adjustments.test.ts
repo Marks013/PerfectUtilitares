@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseCompetencyFileName } from "./competency";
 import { buildEventAdjustmentReport } from "./event-adjustments";
-import { MAX_UNIQUE_EMPLOYEES } from "./limits";
+import { MAX_UNIQUE_EMPLOYEES, MAX_EVENT_IDENTITY_LENGTH } from "./limits";
 import type { EventAdjustmentSettings, ParsedSalaryEventFile, ParsedSalaryEvent } from "./event-adjustment-types";
 
 const settings: EventAdjustmentSettings = { bonusOldValueCents: "8000", bonusNewValueCents: "9000", sundayOldValueCents: "8500", sundayNewValueCents: "9000", historicOverrides: [] };
@@ -11,6 +11,15 @@ function file(month: string, bonus: ParsedSalaryEvent[] = [], sunday: ParsedSala
 }
 
 describe("event adjustment calculations", () => {
+  it.each([null, "", "   "])("rejects missing company identity instead of merging an unknown company", (company) => {
+    const unknownCompany = { ...file("07", [event("8000", "1")]), company };
+    expect(() => buildEventAdjustmentReport([file("06", [event("8000", "1")]), unknownCompany], settings)).toThrow(expect.objectContaining({ code: "REAJUSTE_STRUCTURE_INVALID" }));
+  });
+  it.each(["registration", "employeeName", "branchAlias"] as const)("bounds the %s identity for predictable report layout", (field) => {
+    const inputs = file("06");
+    inputs.rows[0][field] = "1".repeat(MAX_EVENT_IDENTITY_LENGTH + 1);
+    expect(() => buildEventAdjustmentReport([inputs], settings)).toThrow(expect.objectContaining({ code: "REAJUSTE_STRUCTURE_INVALID" }));
+  });
   it("limits the distinct employee union across files while allowing repeated monthly evidence", () => {
     const june = file("06");
     const july = file("07");
@@ -79,6 +88,16 @@ describe("event adjustment calculations", () => {
   it("uses explicit historical overrides", () => {
     const report = buildEventAdjustmentReport([file("06", [event("7500", "1")], [event("16000")])], { ...settings, historicOverrides: [{ competencyKey: "06-2026", bonusOldValueCents: "7500", sundayOldValueCents: "8000" }] });
     expect(report.grandTotalCents).toBe("3500");
+  });
+  it("groups transferred employees by their latest payroll while preserving monthly amounts", () => {
+    const june = file("06", [event("8000", "1")]);
+    const july = file("07", [event("8000", "1")]);
+    june.rows[0].branchAlias = "FILIAL ANTERIOR";
+    july.rows[0].branchAlias = "FILIAL ATUAL";
+    const report = buildEventAdjustmentReport([july, june], settings);
+    expect(report).toMatchObject({ employeeCount: 1, branchCount: 1, grandTotalCents: "2000" });
+    expect(report.employees[0]).toMatchObject({ branchAlias: "FILIAL ATUAL", totalDifferenceCents: "2000" });
+    expect(report.employees[0].months.map(({ bonus565 }) => bonus565.differenceCents)).toEqual(["1000", "1000"]);
   });
   it.each([
     { bonusOldValueCents: "0" }, { sundayOldValueCents: "-1" }, { bonusNewValueCents: "90.00" },

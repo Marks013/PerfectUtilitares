@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { zipSync, strToU8 } from "fflate";
 import { parseCompetencyFileName } from "./competency";
 import { parseSalaryEventWorkbook } from "./event-parser";
+import { MAX_EVENT_IDENTITY_LENGTH } from "./limits";
 
 const competency = parseCompetencyFileName("06-2026.xlsx");
 function workbook(rows: unknown[][]): Buffer {
@@ -21,6 +22,23 @@ const right = [null, null, null, null, null, null, null, null, "0901", "01", "In
 const parse = (rows: unknown[][]) => parseSalaryEventWorkbook(workbook(rows), competency, "06-2026.xlsx");
 
 describe("detailed salary event import", () => {
+  it("requires company identity and recognizes the complete page label", async () => {
+    await expect(parse([...header().slice(1), ...employee([left])])).rejects.toMatchObject({ code: "REAJUSTE_STRUCTURE_INVALID" });
+    const unknownHeader = header(); unknownHeader[0][2] = "Pg:";
+    await expect(parse([...unknownHeader, ...employee([left])])).rejects.toThrow(/empresa/);
+    const fullHeader = header(); fullHeader[0][2] = "Página:";
+    expect((await parse([...fullHeader, ...employee([left])])).company).toBe("1 - EMPRESA TESTE");
+    const differentHeader = header("OUTRA EMPRESA"); differentHeader[0][2] = "Página:";
+    await expect(parse([...header(), ...employee([left]), ...differentHeader, ...employee([], "2")])).rejects.toThrow(/empresas diferentes/);
+  });
+  it("rejects oversized identities before calculation or PDF layout", async () => {
+    const oversized = "COLABORADOR FICTICIO ".repeat(600);
+    const longEmployee = employee([left]); longEmployee[0][3] = `1 - ${oversized}`;
+    await expect(parse([...header(), ...longEmployee])).rejects.toMatchObject({ code: "REAJUSTE_STRUCTURE_INVALID" });
+    await expect(parse([...header("A".repeat(MAX_EVENT_IDENTITY_LENGTH)), ...employee([left])])).rejects.toThrow(/caracteres/);
+    const boundedEmployee = employee([left]); boundedEmployee[0][3] = `1 - ${"A".repeat(MAX_EVENT_IDENTITY_LENGTH)}`;
+    expect((await parse([...header(), ...boundedEmployee])).rows[0].employeeName).toHaveLength(MAX_EVENT_IDENTITY_LENGTH);
+  });
   it("reads both sides, normalizes exact numeric codes and excludes summaries", async () => {
     const result = await parse([...header(), ...employee([left, right]), ["Resumo da filial"], left, right]);
     expect(result.company).toBe("1 - EMPRESA TESTE");

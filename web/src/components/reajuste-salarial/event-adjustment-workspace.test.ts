@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventAdjustmentReport } from "@/lib/reajuste-salarial/event-adjustment-types";
-import { filterEventEmployees, initialEventSettings, validateEventInputs } from "./event-adjustment-workspace-model";
+import { displayedEventDifference, filterEventEmployees, initialEventSettings, validateEventInputs } from "./event-adjustment-workspace-model";
 
 const runtime = vi.hoisted(() => {
   const slots: unknown[] = []; let cursor = 0;
@@ -24,6 +24,55 @@ beforeEach(() => { runtime.reset(); vi.clearAllMocks(); fetchMock.mockReset(); v
 afterEach(() => vi.unstubAllGlobals());
 
 describe("event adjustment configuration and cancellation", () => {
+  it("rejects the entire selection above four distinct files and preserves the analyzed bases", async () => {
+    const bases = ["06", "07", "08", "09"].map(month => new File(["spreadsheet"], `${month}-2026.xlsx`, { lastModified: 1 }));
+    render().mergeIncoming(bases);
+    fetchMock.mockResolvedValueOnce(Response.json({ report })); await render().analyze();
+    const previous = render();
+    render().mergeIncoming([bases[0], new File(["revision"], "06-2026.xlsx", { lastModified: 2 }), new File(["spreadsheet"], "10-2026.xlsx")]);
+    expect(render()).toMatchObject({ files: bases, report, datasetVersion: previous.datasetVersion, status: "idle" });
+    expect(render().fileSelectionError).toContain("Remova uma base antes de incluir outra");
+    render().removeFile(`${bases[3].name}:${bases[3].size}:${bases[3].lastModified}`);
+    expect(render().fileSelectionError).toBeNull();
+    const replacement = new File(["spreadsheet"], "10-2026.xlsx");
+    render().mergeIncoming([replacement]);
+    expect(render().files).toEqual([...bases.slice(0, 3), replacement]);
+  });
+  it("rejects an initial selection above four files without silently retaining a subset", () => {
+    render().mergeIncoming(["06", "07", "08", "09", "10"].map(month => new File(["spreadsheet"], `${month}-2026.xlsx`)));
+    expect(render().files).toEqual([]);
+    expect(render().datasetVersion).toBe(0);
+    expect(render().fileSelectionError).toContain("limite é de 4 bases");
+    render().reset();
+    expect(render().fileSelectionError).toBeNull();
+  });
+  it("keeps an analysis in progress when an excessive selection is rejected", async () => {
+    let resolve!: (response: Response) => void;
+    const bases = ["06", "07", "08", "09"].map(month => new File(["spreadsheet"], `${month}-2026.xlsx`));
+    render().mergeIncoming(bases);
+    fetchMock.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const pending = render().analyze();
+    const signal = fetchMock.mock.calls[0][1]?.signal;
+    render().mergeIncoming([new File(["spreadsheet"], "10-2026.xlsx")]);
+    expect(render().busy).toBe(true);
+    expect(signal?.aborted).toBe(false);
+    resolve(Response.json({ report })); await pending;
+    expect(render().report).toEqual(report);
+  });
+  it("sums only the displayed competency while retaining the complete report total", () => {
+    const employee = {
+      totalDifferenceCents: "4500",
+      months: [
+        { competency: { key: "06-2026" }, bonus565: { differenceCents: "1000" }, indemnity901: { differenceCents: "500" } },
+        { competency: { key: "07-2026" }, bonus565: { differenceCents: "1000" }, indemnity901: { differenceCents: "2000" } },
+      ],
+    } as unknown as EventAdjustmentReport["employees"][number];
+    expect(displayedEventDifference(employee, "06-2026")).toBe("1500");
+    expect(displayedEventDifference(employee, "07-2026")).toBe("3000");
+    expect(displayedEventDifference(employee, "")).toBe("4500");
+    expect(displayedEventDifference(employee, "08-2026")).toBe("0");
+    expect(employee.totalDifferenceCents).toBe("4500");
+  });
   it("permits analysis with blank new values and validates historical values", () => {
     expect(validateEventInputs([file], initialEventSettings, [])).toEqual([]);
     expect(validateEventInputs([file], { ...initialEventSettings, sundayOldValue: "0" }, [])).toHaveLength(1);
