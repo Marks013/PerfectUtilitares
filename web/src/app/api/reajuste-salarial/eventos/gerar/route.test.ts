@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import * as Sentry from "@sentry/nextjs";
+import { beforeSendScrubber } from "@/sentry.shared";
 import { PDFDocument } from "pdf-lib";
 import { eventRequest } from "@/lib/reajuste-salarial/event-adjustment-test-support";
 import { recordUserUsage } from "@/lib/usage/record";
@@ -6,6 +8,7 @@ import { runWithReajusteProcessingSlot } from "@/lib/reajuste-salarial/processin
 import { GET, POST } from "./route";
 
 vi.mock("@/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "test" } }) }));
+vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 vi.mock("@/lib/reajuste-salarial/access.server", () => ({ requireReajusteAccess: vi.fn().mockResolvedValue({ ok: true }) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), requireSameOrigin: vi.fn(() => null), enforcePersistentRateLimit: vi.fn().mockResolvedValue(null) }));
 vi.mock("@/lib/api/resource-capacity", () => ({ requireResourceCapacity: vi.fn().mockResolvedValue(null) }));
@@ -36,5 +39,21 @@ describe("event PDF API", () => {
     const busy = await POST(eventRequest());
     expect(busy.status).toBe(503);
     expect(busy.headers.get("retry-after")).toBe("5");
+  });
+  it("keeps the failure correlation after privacy scrubbing without sending payroll payload", async () => {
+    vi.mocked(recordUserUsage).mockRejectedValueOnce(new Error("PRIVATE_EMPLOYEE_PAYLOAD"));
+    const response = await POST(eventRequest());
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    const correlationId = body.error.message.match(/[0-9a-f]{8}-[0-9a-f-]{27}/i)?.[0];
+    expect(correlationId).toBeDefined();
+    const [error, context] = vi.mocked(Sentry.captureException).mock.calls[0];
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain("PRIVATE_EMPLOYEE_PAYLOAD");
+    expect(JSON.stringify(context)).not.toContain("PRIVATE_EMPLOYEE_PAYLOAD");
+    const captureContext = context as { tags: Record<string, string>; extra: Record<string, unknown> };
+    const scrubbed = beforeSendScrubber({ tags: captureContext.tags, extra: captureContext.extra });
+    expect(scrubbed?.tags.correlationId).toBe(correlationId);
+    expect(scrubbed?.extra).toBeUndefined();
   });
 });

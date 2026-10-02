@@ -113,6 +113,20 @@ describe("optional salary advance events", () => {
     render().mergeIncoming(files); render().mergeIncoming([new File(["x"], "10-2026.xlsx")]);
     expect(render().files).toEqual(files); expect(render().fileSelectionError).toContain("limite é de 4 bases");
   });
+  it("keeps the shared files and pending analysis when an excessive selection is rejected", async () => {
+    const files = ["06", "07", "08", "09"].map(month => new File(["x"], `${month}-2026.xlsx`));
+    render().mergeIncoming(files); render().setIncludeEvents(true);
+    let resolve!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const pending = render().eventModel.analyze();
+    const signal = fetchMock.mock.calls[0][1]?.signal;
+    render().mergeIncoming([new File(["x"], "10-2026.xlsx")]);
+    expect(render().files).toEqual(files);
+    expect(render().eventModel.busy).toBe(true);
+    expect(signal?.aborted).toBe(false);
+    resolve(Response.json({ report })); await pending;
+    expect(render().eventModel.report).toEqual(report);
+  });
   it("aborts a pending PDF when the role percentage changes and rejects its late download", () => {
     render().mergeIncoming([file]); render().setPercentage("1,08"); render().generate();
     const request = FakeRequest.latest;

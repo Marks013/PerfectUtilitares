@@ -68,7 +68,7 @@ export async function handleEventAdjustment(request: Request, output: "analysis"
       if (error instanceof SalaryAdjustmentError) return jsonError(error.status, error.code, error.message, error.diagnostics.length ? error.diagnostics : undefined);
       if (error instanceof XlsxSecurityError) return jsonError(400, "REAJUSTE_WORKBOOK_INVALID", `${error.message} Exporte novamente como .xlsx e tente outra vez.`);
       const correlationId = randomUUID();
-      Sentry.captureException(new Error("Event adjustment processing failed"), { tags: { component: "event-adjustment", stage, output }, extra: { correlationId, fileCount, totalBytes, errorType: error instanceof Error ? error.name : "unknown" } });
+      Sentry.captureException(new Error("Event adjustment processing failed"), { tags: { component: "event-adjustment", stage, output, correlationId }, extra: { fileCount, totalBytes, errorType: error instanceof Error ? error.name : "unknown" } });
       return jsonError(503, "REAJUSTE_GENERATION_FAILED", `Não foi possível concluir a apuração. Código: ${correlationId}`);
     }
   });

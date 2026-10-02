@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeSendScrubber } from "@/sentry.shared";
 import { strToU8, zipSync } from "fflate";
 
 const mocks = vi.hoisted(() => ({
@@ -276,5 +277,11 @@ describe("salary adjustment PDF API", () => {
     const [error, context] = mocks.captureException.mock.calls[0];
     expect(error.message).not.toContain("PRIVATE_EMPLOYEE_PAYLOAD");
     expect(JSON.stringify(context)).not.toContain("PRIVATE_EMPLOYEE_PAYLOAD");
+    const body = await response.json();
+    const correlationId = body.error.message.match(/[0-9a-f]{8}-[0-9a-f-]{27}/i)?.[0];
+    expect(correlationId).toBeDefined();
+    const scrubbed = beforeSendScrubber({ tags: context.tags, extra: context.extra });
+    expect(scrubbed?.tags.correlationId).toBe(correlationId);
+    expect(scrubbed?.extra).toBeUndefined();
   });
 });

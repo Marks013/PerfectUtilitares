@@ -204,7 +204,7 @@ export function ReajusteSalarialWorkspaceView({
             </label>
             <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">Opcional. Usa as mesmas folhas mensais e inclui eventos 565 e 901 no PDF da antecipação, com total consolidado por colaborador.</p>
           </div>
-          {model.includeEvents ? <div id="advance-optional-events"><EventAdjustmentWorkspaceView key={model.eventModel.datasetVersion} model={model.eventModel} embedded disabled={model.state.status === "uploading" || model.state.status === "processing"} /></div> : null}
+          {model.includeEvents ? <div id="advance-optional-events"><EventAdjustmentWorkspaceView key={model.eventModel.datasetVersion} model={model.eventModel} disabled={model.state.status === "uploading" || model.state.status === "processing"} /></div> : null}
 
           {(model.state.status === "uploading" || model.state.status === "processing") ? (
             <div className="mt-5" aria-live="polite">

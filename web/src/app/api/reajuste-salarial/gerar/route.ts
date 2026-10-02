@@ -242,8 +242,8 @@ export async function POST(request: Request) {
     }
     const correlationId = randomUUID();
     Sentry.captureException(new Error("Falha inesperada ao gerar antecipação salarial."), {
-      tags: { component: "salary-advance", stage },
-      extra: { correlationId, fileCount, totalBytes, errorType: error instanceof Error ? error.name : typeof error },
+      tags: { component: "salary-advance", stage, correlationId },
+      extra: { fileCount, totalBytes, errorType: error instanceof Error ? error.name : typeof error },
     });
     return jsonError(
       503,

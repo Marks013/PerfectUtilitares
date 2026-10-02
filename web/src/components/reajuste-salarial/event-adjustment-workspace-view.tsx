@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { EventAdjustmentResult } from "@/lib/reajuste-salarial/event-adjustment-types";
-import { bytesLabel, competencyFromFileName, fileKey } from "./reajuste-salarial-workspace-model";
+import { competencyFromFileName } from "./reajuste-salarial-workspace-model";
 import { displayedEventDifference, eventMoney, filterEventEmployees, type EventFilters, type EventSettings } from "./event-adjustment-workspace-model";
 import type { useEventAdjustmentWorkspaceController } from "./event-adjustment-workspace";
 
@@ -28,7 +28,7 @@ function EventResult({ title, result }: { title: string; result: EventAdjustment
   </div>;
 }
 
-export function EventAdjustmentWorkspaceView({ model, embedded = false, disabled = false }: { model: Model; embedded?: boolean; disabled?: boolean }) {
+export function EventAdjustmentWorkspaceView({ model, disabled = false }: { model: Model; disabled?: boolean }) {
   const [search, setSearch] = useState("");
   const [competency, setCompetency] = useState("");
   const [event, setEvent] = useState<EventFilters["event"]>("all");
@@ -40,16 +40,7 @@ export function EventAdjustmentWorkspaceView({ model, embedded = false, disabled
   const fields: Array<[keyof EventSettings, string]> = [["bonusOldValue", "Valor antigo do bônus (R$)"], ["bonusNewValue", "Novo valor do bônus (R$)"], ["sundayOldValue", "Valor antigo por domingo (R$)"], ["sundayNewValue", "Novo valor por domingo (R$)"]];
   const competencies = model.files.map(file => competencyFromFileName(file.name)).filter((key): key is string => Boolean(key));
   return <section aria-label="Diferenças opcionais dos eventos 565 e 901" className="mt-6 min-w-0 text-[color:var(--app-fg)]"><fieldset disabled={disabled} className="min-w-0 space-y-5">
-    <div className={`grid min-w-0 gap-5 ${embedded ? "" : "lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"}`}>
-      {!embedded ? <div className={panelClass}>
-        <h2 className="text-lg font-black">Bases mensais dos eventos</h2>
-        <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">Importe de uma a quatro folhas MM-AAAA.xlsx. A apuração acompanha cada colaborador em cada competência.</p>
-        <label htmlFor="event-adjustment-files" className="mt-4 block text-sm font-bold">Selecionar planilhas dos eventos</label>
-        <input id="event-adjustment-files" ref={model.inputRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple className={`${inputClass} text-sm file:mr-2 file:rounded-lg file:border-0 file:p-2`} onChange={e => { model.mergeIncoming(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <p className="mt-2 text-xs text-[color:var(--app-muted)]">10 MB por arquivo · 20 MB no total · {model.files.length}/4 arquivos</p>
-        {model.fileSelectionError ? <p role="alert" className="mt-3 rounded-xl bg-[color:var(--app-danger-soft)] p-3 text-sm">{model.fileSelectionError}</p> : null}
-        <ul className="mt-4 space-y-2">{model.files.map(file => <li key={fileKey(file)} className="flex min-w-0 items-center gap-2 rounded-xl border border-[color:var(--app-border)] p-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{file.name}</p><p className="text-xs text-[color:var(--app-muted)]">{bytesLabel(file.size)}</p></div><button type="button" className={`${buttonClass} shrink-0 px-3 py-2`} aria-label={`Remover ${file.name}`} onClick={() => model.removeFile(fileKey(file))}>Remover</button></li>)}</ul>
-      </div> : null}
+    <div className="grid min-w-0 gap-5">
       <div className={panelClass}>
         <h2 className="text-lg font-black">Valores do bônus e dos domingos</h2>
         <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">565 — Bônus Convenc. SINDECOMU: valor por ocorrência. 901 — Indenização Compensatória: valor por domingo trabalhado.</p>
@@ -61,7 +52,7 @@ export function EventAdjustmentWorkspaceView({ model, embedded = false, disabled
     <div className={`${panelClass} space-y-4`}>
       <p className="text-sm leading-6 text-[color:var(--app-muted)]">Quantidade obtida sem arredondamento. Pagamento e valor antigo precisam fechar exatamente; referências da folha são confrontadas quando disponíveis. Divergências ficam visíveis e bloqueiam o PDF. Dados permanecem somente nesta sessão.</p>
       {model.messages.length ? <div role={model.status === "error" ? "alert" : "status"} className={`rounded-xl p-3 text-sm ${model.status === "error" ? "bg-[color:var(--app-danger-soft)]" : "bg-[color:var(--app-success-soft)]"}`}><ul className="list-disc pl-5">{model.messages.map(message => <li key={message}>{message}</li>)}</ul></div> : null}
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">{!embedded ? <button type="button" className={buttonClass} onClick={() => { model.reset(); setSearch(""); setCompetency(""); setEvent("all"); setPage(0); }}>Limpar</button> : null}<button type="button" className={buttonClass} disabled={model.busy} onClick={() => { setPage(0); void model.analyze(); }}>{model.status === "analyzing" ? "Apurando eventos…" : "Apurar eventos"}</button>{!embedded ? <button type="button" className={`${buttonClass} bg-[color:var(--app-canvas)] text-white`} disabled={model.busy || !model.canGenerate} onClick={() => void model.generate()}>{model.status === "generating" ? "Gerando PDF…" : "Gerar PDF dos eventos"}</button> : null}</div>
+      <div className="flex justify-end"><button type="button" className={buttonClass} disabled={model.busy} onClick={() => { setPage(0); void model.analyze(); }}>{model.status === "analyzing" ? "Apurando eventos…" : "Apurar eventos"}</button></div>
       {model.busy ? <p role="status" className="text-sm">Processando arquivos e calculando diferenças. Aguarde.</p> : null}
     </div>
     {report ? <>
