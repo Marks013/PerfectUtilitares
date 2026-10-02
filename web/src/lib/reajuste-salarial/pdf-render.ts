@@ -1,5 +1,5 @@
 import type PDFKit from "pdfkit";
-import { formatCents, formatPercentage } from "./money";
+import { formatCents, formatPercentage, formatPercentageTenThousandths } from "./money";
 import {
   allocateReportColumns,
   employeeRowHeight,
@@ -91,7 +91,7 @@ function drawPageHeader(
       .font("Helvetica")
       .fontSize(7.5)
       .text(
-        `${competenciesLabel(report)} | ${formatPercentage(report.percentageBasisPoints)}`,
+        `${competenciesLabel(report)} | Geral ${formatPercentage(report.percentageBasisPoints)} | Embalador ${formatPercentageTenThousandths(report.packerPercentageTenThousandths ?? 22655n)}`,
         left + 290,
         doc.page.margins.top + 2,
         { width: width - 290, align: "right" },
@@ -112,7 +112,7 @@ function drawPageHeader(
     .fontSize(8)
     .fillColor("#dbe7e2")
     .text(
-      `Competências: ${competenciesLabel(report)} | Percentual restante: ${formatPercentage(report.percentageBasisPoints)}`,
+      `Competências: ${competenciesLabel(report)} | Geral: ${formatPercentage(report.percentageBasisPoints)}`,
       left + 20,
       top + 38,
       { width: 500 },
@@ -143,7 +143,13 @@ function drawPageHeader(
     .font("Helvetica")
     .fontSize(7)
     .text(`Gerado em ${generated}`, left, top + 68, { width });
-  return top + 82;
+  doc.text(
+    `Embalador a mão: ${formatPercentageTenThousandths(report.packerPercentageTenThousandths ?? 22655n)}. Bloqueio por competência: Lic. s/ Remuneração, Demitido, Aposent. Invalidez e Detenção.`,
+    left,
+    top + 81,
+    { width },
+  );
+  return top + 104;
 }
 
 function drawBranchBand(
@@ -188,7 +194,10 @@ function employeeCellValue(
     const base = employee.basesByCompetency.get(key) ?? null;
     return base === null ? "—" : formatCents(base);
   }
-  return formatCents(employee.adjustmentsByCompetency.get(key) ?? 0n);
+  const rule = employee.advanceRulesByCompetency?.get(key);
+  const amount = formatCents(employee.adjustmentsByCompetency.get(key) ?? 0n);
+  if (rule?.exclusionReason) return `${amount}\nBloqueado`;
+  return rule ? `${amount}\n${formatPercentageTenThousandths(rule.percentageTenThousandths)}` : amount;
 }
 
 function getEmployeeRowHeight(
@@ -198,7 +207,7 @@ function getEmployeeRowHeight(
 ) {
   doc.font("Helvetica").fontSize(6.5);
   const textColumns = columns.filter(
-    (column) => column.kind === "branch" || column.kind === "name",
+    (column) => column.kind === "branch" || column.kind === "name" || column.kind === "adjustment",
   );
   const height = Math.max(
     ...textColumns.map((column) =>
@@ -209,6 +218,14 @@ function getEmployeeRowHeight(
     ),
   );
   return employeeRowHeight(height);
+}
+
+function employeeRuleNotes(employee: ConsolidatedEmployee) {
+  return Array.from(employee.advanceRulesByCompetency ?? []).flatMap(([key, rule]) => {
+    if (rule.exclusionReason) return [`${key}: bloqueado por situação ${rule.employmentStatus ?? rule.exclusionReason}`];
+    if (!rule.metadataKnown) return [`${key}: situação ou cargo não informados na base; confira a elegibilidade e o percentual aplicado`];
+    return [];
+  }).join(" | ").replace(/\s+/g, " ");
 }
 
 function drawEmployeeRow(
@@ -282,12 +299,21 @@ export function drawSalaryAdvanceReport(
 
     for (const employee of group.employees) {
       const rowHeight = getEmployeeRowHeight(doc, columns, employee);
-      if (!hasVerticalSpace(y, rowHeight, contentBottom)) {
+      const notes = employeeRuleNotes(employee);
+      doc.font("Helvetica").fontSize(6.5);
+      const notesHeight = notes ? Math.ceil(doc.heightOfString(notes, { width: usableWidth - 12 })) + 8 : 0;
+      if (!hasVerticalSpace(y, rowHeight + notesHeight, contentBottom)) {
         doc.addPage();
         y = drawTableHeader(doc, columns, drawPageHeader(doc, report, false));
         y = drawBranchBand(doc, group, y, true);
       }
       y = drawEmployeeRow(doc, columns, employee, y, rowHeight, striped);
+      if (notes) {
+        doc.rect(left, y, usableWidth, notesHeight).fillAndStroke(COLORS.stripe, COLORS.border);
+        doc.font("Helvetica").fontSize(6.5).fillColor(COLORS.muted)
+          .text(notes, left + 6, y + 4, { width: usableWidth - 12 });
+        y += notesHeight;
+      }
       striped = !striped;
     }
   }

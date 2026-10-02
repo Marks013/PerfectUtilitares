@@ -15,10 +15,13 @@ export type EventAdjustmentResult = {
   differenceCents: string;
   quantitySource: "reference" | "amount" | "none";
   issue: string | null;
+  exclusionReason?: string | null;
 };
 type EventAdjustmentMonth = {
   competency: Competency;
   inPayroll: boolean;
+  employmentStatus?: string | null;
+  exclusionReason?: string | null;
   bonus565: EventAdjustmentResult;
   indemnity901: EventAdjustmentResult;
 };
@@ -46,6 +49,8 @@ export type EventAdjustmentReport = {
 };
 export type ParsedSalaryEvent = { paidCents: string; reference: string; sourceRow: number };
 export type ParsedSalaryEventEmployee = {
+  employmentStatus?: string | null;
+  role?: string | null;
   registration: string;
   employeeName: string;
   branchAlias: string;

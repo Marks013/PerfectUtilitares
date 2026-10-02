@@ -36,7 +36,7 @@ export async function parseSalaryEventWorkbook(bytes: Buffer, competency: Compet
   }
   const { data, sheet: sourceSheet } = compatible[0];
   const payroll = parsePayrollSheetRows(data, { competency, sourceFile, sourceSheet });
-  const rows: ParsedSalaryEventEmployee[] = payroll.map(({ registration, employeeName, branchAlias }) => ({ registration, employeeName, branchAlias, events: { "565": [], "901": [] } }));
+  const rows: ParsedSalaryEventEmployee[] = payroll.map(({ registration, employeeName, branchAlias, employmentStatus, role }) => ({ registration, employeeName, branchAlias, employmentStatus, role, events: { "565": [], "901": [] } }));
   if (rows.some(({ registration, employeeName, branchAlias }) => [registration, employeeName, branchAlias].some((value) => value.length > MAX_EVENT_IDENTITY_LENGTH))) {
     structural(`A identificação do colaborador ou da filial ultrapassa ${MAX_EVENT_IDENTITY_LENGTH} caracteres. Confira o conteúdo da folha antes de reenviar.`, sourceFile, sourceSheet);
   }

@@ -66,9 +66,9 @@ function request(files: File[], percentage = "4,42", fields: Record<string, stri
   });
 }
 
-function monthlyWorkbook(name = "06-2026.xlsx", sundayPaid = "170,00", company = "EMPRESA TESTE") {
+function monthlyWorkbook(name = "06-2026.xlsx", sundayPaid = "170,00", company = "EMPRESA TESTE", status = "Trabalhando", role = "OPERADOR") {
   const rows = [["0001", company, "Pág.:", "1"], ["FOLHA DE PAGAMENTO"], ["Local:", "01 MATRIZ"],
-    ["Tipo:", "1", "Colaborador:", "1 - ANA TESTE"],
+    ["Tipo:", "1", "Colaborador:", "1 - ANA TESTE", "Sit:", status], ["Cargo:", `0001 - ${role}`],
     ["565", "01", "Bonus Convenc. SINDECOMU", "", "1,00", "80,00"],
     ["901", "01", "Indenização Compensatória", "", "0,00", sundayPaid], ["INSS Proc:", "2.000,00"]];
   const xml = rows.map((row, index) => `<row r="${index + 1}">${row.map((cell, column) => `<c r="${String.fromCharCode(65 + column)}${index + 1}" t="inlineStr"><is><t>${cell}</t></is></c>`).join("")}</row>`).join("");
@@ -134,6 +134,24 @@ beforeEach(() => {
 });
 
 describe("salary adjustment PDF API", () => {
+  it("applies precise packer percentage and monthly eligibility through real XLSX parsing and PDF generation", async () => {
+    await useRealPipeline();
+    const response = await POST(request([monthlyWorkbook("06-2026.xlsx", "170,00", "EMPRESA TESTE", "Trabalhando", "Embalador a mão"), monthlyWorkbook("07-2026.xlsx", "170,00", "EMPRESA TESTE", "Demitido", "Embalador a mão")], "1.08", { ...eventFields, packerPercentage: "2.2655" }));
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
+    const report = mocks.generatePdf.mock.calls[0][0];
+    expect(report.grandTotalCents).toBe(4531n);
+    expect(report.groups[0].employees[0].adjustmentsByCompetency.get("07-2026")).toBe(0n);
+    const events = mocks.generatePdf.mock.calls[0][1];
+    expect(events.grandTotalCents).toBe("2000");
+    expect(events.employees[0].months[1].exclusionReason).toContain("Demitido");
+  });
+
+  it("rejects an invalid special percentage before parsing files", async () => {
+    const response = await POST(request([xlsx()], "1.08", { packerPercentage: "2.26555" }));
+    expect(response.status).toBe(400);
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
   it("accepts only POST", () => {
     expect(GET().status).toBe(405);
     expect(GET().headers.get("allow")).toBe("POST");

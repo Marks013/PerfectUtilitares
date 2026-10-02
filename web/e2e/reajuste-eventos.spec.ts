@@ -241,7 +241,7 @@ test.describe("original private payroll", () => {
       const name = `0${month}-2026.xlsx`; return { name, mimeType, buffer: await readFile(path.join(directory!, name)) };
     })));
     await configure(page); const report = await analyze(page);
-    expect(report).toMatchObject({ issueCount: 0, bonusTotalCents: "1954000", sundayTotalCents: "966000", grandTotalCents: "2920000" });
+    expect(report).toMatchObject({ issueCount: 0, bonusTotalCents: "1908000", sundayTotalCents: "937000", grandTotalCents: "2845000" });
     await pdf(page);
   });
 });

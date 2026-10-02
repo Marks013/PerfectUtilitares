@@ -1,4 +1,5 @@
 import { SalaryAdjustmentError } from "./errors";
+import { payrollExclusionReason } from "./advance-rules";
 import { parseCompetencyFileName, sortAndValidateCompetencies } from "./competency";
 import { MAX_UNIQUE_EMPLOYEES, MAX_EVENT_IDENTITY_LENGTH } from "./limits";
 import type { Competency } from "./types";
@@ -133,10 +134,14 @@ export function buildEventAdjustmentReport(files: ParsedSalaryEventFile[], setti
     const months = competencies.map((competency) => {
       const entry = employee.entries.get(competency.key);
       const old = overrides.get(competency.key);
-      const bonus565 = result(entry?.events["565"] ?? [], old?.bonus ?? bonusOld, bonusNew);
-      const indemnity901 = result(entry?.events["901"] ?? [], old?.sunday ?? sundayOld, sundayNew, sundayCount(competency));
+      const exclusionReason = payrollExclusionReason(entry?.employmentStatus);
+      const eligibleResult = (value: EventAdjustmentResult): EventAdjustmentResult => exclusionReason
+        ? { ...value, differenceCents: "0", issue: null, exclusionReason }
+        : value;
+      const bonus565 = eligibleResult(result(entry?.events["565"] ?? [], old?.bonus ?? bonusOld, bonusNew));
+      const indemnity901 = eligibleResult(result(entry?.events["901"] ?? [], old?.sunday ?? sundayOld, sundayNew, sundayCount(competency)));
       issueCount += Number(bonus565.issue !== null) + Number(indemnity901.issue !== null);
-      return { competency, inPayroll: Boolean(entry), bonus565, indemnity901 };
+      return { competency, inPayroll: Boolean(entry), employmentStatus: entry?.employmentStatus ?? null, exclusionReason, bonus565, indemnity901 };
     });
     const bonus = months.reduce((sum, month) => sum + BigInt(month.bonus565.differenceCents), 0n);
     const sunday = months.reduce((sum, month) => sum + BigInt(month.indemnity901.differenceCents), 0n);

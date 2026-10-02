@@ -89,6 +89,27 @@ describe("event adjustment PDF", () => {
     expect(calls.some((call) => String(call[0]).includes("(continuação)"))).toBe(true);
     expect(calls.every((call) => !(call[3] as { ellipsis?: boolean } | undefined)?.ellipsis)).toBe(true);
     expect(calls.some((call) => call[0] === `Página ${pdf.getPageCount()} de ${pdf.getPageCount()}`)).toBe(true);
+  }, 20_000);
+
+  it("shows blocked monthly events and retains the amounts originally paid for audit", async () => {
+    const text = vi.spyOn(PDFDocument.prototype, "text");
+    const report = fixture();
+    const month = report.employees[0].months[1];
+    month.employmentStatus = "Demitido";
+    month.exclusionReason = "Situação impeditiva: Demitido";
+    month.bonus565.differenceCents = "0";
+    month.indemnity901.differenceCents = "0";
+    month.bonus565.exclusionReason = month.exclusionReason;
+    month.indemnity901.exclusionReason = month.exclusionReason;
+    report.employees[0].bonusDifferenceCents = report.bonusTotalCents = "2000";
+    report.employees[0].sundayDifferenceCents = report.sundayTotalCents = "2000";
+    report.employees[0].totalDifferenceCents = report.grandTotalCents = "4000";
+    await generateEventAdjustmentPdf(report);
+    const values = text.mock.calls.map(call => String(call[0]));
+    expect(values.filter(value => value === "Bloqueado: Demitido")).toHaveLength(2);
+    expect(values).toContain("R$ 170,00");
+    expect(values).toContain("R$ 0,00");
+    expect(values.join("\n")).toContain("Total geral: R$ 40,00");
   });
 
   it("distinguishes missing payroll and absent events, null settings and zero without deduction", async () => {

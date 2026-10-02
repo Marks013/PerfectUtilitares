@@ -14,6 +14,16 @@ export type ParsedPayrollRow = {
   registration: string;
   employeeName: string;
   baseCents: bigint;
+  employmentStatus?: string | null;
+  role?: string | null;
+};
+
+type AdvanceCompetencyRule = {
+  employmentStatus: string | null;
+  role: string | null;
+  percentageTenThousandths: bigint;
+  exclusionReason: string | null;
+  metadataKnown: boolean;
 };
 
 export type ParsedPayrollFile = {
@@ -30,6 +40,7 @@ export type ConsolidatedEmployee = {
   basesByCompetency: Map<string, bigint | null>;
   adjustmentsByCompetency: Map<string, bigint>;
   totalAdjustmentCents: bigint;
+  advanceRulesByCompetency?: Map<string, AdvanceCompetencyRule>;
 };
 
 export type BranchReportGroup = {
@@ -43,6 +54,7 @@ export type SalaryAdvanceReport = {
   parserProfile: "antecipacao-inss-v1";
   generatedAt: Date;
   percentageBasisPoints: bigint;
+  packerPercentageTenThousandths?: bigint;
   competencies: Competency[];
   groups: BranchReportGroup[];
   employeeCount: number;

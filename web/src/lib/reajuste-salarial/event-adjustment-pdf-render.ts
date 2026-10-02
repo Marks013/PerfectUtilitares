@@ -91,6 +91,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
   }
   paragraph("Método: quantidade validada pela referência da folha ou pelo valor pago dividido pelo unitário histórico. Novo total = quantidade × novo unitário. Adicional = máximo de zero e novo total menos pago. Valor novo menor não gera desconto.");
   paragraph("Ausência do evento não presume direito. Sem folha significa competência sem registro para o colaborador. Não reajustado significa valor novo não configurado. Este relatório não aplica percentual sobre INSS.");
+  paragraph("Bloqueio por competência: Lic. s/ Remuneração, Demitido, Aposent. Invalidez e Detenção não geram diferenças de bônus ou domingos. O valor originalmente pago permanece visível para conferência.");
   paragraph("Agrupamento por filial: considera a última competência em que cada colaborador consta nas bases importadas, inclusive quando houve transferência entre filiais.");
   paragraph(`Total geral: ${money(report.grandTotalCents)} | Bônus: ${money(report.bonusTotalCents)} | Domingos: ${money(report.sundayTotalCents)}`, true);
 
@@ -123,7 +124,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
           const oldValue = event === "565" ? historic?.bonusOldValueCents ?? report.settings.bonusOldValueCents : historic?.sundayOldValueCents ?? report.settings.sundayOldValueCents;
           const newValue = event === "565" ? report.settings.bonusNewValueCents : report.settings.sundayNewValueCents;
           const received = !!month?.inPayroll && !!result?.received;
-          const status = !month?.inPayroll ? "Sem folha" : !received ? "Evento ausente" : newValue === null ? "Recebeu; não reajustado" : result?.targetCents !== null && BigInt(result?.targetCents ?? "0") < BigInt(result?.paidCents ?? "0") ? "Adicional zero; sem desconto" : "Recebeu evento";
+          const status = !month?.inPayroll ? "Sem folha" : month.exclusionReason ? `Bloqueado: ${month.employmentStatus ?? month.exclusionReason}`.replace(/\s+/g, " ") : !received ? "Evento ausente" : newValue === null ? "Recebeu; não reajustado" : result?.targetCents !== null && BigInt(result?.targetCents ?? "0") < BigInt(result?.paidCents ?? "0") ? "Adicional zero; sem desconto" : "Recebeu evento";
           const values = [
             competencyLabel(competency.month, competency.year), event === "565" ? "565\nBônus" : "901\nDomingos", status,
             received && result ? money(result.paidCents) : "—", money(oldValue),

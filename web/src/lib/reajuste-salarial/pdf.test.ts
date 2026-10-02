@@ -1,10 +1,31 @@
 import { PDFDocument } from "pdf-lib";
-import { describe, expect, it } from "vitest";
+import PDFDocumentKit from "pdfkit";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseCompetencyFileName } from "./competency";
 import { consolidateSalaryAdvanceFiles } from "./consolidator";
 import { generateSalaryAdvancePdf } from "./pdf";
+afterEach(() => vi.restoreAllMocks());
 
 describe("salary adjustment PDF", () => {
+  it("prints the exact monthly percentage and exclusion reason beside the calculated amounts", async () => {
+    const text = vi.spyOn(PDFDocumentKit.prototype, "text");
+    const files = ["06", "07", "08"].map((month, index) => {
+      const competency = parseCompetencyFileName(`${month}-2026.xlsx`);
+      return { competency, sourceFile: `${month}-2026.xlsx`, sourceSheet: "Plan1", rows: [{ competency,
+        sourceFile: `${month}-2026.xlsx`, sourceSheet: "Plan1", sourceRow: 5, branchAlias: "MATRIZ",
+        registration: "1", employeeName: "COLABORADOR TESTE", baseCents: 182286n,
+        employmentStatus: index === 1 ? "Demitido" : "Trabalhando", role: index === 2 ? "OPERADOR" : "Embalador a mão" }] };
+    });
+    const report = consolidateSalaryAdvanceFiles(files, 108n);
+    const pdf = await PDFDocument.load(await generateSalaryAdvancePdf(report));
+    expect(pdf.getPageCount()).toBe(1);
+    const values = text.mock.calls.map(call => String(call[0]));
+    expect(values).toContain("R$ 41,30\n2,2655%");
+    expect(values).toContain("R$ 0,00\nBloqueado");
+    expect(values).toContain("R$ 19,69\n1,0800%");
+    expect(values).toContain("07-2026: bloqueado por situação Demitido");
+    expect(text.mock.calls.every(call => typeof call[2] !== "number" || call[2] < 570)).toBe(true);
+  });
   it("generates A4 landscape pages with a valid PDF structure", async () => {
     const competency = parseCompetencyFileName("06-2026.xlsx");
     const report = consolidateSalaryAdvanceFiles(

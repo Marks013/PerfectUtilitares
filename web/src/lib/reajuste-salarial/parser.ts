@@ -92,8 +92,16 @@ function parseMonthlyPayrollRows(rows: unknown[][], context: ParserContext): Par
         );
       }
       registrations.add(registration);
-      employee = { ...context, sourceRow, branchAlias, registration, employeeName: match[2].trim() };
+      const statusIndex = Math.max(findLabel(row, "SIT:"), findLabel(row, "SITUACAO:"));
+      employee = { ...context, sourceRow, branchAlias, registration, employeeName: match[2].trim(), employmentStatus: statusIndex >= 0 ? text(row[statusIndex + 1]) || null : null, role: null };
       continue;
+    }
+
+    if (employee) {
+      const statusIndex = Math.max(findLabel(row, "SIT:"), findLabel(row, "SITUACAO:"));
+      if (statusIndex >= 0) employee.employmentStatus = text(row[statusIndex + 1]) || null;
+      const roleIndex = findLabel(row, "CARGO:");
+      if (roleIndex >= 0) employee.role = text(row[roleIndex + 1]).replace(/^\d+\s*-\s*/, "") || null;
     }
 
     const baseIndex = findLabel(row, "INSS PROC:");

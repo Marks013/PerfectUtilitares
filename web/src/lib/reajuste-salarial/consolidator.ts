@@ -1,6 +1,7 @@
 import { SalaryAdjustmentError } from "./errors";
 import { MAX_UNIQUE_EMPLOYEES, PARSER_PROFILE } from "./limits";
-import { calculateAdjustmentCents } from "./money";
+import { calculatePreciseAdjustmentCents } from "./money";
+import { DEFAULT_PACKER_PERCENTAGE_TEN_THOUSANDTHS, isHandPacker, payrollExclusionReason } from "./advance-rules";
 import {
   canonicalBranchAlias,
   compareBranchAliases,
@@ -25,6 +26,7 @@ export function consolidateSalaryAdvanceFiles(
   files: ParsedPayrollFile[],
   percentageBasisPoints: bigint,
   generatedAt = new Date(),
+  packerPercentageTenThousandths = DEFAULT_PACKER_PERCENTAGE_TEN_THOUSANDTHS,
 ): SalaryAdvanceReport {
   const ordered = [...files].sort(
     (left, right) => left.competency.order - right.competency.order,
@@ -58,10 +60,18 @@ export function consolidateSalaryAdvanceFiles(
         basesByCompetency: new Map<string, bigint | null>(),
         adjustmentsByCompetency: new Map<string, bigint>(),
         totalAdjustmentCents: 0n,
+        advanceRulesByCompetency: new Map(),
       };
       employee.employeeName = row.employeeName;
       employee.branchAlias = branchAlias;
       employee.basesByCompetency.set(file.competency.key, row.baseCents);
+      employee.advanceRulesByCompetency?.set(file.competency.key, {
+        employmentStatus: row.employmentStatus ?? null,
+        role: row.role ?? null,
+        percentageTenThousandths: isHandPacker(row.role) ? packerPercentageTenThousandths : percentageBasisPoints * 100n,
+        exclusionReason: payrollExclusionReason(row.employmentStatus),
+        metadataKnown: Boolean(row.employmentStatus && row.role),
+      });
       employees.set(row.registration, { employee, comparableName });
     }
   }
@@ -82,9 +92,9 @@ export function consolidateSalaryAdvanceFiles(
       const base = employee.basesByCompetency.get(competency.key) ?? null;
       employee.basesByCompetency.set(competency.key, base);
       const adjustment =
-        base === null
+        base === null || employee.advanceRulesByCompetency?.get(competency.key)?.exclusionReason
           ? 0n
-          : calculateAdjustmentCents(base, percentageBasisPoints);
+          : calculatePreciseAdjustmentCents(base, employee.advanceRulesByCompetency?.get(competency.key)?.percentageTenThousandths ?? percentageBasisPoints * 100n);
       employee.adjustmentsByCompetency.set(competency.key, adjustment);
       total += adjustment;
     }
@@ -117,6 +127,7 @@ export function consolidateSalaryAdvanceFiles(
     parserProfile: PARSER_PROFILE,
     generatedAt,
     percentageBasisPoints,
+    packerPercentageTenThousandths,
     competencies,
     groups: reportGroups,
     employeeCount: employees.size,

@@ -35,7 +35,7 @@ import {
   RATE_LIMIT,
   RATE_WINDOW_MS,
 } from "@/lib/reajuste-salarial/limits";
-import { parsePercentageBasisPoints } from "@/lib/reajuste-salarial/money";
+import { parsePercentageBasisPoints, parsePercentageTenThousandths } from "@/lib/reajuste-salarial/money";
 import { runWithReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
 import { hasDeclaredReajusteContentLength } from "@/lib/reajuste-salarial/request-security";
 import { parseSalaryAdvanceWorkbook } from "@/lib/reajuste-salarial/parser";
@@ -158,6 +158,11 @@ export async function POST(request: Request) {
       String(formData.get("percentage") ?? ""),
     );
     const eventSettings = parseOptionalAdvanceEventSettings(formData);
+    const packerValues = formData.getAll("packerPercentage");
+    if (packerValues.length > 1 || (packerValues.length === 1 && typeof packerValues[0] !== "string")) {
+      throw new SalaryAdjustmentError("REAJUSTE_PERCENTAGE_INVALID", "Informe um único percentual do Embalador a mão.");
+    }
+    const packerPercentage = parsePercentageTenThousandths(String(packerValues[0] ?? "2.2655"));
     const withCompetency = validated.files.map((file) => ({
       file,
       competency: parseCompetencyFileName(file.name),
@@ -189,6 +194,8 @@ export async function POST(request: Request) {
     const report = consolidateSalaryAdvanceFiles(
       parsedFiles,
       percentageBasisPoints,
+      new Date(),
+      packerPercentage,
     );
     const eventReport = eventSettings ? buildEventAdjustmentReport(eventFiles, eventSettings, report.generatedAt) : undefined;
     if (eventReport?.issueCount) {

@@ -61,11 +61,21 @@ function configure() {
 async function analyze() { fetchMock.mockResolvedValueOnce(Response.json({ report })); await render().eventModel.analyze(); }
 
 describe("optional salary advance events", () => {
-  it("keeps the original request unchanged while the option is off", () => {
+  it("disables PDF generation for an invalid role percentage while retaining a valid event preview", async () => {
+    configure(); await analyze();
+    expect(render().canGenerate).toBe(true);
+    render().setPackerPercentage("2.26555");
+    expect(render().canGenerate).toBe(false);
+    expect(render().eventModel.report).toEqual(report);
+    render().setPackerPercentage("3,1234");
+    expect(render().canGenerate).toBe(true);
+  });
+  it("sends the role percentage while optional events are off", () => {
     render().mergeIncoming([file]); render().setPercentage("5");
     expect(render().includeEvents).toBe(false);
     render().generate();
-    expect([...FakeRequest.latest.data.keys()]).toEqual(["files", "percentage"]);
+    expect([...FakeRequest.latest.data.keys()]).toEqual(["files", "percentage", "packerPercentage"]);
+    expect(FakeRequest.latest.data.get("packerPercentage")).toBe("2.2655");
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("requires a current event preview and sends settings with the same files once", async () => {
@@ -80,6 +90,7 @@ describe("optional salary advance events", () => {
     expect(data.get("includeEvents")).toBe("true");
     expect(data.getAll("files")).toHaveLength(1);
     expect(data.get("bonusNewValue")).toBe("90,00");
+    expect(data.get("packerPercentage")).toBe("2.2655");
     expect(JSON.parse(data.get("historicOverrides") as string)).toEqual([{ competencyKey: "06-2026", bonusOldValue: "80,00", sundayOldValue: "75,00" }]);
   });
   it("aborts pending event analysis when external bases change and ignores its late result", async () => {
@@ -102,11 +113,24 @@ describe("optional salary advance events", () => {
     render().mergeIncoming(files); render().mergeIncoming([new File(["x"], "10-2026.xlsx")]);
     expect(render().files).toEqual(files); expect(render().fileSelectionError).toContain("limite é de 4 bases");
   });
+  it("aborts a pending PDF when the role percentage changes and rejects its late download", () => {
+    render().mergeIncoming([file]); render().setPercentage("1,08"); render().generate();
+    const request = FakeRequest.latest;
+    render().setPackerPercentage("3,1234"); render(); request.dispatchEvent(new Event("load"));
+    expect(request.abort).toHaveBeenCalledOnce(); expect(downloadBlob).not.toHaveBeenCalled();
+    render().generate(); expect(FakeRequest.latest.data.get("packerPercentage")).toBe("3,1234");
+  });
+  it("requires a valid role percentage even when optional events are off", () => {
+    render().mergeIncoming([file]); render().setPercentage("1,08"); render().setPackerPercentage("2,26555");
+    expect(render().canGenerate).toBe(false);
+    render().generate();
+    expect(render().state).toMatchObject({ status: "error", messages: ["Informe o percentual para Embalador a mão entre 0,0001 e 100, com até quatro casas."] });
+  });
   it("clears the optional configuration and rejects late downloads after reset", async () => {
     configure(); await analyze(); render().generate(); const request = FakeRequest.latest;
     render().reset(); render(); request.dispatchEvent(new Event("load"));
     expect(downloadBlob).not.toHaveBeenCalled();
-    expect(render()).toMatchObject({ files: [], percentage: "", includeEvents: false, state: { status: "idle" }, eventModel: { report: null, overrides: [], settings: { bonusNewValue: "" } } });
+    expect(render()).toMatchObject({ files: [], percentage: "", packerPercentage: "2.2655", includeEvents: false, state: { status: "idle" }, eventModel: { report: null, overrides: [], settings: { bonusNewValue: "" } } });
   });
   it("releases shared files and invalidates the preview after a successful combined PDF", async () => {
     configure(); await analyze(); render().generate(); FakeRequest.latest.dispatchEvent(new Event("load"));

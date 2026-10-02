@@ -40,6 +40,7 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
   const requestRef = useRef<XMLHttpRequest | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [percentage, setPercentage] = useState("");
+  const [packerPercentage, setPackerPercentage] = useState("2.2655");
   const [includeEvents, setIncludeEvents] = useState(false);
   const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
   const eventModel = useEventAdjustmentWorkspaceController(active && includeEvents, files);
@@ -49,13 +50,13 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     [files],
   );
   const busy = state.status === "uploading" || state.status === "processing" || eventModel.busy;
-  const canGenerate = !includeEvents || eventModel.canGenerate;
+  const canGenerate = validateGeneration(files, percentage, packerPercentage).length === 0 && (!includeEvents || eventModel.canGenerate);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Changes to any generation input invalidate the pending PDF, even while its body is being read.
   useEffect(() => {
     requestRef.current?.abort(); requestRef.current = null;
     setState(current => current.status === "uploading" || current.status === "processing" ? { status: "idle", progress: 0 } : current);
-  }, [active, includeEvents, files, percentage, eventModel.settings, eventModel.overrides]);
+  }, [active, includeEvents, files, percentage, packerPercentage, eventModel.settings, eventModel.overrides]);
 
   useEffect(
     () => () => {
@@ -74,6 +75,7 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     requestRef.current = null;
     releaseFiles();
     setPercentage("");
+    setPackerPercentage("2.2655");
     setIncludeEvents(false);
     setFileSelectionError(null);
     eventModel.reset();
@@ -89,7 +91,7 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
 
   function generate() {
     if (!active || busy) return;
-    const messages = validateGeneration(files, percentage);
+    const messages = validateGeneration(files, percentage, packerPercentage);
     if (includeEvents) {
       messages.push(...validateEventInputs(files, eventModel.settings, eventModel.overrides));
       if (!eventModel.canGenerate) messages.push("Apure os eventos sem pendências e configure pelo menos um novo valor antes de gerar o PDF único.");
@@ -102,6 +104,7 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     const data = new FormData();
     for (const file of files) data.append("files", file, file.name);
     data.set("percentage", percentage.trim());
+    data.set("packerPercentage", packerPercentage.trim());
     if (includeEvents) {
       data.set("includeEvents", "true");
       appendEventSettings(data, eventModel.settings, eventModel.overrides);
@@ -180,9 +183,11 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
       setState({ status: "idle", progress: 0 });
     },
     percentage,
+    packerPercentage,
     removeFile,
     reset,
     setPercentage,
+    setPackerPercentage,
     state,
     totalBytes,
   };

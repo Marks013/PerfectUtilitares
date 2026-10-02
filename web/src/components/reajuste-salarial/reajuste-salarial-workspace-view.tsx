@@ -166,7 +166,7 @@ export function ReajusteSalarialWorkspaceView({
               type="text"
               inputMode="decimal"
               autoComplete="off"
-              placeholder="4,42"
+              placeholder="1,08"
               value={model.percentage}
               disabled={model.busy}
               onChange={(event) => model.setPercentage(event.target.value)}
@@ -174,6 +174,26 @@ export function ReajusteSalarialWorkspaceView({
             />
             <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">
               Informe somente o percentual que ainda deve ser pago após descontar eventual antecipação.
+            </p>
+          </div>
+
+          <div className="mt-5">
+            <label htmlFor="salary-adjustment-packer-percentage" className="text-sm font-black text-[color:var(--app-fg)]">
+              Percentual para Embalador a mão (%)
+            </label>
+            <input
+              id="salary-adjustment-packer-percentage"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              aria-describedby="salary-adjustment-packer-help"
+              value={model.packerPercentage}
+              disabled={model.busy}
+              onChange={(event) => model.setPackerPercentage(event.target.value)}
+              className="mt-2 w-full rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-4 py-3 text-base font-bold text-[color:var(--app-fg)] outline-none transition focus:border-[color:var(--app-teal)] focus-visible:ring-2 focus-visible:ring-[color:var(--app-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--app-surface)]"
+            />
+            <p id="salary-adjustment-packer-help" className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">
+              Substitui o percentual geral somente quando o cargo da competência é Embalador a mão. Aceita até quatro casas decimais.
             </p>
           </div>
 
@@ -229,7 +249,8 @@ export function ReajusteSalarialWorkspaceView({
           </section>
           <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow">
             <h2 className="font-black text-[color:var(--app-fg)]">Regra da antecipação</h2>
-            <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">Cada base mensal é multiplicada pelo percentual restante, arredondada para centavos e somada ao total retroativo do colaborador.</p>
+            <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">A base INSS Proc de cada competência usa o percentual geral ou o percentual específico de Embalador a mão, conforme o cargo naquele mês. O resultado é arredondado para centavos antes de somar as competências.</p>
+            <p className="mt-3 text-sm leading-6 text-[color:var(--app-muted)]">Lic. s/ Remuneração, Demitido, Aposent. Invalidez e Detenção bloqueiam antecipação, bônus e domingos somente na competência em que essa situação consta na folha.</p>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
               <div className="rounded-xl bg-[color:var(--app-surface-strong)] p-3"><dt className="text-[color:var(--app-subtle)]">Arquivos</dt><dd className="mt-1 font-black text-[color:var(--app-fg)]">{model.files.length}/4</dd></div>
               <div className="rounded-xl bg-[color:var(--app-surface-strong)] p-3"><dt className="text-[color:var(--app-subtle)]">Tamanho</dt><dd className="mt-1 font-black text-[color:var(--app-fg)]">{bytesLabel(model.totalBytes)}</dd></div>

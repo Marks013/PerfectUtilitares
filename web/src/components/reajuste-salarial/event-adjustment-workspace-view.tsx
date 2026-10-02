@@ -14,11 +14,12 @@ type Model = ReturnType<typeof useEventAdjustmentWorkspaceController>;
 function EventResult({ title, result }: { title: string; result: EventAdjustmentResult }) {
   return <div className="min-w-0 rounded-xl bg-[color:var(--app-surface-strong)] p-3">
     <h5 className="text-sm font-bold">{title}</h5>
+    {result.exclusionReason ? <p className="mt-2 rounded-lg bg-[color:var(--app-warning-soft)] p-2 text-xs font-bold" role="status">Cálculo bloqueado nesta competência: {result.exclusionReason}. Diferença a pagar: R$ 0,00.</p> : null}
     {!result.received ? <p className="mt-2 text-sm text-[color:var(--app-muted)]">Evento não encontrado nesta folha.</p> : <>
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
         <div><dt className="text-[color:var(--app-muted)]">Pago</dt><dd className="mt-1 font-bold">{eventMoney(result.paidCents)}</dd></div>
-        <div><dt className="text-[color:var(--app-muted)]">Quantidade</dt><dd className="mt-1 font-bold">{result.quantity ?? "Pendente"}</dd></div>
-        <div><dt className="text-[color:var(--app-muted)]">Total reajustado</dt><dd className="mt-1 font-bold">{eventMoney(result.targetCents)}</dd></div>
+        <div><dt className="text-[color:var(--app-muted)]">Quantidade</dt><dd className="mt-1 font-bold">{result.quantity ?? (result.exclusionReason ? "Não determinada" : "Pendente")}</dd></div>
+        <div><dt className="text-[color:var(--app-muted)]">{result.exclusionReason ? "Total pela tabela (bloqueado)" : "Total reajustado"}</dt><dd className="mt-1 font-bold">{eventMoney(result.targetCents)}</dd></div>
         <div><dt className="text-[color:var(--app-muted)]">Diferença a pagar</dt><dd className="mt-1 font-black text-[color:var(--app-teal)]">{eventMoney(result.differenceCents)}</dd></div>
       </dl>
       <p className="mt-2 text-xs text-[color:var(--app-muted)]">Origem: {result.quantitySource === "reference" ? "referência da folha" : result.quantitySource === "amount" ? "divisão exata do pago pelo valor antigo" : "não determinada"}.</p>

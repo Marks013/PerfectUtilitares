@@ -6,7 +6,7 @@ import {
   MAX_TOTAL_FILE_BYTES,
   MIN_FILES,
 } from "@/lib/reajuste-salarial/limits";
-import { parsePercentageBasisPoints } from "@/lib/reajuste-salarial/money";
+import { parsePercentageBasisPoints, parsePercentageTenThousandths } from "@/lib/reajuste-salarial/money";
 
 export type GenerationState =
   | { status: "idle"; progress: 0 }
@@ -25,7 +25,7 @@ export function competencyFromFileName(fileName: string) {
     : null;
 }
 
-export function validateGeneration(files: File[], percentage: string) {
+export function validateGeneration(files: File[], percentage: string, packerPercentage = "2.2655") {
   const messages: string[] = [];
   if (files.length < MIN_FILES || files.length > MAX_FILES) {
     messages.push(`Selecione de ${MIN_FILES} a ${MAX_FILES} arquivos .xlsx.`);
@@ -51,6 +51,11 @@ export function validateGeneration(files: File[], percentage: string) {
     parsePercentageBasisPoints(percentage);
   } catch {
     messages.push("Informe um percentual entre 0,01 e 100,00, com até duas casas.");
+  }
+  try {
+    parsePercentageTenThousandths(packerPercentage);
+  } catch {
+    messages.push("Informe o percentual para Embalador a mão entre 0,0001 e 100, com até quatro casas.");
   }
   return messages;
 }

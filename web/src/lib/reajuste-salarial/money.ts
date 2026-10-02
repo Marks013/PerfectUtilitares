@@ -1,5 +1,22 @@
 import { SalaryAdjustmentError } from "./errors";
 
+export function parsePercentageTenThousandths(value: string): bigint {
+  const match = /^(\d{1,3})(?:[.,](\d{1,4}))?$/.exec(value.trim());
+  const units = match ? BigInt(match[1]) * 10_000n + BigInt((match[2] ?? "").padEnd(4, "0")) : 0n;
+  if (!match || units < 1n || units > 1_000_000n) {
+    throw new SalaryAdjustmentError("REAJUSTE_PERCENTAGE_INVALID", "Informe o percentual do Embalador a mão entre 0,0001% e 100%, com no máximo quatro casas decimais.");
+  }
+  return units;
+}
+
+export function calculatePreciseAdjustmentCents(baseCents: bigint, percentageTenThousandths: bigint): bigint {
+  return (baseCents * percentageTenThousandths + 500_000n) / 1_000_000n;
+}
+
+export function formatPercentageTenThousandths(units: bigint): string {
+  return `${units / 10_000n},${(units % 10_000n).toString().padStart(4, "0")}%`;
+}
+
 const DECIMAL_PERCENTAGE = /^(\d{1,3})(?:[.,](\d{1,2}))?$/;
 const BRAZILIAN_MONEY = /^(?:0|[1-9]\d{0,2}(?:\.\d{3})*|[1-9]\d*)(?:,(\d{1,2}))?$/;
 

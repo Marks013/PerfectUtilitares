@@ -22,4 +22,16 @@ describe("salary adjustment workspace model", () => {
       "Somente arquivos .xlsx são aceitos.",
     );
   });
+
+  it("validates the specific percentage without losing four decimal places", () => {
+    const file = new File(["xlsx"], "06-2026.xlsx");
+    for (const percentage of ["2,2655", "2.2655", "0,0001", "100"]) {
+      expect(validateGeneration([file], "1,08", percentage)).toEqual([]);
+    }
+    for (const percentage of ["", "0", "-1", "2,26555", "100,0001", "1e2"]) {
+      expect(validateGeneration([file], "1,08", percentage)).toContain(
+        "Informe o percentual para Embalador a mão entre 0,0001 e 100, com até quatro casas.",
+      );
+    }
+  });
 });
