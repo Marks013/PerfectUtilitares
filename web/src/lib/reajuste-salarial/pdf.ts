@@ -1,12 +1,11 @@
 import PDFDocument from "pdfkit";
-import { drawSalaryAdvanceReport } from "./pdf-render";
-import type { SalaryAdvanceReport } from "./types";
+import { drawSalaryAdvanceReport, drawSalaryAdvanceFooters } from "./pdf-render";
+import type { SalaryAdvanceReport, SalaryAdvancePdfKind } from "./types";
 import type { EventAdjustmentReport } from "./event-adjustment-types";
-import { buildIntegratedAdvanceSummary } from "./advance-events";
-import { drawIntegratedAdvanceSummary } from "./advance-events-pdf-render";
-import { drawEventAdjustmentReport } from "./event-adjustment-pdf-render";
+import { buildSalaryAdvanceSummary } from "./advance-events";
+import { drawSalaryAdvanceSummary, drawSalaryAdvanceEventDetail } from "./advance-events-pdf-render";
 
-export function generateSalaryAdvancePdf(report: SalaryAdvanceReport, eventReport?: EventAdjustmentReport) {
+export function generateSalaryAdvancePdf(report: SalaryAdvanceReport, eventReport?: EventAdjustmentReport, kind: SalaryAdvancePdfKind = "detailed") {
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
@@ -14,7 +13,7 @@ export function generateSalaryAdvancePdf(report: SalaryAdvanceReport, eventRepor
       margins: { top: 24, right: 24, bottom: 28, left: 24 },
       bufferPages: true,
       info: {
-        Title: eventReport ? "Antecipação Salarial com diferenças de bônus e domingos" : "Antecipação Salarial",
+        Title: kind === "summary" ? "Antecipação Salarial — Resumo Consolidado" : "Antecipação Salarial — Apuração Detalhada",
         Author: "PerfectUtilitares",
       },
     });
@@ -24,17 +23,11 @@ export function generateSalaryAdvancePdf(report: SalaryAdvanceReport, eventRepor
     doc.on("error", reject);
 
     try {
-      if (eventReport) {
-        const summary = buildIntegratedAdvanceSummary(report, eventReport);
-        drawIntegratedAdvanceSummary(doc, summary, report.competencies);
-        doc.addPage();
-        drawSalaryAdvanceReport(doc, report, false);
-        doc.addPage();
-        // This final section numbers every buffered page once, including the summary and advance.
-        drawEventAdjustmentReport(doc, eventReport);
-      } else {
-        drawSalaryAdvanceReport(doc, report);
-      }
+      const summary = buildSalaryAdvanceSummary(report, eventReport);
+      if (kind === "summary") drawSalaryAdvanceSummary(doc, summary, report);
+      else if (eventReport) drawSalaryAdvanceEventDetail(doc, summary, report, eventReport);
+      else drawSalaryAdvanceReport(doc, report, false);
+      drawSalaryAdvanceFooters(doc, report);
       doc.end();
     } catch (error) {
       doc.destroy();

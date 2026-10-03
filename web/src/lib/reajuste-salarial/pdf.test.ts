@@ -20,9 +20,9 @@ describe("salary adjustment PDF", () => {
     const pdf = await PDFDocument.load(await generateSalaryAdvancePdf(report));
     expect(pdf.getPageCount()).toBe(1);
     const values = text.mock.calls.map(call => String(call[0]));
-    expect(values).toContain("R$ 41,30\n2,2655%");
+    expect(values).toContain("R$ 41,30\n2,26550%");
     expect(values).toContain("R$ 0,00\nBloqueado");
-    expect(values).toContain("R$ 19,69\n1,0800%");
+    expect(values).toContain("R$ 19,69\n1,08000%");
     expect(values).toContain("07-2026: bloqueado por situação Demitido");
     expect(text.mock.calls.every(call => typeof call[2] !== "number" || call[2] < 570)).toBe(true);
   });

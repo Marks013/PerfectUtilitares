@@ -55,6 +55,7 @@ test.beforeEach(async ({ page }) => {
   await page.getByLabel("Senha padrão").fill(password!);
   await page.getByRole("button", { name: "Desbloquear módulo", exact: true }).click();
   await expect(page).toHaveURL(/\/reajuste-salarial$/, { timeout: 30_000 });
+  await page.getByLabel("Percentual para Embalador a mão (%)", { exact: true }).fill("2,26550");
 });
 
 test("monthly payroll imports and generates the salary advance PDF", async ({ page }) => {
@@ -67,7 +68,9 @@ test("monthly payroll imports and generates the salary advance PDF", async ({ pa
   ])));
   await page.locator("#salary-adjustment-files").setInputFiles(files);
   await page.getByLabel("Percentual restante a pagar (%)").fill("4,42");
-  await assertPdfDownload(page, "Gerar PDF");
+  await assertPdfDownload(page, "Detalhado");
+  await expect(page.getByRole("button", { name: /^Remover \d\d-2026\.xlsx$/ })).toHaveCount(3);
+  await assertPdfDownload(page, "Resumo Consolidado");
   await page.getByRole("button", { name: "Limpar", exact: true }).click();
   await expect(page.getByText("06-2026.xlsx", { exact: true })).toHaveCount(0);
 });

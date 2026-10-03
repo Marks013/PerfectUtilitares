@@ -20,12 +20,14 @@ import {
   bytesLabel,
   competencyFromFileName,
   fileKey,
+  normalizePercentageInput,
 } from "./reajuste-salarial-workspace-model";
 import type { useSalaryAdvanceWorkspaceController } from "./reajuste-salarial-workspace";
 import { ReajusteSalarialAccessLogoutButton } from "./reajuste-salarial-access-logout-button";
 import type { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
 import { SalaryRevisionWorkspaceView } from "./salary-revision-workspace-view";
 import { EventAdjustmentWorkspaceView } from "./event-adjustment-workspace-view";
+import { SalaryPercentageCalculator } from "./salary-percentage-calculator";
 
 type AdvanceModel = ReturnType<typeof useSalaryAdvanceWorkspaceController>;
 type RevisionModel = ReturnType<typeof useSalaryRevisionWorkspaceController>;
@@ -157,6 +159,15 @@ export function ReajusteSalarialWorkspaceView({
 
           {model.fileSelectionError ? <p role="alert" className="mt-4 rounded-xl bg-[color:var(--app-danger-soft)] p-3 text-sm text-[color:var(--app-fg)]">{model.fileSelectionError}</p> : null}
 
+          <div className="mt-6 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4">
+            <label className="flex cursor-pointer items-start gap-3 text-sm font-black text-[color:var(--app-fg)]">
+              <input type="checkbox" checked={model.salaryScope === "drivers-forklift"} onChange={event => model.setSalaryScope(event.target.checked ? "drivers-forklift" : "standard")} aria-controls="salary-scope-percentages" className="mt-0.5 size-4 shrink-0 accent-[color:var(--app-teal)]" />
+              Apurar somente Motoristas e Operador de Empilhadeira
+            </label>
+            <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">{model.salaryScope === "drivers-forklift" ? "Somente esses cargos entram nos cálculos e relatórios, com o percentual próprio abaixo." : "Motoristas e Operador de Empilhadeira ficam fora dos cálculos e relatórios. Os demais cargos usam os percentuais abaixo."} A seleção considera o cargo de cada competência e também vale para bônus e domingos opcionais.</p>
+          </div>
+          <div id="salary-scope-percentages">
+          {model.salaryScope === "standard" ? <>
           <div className="mt-6">
             <label htmlFor="salary-adjustment-percentage" className="text-sm font-black text-[color:var(--app-fg)]">
               Percentual restante a pagar (%)
@@ -166,10 +177,11 @@ export function ReajusteSalarialWorkspaceView({
               type="text"
               inputMode="decimal"
               autoComplete="off"
-              placeholder="1,08"
+              placeholder="0,00000"
               value={model.percentage}
               disabled={model.busy}
-              onChange={(event) => model.setPercentage(event.target.value)}
+              onChange={(event) => model.setPercentage(event.target.value.replaceAll(".", ","))}
+              onBlur={() => model.setPercentage(normalizePercentageInput(model.percentage))}
               className="mt-2 w-full rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-4 py-3 text-base font-bold text-[color:var(--app-fg)] outline-none transition focus:border-[color:var(--app-teal)] focus-visible:ring-2 focus-visible:ring-[color:var(--app-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--app-surface)]"
             />
             <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">
@@ -187,22 +199,33 @@ export function ReajusteSalarialWorkspaceView({
               inputMode="decimal"
               autoComplete="off"
               aria-describedby="salary-adjustment-packer-help"
+              placeholder="0,00000"
               value={model.packerPercentage}
               disabled={model.busy}
-              onChange={(event) => model.setPackerPercentage(event.target.value)}
+              onChange={(event) => model.setPackerPercentage(event.target.value.replaceAll(".", ","))}
+              onBlur={() => model.setPackerPercentage(normalizePercentageInput(model.packerPercentage))}
               className="mt-2 w-full rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-4 py-3 text-base font-bold text-[color:var(--app-fg)] outline-none transition focus:border-[color:var(--app-teal)] focus-visible:ring-2 focus-visible:ring-[color:var(--app-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--app-surface)]"
             />
             <p id="salary-adjustment-packer-help" className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">
-              Substitui o percentual geral somente quando o cargo da competência é Embalador a mão. Aceita até quatro casas decimais.
+              Substitui o percentual geral somente quando o cargo da competência é Embalador a mão. Informe o valor aplicável, com até cinco casas decimais.
             </p>
           </div>
+
+          </> : <div className="mt-6">
+            <label htmlFor="salary-adjustment-driver-percentage" className="text-sm font-black text-[color:var(--app-fg)]">Percentual para Motoristas e Operador de Empilhadeira (%)</label>
+            <input id="salary-adjustment-driver-percentage" type="text" inputMode="decimal" autoComplete="off" placeholder="0,00000" value={model.driverPercentage} disabled={model.busy} onChange={event => model.setDriverPercentage(event.target.value.replaceAll(".", ","))} onBlur={() => model.setDriverPercentage(normalizePercentageInput(model.driverPercentage))} aria-describedby="salary-adjustment-driver-help" className="mt-2 w-full rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-4 py-3 text-base font-bold text-[color:var(--app-fg)] outline-none transition focus:border-[color:var(--app-teal)] focus-visible:ring-2 focus-visible:ring-[color:var(--app-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--app-surface)]" />
+            <p id="salary-adjustment-driver-help" className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">Informe o percentual restante deste sindicato. Aceita até cinco casas decimais; o percentual geral e o de Embalador a mão não são usados nesta seleção.</p>
+          </div>}
+          </div>
+
+          <SalaryPercentageCalculator key={model.calculatorResetVersion} />
 
           <div className="mt-6 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4">
             <label className="flex cursor-pointer items-start gap-3 text-sm font-black text-[color:var(--app-fg)]">
               <input type="checkbox" checked={model.includeEvents} onChange={event => model.setIncludeEvents(event.target.checked)} aria-controls="advance-optional-events" className="mt-0.5 size-4 shrink-0 accent-[color:var(--app-teal)]" />
               Incluir diferenças de bônus e domingos
             </label>
-            <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">Opcional. Usa as mesmas folhas mensais e inclui eventos 565 e 901 no PDF da antecipação, com total consolidado por colaborador.</p>
+            <p className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">Opcional. Usa as mesmas folhas mensais e inclui as diferenças dos eventos 565 e 901 no resumo consolidado e na apuração mensal detalhada.</p>
           </div>
           {model.includeEvents ? <div id="advance-optional-events"><EventAdjustmentWorkspaceView key={model.eventModel.datasetVersion} model={model.eventModel} disabled={model.state.status === "uploading" || model.state.status === "processing"} /></div> : null}
 
@@ -231,12 +254,16 @@ export function ReajusteSalarialWorkspaceView({
             </div>
           ) : null}
 
-          <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <p className="mt-5 text-xs leading-5 text-[color:var(--app-muted)]">O Resumo Consolidado reúne os totais por colaborador e filial. O Detalhado mostra a apuração mensal. As bases permanecem disponíveis para gerar os dois PDFs; Limpar encerra essa seleção.</p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
             <button type="button" onClick={model.reset} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
               <RotateCcw className="size-4" /> Limpar
             </button>
-            <button type="button" onClick={model.generate} disabled={model.busy || !model.canGenerate} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-canvas)] px-5 py-3 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
-              {model.busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Gerar PDF
+            <button type="button" onClick={() => model.generate("summary")} disabled={model.busy || !model.canGenerate} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-5 py-3 text-sm font-black text-[color:var(--app-fg)] transition hover:bg-[color:var(--app-surface-strong)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
+              {(model.state.status === "uploading" || model.state.status === "processing") && model.state.pdfKind === "summary" ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Resumo Consolidado
+            </button>
+            <button type="button" onClick={() => model.generate("detailed")} disabled={model.busy || !model.canGenerate} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[color:var(--app-canvas)] px-5 py-3 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)]">
+              {(model.state.status === "uploading" || model.state.status === "processing") && model.state.pdfKind === "detailed" ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Detalhado
             </button>
           </div>
         </section>

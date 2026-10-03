@@ -59,6 +59,7 @@ function request(files: File[], percentage = "4,42", fields: Record<string, stri
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
   form.set("percentage", percentage);
+  form.set("packerPercentage", "2.2655");
   for (const [key, value] of Object.entries(fields)) form.set(key, value);
   return new Request("http://localhost/api/reajuste-salarial/gerar", {
     method: "POST",
@@ -135,6 +136,30 @@ beforeEach(() => {
 });
 
 describe("salary adjustment PDF API", () => {
+  it.each([
+    ["standard", "OPERADOR", "1,23456", 2469n],
+    ["drivers-forklift", "Motorista de Truck", "1,23456", 2469n],
+    ["drivers-forklift", "Operador de Empilhadeira", "0,00001", 0n],
+    ["standard", "Embalador a mão", "2,26555", 4531n],
+  ] as const)("calculates real five-decimal %s rate for %s", async (scope, role, rate, expected) => {
+    await useRealPipeline();
+    const response = await POST(request([monthlyWorkbook("06-2026.xlsx", "170,00", "EMPRESA TESTE", "Trabalhando", role)], scope === "standard" ? rate : "", { salaryScope: scope, driverPercentage: rate, packerPercentage: rate }));
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
+    expect(mocks.generatePdf.mock.calls[0][0].grandTotalCents).toBe(expected);
+  });
+  it.each(["0", "0,00000", "1,234567", "100,00001", ""])("rejects invalid five-decimal API rate %j", async (rate) => {
+    const response = await POST(request([xlsx()], rate));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("REAJUSTE_PERCENTAGE_INVALID");
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
+  it("requires explicit packer rate in standard mode", async () => {
+    expect((await POST(request([xlsx()], "1,08", { packerPercentage: "" }))).status).toBe(400);
+    const form = new FormData(); form.append("files", xlsx()); form.set("percentage", "1,08");
+    expect((await POST(new Request("http://localhost/api/reajuste-salarial/gerar", { method: "POST", body: form, headers: { "content-length": "1024" } }))).status).toBe(400);
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
   it("applies precise packer percentage and monthly eligibility through real XLSX parsing and PDF generation", async () => {
     await useRealPipeline();
     const response = await POST(request([monthlyWorkbook("06-2026.xlsx", "170,00", "EMPRESA TESTE", "Trabalhando", "Embalador a mão"), monthlyWorkbook("07-2026.xlsx", "170,00", "EMPRESA TESTE", "Demitido", "Embalador a mão")], "1.08", { ...eventFields, packerPercentage: "2.2655" }));
@@ -149,7 +174,7 @@ describe("salary adjustment PDF API", () => {
   });
 
   it("rejects an invalid special percentage before parsing files", async () => {
-    const response = await POST(request([xlsx()], "1.08", { packerPercentage: "2.26555" }));
+    const response = await POST(request([xlsx()], "1.08", { packerPercentage: "2.265555" }));
     expect(response.status).toBe(400);
     expect(mocks.parseWorkbook).not.toHaveBeenCalled();
   });
@@ -197,7 +222,7 @@ describe("salary adjustment PDF API", () => {
   it("keeps disabled events compatible and ignores unused event settings", async () => {
     const response = await POST(request([xlsx()], "5", { includeEvents: "false", bonusOldValue: "invalid" }));
     expect(response.status).toBe(200);
-    expect(mocks.generatePdf).toHaveBeenCalledWith(expect.objectContaining({ grandTotalCents: 5000n }), undefined);
+    expect(mocks.generatePdf).toHaveBeenCalledWith(expect.objectContaining({ grandTotalCents: 5000n }), undefined, "detailed");
   });
 
   it("rejects invalid or repeated enablement and missing new values", async () => {
@@ -215,12 +240,12 @@ describe("salary adjustment PDF API", () => {
     expect(mocks.prepareArchive).not.toHaveBeenCalled();
   });
 
-  it("generates a real integrated PDF from the same monthly XLSX bytes", async () => {
+  it.each(["summary", "detailed"] as const)("generates a separate real %s PDF from the same monthly XLSX bytes", async (reportType) => {
     await useRealPipeline();
     const { default: PDFDocument } = await import("pdfkit");
     const text = vi.spyOn(PDFDocument.prototype, "text");
     try {
-    const response = await POST(request([monthlyWorkbook(), monthlyWorkbook("07-2026.xlsx")], "5", eventFields));
+    const response = await POST(request([monthlyWorkbook(), monthlyWorkbook("07-2026.xlsx")], "5", { ...eventFields, reportType }));
     expect(response.status).toBe(200);
     const bytes = Buffer.from(await response.arrayBuffer());
     expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
@@ -232,19 +257,40 @@ describe("salary adjustment PDF API", () => {
     expect(events.generatedAt).toBe(advance.generatedAt.toISOString());
     const { PDFDocument: LoadedPdf } = await import("pdf-lib");
     const loaded = await LoadedPdf.load(bytes);
-    expect(loaded.getPageCount()).toBeGreaterThanOrEqual(4);
-    expect(loaded.getTitle()).toContain("bônus e domingos");
+    expect(loaded.getPageCount()).toBeGreaterThanOrEqual(1);
+    expect(loaded.getTitle()).toContain(reportType === "summary" ? "Resumo Consolidado" : "Apuração Detalhada");
+    expect(mocks.generatePdf.mock.calls[0][2]).toBe(reportType);
+    expect(response.headers.get("content-disposition")).toContain(reportType === "summary" ? "resumo-consolidado" : "detalhado");
     const values = text.mock.calls.map((call) => String(call[0])).join("\n");
     for (const expected of ["240,00", "ANA TESTE", "565", "901"]) expect(values).toContain(expected);
+    expect(values).not.toContain(reportType === "summary" ? "Apuração Detalhada" : "Resumo Consolidado");
     } finally { text.mockRestore(); }
   });
 
-  it("generates the real legacy PDF when events are disabled", async () => {
+  it.each(["summary", "detailed"] as const)("generates the real %s PDF when events are disabled", async (reportType) => {
     await useRealPipeline();
-    const response = await POST(request([monthlyWorkbook()], "5", { includeEvents: "false" }));
+    const response = await POST(request([monthlyWorkbook()], "5", { includeEvents: "false", reportType }));
     expect(response.status).toBe(200);
     expect(Buffer.from(await response.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
-    expect(mocks.generatePdf).toHaveBeenCalledWith(expect.objectContaining({ grandTotalCents: 10000n }), undefined);
+    expect(mocks.generatePdf).toHaveBeenCalledWith(expect.objectContaining({ grandTotalCents: 10000n }), undefined, reportType);
+  });
+
+  it.each(["", "integrated", "SUMMARY"])("rejects invalid report type %j before parsing", async (reportType) => {
+    const response = await POST(request([xlsx()], "5", { reportType }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("REAJUSTE_REPORT_TYPE_INVALID");
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate and file-valued report types", async () => {
+    for (const values of [["summary", "detailed"], [xlsx()]] as Array<Array<string | File>>) {
+      const form = new FormData(); form.append("files", xlsx()); form.set("percentage", "5"); form.set("packerPercentage", "2.2655");
+      for (const value of values) form.append("reportType", value);
+      const response = await POST(new Request("http://localhost/api/reajuste-salarial/gerar", { method: "POST", body: form, headers: { "content-length": "1024" } }));
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe("REAJUSTE_REPORT_TYPE_INVALID");
+    }
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
   });
 
   it("blocks pending events and mixed companies before rendering", async () => {

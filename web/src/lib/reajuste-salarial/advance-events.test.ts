@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIntegratedAdvanceSummary, parseOptionalAdvanceEventSettings } from "./advance-events";
+import { buildIntegratedAdvanceSummary, buildSalaryAdvanceSummary, parseOptionalAdvanceEventSettings } from "./advance-events";
 import { parseCompetencyFileName } from "./competency";
 import { consolidateSalaryAdvanceFiles } from "./consolidator";
 import { buildEventAdjustmentReport } from "./event-adjustments";
@@ -46,6 +46,17 @@ describe("optional advance events", () => {
 });
 
 describe("integrated advance summary", () => {
+  it("rejects duplicated registrations and inconsistent advance subtotals in the separated PDFs", () => {
+    const first = reports();
+    first.advance.groups.push(first.advance.groups[0]);
+    expect(() => buildSalaryAdvanceSummary(first.advance, first.events)).toThrow("repetidas");
+    const second = reports();
+    second.advance.groups[0].subtotalCents += 1n;
+    expect(() => buildSalaryAdvanceSummary(second.advance)).toThrow("subtotais");
+    const third = reports();
+    third.advance.groups[0].employees[0].totalAdjustmentCents += 1n;
+    expect(() => buildSalaryAdvanceSummary(third.advance, third.events)).toThrow("mensais");
+  });
   it("adds advance and event differences once, preserving the latest event branch", () => {
     const { advance, events } = reports();
     const summary = buildIntegratedAdvanceSummary(advance, events);

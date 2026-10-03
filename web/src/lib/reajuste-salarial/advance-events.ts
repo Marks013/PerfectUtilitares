@@ -107,3 +107,39 @@ export function buildIntegratedAdvanceSummary(advanceReport: SalaryAdvanceReport
   }
   return { employees, advanceTotalCents, bonusTotalCents, sundayTotalCents, grandTotalCents: advanceTotalCents + bonusTotalCents + sundayTotalCents };
 }
+
+export function buildSalaryAdvanceSummary(report: SalaryAdvanceReport, eventReport?: EventAdjustmentReport) {
+  const registrations = new Set<string>();
+  for (const group of report.groups) {
+    for (const employee of group.employees) {
+      const key = registration(employee.registration);
+      if (registrations.has(key)) return invalid("Há matrículas repetidas nas filiais da antecipação.");
+      registrations.add(key);
+      const monthlyTotal = report.competencies.reduce((sum, competency) => sum + (employee.adjustmentsByCompetency.get(competency.key) ?? 0n), 0n);
+      if (monthlyTotal !== employee.totalAdjustmentCents) return invalid("Os valores mensais da antecipação são inconsistentes.");
+    }
+    if (group.employeeCount !== group.employees.length || group.subtotalCents !== group.employees.reduce((sum, employee) => sum + employee.totalAdjustmentCents, 0n)) return invalid("Os subtotais das filiais da antecipação são inconsistentes.");
+  }
+  if (registrations.size !== report.employeeCount || report.grandTotalCents !== report.groups.reduce((sum, group) => sum + group.subtotalCents, 0n)) return invalid("Os totais da antecipação são inconsistentes.");
+  const integrated = eventReport ? buildIntegratedAdvanceSummary(report, eventReport) : null;
+  const byRegistration = new Map(integrated?.employees.map(employee => [employee.registration, employee]));
+  const groups = report.groups.map(group => {
+    const employees = group.employees.map(employee => {
+      const events = byRegistration.get(registration(employee.registration));
+      const bonusCents = events?.bonusCents ?? 0n;
+      const sundayCents = events?.sundayCents ?? 0n;
+      return { registration: employee.registration, employeeName: employee.employeeName, branchAlias: group.branchAlias,
+        advanceCents: employee.totalAdjustmentCents, bonusCents, sundayCents,
+        totalCents: employee.totalAdjustmentCents + bonusCents + sundayCents };
+    });
+    return { branchAlias: group.branchAlias, employees,
+      advanceCents: employees.reduce((sum, employee) => sum + employee.advanceCents, 0n),
+      bonusCents: employees.reduce((sum, employee) => sum + employee.bonusCents, 0n),
+      sundayCents: employees.reduce((sum, employee) => sum + employee.sundayCents, 0n),
+      totalCents: employees.reduce((sum, employee) => sum + employee.totalCents, 0n) };
+  });
+  return { groups, employees: groups.flatMap(group => group.employees),
+    advanceTotalCents: report.grandTotalCents, bonusTotalCents: integrated?.bonusTotalCents ?? 0n,
+    sundayTotalCents: integrated?.sundayTotalCents ?? 0n,
+    grandTotalCents: integrated?.grandTotalCents ?? report.grandTotalCents };
+}

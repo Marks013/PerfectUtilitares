@@ -35,11 +35,12 @@ import {
   RATE_LIMIT,
   RATE_WINDOW_MS,
 } from "@/lib/reajuste-salarial/limits";
-import { parsePercentageBasisPoints, parsePercentageTenThousandths } from "@/lib/reajuste-salarial/money";
+import { parseSalaryAdvanceScopeSettings } from "@/lib/reajuste-salarial/payroll-scope";
 import { runWithReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
 import { hasDeclaredReajusteContentLength } from "@/lib/reajuste-salarial/request-security";
 import { parseSalaryAdvanceWorkbook } from "@/lib/reajuste-salarial/parser";
 import { generateSalaryAdvancePdf } from "@/lib/reajuste-salarial/pdf";
+import type { SalaryAdvancePdfKind } from "@/lib/reajuste-salarial/types";
 import { prepareXlsxArchive, XlsxSecurityError } from "@/lib/spreadsheets/xlsx-security";
 import { getRequestContentLength } from "@/lib/system/resource-capacity";
 import { recordUserUsage } from "@/lib/usage/record";
@@ -154,15 +155,14 @@ export async function POST(request: Request) {
     const validated = validateFiles(formData.getAll("files"));
     fileCount = validated.files.length;
     totalBytes = validated.totalBytes;
-    const percentageBasisPoints = parsePercentageBasisPoints(
-      String(formData.get("percentage") ?? ""),
-    );
+    const scopeSettings = parseSalaryAdvanceScopeSettings(formData);
     const eventSettings = parseOptionalAdvanceEventSettings(formData);
-    const packerValues = formData.getAll("packerPercentage");
-    if (packerValues.length > 1 || (packerValues.length === 1 && typeof packerValues[0] !== "string")) {
-      throw new SalaryAdjustmentError("REAJUSTE_PERCENTAGE_INVALID", "Informe um único percentual do Embalador a mão.");
+    const reportTypes = formData.getAll("reportType");
+    const reportTypeValue = reportTypes[0] ?? "detailed";
+    if (reportTypes.length > 1 || (reportTypeValue !== "summary" && reportTypeValue !== "detailed")) {
+      throw new SalaryAdjustmentError("REAJUSTE_REPORT_TYPE_INVALID", "Escolha um único relatório: Resumo Consolidado ou Detalhado.");
     }
-    const packerPercentage = parsePercentageTenThousandths(String(packerValues[0] ?? "2.2655"));
+    const reportType: SalaryAdvancePdfKind = reportTypeValue;
     const withCompetency = validated.files.map((file) => ({
       file,
       competency: parseCompetencyFileName(file.name),
@@ -193,17 +193,18 @@ export async function POST(request: Request) {
     stage = "consolidate";
     const report = consolidateSalaryAdvanceFiles(
       parsedFiles,
-      percentageBasisPoints,
+      scopeSettings.percentageBasisPoints,
       new Date(),
-      packerPercentage,
+      scopeSettings.packerPercentageTenThousandths,
+      scopeSettings,
     );
-    const eventReport = eventSettings ? buildEventAdjustmentReport(eventFiles, eventSettings, report.generatedAt) : undefined;
+    const eventReport = eventSettings ? buildEventAdjustmentReport(eventFiles, eventSettings, report.generatedAt, scopeSettings.salaryScope) : undefined;
     if (eventReport?.issueCount) {
       return jsonError(409, "REAJUSTE_EVENTS_PENDING", "Há pendências nos eventos 565 ou 901. Confira os valores históricos, as referências e as rubricas antes de gerar o PDF.");
     }
     if (eventReport) buildIntegratedAdvanceSummary(report, eventReport);
     stage = "render";
-    const pdf = await generateSalaryAdvancePdf(report, eventReport);
+    const pdf = await generateSalaryAdvancePdf(report, eventReport, reportType);
     await recordUserUsage({
       userId: authenticatedSession?.user.id,
       module: "PDF",
@@ -213,7 +214,7 @@ export async function POST(request: Request) {
     });
     const first = orderedCompetencies[0].key;
     const last = orderedCompetencies.at(-1)?.key ?? first;
-    const fileName = `antecipacao-salarial-${first}-a-${last}.pdf`;
+    const fileName = `antecipacao-salarial-${reportType === "summary" ? "resumo-consolidado" : "detalhado"}-${first}-a-${last}.pdf`;
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {

@@ -86,7 +86,7 @@ describe("salary workspace reset", () => {
   it.each(["advance", "revision"] as const)("resets %s during PDF generation and ignores late events", async (mode) => {
     if (mode === "advance") {
       renderAdvance().mergeIncoming([file]);
-      renderAdvance().setPercentage("5");
+      renderAdvance().setPercentage("5"); renderAdvance().setPackerPercentage("2,26550");
     } else {
       fetchMock.mockResolvedValueOnce(Response.json({ analysis }));
       renderRevision().setFile(file);
@@ -110,7 +110,7 @@ describe("salary workspace reset", () => {
 
   it("does not restore an error when reset happens while its body is being read", async () => {
     renderAdvance().mergeIncoming([file]);
-    renderAdvance().setPercentage("5");
+    renderAdvance().setPercentage("5"); renderAdvance().setPackerPercentage("2,26550");
     renderAdvance().generate();
     const request = FakeRequest.latest;
     request.status = 500;

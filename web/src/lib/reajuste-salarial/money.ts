@@ -1,5 +1,22 @@
 import { SalaryAdjustmentError } from "./errors";
 
+export function parsePercentageHundredThousandths(value: string): bigint {
+  const match = /^(\d{1,3})(?:[.,](\d{1,5}))?$/.exec(value.trim());
+  const units = match ? BigInt(match[1]) * 100_000n + BigInt((match[2] ?? "").padEnd(5, "0")) : 0n;
+  if (!match || units < 1n || units > 10_000_000n) {
+    throw new SalaryAdjustmentError("REAJUSTE_PERCENTAGE_INVALID", "Informe um percentual entre 0,00001% e 100%, com no máximo cinco casas decimais.");
+  }
+  return units;
+}
+
+export function calculateAdjustmentAtHundredThousandths(baseCents: bigint, percentageHundredThousandths: bigint): bigint {
+  return (baseCents * percentageHundredThousandths + 5_000_000n) / 10_000_000n;
+}
+
+export function formatPercentageHundredThousandths(units: bigint): string {
+  return `${units / 100_000n},${(units % 100_000n).toString().padStart(5, "0")}%`;
+}
+
 export function parsePercentageTenThousandths(value: string): bigint {
   const match = /^(\d{1,3})(?:[.,](\d{1,4}))?$/.exec(value.trim());
   const units = match ? BigInt(match[1]) * 10_000n + BigInt((match[2] ?? "").padEnd(4, "0")) : 0n;

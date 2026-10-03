@@ -12,11 +12,12 @@ import { useSalaryRevisionWorkspaceController } from "./salary-revision-workspac
 import { useEventAdjustmentWorkspaceController } from "./event-adjustment-workspace";
 import { appendEventSettings, validateEventInputs } from "./event-adjustment-workspace-model";
 import { MAX_FILES } from "@/lib/reajuste-salarial/limits";
+import type { SalaryAdvancePdfKind, SalaryAdvanceScope } from "@/lib/reajuste-salarial/types";
 
-function downloadName(header: string | null) {
+function downloadName(header: string | null, kind: SalaryAdvancePdfKind) {
   const encoded = header?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
   if (encoded) return decodeURIComponent(encoded);
-  return header?.match(/filename="?([^";]+)"?/i)?.[1] ?? "antecipacao-salarial.pdf";
+  return header?.match(/filename="?([^";]+)"?/i)?.[1] ?? `antecipacao-salarial-${kind === "summary" ? "resumo-consolidado" : "detalhado"}.pdf`;
 }
 
 async function responseMessages(blob: Blob) {
@@ -40,23 +41,26 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
   const requestRef = useRef<XMLHttpRequest | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [percentage, setPercentage] = useState("");
-  const [packerPercentage, setPackerPercentage] = useState("2.2655");
+  const [packerPercentage, setPackerPercentage] = useState("");
+  const [calculatorResetVersion, setCalculatorResetVersion] = useState(0);
+  const [salaryScope, setSalaryScope] = useState<SalaryAdvanceScope>("standard");
+  const [driverPercentage, setDriverPercentage] = useState("");
   const [includeEvents, setIncludeEvents] = useState(false);
   const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
-  const eventModel = useEventAdjustmentWorkspaceController(active && includeEvents, files);
+  const eventModel = useEventAdjustmentWorkspaceController(active && includeEvents, files, salaryScope);
   const [state, setState] = useState<GenerationState>({ status: "idle", progress: 0 });
   const totalBytes = useMemo(
     () => files.reduce((sum, file) => sum + file.size, 0),
     [files],
   );
   const busy = state.status === "uploading" || state.status === "processing" || eventModel.busy;
-  const canGenerate = validateGeneration(files, percentage, packerPercentage).length === 0 && (!includeEvents || eventModel.canGenerate);
+  const canGenerate = validateGeneration(files, percentage, packerPercentage, salaryScope, driverPercentage).length === 0 && (!includeEvents || eventModel.canGenerate);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Changes to any generation input invalidate the pending PDF, even while its body is being read.
   useEffect(() => {
     requestRef.current?.abort(); requestRef.current = null;
     setState(current => current.status === "uploading" || current.status === "processing" ? { status: "idle", progress: 0 } : current);
-  }, [active, includeEvents, files, percentage, packerPercentage, eventModel.settings, eventModel.overrides]);
+  }, [active, includeEvents, files, percentage, packerPercentage, salaryScope, driverPercentage, eventModel.settings, eventModel.overrides]);
 
   useEffect(
     () => () => {
@@ -75,7 +79,10 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     requestRef.current = null;
     releaseFiles();
     setPercentage("");
-    setPackerPercentage("2.2655");
+    setPackerPercentage("");
+    setCalculatorResetVersion(current => current + 1);
+    setSalaryScope("standard");
+    setDriverPercentage("");
     setIncludeEvents(false);
     setFileSelectionError(null);
     eventModel.reset();
@@ -89,12 +96,12 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     setState({ status: "idle", progress: 0 });
   }
 
-  function generate() {
+  function generate(kind: SalaryAdvancePdfKind = "detailed") {
     if (!active || busy) return;
-    const messages = validateGeneration(files, percentage, packerPercentage);
+    const messages = validateGeneration(files, percentage, packerPercentage, salaryScope, driverPercentage);
     if (includeEvents) {
       messages.push(...validateEventInputs(files, eventModel.settings, eventModel.overrides));
-      if (!eventModel.canGenerate) messages.push("Apure os eventos sem pendências e configure pelo menos um novo valor antes de gerar o PDF único.");
+      if (!eventModel.canGenerate) messages.push("Apure os eventos sem pendências e configure pelo menos um novo valor antes de gerar os relatórios.");
     }
     if (messages.length > 0) {
       setState({ status: "error", progress: 0, messages });
@@ -105,6 +112,9 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     for (const file of files) data.append("files", file, file.name);
     data.set("percentage", percentage.trim());
     data.set("packerPercentage", packerPercentage.trim());
+    data.set("reportType", kind);
+    data.set("salaryScope", salaryScope);
+    if (salaryScope === "drivers-forklift") data.set("driverPercentage", driverPercentage.trim());
     if (includeEvents) {
       data.set("includeEvents", "true");
       appendEventSettings(data, eventModel.settings, eventModel.overrides);
@@ -113,45 +123,43 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     requestRef.current = request;
     request.open("POST", "/api/reajuste-salarial/gerar");
     request.responseType = "blob";
-    setState({ status: "uploading", progress: 0 });
+    setState({ status: "uploading", progress: 0, pdfKind: kind });
     request.upload.addEventListener("progress", (event) => {
       if (requestRef.current !== request) return;
       if (!event.lengthComputable) return;
       setState({
         status: "uploading",
         progress: Math.min(99, Math.round((event.loaded / event.total) * 100)),
+        pdfKind: kind,
       });
     });
     request.upload.addEventListener("load", () => {
       if (requestRef.current !== request) return;
-      setState({ status: "processing", progress: 100 });
+      setState({ status: "processing", progress: 100, pdfKind: kind });
     });
     request.addEventListener("load", async () => {
       if (requestRef.current !== request) return;
       const blob = request.response as Blob;
       const contentType = request.getResponseHeader("content-type") ?? "";
       if (request.status >= 200 && request.status < 300 && contentType.includes("application/pdf")) {
-        const fileName = downloadName(request.getResponseHeader("content-disposition"));
+        const fileName = downloadName(request.getResponseHeader("content-disposition"), kind);
         downloadBlob(blob, fileName);
         requestRef.current = null;
-        releaseFiles();
-        setState({ status: "success", progress: 100, fileName });
+        setState({ status: "success", progress: 100, fileName, pdfKind: kind });
         return;
       }
       const messages = await responseMessages(blob);
       if (requestRef.current !== request) return;
       requestRef.current = null;
-      releaseFiles();
       setState({ status: "error", progress: 0, messages });
     });
     request.addEventListener("error", () => {
       if (requestRef.current !== request) return;
       requestRef.current = null;
-      releaseFiles();
       setState({
         status: "error",
         progress: 0,
-        messages: ["Falha de conexão. Selecione os arquivos e tente novamente."],
+        messages: ["Falha de conexão. Tente novamente."],
       });
     });
     request.addEventListener("abort", () => {
@@ -184,6 +192,11 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     },
     percentage,
     packerPercentage,
+    salaryScope,
+    setSalaryScope,
+    driverPercentage,
+    setDriverPercentage,
+    calculatorResetVersion,
     removeFile,
     reset,
     setPercentage,

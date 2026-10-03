@@ -1,6 +1,7 @@
 import { SalaryAdjustmentError } from "./errors";
 import { MAX_UNIQUE_EMPLOYEES, PARSER_PROFILE } from "./limits";
-import { calculatePreciseAdjustmentCents } from "./money";
+import { calculateAdjustmentAtHundredThousandths } from "./money";
+import { payrollScopeEligible, payrollScopeExclusionReason } from "./payroll-scope";
 import { DEFAULT_PACKER_PERCENTAGE_TEN_THOUSANDTHS, isHandPacker, payrollExclusionReason } from "./advance-rules";
 import {
   canonicalBranchAlias,
@@ -11,6 +12,7 @@ import type {
   ConsolidatedEmployee,
   ParsedPayrollFile,
   SalaryAdvanceReport,
+  SalaryAdvanceScopeOptions,
 } from "./types";
 
 function normalizeComparableText(value: string) {
@@ -27,7 +29,19 @@ export function consolidateSalaryAdvanceFiles(
   percentageBasisPoints: bigint,
   generatedAt = new Date(),
   packerPercentageTenThousandths = DEFAULT_PACKER_PERCENTAGE_TEN_THOUSANDTHS,
+  scopeOptions: SalaryAdvanceScopeOptions = { salaryScope: "standard" },
 ): SalaryAdvanceReport {
+  const { salaryScope, driverPercentageTenThousandths } = scopeOptions;
+  const percentageHundredThousandths = scopeOptions.percentageHundredThousandths ?? percentageBasisPoints * 1_000n;
+  const packerPercentageHundredThousandths = scopeOptions.packerPercentageHundredThousandths ?? packerPercentageTenThousandths * 10n;
+  const driverPercentageHundredThousandths = scopeOptions.driverPercentageHundredThousandths ?? (driverPercentageTenThousandths === undefined ? undefined : driverPercentageTenThousandths * 10n);
+  if (salaryScope !== "standard" && salaryScope !== "drivers-forklift") throw new SalaryAdjustmentError("REAJUSTE_SCOPE_INVALID", "Apuração sindical inválida.");
+  if (salaryScope === "standard" && [scopeOptions.percentageHundredThousandths, scopeOptions.packerPercentageHundredThousandths].some((rate) => rate !== undefined && (typeof rate !== "bigint" || rate <= 0n || rate > 10_000_000n))) {
+    throw new SalaryAdjustmentError("REAJUSTE_PERCENTAGE_INVALID", "Informe percentuais entre 0,00001% e 100%.");
+  }
+  if (salaryScope === "drivers-forklift" && (typeof driverPercentageHundredThousandths !== "bigint" || driverPercentageHundredThousandths <= 0n || driverPercentageHundredThousandths > 10_000_000n)) {
+    throw new SalaryAdjustmentError("REAJUSTE_PERCENTAGE_INVALID", "Informe o percentual próprio de Motoristas e Operadores de Empilhadeira.");
+  }
   const ordered = [...files].sort(
     (left, right) => left.competency.order - right.competency.order,
   );
@@ -68,8 +82,10 @@ export function consolidateSalaryAdvanceFiles(
       employee.advanceRulesByCompetency?.set(file.competency.key, {
         employmentStatus: row.employmentStatus ?? null,
         role: row.role ?? null,
-        percentageTenThousandths: isHandPacker(row.role) ? packerPercentageTenThousandths : percentageBasisPoints * 100n,
-        exclusionReason: payrollExclusionReason(row.employmentStatus),
+        percentageTenThousandths: (salaryScope === "drivers-forklift" ? driverPercentageHundredThousandths ?? 0n : isHandPacker(row.role) ? packerPercentageHundredThousandths : percentageHundredThousandths) / 10n,
+        percentageHundredThousandths: salaryScope === "drivers-forklift" ? driverPercentageHundredThousandths ?? 0n : isHandPacker(row.role) ? packerPercentageHundredThousandths : percentageHundredThousandths,
+        exclusionReason: payrollExclusionReason(row.employmentStatus) ?? payrollScopeExclusionReason(row.role, salaryScope),
+        scopeEligible: payrollScopeEligible(row.role, salaryScope),
         metadataKnown: Boolean(row.employmentStatus && row.role),
       });
       employees.set(row.registration, { employee, comparableName });
@@ -87,6 +103,7 @@ export function consolidateSalaryAdvanceFiles(
 
   const groups = new Map<string, ConsolidatedEmployee[]>();
   for (const { employee } of employees.values()) {
+    if (!Array.from(employee.advanceRulesByCompetency?.values() ?? []).some((rule) => rule.scopeEligible)) continue;
     let total = 0n;
     for (const competency of competencies) {
       const base = employee.basesByCompetency.get(competency.key) ?? null;
@@ -94,7 +111,7 @@ export function consolidateSalaryAdvanceFiles(
       const adjustment =
         base === null || employee.advanceRulesByCompetency?.get(competency.key)?.exclusionReason
           ? 0n
-          : calculatePreciseAdjustmentCents(base, employee.advanceRulesByCompetency?.get(competency.key)?.percentageTenThousandths ?? percentageBasisPoints * 100n);
+          : calculateAdjustmentAtHundredThousandths(base, employee.advanceRulesByCompetency?.get(competency.key)?.percentageHundredThousandths ?? percentageHundredThousandths);
       employee.adjustmentsByCompetency.set(competency.key, adjustment);
       total += adjustment;
     }
@@ -123,6 +140,8 @@ export function consolidateSalaryAdvanceFiles(
       };
     });
 
+  if (!reportGroups.length) throw new SalaryAdjustmentError("REAJUSTE_SCOPE_EMPTY", "Nenhum colaborador possui cargo correspondente à apuração sindical selecionada nas competências importadas.");
+
   return {
     parserProfile: PARSER_PROFILE,
     generatedAt,
@@ -130,7 +149,12 @@ export function consolidateSalaryAdvanceFiles(
     packerPercentageTenThousandths,
     competencies,
     groups: reportGroups,
-    employeeCount: employees.size,
+    salaryScope,
+    driverPercentageTenThousandths,
+    percentageHundredThousandths,
+    packerPercentageHundredThousandths,
+    driverPercentageHundredThousandths,
+    employeeCount: reportGroups.reduce((sum, group) => sum + group.employeeCount, 0),
     grandTotalCents: reportGroups.reduce(
       (total, group) => total + group.subtotalCents,
       0n,

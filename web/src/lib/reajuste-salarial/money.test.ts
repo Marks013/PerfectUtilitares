@@ -4,9 +4,24 @@ import {
   formatCents,
   parseMoneyCents,
   parsePercentageBasisPoints,
+  parsePercentageHundredThousandths,
+  formatPercentageHundredThousandths,
+  calculateAdjustmentAtHundredThousandths,
 } from "./money";
 
 describe("salary adjustment money", () => {
+  it("uses exact five-decimal percentage units and half-up cents", () => {
+    expect(parsePercentageHundredThousandths("1,23456")).toBe(123456n);
+    expect(parsePercentageHundredThousandths("0.00001")).toBe(1n);
+    expect(parsePercentageHundredThousandths("100,00000")).toBe(10_000_000n);
+    expect(formatPercentageHundredThousandths(226555n)).toBe("2,26555%");
+    expect(calculateAdjustmentAtHundredThousandths(200_000n, 123456n)).toBe(2469n);
+    expect(calculateAdjustmentAtHundredThousandths(1n, 5_000_000n)).toBe(1n);
+    expect(calculateAdjustmentAtHundredThousandths(1n, 4_999_999n)).toBe(0n);
+    expect(calculateAdjustmentAtHundredThousandths(5_000_000n, 1n)).toBe(1n);
+    expect(calculateAdjustmentAtHundredThousandths(4_999_999n, 1n)).toBe(0n);
+    for (const invalid of ["0", "0,00000", "1,234567", "100,00001", "", "1%", "NaN"]) expect(() => parsePercentageHundredThousandths(invalid)).toThrow();
+  });
   it("parses Brazilian money and percentages without floating point math", () => {
     expect(parseMoneyCents("4.560,84")).toBe(456_084n);
     expect(parseMoneyCents(3451.68)).toBe(345_168n);

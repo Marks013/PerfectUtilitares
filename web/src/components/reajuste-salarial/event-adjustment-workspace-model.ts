@@ -11,7 +11,7 @@ export function appendEventSettings(data: FormData, settings: EventSettings, ove
   data.set("historicOverrides", JSON.stringify(overrides.filter(row => row.bonusOldValue.trim() || row.sundayOldValue.trim()).map(row => ({ competencyKey: row.competencyKey, bonusOldValue: row.bonusOldValue.trim() || settings.bonusOldValue.trim(), sundayOldValue: row.sundayOldValue.trim() || settings.sundayOldValue.trim() }))));
 }
 export function validateEventInputs(files: File[], settings: EventSettings, overrides: HistoricOverride[]) {
-  const messages = validateGeneration(files, "1");
+  const messages = validateGeneration(files, "1", "1");
   const fields = [
     ["Valor antigo do bônus", settings.bonusOldValue, true],
     ["Novo valor do bônus", settings.bonusNewValue, false],

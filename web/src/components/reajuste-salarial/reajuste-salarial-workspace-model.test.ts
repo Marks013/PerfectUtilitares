@@ -8,7 +8,7 @@ describe("salary adjustment workspace model", () => {
   it("recognizes competence and validates the form", () => {
     const file = new File(["xlsx"], "06-2026.xlsx");
     expect(competencyFromFileName(file.name)).toBe("06-2026");
-    expect(validateGeneration([file], "4,42")).toEqual([]);
+    expect(validateGeneration([file], "4,42", "2,26550")).toEqual([]);
   });
 
   it("rejects legacy xls and duplicate competencies", () => {
@@ -23,14 +23,14 @@ describe("salary adjustment workspace model", () => {
     );
   });
 
-  it("validates the specific percentage without losing four decimal places", () => {
+  it("validates the specific percentage without losing five decimal places", () => {
     const file = new File(["xlsx"], "06-2026.xlsx");
-    for (const percentage of ["2,2655", "2.2655", "0,0001", "100"]) {
+    for (const percentage of ["2,2655", "2.2655", "2,26555", "0,00001", "100"]) {
       expect(validateGeneration([file], "1,08", percentage)).toEqual([]);
     }
-    for (const percentage of ["", "0", "-1", "2,26555", "100,0001", "1e2"]) {
+    for (const percentage of ["", "0", "-1", "2,265555", "100,0001", "1e2"]) {
       expect(validateGeneration([file], "1,08", percentage)).toContain(
-        "Informe o percentual para Embalador a mão entre 0,0001 e 100, com até quatro casas.",
+        "Informe o percentual para Embalador a mão entre 0,00001 e 100, com até cinco casas.",
       );
     }
   });

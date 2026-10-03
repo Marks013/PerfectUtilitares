@@ -1,8 +1,8 @@
 import type PDFKit from "pdfkit";
-import { formatCents, formatPercentage, formatPercentageTenThousandths } from "./money";
+import { formatCents, formatPercentageHundredThousandths } from "./money";
+import { salaryAdvanceScopeLabel, salaryAdvancePercentageLabel } from "./pdf-scope-display";
 import {
   allocateReportColumns,
-  employeeRowHeight,
   hasVerticalSpace,
   type ReportColumn,
 } from "./pdf-layout";
@@ -45,7 +45,6 @@ function drawClippedText(
       height: Math.max(1, height - padding * 2),
       align: options.align ?? "left",
       lineBreak: true,
-      ellipsis: true,
     });
   doc.restore();
 }
@@ -91,12 +90,13 @@ function drawPageHeader(
       .font("Helvetica")
       .fontSize(7.5)
       .text(
-        `${competenciesLabel(report)} | Geral ${formatPercentage(report.percentageBasisPoints)} | Embalador ${formatPercentageTenThousandths(report.packerPercentageTenThousandths ?? 22655n)}`,
+        `${competenciesLabel(report)} | ${salaryAdvancePercentageLabel(report)}`,
         left + 290,
         doc.page.margins.top + 2,
         { width: width - 290, align: "right" },
       );
-    return doc.page.margins.top + 24;
+    doc.font("Helvetica").fontSize(7.5).text(salaryAdvanceScopeLabel(report), left, doc.page.margins.top + 20, { width });
+    return doc.page.margins.top + 38;
   }
 
   const top = doc.page.margins.top;
@@ -112,7 +112,7 @@ function drawPageHeader(
     .fontSize(8)
     .fillColor("#dbe7e2")
     .text(
-      `Competências: ${competenciesLabel(report)} | Geral: ${formatPercentage(report.percentageBasisPoints)}`,
+      `Competências: ${competenciesLabel(report)} | ${salaryAdvancePercentageLabel(report)}`,
       left + 20,
       top + 38,
       { width: 500 },
@@ -144,12 +144,20 @@ function drawPageHeader(
     .fontSize(7)
     .text(`Gerado em ${generated}`, left, top + 68, { width });
   doc.text(
-    `Embalador a mão: ${formatPercentageTenThousandths(report.packerPercentageTenThousandths ?? 22655n)}. Bloqueio por competência: Lic. s/ Remuneração, Demitido, Aposent. Invalidez e Detenção.`,
+    salaryAdvanceScopeLabel(report),
     left,
     top + 81,
     { width },
   );
-  return top + 104;
+  doc.text("Bloqueio por competência: Lic. s/ Remuneração, Demitido, Aposent. Invalidez e Detenção.", left, top + 94, { width });
+  return top + 117;
+}
+
+function branchBandHeight(doc: PDFKit.PDFDocument, group: BranchReportGroup, continuation: boolean) {
+  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  doc.font("Helvetica-Bold").fontSize(8);
+  const label = `${group.branchAlias.replace(/\s+/g, " ")}${continuation ? " (continuação)" : ""}`;
+  return Math.max(BRANCH_HEIGHT, Math.ceil(doc.heightOfString(label, { width: width - 250 })) + 14);
 }
 
 function drawBranchBand(
@@ -160,15 +168,16 @@ function drawBranchBand(
 ) {
   const left = doc.page.margins.left;
   const width = doc.page.width - left - doc.page.margins.right;
-  doc.rect(left, y, width, BRANCH_HEIGHT).fillAndStroke(COLORS.branch, COLORS.border);
+  const label = `${group.branchAlias.replace(/\s+/g, " ")}${continuation ? " (continuação)" : ""}`;
+  doc.font("Helvetica-Bold").fontSize(8);
+  const bandHeight = branchBandHeight(doc, group, continuation);
+  doc.rect(left, y, width, bandHeight).fillAndStroke(COLORS.branch, COLORS.border);
   doc
     .fillColor(COLORS.brand)
     .font("Helvetica-Bold")
     .fontSize(8)
-    .text(`${group.branchAlias.replace(/\s+/g, " ")}${continuation ? " (continuação)" : ""}`, left + 6, y + 7, {
+    .text(label, left + 6, y + 7, {
       width: width - 250,
-      height: BRANCH_HEIGHT - 10,
-      ellipsis: true,
     });
   doc
     .fontSize(7)
@@ -178,7 +187,7 @@ function drawBranchBand(
       y + 7,
       { width: 234, align: "right" },
     );
-  return y + BRANCH_HEIGHT;
+  return y + bandHeight;
 }
 
 function employeeCellValue(
@@ -197,7 +206,7 @@ function employeeCellValue(
   const rule = employee.advanceRulesByCompetency?.get(key);
   const amount = formatCents(employee.adjustmentsByCompetency.get(key) ?? 0n);
   if (rule?.exclusionReason) return `${amount}\nBloqueado`;
-  return rule ? `${amount}\n${formatPercentageTenThousandths(rule.percentageTenThousandths)}` : amount;
+  return rule ? `${amount}\n${formatPercentageHundredThousandths(rule.percentageHundredThousandths ?? rule.percentageTenThousandths * 10n)}` : amount;
 }
 
 function getEmployeeRowHeight(
@@ -217,11 +226,12 @@ function getEmployeeRowHeight(
       }),
     ),
   );
-  return employeeRowHeight(height);
+  return Math.max(18, Math.ceil(height + 6));
 }
 
 function employeeRuleNotes(employee: ConsolidatedEmployee) {
   return Array.from(employee.advanceRulesByCompetency ?? []).flatMap(([key, rule]) => {
+    if (rule.scopeEligible === false) return [`${key}: bloqueado por cargo: ${rule.exclusionReason}`];
     if (rule.exclusionReason) return [`${key}: bloqueado por situação ${rule.employmentStatus ?? rule.exclusionReason}`];
     if (!rule.metadataKnown) return [`${key}: situação ou cargo não informados na base; confira a elegibilidade e o percentual aplicado`];
     return [];
@@ -251,7 +261,7 @@ function drawEmployeeRow(
   return y + height;
 }
 
-function drawFooters(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport) {
+export function drawSalaryAdvanceFooters(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport) {
   const range = doc.bufferedPageRange();
   for (let pageIndex = range.start; pageIndex < range.start + range.count; pageIndex += 1) {
     doc.switchToPage(pageIndex);
@@ -291,7 +301,7 @@ export function drawSalaryAdvanceReport(
 
   for (const group of report.groups) {
     const firstHeight = getEmployeeRowHeight(doc, columns, group.employees[0]);
-    if (!hasVerticalSpace(y, BRANCH_HEIGHT + firstHeight, contentBottom)) {
+    if (!hasVerticalSpace(y, branchBandHeight(doc, group, false) + firstHeight, contentBottom)) {
       doc.addPage();
       y = drawTableHeader(doc, columns, drawPageHeader(doc, report, false));
     }
@@ -318,5 +328,5 @@ export function drawSalaryAdvanceReport(
     }
   }
 
-  if (includeFooter) drawFooters(doc, report);
+  if (includeFooter) drawSalaryAdvanceFooters(doc, report);
 }

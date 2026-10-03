@@ -55,7 +55,7 @@ const render = AdvanceWorkspace;
 beforeEach(() => { runtime.reset(); vi.clearAllMocks(); fetchMock.mockReset(); vi.stubGlobal("fetch", fetchMock); vi.stubGlobal("XMLHttpRequest", FakeRequest); });
 afterEach(() => vi.unstubAllGlobals());
 function configure() {
-  render().mergeIncoming([file]); render().setPercentage("5"); render().setIncludeEvents(true);
+  render().mergeIncoming([file]); render().setPercentage("5"); render().setPackerPercentage("2,26550"); render().setIncludeEvents(true);
   render().eventModel.updateSetting("bonusNewValue", "90,00");
 }
 async function analyze() { fetchMock.mockResolvedValueOnce(Response.json({ report })); await render().eventModel.analyze(); }
@@ -64,18 +64,20 @@ describe("optional salary advance events", () => {
   it("disables PDF generation for an invalid role percentage while retaining a valid event preview", async () => {
     configure(); await analyze();
     expect(render().canGenerate).toBe(true);
-    render().setPackerPercentage("2.26555");
+    render().setPackerPercentage("2.265555");
     expect(render().canGenerate).toBe(false);
     expect(render().eventModel.report).toEqual(report);
     render().setPackerPercentage("3,1234");
     expect(render().canGenerate).toBe(true);
   });
   it("sends the role percentage while optional events are off", () => {
-    render().mergeIncoming([file]); render().setPercentage("5");
+    render().mergeIncoming([file]); render().setPercentage("5"); render().setPackerPercentage("2,26550");
     expect(render().includeEvents).toBe(false);
     render().generate();
-    expect([...FakeRequest.latest.data.keys()]).toEqual(["files", "percentage", "packerPercentage"]);
-    expect(FakeRequest.latest.data.get("packerPercentage")).toBe("2.2655");
+    expect([...FakeRequest.latest.data.keys()]).toEqual(["files", "percentage", "packerPercentage", "reportType", "salaryScope"]);
+    expect(FakeRequest.latest.data.get("salaryScope")).toBe("standard");
+    expect(FakeRequest.latest.data.get("reportType")).toBe("detailed");
+    expect(FakeRequest.latest.data.get("packerPercentage")).toBe("2,26550");
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("requires a current event preview and sends settings with the same files once", async () => {
@@ -90,7 +92,7 @@ describe("optional salary advance events", () => {
     expect(data.get("includeEvents")).toBe("true");
     expect(data.getAll("files")).toHaveLength(1);
     expect(data.get("bonusNewValue")).toBe("90,00");
-    expect(data.get("packerPercentage")).toBe("2.2655");
+    expect(data.get("packerPercentage")).toBe("2,26550");
     expect(JSON.parse(data.get("historicOverrides") as string)).toEqual([{ competencyKey: "06-2026", bonusOldValue: "80,00", sundayOldValue: "75,00" }]);
   });
   it("aborts pending event analysis when external bases change and ignores its late result", async () => {
@@ -128,27 +130,83 @@ describe("optional salary advance events", () => {
     expect(render().eventModel.report).toEqual(report);
   });
   it("aborts a pending PDF when the role percentage changes and rejects its late download", () => {
-    render().mergeIncoming([file]); render().setPercentage("1,08"); render().generate();
+    render().mergeIncoming([file]); render().setPercentage("1,08"); render().setPackerPercentage("2,26550"); render().generate();
     const request = FakeRequest.latest;
     render().setPackerPercentage("3,1234"); render(); request.dispatchEvent(new Event("load"));
     expect(request.abort).toHaveBeenCalledOnce(); expect(downloadBlob).not.toHaveBeenCalled();
     render().generate(); expect(FakeRequest.latest.data.get("packerPercentage")).toBe("3,1234");
   });
   it("requires a valid role percentage even when optional events are off", () => {
-    render().mergeIncoming([file]); render().setPercentage("1,08"); render().setPackerPercentage("2,26555");
+    render().mergeIncoming([file]); render().setPercentage("1,08"); render().setPackerPercentage("2,26550"); render().setPackerPercentage("2,265555");
     expect(render().canGenerate).toBe(false);
     render().generate();
-    expect(render().state).toMatchObject({ status: "error", messages: ["Informe o percentual para Embalador a mão entre 0,0001 e 100, com até quatro casas."] });
+    expect(render().state).toMatchObject({ status: "error", messages: ["Informe o percentual para Embalador a mão entre 0,00001 e 100, com até cinco casas."] });
   });
   it("clears the optional configuration and rejects late downloads after reset", async () => {
     configure(); await analyze(); render().generate(); const request = FakeRequest.latest;
     render().reset(); render(); request.dispatchEvent(new Event("load"));
     expect(downloadBlob).not.toHaveBeenCalled();
-    expect(render()).toMatchObject({ files: [], percentage: "", packerPercentage: "2.2655", includeEvents: false, state: { status: "idle" }, eventModel: { report: null, overrides: [], settings: { bonusNewValue: "" } } });
+    expect(render()).toMatchObject({ files: [], percentage: "", packerPercentage: "", includeEvents: false, state: { status: "idle" }, eventModel: { report: null, overrides: [], settings: { bonusNewValue: "" } } });
   });
-  it("releases shared files and invalidates the preview after a successful combined PDF", async () => {
-    configure(); await analyze(); render().generate(); FakeRequest.latest.dispatchEvent(new Event("load"));
-    expect(downloadBlob).toHaveBeenCalledOnce();
-    expect(render().files).toEqual([]); expect(render().eventModel.report).toBeNull();
+  it("generates both reports from the same selection and current preview without reimporting", async () => {
+    configure(); await analyze(); render().generate("summary");
+    expect(FakeRequest.latest.data.get("reportType")).toBe("summary");
+    FakeRequest.latest.dispatchEvent(new Event("load"));
+    expect(downloadBlob).toHaveBeenLastCalledWith(expect.any(Blob), "antecipacao-salarial-resumo-consolidado.pdf");
+    expect(render().files).toEqual([file]); expect(render().eventModel.report).toEqual(report);
+    expect(render().canGenerate).toBe(true);
+    render().generate("detailed");
+    expect(FakeRequest.latest.data.get("reportType")).toBe("detailed");
+    expect(FakeRequest.latest.data.getAll("files")).toEqual([file]);
+    FakeRequest.latest.dispatchEvent(new Event("load"));
+    expect(downloadBlob).toHaveBeenCalledTimes(2);
+    expect(downloadBlob).toHaveBeenLastCalledWith(expect.any(Blob), "antecipacao-salarial-detalhado.pdf");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+  it("retains files and preview for retry after a connection failure", async () => {
+    configure(); await analyze(); render().generate("summary");
+    FakeRequest.latest.dispatchEvent(new Event("error"));
+    expect(render().state.status).toBe("error");
+    expect(render().files).toEqual([file]); expect(render().eventModel.report).toEqual(report);
+    expect(render().canGenerate).toBe(true);
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+  it("requires the exclusive union rate and sends the same scope for analysis and PDF", async () => {
+    render().mergeIncoming([file]); render().setSalaryScope("drivers-forklift");
+    expect(render().canGenerate).toBe(false);
+    render().setPercentage("invalid-unused"); render().setPackerPercentage("invalid-unused");
+    render().setDriverPercentage("1,2345");
+    expect(render().canGenerate).toBe(true);
+    render().setIncludeEvents(true); render().eventModel.updateSetting("bonusNewValue", "90,00");
+    await analyze();
+    const analysisBody = fetchMock.mock.calls[0][1]?.body;
+    expect(analysisBody).toBeInstanceOf(FormData);
+    expect((analysisBody as FormData).get("salaryScope")).toBe("drivers-forklift");
+    render().generate("summary");
+    expect(FakeRequest.latest.data.get("salaryScope")).toBe("drivers-forklift");
+    expect(FakeRequest.latest.data.get("driverPercentage")).toBe("1,2345");
+    render().reset();
+    expect(render()).toMatchObject({ salaryScope: "standard", driverPercentage: "", files: [] });
+  });
+  it("invalidates previews and cancels stale downloads when the union selection changes", async () => {
+    configure(); await analyze(); render().generate("summary"); const request = FakeRequest.latest;
+    render().setSalaryScope("drivers-forklift"); render(); request.dispatchEvent(new Event("load"));
+    expect(request.abort).toHaveBeenCalledOnce(); expect(downloadBlob).not.toHaveBeenCalled();
+    expect(render().eventModel.report).toBeNull(); expect(render().files).toEqual([file]);
+    expect(render().canGenerate).toBe(false);
+    render().setDriverPercentage("1,2345"); await analyze();
+    expect(render().canGenerate).toBe(true);
+    render().generate("detailed"); const current = FakeRequest.latest;
+    render().setDriverPercentage("2,3456"); render(); current.dispatchEvent(new Event("load"));
+    expect(current.abort).toHaveBeenCalledOnce(); expect(downloadBlob).not.toHaveBeenCalled();
+    expect(render().eventModel.report).toEqual(report);
+  });
+  it("cancels event analysis when the union scope changes and rejects its late result", async () => {
+    configure(); let resolve!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const pending = render().eventModel.analyze(); const signal = fetchMock.mock.calls[0][1]?.signal;
+    render().setSalaryScope("drivers-forklift"); render();
+    resolve(Response.json({ report })); await pending;
+    expect(signal?.aborted).toBe(true); expect(render().eventModel.report).toBeNull();
   });
 });

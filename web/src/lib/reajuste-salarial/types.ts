@@ -1,3 +1,13 @@
+export type SalaryAdvancePdfKind = "summary" | "detailed";
+export type SalaryAdvanceScope = "standard" | "drivers-forklift";
+export type SalaryAdvanceScopeOptions = {
+  salaryScope: SalaryAdvanceScope;
+  driverPercentageTenThousandths?: bigint;
+  percentageHundredThousandths?: bigint;
+  packerPercentageHundredThousandths?: bigint;
+  driverPercentageHundredThousandths?: bigint;
+};
+
 export type Competency = {
   key: `${string}-${string}`;
   month: number;
@@ -22,8 +32,10 @@ type AdvanceCompetencyRule = {
   employmentStatus: string | null;
   role: string | null;
   percentageTenThousandths: bigint;
+  percentageHundredThousandths?: bigint;
   exclusionReason: string | null;
   metadataKnown: boolean;
+  scopeEligible?: boolean;
 };
 
 export type ParsedPayrollFile = {
@@ -55,6 +67,11 @@ export type SalaryAdvanceReport = {
   generatedAt: Date;
   percentageBasisPoints: bigint;
   packerPercentageTenThousandths?: bigint;
+  salaryScope?: SalaryAdvanceScope;
+  driverPercentageTenThousandths?: bigint;
+  percentageHundredThousandths?: bigint;
+  packerPercentageHundredThousandths?: bigint;
+  driverPercentageHundredThousandths?: bigint;
   competencies: Competency[];
   groups: BranchReportGroup[];
   employeeCount: number;

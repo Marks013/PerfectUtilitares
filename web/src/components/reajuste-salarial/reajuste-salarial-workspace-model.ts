@@ -6,13 +6,14 @@ import {
   MAX_TOTAL_FILE_BYTES,
   MIN_FILES,
 } from "@/lib/reajuste-salarial/limits";
-import { parsePercentageBasisPoints, parsePercentageTenThousandths } from "@/lib/reajuste-salarial/money";
+import { formatPercentageHundredThousandths, parsePercentageHundredThousandths } from "@/lib/reajuste-salarial/money";
+import type { SalaryAdvancePdfKind, SalaryAdvanceScope } from "@/lib/reajuste-salarial/types";
 
 export type GenerationState =
   | { status: "idle"; progress: 0 }
-  | { status: "uploading"; progress: number }
-  | { status: "processing"; progress: 100 }
-  | { status: "success"; progress: 100; fileName: string }
+  | { status: "uploading"; progress: number; pdfKind: SalaryAdvancePdfKind }
+  | { status: "processing"; progress: 100; pdfKind: SalaryAdvancePdfKind }
+  | { status: "success"; progress: 100; fileName: string; pdfKind: SalaryAdvancePdfKind }
   | { status: "error"; progress: 0; messages: string[] };
 
 export function fileKey(file: File) {
@@ -25,7 +26,12 @@ export function competencyFromFileName(fileName: string) {
     : null;
 }
 
-export function validateGeneration(files: File[], percentage: string, packerPercentage = "2.2655") {
+export function normalizePercentageInput(value: string): string {
+  try { return formatPercentageHundredThousandths(parsePercentageHundredThousandths(value)).replace("%", ""); }
+  catch { return value.replaceAll(".", ","); }
+}
+
+export function validateGeneration(files: File[], percentage: string, packerPercentage = "", salaryScope: SalaryAdvanceScope = "standard", driverPercentage = "") {
   const messages: string[] = [];
   if (files.length < MIN_FILES || files.length > MAX_FILES) {
     messages.push(`Selecione de ${MIN_FILES} a ${MAX_FILES} arquivos .xlsx.`);
@@ -47,15 +53,20 @@ export function validateGeneration(files: File[], percentage: string, packerPerc
   if (files.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_FILE_BYTES) {
     messages.push("O conjunto de arquivos deve ter no máximo 20 MB.");
   }
-  try {
-    parsePercentageBasisPoints(percentage);
-  } catch {
-    messages.push("Informe um percentual entre 0,01 e 100,00, com até duas casas.");
+  if (salaryScope === "drivers-forklift") {
+    try { parsePercentageHundredThousandths(driverPercentage); }
+    catch { messages.push("Informe o percentual para Motoristas e Operador de Empilhadeira entre 0,00001 e 100, com até cinco casas."); }
+    return messages;
   }
   try {
-    parsePercentageTenThousandths(packerPercentage);
+    parsePercentageHundredThousandths(percentage);
   } catch {
-    messages.push("Informe o percentual para Embalador a mão entre 0,0001 e 100, com até quatro casas.");
+    messages.push("Informe um percentual entre 0,00001 e 100, com até cinco casas.");
+  }
+  try {
+    parsePercentageHundredThousandths(packerPercentage);
+  } catch {
+    messages.push("Informe o percentual para Embalador a mão entre 0,00001 e 100, com até cinco casas.");
   }
   return messages;
 }

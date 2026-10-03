@@ -33,7 +33,7 @@ async function respectRateLimit(page: Page, response: Response) {
   await expect(page.getByRole("alert").filter({ hasText: body.error.message })).toBeVisible();
   await page.waitForTimeout(seconds * 1000);
 }
-async function analyze(page: Page) {
+async function analyze(page: Page, expand = true) {
   const pending = page.waitForResponse(response => response.url().endsWith("/eventos/analisar"));
   await page.getByRole("button", { name: "Apurar eventos", exact: true }).click();
   let response = await pending;
@@ -45,32 +45,35 @@ async function analyze(page: Page) {
   }
   expect(response.status()).toBe(200);
   const { report } = await response.json();
-  await expect(page.getByRole("heading", { name: "Conferência por colaborador e competência" })).toBeVisible();
+  const summary = page.locator("summary").filter({ hasText: "Conferência por colaborador e competência" });
+  await expect(summary).toBeVisible();
+  if (expand && await summary.locator("..").getAttribute("open") === null) await summary.click();
   return report;
 }
 async function configure(page: Page) {
   await page.getByLabel("Novo valor do bônus (R$)", { exact: true }).fill("90,00");
   await page.getByLabel("Novo valor por domingo (R$)", { exact: true }).fill("90,00");
 }
-async function pdf(page: Page) {
+async function pdf(page: Page, kind: "summary" | "detailed" = "detailed") {
+  const button = kind === "summary" ? "Resumo Consolidado" : "Detalhado";
   const pending = page.waitForEvent("download", { timeout: 120_000 });
   void pending.catch(() => undefined);
   // Large real payroll PDFs may exceed the default interaction timeout.
   const responsePending = page.waitForResponse(response => response.url().endsWith("/api/reajuste-salarial/gerar"), { timeout: 120_000 });
-  await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
+  await page.getByRole("button", { name: button, exact: true }).click();
   let response = await responsePending;
   if (response.status() === 429) {
     await respectRateLimit(page, response);
     const retry = page.waitForResponse(response => response.url().endsWith("/api/reajuste-salarial/gerar"), { timeout: 120_000 });
-    await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
+    await page.getByRole("button", { name: button, exact: true }).click();
     response = await retry;
   }
   expect(response.status()).toBe(200);
   const download = await pending; expect(await download.failure()).toBeNull();
   expect(download.suggestedFilename()).toMatch(/\.pdf$/i);
   const document = await PDFDocument.load(await readFile((await download.path())!));
-  expect(document.getPageCount()).toBeGreaterThanOrEqual(4);
-  expect(document.getTitle()).toBe("Antecipação Salarial com diferenças de bônus e domingos");
+  expect(document.getPageCount()).toBeGreaterThanOrEqual(1);
+  expect(document.getTitle()).toBe(kind === "summary" ? "Antecipação Salarial — Resumo Consolidado" : "Antecipação Salarial — Apuração Detalhada");
   await expect(page.getByText(/PDF gerado\. Download iniciado:/)).toBeVisible();
 }
 
@@ -93,6 +96,7 @@ test.beforeEach(async ({ page }) => {
   await expect(includeEvents).not.toBeChecked();
   await includeEvents.check();
   await page.locator("#salary-adjustment-percentage").fill("5,00");
+  await page.getByLabel("Percentual para Embalador a mão (%)", { exact: true }).fill("2,26550");
 });
 
 test("synthetic monthly events distinguish absence, apportion exact quantities and download PDF", async ({ page }) => {
@@ -101,7 +105,12 @@ test("synthetic monthly events distinguish absence, apportion exact quantities a
     syntheticFile(7, employee("1", "ANA FICTICIA", "80,00", "85,00")),
     syntheticFile(8, [...employee("1", "ANA FICTICIA", "80,00", "255,00"), ...employee("2", "BIA FICTICIA", "80,00", null)]),
   ]);
-  await configure(page); const report = await analyze(page);
+  await configure(page); const report = await analyze(page, false);
+  const conference = page.locator("details").filter({ has: page.locator("summary").filter({ hasText: "Conferência por colaborador e competência" }) });
+  await expect(conference).not.toHaveAttribute("open");
+  await expect(page.getByLabel("Buscar colaborador", { exact: true })).not.toBeVisible();
+  await conference.locator("summary").first().focus(); await page.keyboard.press("Enter");
+  await expect(conference).toHaveAttribute("open", "");
   expect(report).toMatchObject({ employeeCount: 2, issueCount: 0, bonusTotalCents: "4000", sundayTotalCents: "3000", grandTotalCents: "7000" });
   expect(report.employees.find((item: { registration: string }) => item.registration === "1").months.map((month: { indemnity901: { quantity: number } }) => month.indemnity901.quantity)).toEqual([2, 1, 3]);
   const bia = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "BIA FICTICIA", exact: true }) });
@@ -112,14 +121,18 @@ test("synthetic monthly events distinguish absence, apportion exact quantities a
   await expect(page.getByText("Nenhum colaborador corresponde aos filtros.")).toBeVisible();
   await page.getByRole("combobox", { name: "Competência", exact: true }).selectOption("");
   await page.getByRole("combobox", { name: "Situação do evento", exact: true }).selectOption("all");
-  await pdf(page);
+  await pdf(page, "summary");
+  await expect(page.getByRole("button", { name: /^Remover \d\d-2026\.xlsx$/ })).toHaveCount(3);
+  await pdf(page, "detailed");
+  await conference.locator("summary").first().click();
+  await expect(page.getByLabel("Buscar colaborador", { exact: true })).not.toBeVisible();
   await page.getByRole("button", { name: "Limpar", exact: true }).click();
   await expect(page.getByRole("checkbox", { name: "Incluir diferenças de bônus e domingos", exact: true })).not.toBeChecked();
   await page.getByRole("checkbox", { name: "Incluir diferenças de bônus e domingos", exact: true }).check();
   await expect(page.getByLabel("Novo valor do bônus (R$)", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("Valor antigo por domingo (R$)", { exact: true })).toHaveValue("85,00");
   await expect(page.getByRole("article")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Detalhado", exact: true })).toBeDisabled();
   await expect(page.getByText("06-2026.xlsx", { exact: true })).toHaveCount(0);
 });
 
@@ -129,13 +142,13 @@ test("historical competency overrides resolve nonintegral Sunday quantities and 
   await page.getByLabel("Valor antigo por domingo (R$)", { exact: true }).fill("90,00");
   const report = await analyze(page); expect(report.issueCount).toBeGreaterThan(0);
   expect(report.employees[0].months[0].indemnity901.quantity).toBeNull();
-  await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Detalhado", exact: true })).toBeDisabled();
   await page.getByText("Valores antigos por competência", { exact: true }).click();
   await page.getByLabel("Domingo antigo de 06-2026", { exact: true }).fill("85,00");
-  await expect(page.getByRole("heading", { name: "Conferência por colaborador e competência" })).toHaveCount(0);
+  await expect(page.locator("summary").filter({ hasText: "Conferência por colaborador e competência" })).toHaveCount(0);
   const corrected = await analyze(page);
   expect(corrected).toMatchObject({ issueCount: 0, bonusTotalCents: "1000", sundayTotalCents: "1000", grandTotalCents: "2000" });
-  await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Detalhado", exact: true })).toBeEnabled();
   await page.getByLabel("Novo valor por domingo (R$)", { exact: true }).fill("80,00");
   const lower = await analyze(page); expect(lower.sundayTotalCents).toBe("0");
 });
@@ -153,7 +166,7 @@ test("synthetic preview paginates and remains inside mobile and desktop viewport
   for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Detalhado", exact: true })).toBeVisible();
   }
 });
 
@@ -223,7 +236,7 @@ test("review regressions preserve four bases, show monthly subtotals and cancel 
     pdfStarted(); await heldPdf;
     await route.fulfill({ contentType: "application/pdf", body: Buffer.from("%PDF-1.7\nSTALE TEST") }).catch(() => undefined);
   });
-  await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
+  await page.getByRole("button", { name: "Detalhado", exact: true }).click();
   await startedPdf;
   await page.getByRole("button", { name: "Limpar", exact: true }).click();
   releasePdf();
@@ -241,7 +254,7 @@ test.describe("original private payroll", () => {
       const name = `0${month}-2026.xlsx`; return { name, mimeType, buffer: await readFile(path.join(directory!, name)) };
     })));
     await configure(page); const report = await analyze(page);
-    expect(report).toMatchObject({ issueCount: 0, bonusTotalCents: "1908000", sundayTotalCents: "937000", grandTotalCents: "2845000" });
+    expect(report).toMatchObject({ issueCount: 0, bonusTotalCents: "1908000", sundayTotalCents: "930500", grandTotalCents: "2838500" });
     await pdf(page);
   });
 });

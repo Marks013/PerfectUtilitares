@@ -1,8 +1,9 @@
 import { SalaryAdjustmentError } from "./errors";
 import { payrollExclusionReason } from "./advance-rules";
+import { payrollScopeEligible, payrollScopeExclusionReason } from "./payroll-scope";
 import { parseCompetencyFileName, sortAndValidateCompetencies } from "./competency";
 import { MAX_UNIQUE_EMPLOYEES, MAX_EVENT_IDENTITY_LENGTH } from "./limits";
-import type { Competency } from "./types";
+import type { Competency, SalaryAdvanceScope } from "./types";
 import type { EventAdjustmentSettings, EventAdjustmentResult, EventAdjustmentReport, ParsedSalaryEvent, ParsedSalaryEventFile } from "./event-adjustment-types";
 
 function invalid(message: string): never {
@@ -79,7 +80,8 @@ function suggestions(files: ParsedSalaryEventFile[]): EventAdjustmentReport["sug
   };
 }
 
-export function buildEventAdjustmentReport(files: ParsedSalaryEventFile[], settings: EventAdjustmentSettings, generatedAt = new Date()): EventAdjustmentReport {
+export function buildEventAdjustmentReport(files: ParsedSalaryEventFile[], settings: EventAdjustmentSettings, generatedAt = new Date(), salaryScope: SalaryAdvanceScope = "standard"): EventAdjustmentReport {
+  if (salaryScope !== "standard" && salaryScope !== "drivers-forklift") throw new SalaryAdjustmentError("REAJUSTE_SCOPE_INVALID", "Apuração sindical inválida.");
   if (!files.length) invalid("Envie pelo menos uma folha mensal.");
   if (!settings || typeof settings !== "object") invalid("A configuração dos eventos é inválida.");
   const competencies = sortAndValidateCompetencies(files.map((file) => file.competency));
@@ -130,11 +132,13 @@ export function buildEventAdjustmentReport(files: ParsedSalaryEventFile[], setti
     }
   }
   let issueCount = 0;
-  const reportEmployees = [...employees.values()].map((employee) => {
+  const scopedEmployees = [...employees.values()].filter((employee) => [...employee.entries.values()].some((entry) => payrollScopeEligible(entry.role, salaryScope)));
+  if (!scopedEmployees.length) throw new SalaryAdjustmentError("REAJUSTE_SCOPE_EMPTY", "Nenhum colaborador possui cargo correspondente à apuração sindical selecionada nas competências importadas.");
+  const reportEmployees = scopedEmployees.map((employee) => {
     const months = competencies.map((competency) => {
       const entry = employee.entries.get(competency.key);
       const old = overrides.get(competency.key);
-      const exclusionReason = payrollExclusionReason(entry?.employmentStatus);
+      const exclusionReason = entry ? payrollExclusionReason(entry.employmentStatus) ?? payrollScopeExclusionReason(entry.role, salaryScope) : null;
       const eligibleResult = (value: EventAdjustmentResult): EventAdjustmentResult => exclusionReason
         ? { ...value, differenceCents: "0", issue: null, exclusionReason }
         : value;
@@ -149,5 +153,6 @@ export function buildEventAdjustmentReport(files: ParsedSalaryEventFile[], setti
   }).sort((a, b) => a.branchAlias.localeCompare(b.branchAlias, "pt-BR") || a.employeeName.localeCompare(b.employeeName, "pt-BR") || a.registration.localeCompare(b.registration, "pt-BR", { numeric: true }));
   const bonus = reportEmployees.reduce((sum, employee) => sum + BigInt(employee.bonusDifferenceCents), 0n);
   const sunday = reportEmployees.reduce((sum, employee) => sum + BigInt(employee.sundayDifferenceCents), 0n);
-  return { settings: { ...settings, historicOverrides: settings.historicOverrides.map((override) => ({ ...override })) }, competencies, employees: reportEmployees, employeeCount: reportEmployees.length, branchCount: new Set(reportEmployees.map(({ branchAlias }) => branchAlias)).size, bonusTotalCents: bonus.toString(), sundayTotalCents: sunday.toString(), grandTotalCents: (bonus + sunday).toString(), generatedAt: generatedAt.toISOString(), issueCount, suggestions: suggestions(files) };
+  const scopedFiles = files.map((file) => ({ ...file, rows: file.rows.filter((row) => payrollScopeEligible(row.role, salaryScope)) }));
+  return { settings: { ...settings, historicOverrides: settings.historicOverrides.map((override) => ({ ...override })) }, competencies, employees: reportEmployees, employeeCount: reportEmployees.length, branchCount: new Set(reportEmployees.map(({ branchAlias }) => branchAlias)).size, bonusTotalCents: bonus.toString(), sundayTotalCents: sunday.toString(), grandTotalCents: (bonus + sunday).toString(), generatedAt: generatedAt.toISOString(), issueCount, suggestions: suggestions(scopedFiles) };
 }
