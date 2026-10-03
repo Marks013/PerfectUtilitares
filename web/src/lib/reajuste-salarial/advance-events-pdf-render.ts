@@ -6,10 +6,24 @@ import { formatCents, formatPercentageHundredThousandths } from "./money";
 import { salaryAdvanceScopeLabel, salaryAdvancePercentageLabel } from "./pdf-scope-display";
 
 type Summary = ReturnType<typeof buildSalaryAdvanceSummary>;
+type Cell = { value: string; span?: number };
 const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+const amount = (value: bigint) => formatCents(value).replace(/^R\$\s*/, "");
+const LINE_HEIGHT = 9;
+const PADDING = 3;
+const MIN_HEIGHT = 15;
 
-/** Fixed readable font, explicit wrapping and page continuation; no ellipsis or clipped identities. */
-function table(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport, title: string, labels: string[], weights: number[]) {
+function settingsLines(events?: EventAdjustmentReport) {
+  if (!events) return [];
+  const unit = (old: string, next: string | null) => `${formatCents(BigInt(old))} para ${next === null ? "não configurado" : formatCents(BigInt(next))}`;
+  return [
+    `Valores unitários — Bônus 565: ${unit(events.settings.bonusOldValueCents, events.settings.bonusNewValueCents)} | Domingos 901: ${unit(events.settings.sundayOldValueCents, events.settings.sundayNewValueCents)}`,
+    ...events.settings.historicOverrides.map(item => `Histórico ${item.competencyKey.replace("-", "/")} — Bônus 565: ${unit(item.bonusOldValueCents, events.settings.bonusNewValueCents)} | Domingos 901: ${unit(item.sundayOldValueCents, events.settings.sundayNewValueCents)}`),
+  ];
+}
+
+/** Fixed body type; measure before paging so ordinary rows and employee blocks stay intact. */
+function table(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport, title: string, labels: string[], weights: number[], configuration: string[], headerGroups?: Cell[]) {
   const left = doc.page.margins.left;
   const width = doc.page.width - left - doc.page.margins.right;
   const bottom = doc.page.height - doc.page.margins.bottom - 18;
@@ -17,8 +31,10 @@ function table(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport, title: stri
   let cursor = left;
   const columns = weights.map(weight => { const column = { x: cursor, width: width * weight / totalWeight }; cursor += column.width; return column; });
   let y = 0;
+  let bodyTop = 0;
   let branch = "";
   let collaborator = "";
+  let striped = false;
   const font = (bold = false) => doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(7.5);
   function lines(value: string, available: number, bold = false) {
     font(bold);
@@ -38,106 +54,143 @@ function table(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport, title: stri
       return output;
     });
   }
-  function band(value: string, bold = true) {
-    const textLines = lines(clean(value), width - 12, bold);
-    for (const line of textLines) {
-      if (y + 15 > bottom) page();
-      doc.rect(left, y, width, 15).fillAndStroke("#e7efec", "#d7dfdc");
-      font(bold).fillColor("#13231f").text(line, left + 6, y + 3, { width: width - 12, lineBreak: false });
-      y += 15;
-    }
+  function measure(values: Cell[], bold = false) {
+    let index = 0;
+    return values.map(({ value, span = 1 }) => {
+      const x = columns[index].x;
+      const cellWidth = columns.slice(index, index + span).reduce((sum, column) => sum + column.width, 0);
+      const cell = { x, width: cellWidth, index, pending: lines(value, cellWidth - PADDING * 2, bold) };
+      index += span;
+      return cell;
+    });
   }
-  function row(values: string[], bold = false, header = false) {
-    const pending = values.map((value, index) => lines(value, columns[index].width - 10, bold || header));
-    while (pending.some(value => value.length)) {
-      if (y + 20 > bottom) page();
-      const count = Math.max(1, Math.floor((bottom - y - 10) / 10));
-      const portion = pending.map(value => value.splice(0, count));
-      const height = Math.max(20, ...portion.map(value => value.length * 10 + 10));
-      for (const [index, value] of portion.entries()) {
-        const column = columns[index];
-        doc.rect(column.x, y, column.width, height).fillAndStroke(header ? "#13231f" : "#f5f8f7", "#d7dfdc");
-        for (const [lineIndex, line] of value.entries()) font(bold || header).fillColor(header ? "#ffffff" : "#17211e")
-          .text(line, column.x + 5, y + 5 + lineIndex * 10, { width: column.width - 10, lineBreak: false, align: index > 1 ? "right" : "left" });
+  function height(values: Cell[], bold = false) {
+    return Math.max(MIN_HEIGHT, ...measure(values, bold).map(cell => cell.pending.length * LINE_HEIGHT + PADDING * 2));
+  }
+  function keep(required: number) {
+    if (y + required > bottom && required <= bottom - bodyTop) page();
+  }
+  function row(values: Cell[], bold = false, header = false) {
+    keep(height(values, bold || header));
+    const cells = measure(values, bold || header);
+    while (cells.some(cell => cell.pending.length)) {
+      if (y + MIN_HEIGHT > bottom) page();
+      const count = Math.max(1, Math.floor((bottom - y - PADDING * 2) / LINE_HEIGHT));
+      const portion = cells.map(cell => ({ ...cell, text: cell.pending.splice(0, count) }));
+      const rowHeight = Math.max(MIN_HEIGHT, ...portion.map(cell => cell.text.length * LINE_HEIGHT + PADDING * 2));
+      for (const cell of portion) {
+        doc.rect(cell.x, y, cell.width, rowHeight).fillAndStroke(header ? "#13231f" : bold ? "#e7efec" : striped ? "#f5f8f7" : "#ffffff", "#d7dfdc");
+        for (const [lineIndex, line] of cell.text.entries()) font(bold || header).fillColor(header ? "#ffffff" : "#17211e")
+          .text(line, cell.x + PADDING, y + PADDING + lineIndex * LINE_HEIGHT, { width: cell.width - PADDING * 2, lineBreak: false, align: header ? "center" : cell.index === 0 || (!headerGroups && cell.index === 1) ? "left" : "right" });
       }
-      y += height;
-      if (pending.some(value => value.length)) page();
+      y += rowHeight;
+      if (cells.some(cell => cell.pending.length)) page();
+    }
+    if (!header && !bold) striped = !striped;
+  }
+  function band(value: string, bold = true) {
+    row([{ value: clean(value), span: columns.length }], bold);
+  }
+  function info(value: string) {
+    for (const line of lines(clean(value), width)) {
+      font().fillColor("#17211e").text(line, left, y, { width, lineBreak: false });
+      y += 12;
     }
   }
   function page(first = false) {
     if (!first) doc.addPage();
     y = doc.page.margins.top;
-    doc.font("Helvetica-Bold").fontSize(15).fillColor("#13231f").text(title, left, y, { width, lineBreak: false });
-    y += 27;
-    font().fillColor("#17211e").text(`Competências: ${report.competencies.map(item => item.key.replace("-", "/")).join(", ")} | ${report.employeeCount} colaboradores`, left, y, { width, lineBreak: false });
-    y += 20;
-    font().text(salaryAdvanceScopeLabel(report), left, y, { width, lineBreak: false });
-    y += 15;
-    font().text(salaryAdvancePercentageLabel(report), left, y, { width, lineBreak: false });
-    y += 20;
-    row(labels, true, true);
+    doc.font("Helvetica-Bold").fontSize(first ? 15 : 11).fillColor("#13231f").text(title, left, y, { width, lineBreak: false });
+    y += first ? 23 : 18;
+    info(`Competências: ${report.competencies.map(item => item.key.replace("-", "/")).join(", ")} | ${report.employeeCount} colaboradores`);
+    if (first) {
+      info(salaryAdvanceScopeLabel(report));
+      info(salaryAdvancePercentageLabel(report));
+      for (const value of configuration) info(value);
+      y += 4;
+    }
+    bodyTop = y;
+    if (headerGroups) row(headerGroups, true, true);
+    row(labels.map(value => ({ value })), true, true);
     if (branch) band(`Filial: ${branch} (continuação)`);
     if (collaborator) band(`${collaborator} (continuação)`, false);
+    bodyTop = y;
   }
   page(true);
-  return { row, band, branch(value: string) { collaborator = ""; branch = clean(value); band(`Filial: ${branch}`); },
-    employee(value: string) { collaborator = clean(value); band(collaborator, false); }, clearEmployee() { collaborator = ""; } };
+  return { row, height, keep,
+    branch(value: string, nextHeight: number) {
+      collaborator = "";
+      branch = "";
+      const label = clean(value);
+      keep(height([{ value: `Filial: ${label}`, span: columns.length }], true) + nextHeight);
+      branch = label;
+      band(`Filial: ${branch}`);
+    },
+    employee(value: string, rows: Cell[][], extraHeight = 0) {
+      collaborator = "";
+      const label = clean(value);
+      keep(height([{ value: label, span: columns.length }]) + rows.reduce((sum, cells) => sum + height(cells), 0) + extraHeight);
+      collaborator = label;
+      band(collaborator, false);
+    },
+    clearEmployee() { collaborator = ""; },
+  };
 }
 
 function totals(summary: { advanceCents: bigint; bonusCents: bigint; sundayCents: bigint; totalCents: bigint }) {
-  return [summary.advanceCents, summary.bonusCents, summary.sundayCents, summary.totalCents].map(formatCents);
+  return [summary.advanceCents, summary.bonusCents, summary.sundayCents, summary.totalCents];
 }
 
-export function drawSalaryAdvanceSummary(doc: PDFKit.PDFDocument, summary: Summary, report: SalaryAdvanceReport) {
-  const layout = table(doc, report, "Antecipação Salarial — resumo consolidado", ["Cadastro", "Colaborador", "Antecipação", "Bônus 565", "Domingos 901", "Total a pagar"], [65, 330, 100, 90, 95, 110]);
-  layout.band("Somente as diferenças dos eventos são somadas. Os valores já pagos nas folhas não são somados novamente.", false);
+export function drawSalaryAdvanceSummary(doc: PDFKit.PDFDocument, summary: Summary, report: SalaryAdvanceReport, events?: EventAdjustmentReport) {
+  const layout = table(doc, report, "Antecipação Salarial — resumo consolidado", ["Cadastro", "Colaborador", "Antecipação", "Bônus 565", "Domingos 901", "Total a pagar"], [65, 330, 100, 90, 95, 110], [...settingsLines(events), "Somente as diferenças dos eventos são somadas. Os valores já pagos nas folhas não são somados novamente."]);
+  const sumCells = (label: string, values: bigint[]) => [{ value: "" }, { value: label }, ...values.map(value => ({ value: formatCents(value) }))];
   for (const group of summary.groups) {
-    layout.branch(group.branchAlias);
-    for (const employee of group.employees) layout.row([employee.registration, clean(employee.employeeName), ...totals(employee)]);
-    layout.row(["", "Subtotal da filial", ...totals(group)], true);
+    const rows = group.employees.map(employee => [employee.registration, clean(employee.employeeName), ...totals(employee).map(formatCents)].map(value => ({ value })));
+    const subtotal = sumCells("Subtotal da filial", totals(group));
+    layout.branch(group.branchAlias, layout.height(rows[0]) + (rows.length === 1 ? layout.height(subtotal, true) : 0));
+    for (const [index, cells] of rows.entries()) {
+      if (index === rows.length - 1) layout.keep(layout.height(cells) + layout.height(subtotal, true));
+      layout.row(cells);
+    }
+    layout.row(subtotal, true);
   }
-  layout.row(["", "Total geral", ...totals({ advanceCents: summary.advanceTotalCents, bonusCents: summary.bonusTotalCents, sundayCents: summary.sundayTotalCents, totalCents: summary.grandTotalCents })], true);
+  layout.row(sumCells("Total geral", [summary.advanceTotalCents, summary.bonusTotalCents, summary.sundayTotalCents, summary.grandTotalCents]), true);
 }
 
-function eventCell(event: EventAdjustmentResult, inPayroll: boolean, oldValue: string, newValue: string | null) {
-  if (!inPayroll) return "Ausente na competência\nDiferença R$ 0,00";
-  const values = [event.received ? `Pago ${formatCents(BigInt(event.paidCents))} | Qtd ${event.quantity ?? "—"}` : "Evento ausente | Qtd 0",
-    `Unitário ${formatCents(BigInt(oldValue))} para ${newValue === null ? "não configurado" : formatCents(BigInt(newValue))}`];
-  if (event.targetCents !== null) values.push(`Alvo ${formatCents(BigInt(event.targetCents))}`);
-  values.push(`Diferença ${formatCents(BigInt(event.differenceCents))}`);
-  if (event.exclusionReason) values.push(`Bloqueado: ${event.exclusionReason}`);
-  return values.join("\n");
+function eventCells(event: EventAdjustmentResult, inPayroll: boolean): Cell[] {
+  return [inPayroll ? event.received ? amount(BigInt(event.paidCents)) : "Sem evento" : "—", inPayroll ? String(event.quantity ?? "—") : "—", amount(BigInt(event.differenceCents))].map(value => ({ value }));
 }
 
 export function drawSalaryAdvanceEventDetail(doc: PDFKit.PDFDocument, summary: Summary, report: SalaryAdvanceReport, events: EventAdjustmentReport) {
-  const layout = table(doc, report, "Antecipação Salarial — apuração detalhada", ["Competência", "INSS Proc", "%", "Antecipação", "Bônus 565", "Domingos 901", "Total mês"], [70, 85, 50, 90, 205, 205, 90]);
+  const layout = table(doc, report, "Antecipação Salarial — apuração detalhada", ["Competência", "INSS Proc (R$)", "%", "Valor (R$)", "Pago (R$)", "Qtd", "Dif. (R$)", "Pago (R$)", "Qtd", "Dif. (R$)", "Total mês (R$)"], [64, 90, 54, 80, 75, 28, 75, 75, 28, 75, 90], [...settingsLines(events), "Pago = valor original na folha | Qtd = quantidade apurada | Dif. = diferença a pagar. Bloqueios e ausências são indicados abaixo do mês."], [{ value: "Bases e antecipação", span: 4 }, { value: "Bônus 565", span: 3 }, { value: "Domingos 901", span: 3 }, { value: "Total mês" }]);
+  const sumCells = (label: string, values: bigint[]): Cell[] => [{ value: label, span: 3 }, ...values.map((value, index) => ({ value: amount(value), span: index === 1 || index === 2 ? 3 : 1 }))];
   const eventEmployees = new Map(events.employees.map(employee => [employee.registration.replace(/^0+(?=\d)/, ""), employee]));
   for (const [groupIndex, group] of report.groups.entries()) {
-    layout.branch(group.branchAlias);
+    layout.branch(group.branchAlias, MIN_HEIGHT * 2);
     for (const [employeeIndex, employee] of group.employees.entries()) {
-      layout.employee(`Cadastro ${employee.registration} | ${employee.employeeName}`);
       const eventEmployee = eventEmployees.get(employee.registration.replace(/^0+(?=\d)/, ""));
       if (!eventEmployee) throw new Error("Resumo validado sem colaborador dos eventos.");
+      const rows: Cell[][] = [];
       for (const [index, competency] of report.competencies.entries()) {
         const month = eventEmployee.months[index];
         const rule = employee.advanceRulesByCompetency?.get(competency.key);
         const base = employee.basesByCompetency.get(competency.key);
         const advance = employee.adjustmentsByCompetency.get(competency.key) ?? 0n;
-        const historical = events.settings.historicOverrides.find(item => item.competencyKey === competency.key) ?? events.settings;
-        const note = rule?.exclusionReason ? `Bloqueado: ${rule.exclusionReason}` : !month.inPayroll ? "Ausente na competência" : rule && !rule.metadataKnown ? "Situação ou cargo não informados; conferir elegibilidade e percentual" : "";
+        const reasons = [...new Set([rule?.exclusionReason, month.bonus565.exclusionReason, month.indemnity901.exclusionReason].filter(Boolean))];
+        const note = reasons.length ? `Bloqueado: ${reasons.join(" | ")}` : !month.inPayroll ? "Ausente na competência" : rule && !rule.metadataKnown ? "Situação ou cargo não informados; conferir elegibilidade e percentual" : "";
         const appliedPercentage = rule?.percentageTenThousandths ?? (report.salaryScope === "drivers-forklift" ? report.driverPercentageTenThousandths : report.percentageBasisPoints * 100n);
         const percentage = rule?.scopeEligible === false || !month.inPayroll || appliedPercentage === undefined ? "—" : formatPercentageHundredThousandths(rule?.percentageHundredThousandths ?? appliedPercentage * 10n);
-        layout.row([competency.key.replace("-", "/"), base == null ? "—" : formatCents(base), percentage,
-          `${formatCents(advance)}${note ? `\n${note}` : ""}`,
-          eventCell(month.bonus565, month.inPayroll, historical.bonusOldValueCents, events.settings.bonusNewValueCents),
-          eventCell(month.indemnity901, month.inPayroll, historical.sundayOldValueCents, events.settings.sundayNewValueCents),
-          formatCents(advance + BigInt(month.bonus565.differenceCents) + BigInt(month.indemnity901.differenceCents))]);
+        rows.push([{ value: competency.key.replace("-", "/") }, { value: base == null ? "—" : amount(base) }, { value: percentage }, { value: amount(advance) }, ...eventCells(month.bonus565, month.inPayroll), ...eventCells(month.indemnity901, month.inPayroll), { value: amount(advance + BigInt(month.bonus565.differenceCents) + BigInt(month.indemnity901.differenceCents)) }]);
+        if (note) rows.push([{ value: `${competency.key.replace("-", "/")} — ${note}`, span: 11 }]);
       }
-      const sum = summary.groups[groupIndex].employees[employeeIndex];
-      layout.row(["Subtotal colaborador", "", "", ...totals(sum)], true);
+      const subtotal = sumCells("Subtotal colaborador", totals(summary.groups[groupIndex].employees[employeeIndex]));
+      rows.push(subtotal);
+      const last = employeeIndex === group.employees.length - 1;
+      layout.employee(`Cadastro ${employee.registration} | ${employee.employeeName}`, rows, last ? MIN_HEIGHT : 0);
+      for (const cells of rows) layout.row(cells, cells === subtotal);
       layout.clearEmployee();
     }
-    layout.row(["Subtotal filial", "", "", ...totals(summary.groups[groupIndex])], true);
+    layout.row(sumCells("Subtotal filial", totals(summary.groups[groupIndex])), true);
   }
-  layout.row(["Total geral", "", "", ...totals({ advanceCents: summary.advanceTotalCents, bonusCents: summary.bonusTotalCents, sundayCents: summary.sundayTotalCents, totalCents: summary.grandTotalCents })], true);
+  layout.row(sumCells("Total geral", [summary.advanceTotalCents, summary.bonusTotalCents, summary.sundayTotalCents, summary.grandTotalCents]), true);
 }

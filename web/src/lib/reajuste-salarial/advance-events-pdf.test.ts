@@ -90,8 +90,9 @@ describe("optional events in the advance PDF", () => {
     const values = text.mock.calls.map(call => String(call[0]));
     expect(values.join(" ")).toContain(`Bloqueado: ${reason}`);
     expect(values).not.toContain("Bloqueado: Trabalhando");
-    expect(values).toContain("Pago R$ 170,00 | Qtd 2");
-    expect(values).toContain("R$ 140,00");
+    expect(values).toContain("170,00");
+    expect(values).toContain("2");
+    expect(values).toContain("140,00");
     expect(values).toContain("—");
     text.mockClear();
     await generateSalaryAdvancePdf(advance);
@@ -105,7 +106,7 @@ describe("optional events in the advance PDF", () => {
     expect(pdf.getTitle()).toBe("Antecipação Salarial — Apuração Detalhada");
     expect(pdf.getPageCount()).toBeGreaterThanOrEqual(1);
     const values = text.mock.calls.map(call => String(call[0])).join("\n");
-    for (const label of ["apuração detalhada", "Pago R$ 170,00 | Qtd 2", "R$ 150,00", "R$ 30,00", "R$ 210,00"]) expect(values).toContain(label);
+    for (const label of ["apuração detalhada", "170,00", "150,00", "30,00", "210,00"]) expect(values).toContain(label);
     expect(values).not.toContain("resumo consolidado");
     expect(text.mock.calls.filter(call => /^Página \d+ de \d+ \|/.test(String(call[0])))).toHaveLength(pdf.getPageCount());
     text.mockClear();
@@ -196,10 +197,11 @@ describe("optional events in the advance PDF", () => {
     const text = vi.spyOn(PDFDocument.prototype, "text");
     await generateSalaryAdvancePdf(advance, events);
     const values = text.mock.calls.map(call => String(call[0]));
-    expect(values).toContain("Evento ausente | Qtd 0");
-    expect(values).toContain("Unitário R$ 75,00 para R$ 90,00");
+    expect(values).toContain("Sem evento");
+    expect(values).toContain("0");
+    expect(values.join("\n")).toContain("Histórico 06/2026 — Bônus 565: R$ 75,00 para R$ 90,00");
     expect(values).not.toContain("Ausente na competência");
-    expect(values).toContain("R$ 200,00");
+    expect(values).toContain("200,00");
   });
 
   it.each([1, 2, 3, 4])("renders %i competencies as monthly rows with readable event detail", async monthCount => {
@@ -208,7 +210,8 @@ describe("optional events in the advance PDF", () => {
     await generateSalaryAdvancePdf(advance, events, "detailed");
     const values = text.mock.calls.map(call => String(call[0]));
     for (const competency of advance.competencies) expect(values).toContain(competency.key.replace("-", "/"));
-    expect(values.filter(value => value === "Pago R$ 80,00 | Qtd 1")).toHaveLength(monthCount);
+    expect(values.filter(value => value === "80,00")).toHaveLength(monthCount);
+    expect(values.filter(value => value === "1").length).toBeGreaterThanOrEqual(monthCount);
     expect(values).toContain("Total geral");
   });
 
@@ -221,8 +224,8 @@ describe("optional events in the advance PDF", () => {
     const values = text.mock.calls.map(call => String(call[0])).join("\n");
     expect(values).toContain("Bloqueado: Situação impeditiva: Demitido");
     expect(values).toContain("Ausente na competência");
-    expect(values).toContain("Pago R$ 80,00 | Qtd 1");
-    expect(values).toContain("R$ 75,00");
+    expect(values).toContain("80,00");
+    expect(values).toContain("75,00");
     text.mockClear();
     await generateSalaryAdvancePdf(advance, events, "summary");
     expect(text.mock.calls.map(call => String(call[0]))).toContain("R$ 75,00");

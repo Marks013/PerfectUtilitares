@@ -24,7 +24,7 @@ export function generateSalaryAdvancePdf(report: SalaryAdvanceReport, eventRepor
 
     try {
       const summary = buildSalaryAdvanceSummary(report, eventReport);
-      if (kind === "summary") drawSalaryAdvanceSummary(doc, summary, report);
+      if (kind === "summary") drawSalaryAdvanceSummary(doc, summary, report, eventReport);
       else if (eventReport) drawSalaryAdvanceEventDetail(doc, summary, report, eventReport);
       else drawSalaryAdvanceReport(doc, report, false);
       drawSalaryAdvanceFooters(doc, report);
