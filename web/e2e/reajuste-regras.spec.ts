@@ -13,7 +13,7 @@ function monthlyFixture(month: number, unionScenario = false) {
   const employees = unionScenario ? [
     { id: "1", status: "Trabalhando", role: "Embalador a mão", sunday: "85,00" },
     { id: "2", status: "Trabalhando", role: "OPERADOR", sunday: "85,00" },
-    { id: "3", status: "Trabalhando", role: "MOTORISTA / ENTREGADOR", sunday: "85,00" },
+    { id: "3", status: "Trabalhando", role: month === 6 ? "MOTORISTA/ENTREGADOR" : "MOTORISTA-ENTREGADOR", sunday: "85,00" },
     { id: "4", status: month === 6 ? "Trabalhando" : "Demitido", role: "OPERADOR DE EMPILHADEIRA", sunday: "85,00" },
     { id: "5", status: "Trabalhando", role: "AJUDANTE DE MOTORISTA", sunday: "85,00" },
     { id: "6", status: "Trabalhando", role: month === 6 ? "OPERADOR" : "MOTORISTA DE TRUCK", sunday: "85,00" },

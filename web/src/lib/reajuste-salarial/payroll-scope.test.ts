@@ -12,6 +12,16 @@ function file(month: string, role: string | null, name = "ANA TESTE"): ParsedPay
 const settings = { bonusOldValueCents: "8000", bonusNewValueCents: "9000", sundayOldValueCents: "8500", sundayNewValueCents: "9000", historicOverrides: [] };
 
 describe("salary union scope", () => {
+  it.each(["MOTORISTA/ENTREGADOR", "MOTORISTA-ENTREGADOR", "MOTORISTA–ENTREGADOR", "MOTORISTA—ENTREGADOR", "OPERADOR DE EMPILHADEIRA/LOGISTICA"])("keeps delimiter variant %s in its own union across salary and events", (role) => {
+    const source = file("06-2026", role);
+    expect(isDriversForkliftRole(role)).toBe(true);
+    expect(() => consolidateSalaryAdvanceFiles([source], 108n)).toThrow(/Nenhum colaborador/);
+    const exclusive = consolidateSalaryAdvanceFiles([source], 0n, new Date(), 0n, { salaryScope: "drivers-forklift", driverPercentageHundredThousandths: 123456n });
+    expect(exclusive.grandTotalCents).toBe(2469n);
+    const eventFile = { ...source, company: "EMPRESA", rows: source.rows.map(row => ({ ...row, events: { "565": [{ paidCents: "8000", reference: "1", sourceRow: 1 }], "901": [{ paidCents: "17000", reference: "2", sourceRow: 2 }] } })) };
+    expect(() => buildEventAdjustmentReport([eventFile], settings)).toThrow(/Nenhum colaborador/);
+    expect(buildEventAdjustmentReport([eventFile], settings, new Date(), "drivers-forklift").grandTotalCents).toBe("2000");
+  });
   it("rounds precise money per employee and month before consolidation", () => {
     const june = file("06-2026", "Operador"); const july = file("07-2026", "Operador");
     june.rows[0].baseCents = 5_000_000n; july.rows[0].baseCents = 5_000_000n;

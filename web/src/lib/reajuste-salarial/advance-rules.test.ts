@@ -4,7 +4,7 @@ import { parsePayrollSheetRows } from "./parser";
 import { consolidateSalaryAdvanceFiles } from "./consolidator";
 import { buildEventAdjustmentReport } from "./event-adjustments";
 import { isHandPacker, payrollExclusionReason } from "./advance-rules";
-import { calculatePreciseAdjustmentCents, formatPercentageTenThousandths, parsePercentageTenThousandths } from "./money";
+import { calculateAdjustmentAtHundredThousandths, formatPercentageHundredThousandths, parsePercentageHundredThousandths } from "./money";
 
 function file(name: string, status: string, role = "Embalador a mão") {
   const competency = parseCompetencyFileName(name);
@@ -35,17 +35,17 @@ describe("monthly payroll eligibility and precise packer percentage", () => {
     expect(report.grandTotalCents).toBe(1969n);
   });
 
-  it("supports a future four-decimal role rate with integer half-up rounding", () => {
-    expect(parsePercentageTenThousandths("2,2655")).toBe(22655n);
-    expect(formatPercentageTenThousandths(22655n)).toBe("2,2655%");
-    expect(calculatePreciseAdjustmentCents(182286n, 22655n)).toBe(4130n);
-    expect(calculatePreciseAdjustmentCents(500000n, 1n)).toBe(1n);
-    const report = consolidateSalaryAdvanceFiles([file("06-2026.xlsx", "Trabalhando")], 108n, new Date(), parsePercentageTenThousandths("3.1234"));
+  it("supports a future five-decimal role rate with integer half-up rounding", () => {
+    expect(parsePercentageHundredThousandths("2,26555")).toBe(226555n);
+    expect(formatPercentageHundredThousandths(226555n)).toBe("2,26555%");
+    expect(calculateAdjustmentAtHundredThousandths(182286n, 226555n)).toBe(4130n);
+    expect(calculateAdjustmentAtHundredThousandths(5000000n, 1n)).toBe(1n);
+    const report = consolidateSalaryAdvanceFiles([file("06-2026.xlsx", "Trabalhando")], 108n, new Date(), 0n, { salaryScope: "standard", packerPercentageHundredThousandths: parsePercentageHundredThousandths("3.12345") });
     expect(report.grandTotalCents).toBe(5694n);
   });
 
-  it.each(["0", "-1", "100.0001", "2.26555", "", "2e1", "NaN"])("rejects ambiguous or out-of-range role percentage %s", (value) => {
-    expect(() => parsePercentageTenThousandths(value)).toThrow();
+  it.each(["0", "-1", "100.00001", "2.265555", "", "2e1", "NaN"])("rejects ambiguous or out-of-range role percentage %s", (value) => {
+    expect(() => parsePercentageHundredThousandths(value)).toThrow();
   });
 
   it("marks legacy metadata as unknown while retaining the general rate", () => {

@@ -6,7 +6,7 @@ export function isDriversForkliftRole(role: string | null | undefined): boolean 
   if (!role) return false;
   const value = role.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase()
     .replace(/^\s*\d+\s*[-.:]?\s*/, "").replace(/\s+/g, " ").trim();
-  return /^MOTORISTA(?:\s|$)/.test(value) || /^OPERADOR(?:\s+DE)?\s+EMPILHADEIRA(?:\s|$)/.test(value);
+  return /^MOTORISTA(?:[\s/–—-]|$)/.test(value) || /^OPERADOR(?:\s+DE)?\s+EMPILHADEIRA(?:[\s/–—-]|$)/.test(value);
 }
 
 export function payrollScopeEligible(role: string | null | undefined, scope: SalaryAdvanceScope): boolean {
