@@ -87,6 +87,7 @@ describe("salary workspace reset", () => {
     if (mode === "advance") {
       renderAdvance().mergeIncoming([file]);
       renderAdvance().setPercentage("5"); renderAdvance().setPackerPercentage("2,26550");
+      renderAdvance().setExcludeAbsentLatest(true);
     } else {
       fetchMock.mockResolvedValueOnce(Response.json({ analysis }));
       renderRevision().setFile(file);
@@ -104,7 +105,7 @@ describe("salary workspace reset", () => {
     request.dispatchEvent(new Event("error"));
     expect(downloadBlob).not.toHaveBeenCalled();
     expect(render()).toMatchObject({ percentage: "", busy: false, state: { status: "idle" } });
-    if (mode === "advance") expect(renderAdvance().files).toEqual([]);
+    if (mode === "advance") expect(renderAdvance()).toMatchObject({ files: [], excludeAbsentLatest: false });
     else expect(renderRevision().file).toBeNull();
   });
 

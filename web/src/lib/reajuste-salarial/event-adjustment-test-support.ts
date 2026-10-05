@@ -1,9 +1,9 @@
 import { zipSync, strToU8 } from "fflate";
 
-function eventWorkbook(sundayPaid = "170,00") {
+function eventWorkbook(sundayPaid = "170,00", registration = "1") {
   const rows = [
     ["0001", "EMPRESA TESTE", "Pág.:", "1"], ["FOLHA DE PAGAMENTO"], ["Local:", "01 MATRIZ"],
-    ["Tipo:", "1", "Colaborador:", "1 - ANA TESTE"],
+    ["Tipo:", "1", "Colaborador:", `${registration} - ANA TESTE`],
     ["565", "01", "Bonus Convenc. SINDECOMU", "", "1,00", "80,00"],
     ["901", "01", "Indenização Compensatória", "", "0,00", sundayPaid],
     ["INSS Proc:", "2.000,00"],
@@ -17,6 +17,12 @@ function eventWorkbook(sundayPaid = "170,00") {
     "xl/_rels/workbook.xml.rels": strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
     "xl/worksheets/sheet1.xml": strToU8(`<worksheet><sheetData>${xml}</sheetData></worksheet>`),
   });
+}
+
+export async function presenceEventRequest(excludeAbsentLatest = "true") {
+  const form = await eventRequest({ excludeAbsentLatest }).formData();
+  form.append("files", new File([new Uint8Array(eventWorkbook("255,00", "2"))], "07-2026.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  return new Request("http://localhost/api/reajuste-salarial/eventos", { method: "POST", body: form, headers: { "content-length": "8192", origin: "http://localhost" } });
 }
 
 export function eventRequest(overrides: Record<string, string> = {}, sundayPaid?: string, duplicate = false) {

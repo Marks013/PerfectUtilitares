@@ -35,6 +35,7 @@ export type EventAdjustmentEmployee = {
   totalDifferenceCents: string;
 };
 export type EventAdjustmentReport = {
+  excludeAbsentLatest?: boolean;
   settings: EventAdjustmentSettings;
   competencies: Competency[];
   employees: EventAdjustmentEmployee[];

@@ -198,7 +198,7 @@ export async function POST(request: Request) {
       scopeSettings.packerPercentageTenThousandths,
       scopeSettings,
     );
-    const eventReport = eventSettings ? buildEventAdjustmentReport(eventFiles, eventSettings, report.generatedAt, scopeSettings.salaryScope) : undefined;
+    const eventReport = eventSettings ? buildEventAdjustmentReport(eventFiles, eventSettings, report.generatedAt, scopeSettings.salaryScope, scopeSettings.excludeAbsentLatest) : undefined;
     if (eventReport?.issueCount) {
       return jsonError(409, "REAJUSTE_EVENTS_PENDING", "Há pendências nos eventos 565 ou 901. Confira os valores históricos, as referências e as rubricas antes de gerar o PDF.");
     }

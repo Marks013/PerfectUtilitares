@@ -46,6 +46,7 @@ export function consolidateSalaryAdvanceFiles(
     (left, right) => left.competency.order - right.competency.order,
   );
   const competencies = ordered.map((file) => file.competency);
+  const latestCompetencyKey = competencies.at(-1)?.key;
   const employees = new Map<
     string,
     {
@@ -104,6 +105,8 @@ export function consolidateSalaryAdvanceFiles(
   const groups = new Map<string, ConsolidatedEmployee[]>();
   for (const { employee } of employees.values()) {
     if (!Array.from(employee.advanceRulesByCompetency?.values() ?? []).some((rule) => rule.scopeEligible)) continue;
+    // A valid zero base is present; missing months are filled with null only below.
+    if (scopeOptions.excludeAbsentLatest && employee.basesByCompetency.get(latestCompetencyKey ?? "") == null) continue;
     let total = 0n;
     for (const competency of competencies) {
       const base = employee.basesByCompetency.get(competency.key) ?? null;
@@ -140,10 +143,14 @@ export function consolidateSalaryAdvanceFiles(
       };
     });
 
-  if (!reportGroups.length) throw new SalaryAdjustmentError("REAJUSTE_SCOPE_EMPTY", "Nenhum colaborador possui cargo correspondente à apuração sindical selecionada nas competências importadas.");
+  if (!reportGroups.length) {
+    if (scopeOptions.excludeAbsentLatest) throw new SalaryAdjustmentError("REAJUSTE_PRESENCE_FILTER_EMPTY", "Nenhum colaborador da apuração sindical selecionada possui base na última competência importada. Confira as folhas ou desative o filtro de presença.");
+    throw new SalaryAdjustmentError("REAJUSTE_SCOPE_EMPTY", "Nenhum colaborador possui cargo correspondente à apuração sindical selecionada nas competências importadas.");
+  }
 
   return {
     parserProfile: PARSER_PROFILE,
+    excludeAbsentLatest: scopeOptions.excludeAbsentLatest ?? false,
     generatedAt,
     percentageBasisPoints,
     packerPercentageTenThousandths,

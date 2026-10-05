@@ -5,7 +5,7 @@ import type { EventAdjustmentReport } from "@/lib/reajuste-salarial/event-adjust
 import type { SalaryAdvanceScope } from "@/lib/reajuste-salarial/types";
 import { appendEventSettings, initialEventSettings, validateEventInputs, type EventSettings, type HistoricOverride } from "./event-adjustment-workspace-model";
 
-export function useEventAdjustmentWorkspaceController(active: boolean, files: File[], salaryScope: SalaryAdvanceScope = "standard") {
+export function useEventAdjustmentWorkspaceController(active: boolean, files: File[], salaryScope: SalaryAdvanceScope = "standard", excludeAbsentLatest = false) {
   const requestRef = useRef<AbortController | null>(null);
   const versionRef = useRef(0);
   const [datasetVersion, setDatasetVersion] = useState(0);
@@ -17,12 +17,12 @@ export function useEventAdjustmentWorkspaceController(active: boolean, files: Fi
   function cancel() { versionRef.current++; requestRef.current?.abort(); requestRef.current = null; }
   useEffect(() => { if (!active) { versionRef.current++; requestRef.current?.abort(); requestRef.current = null; setStatus("idle"); } }, [active]);
   useEffect(() => () => { versionRef.current++; requestRef.current?.abort(); }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: A union change invalidates the preview while keeping the same files.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Selection changes invalidate the preview while keeping the same files.
   useEffect(() => {
     versionRef.current++; requestRef.current?.abort(); requestRef.current = null;
     setReport(null); setMessages([]); setStatus("idle"); setDatasetVersion(current => current + 1);
     setOverrides(current => current.filter(row => files.some(file => file.name.replace(/\.xlsx$/i, "") === row.competencyKey)));
-  }, [files, salaryScope]);
+  }, [files, salaryScope, excludeAbsentLatest]);
   function invalidate() { cancel(); setReport(null); setMessages([]); setStatus("idle"); }
   function reset() {
     invalidate(); setDatasetVersion(current => current + 1); setSettings({ ...initialEventSettings }); setOverrides([]);
@@ -35,6 +35,7 @@ export function useEventAdjustmentWorkspaceController(active: boolean, files: Fi
     const data = new FormData();
     for (const file of files) data.append("files", file, file.name);
     data.set("salaryScope", salaryScope);
+    data.set("excludeAbsentLatest", String(excludeAbsentLatest));
     appendEventSettings(data, settings, overrides);
     setMessages([]); setStatus("analyzing");
     try {

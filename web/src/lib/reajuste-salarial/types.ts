@@ -2,6 +2,7 @@ export type SalaryAdvancePdfKind = "summary" | "detailed";
 export type SalaryAdvanceScope = "standard" | "drivers-forklift";
 export type SalaryAdvanceScopeOptions = {
   salaryScope: SalaryAdvanceScope;
+  excludeAbsentLatest?: boolean;
   driverPercentageTenThousandths?: bigint;
   percentageHundredThousandths?: bigint;
   packerPercentageHundredThousandths?: bigint;
@@ -63,6 +64,7 @@ export type BranchReportGroup = {
 };
 
 export type SalaryAdvanceReport = {
+  excludeAbsentLatest?: boolean;
   parserProfile: "antecipacao-inss-v1";
   generatedAt: Date;
   percentageBasisPoints: bigint;

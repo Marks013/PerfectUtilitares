@@ -161,6 +161,14 @@ export function ReajusteSalarialWorkspaceView({
 
           <div className="mt-6 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4">
             <label className="flex cursor-pointer items-start gap-3 text-sm font-black text-[color:var(--app-fg)]">
+              <input type="checkbox" checked={model.excludeAbsentLatest} onChange={event => model.setExcludeAbsentLatest(event.target.checked)} aria-describedby="salary-latest-presence-help" className="mt-0.5 size-4 shrink-0 accent-[color:var(--app-teal)]" />
+              Excluir colaboradores sem base na última competência
+            </label>
+            <p id="salary-latest-presence-help" className="mt-2 text-xs leading-5 text-[color:var(--app-muted)]">Desativado por padrão. Ao ativar, retira dos dois PDFs e da conferência toda a apuração de quem não tem base válida na competência mais recente importada, incluindo antecipação, bônus e domingos de meses anteriores. Base de R$ 0,00 é mantida. A situação impeditiva continua bloqueando somente o mês em que aparece.</p>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] p-4">
+            <label className="flex cursor-pointer items-start gap-3 text-sm font-black text-[color:var(--app-fg)]">
               <input type="checkbox" checked={model.salaryScope === "drivers-forklift"} onChange={event => model.setSalaryScope(event.target.checked ? "drivers-forklift" : "standard")} aria-controls="salary-scope-percentages" className="mt-0.5 size-4 shrink-0 accent-[color:var(--app-teal)]" />
               Apurar somente Motoristas e Operador de Empilhadeira
             </label>

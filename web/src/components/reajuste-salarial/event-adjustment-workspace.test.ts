@@ -93,6 +93,7 @@ describe("event adjustment configuration and cancellation", () => {
     render().updateOverride("06-2026", "sundayOldValue", "75,00");
     fetchMock.mockResolvedValueOnce(Response.json({ report })); await render().analyze();
     const data = fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(data.get("excludeAbsentLatest")).toBe("false");
     expect(JSON.parse(data.get("historicOverrides") as string)).toEqual([{ competencyKey: "06-2026", bonusOldValue: "80,00", sundayOldValue: "75,00" }]);
     expect(render().canGenerate).toBe(false);
   });

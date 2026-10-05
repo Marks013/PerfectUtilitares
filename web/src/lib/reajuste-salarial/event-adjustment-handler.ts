@@ -15,7 +15,7 @@ import { parseEventAdjustmentFiles, parseEventAdjustmentSettings, validateEventA
 import { MAX_REQUEST_BYTES, RATE_LIMIT, RATE_WINDOW_MS } from "./limits";
 import { runWithReajusteProcessingSlot } from "./processing-gate";
 import { hasDeclaredReajusteContentLength } from "./request-security";
-import { parseSalaryAdvanceScope } from "./payroll-scope";
+import { parseExcludeAbsentLatest, parseSalaryAdvanceScope } from "./payroll-scope";
 
 export async function handleEventAdjustment(request: Request, output: "analysis" | "pdf") {
   const originError = requireSameOrigin(request);
@@ -45,11 +45,12 @@ export async function handleEventAdjustment(request: Request, output: "analysis"
       totalBytes = validated.totalBytes;
       const settings = parseEventAdjustmentSettings(formData);
       const salaryScope = parseSalaryAdvanceScope(formData);
+      const excludeAbsentLatest = parseExcludeAbsentLatest(formData);
       if (output === "pdf" && settings.bonusNewValueCents === null && settings.sundayNewValueCents === null) return jsonError(400, "REAJUSTE_RULE_INVALID", "Informe ao menos um novo valor para gerar o PDF.");
       stage = "parse";
       const parsed = await parseEventAdjustmentFiles(validated);
       stage = "calculate";
-      const report = buildEventAdjustmentReport(parsed, settings, new Date(), salaryScope);
+      const report = buildEventAdjustmentReport(parsed, settings, new Date(), salaryScope, excludeAbsentLatest);
       if (output === "analysis") {
         return NextResponse.json({ report }, { headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
       }

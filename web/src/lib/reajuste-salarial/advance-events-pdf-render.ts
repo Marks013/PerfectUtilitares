@@ -106,6 +106,7 @@ function table(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport, title: stri
     if (first) {
       info(salaryAdvanceScopeLabel(report));
       info(salaryAdvancePercentageLabel(report));
+      if (report.excludeAbsentLatest) info(`Filtro de presença: somente colaboradores com base em ${report.competencies.at(-1)?.key.replace("-", "/")}.`);
       for (const value of configuration) info(value);
       y += 4;
     }

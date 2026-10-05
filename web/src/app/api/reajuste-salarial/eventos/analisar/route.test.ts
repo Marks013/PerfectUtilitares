@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
-import { eventRequest } from "@/lib/reajuste-salarial/event-adjustment-test-support";
+import { eventRequest, presenceEventRequest } from "@/lib/reajuste-salarial/event-adjustment-test-support";
 import { requireSameOrigin, enforcePersistentRateLimit } from "@/lib/api/security";
 import { requireReajusteAccess } from "@/lib/reajuste-salarial/access.server";
 import { GET, POST } from "./route";
@@ -13,6 +13,17 @@ vi.mock("@/lib/reajuste-salarial/processing-gate", () => ({ runWithReajusteProce
 vi.mock("@/lib/usage/record", () => ({ recordUserUsage: vi.fn().mockResolvedValue(undefined) }));
 
 describe("event analysis API", () => {
+  it("filters real XLSX analysis and recomputes amounts; false keeps historical employees", async () => {
+    const filtered = await POST(await presenceEventRequest());
+    expect(filtered.status).toBe(200);
+    const { report } = await filtered.json();
+    expect(report).toMatchObject({ excludeAbsentLatest: true, employeeCount: 1, bonusTotalCents: "1000", sundayTotalCents: "1500", grandTotalCents: "2500" });
+    expect(report.employees.map((employee: { registration: string }) => employee.registration)).toEqual(["2"]);
+    const kept = await POST(await presenceEventRequest("false"));
+    expect(kept.status).toBe(200);
+    expect((await kept.json()).report).toMatchObject({ excludeAbsentLatest: false, employeeCount: 2, grandTotalCents: "4500" });
+    expect((await POST(await presenceEventRequest("yes"))).status).toBe(400);
+  });
   beforeEach(() => { vi.clearAllMocks(); });
   it("imports a real XLSX, excludes summaries and returns exact employee differences", async () => {
     const response = await POST(eventRequest());

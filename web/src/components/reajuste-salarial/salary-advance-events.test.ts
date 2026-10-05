@@ -61,6 +61,41 @@ function configure() {
 async function analyze() { fetchMock.mockResolvedValueOnce(Response.json({ report })); await render().eventModel.analyze(); }
 
 describe("optional salary advance events", () => {
+  it("sends the latest-base filter to event analysis and both PDFs while preserving configuration", async () => {
+    configure(); render().eventModel.updateOverride("06-2026", "sundayOldValue", "75,00");
+    render().setExcludeAbsentLatest(true); await analyze();
+    const analysisBody = fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(analysisBody.get("excludeAbsentLatest")).toBe("true");
+    expect(render()).toMatchObject({ files: [file], percentage: "5", packerPercentage: "2,26550", includeEvents: true });
+    expect(render().eventModel.overrides).toEqual([{ competencyKey: "06-2026", bonusOldValue: "", sundayOldValue: "75,00" }]);
+    for (const kind of ["summary", "detailed"] as const) {
+      render().generate(kind);
+      expect(FakeRequest.latest.data.get("excludeAbsentLatest")).toBe("true");
+      FakeRequest.latest.dispatchEvent(new Event("load"));
+    }
+  });
+  it("cancels a stale PDF and invalidates its event preview when the latest-base filter changes", async () => {
+    configure(); await analyze(); render().generate("summary"); const request = FakeRequest.latest;
+    render().setExcludeAbsentLatest(true); render(); request.dispatchEvent(new Event("load"));
+    expect(request.abort).toHaveBeenCalledOnce(); expect(downloadBlob).not.toHaveBeenCalled();
+    expect(render().eventModel.report).toBeNull(); expect(render().canGenerate).toBe(false);
+    expect(render()).toMatchObject({ files: [file], percentage: "5", packerPercentage: "2,26550", includeEvents: true });
+    expect(render().eventModel.settings.bonusNewValue).toBe("90,00");
+  });
+  it("cancels pending event analysis when the latest-base filter changes and rejects a late result", async () => {
+    configure(); let resolve!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const pending = render().eventModel.analyze(); const signal = fetchMock.mock.calls[0][1]?.signal;
+    render().setExcludeAbsentLatest(true); render();
+    resolve(Response.json({ report })); await pending;
+    expect(signal?.aborted).toBe(true); expect(render().eventModel.report).toBeNull();
+  });
+  it("sends the enabled latest-base filter even when optional events are off", () => {
+    render().mergeIncoming([file]); render().setPercentage("1,08"); render().setPackerPercentage("2,26550");
+    render().setExcludeAbsentLatest(true); render().generate();
+    expect(FakeRequest.latest.data.get("excludeAbsentLatest")).toBe("true");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("disables PDF generation for an invalid role percentage while retaining a valid event preview", async () => {
     configure(); await analyze();
     expect(render().canGenerate).toBe(true);
@@ -74,7 +109,9 @@ describe("optional salary advance events", () => {
     render().mergeIncoming([file]); render().setPercentage("5"); render().setPackerPercentage("2,26550");
     expect(render().includeEvents).toBe(false);
     render().generate();
-    expect([...FakeRequest.latest.data.keys()]).toEqual(["files", "percentage", "packerPercentage", "reportType", "salaryScope"]);
+    expect([...FakeRequest.latest.data.keys()]).toEqual(["files", "percentage", "packerPercentage", "reportType", "salaryScope", "excludeAbsentLatest"]);
+    expect(render().excludeAbsentLatest).toBe(false);
+    expect(FakeRequest.latest.data.get("excludeAbsentLatest")).toBe("false");
     expect(FakeRequest.latest.data.get("salaryScope")).toBe("standard");
     expect(FakeRequest.latest.data.get("reportType")).toBe("detailed");
     expect(FakeRequest.latest.data.get("packerPercentage")).toBe("2,26550");
@@ -143,10 +180,10 @@ describe("optional salary advance events", () => {
     expect(render().state).toMatchObject({ status: "error", messages: ["Informe o percentual para Embalador a mão entre 0,00001 e 100, com até cinco casas."] });
   });
   it("clears the optional configuration and rejects late downloads after reset", async () => {
-    configure(); await analyze(); render().generate(); const request = FakeRequest.latest;
+    configure(); render().setExcludeAbsentLatest(true); await analyze(); render().generate(); const request = FakeRequest.latest;
     render().reset(); render(); request.dispatchEvent(new Event("load"));
     expect(downloadBlob).not.toHaveBeenCalled();
-    expect(render()).toMatchObject({ files: [], percentage: "", packerPercentage: "", includeEvents: false, state: { status: "idle" }, eventModel: { report: null, overrides: [], settings: { bonusNewValue: "" } } });
+    expect(render()).toMatchObject({ files: [], percentage: "", packerPercentage: "", includeEvents: false, excludeAbsentLatest: false, state: { status: "idle" }, eventModel: { report: null, overrides: [], settings: { bonusNewValue: "" } } });
   });
   it("generates both reports from the same selection and current preview without reimporting", async () => {
     configure(); await analyze(); render().generate("summary");

@@ -150,6 +150,10 @@ function drawPageHeader(
     { width },
   );
   doc.text("Bloqueio por competência: Lic. s/ Remuneração, Demitido, Aposent. Invalidez e Detenção.", left, top + 94, { width });
+  if (report.excludeAbsentLatest) {
+    doc.text(`Filtro de presença: somente colaboradores com base em ${report.competencies.at(-1)?.key.replace("-", "/")}.`, left, top + 107, { width });
+    return top + 130;
+  }
   return top + 117;
 }
 

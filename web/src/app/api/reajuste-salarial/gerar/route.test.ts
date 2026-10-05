@@ -68,11 +68,11 @@ function request(files: File[], percentage = "4,42", fields: Record<string, stri
   });
 }
 
-function monthlyWorkbook(name = "06-2026.xlsx", sundayPaid = "170,00", company = "EMPRESA TESTE", status = "Trabalhando", role = "OPERADOR") {
+function monthlyWorkbook(name = "06-2026.xlsx", sundayPaid = "170,00", company = "EMPRESA TESTE", status = "Trabalhando", role = "OPERADOR", registration = "1", base = "2.000,00") {
   const rows = [["0001", company, "Pág.:", "1"], ["FOLHA DE PAGAMENTO"], ["Local:", "01 MATRIZ"],
-    ["Tipo:", "1", "Colaborador:", "1 - ANA TESTE", "Sit:", status], ["Cargo:", `0001 - ${role}`],
+    ["Tipo:", "1", "Colaborador:", `${registration} - ANA TESTE`, "Sit:", status], ["Cargo:", `0001 - ${role}`],
     ["565", "01", "Bonus Convenc. SINDECOMU", "", "1,00", "80,00"],
-    ["901", "01", "Indenização Compensatória", "", "0,00", sundayPaid], ["INSS Proc:", "2.000,00"]];
+    ["901", "01", "Indenização Compensatória", "", "0,00", sundayPaid], ["INSS Proc:", base]];
   const xml = rows.map((row, index) => `<row r="${index + 1}">${row.map((cell, column) => `<c r="${String.fromCharCode(65 + column)}${index + 1}" t="inlineStr"><is><t>${cell}</t></is></c>`).join("")}</row>`).join("");
   const bytes = zipSync({
     "[Content_Types].xml": strToU8('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>'),
@@ -136,6 +136,39 @@ beforeEach(() => {
 });
 
 describe("salary adjustment PDF API", () => {
+  it.each(["summary", "detailed"])("applies latest presence to real %s PDFs and both events, preserving a zero base", async (reportType) => {
+    await useRealPipeline();
+    const files = [monthlyWorkbook("01-2027.xlsx", "170,00", "EMPRESA TESTE", "Trabalhando", "OPERADOR", "2", "0,00"), monthlyWorkbook("12-2026.xlsx")];
+    const response = await POST(request(files, "1,08", { ...eventFields, reportType, excludeAbsentLatest: "true" }));
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
+    const [report, events] = mocks.generatePdf.mock.calls[0];
+    expect(report).toMatchObject({ excludeAbsentLatest: true, employeeCount: 1, grandTotalCents: 0n });
+    expect(report.groups[0].employees.map((employee: { registration: string }) => employee.registration)).toEqual(["2"]);
+    expect(events).toMatchObject({ excludeAbsentLatest: true, employeeCount: 1, bonusTotalCents: "1000", sundayTotalCents: "1000", grandTotalCents: "2000" });
+    expect(events.employees.map((employee: { registration: string }) => employee.registration)).toEqual(["2"]);
+  });
+  it("keeps historical employees when the presence option is omitted", async () => {
+    await useRealPipeline();
+    const response = await POST(request([monthlyWorkbook("06-2026.xlsx"), monthlyWorkbook("07-2026.xlsx", "170,00", "EMPRESA TESTE", "Demitido", "OPERADOR", "2")], "1,08", eventFields));
+    expect(response.status).toBe(200);
+    const [report, events] = mocks.generatePdf.mock.calls[0];
+    expect(report).toMatchObject({ excludeAbsentLatest: false, employeeCount: 2, grandTotalCents: 2160n });
+    expect(events).toMatchObject({ employeeCount: 2, grandTotalCents: "2000" });
+  });
+  it("rejects malformed presence options before parsing", async () => {
+    const response = await POST(request([xlsx()], "1,08", { excludeAbsentLatest: "yes" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("REAJUSTE_PRESENCE_FILTER_INVALID");
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
+  it("does not silently filter an employee whose imported base is invalid", async () => {
+    await useRealPipeline();
+    const response = await POST(request([monthlyWorkbook("06-2026.xlsx", "170,00", "EMPRESA TESTE", "Trabalhando", "OPERADOR", "1", ""), monthlyWorkbook("07-2026.xlsx", "170,00", "EMPRESA TESTE", "Trabalhando", "OPERADOR", "2")], "1,08", { excludeAbsentLatest: "true" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("REAJUSTE_STRUCTURE_INVALID");
+    expect(mocks.generatePdf).not.toHaveBeenCalled();
+  });
   it.each([
     ["standard", "OPERADOR", "1,23456", 2469n],
     ["drivers-forklift", "Motorista de Truck", "1,23456", 2469n],

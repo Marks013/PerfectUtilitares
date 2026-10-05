@@ -84,6 +84,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
   page();
   paragraph("565 — Bonus Convenc. SINDECOMU | 901 — Indenização Compensatória", true);
   paragraph(`Competências: ${report.competencies.map((item) => competencyLabel(item.month, item.year)).join(", ")}`);
+  if (report.excludeAbsentLatest) paragraph(`Filtro de presença: somente colaboradores com base em ${report.competencies.at(-1)?.key.replace("-", "/")}.`);
   paragraph(`Bônus 565: histórico ${money(report.settings.bonusOldValueCents)} por unidade; novo ${money(report.settings.bonusNewValueCents)}. Domingos 901: histórico ${money(report.settings.sundayOldValueCents)} por domingo; novo ${money(report.settings.sundayNewValueCents)}.`);
   for (const override of report.settings.historicOverrides) {
     const competency = report.competencies.find((item) => item.key === override.competencyKey);

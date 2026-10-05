@@ -38,6 +38,7 @@ export function parseSalaryAdvanceScope(form: FormData): SalaryAdvanceScope {
 
 export function parseSalaryAdvanceScopeSettings(form: FormData) {
   const salaryScope = parseSalaryAdvanceScope(form);
+  const excludeAbsentLatest = parseExcludeAbsentLatest(form);
   const percentage = singleField(form, "percentage");
   const packer = singleField(form, "packerPercentage");
   const driver = singleField(form, "driverPercentage");
@@ -46,6 +47,7 @@ export function parseSalaryAdvanceScopeSettings(form: FormData) {
   const driverPercentageHundredThousandths = salaryScope === "drivers-forklift" ? parsePercentageHundredThousandths(driver ?? "") : undefined;
   return {
     salaryScope,
+    excludeAbsentLatest,
     percentageHundredThousandths,
     packerPercentageHundredThousandths,
     driverPercentageHundredThousandths,
@@ -53,4 +55,13 @@ export function parseSalaryAdvanceScopeSettings(form: FormData) {
     packerPercentageTenThousandths: packerPercentageHundredThousandths / 10n,
     driverPercentageTenThousandths: driverPercentageHundredThousandths === undefined ? undefined : driverPercentageHundredThousandths / 10n,
   };
+}
+
+export function parseExcludeAbsentLatest(form: FormData): boolean {
+  const values = form.getAll("excludeAbsentLatest");
+  if (values.length === 0) return false;
+  if (values.length !== 1 || (values[0] !== "true" && values[0] !== "false")) {
+    throw new SalaryAdjustmentError("REAJUSTE_PRESENCE_FILTER_INVALID", "Escolha uma única opção válida para excluir colaboradores sem base na última competência.");
+  }
+  return values[0] === "true";
 }

@@ -46,8 +46,9 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
   const [salaryScope, setSalaryScope] = useState<SalaryAdvanceScope>("standard");
   const [driverPercentage, setDriverPercentage] = useState("");
   const [includeEvents, setIncludeEvents] = useState(false);
+  const [excludeAbsentLatest, setExcludeAbsentLatest] = useState(false);
   const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
-  const eventModel = useEventAdjustmentWorkspaceController(active && includeEvents, files, salaryScope);
+  const eventModel = useEventAdjustmentWorkspaceController(active && includeEvents, files, salaryScope, excludeAbsentLatest);
   const [state, setState] = useState<GenerationState>({ status: "idle", progress: 0 });
   const totalBytes = useMemo(
     () => files.reduce((sum, file) => sum + file.size, 0),
@@ -60,7 +61,7 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
   useEffect(() => {
     requestRef.current?.abort(); requestRef.current = null;
     setState(current => current.status === "uploading" || current.status === "processing" ? { status: "idle", progress: 0 } : current);
-  }, [active, includeEvents, files, percentage, packerPercentage, salaryScope, driverPercentage, eventModel.settings, eventModel.overrides]);
+  }, [active, includeEvents, excludeAbsentLatest, files, percentage, packerPercentage, salaryScope, driverPercentage, eventModel.settings, eventModel.overrides]);
 
   useEffect(
     () => () => {
@@ -84,6 +85,7 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     setSalaryScope("standard");
     setDriverPercentage("");
     setIncludeEvents(false);
+    setExcludeAbsentLatest(false);
     setFileSelectionError(null);
     eventModel.reset();
     setState({ status: "idle", progress: 0 });
@@ -114,6 +116,7 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     data.set("packerPercentage", packerPercentage.trim());
     data.set("reportType", kind);
     data.set("salaryScope", salaryScope);
+    data.set("excludeAbsentLatest", String(excludeAbsentLatest));
     if (salaryScope === "drivers-forklift") data.set("driverPercentage", driverPercentage.trim());
     if (includeEvents) {
       data.set("includeEvents", "true");
@@ -174,6 +177,8 @@ export function useSalaryAdvanceWorkspaceController(active = true) {
     eventModel,
     includeEvents,
     setIncludeEvents,
+    excludeAbsentLatest,
+    setExcludeAbsentLatest,
     fileSelectionError,
     files,
     generate,

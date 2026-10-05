@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/nextjs";
 import { beforeSendScrubber } from "@/sentry.shared";
 import { PDFDocument } from "pdf-lib";
-import { eventRequest } from "@/lib/reajuste-salarial/event-adjustment-test-support";
+import { eventRequest, presenceEventRequest } from "@/lib/reajuste-salarial/event-adjustment-test-support";
 import { recordUserUsage } from "@/lib/usage/record";
 import { runWithReajusteProcessingSlot } from "@/lib/reajuste-salarial/processing-gate";
 import { GET, POST } from "./route";
@@ -16,6 +16,13 @@ vi.mock("@/lib/reajuste-salarial/processing-gate", () => ({ runWithReajusteProce
 vi.mock("@/lib/usage/record", () => ({ recordUserUsage: vi.fn().mockResolvedValue(undefined) }));
 
 describe("event PDF API", () => {
+  it("returns a real PDF with the latest-presence filter and rejects invalid options", async () => {
+    const response = await POST(await presenceEventRequest());
+    expect(response.status).toBe(200);
+    const document = await PDFDocument.load(new Uint8Array(await response.arrayBuffer()));
+    expect(document.getPageCount()).toBeGreaterThan(0);
+    expect((await POST(await presenceEventRequest("yes"))).status).toBe(400);
+  });
   it("imports a real workbook, calculates and returns a real readable PDF", async () => {
     const response = await POST(eventRequest());
     expect(response.status).toBe(200);
