@@ -119,10 +119,12 @@ function table(doc: PDFKit.PDFDocument, report: SalaryAdvanceReport, title: stri
   page(true);
   return { row, height, keep,
     branch(value: string, nextHeight: number) {
+      const nextBranch = branch !== "";
       collaborator = "";
       branch = "";
       const label = clean(value);
-      keep(height([{ value: `Filial: ${label}`, span: columns.length }], true) + nextHeight);
+      if (nextBranch) page();
+      else keep(height([{ value: `Filial: ${label}`, span: columns.length }], true) + nextHeight);
       branch = label;
       band(`Filial: ${branch}`);
     },

@@ -299,9 +299,9 @@ export function drawSalaryAdvanceReport(
   let y = drawTableHeader(doc, columns, drawPageHeader(doc, report, true));
   let striped = false;
 
-  for (const group of report.groups) {
+  for (const [groupIndex, group] of report.groups.entries()) {
     const firstHeight = getEmployeeRowHeight(doc, columns, group.employees[0]);
-    if (!hasVerticalSpace(y, branchBandHeight(doc, group, false) + firstHeight, contentBottom)) {
+    if (groupIndex > 0 || !hasVerticalSpace(y, branchBandHeight(doc, group, false) + firstHeight, contentBottom)) {
       doc.addPage();
       y = drawTableHeader(doc, columns, drawPageHeader(doc, report, false));
     }
