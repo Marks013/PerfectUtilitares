@@ -85,7 +85,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
   paragraph("565 — Bonus Convenc. SINDECOMU | 901 — Indenização Compensatória", true);
   paragraph(`Competências: ${report.competencies.map((item) => competencyLabel(item.month, item.year)).join(", ")}`);
   if (report.excludeAbsentLatest) paragraph(`Filtro de presença: somente colaboradores com base em ${report.competencies.at(-1)?.key.replace("-", "/")}.`);
-  paragraph(`Bônus 565: histórico ${money(report.settings.bonusOldValueCents)} por unidade; novo ${money(report.settings.bonusNewValueCents)}. Domingos 901: histórico ${money(report.settings.sundayOldValueCents)} por domingo; novo ${money(report.settings.sundayNewValueCents)}.`);
+  paragraph(`Bônus Sindicato 565: histórico ${money(report.settings.bonusOldValueCents)} por unidade; novo ${money(report.settings.bonusNewValueCents)}. Indenização Domingo 901: histórico ${money(report.settings.sundayOldValueCents)} por domingo; novo ${money(report.settings.sundayNewValueCents)}.`);
   for (const override of report.settings.historicOverrides) {
     const competency = report.competencies.find((item) => item.key === override.competencyKey);
     paragraph(`Histórico específico ${competency ? competencyLabel(competency.month, competency.year) : override.competencyKey}: bônus ${money(override.bonusOldValueCents)}; domingo ${money(override.sundayOldValueCents)}.`);
@@ -127,7 +127,7 @@ export function drawEventAdjustmentReport(doc: PDFKit.PDFDocument, report: Event
           const received = !!month?.inPayroll && !!result?.received;
           const status = !month?.inPayroll ? "Sem folha" : month.exclusionReason ? `Bloqueado: ${month.employmentStatus ?? month.exclusionReason}`.replace(/\s+/g, " ") : !received ? "Evento ausente" : newValue === null ? "Recebeu; não reajustado" : result?.targetCents !== null && BigInt(result?.targetCents ?? "0") < BigInt(result?.paidCents ?? "0") ? "Adicional zero; sem desconto" : "Recebeu evento";
           const values = [
-            competencyLabel(competency.month, competency.year), event === "565" ? "565\nBônus" : "901\nDomingos", status,
+            competencyLabel(competency.month, competency.year), event === "565" ? "Bônus Sindicato 565" : "Indenização Domingo 901", status,
             received && result ? money(result.paidCents) : "—", money(oldValue),
             received && result && result.quantity !== null ? `${result.quantity} ${event === "565" ? "unid." : "dom."}` : "—",
             received && result ? quantitySource(result) : "—", money(newValue),

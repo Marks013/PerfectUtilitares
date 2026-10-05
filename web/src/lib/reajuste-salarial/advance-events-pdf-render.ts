@@ -17,8 +17,8 @@ function settingsLines(events?: EventAdjustmentReport) {
   if (!events) return [];
   const unit = (old: string, next: string | null) => `${formatCents(BigInt(old))} para ${next === null ? "não configurado" : formatCents(BigInt(next))}`;
   return [
-    `Valores unitários — Bônus 565: ${unit(events.settings.bonusOldValueCents, events.settings.bonusNewValueCents)} | Domingos 901: ${unit(events.settings.sundayOldValueCents, events.settings.sundayNewValueCents)}`,
-    ...events.settings.historicOverrides.map(item => `Histórico ${item.competencyKey.replace("-", "/")} — Bônus 565: ${unit(item.bonusOldValueCents, events.settings.bonusNewValueCents)} | Domingos 901: ${unit(item.sundayOldValueCents, events.settings.sundayNewValueCents)}`),
+    `Valores unitários — Bônus Sindicato 565: ${unit(events.settings.bonusOldValueCents, events.settings.bonusNewValueCents)} | Indenização Domingo 901: ${unit(events.settings.sundayOldValueCents, events.settings.sundayNewValueCents)}`,
+    ...events.settings.historicOverrides.map(item => `Histórico ${item.competencyKey.replace("-", "/")} — Bônus Sindicato 565: ${unit(item.bonusOldValueCents, events.settings.bonusNewValueCents)} | Indenização Domingo 901: ${unit(item.sundayOldValueCents, events.settings.sundayNewValueCents)}`),
   ];
 }
 
@@ -145,7 +145,7 @@ function totals(summary: { advanceCents: bigint; bonusCents: bigint; sundayCents
 }
 
 export function drawSalaryAdvanceSummary(doc: PDFKit.PDFDocument, summary: Summary, report: SalaryAdvanceReport, events?: EventAdjustmentReport) {
-  const layout = table(doc, report, "Antecipação Salarial — resumo consolidado", ["Cadastro", "Colaborador", "Antecipação", "Bônus 565", "Domingos 901", "Total a pagar"], [65, 330, 100, 90, 95, 110], [...settingsLines(events), "Somente as diferenças dos eventos são somadas. Os valores já pagos nas folhas não são somados novamente."]);
+  const layout = table(doc, report, "Antecipação Salarial — resumo consolidado", ["Cadastro", "Colaborador", "Antecipação", "Bônus Sindicato 565", "Indenização Domingo 901", "Total a pagar"], [65, 330, 100, 90, 95, 110], [...settingsLines(events), "Somente as diferenças dos eventos são somadas. Os valores já pagos nas folhas não são somados novamente."]);
   const sumCells = (label: string, values: bigint[]) => [{ value: "" }, { value: label }, ...values.map(value => ({ value: formatCents(value) }))];
   for (const group of summary.groups) {
     const rows = group.employees.map(employee => [employee.registration, clean(employee.employeeName), ...totals(employee).map(formatCents)].map(value => ({ value })));
@@ -165,7 +165,7 @@ function eventCells(event: EventAdjustmentResult, inPayroll: boolean): Cell[] {
 }
 
 export function drawSalaryAdvanceEventDetail(doc: PDFKit.PDFDocument, summary: Summary, report: SalaryAdvanceReport, events: EventAdjustmentReport) {
-  const layout = table(doc, report, "Antecipação Salarial — apuração detalhada", ["Competência", "INSS Proc (R$)", "%", "Valor (R$)", "Pago (R$)", "Qtd", "Dif. (R$)", "Pago (R$)", "Qtd", "Dif. (R$)", "Total mês (R$)"], [64, 90, 54, 80, 75, 28, 75, 75, 28, 75, 90], [...settingsLines(events), "Pago = valor original na folha | Qtd = quantidade apurada | Dif. = diferença a pagar. Bloqueios e ausências são indicados abaixo do mês."], [{ value: "Bases e antecipação", span: 4 }, { value: "Bônus 565", span: 3 }, { value: "Domingos 901", span: 3 }, { value: "Total mês" }]);
+  const layout = table(doc, report, "Antecipação Salarial — apuração detalhada", ["Competência", "INSS Proc (R$)", "%", "Valor (R$)", "Pago (R$)", "Qtd", "Dif. (R$)", "Pago (R$)", "Qtd", "Dif. (R$)", "Total mês (R$)"], [64, 90, 54, 80, 75, 28, 75, 75, 28, 75, 90], [...settingsLines(events), "Pago = valor original na folha | Qtd = quantidade apurada | Dif. = diferença a pagar. Bloqueios e ausências são indicados abaixo do mês."], [{ value: "Bases e antecipação", span: 4 }, { value: "Bônus Sindicato 565", span: 3 }, { value: "Indenização Domingo 901", span: 3 }, { value: "Total mês" }]);
   const sumCells = (label: string, values: bigint[]): Cell[] => [{ value: label, span: 3 }, ...values.map((value, index) => ({ value: amount(value), span: index === 1 || index === 2 ? 3 : 1 }))];
   const eventEmployees = new Map(events.employees.map(employee => [employee.registration.replace(/^0+(?=\d)/, ""), employee]));
   for (const [groupIndex, group] of report.groups.entries()) {

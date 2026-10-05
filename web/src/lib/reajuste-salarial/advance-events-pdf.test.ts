@@ -199,7 +199,7 @@ describe("optional events in the advance PDF", () => {
     const values = text.mock.calls.map(call => String(call[0]));
     expect(values).toContain("Sem evento");
     expect(values).toContain("0");
-    expect(values.join("\n")).toContain("Histórico 06/2026 — Bônus 565: R$ 75,00 para R$ 90,00");
+    expect(values.join("\n")).toContain("Histórico 06/2026 — Bônus Sindicato 565: R$ 75,00 para R$ 90,00");
     expect(values).not.toContain("Ausente na competência");
     expect(values).toContain("200,00");
   });
