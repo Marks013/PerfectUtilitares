@@ -15,21 +15,27 @@ export type ParsedSalaryRevisionFile = {
   employees: ParsedSalaryRevisionEmployee[];
 };
 
-export type SalaryRevisionRule = {
+type SalaryRevisionRuleSelection = {
   id: string;
   name: string;
   minimumSalaryCents: bigint;
   maximumSalaryCents: bigint;
-  newSalaryCents: bigint;
   selectedRegistrations: string[];
+  roleFilter?: string;
 };
+
+export type SalaryRevisionRule = SalaryRevisionRuleSelection & (
+  | { calculation?: "fixed"; newSalaryCents: bigint; percentageBasisPoints?: never }
+  | { calculation: "general_percentage"; newSalaryCents?: never; percentageBasisPoints?: never }
+  | { calculation: "percentage"; newSalaryCents?: never; percentageBasisPoints: bigint }
+);
 
 export type SalaryRevisionScope = "all" | "rules_only";
 
 export type AppliedSalaryRevisionEmployee = ParsedSalaryRevisionEmployee & {
   application:
     | { kind: "general" }
-    | { kind: "special"; ruleId: string; ruleName: string };
+    | { kind: "special"; ruleId: string; ruleName: string; percentageBasisPoints?: bigint };
   adjustmentCents: bigint;
   newSalaryCents: bigint;
 };

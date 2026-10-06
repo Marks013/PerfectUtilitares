@@ -4,6 +4,18 @@ import { generateSalaryRevisionPdf } from "./salary-revision-pdf";
 import { applySalaryRevisionRules } from "./salary-revision-rules";
 
 describe("salary revision PDF", () => {
+  it("starts each small branch on its own page", async () => {
+    const report = applySalaryRevisionRules({
+      sourceFile: "FPRE131.xlsx", sourceSheet: "Plan1",
+      employees: ["Multi Atacado", "Tiradentes", "Anchieta"].map((branchAlias, index) => ({
+        sourceFile: "FPRE131.xlsx", sourceSheet: "Plan1", sourceRow: index + 4,
+        branchAlias, registration: String(index + 1), employeeName: `COLABORADOR ${index}`,
+        role: "CAIXA", currentSalaryCents: 214_370n,
+      })),
+    }, 103n, []);
+    expect(report.groups.map((group) => group.branchAlias)).toEqual(["Tiradentes", "Multi Atacado", "Anchieta"]);
+    expect((await PDFDocument.load(await generateSalaryRevisionPdf(report))).getPageCount()).toBe(3);
+  });
   it("generates readable A4 landscape pages", async () => {
     const report = applySalaryRevisionRules(
       {

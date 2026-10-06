@@ -58,6 +58,7 @@ function request(
   hash = fileHash,
   scope: string | null = "all",
   rules = "[]",
+  percentage?: string,
 ) {
   const form = new FormData();
   form.set(
@@ -68,7 +69,7 @@ function request(
   );
   form.set("fileHash", hash);
   if (scope !== null) form.set("scope", scope);
-  if (scope !== "rules_only") form.set("percentage", "4,42");
+  if (percentage !== undefined || scope !== "rules_only") form.set("percentage", percentage ?? "4,42");
   form.set("rules", rules);
   return new Request("http://localhost/api/reajuste-salarial/reajuste/gerar", {
     method: "POST",
@@ -117,6 +118,31 @@ beforeEach(() => {
 });
 
 describe("salary revision PDF API", () => {
+  it("calculates selected general and own percentage rules on the server", async () => {
+    const rules = JSON.stringify([
+      { id: "general", name: "Geral", minimumSalaryCents: "203194", maximumSalaryCents: "203194", selectedRegistrations: ["4"], calculation: "general_percentage", roleFilter: "cáixa" },
+      { id: "own", name: "Próprio", minimumSalaryCents: "174570", maximumSalaryCents: "174570", selectedRegistrations: ["5"], calculation: "percentage", percentageBasisPoints: "227" },
+    ]);
+    const response = await POST(request(fileHash, "rules_only", rules, "1,08"));
+    expect(response.status).toBe(200);
+    const report = mocks.generatePdf.mock.calls[0][0];
+    expect(report.generalPercentageBasisPoints).toBe(108n);
+    expect(report.employeeCount).toBe(2);
+    expect(report.groups[0].employees.map((employee: { adjustmentCents: bigint }) => employee.adjustmentCents)).toEqual([2194n, 3963n]);
+    expect(report.totalAdjustmentCents).toBe(6157n);
+  });
+
+  it("accepts own percentages without a general value in selected scope", async () => {
+    const rules = JSON.stringify([{ id: "own", name: "Próprio", minimumSalaryCents: "0", maximumSalaryCents: "300000", selectedRegistrations: ["5"], calculation: "percentage", percentageBasisPoints: "227" }]);
+    expect((await POST(request(fileHash, "rules_only", rules))).status).toBe(200);
+    expect(mocks.generatePdf.mock.calls[0][0]).toMatchObject({ generalPercentageBasisPoints: null, employeeCount: 1, totalAdjustmentCents: 3963n });
+  });
+
+  it("rejects a selected general rule without its required percentage", async () => {
+    const rules = JSON.stringify([{ id: "general", name: "Geral", minimumSalaryCents: "0", maximumSalaryCents: "300000", selectedRegistrations: ["4"], calculation: "general_percentage" }]);
+    expect((await POST(request(fileHash, "rules_only", rules))).status).toBe(400);
+    expect(mocks.parseWorkbook).not.toHaveBeenCalled();
+  });
   it("accepts only POST", () => {
     expect(GET().status).toBe(405);
   });

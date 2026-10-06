@@ -34,10 +34,45 @@ function specialRule(overrides: Partial<SalaryRevisionRule> = {}): SalaryRevisio
     newSalaryCents: 190_000n,
     selectedRegistrations: ["000000001"],
     ...overrides,
-  };
+  } as SalaryRevisionRule;
 }
 
 describe("salary revision rules", () => {
+  it("applies general and own percentages to selected rules with exact cents", () => {
+    const report = applySalaryRevisionRules(parsedFile(), 108n, [
+      { id: "general", name: "Geral", minimumSalaryCents: 138862n, maximumSalaryCents: 138862n, selectedRegistrations: ["1"], calculation: "general_percentage", roleFilter: "  cAÍxa " },
+      { id: "own", name: "Próprio", minimumSalaryCents: 174570n, maximumSalaryCents: 174570n, selectedRegistrations: ["2"], calculation: "percentage", percentageBasisPoints: 227n },
+    ], new Date(), "rules_only");
+    const employees = report.groups.flatMap((group) => group.employees);
+    expect(employees.map((employee) => [employee.registration, employee.adjustmentCents, employee.newSalaryCents])).toEqual([["1", 1500n, 140362n], ["2", 3963n, 178533n]]);
+    expect(employees[0].application).toMatchObject({ percentageBasisPoints: 108n });
+    expect(employees[1].application).toMatchObject({ percentageBasisPoints: 227n });
+    expect(report.generalPercentageBasisPoints).toBe(108n);
+    expect(report.totalAdjustmentCents).toBe(5463n);
+    expect(report.generalEmployeeCount).toBe(0);
+  });
+
+  it("combines fixed and percentage rules with the remaining general employees", () => {
+    const report = applySalaryRevisionRules(parsedFile(), 108n, [
+      specialRule(),
+      { id: "own", name: "Próprio", minimumSalaryCents: 174570n, maximumSalaryCents: 174570n, selectedRegistrations: ["2"], calculation: "percentage", percentageBasisPoints: 227n },
+    ]);
+    expect(report.employeeCount).toBe(3);
+    expect(report.specialEmployeeCount).toBe(2);
+    expect(report.generalEmployeeCount).toBe(1);
+    expect(report.totalAdjustmentCents).toBe(57295n);
+  });
+
+  it("rejects wrong exact roles and percentage bounds even without request parsing", () => {
+    expect(() => applySalaryRevisionRules(parsedFile(), 108n, [specialRule({ roleFilter: "CAIXA CHEFE" })])).toThrow("cargo diferente");
+    for (const value of [0n, 10001n]) {
+      expect(() => applySalaryRevisionRules(parsedFile(), value, [])).toThrow("percentual geral");
+      expect(() => applySalaryRevisionRules(parsedFile(), 0n, [{ id: "own", name: "Próprio", minimumSalaryCents: 0n, maximumSalaryCents: 300000n, selectedRegistrations: ["1"], calculation: "percentage", percentageBasisPoints: value }], new Date(), "rules_only")).toThrow("percentual entre");
+    }
+    for (const value of [1n, 10000n]) {
+      expect(applySalaryRevisionRules(parsedFile(), value, []).employeeCount).toBe(3);
+    }
+  });
   it("uses fixed salary only for selected employees and percentage for all others", () => {
     const report = applySalaryRevisionRules(
       parsedFile(),

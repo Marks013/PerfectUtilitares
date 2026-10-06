@@ -7,7 +7,6 @@ import type {
 } from "./salary-revision-types";
 
 type ColumnKind =
-  | "branch"
   | "registration"
   | "name"
   | "role"
@@ -34,7 +33,7 @@ const COLORS = {
   branch: "#e7efec",
   white: "#ffffff",
 };
-const HEADER_HEIGHT = 34;
+const HEADER_HEIGHT = 24;
 const BRANCH_HEIGHT = 22;
 const FOOTER_RESERVE = 18;
 
@@ -52,12 +51,11 @@ function scopeLabel(report: SalaryRevisionReport) {
 
 function columns(usableWidth: number, left: number) {
   const definitions = [
-    { kind: "branch" as const, label: "Filial", weight: 0.8 },
     { kind: "registration" as const, label: "Cadastro", weight: 0.65 },
     { kind: "name" as const, label: "Nome", weight: 1.8 },
     { kind: "role" as const, label: "Cargo", weight: 1.35 },
     { kind: "current" as const, label: "Salário atual", weight: 0.88 },
-    { kind: "application" as const, label: "Aplicação", weight: 1.05 },
+    { kind: "application" as const, label: "Regra aplicada", weight: 1.05 },
     { kind: "percentage" as const, label: "Percentual", weight: 0.72 },
     { kind: "adjustment" as const, label: "Reajuste", weight: 0.88 },
     { kind: "new" as const, label: "Novo salário", weight: 0.88 },
@@ -80,7 +78,6 @@ function cellValue(
   column: Column,
   report: SalaryRevisionReport,
 ) {
-  if (column.kind === "branch") return employee.branchAlias;
   if (column.kind === "registration") return employee.registration;
   if (column.kind === "name") return employee.employeeName;
   if (column.kind === "role") return employee.role;
@@ -88,6 +85,9 @@ function cellValue(
   if (column.kind === "adjustment") return formatCents(employee.adjustmentCents);
   if (column.kind === "new") return formatCents(employee.newSalaryCents);
   if (column.kind === "percentage") {
+    if (employee.application.kind === "special" && employee.application.percentageBasisPoints !== undefined) {
+      return formatPercentage(employee.application.percentageBasisPoints);
+    }
     return employee.application.kind === "general" &&
       report.generalPercentageBasisPoints !== null
       ? formatPercentage(report.generalPercentageBasisPoints)
@@ -115,7 +115,7 @@ function clippedText(
   doc.save().rect(column.x, y, column.width, height).clip();
   doc
     .font(options.font ?? "Helvetica")
-    .fontSize(options.size ?? 6)
+    .fontSize(options.size ?? 7.5)
     .fillColor(options.color ?? COLORS.ink)
     .text(value, column.x + padding, y + padding, {
       width: Math.max(1, column.width - padding * 2),
@@ -212,7 +212,7 @@ function tableHeader(doc: PDFKit.PDFDocument, reportColumns: Column[], y: number
       align: column.kind === "name" || column.kind === "role" ? "left" : "center",
       font: "Helvetica-Bold",
       color: COLORS.white,
-      size: 6.2,
+      size: 7.5,
     });
   }
   return y + HEADER_HEIGHT;
@@ -252,7 +252,7 @@ function rowHeight(
   employee: AppliedSalaryRevisionEmployee,
   report: SalaryRevisionReport,
 ) {
-  doc.font("Helvetica").fontSize(6);
+  doc.font("Helvetica").fontSize(7.5);
   const height = Math.max(
     ...reportColumns
       .filter((column) =>
@@ -267,7 +267,36 @@ function rowHeight(
         }),
       ),
   );
-  return Math.max(18, Math.min(32, Math.ceil(height + 6)));
+  return Math.max(20, Math.ceil(height + 6));
+}
+
+function totalsRow(
+  doc: PDFKit.PDFDocument,
+  reportColumns: Column[],
+  label: string,
+  current: bigint,
+  adjustment: bigint,
+  updated: bigint,
+  y: number,
+) {
+  const height = 26;
+  const labelColumns = reportColumns.filter((column) =>
+    column.kind === "registration" || column.kind === "name" || column.kind === "role",
+  );
+  const labelColumn: Column = {
+    ...labelColumns[0],
+    width: labelColumns.reduce((total, column) => total + column.width, 0),
+  };
+  doc.rect(labelColumn.x, y, labelColumn.width, height).fillAndStroke(COLORS.branch, COLORS.border);
+  clippedText(doc, label, labelColumn, y, height, { font: "Helvetica-Bold" });
+  for (const column of reportColumns.filter((item) => !labelColumns.includes(item))) {
+    doc.rect(column.x, y, column.width, height).fillAndStroke(COLORS.branch, COLORS.border);
+    const value = column.kind === "current" ? formatCents(current)
+      : column.kind === "adjustment" ? formatCents(adjustment)
+        : column.kind === "new" ? formatCents(updated) : "";
+    clippedText(doc, value, column, y, height, { align: "right", font: "Helvetica-Bold" });
+  }
+  return y + height;
 }
 
 function employeeRow(
@@ -332,16 +361,17 @@ export function drawSalaryRevisionReport(
   const contentBottom = doc.page.height - doc.page.margins.bottom - FOOTER_RESERVE;
   let y = tableHeader(doc, reportColumns, pageHeader(doc, report, true));
   let striped = false;
-  for (const group of report.groups) {
+  for (const [groupIndex, group] of report.groups.entries()) {
     const firstHeight = rowHeight(doc, reportColumns, group.employees[0], report);
-    if (y + BRANCH_HEIGHT + firstHeight > contentBottom) {
+    if (groupIndex > 0 || y + BRANCH_HEIGHT + firstHeight > contentBottom) {
       doc.addPage();
       y = tableHeader(doc, reportColumns, pageHeader(doc, report, false));
     }
     y = branchBand(doc, group, y, false);
-    for (const employee of group.employees) {
+    for (const [employeeIndex, employee] of group.employees.entries()) {
       const height = rowHeight(doc, reportColumns, employee, report);
-      if (y + height > contentBottom) {
+      const finalReserve = employeeIndex === group.employees.length - 1 ? 26 : 0;
+      if (y + height + finalReserve > contentBottom) {
         doc.addPage();
         y = tableHeader(doc, reportColumns, pageHeader(doc, report, false));
         y = branchBand(doc, group, y, true);
@@ -349,6 +379,12 @@ export function drawSalaryRevisionReport(
       y = employeeRow(doc, reportColumns, employee, report, y, height, striped);
       striped = !striped;
     }
+    y = totalsRow(doc, reportColumns, `Total ${group.branchAlias} | ${group.employeeCount.toLocaleString("pt-BR")} colaboradores`, group.currentPayrollCents, group.adjustmentSubtotalCents, group.newPayrollCents, y);
   }
+  if (y + 32 > contentBottom) {
+    doc.addPage();
+    y = tableHeader(doc, reportColumns, pageHeader(doc, report, false));
+  }
+  totalsRow(doc, reportColumns, `Total geral | ${report.employeeCount.toLocaleString("pt-BR")} colaboradores`, report.currentPayrollCents, report.totalAdjustmentCents, report.newPayrollCents, y + 6);
   footers(doc, report);
 }

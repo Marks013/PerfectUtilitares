@@ -5,6 +5,7 @@ import {
 import { SalaryAdjustmentError } from "./errors";
 import { MAX_UNIQUE_EMPLOYEES } from "./limits";
 import { calculateAdjustmentCents } from "./money";
+import { salaryRevisionRoleMatches, salaryRevisionUsesGeneralPercentage } from "./salary-revision-matching";
 import type {
   AppliedSalaryRevisionEmployee,
   ParsedSalaryRevisionFile,
@@ -100,6 +101,10 @@ export function applySalaryRevisionRules(
   if (adjustmentScope === "rules_only" && rules.length === 0) {
     invalidRule("Adicione ao menos uma regra no escopo somente selecionados.");
   }
+  const usesGeneralPercentage = salaryRevisionUsesGeneralPercentage(adjustmentScope, rules);
+  if (usesGeneralPercentage && (generalPercentageBasisPoints < 1n || generalPercentageBasisPoints > 10_000n)) {
+    invalidRule("Informe um percentual geral entre 0,01 e 100,00.");
+  }
 
   const employeeByRegistration = new Map(
     file.employees.map((employee) => [employee.registration, employee]),
@@ -113,10 +118,24 @@ export function applySalaryRevisionRules(
     ruleIds.add(rule.id);
     if (
       rule.minimumSalaryCents < 0n ||
-      rule.maximumSalaryCents < rule.minimumSalaryCents ||
-      rule.newSalaryCents < 0n
+      rule.maximumSalaryCents < rule.minimumSalaryCents
     ) {
       invalidRule(`A regra ${name} possui uma faixa ou novo salário inválido.`);
+    }
+    if (rule.calculation !== undefined && !["fixed", "general_percentage", "percentage"].includes(rule.calculation)) {
+      invalidRule(`A regra ${name} possui cálculo inválido.`);
+    }
+    if (rule.calculation === undefined || rule.calculation === "fixed") {
+      if (typeof rule.newSalaryCents !== "bigint" || rule.newSalaryCents < 0n || rule.percentageBasisPoints !== undefined) {
+        invalidRule(`A regra ${name} possui novo salário inválido.`);
+      }
+    } else if (rule.newSalaryCents !== undefined || (rule.calculation === "general_percentage" && rule.percentageBasisPoints !== undefined)) {
+      invalidRule(`A regra ${name} possui campos de cálculo conflitantes.`);
+    } else if (rule.calculation === "percentage" && (typeof rule.percentageBasisPoints !== "bigint" || rule.percentageBasisPoints < 1n || rule.percentageBasisPoints > 10_000n)) {
+      invalidRule(`A regra ${name} exige percentual entre 0,01 e 100,00.`);
+    }
+    if (rule.roleFilter !== undefined && (typeof rule.roleFilter !== "string" || rule.roleFilter.trim().length > 120)) {
+      invalidRule(`A regra ${name} possui filtro de cargo inválido.`);
     }
     if (rule.selectedRegistrations.length === 0) {
       invalidRule(`A regra ${name} não possui colaboradores selecionados.`);
@@ -141,7 +160,10 @@ export function applySalaryRevisionRules(
       ) {
         invalidRule(`O cadastro ${selectedRegistration} está fora da faixa da regra ${name}.`);
       }
-      if (rule.newSalaryCents < employee.currentSalaryCents) {
+      if (!salaryRevisionRoleMatches(employee.role, rule.roleFilter)) {
+        invalidRule(`O cadastro ${selectedRegistration} possui cargo diferente do filtro da regra ${name}.`);
+      }
+      if ((rule.calculation === undefined || rule.calculation === "fixed") && rule.newSalaryCents < employee.currentSalaryCents) {
         invalidRule(`O novo salário da regra ${name} é menor que o salário atual do cadastro ${selectedRegistration}.`);
       }
       if (ruleByRegistration.has(selectedRegistration)) {
@@ -156,15 +178,22 @@ export function applySalaryRevisionRules(
     (employee) => {
     const rule = ruleByRegistration.get(employee.registration);
     if (rule) {
+      const percentageBasisPoints = rule.calculation === "percentage"
+        ? rule.percentageBasisPoints
+        : rule.calculation === "general_percentage" ? generalPercentageBasisPoints : undefined;
+      const adjustmentCents = rule.calculation === undefined || rule.calculation === "fixed"
+        ? rule.newSalaryCents - employee.currentSalaryCents
+        : calculateAdjustmentCents(employee.currentSalaryCents, rule.calculation === "percentage" ? rule.percentageBasisPoints : generalPercentageBasisPoints);
       return [{
         ...employee,
         application: {
           kind: "special" as const,
           ruleId: rule.id,
           ruleName: rule.name,
+          ...(percentageBasisPoints !== undefined ? { percentageBasisPoints } : {}),
         },
-        adjustmentCents: rule.newSalaryCents - employee.currentSalaryCents,
-        newSalaryCents: rule.newSalaryCents,
+        adjustmentCents,
+        newSalaryCents: employee.currentSalaryCents + adjustmentCents,
       }];
     }
     if (adjustmentScope === "rules_only") return [];
@@ -221,7 +250,7 @@ export function applySalaryRevisionRules(
     generatedAt,
     adjustmentScope,
     generalPercentageBasisPoints:
-      adjustmentScope === "all" ? generalPercentageBasisPoints : null,
+      usesGeneralPercentage ? generalPercentageBasisPoints : null,
     rules: normalizedRules,
     groups,
     employeeCount: applied.length,

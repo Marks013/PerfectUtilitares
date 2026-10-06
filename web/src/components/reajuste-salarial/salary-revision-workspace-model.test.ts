@@ -5,6 +5,8 @@ import {
   normalizeMoneyInput,
   serializeSalaryRevisionRules,
   validateSalaryRevisionGeneration,
+  updateSalaryRevisionRule,
+  selectSalaryRevisionCandidates,
 } from "./salary-revision-workspace-model";
 
 const analysis: SalaryRevisionAnalysis = {
@@ -32,6 +34,33 @@ const rule = {
 };
 
 describe("salary revision workspace model", () => {
+  it("keeps eligible selections when money formatting changes and removes only outside filters", () => {
+    expect(updateSalaryRevisionRule(analysis, rule, { minimumSalary: "1300,00" }).selectedRegistrations).toEqual(["1"]);
+    expect(updateSalaryRevisionRule(analysis, { ...rule, selectedRegistrations: ["1", "2"] }, { minimumSalary: "2.000,00" }).selectedRegistrations).toEqual(["2"]);
+    expect(updateSalaryRevisionRule(analysis, rule, { roleFilter: "REPOSITOR" }).selectedRegistrations).toEqual([]);
+  });
+
+  it("uses the search when selecting results and prevents overlaps", () => {
+    const empty = { ...rule, selectedRegistrations: [] };
+    expect(selectSalaryRevisionCandidates(analysis, [empty], empty, "BIA")).toEqual(["2"]);
+    expect(selectSalaryRevisionCandidates(analysis, [rule], rule, "BIA")).toEqual(["1", "2"]);
+    const other = { ...rule, id: "other", selectedRegistrations: ["2"] };
+    expect(selectSalaryRevisionCandidates(analysis, [empty, other], empty)).toEqual(["1"]);
+    expect(candidatesForRule(analysis, { ...rule, roleFilter: "caixa" })).toHaveLength(2);
+    expect(candidatesForRule(analysis, { ...rule, roleFilter: "CAIXA AUXILIAR" })).toHaveLength(0);
+  });
+
+  it("supports general or individual percentages in rules-only without requiring fixed salary", () => {
+    const file = new File(["xlsx"], "FPRE131.xlsx");
+    const general = { ...rule, calculation: "general_percentage" as const, newSalary: "" };
+    expect(validateSalaryRevisionGeneration(file, analysis, "1,03", [general], "rules_only")).toEqual([]);
+    expect(validateSalaryRevisionGeneration(file, analysis, "", [general], "rules_only")).toContain("Informe um percentual geral entre 0,01 e 100,00.");
+    const own = { ...general, calculation: "percentage" as const, percentage: "2,26" };
+    expect(validateSalaryRevisionGeneration(file, analysis, "", [own], "rules_only")).toEqual([]);
+    expect(JSON.parse(serializeSalaryRevisionRules([own]))[0]).toMatchObject({ calculation: "percentage", percentageBasisPoints: "226" });
+    expect(JSON.parse(serializeSalaryRevisionRules([general]))[0]).not.toHaveProperty("newSalaryCents");
+    expect(validateSalaryRevisionGeneration(file, analysis, "", [{ ...own, percentage: "0" }], "rules_only")).toContain("Informe um percentual próprio entre 0,01 e 100,00 na regra Categoria.");
+  });
   it("filters an inclusive Brazilian salary range", () => {
     expect(candidatesForRule(analysis, rule).map((employee) => employee.registration)).toEqual([
       "1",

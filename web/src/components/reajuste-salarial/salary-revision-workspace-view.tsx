@@ -28,6 +28,8 @@ const MAX_VISIBLE_CANDIDATES_PER_RULE = 100;
 
 export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
   const analysis = model.analysis;
+  const roles = [...new Set(analysis?.employees.map((employee) => employee.role) ?? [])]
+    .sort((left, right) => left.localeCompare(right, "pt-BR"));
   return (
     <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(290px,0.7fr)]">
       <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow sm:p-7">
@@ -107,7 +109,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                     value: "all" as const,
                     title: "Todos os colaboradores",
                     description:
-                      "Aplica o percentual geral aos demais e substitui pelo novo salário nas regras.",
+                      "Usa o cálculo escolhido em cada regra e aplica o percentual geral aos demais.",
                   },
                   {
                     value: "rules_only" as const,
@@ -142,7 +144,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
               </div>
             </fieldset>
 
-            <div className={`mt-6 ${model.adjustmentScope === "rules_only" ? "opacity-55" : ""}`}>
+            <div className={`mt-6 ${!model.usesGeneralPercentage ? "opacity-55" : ""}`}>
               <label htmlFor="salary-revision-percentage" className="text-sm font-black text-[color:var(--app-fg)]">Percentual geral (%)</label>
               <input
                 id="salary-revision-percentage"
@@ -151,21 +153,21 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                 autoComplete="off"
                 placeholder="4,42"
                 value={model.percentage}
-                disabled={model.busy || model.adjustmentScope === "rules_only"}
+                disabled={model.busy || !model.usesGeneralPercentage}
                 onChange={(event) => model.setPercentage(event.target.value)}
                 className="mt-2 w-full rounded-xl border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-4 py-3 font-bold text-[color:var(--app-fg)] outline-none focus:border-[color:var(--app-teal)] focus-visible:ring-2 focus-visible:ring-[color:var(--app-teal)]"
               />
               <p className="mt-2 text-xs text-[color:var(--app-muted)]">
-                {model.adjustmentScope === "all"
-                  ? "Aplicado somente aos colaboradores que não estiverem selecionados em regra especial."
-                  : "Não usado quando o escopo contém somente os selecionados nas regras."}
+                {model.usesGeneralPercentage
+                  ? "Usado pelas regras com cálculo Percentual geral e, no escopo Todos, pelos colaboradores sem regra."
+                  : "Escolha Percentual geral no cálculo de uma regra para usar este campo com os selecionados."}
               </p>
             </div>
 
             <div className="mt-7 flex flex-col gap-3 border-t border-[color:var(--app-border)] pt-6 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="font-black text-[color:var(--app-fg)]">Regras especiais</h2>
-                <p className="mt-1 text-xs text-[color:var(--app-muted)]">Faixas inclusivas. Novo salário é fixo e digitado manualmente.</p>
+                <p className="mt-1 text-xs text-[color:var(--app-muted)]">Faixas inclusivas e cargo opcional. Escolha salário fixo ou percentual e marque os colaboradores.</p>
               </div>
               <button type="button" onClick={model.addRule} disabled={model.busy || model.rules.length >= 20} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--app-border-strong)] px-4 py-2 text-sm font-black text-[color:var(--app-fg)] disabled:opacity-50">
                 <Plus className="size-4" /> Adicionar regra
@@ -187,17 +189,16 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <label htmlFor={`rule-name-${rule.id}`} className="text-xs font-black text-[color:var(--app-muted)]">Nome da regra</label>
-                        <input id={`rule-name-${rule.id}`} value={rule.name} onChange={(event) => model.updateRule(rule.id, { name: event.target.value })} className="mt-1 w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 font-bold text-[color:var(--app-fg)]" />
+                        <input id={`rule-name-${rule.id}`} value={rule.name} disabled={model.busy} onChange={(event) => model.updateRule(rule.id, { name: event.target.value })} className="mt-1 w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 font-bold text-[color:var(--app-fg)]" />
                       </div>
-                      <button type="button" onClick={() => model.removeRule(rule.id)} aria-label={`Excluir ${rule.name}`} className="grid size-9 place-items-center app-radius-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)]">
+                      <button type="button" disabled={model.busy} onClick={() => model.removeRule(rule.id)} aria-label={`Excluir ${rule.name}`} className="grid size-9 place-items-center app-radius-lg text-[color:var(--app-coral)] hover:bg-[color:var(--app-danger-soft)]">
                         <Trash2 className="size-4" />
                       </button>
                     </div>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       {[
                         ["Salário mínimo", "minimumSalary" as const, rule.minimumSalary, "1.300,00"],
                         ["Salário máximo", "maximumSalary" as const, rule.maximumSalary, "2.100,00"],
-                        ["Novo salário fixo", "newSalary" as const, rule.newSalary, "2.250,00"],
                       ].map(([label, field, value, placeholder]) => (
                         <label key={field} className="text-xs font-black text-[color:var(--app-muted)]">
                           {label}
@@ -208,6 +209,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                               inputMode="decimal"
                               autoComplete="off"
                               value={value}
+                              disabled={model.busy}
                               placeholder={placeholder}
                               onChange={(event) => model.updateRule(rule.id, { [field]: event.target.value })}
                               onBlur={(event) => model.updateRule(rule.id, { [field]: normalizeMoneyInput(event.target.value) })}
@@ -217,11 +219,42 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                         </label>
                       ))}
                     </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <label className="text-xs font-black text-[color:var(--app-muted)]">
+                        Cargo (opcional)
+                        <select value={rule.roleFilter ?? ""} disabled={model.busy} onChange={(event) => model.updateRule(rule.id, { roleFilter: event.target.value })} className="mt-1 w-full min-w-0 app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 text-[color:var(--app-fg)]">
+                          <option value="">Todos os cargos na faixa</option>
+                          {roles.map((role) => <option key={role} value={role}>{role}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs font-black text-[color:var(--app-muted)]">
+                        Cálculo da regra
+                        <select value={rule.calculation ?? "fixed"} disabled={model.busy} onChange={(event) => model.updateRule(rule.id, { calculation: event.target.value as "fixed" | "general_percentage" | "percentage" })} className="mt-1 w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 text-[color:var(--app-fg)]">
+                          <option value="general_percentage">Percentual geral</option>
+                          <option value="percentage">Percentual próprio</option>
+                          <option value="fixed">Novo salário fixo</option>
+                        </select>
+                      </label>
+                    </div>
+                    {(rule.calculation ?? "fixed") === "fixed" ? (
+                      <label className="mt-4 block text-xs font-black text-[color:var(--app-muted)]">
+                        Novo salário fixo (R$)
+                        <input type="text" inputMode="decimal" autoComplete="off" value={rule.newSalary} disabled={model.busy} placeholder="2.250,00" onChange={(event) => model.updateRule(rule.id, { newSalary: event.target.value })} onBlur={(event) => model.updateRule(rule.id, { newSalary: normalizeMoneyInput(event.target.value) })} className="mt-1 w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 text-[color:var(--app-fg)]" />
+                      </label>
+                    ) : rule.calculation === "percentage" ? (
+                      <label className="mt-4 block text-xs font-black text-[color:var(--app-muted)]">
+                        Percentual próprio (%)
+                        <input type="text" inputMode="decimal" autoComplete="off" value={rule.percentage ?? ""} disabled={model.busy} placeholder="1,03" onChange={(event) => model.updateRule(rule.id, { percentage: event.target.value })} className="mt-1 w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] px-3 py-2 text-[color:var(--app-fg)]" />
+                      </label>
+                    ) : (
+                      <p className="mt-3 text-xs text-[color:var(--app-muted)]">Cada selecionado recebe o percentual geral sobre o próprio salário atual.</p>
+                    )}
+                    <p className="mt-3 text-xs text-[color:var(--app-muted)]">O nome identifica a regra. Faixa e cargo filtram os candidatos; a seleção define quem recebe a regra. Ao mudar os filtros, seleções fora deles são removidas.</p>
                     <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-xs text-[color:var(--app-muted)]">{candidates.length.toLocaleString("pt-BR")} na faixa · {selected.size.toLocaleString("pt-BR")} selecionados</p>
                       <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => model.updateRule(rule.id, { selectedRegistrations: [] })} className="app-radius-lg border border-[color:var(--app-border-strong)] px-3 py-2 text-xs font-black text-[color:var(--app-fg)]">Desmarcar tudo</button>
-                        <button type="button" onClick={() => model.selectRange(rule.id)} className="app-radius-lg bg-[color:var(--app-teal)] px-3 py-2 text-xs font-black text-white">Selecionar faixa</button>
+                        <button type="button" disabled={model.busy} onClick={() => model.updateRule(rule.id, { selectedRegistrations: [] })} className="app-radius-lg border border-[color:var(--app-border-strong)] px-3 py-2 text-xs font-black text-[color:var(--app-fg)]">Desmarcar tudo</button>
+                        <button type="button" disabled={model.busy || visible.length === 0} onClick={() => model.selectRange(rule.id)} className="app-radius-lg bg-[color:var(--app-teal)] px-3 py-2 text-xs font-black text-white disabled:opacity-50">{model.search.trim() ? "Selecionar resultados" : "Selecionar faixa"}</button>
                       </div>
                     </div>
                     {candidates.length > 0 ? (
@@ -229,9 +262,10 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                         <label className="relative mt-4 block">
                           <span className="sr-only">Filtrar candidatos de {rule.name}</span>
                           <Search className="absolute left-3 top-2.5 size-4 text-[color:var(--app-subtle)]" />
-                          <input type="search" value={model.search} onChange={(event) => model.setSearch(event.target.value)} placeholder="Filtrar por nome, cadastro, cargo ou filial" className="w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] py-2 pl-9 pr-3 text-sm text-[color:var(--app-fg)]" />
+                          <input type="search" value={model.search} disabled={model.busy} onChange={(event) => model.setSearch(event.target.value)} placeholder="Filtrar por nome, cadastro, cargo ou filial" className="w-full app-radius-lg border border-[color:var(--app-border-strong)] bg-[color:var(--app-input)] py-2 pl-9 pr-3 text-sm text-[color:var(--app-fg)]" />
                         </label>
-                        <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)] lg:max-h-none lg:overflow-visible">
+                        <p className="mt-2 text-xs text-[color:var(--app-muted)]">A busca restringe a lista e Selecionar resultados. Seleções anteriores continuam marcadas; use Desmarcar tudo para reiniciar.</p>
+                        <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-card)]">
                           <table className="w-full min-w-[680px] bg-[color:var(--app-card)] text-left text-xs">
                             <thead className="sticky top-0 bg-[color:var(--app-surface-strong)] text-[color:var(--app-muted)]">
                               <tr><th className="px-3 py-2">Usar</th><th className="px-3 py-2">Filial</th><th className="px-3 py-2">Cadastro</th><th className="px-3 py-2">Nome</th><th className="px-3 py-2">Cargo</th><th className="min-w-28 whitespace-nowrap border-l border-[color:var(--app-border)] bg-[color:var(--app-surface-strong)] px-4 py-2 text-right">Salário</th></tr>
@@ -255,7 +289,9 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
                           </p>
                         ) : null}
                       </>
-                    ) : null}
+                    ) : (
+                      <p className="mt-3 rounded-xl bg-[color:var(--app-surface-strong)] p-3 text-xs text-[color:var(--app-muted)]">Nenhum colaborador atende à faixa e ao cargo informados. Confira a faixa completa do arquivo: {formatClientCents(analysis.minimumSalaryCents)} a {formatClientCents(analysis.maximumSalaryCents)}.</p>
+                    )}
                   </article>
                 );
               })}
@@ -296,8 +332,8 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
           <h2 className="mt-3 font-black text-[color:var(--app-fg)]">Regra de cálculo</h2>
           <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">
             {model.adjustmentScope === "all"
-              ? "Selecionados recebem o novo salário fixo. Desmarcados e demais colaboradores recebem o percentual geral."
-               : "Somente selecionados em uma ou mais regras recebem o novo salário fixo e aparecem no PDF; demais colaboradores ficam fora do cálculo."}
+              ? "Selecionados recebem o cálculo escolhido na regra: salário fixo, percentual geral ou próprio. Os demais recebem o percentual geral e aparecem no PDF."
+               : "Somente selecionados nas regras entram no cálculo e no PDF, com salário fixo ou percentual conforme cada regra. Os demais ficam fora."}
           </p>
         </section>
       </aside>

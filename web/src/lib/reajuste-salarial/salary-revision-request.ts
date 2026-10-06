@@ -23,19 +23,26 @@ export function parseSalaryRevisionScope(
 }
 
 const centsSchema = z.string().regex(/^(0|[1-9]\d*)$/).max(24);
-const ruleSchema = z
-  .object({
+const selectionShape = {
     id: z.string().trim().min(1).max(64),
     name: z.string().trim().min(1).max(80),
     minimumSalaryCents: centsSchema,
     maximumSalaryCents: centsSchema,
-    newSalaryCents: centsSchema,
+    roleFilter: z.string().trim().max(120).optional(),
     selectedRegistrations: z
       .array(z.string().regex(/^\d+$/).max(32))
       .min(1)
       .max(MAX_UNIQUE_EMPLOYEES),
-  })
-  .strict();
+};
+const legacyRuleSchema = z.object({ ...selectionShape, newSalaryCents: centsSchema }).strict();
+const ruleSchema = z.union([
+  legacyRuleSchema,
+  z.discriminatedUnion("calculation", [
+    z.object({ ...selectionShape, calculation: z.literal("fixed"), newSalaryCents: centsSchema }).strict(),
+    z.object({ ...selectionShape, calculation: z.literal("general_percentage") }).strict(),
+    z.object({ ...selectionShape, calculation: z.literal("percentage"), percentageBasisPoints: z.string().regex(/^[1-9]\d*$/).max(5).refine((value) => BigInt(value) <= 10_000n) }).strict(),
+  ]),
+]);
 const rulesSchema = z.array(ruleSchema).max(MAX_SALARY_REVISION_RULES);
 
 function isUploadedFile(value: FormDataEntryValue | null): value is File {
@@ -109,11 +116,20 @@ export function parseSalaryRevisionRules(value: FormDataEntryValue | null) {
     );
   }
   return result.data.map(
-    (rule): SalaryRevisionRule => ({
-      ...rule,
-      minimumSalaryCents: BigInt(rule.minimumSalaryCents),
-      maximumSalaryCents: BigInt(rule.maximumSalaryCents),
-      newSalaryCents: BigInt(rule.newSalaryCents),
-    }),
+    (rule): SalaryRevisionRule => {
+      const selection = {
+        id: rule.id, name: rule.name, roleFilter: rule.roleFilter,
+        minimumSalaryCents: BigInt(rule.minimumSalaryCents),
+        maximumSalaryCents: BigInt(rule.maximumSalaryCents),
+        selectedRegistrations: rule.selectedRegistrations,
+      };
+      if ("calculation" in rule && rule.calculation === "general_percentage") {
+        return { ...selection, calculation: rule.calculation };
+      }
+      if ("calculation" in rule && rule.calculation === "percentage") {
+        return { ...selection, calculation: rule.calculation, percentageBasisPoints: BigInt(rule.percentageBasisPoints) };
+      }
+      return { ...selection, ...("calculation" in rule ? { calculation: rule.calculation } : {}), newSalaryCents: BigInt(rule.newSalaryCents) };
+    },
   );
 }

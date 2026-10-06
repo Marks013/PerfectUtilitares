@@ -26,6 +26,7 @@ import { runWithReajusteProcessingSlot } from "@/lib/reajuste-salarial/processin
 import { hasDeclaredReajusteContentLength } from "@/lib/reajuste-salarial/request-security";
 import { generateSalaryRevisionPdf } from "@/lib/reajuste-salarial/salary-revision-pdf";
 import { applySalaryRevisionRules } from "@/lib/reajuste-salarial/salary-revision-rules";
+import { salaryRevisionUsesGeneralPercentage } from "@/lib/reajuste-salarial/salary-revision-matching";
 import {
   MAX_RULES_JSON_BYTES,
   parseSalaryRevisionScope,
@@ -109,11 +110,11 @@ export async function POST(request: Request) {
     const uploadedBytes = Buffer.from(await file.arrayBuffer());
     requireMatchingHash(formData.get("fileHash"), uploadedBytes);
     const adjustmentScope = parseSalaryRevisionScope(formData.get("scope"));
+    const rules = parseSalaryRevisionRules(formData.get("rules"));
     const percentageBasisPoints =
-      adjustmentScope === "all"
+      salaryRevisionUsesGeneralPercentage(adjustmentScope, rules)
         ? parsePercentageBasisPoints(String(formData.get("percentage") ?? ""))
         : 0n;
-    const rules = parseSalaryRevisionRules(formData.get("rules"));
     stage = "security";
     const bytes = prepareXlsxArchive(uploadedBytes, {
       strict: true,

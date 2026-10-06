@@ -5,14 +5,16 @@ import type {
   SalaryRevisionAnalysis,
   SalaryRevisionScope,
 } from "@/lib/reajuste-salarial/salary-revision-types";
+import { salaryRevisionUsesGeneralPercentage } from "@/lib/reajuste-salarial/salary-revision-matching";
 import {
-  candidatesForRule,
+  formatClientCents,
   type SalaryRevisionClientState,
   type SalaryRevisionRuleDraft,
-  selectedByOtherRules,
+  selectSalaryRevisionCandidates,
   serializeSalaryRevisionRules,
   validateSalaryRevisionFile,
   validateSalaryRevisionGeneration,
+  updateSalaryRevisionRule,
 } from "./salary-revision-workspace-model";
 import { downloadBlob } from "./download";
 
@@ -24,7 +26,7 @@ function downloadName(header: string | null) {
 
 async function responseMessages(response: Response | Blob) {
   try {
-    const text = response instanceof Blob ? await response.text() : await response.text();
+    const text = await response.text();
     const body = JSON.parse(text) as {
       error?: { message?: string; details?: Array<{ message?: string }> };
     };
@@ -52,6 +54,7 @@ export function useSalaryRevisionWorkspaceController() {
   const [search, setSearch] = useState("");
   const [state, setState] = useState<SalaryRevisionClientState>({ status: "idle" });
   const busy = state.status === "analyzing" || state.status === "generating";
+  const usesGeneralPercentage = salaryRevisionUsesGeneralPercentage(adjustmentScope, rules);
   const specialCount = useMemo(
     () => new Set(rules.flatMap((rule) => rule.selectedRegistrations)).size,
     [rules],
@@ -118,14 +121,18 @@ export function useSalaryRevisionWorkspaceController() {
   }
 
   function addRule() {
+    if (busy || !analysis || rules.length >= 20) return;
     setRules((current) => [
       ...current,
       {
         id: crypto.randomUUID(),
         name: `Regra especial ${current.length + 1}`,
-        minimumSalary: "",
-        maximumSalary: "",
+        minimumSalary: formatClientCents(analysis.minimumSalaryCents).replace(/^R\$\s*/, ""),
+        maximumSalary: formatClientCents(analysis.maximumSalaryCents).replace(/^R\$\s*/, ""),
         newSalary: "",
+        calculation: "general_percentage",
+        percentage: "",
+        roleFilter: "",
         selectedRegistrations: [],
       },
     ]);
@@ -133,37 +140,24 @@ export function useSalaryRevisionWorkspaceController() {
   }
 
   function updateRule(id: string, patch: Partial<SalaryRevisionRuleDraft>) {
+    if (busy) return;
     setRules((current) =>
       current.map((rule) => {
         if (rule.id !== id) return rule;
-        const rangeChanged =
-          (patch.minimumSalary !== undefined &&
-            patch.minimumSalary !== rule.minimumSalary) ||
-          (patch.maximumSalary !== undefined &&
-            patch.maximumSalary !== rule.maximumSalary);
-        return {
-          ...rule,
-          ...patch,
-          selectedRegistrations: rangeChanged
-            ? []
-            : patch.selectedRegistrations ?? rule.selectedRegistrations,
-        };
+        return updateSalaryRevisionRule(analysis, rule, patch);
       }),
     );
     setState({ status: "ready" });
   }
 
   function selectRange(id: string) {
-    if (!analysis) return;
+    if (busy || !analysis) return;
     setRules((current) =>
       current.map((rule) => {
         if (rule.id !== id) return rule;
-        const unavailable = selectedByOtherRules(current, id);
         return {
           ...rule,
-          selectedRegistrations: candidatesForRule(analysis, rule)
-            .map((employee) => employee.registration)
-            .filter((registration) => !unavailable.has(registration)),
+          selectedRegistrations: selectSalaryRevisionCandidates(analysis, current, rule, search),
         };
       }),
     );
@@ -171,6 +165,7 @@ export function useSalaryRevisionWorkspaceController() {
   }
 
   function toggleRegistration(id: string, registration: string) {
+    if (busy) return;
     setRules((current) =>
       current.map((rule) => {
         if (rule.id !== id) return rule;
@@ -199,7 +194,7 @@ export function useSalaryRevisionWorkspaceController() {
     data.set("file", file, file.name);
     data.set("fileHash", analysis.fileHash);
     data.set("scope", adjustmentScope);
-    if (adjustmentScope === "all") {
+    if (usesGeneralPercentage) {
       data.set("percentage", percentage.trim());
     }
     data.set("rules", serializeSalaryRevisionRules(rules));
@@ -257,7 +252,11 @@ export function useSalaryRevisionWorkspaceController() {
     generate,
     inputRef,
     percentage,
-    removeRule: (id: string) => setRules((current) => current.filter((rule) => rule.id !== id)),
+    removeRule: (id: string) => {
+      if (busy) return;
+      setRules((current) => current.filter((rule) => rule.id !== id));
+      setState({ status: analysis ? "ready" : "idle" });
+    },
     reset,
     rules,
     search,
@@ -276,5 +275,6 @@ export function useSalaryRevisionWorkspaceController() {
     state,
     toggleRegistration,
     updateRule,
+    usesGeneralPercentage,
   };
 }
