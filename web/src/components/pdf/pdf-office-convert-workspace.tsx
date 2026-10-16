@@ -433,7 +433,7 @@ function PdfOfficeConvertWorkspaceSession({
         className="pdf-dropzone pdf-convert-dropzone"
         data-active={isDragActive}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps({ "aria-label": `Selecionar arquivos ${converter.inputLabel}` })} />
         <Upload className="size-7" aria-hidden="true" />
         <strong>
           Solte {converter.inputLabel === "PDF" ? "os PDFs" : "os arquivos"} aqui

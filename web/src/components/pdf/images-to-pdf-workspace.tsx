@@ -438,7 +438,7 @@ function ImagesToPdfWorkspaceSession() {
           "data-active": isDragActive,
         })}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps({ "aria-label": "Selecionar imagens para o PDF" })} />
         <Upload className="size-6" aria-hidden="true" />
         <span>
           Arraste imagens ou <strong>selecione arquivos</strong>

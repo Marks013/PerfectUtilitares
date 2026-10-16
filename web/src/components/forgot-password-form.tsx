@@ -55,7 +55,7 @@ export function ForgotPasswordForm() {
           autoComplete="username"
           maxLength={254}
           {...form.register("email")}
-          className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none app-focus-border"
+          className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-base sm:text-sm outline-none app-focus-border"
           placeholder="nome@empresa.com"
         />
       </label>

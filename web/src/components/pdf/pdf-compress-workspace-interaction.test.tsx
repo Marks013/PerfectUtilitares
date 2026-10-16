@@ -188,6 +188,24 @@ function makeModel(options?: {
 }
 
 describe("PDF compression workspace interaction regressions", () => {
+  it("keeps technical details closed and outside the download link", () => {
+    const root = PdfCompressWorkspaceView({
+      model: makeModel({ phase: "SUCCEEDED", outputs: [makeOutput("COMPRESSED")] }).model,
+    });
+    const link = findElement(root, element => element.type === "a" &&
+      element.props.href === "/api/pdf/jobs/job-1/outputs/output-1");
+    expect(textContent(link)).toContain("documento.pdf");
+    expect(textContent(link)).not.toContain("IMAGE_RECOMPRESSION");
+    visit(link, element => {
+      expect(element.type).not.toBe("details");
+      expect(element.type).not.toBe("summary");
+    });
+    const details = findElement(root, element => element.type === "details" &&
+      textContent(element).includes("Detalhes técnicos da compactação"));
+    expect(details.props.open).not.toBe(true);
+    expect(textContent(details)).toContain("IMAGE_RECOMPRESSION");
+  });
+
   it("keeps recompression available and wires user overrides after a result", () => {
     const { model, updateSettings, applyPreset } = makeModel();
     const root = PdfCompressWorkspaceView({ model });

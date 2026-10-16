@@ -63,7 +63,7 @@ export function PdfEditorWorkspaceView({ model }: { model: Model }) {
           className="pdf-dropzone pdf-editor-dropzone"
           data-active={isDragActive}
         >
-          <input {...getInputProps()} />
+          <input {...getInputProps({ "aria-label": "Selecionar um arquivo PDF" })} />
           {recovering ? (
             <>
               <Loader2 className="size-8 animate-spin" aria-hidden="true" />

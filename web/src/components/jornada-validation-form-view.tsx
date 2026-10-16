@@ -81,6 +81,9 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
             <span>{interjornadaAtiva ? "Primeira jornada" : "Jornada principal"}</span>
             <input
               {...horariosField}
+              id="jornada-horarios"
+              aria-invalid={Boolean(form.formState.errors.horarios) || undefined}
+              aria-describedby={form.formState.errors.horarios ? "jornada-horarios-hint jornada-horarios-error" : "jornada-horarios-hint"}
               onBlur={(event) => {
                 horariosField.onBlur(event);
                 formatField("horarios");
@@ -90,11 +93,11 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
             />
           </label>
           {form.formState.errors.horarios ? (
-            <p className="jornada-field-error">
+            <p id="jornada-horarios-error" className="jornada-field-error" role="alert">
               {form.formState.errors.horarios.message}
             </p>
           ) : null}
-          <p className="jornada-field-hint">
+          <p id="jornada-horarios-hint" className="jornada-field-hint">
             <Clock3 className="size-3.5" aria-hidden="true" />
             {duracaoPrincipal
               ? `Duração detectada: ${duracaoPrincipal.duracaoFormatada}`
@@ -107,6 +110,9 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
                 <span>Segunda jornada</span>
                 <input
                   {...segundaJornadaField}
+                  id="jornada-segunda"
+                  aria-invalid={Boolean(form.formState.errors.segundaJornadaHorarios) || undefined}
+                  aria-describedby={form.formState.errors.segundaJornadaHorarios ? "jornada-segunda-hint jornada-segunda-error" : "jornada-segunda-hint"}
                   onBlur={(event) => {
                     segundaJornadaField.onBlur(event);
                     formatField("segundaJornadaHorarios");
@@ -116,11 +122,11 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
                 />
               </label>
               {form.formState.errors.segundaJornadaHorarios ? (
-                <p className="jornada-field-error">
+                <p id="jornada-segunda-error" className="jornada-field-error" role="alert">
                   {form.formState.errors.segundaJornadaHorarios.message}
                 </p>
               ) : null}
-              <p className="jornada-field-hint">
+              <p id="jornada-segunda-hint" className="jornada-field-hint">
                 <Clock3 className="size-3.5" aria-hidden="true" />
                 {duracaoSegundaJornada
                   ? `Duração detectada: ${duracaoSegundaJornada.duracaoFormatada}`
@@ -135,6 +141,9 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
                 <span>Complemento de sábado</span>
                 <input
                   {...sabadoField}
+                  id="jornada-sabado"
+                  aria-invalid={Boolean(form.formState.errors.sabadoHorarios) || undefined}
+                  aria-describedby={form.formState.errors.sabadoHorarios ? "jornada-sabado-error" : "jornada-sabado-hint"}
                   onBlur={(event) => {
                     sabadoField.onBlur(event);
                     formatField("sabadoHorarios");
@@ -144,11 +153,11 @@ export function JornadaValidationFormView({ model }: { model: Model }) {
                 />
               </label>
               {form.formState.errors.sabadoHorarios ? (
-                <p className="jornada-field-error">
+                <p id="jornada-sabado-error" className="jornada-field-error" role="alert">
                   {form.formState.errors.sabadoHorarios.message}
                 </p>
               ) : (
-                <p className="jornada-field-success">
+                <p id="jornada-sabado-hint" className="jornada-field-success">
                   A jornada principal está apta; informe 04:00 no sábado para
                   completar 44h semanais quando a regra ou exceção permitir.
                 </p>

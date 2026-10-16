@@ -1,11 +1,17 @@
 "use client";
 
+import { photoSettingsSchema } from "@/lib/photos/schema";
 import type { usePhoto3x4WorkspaceController } from "./photo-3x4-workspace";
 
 type Model = ReturnType<typeof usePhoto3x4WorkspaceController>;
 
 export function Photo3x4WorkspaceView({ model }: { model: Model }) {
   const { Archive, ChevronLeft, ChevronRight, Cropper, Download, ImageIcon, Loader2, PHOTO_ASPECT, PHOTO_DEFAULTS, RotateCcw, ScanFace, Scissors, SlidersHorizontal, Upload, X, clearFiles, cropAreaBorderWidth, cropModeDescription, detectFace, detectFacesInBatch, downloadResult, editorStates, faceStatus, files, form, getEditorState, getFileKey, getPhotoFormErrorMessages, goToPhoto, hasFiles, isBatch, isBusy, isDetectingBatchFaces, isDetectingFace, previewBorderColor, previewBorderWidth, previewFilter, previewUrl, processPhotoFile, processZip, processingFileKey, progressPercent, resetAdjustments, selectedEditor, selectedFile, selectedIndex, selectedKey, setCropGeometry, setSelectedEditorState, setSelectedIndex, singlePhotoMutation, singleResult, updateFiles, watchedAddBorder, watchedBorderColor, watchedQuality, workPreview, workProgress, zipMutation, zipResult } = model;
+  const parsedBorder = photoSettingsSchema.shape.borderWidth.safeParse(form.watch("borderWidth"));
+  const outputBorder = !watchedAddBorder ? 0 : parsedBorder.success ? parsedBorder.data : null;
+  const outputSize = outputBorder === null
+    ? "Confira a borda"
+    : `${PHOTO_DEFAULTS.width + outputBorder * 2} × ${PHOTO_DEFAULTS.height + outputBorder * 2} px`;
   return (
 <div className="photo-studio">
       <section className="photo-workbench">
@@ -14,11 +20,11 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
             <p className="photo-workbench__kicker">Editor de fotos</p>
             <h1>Fotos 3x4</h1>
             <p className="mt-1 text-sm app-text-muted">
-              Saída fixa 3x4 para uma foto ou lote selecionado.
+              Recorte 3x4 para uma foto ou lote, com borda externa opcional.
             </p>
           </div>
           <div className="photo-size-pill">
-            {PHOTO_DEFAULTS.width}x{PHOTO_DEFAULTS.height}px
+            {outputSize}
           </div>
         </div>
 
@@ -437,10 +443,16 @@ export function Photo3x4WorkspaceView({ model }: { model: Model }) {
 
           <div className="app-radius-md border app-border app-bg-surface p-3">
             <p className="text-xs font-semibold uppercase app-text-muted">
-              Tamanho final
+              Tamanho do arquivo
             </p>
-            <p className="mt-1 text-lg font-semibold app-text">
-              3x4 · {PHOTO_DEFAULTS.width}x{PHOTO_DEFAULTS.height}px
+            <output className="mt-1 block text-lg font-semibold app-text" aria-live="polite">
+              {outputSize}
+            </output>
+            <p className="mt-1 text-xs app-text-muted">
+              Área da foto: {PHOTO_DEFAULTS.width} × {PHOTO_DEFAULTS.height} px (3x4).
+              {outputBorder !== null && outputBorder > 0
+                ? ` A borda externa acrescenta ${outputBorder} px em cada lado.`
+                : ""}
             </p>
           </div>
 

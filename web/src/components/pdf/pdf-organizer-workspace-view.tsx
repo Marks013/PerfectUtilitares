@@ -285,7 +285,7 @@ export function PdfOrganizerWorkspaceView({ model }: { model: Model }) {
           "data-active": isDragActive,
         })}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps({ "aria-label": "Selecionar arquivos PDF" })} />
         {upload ? (
           <div className="pdf-upload-progress">
             <Loader2 className="size-5 animate-spin" aria-hidden="true" />

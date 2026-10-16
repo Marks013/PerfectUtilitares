@@ -92,7 +92,7 @@ export default async function LoginPage({
             autoComplete="username"
             maxLength={254}
             required
-            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none focus:border-neutral-900"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-base sm:text-sm outline-none focus:border-neutral-900"
             placeholder="nome@empresa.com"
           />
         </label>
@@ -105,7 +105,7 @@ export default async function LoginPage({
             autoComplete="current-password"
             maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
             required
-            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-sm outline-none focus:border-neutral-900"
+            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-base sm:text-sm outline-none focus:border-neutral-900"
             placeholder="Digite sua senha"
           />
         </label>

@@ -374,7 +374,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
           "data-active": isDragActive,
         })}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps({ "aria-label": "Selecionar arquivos PDF" })} />
         <Upload className="size-6" aria-hidden="true" />
         <span>
           Arraste PDFs ou <strong>selecione arquivos</strong>
@@ -515,11 +515,11 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                   : 0;
               const compression = output.metadata?.compression;
               return (
-                <a
-                  key={output.id}
-                  href={`/api/pdf/jobs/${jobId}/outputs/${output.id}`}
-                  className="pdf-output-row"
-                >
+                <div key={output.id} className="min-w-0">
+                  <a
+                    href={`/api/pdf/jobs/${jobId}/outputs/${output.id}`}
+                    className="pdf-output-row"
+                  >
                   <span>
                     <strong>{output.originalName}</strong>
                     <small>
@@ -530,10 +530,25 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                         : reduction > 0
                           ? ` · ${reduction}% menor`
                           : ""}
-                      {compression?.strategy
-                        ? ` · ${compression.strategy}`
-                        : ""}
                     </small>
+                    {compression?.preservation?.semanticValidated ? (
+                      <small>Integridade do conteúdo verificada.</small>
+                    ) : null}
+                    {compression?.requested &&
+                    (compression.strategy === "STRUCTURAL" || compression.strategy === "SKIP") ? (
+                      <small>Ajustes visuais não aplicados; conteúdo original preservado.</small>
+                    ) : null}
+                  </span>
+                  <Download className="size-4" aria-hidden="true" />
+                  </a>
+                  {compression ? (
+                  <details className="mt-1 rounded-xl border app-border p-3 text-xs app-text-muted">
+                    <summary className="cursor-pointer font-semibold">
+                      Detalhes técnicos da compactação
+                      <span className="sr-only"> de {output.originalName}</span>
+                    </summary>
+                    <div className="mt-2 grid gap-2">
+                    {compression.strategy ? <small>Método: {compression.strategy}</small> : null}
                     {compression?.planReason ? (
                       <small>{compression.planReason}</small>
                     ) : null}
@@ -586,9 +601,10 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                         original preservada.
                       </small>
                     ) : null}
-                  </span>
-                  <Download className="size-4" aria-hidden="true" />
-                </a>
+                    </div>
+                  </details>
+                  ) : null}
+                </div>
               );
             })}
           </div>
