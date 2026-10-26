@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EscalaInput } from "./types";
 import { assertRevision, createEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala, suggestEscala } from "./service";
 import { allowedBranches, branchPermission, escalaActor, requireEscalaPermission } from "./access";
+import { addDays, dateRange, dayOfWeek } from "./dates";
+import { validateEscala } from "./validation";
 
 const mocks = vi.hoisted(() => ({
   workspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   revision: { findUnique: vi.fn(), create: vi.fn() }, grants: { findUnique: vi.fn(), findMany: vi.fn() },
-  audit: { create: vi.fn() }, transaction: vi.fn(), solve: vi.fn(),
+  audit: { create: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: mocks.workspace, escalaRevision: mocks.revision, escalaBranchAccess: mocks.grants, auditLog: mocks.audit, $transaction: mocks.transaction } }));
 vi.mock("./solver-client", async (original) => ({ ...await original<typeof import("./solver-client")>(), solveEscala: mocks.solve }));
@@ -26,6 +28,24 @@ function input(): EscalaInput {
 function row(overrides = {}) { return { id: "w1", tenantId: actor.tenantId, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", revision: 1, status: "DRAFT", updatedAt: new Date("2026-10-26T12:00:00Z"), ...overrides }; }
 function version(value = input(), revision = 1, status = "DRAFT") { return { input: value, revision, status, createdAt: row().updatedAt }; }
 
+function period(startDate: string, weeks = 1): EscalaInput {
+  const value = input();
+  value.startDate = startDate;
+  value.endDate = addDays(startDate, weeks * 7 - 1);
+  value.employees[0].activeFrom = "2020-01-01";
+  value.employees[0].historyKnown = true;
+  const assignment = (date: string) => ({ employeeId: "e1", date, kind: dayOfWeek(date) < 5 ? "WORK" as const : "OFF" as const, ...(dayOfWeek(date) < 5 ? { shiftId: "day" } : {}) });
+  value.employees[0].history = dateRange(addDays(startDate, -21), addDays(startDate, -1)).map(assignment);
+  value.assignments = dateRange(value.startDate, value.endDate).map(assignment);
+  value.demands = dateRange(value.startDate, value.endDate).map((date) => ({ id: `d-${date}`, date, sector: "Reposição", start: 480, end: 720, minimum: dayOfWeek(date) < 5 ? 1 : 0 }));
+  return value;
+}
+
+function useCurrent(value: EscalaInput, status = "DRAFT") {
+  mocks.workspace.findFirst.mockResolvedValue(row({ branchCode: value.branchCode, startDate: value.startDate, endDate: value.endDate, status }));
+  mocks.revision.findUnique.mockResolvedValue(version(value, 1, status));
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.workspace.findFirst.mockResolvedValue(row());
@@ -34,8 +54,155 @@ beforeEach(() => {
   mocks.workspace.updateMany.mockResolvedValue({ count: 1 });
   mocks.revision.findUnique.mockResolvedValue(version());
   mocks.grants.findMany.mockResolvedValue([]);
-  mocks.transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({ escalaWorkspace: mocks.workspace, escalaRevision: mocks.revision, auditLog: mocks.audit }));
+  mocks.peers.mockResolvedValue([]);
+  mocks.advisory.mockResolvedValue(1);
+  mocks.transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({ escalaWorkspace: { ...mocks.workspace, findMany: mocks.peers }, escalaRevision: mocks.revision, auditLog: mocks.audit, $executeRaw: mocks.advisory }));
   mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments, wallTimeSeconds: 0.1, message: "Proposta viável" });
+});
+
+describe("Escalas publication continuity", () => {
+  it("allows identical assignments in overlapping complete-week periods", async () => {
+    const current = period("2026-10-26", 2);
+    const previous = period("2026-11-02", 2);
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    const result = await saveEscala(actor, "w1", 1, current, true);
+    expect(result.status).toBe("PUBLISHED");
+    expect(result.revision).toBe(2);
+    expect(mocks.revision.create).toHaveBeenCalledOnce();
+  });
+
+  it("rejects divergent published work/off decisions without writes or personal data in the error", async () => {
+    const current = period("2026-10-26", 2);
+    const previous = period("2026-11-02", 2);
+    previous.assignments[0] = { employeeId: "e1", date: "2026-11-02", kind: "OFF" };
+    previous.assignments[5] = { employeeId: "e1", date: "2026-11-07", kind: "WORK", shiftId: "day" };
+    previous.demands[0].minimum = 0; previous.demands[5].minimum = 1;
+    expect(validateEscala(current).readyToPublish).toBe(true);
+    expect(validateEscala(previous).readyToPublish).toBe(true);
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    const original = JSON.stringify(current);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ status: 409, code: "ESCALA_PUBLISHED_OVERLAP", message: expect.stringContaining("2026-11-02") });
+    try { await saveEscala(actor, "w1", 1, current, true); } catch (error) {
+      expect(String(error)).not.toContain("Ana");
+      expect(String(error)).not.toContain("0001");
+    }
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+    expect(mocks.audit.create).not.toHaveBeenCalled();
+    expect(JSON.stringify(current)).toBe(original);
+  });
+
+  it("compares exact textual registrations and semantic segments rather than names, IDs or lock flags", async () => {
+    const current = period("2026-10-26", 2);
+    const previous = period("2026-11-02", 2);
+    const employee = previous.employees[0];
+    employee.id = "imported-person"; employee.name = "Nome atualizado"; employee.shiftIds = ["imported-shift"];
+    previous.shifts[0].id = "imported-shift"; previous.shifts[0].name = "Outro nome do mesmo turno";
+    for (const assignment of [...previous.assignments, ...employee.history]) {
+      assignment.employeeId = employee.id;
+      if (assignment.shiftId) assignment.shiftId = "imported-shift";
+      assignment.locked = true;
+    }
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    expect((await saveEscala(actor, "w1", 1, current, true)).status).toBe("PUBLISHED");
+    const otherRegistration = structuredClone(previous);
+    otherRegistration.employees[0].registration = "1";
+    otherRegistration.shifts[0].segments.forEach((segment) => { segment.start += 60; segment.end += 60; });
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: otherRegistration }] }]);
+    expect((await saveEscala(actor, "w1", 1, current, true)).status).toBe("PUBLISHED");
+  });
+
+  it("rejects different shift segments even when employee and shift IDs are equal", async () => {
+    const current = period("2026-10-26", 2);
+    const previous = period("2026-11-02", 2);
+    previous.shifts[0].segments.forEach((segment) => { segment.start += 60; segment.end += 60; });
+    previous.demands.forEach((demand) => { demand.start += 60; demand.end += 60; });
+    expect(validateEscala(previous).readyToPublish).toBe(true);
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_OVERLAP" });
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("checks the latest published revision even when the other workspace currently has a draft", async () => {
+    const current = period("2026-10-26", 2);
+    const previous = period("2026-11-02", 2);
+    previous.assignments[0] = { employeeId: "e1", date: "2026-11-02", kind: "OFF" };
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ status: "DRAFT", revision: 8, revisions: [{ input: previous, revision: 5, status: "PUBLISHED" }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_OVERLAP" });
+    expect(mocks.peers).toHaveBeenCalledWith({
+      where: { tenantId: "company-a", branchCode: "2", id: { not: "w1" }, startDate: { lte: "2026-11-29" }, endDate: { gte: "2026-10-05" } },
+      orderBy: [{ startDate: "asc" }, { id: "asc" }],
+      select: { revisions: { where: { tenantId: "company-a", status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
+    });
+  });
+
+  it("compares declared current history with an earlier published schedule without changing history", async () => {
+    const current = period("2026-11-02");
+    const previous = period("2026-10-26");
+    const record = current.employees[0].history.find((assignment) => assignment.date === "2026-10-30");
+    if (record) { record.kind = "OFF"; delete record.shiftId; }
+    expect(validateEscala(current).readyToPublish).toBe(true);
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    const history = JSON.stringify(current.employees[0].history);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_OVERLAP", message: expect.stringContaining("2026-10-30") });
+    expect(JSON.stringify(current.employees[0].history)).toBe(history);
+  });
+
+  it("protects the declared history of a later published schedule when approving an earlier period", async () => {
+    const current = period("2026-10-26");
+    const previous = period("2026-11-02");
+    const record = previous.employees[0].history.find((assignment) => assignment.date === "2026-10-26");
+    if (record) { record.kind = "OFF"; delete record.shiftId; }
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_OVERLAP", message: expect.stringContaining("2026-10-26") });
+  });
+
+  it("does not compare two historical declarations without a published assignment on that date", async () => {
+    const current = period("2026-11-02");
+    const previous = period("2026-11-09");
+    const record = previous.employees[0].history.find((assignment) => assignment.date === "2026-10-26");
+    if (record) { record.kind = "OFF"; delete record.shiftId; }
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }, { revisions: [] }]);
+    expect((await saveEscala(actor, "w1", 1, current, true)).status).toBe("PUBLISHED");
+  });
+
+  it("acquires the parameterized branch lock before reading peers or writing and uses fresh statement snapshots", async () => {
+    const events: string[] = [];
+    mocks.advisory.mockImplementation(async () => { events.push("lock"); return 1; });
+    mocks.peers.mockImplementation(async () => { events.push("read"); return []; });
+    mocks.workspace.updateMany.mockImplementation(async () => { events.push("update"); return { count: 1 }; });
+    await saveEscala(actor, "w1", 1, input(), true);
+    expect(events).toEqual(["lock", "read", "update"]);
+    const [sql, key] = mocks.advisory.mock.calls[0];
+    expect(Array.from(sql as TemplateStringsArray).join("?")).toBe("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))");
+    expect(key).toBe('escalas-publication:["company-a","2"]');
+    expect(mocks.transaction.mock.calls[0][1]).toEqual({ isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
+    expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", tenantId: "company-a", revision: 1 } }));
+  });
+
+  it("does not lock or compare peers when saving an unpublished draft", async () => {
+    await saveEscala(actor, "w1", 1, input());
+    expect(mocks.advisory).not.toHaveBeenCalled();
+    expect(mocks.peers).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for an unreadable published snapshot and rechecks idempotent publications", async () => {
+    useCurrent(input(), "PUBLISHED");
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: { schemaVersion: 999 } }] }]);
+    await expect(saveEscala(actor, "w1", 1, input(), true)).rejects.toMatchObject({ status: 409, code: "ESCALA_PUBLISHED_OVERLAP" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    mocks.peers.mockResolvedValue([]);
+    mocks.workspace.findFirst.mockResolvedValueOnce(row()).mockResolvedValueOnce(null);
+    await expect(saveEscala(actor, "w1", 1, input(), true)).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
+  });
 });
 
 describe("Escalas permissions", () => {

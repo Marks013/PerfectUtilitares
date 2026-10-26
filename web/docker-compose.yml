@@ -109,8 +109,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      escalas-solver:
-        condition: service_healthy
     environment:
       HOME: /tmp
       AUTH_SECRET: ${AUTH_SECRET:?execute npm run setup:env antes do docker compose}

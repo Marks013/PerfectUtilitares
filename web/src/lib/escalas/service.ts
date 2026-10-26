@@ -6,6 +6,7 @@ import { escalaInputSchema } from "./schema";
 import { EscalaSolverError, solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
 import { compareBranches } from "./order";
+import { addDays } from "./dates";
 import type { EscalaAssignment, EscalaInput, EscalaSuggestion, EscalaWorkspace } from "./types";
 
 type WorkspaceRow = {
@@ -75,6 +76,56 @@ function sameAssignment(a: EscalaAssignment, b: EscalaAssignment | undefined) {
   return Boolean(b && a.kind === b.kind && a.shiftId === b.shiftId && Boolean(a.locked) === Boolean(b.locked));
 }
 
+type PublishedDay = { date: string; signature: string; scheduled: boolean };
+
+function publishedDayIndex(input: EscalaInput, firstDate: string, lastDate: string) {
+  const employees = new Map(input.employees.map((person) => [person.id, person]));
+  const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
+  const records = new Map<string, PublishedDay>();
+  const register = (assignment: EscalaAssignment, scheduled: boolean) => {
+    const person = employees.get(assignment.employeeId);
+    if (!person || assignment.date < firstDate || assignment.date > lastDate || assignment.date < person.activeFrom
+      || (person.activeUntil && assignment.date > person.activeUntil)) return;
+    const key = JSON.stringify([person.registration, assignment.date]);
+    const segments = assignment.kind === "WORK" ? shifts.get(assignment.shiftId ?? "")?.segments.map((segment) => [segment.start, segment.end, segment.kind]) : undefined;
+    // IDs, display names and lock flags do not change the employee's actual scheduled periods.
+    const signature = JSON.stringify([assignment.kind, ...(segments ? [segments] : [])]);
+    if (records.has(key)) throw new EscalaError(409, "ESCALA_PUBLISHED_OVERLAP", `Há mais de um vínculo ou registro para a mesma matrícula em ${assignment.date}. Confira a identificação antes de publicar.`);
+    records.set(key, { date: assignment.date, signature, scheduled });
+  };
+  input.assignments.forEach((assignment) => { register(assignment, true); });
+  input.employees.forEach((person) => { person.history.forEach((assignment) => { register(assignment, false); }); });
+  return records;
+}
+
+async function preservePublishedContinuity(tx: Prisma.TransactionClient, actor: EscalaActor, id: string, input: EscalaInput) {
+  // executeRaw discards SELECT result fields; pg_advisory_xact_lock's void value is never deserialized.
+  const lockKey = `escalas-publication:${JSON.stringify([actor.tenantId, input.branchCode])}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+  const firstDate = addDays(input.startDate, -21);
+  const lastDate = addDays(input.endDate, 21);
+  const peers = await tx.escalaWorkspace.findMany({
+    where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id }, startDate: { lte: lastDate }, endDate: { gte: firstDate } },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+    select: { revisions: { where: { tenantId: actor.tenantId, status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
+  });
+  const current = publishedDayIndex(input, firstDate, lastDate);
+  for (const peer of peers) {
+    const revision = peer.revisions[0];
+    if (!revision) continue;
+    const parsed = escalaInputSchema.safeParse(revision.input);
+    if (!parsed.success) throw new EscalaError(409, "ESCALA_PUBLISHED_OVERLAP", "Uma versão publicada desta filial não pôde ser conferida. Revise os períodos e seus históricos antes de publicar.");
+    const previous = publishedDayIndex(parsed.data, firstDate, lastDate);
+    for (const [key, day] of current) {
+      const other = previous.get(key);
+      // Compare schedules to schedules and declared history to schedules. Never treat a plan as time-clock evidence.
+      if (other && (day.scheduled || other.scheduled) && day.signature !== other.signature) {
+        throw new EscalaError(409, "ESCALA_PUBLISHED_OVERLAP", `Há divergência com uma escala já publicada desta filial em ${day.date}. Compatibilize as revisões e o histórico informado antes de publicar; o histórico não foi alterado.`);
+      }
+    }
+  }
+}
+
 export function preserveLockedAssignments(previous: EscalaInput, next: EscalaInput, canUnlock = false) {
   const assignments = new Map(next.assignments.map((item) => [assignmentKey(item), item]));
   const previousShifts = new Map(previous.shifts.map((shift) => [shift.id, shift]));
@@ -99,10 +150,16 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   const validation = validateEscala(input);
   if (publish && !validation.readyToPublish) throw new EscalaError(422, "ESCALA_NOT_READY", "A escala possui impedimentos ou pendências. Resolva a conferência antes de publicar.");
   const status = publish ? "PUBLISHED" : "DRAFT";
-  if (publish && current.status === "PUBLISHED") return current;
+  const alreadyPublished = publish && current.status === "PUBLISHED";
   const revision = expectedRevision + 1;
   const updatedAt = new Date();
   await prisma.$transaction(async (tx) => {
+    if (publish) await preservePublishedContinuity(tx, actor, id, input);
+    if (alreadyPublished) {
+      const latest = await tx.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId, revision: expectedRevision }, select: { revision: true } });
+      if (!latest) throw new EscalaError(409, "ESCALA_STALE_REVISION", "Esta escala foi alterada por outra pessoa. Recarregue a versão atual antes de continuar.");
+      return;
+    }
     const updated = await tx.escalaWorkspace.updateMany({
       where: { id, tenantId: actor.tenantId, revision: expectedRevision },
       data: { revision, status, branchName: input.branchName, updatedAt },
@@ -112,7 +169,8 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
       input: snapshotJson(input), createdById: actor.userId } });
     await tx.auditLog.create({ data: { userId: actor.userId, action: publish ? "PUBLISH" : "UPDATE", entity: "EscalaWorkspace", entityId: id,
       metadata: { tenantId: actor.tenantId, revision, previousRevision: expectedRevision, employeeCount: input.employees.length } } });
-  });
+  }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
+  if (alreadyPublished) return current;
   return { ...current, revision, status, input, validation, updatedAt: updatedAt.toISOString() } as EscalaWorkspace;
 }
 

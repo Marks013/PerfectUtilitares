@@ -29,6 +29,8 @@ Uma pessoa ocupa seu setor/cargo contratual. Cobertura geral de setor é efetivo
 
 O CP-SAT procura uma solução com todas as restrições obrigatórias. Depois minimiza desequilíbrio proporcional de domingos, pessoas alteradas, dias alterados, preferências não atendidas e desempate estável. Só avança ao objetivo seguinte quando o anterior está comprovado; `FEASIBLE` não é apresentado como ótimo. `UNKNOWN` não comprova impossibilidade e nunca substitui a proposta por uma lista vazia. Respostas com datas ausentes, ausências alteradas ou bloqueios removidos são rejeitadas.
 
+Publicações de períodos vizinhos precisam ser coerentes nos dias compartilhados e no histórico usado nas fronteiras. A última revisão publicada continua sendo a referência quando uma edição posterior ainda está em rascunho. Conflitos são apresentados para revisão; o sistema não sobrescreve a outra escala nem transforma uma previsão em registro de ponto.
+
 ## Limites explícitos desta entrega
 
 - Planejamento de uma a seis semanas completas, até 150 colaboradores por proposta/filial. As filiais são independentes, sem deslocamento automático de pessoal entre elas.
@@ -42,6 +44,8 @@ O CP-SAT procura uma solução com todas as restrições obrigatórias. Depois m
 ## Infraestrutura e recuperação
 
 O serviço `escalas-solver` usa OR-Tools 9.15.6755 com dependências fixadas, Python em imagem identificada por digest, usuário sem privilégios, raiz somente leitura, rede interna sem porta publicada, limite de 1 CPU e 1.536 MiB. O serviço de PDFs continua separado. O processador não grava nem registra o conteúdo pessoal recebido.
+
+A inicialização dos outros módulos não depende da saúde do otimizador. Se ele estiver indisponível, somente gerar/sugerir retorna indisponibilidade; consulta e edição das propostas salvas continuam disponíveis. O comando de publicação sobe explicitamente o serviço de Escalas junto com aplicação e PDFs.
 
 A migração `20261026160000_add_escala_workspaces` adiciona tabelas de propostas, revisões e permissões, índices e revogação de concessões na mudança de empresa. Não recalcula dados de folha nem altera cadastros de jornada existentes. Relações compostas impedem revisão ou concessão associada a outra empresa. Escritas usam revisão esperada e transação para impedir sobrescrita concorrente.
 
