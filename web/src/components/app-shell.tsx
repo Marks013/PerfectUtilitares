@@ -18,6 +18,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
   const activeSession = session?.user.status !== "ACTIVE" ? null : session;
   const navItems = [
     ...publicNavItems,
+    ...(activeSession?.user.tenantId ? [{ href: "/escalas", label: "Escalas 5×2" }] : []),
     ...(activeSession ? [{ href: "/conta", label: "Conta" }] : []),
     ...(activeSession?.user.role === "ADMIN"
       ? [

@@ -179,10 +179,12 @@ model User {
   unimedPublishedImports UnimedImportBatch[] @relation("UnimedImportPublishedBy")
   presenceEventsCreated  PresenceEvent[]     @relation("PresenceEventsCreatedBy")
   presenceActivities     PresenceActivity[]  @relation("PresenceActivitiesActor")
+  escalaAccesses         EscalaBranchAccess[]
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
 
   @@index([tenantId])
+  @@unique([tenantId, id])
 }
 
 model Tenant {
@@ -214,8 +216,59 @@ model Tenant {
   unimedDocumentTemplates UnimedDocumentTemplate[]
   unimedEmailEvents       UnimedEmailEvent[]
   presenceEvents          PresenceEvent[]
+  escalaWorkspaces        EscalaWorkspace[]
+  escalaAccesses          EscalaBranchAccess[]
   createdAt               DateTime                       @default(now())
   updatedAt               DateTime                       @updatedAt
+}
+
+model EscalaWorkspace {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  branchCode   String
+  branchName   String
+  startDate    String
+  endDate      String
+  revision     Int      @default(1)
+  status       String   @default("DRAFT")
+  revisions    EscalaRevision[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, branchCode, startDate, endDate])
+  @@index([tenantId, branchCode, startDate])
+}
+
+model EscalaRevision {
+  id          String   @id @default(cuid())
+  tenantId    String
+  workspaceId String
+  workspace   EscalaWorkspace @relation(fields: [tenantId, workspaceId], references: [tenantId, id], onDelete: Restrict)
+  revision    Int
+  status      String
+  input       Json
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, workspaceId, revision])
+  @@index([tenantId, workspaceId, createdAt])
+}
+
+model EscalaBranchAccess {
+  id         String @id @default(cuid())
+  tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+  branchCode String
+  role       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, userId, branchCode])
+  @@index([tenantId, branchCode])
 }
 
 model UserInvitation {

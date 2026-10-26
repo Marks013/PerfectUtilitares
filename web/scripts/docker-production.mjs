@@ -36,7 +36,7 @@ try {
   };
 
   run("docker", ["compose", "config", "--quiet"], { env });
-  run("docker", ["compose", "build", "migrate", "app", "pdf-worker"], { env });
+  run("docker", ["compose", "build", "migrate", "app", "pdf-worker", "escalas-solver"], { env });
 
   if (mode === "deploy") {
     run("docker", ["compose", "up", "-d", "app", "pdf-worker"], { env });

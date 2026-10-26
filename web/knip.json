@@ -1,6 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
+    "scripts/escalas/verify-model.mjs",
     "src/workers/ferias-workbook-worker.ts",
     "ops/audit-backup.mjs",
     "ops/configure-audit-ingress.mjs",

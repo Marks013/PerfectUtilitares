@@ -109,6 +109,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      escalas-solver:
+        condition: service_healthy
     environment:
       HOME: /tmp
       AUTH_SECRET: ${AUTH_SECRET:?execute npm run setup:env antes do docker compose}
@@ -118,6 +120,7 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3002}
       APP_URL: ${APP_URL:-http://localhost:3002}
       EVENTS_ENABLED: ${EVENTS_ENABLED:-false}
+      ESCALAS_SOLVER_URL: http://escalas-solver:8080
       APP_TIME_ZONE: ${APP_TIME_ZONE:-America/Sao_Paulo}
       CONTACT_EMAIL: ${CONTACT_EMAIL:-admin@perfectutilitares.com}
       GOOGLE_SITE_VERIFICATION: ${GOOGLE_SITE_VERIFICATION:-}
@@ -177,6 +180,27 @@ services:
     mem_limit: ${APP_MEMORY_LIMIT:-2g}
     mem_reservation: ${APP_MEMORY_RESERVATION:-512m}
     pids_limit: 384
+    networks:
+      - default
+      - escalas-internal
+
+  escalas-solver:
+    <<: *runtime-hardening
+    build:
+      context: ./ops/escalas
+    restart: unless-stopped
+    init: true
+    logging: *default-logging
+    user: "1001:1001"
+    environment:
+      HOME: /tmp
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,uid=1001,gid=1001,mode=1770
+    cpus: "1.0"
+    mem_limit: 1536m
+    pids_limit: 64
+    networks:
+      - escalas-internal
 
   pdf-worker:
     <<: *runtime-hardening
@@ -238,6 +262,10 @@ services:
     mem_limit: ${PDF_WORKER_MEMORY_LIMIT:-4g}
     mem_reservation: ${PDF_WORKER_MEMORY_RESERVATION:-1g}
     pids_limit: 512
+
+networks:
+  escalas-internal:
+    internal: true
 
 secrets:
   sentry_auth_token:
