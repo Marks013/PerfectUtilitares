@@ -52,6 +52,7 @@ describe("AppShell Jornada navigation", () => {
     expect(html).not.toContain('href="/jornada/codigos"');
     expect(html).not.toContain('href="/jornada/historico"');
     expect(html).not.toContain('href="/admin/ferias"');
+    expect(html).not.toContain('href="/escalas"');
   });
 
   it("keeps administrative navigation while Jornada options live inside the module", async () => {
@@ -73,6 +74,7 @@ describe("AppShell Jornada navigation", () => {
     expect(html).not.toContain('href="/jornada/codigos"');
     expect(html).not.toContain('href="/jornada/historico"');
     expect(html).toContain('href="/admin/ferias"');
+    expect(html).toContain('href="/escalas"');
   });
 
   it.each([
