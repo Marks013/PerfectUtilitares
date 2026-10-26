@@ -7,6 +7,7 @@ import { EscalaSolverError, solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
 import { compareBranches } from "./order";
 import { addDays } from "./dates";
+import { fixedBoundaryReservations } from "./boundary";
 import type { EscalaAssignment, EscalaInput, EscalaSuggestion, EscalaWorkspace } from "./types";
 
 type WorkspaceRow = {
@@ -82,7 +83,7 @@ function publishedDayIndex(input: EscalaInput, firstDate: string, lastDate: stri
   const employees = new Map(input.employees.map((person) => [person.id, person]));
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const records = new Map<string, PublishedDay>();
-  const register = (assignment: EscalaAssignment, scheduled: boolean) => {
+  const register = (assignment: EscalaAssignment, scheduled: boolean, reservation = false) => {
     const person = employees.get(assignment.employeeId);
     if (!person || assignment.date < firstDate || assignment.date > lastDate || assignment.date < person.activeFrom
       || (person.activeUntil && assignment.date > person.activeUntil)) return;
@@ -90,11 +91,15 @@ function publishedDayIndex(input: EscalaInput, firstDate: string, lastDate: stri
     const segments = assignment.kind === "WORK" ? shifts.get(assignment.shiftId ?? "")?.segments.map((segment) => [segment.start, segment.end, segment.kind]) : undefined;
     // IDs, display names and lock flags do not change the employee's actual scheduled periods.
     const signature = JSON.stringify([assignment.kind, ...(segments ? [segments] : [])]);
-    if (records.has(key)) throw new EscalaError(409, "ESCALA_PUBLISHED_OVERLAP", `Há mais de um vínculo ou registro para a mesma matrícula em ${assignment.date}. Confira a identificação antes de publicar.`);
+    if (records.has(key)) {
+      if (reservation) return;
+      throw new EscalaError(409, "ESCALA_PUBLISHED_OVERLAP", `Há mais de um vínculo ou registro para a mesma matrícula em ${assignment.date}. Confira a identificação antes de publicar.`);
+    }
     records.set(key, { date: assignment.date, signature, scheduled });
   };
   input.assignments.forEach((assignment) => { register(assignment, true); });
   input.employees.forEach((person) => { person.history.forEach((assignment) => { register(assignment, false); }); });
+  fixedBoundaryReservations(input).forEach((assignment) => { register(assignment, true, true); });
   return records;
 }
 

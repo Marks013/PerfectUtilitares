@@ -97,6 +97,8 @@ export type EscalaValidation = {
   issues: EscalaIssue[];
   summaries: EscalaEmployeeSummary[];
   minimumCoverageMargin: number | null;
+  /** Fixed day off just beyond the horizon needed to preserve a consecutive pair. */
+  boundaryReservations?: EscalaAssignment[];
 };
 export type EscalaSolveResult = {
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";

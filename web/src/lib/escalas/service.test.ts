@@ -164,6 +164,38 @@ describe("Escalas publication continuity", () => {
     await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_OVERLAP", message: expect.stringContaining("2026-10-26") });
   });
 
+  it("protects the fixed Monday reservation paired with a published final Sunday off, across different imported IDs", async () => {
+    const previous = period("2026-10-26");
+    previous.employees[0].offMode = "FIXED";
+    previous.employees[0].fixedOffDays = [0, 6];
+    previous.employees[0].offPattern = "CONSECUTIVE";
+    previous.assignments[0] = { employeeId: "e1", date: "2026-10-26", kind: "OFF" };
+    previous.assignments[5] = { employeeId: "e1", date: "2026-10-31", kind: "WORK", shiftId: "day" };
+    previous.demands[0].minimum = 0; previous.demands[5].minimum = 1;
+    expect(validateEscala(previous).readyToPublish).toBe(true);
+    const current = period("2026-11-02");
+    current.employees[0].history = current.employees[0].history.map((assignment) => {
+      const published = previous.assignments.find((item) => item.date === assignment.date);
+      return published ? { ...published } : assignment;
+    });
+    current.employees[0].id = "future-person";
+    current.employees[0].shiftIds = ["future-shift"];
+    current.shifts[0].id = "future-shift";
+    for (const assignment of [...current.assignments, ...current.employees[0].history]) {
+      assignment.employeeId = "future-person";
+      if (assignment.shiftId) assignment.shiftId = "future-shift";
+    }
+    expect(validateEscala(current).readyToPublish).toBe(true);
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ status: "DRAFT", revisions: [{ input: previous }] }]);
+    const historical = JSON.stringify(current.employees[0].history);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ status: 409, code: "ESCALA_PUBLISHED_OVERLAP", message: expect.stringContaining("2026-11-02") });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(JSON.stringify(current.employees[0].history)).toBe(historical);
+    expect(previous.assignments).toHaveLength(7);
+    expect(previous.employees[0].history).toHaveLength(21);
+  });
+
   it("does not compare two historical declarations without a published assignment on that date", async () => {
     const current = period("2026-11-02");
     const previous = period("2026-11-09");

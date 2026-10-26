@@ -84,6 +84,49 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
 
+  it("shows explicit continuity reservations in canonical sector/cargo/name order, initially collapsed", () => {
+    const { input, validation } = sample();
+    input.employees.push({
+      ...newEmployee(42, "turno-inicial"),
+      id: "b",
+      registration: "03",
+      name: "Bruno",
+      sector: "Açougue",
+      role: "Açougueiro",
+      activeFrom: "2020-01-01",
+    });
+    const html = renderToStaticMarkup(
+      <ValidationResults
+        input={input}
+        validation={{
+          ...validation,
+          boundaryReservations: [
+            { employeeId: "z", date: "2026-11-02", kind: "OFF" },
+            { employeeId: "a", date: "2026-11-02", kind: "OFF" },
+            { employeeId: "b", date: "2026-11-02", kind: "OFF" },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain("Folgas fixas reservadas para continuidade");
+    expect(html).toContain("precisam ser mantidas na próxima escala");
+    expect(html).toContain("não são dias publicados dentro deste horizonte");
+    expect(html).toContain("Folga fixa reservada: 02/11/2026");
+    expect(html.indexOf("Bruno")).toBeLessThan(html.indexOf("Ana"));
+    expect(html.indexOf("Ana")).toBeLessThan(html.indexOf("Zélia"));
+    expect(html).not.toMatch(/<details[^>]*\sopen/);
+  });
+
+  it("does not show a reservation panel when the optional field is absent or empty", () => {
+    const { input, validation } = sample();
+    const withoutField = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
+    const empty = renderToStaticMarkup(
+      <ValidationResults input={input} validation={{ ...validation, boundaryReservations: [] }} />,
+    );
+    expect(withoutField).not.toContain("Folgas fixas reservadas para continuidade");
+    expect(empty).not.toContain("Folgas fixas reservadas para continuidade");
+  });
+
   it.each([
     { dirty: true, canPublish: true, ready: true },
     { dirty: false, canPublish: false, ready: true },

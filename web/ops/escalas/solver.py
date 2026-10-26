@@ -142,7 +142,12 @@ def solve(data, force=None):
                 neighbors = []
                 for delta in (-1, 1):
                     adjacent = (date.fromisoformat(day) + timedelta(days=delta)).isoformat()
-                    neighbors.append(off.get((pid, adjacent), int(prior.get(adjacent, {}).get("kind") == "OFF")))
+                    fixed_boundary = (day == dates[-1] and delta == 1 and date.fromisoformat(day).weekday() == 6
+                                      and person["offMode"] in ("FIXED", "MIXED")
+                                      and 0 in person["fixedOffDays"]
+                                      and (not person.get("activeUntil") or adjacent <= person["activeUntil"])
+                                      and not (adjacent in policy["holidayDates"] and not policy["holidayRestAllowed"]))
+                    neighbors.append(off.get((pid, adjacent), int(prior.get(adjacent, {}).get("kind") == "OFF" or fixed_boundary)))
                 model.add(off[pid, day] <= sum(neighbors))
         if person["offPattern"] == "PREFER_CONSECUTIVE":
             for day in active[pid]:

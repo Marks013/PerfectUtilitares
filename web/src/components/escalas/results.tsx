@@ -185,6 +185,7 @@ export function ValidationResults({ input, validation }: { input: EscalaInput; v
   );
   const pages = Math.max(1, Math.ceil(issues.length / 25));
   const currentPage = Math.min(page, pages - 1);
+  const reservations = validation.boundaryReservations ?? [];
   return (
     <section className={panelClass} aria-labelledby="escala-validation-title">
       <h2 id="escala-validation-title" className="text-lg font-bold">
@@ -252,6 +253,37 @@ export function ValidationResults({ input, validation }: { input: EscalaInput; v
             </div>
           )}
         </div>
+      )}
+      {reservations.length > 0 && (
+        <details className="space-y-3">
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold">
+            Folgas fixas reservadas para continuidade
+          </summary>
+          <p className="text-sm text-[color:var(--app-muted)]">
+            Estas folgas fixas adjacentes precisam ser mantidas na próxima escala para preservar a continuidade do
+            descanso. São reservas explícitas da configuração do colaborador, fora do período desta proposta; não são
+            dias publicados dentro deste horizonte.
+          </p>
+          <ul className="max-h-80 space-y-3 overflow-y-auto text-sm">
+            {orderedEmployees.map((employee) => {
+              const dates = reservations
+                .filter((reservation) => reservation.employeeId === employee.id)
+                .map((reservation) => reservation.date)
+                .sort();
+              return dates.length > 0 ? (
+                <li key={employee.id} className="border-b border-[color:var(--app-border)] pb-3">
+                  <p className="font-semibold">
+                    {employee.sector || "Sem setor informado"} / {employee.role || "Sem cargo informado"}
+                  </p>
+                  <p>
+                    {employee.name} · {employee.registration}
+                  </p>
+                  <p>Folga fixa reservada: {dates.map(displayDate).join(", ")}</p>
+                </li>
+              ) : null;
+            })}
+          </ul>
+        </details>
       )}
       <details className="space-y-3">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">Conferência por colaborador (opcional)</summary>

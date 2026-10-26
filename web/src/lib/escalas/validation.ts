@@ -1,6 +1,7 @@
 import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
 import { escalaInputSchema } from "./schema";
 import { sortEmployees } from "./order";
+import { fixedBoundaryReservations } from "./boundary";
 import { validateEmployee } from "./validation-employee";
 import { validateCoverage, validateJourney, workJourney, type WorkJourney } from "./validation-time";
 
@@ -36,12 +37,13 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
       issues.push({ code: "CIVIL_TIME_INVALID", severity: "ERROR", employeeId: assignment.employeeId, date: assignment.date, message: "Horário inválido na transição do fuso; confira as datas e os horários reais." });
     }
   }
-  const results = sortEmployees(input.employees).map((person) => validateEmployee(input, person, journeys));
+  const boundaryReservations = fixedBoundaryReservations(input);
+  const results = sortEmployees(input.employees).map((person) => validateEmployee(input, person, journeys, boundaryReservations));
   issues.push(...results.flatMap((result) => result.issues));
   const coverage = validateCoverage(input, journeys);
   issues.push(...coverage.issues);
   return {
     valid: !issues.some((issue) => issue.severity === "ERROR"), readyToPublish: issues.length === 0,
-    issues, summaries: results.map((result) => result.summary), minimumCoverageMargin: coverage.minimumCoverageMargin,
+    issues, summaries: results.map((result) => result.summary), minimumCoverageMargin: coverage.minimumCoverageMargin, boundaryReservations,
   };
 }

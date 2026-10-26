@@ -124,6 +124,22 @@ class SolverTests(unittest.TestCase):
         data["policy"]["compensationAuthorized"] = False
         self.assertEqual(solve(data)["status"], "INFEASIBLE")
 
+    def test_sunday_monday_fixed_pair_reserves_next_monday(self):
+        data = fixture(weeks=2)
+        person = data["employees"][0]
+        person.update(offMode="FIXED", fixedOffDays=[0, 6], offPattern="CONSECUTIVE")
+        for entry in person["history"]:
+            if date.fromisoformat(entry["date"]).weekday() in (0, 6):
+                entry.update(kind="OFF"); entry.pop("shiftId", None)
+            else:
+                entry.update(kind="WORK", shiftId="day")
+        result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual([a["date"] for a in result["assignments"] if a["kind"] == "OFF"],
+                         ["2026-11-02", "2026-11-08", "2026-11-09", "2026-11-15"])
+        data["policy"]["holidayDates"] = ["2026-11-16"]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
     def test_input_order_and_names_do_not_change_rights(self):
         data = fixture(people=3)
         original = solve(data)

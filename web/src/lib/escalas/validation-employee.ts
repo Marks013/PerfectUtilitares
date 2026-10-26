@@ -1,17 +1,19 @@
 import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
-import type { EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
+import { fixedBoundaryReservations } from "./boundary";
+import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
 
 function isActive(person: EscalaEmployee, day: string): boolean {
   return day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil);
 }
 
-export function validateEmployee(input: EscalaInput, person: EscalaEmployee, journeys: WorkJourney[]): { issues: EscalaIssue[]; summary: EscalaEmployeeSummary } {
+export function validateEmployee(input: EscalaInput, person: EscalaEmployee, journeys: WorkJourney[], reservations: EscalaAssignment[] = fixedBoundaryReservations(input)): { issues: EscalaIssue[]; summary: EscalaEmployeeSummary } {
   const issues: EscalaIssue[] = [];
   const issue = (code: string, message: string, date?: string, severity: "ERROR" | "PENDING" = "ERROR") => issues.push({ code, message, severity, employeeId: person.id, ...(date ? { date } : {}) });
   const current = input.assignments.filter((assignment) => assignment.employeeId === person.id);
   const all = [...person.history, ...current].sort((left, right) => left.date.localeCompare(right.date));
   const byDate = new Map(all.map((assignment) => [assignment.date, assignment]));
+  const reservedOffDates = new Set(reservations.filter((assignment) => assignment.employeeId === person.id).map((assignment) => assignment.date));
   const currentWork = journeys.filter((journey) => journey.assignment.employeeId === person.id && journey.assignment.date >= input.startDate);
   const allWork = journeys.filter((journey) => journey.assignment.employeeId === person.id).sort((left, right) => left.start - right.start);
   const summary: EscalaEmployeeSummary = {
@@ -97,7 +99,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
       for (const off of offs) {
         const before = addDays(off, -1);
         const after = addDays(off, 1);
-        if (byDate.get(before)?.kind === "OFF" || byDate.get(after)?.kind === "OFF") continue;
+        if (byDate.get(before)?.kind === "OFF" || byDate.get(after)?.kind === "OFF" || reservedOffDates.has(after)) continue;
         if (after > input.endDate || (before < input.startDate && !byDate.has(before))) issue("CONSECUTIVE_PENDING", "Folga consecutiva na fronteira depende de outro dia de descanso registrado no período adjacente.", off, "PENDING");
         else issue("CONSECUTIVE_OFF", "Folgas consecutivas obrigatórias não foram respeitadas.", off);
       }

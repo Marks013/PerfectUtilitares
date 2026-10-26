@@ -31,6 +31,8 @@ O CP-SAT procura uma solução com todas as restrições obrigatórias. Depois m
 
 Publicações de períodos vizinhos precisam ser coerentes nos dias compartilhados e no histórico usado nas fronteiras. A última revisão publicada continua sendo a referência quando uma edição posterior ainda está em rascunho. Conflitos são apresentados para revisão; o sistema não sobrescreve a outra escala nem transforma uma previsão em registro de ponto.
 
+Folgas fixas consecutivas no domingo e na segunda-feira atravessam naturalmente a fronteira semanal. Quando a última folga de domingo depende de uma segunda-feira fixa já aprovada, o sistema apresenta uma reserva explícita dessa segunda-feira para continuidade. A reserva não aumenta as folgas ou horas do período e não altera histórico. A escala seguinte precisa preservá-la. Folga variável desconhecida não recebe essa inferência; desligamento e feriado incompatível impedem a reserva.
+
 ## Limites explícitos desta entrega
 
 - Planejamento de uma a seis semanas completas, até 150 colaboradores por proposta/filial. As filiais são independentes, sem deslocamento automático de pessoal entre elas.
