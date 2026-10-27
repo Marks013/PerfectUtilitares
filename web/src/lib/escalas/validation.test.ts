@@ -37,6 +37,30 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
 function codes(input: EscalaInput) { return validateEscala(input).issues.map((issue) => issue.code); }
 
 describe("independent Escalas validation", () => {
+  it("keeps an unconfirmed estimated coverage gap visible without claiming the draft is ready", () => {
+    const input = fixture(40);
+    input.policy.coverageReview = "SUGGESTED";
+    input.demands[0].minimum = 2;
+    input.demands[0].estimated = true;
+    const result = validateEscala(input);
+    expect(result.valid).toBe(true);
+    expect(result.readyToPublish).toBe(false);
+    expect(result.minimumCoverageMargin).toBe(-1);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "ESTIMATED_COVERAGE_GAP", severity: "PENDING", date: input.startDate }));
+    input.policy.coverageReview = "CONFIRMED";
+    expect(validateEscala(input).valid).toBe(false);
+    expect(codes(input)).toContain("COVERAGE_DEFICIT");
+  });
+
+  it("never relaxes a manual staffing minimum when other estimates await review", () => {
+    const input = fixture(40);
+    input.policy.coverageReview = "SUGGESTED";
+    input.demands[0].minimum = 2;
+    expect(validateEscala(input).valid).toBe(false);
+    expect(codes(input)).toContain("COVERAGE_DEFICIT");
+    expect(codes(input)).not.toContain("ESTIMATED_COVERAGE_GAP");
+  });
+
   it.each([40, 42, 44] as const)("reconciles %s hours with exact integer minutes", (hours) => {
     const result = validateEscala(fixture(hours));
     expect(result.issues).toEqual([]);

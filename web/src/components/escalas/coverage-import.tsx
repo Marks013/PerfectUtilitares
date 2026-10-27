@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/types";
 import { sortEmployees } from "@/lib/escalas/order";
-import { prepareRoster, proposeCoverage } from "@/lib/escalas/preparation";
+import { proposeCoverage } from "@/lib/escalas/preparation";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import {
   clock,
@@ -44,7 +44,6 @@ export function ImportEmployees({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [useDefault, setUseDefault] = useState(false);
   async function analyze() {
     if (!file || busy) return;
     setBusy(true);
@@ -70,16 +69,17 @@ export function ImportEmployees({
     }
   }
   return (
-    <details className={panelClass}>
+    <details className={panelClass} open={!input.employees.length || undefined}>
       <summary className="min-h-11 cursor-pointer py-2 font-semibold">Importar equipe com prévia</summary>
       <p className="text-sm text-[color:var(--app-muted)]">
         Importe somente o relatório FPRE136 em CSV (recomendado) ou XLSX. A filial atual é selecionada no relatório;
         registros de outras filiais não entram nesta proposta. Não é necessário outro arquivo, admissão ou histórico
         individual. A importação não remove matrículas ausentes nem publica a escala.
       </p>
-      <a href="/api/escalas/import?template=csv" download className={buttonClass}>
-        Baixar modelo CSV alternativo
-      </a>
+      <details>
+        <summary className="min-h-11 cursor-pointer py-2 text-sm">Usar outro formato (opcional)</summary>
+        <a href="/api/escalas/import?template=csv" download className={buttonClass}>Baixar modelo CSV alternativo</a>
+      </details>
       <Field label="Arquivo CSV ou XLSX">
         {(id) => (
           <input
@@ -110,21 +110,14 @@ export function ImportEmployees({
             Prévia: {preview.employees.length} colaboradores aceitos de {preview.totalRows} linhas.
           </p>
           <p className="text-sm">
-            A aplicação adapta os horários à carga de {input.defaultWeeklyHours}h e às vigências e usa descanso
-            quinzenal protetivo para todos, sem classificação por sexo. São horários propostos, não a jornada original
-            do relatório. Os horários originais permanecem como referência. Gere novamente a proposta após aplicar.
-            Histórico ausente limita a conferência de
-            continuidade; não certifica conformidade legal completa.
+            A importação preserva os horários originais. Depois, confira a proposta de adaptação à carga semanal
+            e escolha os horários antes de sugerir as folgas para toda a filial.
           </p>
           {preview.report && <p className="text-sm">
             FPRE136 · filial {preview.report.branchCode} — {preview.report.branchName}: {preview.report.sourceEmployees}
             {" "}colaboradores na fonte; {preview.report.otherBranchesExcluded} de outras filiais ignorados;
             {" "}{preview.report.missingSchedule} sem horário fixo, incluídos no rodízio de folgas.
           </p>}
-          <Check
-            label="Propor padrão para cadastros com horário que precisam de adaptação (08:00, intervalo 12:00–13:00)"
-            checked={useDefault} disabled={disabled || busy} onChange={setUseDefault}
-          />
           <p className="text-sm">Pessoas sem horário fixo participam do rodízio 5×2 e quinzenal de folgas sem receber turno ou horas fictícias. Para os demais cadastros, jornadas inferiores a 6h e horários sem adaptação precisam de conferência antes da geração.</p>
           {preview.issues.length > 0 && (
             <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm">
@@ -181,11 +174,7 @@ export function ImportEmployees({
             className={primaryClass}
             onClick={() => {
               try {
-                onChange(prepareRoster(
-                  mergeImport(input, preview.employees, preview.shifts),
-                  input.defaultWeeklyHours,
-                  useDefault ? "BRANCH_DEFAULT" : "EXCLUDE",
-                ));
+                onChange(mergeImport(input, preview.employees, preview.shifts));
                 setPreview(null);
                 setFile(null);
               } catch (cause) {
@@ -286,7 +275,7 @@ export function Coverage({
   return (
     <section className={panelClass} aria-labelledby="escala-coverage-title">
       <h2 id="escala-coverage-title" className="text-lg font-bold">
-        3. Cobertura mínima
+        Cobertura mínima por setor
       </h2>
       <p className="text-sm text-[color:var(--app-muted)]">
         Defina quem precisa estar trabalhando em cada faixa. Refeições e pausas não contam como atendimento. Faixas sem
@@ -294,8 +283,9 @@ export function Coverage({
       </p>
       <p className="text-sm">
         A sugestão estima a cobertura pelos horários e setores da equipe e pela disponibilidade em cinco de sete dias.
-        É uma proposta de dimensionamento, sem afirmar a necessidade real do mercado. Em setores com uma pessoa,
-        pode propor mínimo zero: confira expressamente essas faixas antes de aprovar. A sugestão não confirma a revisão.
+        É uma proposta de dimensionamento, sem afirmar a necessidade real do mercado. Quando há possibilidade de
+        atendimento, a referência é de pelo menos uma pessoa; faixas sem disponibilidade podem ter zero. Confira a
+        necessidade real antes de aprovar. A sugestão não confirma a revisão.
       </p>
       <button type="button" className={buttonClass} disabled={disabled || !input.employees.length}
         onClick={() => {
@@ -306,10 +296,12 @@ export function Coverage({
       {input.policy.coverageReview && <Check
         label="Conferi a cobertura sugerida, inclusive faixas com mínimo zero"
         checked={input.policy.coverageReview === "CONFIRMED"} disabled={disabled || !input.demands.length}
-        onChange={(checked) => onChange({ ...input, policy: {
+        onChange={(checked) => onChange({ ...input, demands: checked ? input.demands.map((demand) => ({ ...demand, estimated: false })) : input.demands, policy: {
           ...input.policy, coverageReview: checked ? "CONFIRMED" : "SUGGESTED",
         } })}
       />}
+      <details className="space-y-3">
+        <summary className="min-h-11 cursor-pointer py-2 font-semibold">Ajustar um mínimo operacional (opcional)</summary>
       <form onSubmit={submit}>
         <fieldset disabled={disabled} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -451,6 +443,7 @@ export function Coverage({
           </button>
         </fieldset>
       </form>
+      </details>
       <details className="space-y-3">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">
           Conferir faixas cadastradas ({demands.length})

@@ -33,6 +33,7 @@ describe("isolated schedule processor client", () => {
     vi.stubGlobal("fetch", fetch);
     expect((await solveEscala(fixture())).status).toBe("OPTIMAL");
     expect(fetch).toHaveBeenCalledWith(new URL("http://escalas-solver:8080/solve"), expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).toEqual({ input: fixture() });
   });
   it("preserves unavailability and busy as separate conditions", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
@@ -63,10 +64,5 @@ describe("isolated schedule processor client", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "OPTIMAL", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 1 })));
     const input = fixture(); input.assignments = [{ employeeId: "p1", date: "2026-11-02", kind: "ABSENCE" }];
     await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
-  });
-  it.each([{ offDates: ["2026-11-aa"], employeeId: "p1" }, { offDates: ["2026-11-02"] },
-    { offDates: ["2026-11-02", "2026-11-02"], employeeId: "p1" }])("rejects malformed forced dates before processing", async (force) => {
-    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
-    await expect(solveEscala(fixture(), force)).rejects.toThrow(); expect(fetch).not.toHaveBeenCalled();
   });
 });

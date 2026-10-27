@@ -1,17 +1,19 @@
 "use client";
 
 import { CalendarDays, LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { WeeklyHours } from "@/lib/escalas/types";
 import { compareBranches } from "@/lib/escalas/order";
 import { Rules, Shifts } from "./configuration";
-import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
+import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { Coverage, ImportEmployees } from "./coverage-import";
 import { Employees } from "./employees";
 import { Proposals, Publication, ValidationResults } from "./results";
 import { Roster } from "./roster";
 import { useEscalasWorkspace, type WorkspaceSummary } from "./use-escalas-workspace";
-import { displayDate, errorMessage, HOURS, monthPeriod, newInput } from "./workspace-model";
+import { changeBranchWeeklyHours, displayDate, errorMessage, HOURS, monthPeriod, newInput } from "./workspace-model";
+import type { ReviewTarget } from "./validation-guidance";
+import { HoursProposal, hoursArePrepared } from "./hours-proposal";
 
 function CreatePlan({ disabled, create }: { disabled: boolean; create: (input: ReturnType<typeof newInput>) => void }) {
   const [code, setCode] = useState("");
@@ -27,7 +29,7 @@ function CreatePlan({ disabled, create }: { disabled: boolean; create: (input: R
     /* The form reports the invalid month on submit. */
   }
   return (
-    <details className={panelClass} open>
+    <details className={panelClass}>
       <summary className="min-h-11 cursor-pointer py-2 font-semibold">Criar proposta para uma filial</summary>
       <form
         onSubmit={(event) => {
@@ -108,7 +110,7 @@ function CreatePlan({ disabled, create }: { disabled: boolean; create: (input: R
             </p>
           )}
           <button type="submit" className={primaryClass}>
-            Criar proposta vazia
+            Iniciar planejamento
           </button>
         </fieldset>
       </form>
@@ -157,6 +159,23 @@ export function EscalasStatus({
 export function EscalasWorkspace() {
   const model = useEscalasWorkspace();
   const { input, workspace } = model;
+  const [review, setReview] = useState<ReviewTarget | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (model.error) errorRef.current?.focus(); }, [model.error]);
+  function resolve(target: ReviewTarget) {
+    if (target === "generate") {
+      if (input && hoursArePrepared(input)) model.generate();
+      else document.getElementById("escala-hours-title")?.scrollIntoView({ block: "center" });
+      return;
+    }
+    setReview(target);
+    requestAnimationFrame(() => {
+      const element = document.getElementById(`escala-${target}`);
+      if (element instanceof HTMLDetailsElement) element.open = true;
+      element?.scrollIntoView({ behavior: "instant", block: "start" });
+      element?.focus({ preventScroll: true });
+    });
+  }
   return (
     <div className="min-w-0 space-y-6 text-[color:var(--app-fg)]">
       <header className="space-y-3 border-b border-[color:var(--app-border)] pb-5">
@@ -169,12 +188,9 @@ export function EscalasWorkspace() {
           considera horários reais, descansos e cobertura.
         </p>
         <ol className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-semibold" aria-label="Etapas do planejamento">
-          <li>1. Equipe</li>
-          <li>2. Regras e horários</li>
-          <li>3. Cobertura</li>
-          <li>4. Proposta</li>
-          <li>5. Conferência</li>
-          <li>6. Publicação interna</li>
+          <li>1. Importar equipe</li>
+          <li>2. Escolher horários e sugerir folgas</li>
+          <li>3. Conferir e publicar</li>
         </ol>
       </header>
       <section className={panelClass} aria-labelledby="escala-list-title">
@@ -238,6 +254,8 @@ export function EscalasWorkspace() {
       />
       {model.error && (
         <div
+          ref={errorRef}
+          tabIndex={-1}
           className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-4 text-sm"
           role="alert"
         >
@@ -260,77 +278,79 @@ export function EscalasWorkspace() {
                 Acesso de consulta. Alterações dependem da permissão de planejamento desta filial.
               </p>
             )}
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                className={primaryClass}
-                disabled={!model.canEdit || !model.dirty}
-                onClick={model.save}
-              >
-                Salvar e conferir revisão
-              </button>
-              <button type="button" className={buttonClass} disabled={!model.canEdit} onClick={model.validate}>
-                Conferir dados exibidos
-              </button>
-              <button
-                type="button"
-                className={buttonClass}
-                disabled={!model.dirty || Boolean(model.busy)}
-                onClick={model.discard}
-              >
-                Descartar alterações locais
-              </button>
-            </div>
-            <p className="text-xs text-[color:var(--app-muted)]">
-              A conferência usa os dados aplicados à proposta. Clique em “Aplicar” nos cadastros ainda abertos antes de
-              salvar ou conferir.
-            </p>
           </div>
-          <Employees input={input} disabled={!model.canEdit} onChange={model.update} />
-          <ImportEmployees input={input} disabled={!model.canEdit} onChange={model.update} />
-          <details className={panelClass}>
-            <summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">
-              Configurar regras, horários e cobertura
-            </summary>
-            <div className="space-y-6">
-              <Rules input={input} disabled={!model.canEdit} onChange={model.update} />
-              <Shifts input={input} disabled={!model.canEdit} onChange={model.update} />
-              <Coverage input={input} disabled={!model.canEdit} onChange={model.update} />
-            </div>
-          </details>
-          <div className="flex flex-wrap items-center gap-3">
+          <section id="escala-team" tabIndex={-1} className="space-y-3">
+            <h2 className="text-lg font-bold">1. Equipe da filial</h2>
+            <p className="text-sm">{input.employees.length} colaboradores cadastrados · {input.employees.filter((person) => person.planningEnabled !== false).length} incluídos · {input.employees.filter((person) => person.planningEnabled === false).length} fora da geração</p>
+            <ImportEmployees input={input} disabled={!model.canEdit} onChange={model.update} />
+          </section>
+          <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-mass-title">
+            <h2 id="escala-mass-title" className="text-lg font-bold">2. Escolher horários e sugerir folgas</h2>
+            <p className="text-sm">Escolha os horários adaptados à carga selecionada. Depois, uma análise distribui as folgas de toda a equipe incluída e aponta a cobertura a conferir. Dias bloqueados, ausências e contratos menores são preservados.</p>
+            <fieldset disabled={!model.canEdit} className="max-w-md space-y-3">
+              <Field label="Carga semanal de referência" hint="O limite legal de cada semana e os contratos menores continuam sendo respeitados.">
+                {(id) => <select id={id} value={input.defaultWeeklyHours} className={controlClass} onChange={(event) => model.update(changeBranchWeeklyHours(input, Number(event.target.value) as WeeklyHours))}>
+                  {HOURS.map((hours) => <option key={hours} value={hours}>{hours} horas</option>)}
+                </select>}
+              </Field>
+              {input.defaultWeeklyHours > 40 && <div className="space-y-2 text-sm">
+                <p>Distribuir mais de 40 horas em cinco dias pode exigir compensação e instrumento coletivo. Confirme somente autorizações reais da filial.</p>
+                <Check label="A compensação diária está autorizada no regime aplicável" checked={input.policy.compensationAuthorized} onChange={(value) => model.update({ ...input, policy: { ...input.policy, reviewed: false, compensationAuthorized: value } })} />
+                <button type="button" className={buttonClass} onClick={() => resolve("rules")}>Conferir regras e autorizações</button>
+              </div>}
+            </fieldset>
+            {input.employees.length > 0 && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
             <button
               type="button"
               className={primaryClass}
-              disabled={!model.canEdit || model.dirty || !input.employees.length}
+              disabled={!model.canEdit || !input.employees.some((person) => person.planningEnabled !== false) || !hoursArePrepared(input)}
               onClick={model.generate}
             >
-              Gerar proposta de folgas
+              Sugerir folgas para toda a filial
             </button>
             <p className="max-w-2xl text-sm text-[color:var(--app-muted)]">
-              Aplique e salve as configurações primeiro. A geração preserva decisões bloqueadas e entrega uma prévia
-              para conferência, sem publicação automática.
+              Alterações aplicadas serão salvas antes da análise. Você confere a prévia e decide quando aplicar.
+              A geração não publica a escala.
             </p>
-          </div>
+            {!hoursArePrepared(input) && <p className="text-sm font-semibold">Escolha e aplique os horários propostos acima para continuar.</p>}
+          </section>
           <Proposals
             input={input}
             generated={model.generated}
-            suggestions={model.suggestions}
             disabled={!model.canEdit}
             onGenerated={model.applyGenerated}
-            onSuggestion={model.applySuggestion}
             onDismiss={model.dismissProposals}
           />
-          <Roster
+          <section id="escala-roster" tabIndex={-1} className="space-y-3">
+          <h2 className="text-lg font-bold">3. Conferir e publicar</h2>
+          {input.assignments.length > 0 && <Roster
             input={input}
             validation={model.validation}
             disabled={!model.canEdit}
             canUnlock={workspace.canPublish}
-            canSuggest={model.canEdit && !model.dirty}
             onChange={model.update}
-            onSuggest={model.suggest}
-          />
-          <ValidationResults input={input} validation={model.validation} />
+          />}
+          <ValidationResults input={input} validation={model.validation} onResolve={model.canEdit ? resolve : undefined} />
+          </section>
+          <details id="escala-rules" tabIndex={-1} className={panelClass} open={review === "rules"} onToggle={(event) => { if (!event.currentTarget.open && review === "rules") setReview(null); }}>
+            <summary className="min-h-11 cursor-pointer py-2 font-semibold">Regras e autorizações da filial · conferir antes de publicar</summary>
+            <Rules input={input} disabled={!model.canEdit} onChange={model.update} />
+          </details>
+          <details id="escala-coverage" tabIndex={-1} className={panelClass} open={review === "coverage"} onToggle={(event) => { if (!event.currentTarget.open && review === "coverage") setReview(null); }}>
+            <summary className="min-h-11 cursor-pointer py-2 font-semibold">Cobertura por setor · conferir a estimativa antes de publicar</summary>
+            <Coverage input={input} disabled={!model.canEdit} onChange={model.update} />
+          </details>
+          <details className={panelClass}>
+            <summary className="min-h-11 cursor-pointer py-2 font-semibold">Ajustes avançados e exceções (opcional)</summary>
+            <div className="space-y-6">
+              <Employees input={input} disabled={!model.canEdit} onChange={model.update} />
+              <Shifts input={input} disabled={!model.canEdit} onChange={model.update} />
+              <div className="flex flex-wrap gap-3">
+                <button type="button" className={buttonClass} disabled={!model.canEdit} onClick={model.validate}>Conferir dados exibidos</button>
+                <button type="button" className={buttonClass} disabled={!model.dirty || Boolean(model.busy)} onClick={model.discard}>Descartar alterações locais</button>
+              </div>
+            </div>
+          </details>
           {model.dirty && (
             <div className="flex flex-wrap items-center gap-3">
               <button type="button" className={primaryClass} disabled={!model.canEdit} onClick={model.save}>

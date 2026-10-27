@@ -2,6 +2,15 @@ import { addDays, dateRange, dayOfWeek } from "./dates";
 import { effectiveWeeklyHours } from "./labor-rules";
 import type { EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "./types";
 
+/** Legacy references below the saved branch default may be individual contracts and are never raised. */
+export function planningWeeklyHours(person: EscalaEmployee, savedDefault: WeeklyHours, requested: WeeklyHours): Pick<EscalaEmployee, "weeklyHours" | "weeklyHoursMode"> {
+  const branchReference = person.weeklyHoursMode === "BRANCH" || (person.weeklyHoursMode !== "INDIVIDUAL"
+    && person.sourceSchedule?.report === "FPRE136" && person.weeklyHours === savedDefault);
+  const individualMode = person.weeklyHoursMode ?? (person.sourceSchedule?.report === "FPRE136" ? "INDIVIDUAL" : undefined);
+  return branchReference ? { weeklyHours: requested, weeklyHoursMode: "BRANCH" }
+    : { weeklyHours: Math.min(requested, person.weeklyHours) as WeeklyHours, ...(individualMode ? { weeklyHoursMode: individualMode } : {}) };
+}
+
 function minutes(shift: EscalaShift): number {
   return shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 }
@@ -39,12 +48,13 @@ function originalShift(person: EscalaEmployee): EscalaShift | null {
 }
 
 /** Candidate proposals only: preserve meal times and either arrival or departure. */
-function adjustedShifts(source: EscalaShift, target: number): EscalaShift[] {
+function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END"): EscalaShift[] {
   const delta = target - minutes(source);
   const positions = source.segments.flatMap((segment, index) => segment.kind === "WORK" ? [index] : []);
   if (!positions.length || source.segments.some((segment) => segment.kind !== "BREAK" && (segment.start < 300 || segment.end > 1320))) return [];
   const results: EscalaShift[] = [];
   for (const anchor of ["arrival", "departure"] as const) {
+    if ((strategy === "PRESERVE_START" && anchor !== "arrival") || (strategy === "PRESERVE_END" && anchor !== "departure")) continue;
     const copy = structuredClone(source);
     if (anchor === "arrival") copy.segments[positions[positions.length - 1]].end += delta;
     else copy.segments[positions[0]].start -= delta;
@@ -58,7 +68,7 @@ function adjustedShifts(source: EscalaShift, target: number): EscalaShift[] {
 }
 
 /** One explicit branch action, without claiming imported schedules or contracts were confirmed. */
-export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSchedule: "EXCLUDE" | "BRANCH_DEFAULT" = "EXCLUDE"): EscalaInput {
+export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSchedule: "EXCLUDE" | "BRANCH_DEFAULT" = "EXCLUDE", strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END" = "BOTH"): EscalaInput {
   if (input.assignments.some((assignment) => assignment.locked)) throw new Error("A proposta tem dias bloqueados. Preserve a revisão ou peça a um aprovador para desbloquear antes de reaplicar a configuração em lote.");
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const register = (shift: EscalaShift) => {
@@ -67,25 +77,25 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     shifts.set(shift.id, shift);
   };
   const employees = input.employees.map((person): EscalaEmployee => {
-    if (person.scheduleMode === "UNTIMED") return { ...person, planningEnabled: true, planningExclusionReason: undefined,
-      shiftIds: [], sundayRestRule: "PROTECTIVE", maxConsecutiveSundays: 1 };
+    if (person.planningEnabled === false) return person;
+    if (person.scheduleMode === "UNTIMED") return { ...person, planningEnabled: true, planningExclusionReason: undefined, shiftIds: [] };
     const source = originalShift(person);
     const base = person.sourceSchedule ? (source ? [source] : []) : person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
     // Never silently turn a short/undefined imported contract into a full-time journey.
     const needsDefault = !base.length || (person.sourceSchedule?.report === "FPRE136" && base.every((shift) => minutes(shift) < 360));
-    if ((needsDefault && missingSchedule === "EXCLUDE") || (person.planningEnabled === false && !person.sourceSchedule)) return { ...person, planningEnabled: false,
-      planningExclusionReason: person.planningEnabled === false && !person.sourceSchedule ? "Fora da geração por configuração" : !base.length ? "Horário não definido no FPRE136" : "Jornada curta: não ampliada automaticamente" };
+    if (needsDefault && missingSchedule === "EXCLUDE") return { ...person, planningEnabled: false,
+      planningExclusionReason: !base.length ? "Horário não definido no FPRE136" : "Jornada curta: não ampliada automaticamente" };
     const sources = needsDefault ? [defaultShift()] : base;
-    const weeklyHours = Math.min(hours, person.weeklyHours) as WeeklyHours;
+    const reference = planningWeeklyHours(person, input.defaultWeeklyHours, hours);
+    const { weeklyHours } = reference;
     const targets = new Set<number>();
     for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) targets.add(effectiveWeeklyHours({ weeklyHours }, start) * 12);
-    let candidates = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target)));
-    if (!candidates.length && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target));
+    let candidates = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy)));
+    if (!candidates.length && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy));
     candidates.forEach(register);
     const shiftIds = [...new Set(candidates.map((shift) => shift.id))].slice(0, 12);
-    return { ...person, weeklyHours, shiftIds, planningEnabled: shiftIds.length > 0,
-      planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível",
-      sundayRestRule: "PROTECTIVE", maxConsecutiveSundays: 1 };
+    return { ...person, ...reference, shiftIds, planningEnabled: shiftIds.length > 0,
+      planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });
   // Reference text remains on each imported employee; only keep referenced shift definitions.
   const used = new Set([...employees.flatMap((person) => person.shiftIds), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
@@ -113,17 +123,41 @@ export function proposeCoverage(input: EscalaInput): EscalaInput {
       const points = [...new Set(intervals.flatMap((person) => person.shifts.flatMap((shift) => shift.segments.filter((segment) => segment.kind === "WORK").flatMap((segment) => [segment.start, segment.end]))))].filter((value) => value >= 0 && value <= 1440).sort((a, b) => a - b);
       for (let index = 0; index < points.length - 1; index++) {
         const start = points[index], end = points[index + 1];
-        // Count only coverage common to every alternative. Otherwise the same team can be required
-        // at both opposing tails of mutually exclusive shift proposals, producing false infeasibility.
-        const available = intervals.filter((person) => person.shifts.length > 0 && person.shifts.every((shift) => shift.segments.some((segment) => segment.kind === "WORK" && segment.start <= start && segment.end >= end))).length;
-        // Sunday has a fortnightly protective rest ceiling. Zero remains explicit for branch review.
-        const minimum = Math.floor(available * (dayOfWeek(day) === 6 ? 1 / 2 : 5 / 7));
+        // Count each person once if at least one allowed alternative covers this slice. These targets
+        // are provisional: the joint solve chooses compatible shifts and reports any unmet target.
+        const available = intervals.filter((person) => person.shifts.some((shift) => shift.segments.some((segment) => segment.kind === "WORK" && segment.start <= start && segment.end >= end))).length;
+        // Keep opening/closing opportunities and small sectors visible. An estimated target is not
+        // an approved operating minimum; even a one-person sector can need relief on its days off.
+        const minimum = available ? Math.max(1, Math.floor(available * (dayOfWeek(day) === 6 ? 1 / 2 : 5 / 7))) : 0;
         const previous = demands.at(-1);
         if (previous?.id.startsWith("suggest-") && previous.date === day && previous.sector === sector && previous.end === start && previous.minimum === minimum) previous.end = end;
-        else demands.push({ id: `suggest-${demands.length}-${day}`, date: day, sector, start, end, minimum });
+        else demands.push({ id: `suggest-${demands.length}-${day}`, date: day, sector, start, end, minimum, estimated: true });
       }
     }
   }
   if (demands.length > 12000) throw new Error("A sugestão excedeu 12.000 faixas; reduza o período ou as variações de horários antes de aplicar.");
+  if (demands.length === input.demands.length) return input;
+  // Adding estimates must not soften any minimum that had already been confirmed.
+  if (input.policy.coverageReview === "CONFIRMED") {
+    for (let index = 0; index < input.demands.length; index++) {
+      if (demands[index].estimated) demands[index] = { ...demands[index], estimated: false };
+    }
+  }
   return { ...input, demands, policy: { ...input.policy, coverageReview: "SUGGESTED" } };
+}
+
+/** Persist approval on each minimum so a later setup change cannot turn it back into an estimate. */
+export function confirmCoverageEstimates(input: EscalaInput, previous?: EscalaInput): EscalaInput {
+  const approved = new Map(previous?.demands.filter((demand) => previous.policy.coverageReview === "CONFIRMED" || demand.estimated !== true).map((demand) => [demand.id, demand]));
+  let changed = false;
+  const demands = input.demands.map((demand) => {
+    if (!demand.estimated) return demand;
+    const prior = approved.get(demand.id);
+    const unchangedApproved = prior && prior.date === demand.date && prior.sector === demand.sector && prior.role === demand.role
+      && prior.start === demand.start && prior.end === demand.end && prior.minimum === demand.minimum;
+    if (input.policy.coverageReview !== "CONFIRMED" && !unchangedApproved) return demand;
+    changed = true;
+    return { ...demand, estimated: false };
+  });
+  return changed ? { ...input, demands } : input;
 }

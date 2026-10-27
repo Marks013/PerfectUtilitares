@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
-import { clock, HOURS, parseClock } from "./workspace-model";
+import { changeBranchWeeklyHours, clock, HOURS, parseClock } from "./workspace-model";
 import { LaborPolicyFields } from "./labor-policy-fields";
 
 function DateList({ label, value, onChange }: { label: string; value: string[]; onChange: (dates: string[]) => void }) {
@@ -42,12 +42,12 @@ export function Rules({
   onChange: (input: EscalaInput) => void;
 }) {
   function change<K extends keyof EscalaPolicy>(field: K, value: EscalaPolicy[K]) {
-    onChange({ ...input, policy: { ...input.policy, [field]: value } });
+    onChange({ ...input, policy: { ...input.policy, reviewed: false, [field]: value } });
   }
   return (
     <section className={panelClass} aria-labelledby="escala-rules-title">
       <h2 id="escala-rules-title" className="text-lg font-bold">
-        2. Regras e vigências
+        Regras e vigências da filial
       </h2>
       <p className="text-sm text-[color:var(--app-muted)]">
         O cadastro não certifica a vigência da convenção. Fonte, enquadramento e revisão precisam ser conferidos pelo
@@ -65,10 +65,7 @@ export function Rules({
                 id={id}
                 value={input.defaultWeeklyHours}
                 onChange={(event) =>
-                  onChange({
-                    ...input,
-                    defaultWeeklyHours: Number(event.target.value) as WeeklyHours,
-                  })
+                  onChange(changeBranchWeeklyHours(input, Number(event.target.value) as WeeklyHours))
                 }
                 className={controlClass}
               >

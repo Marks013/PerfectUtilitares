@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { allowedBranches, branchPermission, EscalaError, requireEscalaPermission, type EscalaActor, type EscalaPermission } from "./access";
@@ -9,8 +8,10 @@ import { compareBranches } from "./order";
 import { addDays, dateRange } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
 import { publishedPlanningContext } from "./continuity";
+import { prepareGeneration } from "./generation";
+import { confirmCoverageEstimates } from "./preparation";
 import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, SUPERMARKET_CCT } from "./labor-rules";
-import type { EscalaAssignment, EscalaInput, EscalaSuggestion, EscalaWorkspace } from "./types";
+import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
 
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
@@ -60,7 +61,7 @@ export async function getEscala(actor: EscalaActor, id: string, revision?: numbe
 export async function createEscala(actor: EscalaActor, input: EscalaInput): Promise<EscalaWorkspace> {
   const permission = await branchPermission(actor, input.branchCode);
   requireEscalaPermission(permission, "edit");
-  input = publishedPlanningContext(input, []);
+  input = confirmCoverageEstimates(publishedPlanningContext(input, []));
   const row = await prisma.$transaction(async (tx) => {
     const created = await tx.escalaWorkspace.create({ data: {
       tenantId: actor.tenantId, branchCode: input.branchCode, branchName: input.branchName,
@@ -192,7 +193,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
   preserveLockedAssignments(current.input, input, !publish && current.canPublish);
-  input = publishedPlanningContext(input, []);
+  input = confirmCoverageEstimates(publishedPlanningContext(input, []), current.input);
   let validation = validateEscala(input);
   const status = publish ? "PUBLISHED" : "DRAFT";
   const alreadyPublished = publish && current.status === "PUBLISHED";
@@ -223,7 +224,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   return { ...current, revision, status, input, validation, updatedAt: updatedAt.toISOString() } as EscalaWorkspace;
 }
 
-export function assertRevision(workspace: EscalaWorkspace, expectedRevision: number) {
+function assertRevision(workspace: EscalaWorkspace, expectedRevision: number) {
   if (workspace.revision !== expectedRevision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "A versão da proposta mudou. Recarregue a escala e gere uma nova análise.");
 }
 
@@ -244,7 +245,7 @@ function requireSolverSetup(input: EscalaInput) {
   if (dateRange(input.startDate, input.endDate).some((date) => !collectiveExtensionAuthorized(input.policy, date)
     && timed.some((person) => person.activeFrom <= date && (!person.activeUntil || person.activeUntil >= date)
       && person.shiftIds.every((shiftId) => (minutes.get(shiftId) ?? Infinity) > 480)))) {
-    throw new EscalaError(422, "ESCALA_DAILY_EXTENSION_REQUIRED", "Os horários permitidos exigem mais de 8 horas diárias sem autorização coletiva vigente. Revise os horários ou o acordo; esta pendência é de configuração, não de efetivo.");
+    throw new EscalaError(422, "ESCALA_DAILY_EXTENSION_REQUIRED", "A carga escolhida em 5×2 exige mais de 8 horas por dia. Confira a autorização de compensação da filial em Regras trabalhistas; a partir de 16/12/2026, informe também o acordo coletivo vigente. Para simular uma jornada de 8 horas, escolha expressamente 40 horas semanais e gere novamente. Nenhuma carga ou autorização foi alterada automaticamente.");
   }
   const unsupportedHoliday = !input.policy.holidayRestAllowed && input.policy.holidayDates.some((date) => date >= input.startDate && date <= input.endDate
     && !input.policy.authorizedHolidayDates.includes(date)
@@ -257,8 +258,9 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, "edit");
   assertRevision(current, expectedRevision);
-  requireSolverSetup(current.input);
-  const contextual = await planningContext(actor, id, current.input);
+  const prepared = prepareGeneration(current.input);
+  requireSolverSetup(prepared.input);
+  const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
   const result = await solveEscala(contextual);
   const proposalInput = result.status === "FEASIBLE" || result.status === "OPTIMAL"
     ? parseEscalaInput({ ...contextual, assignments: result.assignments }) : contextual;
@@ -266,43 +268,6 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const latest = await getEscala(actor, id);
   assertRevision(latest, expectedRevision);
   const validation = validateEscala(proposalInput);
-  if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && !validation.valid) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
-  return { result, proposalInput, validation };
-}
-
-export async function suggestEscala(actor: EscalaActor, id: string, expectedRevision: number, employeeId: string, weekStart: string) {
-  const current = await getEscala(actor, id);
-  requireEscalaPermission(current, "edit");
-  assertRevision(current, expectedRevision);
-  requireSolverSetup(current.input);
-  const contextual = await planningContext(actor, id, current.input);
-  const employee = current.input.employees.find((person) => person.id === employeeId && person.planningEnabled !== false);
-  const first = new Date(`${weekStart}T00:00:00Z`);
-  if (!employee || Number.isNaN(first.valueOf()) || first.toISOString().slice(0, 10) !== weekStart || first.getUTCDay() !== 1 || weekStart < current.input.startDate || weekStart > current.input.endDate) {
-    throw new EscalaError(400, "ESCALA_INVALID_SUGGESTION", "Selecione um colaborador e uma segunda-feira dentro do período.");
-  }
-  const dates = Array.from({ length: 7 }, (_, index) => new Date(first.valueOf() + index * 86_400_000).toISOString().slice(0, 10));
-  if (dates[6] > current.input.endDate) throw new EscalaError(400, "ESCALA_INVALID_WEEK", "A semana deve estar inteiramente no período.");
-  const suggestions: EscalaSuggestion[] = [];
-  const excludedOffPairs: string[][] = [];
-  // Each bounded solve searches every feasible pair jointly with the whole branch.
-  // Exclude only completed alternatives, never a few arbitrarily preselected weekdays.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const result = await solveEscala(contextual, { employeeId, weekStart, excludedOffPairs: [...excludedOffPairs] });
-    if (result.status !== "FEASIBLE" && result.status !== "OPTIMAL") break;
-    const proposed = parseEscalaInput({ ...contextual, assignments: result.assignments });
-    preserveLockedAssignments(current.input, proposed);
-    const offDates = proposed.assignments.filter((item) => item.employeeId === employeeId && dates.includes(item.date) && item.kind === "OFF").map((item) => item.date).sort();
-    if (offDates.length !== 2 || excludedOffPairs.some((pair) => pair.every((date, index) => date === offDates[index]))) break;
-    excludedOffPairs.push(offDates);
-    const validation = validateEscala(proposed);
-    if (!validation.valid) continue;
-    const previous = new Map(current.input.assignments.map((item) => [assignmentKey(item), item]));
-    const changedEmployeeIds = [...new Set(proposed.assignments.filter((item) => !sameAssignment(item, previous.get(assignmentKey(item)))).map((item) => item.employeeId))];
-    const suggestionId = createHash("sha256").update(JSON.stringify({ id, expectedRevision, employeeId, offDates, assignments: proposed.assignments })).digest("hex").slice(0, 24);
-    suggestions.push({ id: suggestionId, employeeId, offDates, assignments: proposed.assignments, changedEmployeeIds, validation,
-      status: validation.readyToPublish && changedEmployeeIds.every((changed) => changed === employeeId) ? "VALIDATED" : "REQUIRES_CHANGES" });
-  }
-  assertRevision(await getEscala(actor, id), expectedRevision);
-  return { suggestions };
+  if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING"))) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  return { result, proposalInput, validation, preparation: prepared.preparation };
 }

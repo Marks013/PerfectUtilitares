@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin, requireSession } from "@/lib/api/security";
 import { branchPermission, escalaActor, requireEscalaPermission } from "@/lib/escalas/access";
-import { createEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala, suggestEscala } from "@/lib/escalas/service";
+import { createEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
 import { escalaFailure, escalaJson } from "./http";
 
@@ -14,7 +14,6 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("SAVE"), ...version, input: z.unknown() }).strict(),
   z.object({ action: z.literal("VALIDATE"), input: z.unknown() }).strict(),
   z.object({ action: z.literal("GENERATE"), ...version }).strict(),
-  z.object({ action: z.literal("SUGGEST"), ...version, employeeId: id, weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict(),
   z.object({ action: z.literal("PUBLISH"), ...version }).strict(),
 ]);
 
@@ -46,7 +45,7 @@ export async function POST(request: Request) {
   try {
     const actor = escalaActor(guard.session);
     const data = parsed.data;
-    const expensive = data.action === "GENERATE" || data.action === "SUGGEST";
+    const expensive = data.action === "GENERATE";
     const limited = await enforcePersistentRateLimit(request, { keyPrefix: expensive ? "escalas-solver" : "escalas-write", limit: expensive ? 6 : 30, windowMs: expensive ? 600_000 : 60_000 });
     if (limited) return limited;
     switch (data.action) {
@@ -58,7 +57,6 @@ export async function POST(request: Request) {
         return escalaJson(validateEscala(input));
       }
       case "GENERATE": return escalaJson(await generateEscala(actor, data.id, data.expectedRevision));
-      case "SUGGEST": return escalaJson(await suggestEscala(actor, data.id, data.expectedRevision, data.employeeId, data.weekStart));
       case "PUBLISH": {
         const current = await getEscala(actor, data.id);
         return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, current.input, true));

@@ -4,10 +4,10 @@ import { EscalaError } from "@/lib/escalas/access";
 import { EscalaSolverError } from "@/lib/escalas/solver-client";
 import { DELETE, GET, PATCH, POST } from "./route";
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), suggest: vi.fn(), rate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), rate: vi.fn() }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
-vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, saveEscala: mocks.save, generateEscala: mocks.generate, suggestEscala: mocks.suggest, parseEscalaInput: (value: unknown) => value }));
+vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, saveEscala: mocks.save, generateEscala: mocks.generate, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
 const workspace = { id: "w1", revision: 1, status: "DRAFT", input, canEdit: true, canPublish: true };
@@ -16,8 +16,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
   mocks.list.mockResolvedValue([workspace]); mocks.get.mockResolvedValue(workspace); mocks.create.mockResolvedValue(workspace); mocks.save.mockResolvedValue({ ...workspace, revision: 2 });
-  mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input, validation: { valid: true } });
-  mocks.suggest.mockResolvedValue({ suggestions: [{ id: "s1", assignments: [] }] }); mocks.rate.mockResolvedValue(null);
+  mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input, validation: { valid: true }, preparation: { adjustedEmployeeIds: [], excludedEmployeeIds: [], generatedCoverageSlots: 7, includedEmployees: 81, untimedEmployees: 12 } });
+  mocks.rate.mockResolvedValue(null);
 });
 
 describe("/api/escalas", () => {
@@ -38,14 +38,12 @@ describe("/api/escalas", () => {
     expect((await POST(command({ action: "PUBLISH", id: "w1", expectedRevision: 1 }))).status).toBe(200);
     expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 1, input, true);
   });
-  it("returns complete generation previews and suggestions without an implicit save", async () => {
+  it("returns the whole-branch generation preview and preparation summary without an implicit save", async () => {
     const generated = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
     expect(generated.status).toBe(200);
-    expect((await generated.json()).result.status).toBe("FEASIBLE");
-    const suggested = await POST(command({ action: "SUGGEST", id: "w1", expectedRevision: 1, employeeId: "e1", weekStart: "2026-10-26" }));
-    expect(suggested.status).toBe(200);
-    expect((await suggested.json()).suggestions).toHaveLength(1);
-    expect(mocks.suggest).toHaveBeenCalledWith(expect.any(Object), "w1", 1, "e1", "2026-10-26");
+    expect(await generated.json()).toMatchObject({ result: { status: "FEASIBLE" }, preparation: { includedEmployees: 81, untimedEmployees: 12, generatedCoverageSlots: 7 } });
+    expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 1);
+    expect(mocks.rate).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ keyPrefix: "escalas-solver", limit: 6 }));
     expect(mocks.save).not.toHaveBeenCalled();
   });
   it("denies unauthenticated sessions, missing tenants and foreign origins", async () => {
@@ -57,6 +55,8 @@ describe("/api/escalas", () => {
     expect((await POST(command({ action: "CREATE", input }, { "content-type": "application/json" }))).status).toBe(403);
   });
   it("rejects malformed commands, unknown options and invalid IDs", async () => {
+    expect((await POST(command({ action: "SUGGEST", id: "w1", expectedRevision: 1, employeeId: "e1", weekStart: "2026-10-26" }))).status).toBe(400);
+    expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1, employeeId: "e1" }))).status).toBe(400);
     expect((await POST(command({ action: "SAVE", id: "w1", expectedRevision: 0, input }))).status).toBe(400);
     expect((await POST(command({ action: "CREATE", tenantId: "foreign", input }))).status).toBe(400);
     expect((await GET(new Request("http://localhost/api/escalas?id="))).status).toBe(400);

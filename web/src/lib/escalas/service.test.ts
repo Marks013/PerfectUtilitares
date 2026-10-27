@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EscalaInput } from "./types";
-import { assertRevision, createEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala, suggestEscala } from "./service";
+import { createEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala } from "./service";
 import { allowedBranches, branchPermission, escalaActor, requireEscalaPermission } from "./access";
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import { validateEscala } from "./validation";
@@ -435,6 +435,24 @@ describe("Escalas revision service", () => {
     expect(mocks.revision.create).toHaveBeenCalledWith({ data: expect.objectContaining({ revision: 2, status: "DRAFT" }) });
     expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", tenantId: "company-a", revision: 1 } }));
   });
+  it("persists confirmed estimates as hard minima so a later setup edit cannot relax them", async () => {
+    const value = input(); value.policy.coverageReview = "CONFIRMED";
+    value.demands = value.demands.map((demand) => ({ ...demand, estimated: true }));
+    const saved = await saveEscala(actor, "w1", 1, value);
+    expect(saved.input.demands.every((demand) => demand.estimated === false)).toBe(true);
+    const stored = mocks.revision.create.mock.calls[0][0].data.input as EscalaInput;
+    expect(stored.demands.every((demand) => demand.estimated === false)).toBe(true);
+    expect(value.demands.every((demand) => demand.estimated === true)).toBe(true);
+  });
+  it("freezes confirmed legacy minima even when the next save resets the branch review", async () => {
+    const previous = input(); previous.policy.coverageReview = "CONFIRMED";
+    previous.demands = previous.demands.map((demand) => ({ ...demand, estimated: true }));
+    useCurrent(previous);
+    const next = structuredClone(previous); next.policy.coverageReview = "SUGGESTED";
+    const result = await saveEscala(actor, "w1", 1, next);
+    expect(result.input.policy.coverageReview).toBe("SUGGESTED");
+    expect(result.input.demands.every((demand) => demand.estimated === false)).toBe(true);
+  });
   it("rejects stale revisions before writes and enforces the transactional compare-and-swap", async () => {
     await expect(saveEscala(actor, "w1", 2, input())).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
     expect(mocks.transaction).not.toHaveBeenCalled();
@@ -477,26 +495,31 @@ describe("Escalas revision service", () => {
     mocks.revision.findUnique.mockResolvedValueOnce(version()).mockResolvedValueOnce(version(input(), 2));
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
   });
-  it("limits individual suggestions to three complete joint solves, validating the requested pair", async () => {
-    const result = await suggestEscala(actor, "w1", 1, "e1", input().startDate);
-    expect(mocks.solve).toHaveBeenCalledTimes(2);
-    expect(mocks.solve.mock.calls[0][1]).toEqual({ employeeId: "e1", weekStart: "2026-10-26", excludedOffPairs: [] });
-    expect(mocks.solve.mock.calls[1][1].excludedOffPairs).toEqual([["2026-10-31", "2026-11-01"]]);
-    expect(result.suggestions).toHaveLength(1);
-    expect(result.suggestions[0]).toMatchObject({ employeeId: "e1", offDates: ["2026-10-31", "2026-11-01"], status: "VALIDATED" });
+  it("rejects a feasible response with an unassigned day even when missing days are draft pendings", async () => {
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments.slice(1), wallTimeSeconds: 0.1, message: "Concluído" });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
-  it("rejects absent employees and incomplete weeks in suggestions", async () => {
-    await expect(suggestEscala(actor, "w1", 1, "missing", input().startDate)).rejects.toMatchObject({ status: 400 });
-    await expect(suggestEscala(actor, "w1", 1, "e1", "2026-10-27")).rejects.toMatchObject({ status: 400 });
-    const current = await getEscala(actor, "w1");
-    expect(() => assertRevision(current, 9)).toThrow(/versão/);
+  it("generates one joint preview with pending policy and automatically proposed coverage, without approving or persisting", async () => {
+    const value = input(); value.assignments = []; value.demands = [];
+    value.policy.reviewed = false; value.policy.source = ""; value.policy.reviewedBy = "";
+    useCurrent(value);
+    const result = await generateEscala(actor, "w1", 1);
+    expect(mocks.solve).toHaveBeenCalledTimes(1);
+    expect(mocks.solve.mock.calls[0]).toHaveLength(1);
+    expect(result.preparation).toMatchObject({ includedEmployees: 1, untimedEmployees: 0 });
+    expect(result.preparation.generatedCoverageSlots).toBeGreaterThan(0);
+    expect(result.proposalInput.policy).toMatchObject({ reviewed: false, source: "", reviewedBy: "", coverageReview: "SUGGESTED" });
+    expect(result.validation.valid).toBe(true);
+    expect(result.validation.readyToPublish).toBe(false);
+    expect(result.validation.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "POLICY_PENDING" }), expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING" })]));
+    expect(result.validation.issues.some((issue) => issue.code === "DAY_PENDING" || issue.code === "COVERAGE_PENDING")).toBe(false);
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
   it("identifies incomplete setup before contacting the solver", async () => {
     const empty = input(); empty.employees = []; empty.assignments = [];
     mocks.revision.findUnique.mockResolvedValue(version(empty));
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ status: 422, code: "ESCALA_SETUP_REQUIRED" });
-    await expect(suggestEscala(actor, "w1", 1, "e1", input().startDate)).rejects.toMatchObject({ status: 422 });
     expect(mocks.solve).not.toHaveBeenCalled();
   });
   it("generates rest rotation for an untimed manager without requiring a fictitious shift", async () => {

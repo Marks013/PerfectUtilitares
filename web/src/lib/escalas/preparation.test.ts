@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { unzipSync, strFromU8 } from "fflate";
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import { certificateAuthorizes, collectiveExtensionAuthorized, effectiveSundayLimit, effectiveWeeklyHours, legalWeeklyHours, transitionWeeks } from "./labor-rules";
-import { prepareRoster, proposeCoverage } from "./preparation";
+import { confirmCoverageEstimates, prepareRoster, proposeCoverage } from "./preparation";
 import { escalaInputSchema } from "./schema";
 import { validateEscala } from "./validation";
 import { exportEscalaXlsx } from "./export";
@@ -118,6 +118,8 @@ describe("branch-wide proposal preparation", () => {
     input.employees[0].shiftIds = [];
     input.employees[0].planningEnabled = false;
     expect(prepareRoster(input, 42).employees[0].planningEnabled).toBe(false);
+    expect(prepareRoster(input, 42, "BRANCH_DEFAULT").employees[0].planningEnabled).toBe(false);
+    input.employees[0].planningEnabled = true;
     const included = prepareRoster(input, 42, "BRANCH_DEFAULT");
     expect(included.employees[0].planningEnabled).toBe(true);
     expect(paid(included, included.employees[0].shiftIds[0])).toBe(504);
@@ -125,11 +127,31 @@ describe("branch-wide proposal preparation", () => {
     input.shifts[0].segments = [{ start: 420, end: 660, kind: "WORK" }];
     expect(prepareRoster(input, 42).employees[0].planningEnabled).toBe(false);
   });
+  it.each([["PRESERVE_START", 420, 1044], ["PRESERVE_END", 356, 980]] as const)("keeps the explicitly selected %s strategy with the original unpaid meal", (strategy, start, end) => {
+    const input = fixture();
+    input.employees[0].sourceSchedule = { report: "FPRE136", code: "0026", description: "Referência", weekday: "07:00-11:00 / 13:00-16:20", saturday: "07:00-11:00" };
+    const prepared = prepareRoster(input, 42, "EXCLUDE", strategy);
+    expect(prepared.employees[0].shiftIds).toHaveLength(1);
+    const shift = prepared.shifts.find((item) => item.id === prepared.employees[0].shiftIds[0]);
+    expect(shift?.segments).toEqual([{ start, end: 660, kind: "WORK" }, { start: 660, end: 780, kind: "BREAK" }, { start: 780, end, kind: "WORK" }]);
+    expect(paid(prepared, prepared.employees[0].shiftIds[0])).toBe(504);
+    expect(input.employees[0].sourceSchedule.weekday).toBe("07:00-11:00 / 13:00-16:20");
+  });
   it("does not move blocked assignments or erase absences", () => {
     const input = fixture(); input.assignments[0].locked = true;
     expect(() => prepareRoster(input, 40)).toThrow(/bloqueados/);
     input.assignments[0] = { employeeId: "p1", date: input.startDate, kind: "ABSENCE" };
     expect(prepareRoster(input, 40).assignments).toEqual([input.assignments[0]]);
+  });
+  it("preserves explicit exclusions and Sunday classifications when adapting hours", () => {
+    const input = fixture();
+    input.employees[0].sundayRestRule = "COMMERCE";
+    input.employees[0].maxConsecutiveSundays = 2;
+    input.employees[0].offMode = "MIXED"; input.employees[0].fixedOffDays = [2];
+    input.employees.push({ ...structuredClone(input.employees[0]), id: "excluded", registration: "0002", planningEnabled: false, scheduleMode: "UNTIMED", shiftIds: [] });
+    const prepared = prepareRoster(input, 40, "BRANCH_DEFAULT");
+    expect(prepared.employees[0]).toMatchObject({ sundayRestRule: "COMMERCE", maxConsecutiveSundays: 2, offMode: "MIXED", fixedOffDays: [2] });
+    expect(prepared.employees[1]).toEqual(input.employees[1]);
   });
   it("preserves a shorter contract and rebuilds imported proposals from their original reference on repeated setup", () => {
     const shorter = prepareRoster(fixture("2026-11-02", 40), 42);
@@ -139,6 +161,22 @@ describe("branch-wide proposal preparation", () => {
     input.employees[0].sourceSchedule = { report: "FPRE136", code: "0026", description: "Referência", weekday: "07:00-11:00 / 13:00-16:20", saturday: "07:00-11:00" };
     const first = prepareRoster(input, 42);
     expect(prepareRoster(first, 42).employees[0].shiftIds).toEqual(first.employees[0].shiftIds);
+  });
+  it("allows 42 to 40 to 42 for a branch reference while preserving explicit and ambiguous shorter contracts", () => {
+    const input = fixture();
+    input.assignments = [];
+    input.employees[0].sourceSchedule = { report: "FPRE136", code: "0026", description: "Referência", weekday: "07:00-11:00 / 13:00-16:20", saturday: "07:00-11:00" };
+    input.employees.push({ ...structuredClone(input.employees[0]), id: "individual", registration: "0002", weeklyHours: 40, weeklyHoursMode: "INDIVIDUAL" });
+    input.employees.push({ ...structuredClone(input.employees[0]), id: "legacy-shorter", registration: "0003", weeklyHours: 40 });
+    const shorter = prepareRoster(input, 40);
+    expect(shorter.employees.map((person) => person.weeklyHours)).toEqual([40, 40, 40]);
+    expect(shorter.employees[0].weeklyHoursMode).toBe("BRANCH");
+    // Keep the ambiguous legacy shorter reference individual when first adapting it.
+    expect(shorter.employees[2].weeklyHoursMode).toBe("INDIVIDUAL");
+    const restored = prepareRoster(shorter, 42);
+    expect(restored.employees.map((person) => person.weeklyHours)).toEqual([42, 40, 40]);
+    expect(restored.employees[0].shiftIds.every((id) => paid(restored, id) === 504)).toBe(true);
+    expect(restored.employees.slice(1).every((person) => person.shiftIds.every((id) => paid(restored, id) === 480))).toBe(true);
   });
   it("retains excluded people for auditing without demanding a nonexistent schedule", () => {
     const input = fixture();
@@ -175,25 +213,56 @@ describe("branch-wide proposal preparation", () => {
     expect(result.issues).toContainEqual(expect.objectContaining({ code: "SUNDAY_ROTATION" }));
     expect(result.readyToPublish).toBe(false);
   });
-  it("suggests coverage without double-counting alternative shifts or overwriting an existing sector/day", () => {
+  it("suggests provisional coverage for a one-person sector without overwriting an existing sector/day", () => {
     const input = prepareRoster(fixture(), 42);
     input.demands = [{ id: "existing", date: input.startDate, sector: "Setor", start: 420, end: 660, minimum: 1 }];
     const original = structuredClone(input);
     const proposed = proposeCoverage(input);
     expect(proposed.demands.filter((demand) => demand.date === input.startDate)).toEqual(input.demands);
-    expect(proposed.demands.filter((demand) => demand.date !== input.startDate).every((demand) => demand.minimum === 0)).toBe(true);
+    expect(proposed.demands.filter((demand) => demand.date !== input.startDate).some((demand) => demand.minimum === 1)).toBe(true);
+    expect(proposed.demands.filter((demand) => demand.date !== input.startDate).some((demand) => demand.minimum === 0)).toBe(true);
+    expect(proposed.demands.filter((demand) => demand.date !== input.startDate).every((demand) => demand.estimated === true)).toBe(true);
+    expect(proposed.demands.find((demand) => demand.id === "existing")?.estimated).toBeUndefined();
     expect(proposed.policy.coverageReview).toBe("SUGGESTED");
     expect(validateEscala(proposed).issues).toContainEqual(expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING" }));
     expect(input).toEqual(original);
   });
-  it("does not demand simultaneous coverage at the mutually exclusive tails of alternative shifts", () => {
+  it("retains confirmed minima as hard requirements when missing days receive new estimates", () => {
+    const input = fixture();
+    input.policy.coverageReview = "CONFIRMED";
+    input.demands = [{ id: "approved", date: input.startDate, sector: "Setor", start: 420, end: 660, minimum: 1, estimated: true }];
+    const proposed = proposeCoverage(input);
+    expect(proposed.policy.coverageReview).toBe("SUGGESTED");
+    expect(proposed.demands[0]).toEqual({ ...input.demands[0], estimated: false });
+    expect(proposed.demands.slice(1).every((demand) => demand.estimated === true)).toBe(true);
+    expect(input.demands[0].estimated).toBe(true);
+  });
+  it("records confirmation on each provisional minimum without approving anything by itself", () => {
+    const input = proposeCoverage({ ...fixture(), demands: [] });
+    expect(confirmCoverageEstimates(input)).toBe(input);
+    const confirmed = confirmCoverageEstimates({ ...input, policy: { ...input.policy, coverageReview: "CONFIRMED" } });
+    expect(confirmed.demands.every((demand) => demand.estimated === false)).toBe(true);
+    expect(confirmed.demands.map(({ minimum }) => minimum)).toEqual(input.demands.map(({ minimum }) => minimum));
+    expect(confirmCoverageEstimates(confirmed)).toBe(confirmed);
+  });
+  it("keeps a previously approved legacy estimate hard after a setup change resets the global review", () => {
+    const previous = proposeCoverage({ ...fixture(), demands: [] });
+    previous.policy.coverageReview = "CONFIRMED";
+    const next = structuredClone(previous); next.policy.coverageReview = "SUGGESTED";
+    next.demands.push({ id: "new-estimate", date: next.startDate, sector: "Outro setor", start: 420, end: 660, minimum: 1, estimated: true });
+    const retained = confirmCoverageEstimates(next, previous);
+    expect(retained.demands.slice(0, -1).every((demand) => demand.estimated === false)).toBe(true);
+    expect(retained.demands.at(-1)?.estimated).toBe(true);
+    expect(next.demands[0].estimated).toBe(true);
+  });
+  it("keeps alternative opening and closing coverage as estimates while counting each person only once", () => {
     const input = fixture(); input.assignments = []; input.demands = [];
     input.shifts[0].segments[2].end = 980;
     input.employees = Array.from({ length: 4 }, (_, index) => ({ ...structuredClone(input.employees[0]), id: `p${index}`, registration: `00${index}` }));
     const prepared = prepareRoster(input, 42);
     const demands = proposeCoverage(prepared).demands.filter((demand) => demand.date === input.startDate);
-    expect(demands.filter((demand) => demand.start < 420 || demand.end > 980).every((demand) => demand.minimum === 0)).toBe(true);
-    expect(demands.some((demand) => demand.start >= 420 && demand.end <= 980 && demand.minimum === 2)).toBe(true);
+    expect(demands.filter((demand) => demand.start < 420 || demand.end > 980).every((demand) => demand.minimum === 2 && demand.estimated === true)).toBe(true);
+    expect(demands.some((demand) => demand.start <= 420 && demand.end >= 660 && demand.minimum === 2)).toBe(true);
   });
   it("exports effective weekly targets and the limits of verification", () => {
     const input = fixture("2028-01-03", 42);

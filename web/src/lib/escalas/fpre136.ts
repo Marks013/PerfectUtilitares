@@ -75,7 +75,7 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
       if (shift && shift.segments.filter((segment) => segment.kind === "WORK").reduce((total, segment) => total + segment.end - segment.start, 0) > 600) throw new Error("Jornada FPRE136 excede 600 minutos de trabalho.");
       if (shift && !shifts.has(shift.id) && shifts.size >= 120) throw new Error("A proposta aceita até 120 horários distintos.");
       const id = `imp-${createHash("sha256").update(`${branchCode}:${registration}`).digest("hex").slice(0, 24)}`;
-      result.employees.push({ id, registration, name, sector, role, weeklyHours: options.defaultWeeklyHours,
+      result.employees.push({ id, registration, name, sector, role, weeklyHours: options.defaultWeeklyHours, weeklyHoursMode: "BRANCH",
         shiftIds: shift ? [shift.id] : [], activeFrom: "", planningEnabled: true, scheduleMode: missing ? "UNTIMED" : "TIMED",
         sourceSchedule: { report: "FPRE136", code: required(record.code, 40), description: required(record.description, 180), weekday, saturday },
         offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, sundayRestRule: "PROTECTIVE",

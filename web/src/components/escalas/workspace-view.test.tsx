@@ -63,7 +63,7 @@ describe("Escalas practical accessibility and publication states", () => {
     input.assignments = [{ employeeId: employee.id, date: input.startDate, kind: "DUTY" }];
     validation.summaries = [{ employeeId: employee.id, workedMinutes: 0, workDays: 5, offDays: 2, maxStreak: 5, sundaysWorked: 1 }];
     const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false}
-      canUnlock canSuggest onChange={vi.fn()} onSuggest={vi.fn()} />);
+      canUnlock onChange={vi.fn()} />);
     expect(html).toContain("Trabalho sem horário fixo");
     expect(html).toContain("Sem horário fixo · horas não apuradas");
     expect(html).toContain("5 dias trabalhados · 2 folgas");
@@ -128,7 +128,7 @@ describe("Escalas practical accessibility and publication states", () => {
     const html = renderToStaticMarkup(<Coverage input={input} disabled={false} onChange={vi.fn()} />);
     expect(html).toContain("Sugerir cobertura pela equipe");
     expect(html).toContain("Conferi a cobertura sugerida, inclusive faixas com mínimo zero");
-    expect(html).toContain("pode propor mínimo zero");
+    expect(html).toContain("referência é de pelo menos uma pessoa");
     expect(html).toMatch(/<input[^>]*\/><span>Conferi a cobertura sugerida/);
     expect(html).not.toMatch(/<input[^>]*checked[^>]*\/><span>Conferi a cobertura sugerida/);
   });
@@ -155,9 +155,7 @@ describe("Escalas practical accessibility and publication states", () => {
         validation={null}
         disabled={false}
         canUnlock
-        canSuggest={false}
         onChange={vi.fn()}
-        onSuggest={vi.fn()}
       />,
     );
     expect(html).toContain("Reposição / Repositor");
@@ -168,7 +166,8 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).toContain("Bloqueado");
     expect(html).toContain("rolagem horizontal");
     expect(html).toContain('aria-label="Ana, 28/09/2026: Folga, bloqueado. Editar"');
-    expect(html).toContain("Sugestões só ficam disponíveis após salvar a revisão");
+    expect(html).toContain("As sugestões em massa consideram todos os colaboradores incluídos da filial");
+    expect(html).not.toContain("Sugerir folgas");
   });
 
   it("keeps individual reconciliation collapsed and identifies unsaved validation", () => {
@@ -267,14 +266,12 @@ describe("Escalas practical accessibility and publication states", () => {
           proposalInput: proposal,
           validation: { ...validation, valid: false },
         }}
-        suggestions={[]}
         disabled={false}
         onGenerated={vi.fn()}
-        onSuggestion={vi.fn()}
         onDismiss={vi.fn()}
       />,
     );
-    expect(html).toContain("Nada foi gravado");
+    expect(html).toContain("A sugestão ainda não foi aplicada");
     expect(html).toContain("1 dias de 1 colaboradores");
     expect(html).toContain("Zélia");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Aplicar proposta à grade/);

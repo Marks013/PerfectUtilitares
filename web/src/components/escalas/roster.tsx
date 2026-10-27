@@ -125,17 +125,13 @@ export function Roster({
   validation,
   disabled,
   canUnlock,
-  canSuggest,
   onChange,
-  onSuggest,
 }: {
   input: EscalaInput;
   validation: EscalaValidation | null;
   disabled: boolean;
   canUnlock: boolean;
-  canSuggest: boolean;
   onChange: (input: EscalaInput) => void;
-  onSuggest: (employeeId: string, weekStart: string) => void;
 }) {
   const [week, setWeek] = useState(input.startDate);
   const [filter, setFilter] = useState("");
@@ -169,7 +165,7 @@ export function Roster({
   return (
     <section className={panelClass} aria-labelledby="escala-roster-title">
       <h2 id="escala-roster-title" className="text-lg font-bold">
-        4. Proposta da equipe
+        Grade de folgas da filial
       </h2>
       <p className="text-sm text-[color:var(--app-muted)]">
         Filial {input.branchCode} · {input.branchName}. Organização: setor, cargo e nome A–Z. Selecione um dia para
@@ -292,15 +288,7 @@ export function Roster({
                         {summary.workDays} dias trabalhados · {summary.offDays} folgas
                       </span>
                     )}
-                    <button
-                      type="button"
-                      className={`${buttonClass} mt-2 w-full px-2 text-xs`}
-                      disabled={!canSuggest}
-                      onClick={() => onSuggest(employee.id, week)}
-                    >
-                      Sugerir folgas
-                      <span className="sr-only"> para {employee.name}</span>
-                    </button>
+                    {employee.planningEnabled === false && <span className="block text-xs font-normal text-[color:var(--app-coral)]">Fora da geração · {employee.planningExclusionReason || "Conferência necessária"}</span>}
                   </th>
                   {dates.map((date) => {
                     const assignment = assignments.get(`${employee.id}:${date}`);
@@ -308,7 +296,9 @@ export function Roster({
                       Boolean(employee.activeFrom && date < employee.activeFrom) || Boolean(employee.activeUntil && date > employee.activeUntil);
                     return (
                       <td key={date} className="border-b border-[color:var(--app-border)] p-1.5 align-top">
-                        {inactive ? (
+                        {employee.planningEnabled === false ? (
+                          <span className="block p-2 text-xs text-[color:var(--app-muted)]">Fora da geração</span>
+                        ) : inactive ? (
                           <span className="block p-2 text-xs text-[color:var(--app-muted)]">Fora do vínculo</span>
                         ) : (
                           <button
@@ -362,8 +352,7 @@ export function Roster({
         </div>
       )}
       <p className="text-xs text-[color:var(--app-muted)]">
-        A análise e a geração consideram toda a filial, inclusive pessoas ocultas pelos filtros. Sugestões só ficam
-        disponíveis após salvar a revisão.
+        As sugestões em massa consideram todos os colaboradores incluídos da filial, inclusive os ocultos pelos filtros.
       </p>
       {selected && selectedEmployee && (
         <fieldset disabled={disabled}>

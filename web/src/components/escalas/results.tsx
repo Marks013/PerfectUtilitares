@@ -5,12 +5,13 @@ import { sortEmployees } from "@/lib/escalas/order";
 import type {
   EscalaAssignment,
   EscalaInput,
-  EscalaSuggestion,
+  EscalaIssue,
   EscalaValidation,
   EscalaWorkspace,
 } from "@/lib/escalas/types";
 import { buttonClass, Check, panelClass, primaryClass } from "./controls";
 import { clock, displayDate } from "./workspace-model";
+import { groupValidationIssues, type ReviewTarget } from "./validation-guidance";
 
 function changesBetween(previous: EscalaAssignment[], next: EscalaAssignment[]) {
   const before = new Map(previous.map((item) => [`${item.employeeId}:${item.date}`, item]));
@@ -81,10 +82,8 @@ function Changes({ input, assignments }: { input: EscalaInput; assignments: Esca
 export function Proposals({
   input,
   generated,
-  suggestions,
   disabled,
   onGenerated,
-  onSuggestion,
   onDismiss,
 }: {
   input: EscalaInput;
@@ -93,21 +92,20 @@ export function Proposals({
     proposalInput: EscalaInput;
     validation: EscalaValidation;
   } | null;
-  suggestions: EscalaSuggestion[];
   disabled: boolean;
   onGenerated: () => void;
-  onSuggestion: (suggestion: EscalaSuggestion) => void;
   onDismiss: () => void;
 }) {
-  if (!generated && !suggestions.length) return null;
+  if (!generated) return null;
+  const coverageGaps = generated.validation.issues.filter((issue) => issue.code === "ESTIMATED_COVERAGE_GAP");
   return (
     <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
       <h2 id="escala-proposals-title" className="text-lg font-bold">
-        Prévia das alternativas
+        Sugestão em massa pronta para conferir
       </h2>
       <p className="text-sm">
-        Nada foi gravado. Aplicar substitui a proposta completa exibida e invalida as outras alternativas. Sugestões
-        isoladas não podem ser somadas sem uma nova análise conjunta.
+        A sugestão ainda não foi aplicada. Confira as folgas de toda a filial e os horários propostos. Aplicar atualiza
+        o rascunho exibido; a publicação continua dependendo da sua conferência.
       </p>
       {generated && (
         <div className="space-y-3">
@@ -122,6 +120,11 @@ export function Proposals({
             impeditivos e {generated.validation.issues.filter((issue) => issue.severity === "PENDING").length}{" "}
             pendências.
           </p>
+          {coverageGaps.length > 0 && <div className="space-y-2 border-l-4 border-[color:var(--app-coral)] pl-3">
+            <p className="text-sm font-semibold">Cobertura a ajustar: {coverageGaps.length} faixa(s) abaixo da estimativa.</p>
+            <p className="text-sm">O rascunho pode ser aplicado para conferência. A publicação depende de ajustar a cobertura; os mínimos já confirmados continuam obrigatórios.</p>
+            <IssueDetails input={generated.proposalInput} issues={coverageGaps} />
+          </div>}
           <Changes input={input} assignments={generated.proposalInput.assignments} />
           <button
             type="button"
@@ -133,140 +136,91 @@ export function Proposals({
           </button>
         </div>
       )}
-      {suggestions.map((suggestion, index) => (
-        <div key={suggestion.id} className="space-y-3 border-t border-[color:var(--app-border)] pt-4">
-          <h3 className="font-semibold">
-            Alternativa {index + 1}: {suggestion.offDates.map(displayDate).join(" e ")}
-          </h3>
-          <p className="text-sm">
-            {suggestion.status === "VALIDATED" ? "Validada na proposta salva" : "Requer ajustes e conferência"}.{" "}
-            {suggestion.changedEmployeeIds.length} colaborador(es) afetado(s). Menor margem de cobertura:{" "}
-            {suggestion.validation.minimumCoverageMargin === null
-              ? "não aferida"
-              : `${suggestion.validation.minimumCoverageMargin} pessoa(s)`}
-            .
-          </p>
-          <Changes input={input} assignments={suggestion.assignments} />
-          <button
-            type="button"
-            className={primaryClass}
-            disabled={disabled || !suggestion.validation.valid}
-            onClick={() => onSuggestion(suggestion)}
-          >
-            Aplicar esta alternativa completa
-          </button>
-        </div>
-      ))}
       <button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>
-        Descartar prévias
+        Descartar sugestão
       </button>
     </section>
   );
 }
 
-export function ValidationResults({ input, validation }: { input: EscalaInput; validation: EscalaValidation | null }) {
+function IssueDetails({ input, issues }: { input: EscalaInput; issues: EscalaIssue[] }) {
   const [page, setPage] = useState(0);
+  const names = new Map(input.employees.map((employee) => [employee.id, employee]));
+  const pages = Math.max(1, Math.ceil(issues.length / 25));
+  const current = Math.min(page, pages - 1);
+  return <details className="space-y-2">
+    <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">Ver detalhes ({issues.length})</summary>
+    <ul className="space-y-2 text-sm">
+      {issues.slice(current * 25, current * 25 + 25).map((issue) => {
+        const employee = issue.employeeId ? names.get(issue.employeeId) : undefined;
+        return <li key={JSON.stringify([issue.code, issue.employeeId, issue.date, issue.message])} className="border-t border-[color:var(--app-border)] pt-2">
+          {employee && <p className="font-semibold">{employee.sector} / {employee.role} · {employee.name} ({employee.registration})</p>}
+          <p>{issue.date ? `${displayDate(issue.date)} · ` : ""}{employee ? `${employee.name}: ` : ""}{issue.message}</p>
+          <p className="text-xs text-[color:var(--app-muted)]">Referência técnica: {issue.code}</p>
+        </li>;
+      })}
+    </ul>
+    {pages > 1 && <div className="flex flex-wrap items-center gap-3">
+      <button type="button" className={buttonClass} disabled={current === 0} onClick={() => setPage(current - 1)}>Anterior</button>
+      <span className="text-sm">Página {current + 1} de {pages}</span>
+      <button type="button" className={buttonClass} disabled={current + 1 === pages} onClick={() => setPage(current + 1)}>Próxima</button>
+    </div>}
+  </details>;
+}
+
+export function ValidationResults({ input, validation, onResolve }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: (target: ReviewTarget) => void }) {
   if (!validation)
     return (
       <section className={panelClass}>
-        <h2 className="text-lg font-bold">5. Conferência</h2>
+        <h2 className="text-lg font-bold">Conferência da filial</h2>
         <p className="text-sm">
           Os dados foram alterados. Execute a conferência ou salve a revisão para atualizar os resultados.
         </p>
       </section>
     );
   const orderedEmployees = sortEmployees(input.employees);
-  const positions = new Map(orderedEmployees.map((employee, index) => [employee.id, index]));
-  const names = new Map(input.employees.map((employee) => [employee.id, employee]));
   const warnings = validation.issues.filter((issue) => issue.severity === "WARNING");
-  const issues = validation.issues.filter((issue) => issue.severity !== "WARNING").sort(
-    (a, b) =>
-      (positions.get(a.employeeId ?? "") ?? -1) - (positions.get(b.employeeId ?? "") ?? -1) ||
-      (a.date ?? "").localeCompare(b.date ?? "") ||
-      a.code.localeCompare(b.code),
-  );
-  const pages = Math.max(1, Math.ceil(issues.length / 25));
-  const currentPage = Math.min(page, pages - 1);
+  const issues = validation.issues.filter((issue) => issue.severity !== "WARNING");
+  const groups = groupValidationIssues(issues);
+  const ungenerated = !input.assignments.some((item) => item.kind === "WORK" || item.kind === "DUTY");
   const reservations = validation.boundaryReservations ?? [];
   return (
     <section className={panelClass} aria-labelledby="escala-validation-title">
       <h2 id="escala-validation-title" className="text-lg font-bold">
-        5. Conferência
+        Conferência da filial
       </h2>
       <p className="font-semibold">
         {validation.readyToPublish
           ? "Conferência concluída: pronta para aprovação interna"
+          : ungenerated && input.employees.length > 0
+            ? "Equipe pronta para receber sugestões em massa"
           : validation.valid
             ? "Sem conflitos detectados, com pendências para publicar"
             : "Existem conflitos que precisam ser resolvidos"}
       </p>
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-        <span>{issues.filter((issue) => issue.severity === "ERROR").length} impeditivos</span>
-        <span>{issues.filter((issue) => issue.severity === "PENDING").length} pendências</span>
+        <span>{groups.filter((group) => group.severity === "ERROR").length} impeditivos</span>
+        <span>{groups.filter((group) => group.severity === "PENDING").length} pendências</span>
         <span>
           Margem mínima de cobertura:{" "}
           {validation.minimumCoverageMargin === null ? "não aferida" : validation.minimumCoverageMargin}
         </span>
       </div>
+      {groups.length > 0 && <div className="space-y-3">
+        <p className="text-sm">{groups.length} assunto(s) para resolver. Ocorrências repetidas foram agrupadas.</p>
+        {groups.map((group) => <div key={group.key} className="app-radius-lg border border-[color:var(--app-border)] p-4">
+          <h3 className="font-semibold">{group.guidance.title}</h3>
+          <p className="mt-1 text-sm">{group.guidance.instruction}</p>
+          {onResolve && group.guidance.target && <button type="button" className={`${buttonClass} mt-3`} onClick={() => onResolve(group.guidance.target as ReviewTarget)}>{group.guidance.action}</button>}
+          <IssueDetails input={input} issues={group.issues} />
+        </div>)}
+      </div>}
       {warnings.length > 0 && (
         <details className="space-y-2">
           <summary className="min-h-11 cursor-pointer py-2 font-semibold">Limites de conferência ({warnings.length})</summary>
           <p className="text-sm">Estes avisos não impedem a publicação interna da proposta. A conferência não certifica conformidade legal completa.</p>
-          <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
-            {warnings.map((issue) => <li key={`${issue.code}-${issue.employeeId}-${issue.date}-${issue.message}`}>
-              {issue.employeeId && names.get(issue.employeeId) ? `${names.get(issue.employeeId)?.name}: ` : ""}
-              {issue.message}
-            </li>)}
-          </ul>
+          {groupValidationIssues(warnings).map((group) => <IssueDetails key={group.key} input={input} issues={group.issues} />)}
         </details>
-      )}
-      {issues.length > 0 && (
-        <div className="space-y-2">
-          <ul className="space-y-2">
-            {issues.slice(currentPage * 25, currentPage * 25 + 25).map((issue) => {
-              const employee = issue.employeeId ? names.get(issue.employeeId) : undefined;
-              return (
-                <li
-                  key={`${issue.code}-${issue.employeeId}-${issue.date}-${issue.message}`}
-                  className="app-radius-lg border border-[color:var(--app-border)] p-3 text-sm"
-                >
-                  <span className="font-semibold">
-                    {issue.severity === "ERROR" ? "Impeditivo" : "Pendente"}
-                    {employee
-                      ? ` · ${employee.sector} / ${employee.role} · ${employee.name} (${employee.registration})`
-                      : " · Filial"}
-                    {issue.date ? ` · ${displayDate(issue.date)}` : ""}
-                  </span>
-                  <p>{issue.message}</p>
-                  <p className="mt-1 text-xs text-[color:var(--app-muted)]">Referência: {issue.code}</p>
-                </li>
-              );
-            })}
-          </ul>
-          {pages > 1 && (
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                className={buttonClass}
-                disabled={currentPage === 0}
-                onClick={() => setPage(currentPage - 1)}
-              >
-                Anterior
-              </button>
-              <span className="text-sm">
-                Página {currentPage + 1} de {pages}
-              </span>
-              <button
-                type="button"
-                className={buttonClass}
-                disabled={currentPage + 1 === pages}
-                onClick={() => setPage(currentPage + 1)}
-              >
-                Próxima
-              </button>
-            </div>
-          )}
-        </div>
       )}
       {reservations.length > 0 && (
         <details className="space-y-3">
@@ -370,7 +324,7 @@ export function Publication({
   return (
     <section className={panelClass} aria-labelledby="escala-publication-title">
       <h2 id="escala-publication-title" className="text-lg font-bold">
-        6. Aprovar e publicar
+        Aprovar e publicar
       </h2>
       <p className="text-sm">
         A publicação aprova internamente os dados da revisão {workspace.revision} e registra uma versão preservada.

@@ -21,6 +21,8 @@ export type EscalaEmployee = {
   sector: string;
   role: string;
   weeklyHours: WeeklyHours;
+  /** FPRE136 has no contract-hours field; a branch reference remains adjustable until individually overridden. */
+  weeklyHoursMode?: "BRANCH" | "INDIVIDUAL";
   shiftIds: string[];
   /** Empty means employment dates are unknown; it never represents a new admission. */
   activeFrom: string;
@@ -52,6 +54,8 @@ type EscalaDemand = {
   start: number;
   end: number;
   minimum: number;
+  /** Automatic estimates stay provisional until an explicit branch-wide coverage review. */
+  estimated?: boolean;
 };
 export type EscalaPolicy = {
   source: string;
@@ -127,14 +131,12 @@ export type EscalaSolveResult = {
   message: string;
   wallTimeSeconds: number;
 };
-export type EscalaSuggestion = {
-  id: string;
-  employeeId: string;
-  offDates: string[];
-  assignments: EscalaAssignment[];
-  changedEmployeeIds: string[];
-  validation: EscalaValidation;
-  status: "VALIDATED" | "REQUIRES_CHANGES";
+export type EscalaGenerationPreparation = {
+  adjustedEmployeeIds: string[];
+  excludedEmployeeIds: string[];
+  generatedCoverageSlots: number;
+  includedEmployees: number;
+  untimedEmployees: number;
 };
 export type EscalaWorkspace = {
   id: string;

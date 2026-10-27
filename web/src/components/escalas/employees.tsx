@@ -149,7 +149,7 @@ export function EmployeeEditor({
   const [history, setHistory] = useState(employee.history);
   const [error, setError] = useState("");
   function change<K extends keyof EscalaEmployee>(field: K, value: EscalaEmployee[K]) {
-    setDraft((previous) => ({ ...previous, [field]: value }));
+    setDraft((previous) => ({ ...previous, ...(field === "weeklyHours" ? { weeklyHoursMode: "INDIVIDUAL" as const } : {}), [field]: value }));
   }
   function submit(event: React.FormEvent) {
     event.preventDefault();

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { escalaInputSchema } from "./schema";
-import { addDays, dateRange, dayOfWeek, isDate } from "./dates";
+import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 
 const resultSchema = z.strictObject({
@@ -25,32 +25,15 @@ export class EscalaSolverError extends Error {
 
 export async function solveEscala(
   input: EscalaInput,
-  force: { employeeId?: string; offDates?: string[]; weekStart?: string; excludedOffPairs?: string[][] } = {},
 ): Promise<EscalaSolveResult> {
   const parsed = escalaInputSchema.parse(input);
-  if (force.employeeId && !parsed.employees.some((person) => person.id === force.employeeId && person.planningEnabled !== false)) {
-    throw new Error("Colaborador da sugestão não pertence à escala.");
-  }
-  if (force.offDates?.some((day) => !isDate(day) || day < input.startDate || day > input.endDate)
-    || (force.offDates?.length ?? 0) > 2 || new Set(force.offDates).size !== (force.offDates?.length ?? 0)
-    || ((force.offDates?.length || force.weekStart || force.excludedOffPairs?.length) && !force.employeeId)) {
-    throw new Error("Selecione até duas folgas dentro do período.");
-  }
-  if (force.weekStart && (!isDate(force.weekStart) || dayOfWeek(force.weekStart) !== 0
-    || force.weekStart < input.startDate || addDays(force.weekStart, 6) > input.endDate)) {
-    throw new Error("A semana da sugestão deve estar inteiramente na escala.");
-  }
-  if ((force.excludedOffPairs?.length ?? 0) > 2 || force.excludedOffPairs?.some((pair) => pair.length !== 2
-    || pair[0] === pair[1] || pair.some((day) => !isDate(day) || !force.weekStart || day < force.weekStart || day > addDays(force.weekStart, 6)))) {
-    throw new Error("Alternativas anteriores da sugestão são inválidas.");
-  }
   const base = process.env.ESCALAS_SOLVER_URL;
   if (!base) throw new EscalaSolverError("SOLVER_UNAVAILABLE");
   let response: Response;
   try {
     response = await fetch(new URL("/solve", base), {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: parsed, force }),
+      body: JSON.stringify({ input: parsed }),
       signal: AbortSignal.timeout(20_000), cache: "no-store",
     });
   } catch {
@@ -78,9 +61,6 @@ export async function solveEscala(
         const proposed = assignments.get(`${previous.employeeId}\0${previous.date}`);
         if (previous.kind === "ABSENCE" && proposed?.kind !== "ABSENCE") throw new Error("Changed absence");
         if (previous.locked && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || !proposed.locked)) throw new Error("Changed locked day");
-      }
-      for (const day of force.offDates ?? []) {
-        if (assignments.get(`${force.employeeId}\0${day}`)?.kind !== "OFF") throw new Error("Missing requested rest");
       }
     } else if (result.assignments.length) {
       throw new Error("Unexpected assignments on unsuccessful solve");

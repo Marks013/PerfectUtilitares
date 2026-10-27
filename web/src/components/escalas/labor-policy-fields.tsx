@@ -30,7 +30,7 @@ export function LaborPolicyFields({ input, onChange }: Props) {
     after20: false,
   };
   function change(patch: Partial<EscalaPolicy>) {
-    onChange({ ...input, policy: { ...policy, ...patch } });
+    onChange({ ...input, policy: { ...policy, reviewed: false, ...patch } });
   }
   function changeAgreement<K extends keyof Agreement>(field: K, value: Agreement[K]) {
     change({ collectiveAgreement: { ...agreement, reviewed: false, [field]: value } });

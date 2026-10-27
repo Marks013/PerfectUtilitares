@@ -40,7 +40,9 @@ class Handler(BaseHTTPRequestHandler):
             if length <= 0 or length > MAX_BODY:
                 return self.reply(413, {"error": "INVALID_LENGTH"})
             payload = json.loads(self.rfile.read(length))
-            self.reply(200, solve(payload["input"], payload.get("force", {})))
+            if set(payload) != {"input"}:
+                return self.reply(400, {"error": "INVALID_MODEL_INPUT"})
+            self.reply(200, solve(payload["input"]))
         except (ValueError, KeyError, TypeError, OverflowError):
             self.reply(400, {"error": "INVALID_MODEL_INPUT"})
         except Exception:

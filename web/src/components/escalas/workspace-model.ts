@@ -1,5 +1,6 @@
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
 import { CCT_FROM, CCT_UNTIL, legalWeeklyHours, SUPERMARKET_CCT } from "@/lib/escalas/labor-rules";
+import { planningWeeklyHours } from "@/lib/escalas/preparation";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const HOURS: WeeklyHours[] = [40, 42, 44];
@@ -113,6 +114,7 @@ export function newEmployee(hours: WeeklyHours, shiftId?: string | string[]): Es
     sector: "",
     role: "",
     weeklyHours: hours,
+    weeklyHoursMode: "INDIVIDUAL",
     shiftIds: Array.isArray(shiftId) ? [...new Set(shiftId)] : shiftId ? [shiftId] : [],
     activeFrom: "",
     offMode: "VARIABLE",
@@ -124,6 +126,24 @@ export function newEmployee(hours: WeeklyHours, shiftId?: string | string[]): Es
     historyKnown: false,
     history: [],
   };
+}
+
+/** Resolve legacy branch references before changing the selected branch target. */
+export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours): EscalaInput {
+  return { ...input, defaultWeeklyHours: hours, employees: input.employees.map((person) => ({
+    ...person, ...planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours),
+  })) };
+}
+
+export function coverageDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
+  if (previous.employees !== next.employees || previous.shifts !== next.shifts) return true;
+  if (previous.demands === next.demands) return false;
+  return previous.demands.length !== next.demands.length || previous.demands.some((before, index) => {
+    const after = next.demands[index];
+    return before.id !== after.id || before.date !== after.date || before.sector !== after.sector
+      || before.role !== after.role || before.start !== after.start || before.end !== after.end
+      || before.minimum !== after.minimum;
+  });
 }
 
 export function selectNormativeProfile(

@@ -3,22 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   EscalaInput,
-  EscalaSolveResult,
-  EscalaSuggestion,
   EscalaValidation,
   EscalaWorkspace,
 } from "@/lib/escalas/types";
-import { errorMessage, isCurrentResponse, responseMessage } from "./workspace-model";
+import { coverageDefinitionChanged, errorMessage, isCurrentResponse, responseMessage } from "./workspace-model";
+import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
 
 export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status" | "updatedAt"> & {
   input: Pick<EscalaInput, "branchCode" | "branchName" | "startDate" | "endDate">;
 };
-type GeneratedProposal = {
-  result: EscalaSolveResult;
-  proposalInput: EscalaInput;
-  validation: EscalaValidation;
-};
-
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
   let body: unknown;
@@ -43,7 +36,6 @@ export function useEscalasWorkspace() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [generated, setGenerated] = useState<GeneratedProposal | null>(null);
-  const [suggestions, setSuggestions] = useState<EscalaSuggestion[]>([]);
   const [pendingOpen, setPendingOpen] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState(0);
   const working = useRef(false);
@@ -76,7 +68,6 @@ export function useEscalasWorkspace() {
     setDirty(false);
     setResetKey((previous) => previous + 1);
     setGenerated(null);
-    setSuggestions([]);
     setWorkspaces((previous) => [next, ...previous.filter((item) => item.id !== next.id)]);
   }, []);
 
@@ -114,7 +105,7 @@ export function useEscalasWorkspace() {
 
   const update = useCallback((next: EscalaInput) => {
     setInput((previous) => {
-      const changedCoverage = previous && (previous.employees !== next.employees || previous.shifts !== next.shifts || previous.demands !== next.demands);
+      const changedCoverage = previous && coverageDefinitionChanged(previous, next);
       return changedCoverage && next.policy.coverageReview === "CONFIRMED"
         ? { ...next, policy: { ...next.policy, coverageReview: "SUGGESTED" } }
         : next;
@@ -122,7 +113,6 @@ export function useEscalasWorkspace() {
     setDirty(true);
     setValidation(null);
     setGenerated(null);
-    setSuggestions([]);
     setNotice("");
     setError("");
   }, []);
@@ -157,7 +147,7 @@ export function useEscalasWorkspace() {
       const result = await post<EscalaWorkspace>({ action: "CREATE", input: next }, signal);
       if (isCurrent()) {
         acceptWorkspace(result);
-        setNotice("Proposta criada. Cadastre a equipe, confira regras e cobertura.");
+        setNotice("Proposta criada. Importe o FPRE136 e peça sugestões para toda a filial.");
       }
     });
   }
@@ -193,55 +183,24 @@ export function useEscalasWorkspace() {
   }
 
   function generate() {
-    if (!workspace?.canEdit || dirty) return;
+    if (!workspace?.canEdit || !input) return;
     setGenerated(null);
-    setSuggestions([]);
     void run(
-      "Gerando proposta e conferindo a equipe…",
+      dirty ? "Salvando a equipe antes da análise…" : "Sugerindo folgas para toda a filial…",
       async (signal, isCurrent) => {
-        const result = await post<GeneratedProposal>(
-          {
-            action: "GENERATE",
-            id: workspace.id,
-            expectedRevision: workspace.revision,
-          },
-          signal,
-        );
-        if (isCurrent()) {
-          if (["OPTIMAL", "FEASIBLE"].includes(result.result.status)) setGenerated(result);
+        const result = await requestMassGeneration({ workspace, input, dirty, signal, isCurrent, post,
+          onSaved: acceptWorkspace,
+          onSolving: () => { setBusy("Sugerindo folgas para toda a filial e conferindo a cobertura…"); setCancellable(true); },
+        });
+        if (result && isCurrent()) {
+          if (["OPTIMAL", "FEASIBLE"].includes(result.result.status)) {
+            setGenerated(result);
+            setNotice("Sugestão em massa pronta. Confira a prévia e aplique quando desejar.");
+          }
           else setNotice(result.result.message);
         }
       },
-      true,
-    );
-  }
-
-  function suggest(employeeId: string, weekStart: string) {
-    if (!workspace?.canEdit || dirty) return;
-    setSuggestions([]);
-    setGenerated(null);
-    void run(
-      "Comparando alternativas com toda a equipe…",
-      async (signal, isCurrent) => {
-        const result = await post<{ suggestions: EscalaSuggestion[] }>(
-          {
-            action: "SUGGEST",
-            id: workspace.id,
-            expectedRevision: workspace.revision,
-            employeeId,
-            weekStart,
-          },
-          signal,
-        );
-        if (isCurrent()) {
-          setSuggestions(result.suggestions);
-          if (!result.suggestions.length)
-            setNotice(
-              "Nenhuma alternativa completa foi validada nesta análise. Confira os bloqueios, horários e cobertura.",
-            );
-        }
-      },
-      true,
+      !dirty,
     );
   }
 
@@ -251,13 +210,6 @@ export function useEscalasWorkspace() {
     update(next);
     setValidation(generated.validation);
     setNotice("Proposta aplicada à grade. Confira as mudanças e salve a nova revisão.");
-  }
-
-  function applySuggestion(suggestion: EscalaSuggestion) {
-    if (!input) return;
-    update({ ...input, assignments: suggestion.assignments });
-    setValidation(suggestion.validation);
-    setNotice("Alternativa completa aplicada à proposta. As demais sugestões foram descartadas; confira e salve.");
   }
 
   function publish() {
@@ -294,9 +246,8 @@ export function useEscalasWorkspace() {
     setBusy("");
     setCancellable(false);
     setGenerated(null);
-    setSuggestions([]);
     setNotice(
-      "Solicitação cancelada nesta tela. Respostas atrasadas serão ignoradas. O processamento já iniciado no servidor pode terminar dentro do prazo, sem alterar a escala salva.",
+      "Análise cancelada. A equipe salva antes da análise foi preservada. Respostas atrasadas serão ignoradas e nenhuma sugestão será aplicada.",
     );
   }
 
@@ -311,7 +262,6 @@ export function useEscalasWorkspace() {
     error,
     notice,
     generated,
-    suggestions,
     pendingOpen,
     setPendingOpen,
     update,
@@ -320,9 +270,7 @@ export function useEscalasWorkspace() {
     save,
     validate,
     generate,
-    suggest,
     applyGenerated,
-    applySuggestion,
     publish,
     discard,
     resetKey,
@@ -330,7 +278,6 @@ export function useEscalasWorkspace() {
     cancelAnalysis,
     dismissProposals: () => {
       setGenerated(null);
-      setSuggestions([]);
     },
     canEdit: Boolean(workspace?.canEdit && !busy),
   };

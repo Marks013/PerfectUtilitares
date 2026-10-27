@@ -45,6 +45,7 @@ const shift = z.strictObject({
 const employee = z.strictObject({
   id: identifier, registration: label, name: label,
   sector: z.string().trim().max(160), role: z.string().trim().max(160), weeklyHours,
+  weeklyHoursMode: z.enum(["BRANCH", "INDIVIDUAL"]).optional(),
   shiftIds: z.array(identifier).max(12), activeFrom: z.union([date, z.literal("")]), activeUntil: date.optional(),
   planningEnabled: z.boolean().optional(),
   scheduleMode: z.enum(["TIMED", "UNTIMED"]).optional(),
@@ -99,6 +100,7 @@ export const escalaInputSchema = z.strictObject({
     id: identifier, date, sector: label, role: label.optional(),
     start: z.number().int().min(0).max(1439), end: z.number().int().min(1).max(1440),
     minimum: z.number().int().min(0).max(250),
+    estimated: z.boolean().optional(),
   })).max(12000), assignments: z.array(assignment).max(10500),
 }).superRefine((value, context) => {
   if (!isDate(value.startDate) || !isDate(value.endDate)) return;
