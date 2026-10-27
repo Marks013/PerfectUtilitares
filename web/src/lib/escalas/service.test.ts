@@ -4,6 +4,7 @@ import { assertRevision, createEscala, generateEscala, getEscala, listEscalas, p
 import { allowedBranches, branchPermission, escalaActor, requireEscalaPermission } from "./access";
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import { validateEscala } from "./validation";
+import { publishedPlanningContext } from "./continuity";
 
 const mocks = vi.hoisted(() => ({
   workspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
@@ -19,7 +20,7 @@ function input(): EscalaInput {
   return {
     schemaVersion: 1, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
     policy: { source: "Instrumento validado no cenário", validFrom: "2026-01-01", validUntil: "2027-01-01", reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: true, nightWorkReviewed: false },
-    employees: [{ id: "e1", registration: "0001", name: "Ana", sector: "Reposição", role: "Repositor", weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-10-26", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, preferredOffDays: [5, 6], historyKnown: false, history: [] }],
+    employees: [{ id: "e1", registration: "0001", name: "Ana", sector: "Reposição", role: "Repositor", weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-10-26", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, sundayRestRule: "CLT_386", preferredOffDays: [5, 6], historyKnown: false, history: [] }],
     shifts: [{ id: "day", name: "Diurno", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
     demands: Array.from({ length: 7 }, (_, index) => ({ id: `d${index}`, date: new Date(Date.UTC(2026, 9, 26 + index)).toISOString().slice(0, 10), sector: "Reposição", start: 480, end: 720, minimum: index < 5 ? 1 : 0 })),
     assignments: Array.from({ length: 7 }, (_, index) => ({ employeeId: "e1", date: new Date(Date.UTC(2026, 9, 26 + index)).toISOString().slice(0, 10), kind: index < 5 ? "WORK" as const : "OFF" as const, ...(index < 5 ? { shiftId: "day" } : {}) })),
@@ -61,6 +62,136 @@ beforeEach(() => {
 });
 
 describe("Escalas publication continuity", () => {
+  it("reconstructs trusted planning history by textual registration and semantic shift, without attendance inference", async () => {
+    const current = period("2026-11-02");
+    current.employees[0].history = [];
+    current.employees[0].historyKnown = false;
+    current.employees[0].planningHistory = [{ employeeId: "e1", date: "2026-11-01", kind: "WORK", shiftId: "day" }];
+    const previous = period("2026-10-26");
+    previous.employees[0].id = "old-person";
+    previous.employees[0].shiftIds = ["old-shift"];
+    previous.shifts[0].id = "old-shift";
+    previous.shifts[0].segments[2].end = 1020;
+    for (const item of [...previous.assignments, ...previous.employees[0].history]) {
+      item.employeeId = "old-person";
+      if (item.shiftId) item.shiftId = "old-shift";
+    }
+    useCurrent(current);
+    mocks.workspace.findMany.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    mocks.solve.mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 1, message: "Prazo" });
+    const result = await generateEscala(actor, "w1", 1);
+    const person = result.proposalInput.employees[0];
+    expect(person.history).toEqual([]);
+    expect(person.historyKnown).toBe(false);
+    expect(person.planningHistory).toHaveLength(7);
+    expect(person.planningHistory?.at(-1)).toEqual({ employeeId: "e1", date: "2026-11-01", kind: "OFF" });
+    const work = person.planningHistory?.find((item) => item.kind === "WORK");
+    expect(work?.shiftId).toMatch(/^plan-/);
+    expect(result.proposalInput.shifts.find((shift) => shift.id === work?.shiftId)?.segments).toEqual(previous.shifts[0].segments);
+    expect(mocks.solve.mock.calls[0][0]).toEqual(result.proposalInput);
+    expect(mocks.workspace.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: actor.tenantId, branchCode: "2", id: { not: "w1" } }),
+      select: { revisions: expect.objectContaining({ where: { tenantId: actor.tenantId, status: "PUBLISHED" }, take: 1, orderBy: { revision: "desc" } }) } }));
+    expect(publishedPlanningContext(current, [previous]).shifts).toEqual(result.proposalInput.shifts);
+  });
+
+  it("rejects the seventh contiguous workday across two non-overlapping published periods", async () => {
+    const current = period("2026-11-02");
+    current.employees[0].history = [];
+    current.employees[0].historyKnown = false;
+    const previous = period("2026-10-26");
+    previous.assignments = previous.assignments.map((item, index) => ({ employeeId: "e1", date: item.date, kind: index === 0 ? "OFF" : "WORK", ...(index === 0 ? {} : { shiftId: "day" }) }));
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ status: 409, code: "ESCALA_PUBLISHED_CONTINUITY", message: expect.stringContaining("2026-11-02") });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("checks a later published period when inserting its preceding week", async () => {
+    const current = period("2026-10-26");
+    current.assignments = current.assignments.map((item, index) => ({ employeeId: "e1", date: item.date, kind: index === 0 ? "OFF" : "WORK", ...(index === 0 ? {} : { shiftId: "day" }) }));
+    const later = period("2026-11-02");
+    later.employees[0].history = [];
+    later.employees[0].historyKnown = false;
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: later }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_CONTINUITY", message: expect.stringContaining("2026-11-02") });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("preserves protective Sunday rotation from the previous published Sunday", async () => {
+    const current = period("2026-11-02");
+    current.employees[0].history = [];
+    current.employees[0].historyKnown = false;
+    current.assignments[4] = { employeeId: "e1", date: "2026-11-06", kind: "OFF" };
+    current.assignments[6] = { employeeId: "e1", date: "2026-11-08", kind: "WORK", shiftId: "day" };
+    current.demands[4].minimum = 0;
+    const previous = period("2026-10-26");
+    previous.assignments[4] = { employeeId: "e1", date: "2026-10-30", kind: "OFF" };
+    previous.assignments[6] = { employeeId: "e1", date: "2026-11-01", kind: "WORK", shiftId: "day" };
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_CONTINUITY", message: expect.stringContaining("domingo") });
+  });
+
+  it("rejects conflicting published duplicates and respects binding dates, disabled people and textual registrations", () => {
+    const current = period("2026-11-02");
+    const previous = period("2026-10-26");
+    const conflict = structuredClone(previous);
+    conflict.assignments[0] = { employeeId: "e1", date: previous.startDate, kind: "OFF" };
+    expect(() => publishedPlanningContext(current, [previous, conflict])).toThrow(/divergentes/);
+    current.employees[0].registration = "1";
+    expect(publishedPlanningContext(current, [previous]).employees[0].planningHistory).toBeUndefined();
+    current.employees[0].registration = "0001";
+    current.employees[0].activeFrom = current.startDate;
+    expect(publishedPlanningContext(current, [previous]).employees[0].planningHistory).toBeUndefined();
+    current.employees[0].activeFrom = "";
+    current.employees[0].planningEnabled = false;
+    expect(publishedPlanningContext(current, [previous]).employees[0].planningHistory).toBeUndefined();
+    current.employees[0].planningEnabled = true;
+    expect(() => publishedPlanningContext(current, [{ ...previous, branchCode: "3" }])).toThrow(/filial/);
+  });
+
+  it.each(["work", "off"])("protects inter-shift rest and an occupied %s day at the publication boundary", async (kind) => {
+    const current = period("2026-11-02");
+    current.employees[0].history = [];
+    const previous = period("2026-10-26");
+    previous.shifts.push({ id: "night", name: "Noturno", segments: [{ start: 1200, end: 1440, kind: "WORK" }, { start: 1440, end: 1500, kind: "BREAK" }, { start: 1500, end: 1740, kind: "WORK" }] });
+    previous.employees[0].shiftIds.push("night");
+    previous.assignments[6] = { employeeId: "e1", date: "2026-11-01", kind: "WORK", shiftId: "night" };
+    if (kind === "off") {
+      current.assignments[0] = { employeeId: "e1", date: "2026-11-02", kind: "OFF" };
+      current.assignments[5] = { employeeId: "e1", date: "2026-11-07", kind: "WORK", shiftId: "day" };
+      current.demands[0].minimum = 0; current.demands[5].minimum = 1;
+    }
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_CONTINUITY", message: expect.stringContaining(kind === "off" ? "ainda contém trabalho" : "entre jornadas") });
+  });
+
+  it("resolves consecutive rest against the previous published Sunday without fabricating attendance", async () => {
+    const current = period("2026-11-02");
+    current.employees[0].history = [];
+    current.employees[0].offPattern = "CONSECUTIVE";
+    current.employees[0].offMode = "MIXED";
+    current.employees[0].fixedOffDays = [0];
+    current.assignments[0] = { employeeId: "e1", date: "2026-11-02", kind: "OFF" };
+    current.assignments[5] = { employeeId: "e1", date: "2026-11-07", kind: "WORK", shiftId: "day" };
+    current.demands[0].minimum = 0; current.demands[5].minimum = 1;
+    const previous = period("2026-10-26");
+    previous.assignments[6] = { employeeId: "e1", date: "2026-11-01", kind: "WORK", shiftId: "day" };
+    useCurrent(current);
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+    await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_CONTINUITY", message: expect.stringContaining("consecutivas") });
+  });
+
+  it("fails clearly when copied planning shifts exceed the existing 120-shift input limit", () => {
+    const current = period("2026-11-02");
+    current.shifts = Array.from({ length: 120 }, (_, index) => ({ ...current.shifts[0], id: `shift-${index}` }));
+    const previous = period("2026-10-26");
+    previous.shifts[0].segments[2].end = 1020;
+    expect(() => publishedPlanningContext(current, [previous])).toThrow(/120/);
+  });
+
   it("allows identical assignments in overlapping complete-week periods", async () => {
     const current = period("2026-10-26", 2);
     const previous = period("2026-11-02", 2);
@@ -366,6 +497,35 @@ describe("Escalas revision service", () => {
     mocks.revision.findUnique.mockResolvedValue(version(empty));
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ status: 422, code: "ESCALA_SETUP_REQUIRED" });
     await expect(suggestEscala(actor, "w1", 1, "e1", input().startDate)).rejects.toMatchObject({ status: 422 });
+    expect(mocks.solve).not.toHaveBeenCalled();
+  });
+  it("generates rest rotation for an untimed manager without requiring a fictitious shift", async () => {
+    const value = input();
+    value.employees[0] = { ...value.employees[0], scheduleMode: "UNTIMED", shiftIds: [] };
+    value.shifts = []; value.demands = [];
+    value.assignments = value.assignments.map((item) => ({ employeeId: item.employeeId, date: item.date, kind: item.kind === "WORK" ? "DUTY" : item.kind }));
+    useCurrent(value);
+    mocks.solve.mockResolvedValue({ status: "OPTIMAL", assignments: value.assignments, wallTimeSeconds: 0.1, message: "Concluído" });
+    const result = await generateEscala(actor, "w1", 1);
+    expect(result.validation.readyToPublish).toBe(true);
+    expect(result.validation.summaries[0]).toMatchObject({ workDays: 5, offDays: 2, workedMinutes: 0 });
+  });
+  it.each(["excluded", "inactive", "no-shift"])("rejects %s setup before contacting Python", async (scenario) => {
+    const value = input();
+    if (scenario === "excluded") { value.employees[0].planningEnabled = false; value.assignments = []; }
+    if (scenario === "inactive") { value.employees[0].activeFrom = "2027-01-01"; value.assignments = []; }
+    if (scenario === "no-shift") value.employees[0].shiftIds = [];
+    useCurrent(value);
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_SETUP_REQUIRED", status: 422 });
+    expect(mocks.solve).not.toHaveBeenCalled();
+  });
+  it("rejects forbidden CCT holiday rest and missing extended-day authorization as configuration", async () => {
+    const cct = input(); cct.policy.normativeProfile = "SINDECOMU_SUPERMARKETS_2026_2027";
+    useCurrent(cct);
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_CCT_HOLIDAY_REST", status: 422 });
+    const extended = input(); extended.policy.compensationAuthorized = false;
+    useCurrent(extended);
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_DAILY_EXTENSION_REQUIRED", status: 422 });
     expect(mocks.solve).not.toHaveBeenCalled();
   });
   it("does not misclassify unsupported non-worked holidays as a staffing impossibility", async () => {

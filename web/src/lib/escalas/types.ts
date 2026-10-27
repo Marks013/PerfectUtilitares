@@ -1,9 +1,10 @@
 /** Versioned, tenant-scoped inputs. All durations are integer minutes. */
 export type WeeklyHours = 40 | 42 | 44;
+type SundayRestRule = "PROTECTIVE" | "UNREVIEWED" | "CLT_386" | "COMMERCE";
 export type EscalaAssignment = {
   employeeId: string;
   date: string;
-  kind: "WORK" | "OFF" | "ABSENCE";
+  kind: "WORK" | "DUTY" | "OFF" | "ABSENCE";
   shiftId?: string;
   locked?: boolean;
 };
@@ -21,17 +22,27 @@ export type EscalaEmployee = {
   role: string;
   weeklyHours: WeeklyHours;
   shiftIds: string[];
+  /** Empty means employment dates are unknown; it never represents a new admission. */
   activeFrom: string;
   activeUntil?: string;
+  planningEnabled?: boolean;
+  /** DUTY assigns a workday without inventing a clock schedule or credited hours. */
+  scheduleMode?: "TIMED" | "UNTIMED";
+  planningExclusionReason?: string;
+  sourceSchedule?: { report: "FPRE136"; code: string; description: string; weekday: string; saturday: string };
   offMode: "VARIABLE" | "MIXED" | "FIXED";
   /** Monday=0, Sunday=6. Approved fixed days are hard constraints. */
   fixedOffDays: number[];
   offPattern: "ANY" | "CONSECUTIVE" | "PREFER_CONSECUTIVE";
   maxConsecutiveSundays: 1 | 2;
+  /** Explicit legal classification, never inferred from names or the numeric cap. */
+  sundayRestRule?: SundayRestRule;
   preferredOffDays: number[];
   historyKnown: boolean;
   /** Previous actual assignments covering the policy lookback, not inferred absences. */
   history: EscalaAssignment[];
+  /** Prior published schedules, kept separate from actual attendance history. */
+  planningHistory?: EscalaAssignment[];
 };
 type EscalaDemand = {
   id: string;
@@ -51,6 +62,16 @@ export type EscalaPolicy = {
   weeklyLimit: WeeklyHours;
   dailyLimitMinutes: number;
   compensationAuthorized: boolean;
+  normativeProfile?: "CUSTOM" | "SINDECOMU_SUPERMARKETS_2026_2027";
+  transitionWeekAccepted?: boolean;
+  coverageReview?: "SUGGESTED" | "CONFIRMED";
+  collectiveAgreement?: {
+    source: string; validFrom: string; validUntil: string; reviewedBy: string; reviewed: boolean;
+  };
+  operationalCertificate?: {
+    identifier: string; validFrom: string; validUntil: string; reviewedBy: string; reviewed: boolean;
+    sundays: boolean; holidays: boolean; after20: boolean;
+  };
   minInterShiftMinutes: number;
   minWeeklyRestMinutes: number;
   minMealMinutes: number;
@@ -79,7 +100,7 @@ export type EscalaInput = {
 export type EscalaIssue = {
   code: string;
   message: string;
-  severity: "ERROR" | "PENDING";
+  severity: "ERROR" | "PENDING" | "WARNING";
   employeeId?: string;
   date?: string;
 };

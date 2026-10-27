@@ -9,11 +9,11 @@ Na primeira entrega, a manutenção dessas concessões é administrativa no banc
 ## Fluxo de trabalho
 
 1. Criar uma proposta por filial e mês. O período inclui as semanas completas de segunda a domingo que alcançam o mês; os dias adjacentes ficam visíveis e entram nos cálculos.
-2. Cadastrar ou importar a equipe pelo modelo CSV/XLSX do próprio módulo. Informar matrícula textual, nome, setor, cargo, carga de 40/42/44 horas, horários permitidos e admissão real. O FPRE131 não substitui horário, setor e histórico de folgas.
-3. Configurar folgas variáveis, mistas ou fixas e consecutivas obrigatórias, preferenciais ou separadas. Escolher explicitamente o limite de domingos consecutivos aplicável à pessoa; o sistema não infere enquadramento pelo nome.
-4. Informar os últimos 21 dias do vínculo, quando existentes. Histórico ausente permanece pendente; não representa folga. A data de início do planejamento não deve ser utilizada como falsa admissão.
+2. Importar somente o **FPRE136.CSV**. O arquivo Windows-1252 fornecido contém matrícula, nome, filial, setor, cargo, horário dos dias úteis e referência de sábado. A importação seleciona apenas a filial da proposta, preserva matrículas textuais e mantém as referências originais. O XLSX fornecido apresenta uma estrutura incompatível com a biblioteca existente; utilizar o CSV, semanticamente conferido contra os 650 registros do XLSX. O modelo CSV/XLSX próprio continua como alternativa, sem exigir um segundo arquivo.
+3. Aplicar a configuração da filial à equipe em uma ação: carga de referência, propostas de horários adaptados e descanso dominical quinzenal protetivo para todos. Folgas variáveis, mistas, fixas, consecutivas ou separadas podem receber exceções individuais opcionais. A regra geral do comércio admite uma folga em três domingos; a proteção do art. 386 continua quinzenal e não pode ser relaxada por um limite numérico. O sistema não infere gênero pelo nome.
+4. Admissão e histórico são opcionais e ficam na conferência avançada. Data vazia não equivale a nova admissão. Quando disponíveis, os últimos 21 dias reais participam da validação; sua falta gera um aviso de limite de conferência, sem exigir segunda importação nem bloquear a publicação da proposta interna. A continuidade planejada é reconstruída automaticamente com as últimas propostas publicadas da mesma empresa e filial, por matrícula, mantendo-se separada dos registros reais de ponto.
 5. Conferir fonte normativa, responsável, vigência, carga máxima, distribuição/compensação, intervalos, domingos, feriados e fechamentos. Nenhuma CCT expirada é aplicada automaticamente. O cadastro não substitui a conferência do instrumento vigente.
-6. Declarar cobertura por setor/data/faixa, podendo detalhar cargo. Mínimo zero precisa ser explícito; uma data sem demanda não comprova dimensionamento. A conferência cobre as faixas declaradas, não horários de funcionamento omitidos.
+6. Sugerir cobertura da filial a partir da equipe e conferir o conjunto uma vez. A estimativa usa a disponibilidade comum às alternativas de cada pessoa, aplica disponibilidade de 5/7 e limita a referência dominical a 1/2 no rodízio protetivo. Nunca exige a mesma pessoa nas duas extremidades incompatíveis de turnos alternativos. Mínimo zero é explícito e precisa ser confirmado. Faixas já cadastradas são preservadas. Essa sugestão não comprova a demanda real de operação; horários de funcionamento e exceções ainda precisam ser conferidos por filial.
 7. Salvar e gerar uma proposta ou solicitar até três alternativas por colaborador/semana. Conferir a prévia completa e as outras pessoas afetadas antes de aplicar.
 8. Salvar a nova revisão, resolver impeditivos e pendências e aprovar internamente. PDF e XLSX usam a revisão salva identificada, inclusive quando rascunho.
 
@@ -21,7 +21,13 @@ As sugestões são alternativas completas. Aplicar uma substitui a proposta inte
 
 ## Cálculo e conferência
 
-Tempos são minutos inteiros: 40h = 2.400, 42h = 2.520 e 44h = 2.640. Distribuídos igualmente em cinco dias, correspondem a 8h00, 8h24 e 8h48 computáveis. Refeição não é trabalho; pausa remunerada conta para carga, mas não para atendimento. A jornada superior a oito horas exige distribuição/compensação autorizada.
+Tempos controlados são minutos inteiros: 40h = 2.400, 42h = 2.520 e 44h = 2.640. Distribuídos em cinco dias, correspondem a 8h00, 8h24 e 8h48 computáveis. Refeição não é trabalho; pausa remunerada conta para carga, mas não para atendimento. A EC 141/2026 limita a jornada semanal a 42h a partir de 16/12/2026 e a 40h a partir de 16/12/2027. Neste regime, o limite diário da distribuição passa a 8h24 e depois 8h00. A ampliação acima de oito horas na transição exige instrumento coletivo conferido e vigente, além da autorização de compensação. Cargas menores existentes não são elevadas. Semanas que atravessam as transições usam a carga menor para a semana completa, mediante confirmação expressa; não há rateio diário presumido.
+
+Gerentes e encarregados identificados pelo usuário como não subordinados a horário, com os quatro horários zerados, recebem o modo **sem horário fixo**. Entram no rodízio com cinco dias `DUTY` e duas folgas, incluindo a regra dominical e o máximo de seis dias seguidos. Não recebem turno fictício, crédito de horas nem participação na cobertura por faixa. O cálculo não certifica enquadramento no art. 62 da CLT e informa que os intervalos em horas não foram apurados. O PDF mostra `SH`; o XLSX mostra “Trabalho sem horário fixo”.
+
+A preparação em lote preserva o horário original e cria alternativas de planejamento com a entrada ou a saída mantida, respeitando o intervalo original. Jornadas curtas não são ampliadas automaticamente; horários noturnos sem adaptação diurna permanecem fora da geração, com motivo explícito. Uma opção da filial pode propor um padrão diurno para essas exceções, sem editar cada pessoa. Esse padrão não é aplicado aos colaboradores sem horário fixo.
+
+O perfil opcional da CCT Supermercados Umuarama **PR003084/2026**, fornecida pelo usuário, vale de 01/06/2026 a 31/05/2027. O perfil exige certidão sindical conferida para os regimes previstos na cláusula 46, preserva a proteção quinzenal e veda compensar DSR em feriado. O PDF não comprova a certidão da empresa nem um acordo específico de 8h24. A proibição de atendimento ao público em 25/12, 01/01 e 01/05 não é convertida automaticamente em proibição de todo trabalho interno; casos sem classificação permanecem pendentes. O instrumento sucessor precisa ser conferido para períodos posteriores.
 
 O verificador recalcula as atribuições sem confiar nos totais do processador: semana 5×2, carga contratual/normativa, limite diário, até seis jornadas consecutivas, continuidade com histórico, domingos, intervalos reais, folga sem trabalho remanescente e cobertura nas fronteiras exatas dos segmentos. Nome A–Z é somente apresentação; não é prioridade na alocação. O rodízio compara oportunidades válidas, sem transformar licença em dívida de domingos.
 
@@ -35,11 +41,11 @@ Folgas fixas consecutivas no domingo e na segunda-feira atravessam naturalmente 
 
 ## Limites explícitos desta entrega
 
-- Planejamento de uma a seis semanas completas, até 150 colaboradores por proposta/filial. As filiais são independentes, sem deslocamento automático de pessoal entre elas.
+- Planejamento de uma a seis semanas completas, até 250 colaboradores, 120 horários e 12.000 faixas de cobertura por proposta/filial. As filiais são independentes, sem deslocamento automático de pessoal entre elas.
 - Jornadas noturnas podem ser registradas e conferidas em rascunho. A publicação permanece pendente porque ainda falta representar o crédito de hora noturna reduzida, mesmo que alguém tenha marcado revisão normativa.
 - Semanas com ausências ou vínculo parcial permanecem pendentes até existir regra específica para sua carga. Não há horas a repor fictícias ou conversão de licença em folga.
 - Feriado não trabalhado que não pode compensar o descanso semanal exige um estado/regra própria ainda não modelado. A geração informa configuração específica pendente; não inventa ausência nem diagnostica falta de funcionários.
-- Somente as faixas operacionais declaradas são conferidas. A revisão normativa/municipal, cobertura completa de funcionamento e histórico real são responsabilidades do cadastro e da aprovação.
+- Somente as faixas operacionais declaradas são conferidas. Revisão normativa/municipal e cobertura de funcionamento são configurações por filial. Histórico real não é obrigatório; quando ausente, o sistema permite publicar o planejamento com aviso de abrangência e sem certificar a execução ou a continuidade real anterior.
 - Edições de uma versão publicada criam rascunho posterior, preservando a revisão anterior. Os arquivos podem apontar uma revisão histórica; ainda não há uma tela de comparação de todas as revisões.
 - O processador tem um trabalho ativo por vez e prazo limitado. A primeira entrega usa chamada privada limitada em vez de fila persistente: queda ou cancelamento exige nova solicitação; a última proposta salva permanece intacta. Cancelar análise descarta a resposta na tela; o processamento privado já iniciado pode concluir seu prazo.
 
@@ -62,4 +68,7 @@ Preservar imagens anteriores antes da atualização. Para voltar à versão ante
 - [OR-Tools: escalas de empregados](https://developers.google.com/optimization/scheduling/employee_scheduling)
 - [CP-SAT: estados e minutos inteiros](https://developers.google.com/optimization/cp/cp_solver)
 - [Instalação oficial Python](https://developers.google.com/optimization/install/python)
-- O planejamento aprovado de 26/10/2026 documenta as fontes normativas consultadas e as confirmações ainda necessárias. Este módulo não fixa transições legais futuras a partir de uma referência não confirmada no cadastro.
+- [EC 141/2026, arts. 6 e 7](https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc141.htm).
+- [Lei 10.101/2000, art. 6](https://www.presidencia.gov.br/ccivil_03/leis/l10101compilado.htm).
+- [STF, RE 1403904: proteção quinzenal das mulheres](https://portal.stf.jus.br/noticias/verNoticiaDetalhe.asp?idConteudo=496208&ori=1).
+- CCT PR003084/2026, fornecida em PDF pelo usuário: conteúdo lido diretamente; autenticidade no Mediador não certificada nesta revisão.

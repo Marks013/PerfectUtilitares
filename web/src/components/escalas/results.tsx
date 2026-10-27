@@ -37,6 +37,7 @@ function changesBetween(previous: EscalaAssignment[], next: EscalaAssignment[]) 
 
 function dayText(assignment: EscalaAssignment | undefined, input: EscalaInput) {
   if (!assignment) return "Pendente";
+  if (assignment.kind === "DUTY") return "Trabalho sem horário fixo";
   return assignment.kind === "OFF"
     ? "Folga"
     : assignment.kind === "ABSENCE"
@@ -177,7 +178,8 @@ export function ValidationResults({ input, validation }: { input: EscalaInput; v
   const orderedEmployees = sortEmployees(input.employees);
   const positions = new Map(orderedEmployees.map((employee, index) => [employee.id, index]));
   const names = new Map(input.employees.map((employee) => [employee.id, employee]));
-  const issues = [...validation.issues].sort(
+  const warnings = validation.issues.filter((issue) => issue.severity === "WARNING");
+  const issues = validation.issues.filter((issue) => issue.severity !== "WARNING").sort(
     (a, b) =>
       (positions.get(a.employeeId ?? "") ?? -1) - (positions.get(b.employeeId ?? "") ?? -1) ||
       (a.date ?? "").localeCompare(b.date ?? "") ||
@@ -206,6 +208,18 @@ export function ValidationResults({ input, validation }: { input: EscalaInput; v
           {validation.minimumCoverageMargin === null ? "não aferida" : validation.minimumCoverageMargin}
         </span>
       </div>
+      {warnings.length > 0 && (
+        <details className="space-y-2">
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold">Limites de conferência ({warnings.length})</summary>
+          <p className="text-sm">Estes avisos não impedem a publicação interna da proposta. A conferência não certifica conformidade legal completa.</p>
+          <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
+            {warnings.map((issue) => <li key={`${issue.code}-${issue.employeeId}-${issue.date}-${issue.message}`}>
+              {issue.employeeId && names.get(issue.employeeId) ? `${names.get(issue.employeeId)?.name}: ` : ""}
+              {issue.message}
+            </li>)}
+          </ul>
+        </details>
+      )}
       {issues.length > 0 && (
         <div className="space-y-2">
           <ul className="space-y-2">
@@ -320,7 +334,7 @@ export function ValidationResults({ input, validation }: { input: EscalaInput; v
                         {employee.name} · {employee.registration}
                       </span>
                     </th>
-                    <td className="p-2 tabular-nums">{clock(summary.workedMinutes)}</td>
+                    <td className="p-2 tabular-nums">{employee.scheduleMode === "UNTIMED" ? "Horas não apuradas" : clock(summary.workedMinutes)}</td>
                     <td className="p-2">
                       {summary.workDays} / {summary.offDays}
                     </td>
@@ -361,7 +375,8 @@ export function Publication({
       <p className="text-sm">
         A publicação aprova internamente os dados da revisão {workspace.revision} e registra uma versão preservada.
         Alterações posteriores formam uma nova proposta. Não há envio a colaboradores, integração com ponto ou
-        lançamento em folha.
+        lançamento em folha. A aprovação interna preserva os limites de conferência informados e não certifica
+        conformidade legal completa.
       </p>
       <Check
         label={`Conferi a equipe, os horários, a cobertura e as regras da filial ${workspace.input.branchCode} para esta revisão`}
@@ -370,7 +385,7 @@ export function Publication({
         onChange={setConfirmed}
       />
       <button type="button" className={primaryClass} disabled={!ready || !confirmed} onClick={onPublish}>
-        {workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar revisão conferida"}
+        {workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}
       </button>
       {!ready && workspace.status !== "PUBLISHED" && (
         <p className="text-sm text-[color:var(--app-muted)]">

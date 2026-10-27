@@ -2,9 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { EscalaValidation, EscalaWorkspace } from "@/lib/escalas/types";
 import { Rules } from "./configuration";
+import { Employees, EmployeeEditor } from "./employees";
+import { Coverage, ImportEmployees } from "./coverage-import";
+import { LaborPolicyFields } from "./labor-policy-fields";
 import { EscalasStatus } from "./escalas-workspace";
 import { Proposals, Publication, ValidationResults } from "./results";
-import { Roster } from "./roster";
+import { CellEditor, Roster } from "./roster";
 import { newEmployee, newInput } from "./workspace-model";
 
 function sample() {
@@ -15,6 +18,7 @@ function sample() {
       id: "z",
       registration: "02",
       name: "Zélia",
+      sundayRestRule: "CLT_386",
       sector: "Reposição",
       role: "Repositor",
       activeFrom: "2020-01-01",
@@ -24,6 +28,7 @@ function sample() {
       id: "a",
       registration: "01",
       name: "Ana",
+      sundayRestRule: "CLT_386",
       sector: "Reposição",
       role: "Repositor",
       activeFrom: "2020-01-01",
@@ -51,6 +56,97 @@ function sample() {
 }
 
 describe("Escalas practical accessibility and publication states", () => {
+  it("includes untimed managers in the day-off rotation and renders DUTY without inventing credited hours", () => {
+    const { input, validation } = sample();
+    input.employees = [{ ...input.employees[0], scheduleMode: "UNTIMED", shiftIds: [], planningEnabled: true }];
+    const employee = input.employees[0];
+    input.assignments = [{ employeeId: employee.id, date: input.startDate, kind: "DUTY" }];
+    validation.summaries = [{ employeeId: employee.id, workedMinutes: 0, workDays: 5, offDays: 2, maxStreak: 5, sundaysWorked: 1 }];
+    const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false}
+      canUnlock canSuggest onChange={vi.fn()} onSuggest={vi.fn()} />);
+    expect(html).toContain("Trabalho sem horário fixo");
+    expect(html).toContain("Sem horário fixo · horas não apuradas");
+    expect(html).toContain("5 dias trabalhados · 2 folgas");
+    expect(html).not.toContain("42h por semana");
+    expect(html).not.toContain("Turno não encontrado");
+    const result = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
+    expect(result).toContain("Horas não apuradas");
+    expect(result).not.toContain('class="p-2 tabular-nums">00:00');
+  });
+
+  it("offers DUTY only for untimed day editing and keeps timed shift controls for timed employees", () => {
+    const { input } = sample();
+    const renderEditor = (untimed: boolean) => renderToStaticMarkup(<CellEditor
+      employee={{ ...input.employees[0], ...(untimed ? { scheduleMode: "UNTIMED" as const, shiftIds: [] } : {}) }}
+      date={input.startDate} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
+    const untimed = renderEditor(true);
+    expect(untimed).toContain('value="DUTY" selected=""');
+    expect(untimed).toContain("Trabalho sem horário fixo");
+    expect(untimed).not.toContain('value="WORK"');
+    expect(untimed).not.toContain("Turno autorizado");
+    const timed = renderEditor(false);
+    expect(timed).not.toContain('value="DUTY"');
+    expect(timed).toContain("Turno autorizado");
+  });
+
+  it("makes timed shifts optional for untimed employee registration and preserves optional admission", () => {
+    const { input } = sample();
+    const employee = { ...input.employees[0], activeFrom: "", scheduleMode: "UNTIMED" as const, shiftIds: [] };
+    const html = renderToStaticMarkup(<EmployeeEditor employee={employee} input={input} onSave={vi.fn()} onCancel={vi.fn()} />);
+    expect(html).toContain("Sem horário fixo");
+    expect(html).toContain("Incluído no rodízio 5×2");
+    expect(html).toContain('value="DUTY"');
+    expect(html).not.toContain("Turnos autorizados");
+    expect(html).toContain("Data real de admissão (opcional)");
+    expect(html).not.toMatch(/<input[^>]*required[^>]*type="date"/);
+  });
+
+  it("offers one-file FPRE136 import and optional bulk configuration without classifying people by sex", () => {
+    const { input } = sample();
+    input.employees[0].sundayRestRule = "UNREVIEWED";
+    input.employees[0].planningEnabled = false;
+    input.employees[0].sourceSchedule = {
+      report: "FPRE136", code: "0000", description: "Não subordinado a horário",
+      weekday: "00:00", saturday: "00:00",
+    };
+    const team = renderToStaticMarkup(<Employees input={input} disabled={false} onChange={vi.fn()} />);
+    expect(team).toContain("Configurar equipe em lote");
+    expect(team).toContain("Aplicar configuração à equipe");
+    expect(team).toContain("Admissão e histórico são opcionais");
+    expect(team).toContain("fora do planejamento");
+    expect(team).toContain("Referência FPRE136");
+    expect(team).not.toContain("enquadramento pendente");
+    const upload = renderToStaticMarkup(<ImportEmployees input={input} disabled={false} onChange={vi.fn()} />);
+    expect(upload).toContain("FPRE136 em CSV (recomendado) ou XLSX");
+    expect(upload).toContain("Não é necessário outro arquivo");
+    expect(upload).toContain("Baixar modelo CSV alternativo");
+  });
+
+  it("requires an explicit branch-level review of suggested coverage, including zero minimums", () => {
+    const { input } = sample();
+    input.policy.coverageReview = "SUGGESTED";
+    const html = renderToStaticMarkup(<Coverage input={input} disabled={false} onChange={vi.fn()} />);
+    expect(html).toContain("Sugerir cobertura pela equipe");
+    expect(html).toContain("Conferi a cobertura sugerida, inclusive faixas com mínimo zero");
+    expect(html).toContain("pode propor mínimo zero");
+    expect(html).toMatch(/<input[^>]*\/><span>Conferi a cobertura sugerida/);
+    expect(html).not.toMatch(/<input[^>]*checked[^>]*\/><span>Conferi a cobertura sugerida/);
+  });
+
+  it("separates nonblocking verification limits from conflicts and discloses publication scope", () => {
+    const { input, validation, workspace } = sample();
+    validation.issues = [{ severity: "WARNING", code: "HISTORY_UNKNOWN", employeeId: "a", message: "Histórico anterior não verificado." }];
+    const html = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
+    expect(html).toContain("Limites de conferência (1)");
+    expect(html).toContain("0 impeditivos");
+    expect(html).toContain("0 pendências");
+    expect(html).toContain("Ana: Histórico anterior não verificado.");
+    expect(html).not.toContain("Pendente ·");
+    const publication = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />);
+    expect(publication).toContain("Publicar proposta");
+    expect(publication).toContain("não certifica");
+  });
+
   it("renders the week by sector/cargo/name, with explicit pending and locked day states", () => {
     const { input } = sample();
     const html = renderToStaticMarkup(
@@ -143,7 +239,7 @@ describe("Escalas practical accessibility and publication states", () => {
       />,
     );
     expect(html).toMatch(/<input[^>]*disabled=""/);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar revisão conferida/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta/);
     if (dirty) expect(html).not.toContain("/api/escalas/export");
   });
 
@@ -189,6 +285,39 @@ describe("Escalas practical accessibility and publication states", () => {
     const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
     expect(html).toContain("cômputo específico da hora noturna");
     expect(html).not.toContain("Regras específicas do trabalho noturno foram conferidas");
+  });
+
+  it("explains dated weekly ceilings and leaves collective authorization unconfirmed", () => {
+    const input = newInput("2", "Centro", "2027-12", 42);
+    const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
+    expect(html).toContain("De 16/12/2026 a 15/12/2027");
+    expect(html).toContain("Desde 16/12/2027");
+    expect(html).toContain("13/12/2027 a 19/12/2027");
+    expect(html).toContain("Adotar carga menor em toda a semana de transição");
+    expect(html).toContain("Identificação e cláusula do instrumento coletivo");
+    expect(html).not.toMatch(/<input[^>]*checked/);
+    expect(html).not.toMatch(/<details[^>]*\sopen/);
+  });
+
+  it("keeps the transition confirmation out of periods without a legal boundary", () => {
+    const { input } = sample();
+    const html = renderToStaticMarkup(<LaborPolicyFields input={input} onChange={vi.fn()} />);
+    expect(html).not.toContain("Adotar carga menor em toda a semana de transição");
+    expect(html).not.toContain("Identificação da certidão");
+  });
+
+  it("shows the CCT safeguards and separate certificate scopes without inventing an authorization", () => {
+    const { input } = sample();
+    input.policy.normativeProfile = "SINDECOMU_SUPERMARKETS_2026_2027";
+    const html = renderToStaticMarkup(<LaborPolicyFields input={input} onChange={vi.fn()} />);
+    expect(html).toContain("PR003084/2026");
+    expect(html).toContain("não afasta o descanso dominical quinzenal das mulheres");
+    expect(html).toContain("não significa fechamento automático de toda atividade interna");
+    expect(html).toContain("A CCT homologada não é a certidão individual da empresa");
+    expect(html).toContain("Certidão autoriza domingos");
+    expect(html).toContain("Certidão autoriza feriados");
+    expect(html).toContain("Certidão autoriza prorrogação e trabalho noturno após 20h");
+    expect(html).not.toMatch(/<input[^>]*checked/);
   });
 
   it("offers cancellation for analysis but never for an in-progress write", () => {

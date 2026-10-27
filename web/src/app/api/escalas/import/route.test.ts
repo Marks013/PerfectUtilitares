@@ -16,6 +16,18 @@ function upload(content = ESCALA_IMPORT_TEMPLATE, name = "base.csv", type = "tex
 beforeEach(() => { vi.resetAllMocks(); mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" }; mocks.rate.mockResolvedValue(null); });
 
 describe("/api/escalas/import", () => {
+  it("previews one complete FPRE136 CSV with only the authorized branch and retains employees without schedules", async () => {
+    const report = '0001,-,Empresa,Pág.:,1\nQuadro de Horários\n,Nome,Cargo,Horário\n"02.01 , ICARAIMA, ADMINISTRATIVO"\nHorário:,0011,-,Sem horário\n1,-,Pessoa Sintética,Operador,00:00,-,00:00,00:00,-,00:00\nSábado:,00:00,-,00:00,00:00,-,00:00,00:00,0011\n"06.02 , BIG, LOJA"\n2,-,Outra Pessoa,Operador,07:00,-,11:00,13:00,-,16:20\nSábado:,07:00,-,11:00,13:00,-,16:20,07:00,0026';
+    const response = await POST(upload(report, "FPRE136.CSV"));
+    expect(response.status).toBe(200);
+    const { preview } = await response.json();
+    expect(preview.report).toMatchObject({ branchCode: "02", sourceEmployees: 2, otherBranchesExcluded: 1, missingSchedule: 1 });
+    expect(preview.employees).toHaveLength(1);
+    expect(preview.employees[0]).toMatchObject({ registration: "1", activeFrom: "", planningEnabled: true, scheduleMode: "UNTIMED", shiftIds: [], sundayRestRule: "PROTECTIVE" });
+    expect(preview.issues).toEqual([]);
+    expect(preview.shifts).toEqual([]);
+    expect(JSON.stringify(preview)).not.toContain("Outra Pessoa");
+  });
   it("downloads a private explicit template and previews real CSV without persistence", async () => {
     const template = await GET();
     expect(template.status).toBe(200);

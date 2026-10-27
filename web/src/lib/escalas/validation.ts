@@ -3,7 +3,8 @@ import { escalaInputSchema } from "./schema";
 import { sortEmployees } from "./order";
 import { fixedBoundaryReservations } from "./boundary";
 import { validateEmployee } from "./validation-employee";
-import { validateCoverage, validateJourney, workJourney, type WorkJourney } from "./validation-time";
+import { validateCoverage, validateJourney, validateUntimedDuty, workJourney, type WorkJourney } from "./validation-time";
+import { CCT_FROM, CCT_UNTIL, SUPERMARKET_CCT, transitionWeeks } from "./labor-rules";
 
 /** Recalculates from assignments, without trusting optimizer totals or feasibility. */
 export function validateEscala(rawInput: EscalaInput): EscalaValidation {
@@ -15,14 +16,28 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   const input = parsed.data;
   const issues: EscalaIssue[] = [];
   if (!input.employees.length) issues.push({ code: "EMPLOYEES_PENDING", severity: "PENDING", message: "Cadastre os colaboradores da filial." });
-  else if (!input.employees.some((person) => person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate))) issues.push({ code: "ACTIVE_EMPLOYEES_PENDING", severity: "PENDING", message: "Nenhum colaborador tem vínculo ativo neste período." });
-  if (!input.shifts.length) issues.push({ code: "SHIFTS_PENDING", severity: "PENDING", message: "Cadastre os horários permitidos antes de gerar a escala." });
+  else if (!input.employees.some((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate))) issues.push({ code: "ACTIVE_EMPLOYEES_PENDING", severity: "PENDING", message: "Nenhum colaborador está incluído na geração neste período." });
+  if (!input.shifts.length && input.employees.some((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED")) issues.push({ code: "SHIFTS_PENDING", severity: "PENDING", message: "Cadastre os horários permitidos antes de gerar a escala." });
   if (!input.policy.reviewed || !input.policy.source || !input.policy.reviewedBy) issues.push({ code: "POLICY_PENDING", severity: "PENDING", message: "Confira a norma aplicável, sua fonte e o responsável pela validação antes da publicação." });
   if (input.policy.validFrom > input.startDate || input.policy.validUntil < input.endDate) issues.push({ code: "POLICY_VALIDITY", severity: "PENDING", message: "A vigência da norma não abrange todo o período da escala." });
+  if (input.policy.coverageReview === "SUGGESTED") issues.push({ code: "COVERAGE_REVIEW_PENDING", severity: "PENDING", message: "Confira a cobertura sugerida para a filial, inclusive faixas com mínimo zero. A estimativa da equipe não comprova a demanda operacional." });
+  for (const date of transitionWeeks(input)) {
+    if (!input.policy.transitionWeekAccepted) issues.push({ code: "TRANSITION_WEEK_PENDING", severity: "PENDING", date,
+      message: "Esta semana atravessa uma redução legal da carga. Confirme a adoção antecipada do menor limite para a semana completa; não foi inventado rateio diário." });
+  }
+  if (input.policy.normativeProfile === SUPERMARKET_CCT) {
+    if (input.startDate < CCT_FROM || input.endDate > CCT_UNTIL) issues.push({ code: "CCT_VALIDITY", severity: "PENDING", message: "A CCT PR003084/2026 vale de 01/06/2026 a 31/05/2027. Cadastre o instrumento sucessor antes de publicar fora dessa vigência." });
+    if (input.policy.holidayRestAllowed) issues.push({ code: "CCT_HOLIDAY_REST", severity: "ERROR", message: "A cláusula 29 da CCT de supermercados veda compensar o DSR em feriado." });
+  }
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const journeys: WorkJourney[] = [];
-  const assignments = [...input.employees.flatMap((person) => person.history), ...input.assignments];
+  const prior = input.employees.flatMap((person) => {
+    const records = new Map([...(person.planningHistory ?? []), ...person.history].map((item) => [item.date, item]));
+    return [...records.values()];
+  });
+  const assignments = [...prior, ...input.assignments];
   for (const assignment of assignments) {
+    if (assignment.kind === "DUTY" && assignment.date >= input.startDate) issues.push(...validateUntimedDuty(input, assignment));
     if (assignment.kind !== "WORK") continue;
     const shift = shifts.get(assignment.shiftId ?? "");
     if (!shift) continue; // Schema reports every unresolved reference.
@@ -43,7 +58,7 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   const coverage = validateCoverage(input, journeys);
   issues.push(...coverage.issues);
   return {
-    valid: !issues.some((issue) => issue.severity === "ERROR"), readyToPublish: issues.length === 0,
+    valid: !issues.some((issue) => issue.severity === "ERROR"), readyToPublish: !issues.some((issue) => issue.severity !== "WARNING"),
     issues, summaries: results.map((result) => result.summary), minimumCoverageMargin: coverage.minimumCoverageMargin, boundaryReservations,
   };
 }

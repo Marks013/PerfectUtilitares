@@ -4,11 +4,13 @@ import { readSheet } from "read-excel-file/node";
 import { validateXlsxArchive } from "@/lib/spreadsheets/xlsx-security";
 import { EscalaError } from "./access";
 import type { EscalaEmployee, EscalaShift, WeeklyHours } from "./types";
+import { isFpre136Text, isFpre136Rows, previewFpre136Rows } from "./fpre136";
 
-export const ESCALA_IMPORT_TEMPLATE = "Matricula;Nome;Setor;Cargo;CargaSemanal;Horarios;Admissao\r\n0001;Nome completo;Reposição;Repositor;42;08:00-12:00 / 13:00-17:24;2020-01-01\r\n";
+export const ESCALA_IMPORT_TEMPLATE = "Matricula;Nome;Setor;Cargo;CargaSemanal;Horarios;Admissao;RegraDomingos\r\n0001;Nome completo;Reposição;Repositor;42;08:00-12:00 / 13:00-17:24;2020-01-01;\r\n";
 const headers = ["matricula", "nome", "setor", "cargo", "cargasemanal", "horarios", "admissao"];
-type ImportOptions = { startDate: string; defaultWeeklyHours: WeeklyHours };
-export type EscalaImportPreview = { employees: EscalaEmployee[]; shifts: EscalaShift[]; issues: { line: number; message: string }[]; totalRows: number };
+export type ImportOptions = { startDate: string; defaultWeeklyHours: WeeklyHours; branchCode?: string };
+export type EscalaImportPreview = { employees: EscalaEmployee[]; shifts: EscalaShift[]; issues: { line: number; message: string }[]; totalRows: number;
+  report?: { format: "FPRE136"; branchCode: string; branchName: string; sourceEmployees: number; otherBranchesExcluded: number; missingSchedule: number } };
 
 function normalized(value: unknown) { return String(value ?? "").trim().normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s/g, ""); }
 function bounded(value: unknown, max: number) {
@@ -44,7 +46,8 @@ function parseShift(value: string): EscalaShift {
 }
 
 export function previewEscalaRows(rows: unknown[][], options: ImportOptions): EscalaImportPreview {
-  if (rows.length > 151) throw new EscalaError(400, "ESCALA_IMPORT_LIMIT", "A importação aceita até 150 colaboradores por proposta.");
+  if (isFpre136Rows(rows)) return previewFpre136Rows(rows, options, parseShift);
+  if (rows.length > 251) throw new EscalaError(400, "ESCALA_IMPORT_LIMIT", "A importação aceita até 250 colaboradores por proposta.");
   if (rows.length < 2 || headers.some((header, index) => normalized(rows[0]?.[index]) !== header)) {
     throw new EscalaError(400, "ESCALA_IMPORT_LAYOUT", "Use o modelo de Escalas com as colunas Matricula, Nome, Setor, Cargo, CargaSemanal, Horarios e Admissao. Relatórios de folha não contêm todos os dados necessários.");
   }
@@ -68,8 +71,11 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
         throw new Error("Informe a data real de admissão no formato AAAA-MM-DD. O início da escala não será tratado como contratação.");
       }
       const id = `imp-${createHash("sha256").update(registration).digest("hex").slice(0, 24)}`;
+      const sundayRule = normalized(rows[0]?.[7]) === "regradomingos" ? bounded(row[7], 30).toUpperCase() : "";
+      if (sundayRule && !["UNREVIEWED", "CLT_386", "COMMERCE"].includes(sundayRule)) throw new Error("RegraDomingos deve ser CLT_386 (quinzenal), COMMERCE (três semanas) ou UNREVIEWED. O enquadramento não será inferido pelo nome.");
       result.employees.push({ id, registration, name, sector, role, weeklyHours: weeklyHours as WeeklyHours, shiftIds: [shift.id],
-        activeFrom: admission, offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1,
+        activeFrom: admission, offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: sundayRule === "COMMERCE" ? 2 : 1,
+        sundayRestRule: sundayRule === "COMMERCE" ? "COMMERCE" : sundayRule === "CLT_386" ? "CLT_386" : "UNREVIEWED",
         preferredOffDays: [], historyKnown: false, history: [] });
       shifts.set(shift.id, shift);
       registrations.add(registration);
@@ -83,11 +89,19 @@ export async function previewEscalaImport(buffer: Buffer, extension: "csv" | "xl
   let rows: unknown[][];
   if (extension === "xlsx") {
     validateXlsxArchive(buffer, { strict: true, maxEntryUncompressedBytes: 4 * 1024 * 1024, maxTotalUncompressedBytes: 16 * 1024 * 1024 });
-    rows = await readSheet(buffer);
+    try { rows = await readSheet(buffer); }
+    catch { throw new EscalaError(400, "ESCALA_IMPORT_XLSX", "Não foi possível ler este XLSX. Exporte o relatório FPRE136 como CSV e envie o arquivo completo."); }
   } else {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(buffer).replace(/^\uFEFF/, "");
+    let text: string;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(buffer); }
+    catch (error) {
+      text = new TextDecoder("windows-1252").decode(buffer);
+      if (!isFpre136Text(text)) throw error;
+    }
+    text = text.replace(/^\uFEFF/, "");
+    const report = isFpre136Text(text);
     const first = text.split(/\r?\n/, 1)[0];
-    rows = parse(text, { delimiter: first.includes(";") ? ";" : ",", bom: true, skip_empty_lines: true, max_record_size: 8192, relax_column_count: false }) as unknown[][];
+    rows = parse(text, { delimiter: report ? "," : first.includes(";") ? ";" : ",", bom: true, skip_empty_lines: true, max_record_size: 8192, relax_column_count: report }) as unknown[][];
   }
   return previewEscalaRows(rows, options);
 }

@@ -1,0 +1,56 @@
+import { addDays, dateRange, isDate, weekStart } from "./dates";
+import type { EscalaEmployee, EscalaInput, EscalaPolicy, WeeklyHours } from "./types";
+
+// EC 141/2026, arts. 6 and 7. Saved policies cannot raise these ceilings.
+export const TRANSITION_42_DATE = "2026-12-16";
+export const TRANSITION_40_DATE = "2027-12-16";
+export const SUPERMARKET_CCT = "SINDECOMU_SUPERMARKETS_2026_2027";
+export const CCT_FROM = "2026-06-01";
+export const CCT_UNTIL = "2027-05-31";
+
+export function legalWeeklyHours(day: string): WeeklyHours {
+  return day < TRANSITION_42_DATE ? 44 : day < TRANSITION_40_DATE ? 42 : 40;
+}
+
+/** Conservative whole-week proposal; transition weeks require explicit acceptance. */
+export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">, start: string): WeeklyHours {
+  return Math.min(person.weeklyHours, legalWeeklyHours(addDays(weekStart(start), 6))) as WeeklyHours;
+}
+
+export function transitionWeeks(input: Pick<EscalaInput, "startDate" | "endDate">): string[] {
+  return [TRANSITION_42_DATE, TRANSITION_40_DATE]
+    .filter((day) => day >= input.startDate && day <= input.endDate && weekStart(day) !== day)
+    .map(weekStart);
+}
+
+export function effectiveSundayLimit(person: EscalaEmployee): 1 | 2 {
+  return Math.min(person.maxConsecutiveSundays, person.sundayRestRule === "COMMERCE" ? 2 : 1) as 1 | 2;
+}
+
+/** Operational daily distribution in this five-day regime; overtime is not modeled. */
+export function dailyMinuteCeiling(day: string): number {
+  return day < TRANSITION_42_DATE ? 600 : day < TRANSITION_40_DATE ? 504 : 480;
+}
+
+export function collectiveExtensionAuthorized(policy: EscalaPolicy, day: string): boolean {
+  if (!policy.compensationAuthorized) return false;
+  if (day < TRANSITION_42_DATE) return true;
+  if (day >= TRANSITION_40_DATE) return false;
+  const agreement = policy.collectiveAgreement;
+  return Boolean(agreement?.reviewed && agreement.source.trim() && agreement.reviewedBy.trim()
+    && isDate(agreement.validFrom) && isDate(agreement.validUntil) && agreement.validFrom <= day && agreement.validUntil >= day);
+}
+
+export function certificateAuthorizes(policy: EscalaPolicy, day: string, scope: "sundays" | "holidays" | "after20"): boolean {
+  if (policy.normativeProfile !== SUPERMARKET_CCT) return true;
+  const certificate = policy.operationalCertificate;
+  return Boolean(day >= CCT_FROM && day <= CCT_UNTIL && certificate?.reviewed
+    && certificate.identifier.trim() && certificate.reviewedBy.trim() && certificate[scope]
+    && isDate(certificate.validFrom) && isDate(certificate.validUntil) && certificate.validFrom <= day && certificate.validUntil >= day);
+}
+
+export function weeklyTargets(input: EscalaInput, person: EscalaEmployee): { start: string; hours: WeeklyHours }[] {
+  return dateRange(input.startDate, input.endDate).filter((day) => weekStart(day) === day
+    && person.activeFrom <= addDays(day, 6) && (!person.activeUntil || person.activeUntil >= day))
+    .map((start) => ({ start, hours: effectiveWeeklyHours(person, start) }));
+}

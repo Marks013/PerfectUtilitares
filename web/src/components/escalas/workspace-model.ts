@@ -1,4 +1,5 @@
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
+import { CCT_FROM, CCT_UNTIL, legalWeeklyHours, SUPERMARKET_CCT } from "@/lib/escalas/labor-rules";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const HOURS: WeeklyHours[] = [40, 42, 44];
@@ -51,7 +52,13 @@ export function parseClock(value: string) {
 
 export function newInput(branchCode: string, branchName: string, month: string, hours: WeeklyHours): EscalaInput {
   const period = monthPeriod(month);
-  const daily = (hours * 60) / 5;
+  const weeklyTargets = [
+    ...new Set(
+      datesBetween(period.startDate, period.endDate)
+        .filter((_, index) => index % 7 === 0)
+        .map((start) => Math.min(hours, legalWeeklyHours(addDate(start, 6)))),
+    ),
+  ];
   return {
     schemaVersion: 1,
     branchCode: branchCode.trim(),
@@ -68,6 +75,8 @@ export function newInput(branchCode: string, branchName: string, month: string, 
       weeklyLimit: 44,
       dailyLimitMinutes: 528,
       compensationAuthorized: false,
+      normativeProfile: "CUSTOM",
+      transitionWeekAccepted: false,
       minInterShiftMinutes: 660,
       minWeeklyRestMinutes: 2100,
       minMealMinutes: 60,
@@ -78,24 +87,25 @@ export function newInput(branchCode: string, branchName: string, month: string, 
       holidayRestAllowed: false,
       nightWorkReviewed: false,
     },
-    shifts: [
-      {
-        id: "turno-inicial",
+    shifts: weeklyTargets.map((target, index) => {
+      const daily = (target * 60) / 5;
+      return {
+        id: index === 0 ? "turno-inicial" : `turno-inicial-${target}h`,
         name: `Diurno ${clock(daily)}`,
         segments: [
           { start: 480, end: 720, kind: "WORK" },
           { start: 720, end: 780, kind: "BREAK" },
           { start: 780, end: 780 + daily - 240, kind: "WORK" },
         ],
-      },
-    ],
+      };
+    }),
     employees: [],
     demands: [],
     assignments: [],
   };
 }
 
-export function newEmployee(hours: WeeklyHours, shiftId?: string): EscalaEmployee {
+export function newEmployee(hours: WeeklyHours, shiftId?: string | string[]): EscalaEmployee {
   return {
     id: crypto.randomUUID(),
     registration: "",
@@ -103,15 +113,46 @@ export function newEmployee(hours: WeeklyHours, shiftId?: string): EscalaEmploye
     sector: "",
     role: "",
     weeklyHours: hours,
-    shiftIds: shiftId ? [shiftId] : [],
+    shiftIds: Array.isArray(shiftId) ? [...new Set(shiftId)] : shiftId ? [shiftId] : [],
     activeFrom: "",
     offMode: "VARIABLE",
     fixedOffDays: [],
     offPattern: "ANY",
     maxConsecutiveSundays: 1,
+    sundayRestRule: "PROTECTIVE",
     preferredOffDays: [],
     historyKnown: false,
     history: [],
+  };
+}
+
+export function selectNormativeProfile(
+  input: EscalaInput,
+  normativeProfile: NonNullable<EscalaInput["policy"]["normativeProfile"]>,
+): EscalaInput {
+  const previous = input.policy;
+  return {
+    ...input,
+    policy: {
+      ...previous,
+      normativeProfile,
+      reviewed: false,
+      ...(previous.collectiveAgreement
+        ? { collectiveAgreement: { ...previous.collectiveAgreement, reviewed: false } }
+        : {}),
+      ...(previous.operationalCertificate
+        ? { operationalCertificate: { ...previous.operationalCertificate, reviewed: false } }
+        : {}),
+      ...(normativeProfile === SUPERMARKET_CCT
+        ? {
+            source: "PR003084/2026 — CCT Supermercados Umuarama, cl. 28/29/30/35/46",
+            validFrom: CCT_FROM,
+            validUntil: CCT_UNTIL,
+            holidayRestAllowed: false,
+            maxConsecutiveWorkDays: 6,
+          }
+        : {}),
+    },
   };
 }
 
@@ -129,8 +170,8 @@ export function mergeImport(input: EscalaInput, employees: EscalaEmployee[], shi
       "A prévia contém matrícula já cadastrada. Revise os registros antes de importar; nenhum dado foi substituído.",
     );
   }
-  if (input.employees.length + employees.length > 150)
-    throw new Error("A filial comporta até 150 colaboradores por proposta. Reduza os registros da importação.");
+  if (input.employees.length + employees.length > 250)
+    throw new Error("A filial comporta até 250 colaboradores por proposta. Reduza os registros da importação.");
   const byId = new Map(input.shifts.map((shift) => [shift.id, shift]));
   for (const shift of shifts) {
     if (byId.has(shift.id) && JSON.stringify(byId.get(shift.id)) !== JSON.stringify(shift)) {

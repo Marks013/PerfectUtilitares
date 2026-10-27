@@ -113,7 +113,12 @@ export function useEscalasWorkspace() {
   );
 
   const update = useCallback((next: EscalaInput) => {
-    setInput(next);
+    setInput((previous) => {
+      const changedCoverage = previous && (previous.employees !== next.employees || previous.shifts !== next.shifts || previous.demands !== next.demands);
+      return changedCoverage && next.policy.coverageReview === "CONFIRMED"
+        ? { ...next, policy: { ...next.policy, coverageReview: "SUGGESTED" } }
+        : next;
+    });
     setDirty(true);
     setValidation(null);
     setGenerated(null);

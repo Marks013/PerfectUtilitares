@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { sortEmployees } from "@/lib/escalas/order";
+import { BulkControls } from "./bulk-controls";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { addDate, displayDate, HOURS, newEmployee, replaceAssignment, WEEKDAYS } from "./workspace-model";
 
@@ -90,7 +91,9 @@ function HistoryEditor({
                     }}
                   >
                     <option value="">{outside ? "Sem vínculo" : "Não informado"}</option>
-                    <option value="WORK">Trabalho</option>
+                    {employee.scheduleMode === "UNTIMED"
+                      ? <option value="DUTY">Trabalho sem horário fixo</option>
+                      : <option value="WORK">Trabalho</option>}
                     <option value="OFF">Folga</option>
                     <option value="ABSENCE">Ausência</option>
                   </select>
@@ -131,7 +134,7 @@ function HistoryEditor({
   );
 }
 
-function EmployeeEditor({
+export function EmployeeEditor({
   employee,
   input,
   onSave,
@@ -156,10 +159,9 @@ function EmployeeEditor({
         !draft.registration.trim() ||
         !draft.sector.trim() ||
         !draft.role.trim() ||
-        !draft.activeFrom ||
-        !draft.shiftIds.length
+        (draft.planningEnabled !== false && draft.scheduleMode !== "UNTIMED" && !draft.shiftIds.length)
       )
-        throw new Error("Preencha matrícula, nome, setor, cargo, admissão e ao menos um turno autorizado.");
+        throw new Error("Preencha matrícula, nome, setor, cargo e, para incluir quem tem horário fixo, ao menos um turno autorizado.");
       if (input.employees.some((item) => item.id !== draft.id && item.registration === draft.registration.trim()))
         throw new Error("Essa matrícula já está cadastrada nesta filial.");
       const expected = draft.offMode === "FIXED" ? 2 : draft.offMode === "MIXED" ? 1 : 0;
@@ -206,7 +208,10 @@ function EmployeeEditor({
             />
           )}
         </Field>
-        <Field label="Carga semanal">
+        <Field
+          label="Carga semanal de referência"
+          hint="O cálculo respeita o teto legal vigente em cada semana; uma carga menor é preservada."
+        >
           {(id) => (
             <select
               id={id}
@@ -247,13 +252,12 @@ function EmployeeEditor({
           )}
         </Field>
         <Field
-          label="Data real de admissão"
-          hint="Não use o início da proposta para substituir uma admissão desconhecida."
+          label="Data real de admissão (opcional)"
+          hint="Deixe em branco quando desconhecida. Não substitua pelo início da proposta."
         >
           {(id) => (
             <input
               id={id}
-              required
               type="date"
               value={draft.activeFrom}
               onChange={(event) => change("activeFrom", event.target.value)}
@@ -304,21 +308,68 @@ function EmployeeEditor({
             </select>
           )}
         </Field>
-        <Field label="Máximo de domingos seguidos" hint="Defina pelo enquadramento do colaborador; nunca pelo nome.">
+        <Field
+          label="Descanso aos domingos"
+          hint="O padrão quinzenal protetivo vale para todos, sem identificar sexo pelo nome. Exceções são opcionais."
+        >
           {(id) => (
             <select
               id={id}
-              value={draft.maxConsecutiveSundays}
+              value={draft.sundayRestRule ?? "PROTECTIVE"}
+              onChange={(event) =>
+                setDraft((previous) => ({
+                  ...previous,
+                  sundayRestRule: event.target.value as EscalaEmployee["sundayRestRule"],
+                  maxConsecutiveSundays: event.target.value === "COMMERCE" ? 2 : 1,
+                }))
+              }
+              className={controlClass}
+            >
+              <option value="PROTECTIVE">Quinzenal protetivo — todos</option>
+              <option value="UNREVIEWED">Não conferido — limite protetivo</option>
+              <option value="CLT_386">Mulheres — quinzenal (art. 386 da CLT)</option>
+              <option value="COMMERCE">Regra geral do comércio — a cada 3 semanas</option>
+            </select>
+          )}
+        </Field>
+        <Field
+          label="Máximo de domingos seguidos"
+          hint="O padrão protetivo permite no máximo um domingo seguido. Dois exigem enquadramento específico conferido."
+        >
+          {(id) => (
+            <select
+              id={id}
+              value={draft.sundayRestRule === "COMMERCE" ? draft.maxConsecutiveSundays : 1}
               onChange={(event) => change("maxConsecutiveSundays", Number(event.target.value) as 1 | 2)}
               className={controlClass}
             >
               <option value={1}>1 domingo</option>
-              <option value={2}>2 domingos</option>
+              {draft.sundayRestRule === "COMMERCE" && <option value={2}>2 domingos</option>}
             </select>
           )}
         </Field>
       </div>
-      <fieldset>
+      <Field label="Modo de horário" hint="Sem horário fixo participa do rodízio de trabalho e folgas, sem apuração de horas.">
+        {(id) => <select id={id} value={draft.scheduleMode ?? "TIMED"} className={controlClass}
+          onChange={(event) => setDraft((previous) => ({
+            ...previous,
+            scheduleMode: event.target.value as "TIMED" | "UNTIMED",
+            ...(event.target.value === "UNTIMED" ? { shiftIds: [] } : {}),
+          }))}>
+          <option value="TIMED">Com horário</option>
+          <option value="UNTIMED">Sem horário fixo</option>
+        </select>}
+      </Field>
+      {draft.scheduleMode === "UNTIMED" && <p className="text-sm">
+        Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo seis dias seguidos de trabalho.
+        Os dias de trabalho não recebem turno nem horas fictícias. A carga semanal é apenas uma referência cadastral.
+      </p>}
+      <Check
+        label="Incluir colaborador no planejamento desta proposta"
+        checked={draft.planningEnabled !== false}
+        onChange={(checked) => change("planningEnabled", checked)}
+      />
+      {draft.scheduleMode !== "UNTIMED" && <fieldset>
         <legend className="text-sm font-semibold">Turnos autorizados</legend>
         <div className="flex flex-wrap gap-x-5">
           {input.shifts.map((shift) => (
@@ -335,7 +386,7 @@ function EmployeeEditor({
             />
           ))}
         </div>
-      </fieldset>
+      </fieldset>}
       {draft.offMode !== "VARIABLE" && (
         <DayChoices
           label="Dias fixos aprovados"
@@ -350,11 +401,12 @@ function EmployeeEditor({
       />
       <details className="space-y-3 border-t border-[color:var(--app-border)] pt-3">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">
-          Histórico anterior e continuidade
+          Histórico anterior e continuidade (avançado, opcional)
         </summary>
         <p className="text-sm text-[color:var(--app-muted)]">
           Informe os 21 dias anteriores a {displayDate(input.startDate)}, ou os dias desde a admissão real quando ela
-          for recente. Não preencha folgas por suposição.
+          for recente. Não preencha folgas por suposição. Sem histórico, a continuidade anterior fica não verificada;
+          isso não impede a proposta interna nem certifica sua conformidade legal completa.
         </p>
         <HistoryEditor employee={draft} input={input} entries={history} onChange={setHistory} />
         <Check
@@ -406,8 +458,18 @@ export function Employees({
         <button
           type="button"
           className={buttonClass}
-          disabled={disabled || input.employees.length >= 150}
-          onClick={() => setEditing(newEmployee(input.defaultWeeklyHours, input.shifts[0]?.id))}
+          disabled={disabled || input.employees.length >= 250}
+          onClick={() => {
+            const initial = input.shifts
+              .filter((shift) => /^turno-inicial(?:-|$)/.test(shift.id))
+              .map((shift) => shift.id);
+            setEditing(
+              newEmployee(
+                input.defaultWeeklyHours,
+                initial.length ? initial : input.shifts.slice(0, 1).map((shift) => shift.id),
+              ),
+            );
+          }}
         >
           Adicionar colaborador
         </button>
@@ -415,6 +477,7 @@ export function Employees({
       <p className="text-sm text-[color:var(--app-muted)]">
         Cadastros e alterações ficam na proposta até salvar a revisão. Setor e cargo são informações distintas.
       </p>
+      <BulkControls input={input} disabled={disabled} onChange={onChange} />
       <Field label="Localizar colaborador, matrícula, setor ou cargo">
         {(id) => (
           <input
@@ -440,8 +503,19 @@ export function Employees({
                 {employee.name} · {employee.registration}
               </p>
               <p className="text-xs text-[color:var(--app-muted)]">
-                {employee.sector} / {employee.role} · {employee.weeklyHours}h
+                {employee.sector} / {employee.role} · {employee.scheduleMode === "UNTIMED"
+                  ? "Sem horário fixo · incluído no rodízio de folgas · horas não apuradas"
+                  : `referência ${employee.weeklyHours}h`}
+                {employee.maxConsecutiveSundays > 1 && employee.sundayRestRule !== "COMMERCE" &&
+                  " · domingos: enquadramento pendente"}
+                {employee.planningEnabled === false && " · fora do planejamento"}
               </p>
+              {employee.planningEnabled === false && employee.planningExclusionReason && <p className="text-xs text-[color:var(--app-muted)]">{employee.planningExclusionReason}</p>}
+              {employee.sourceSchedule && <p className="break-words text-xs text-[color:var(--app-muted)]">
+                Referência FPRE136: {employee.sourceSchedule.code} · {employee.sourceSchedule.description}
+                {" · Dias úteis: "}{employee.sourceSchedule.weekday || "não informado"}
+                {" · Sábado: "}{employee.sourceSchedule.saturday || "não informado"}
+              </p>}
             </div>
             <div className="flex flex-wrap gap-2">
               <button type="button" className={buttonClass} disabled={disabled} onClick={() => setEditing(employee)}>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { clock, HOURS, parseClock } from "./workspace-model";
+import { LaborPolicyFields } from "./labor-policy-fields";
 
 function DateList({ label, value, onChange }: { label: string; value: string[]; onChange: (dates: string[]) => void }) {
   const [text, setText] = useState(value.join(", "));
@@ -53,10 +54,11 @@ export function Rules({
         responsável antes da publicação.
       </p>
       <fieldset disabled={disabled} className="space-y-4">
+        <LaborPolicyFields input={input} onChange={onChange} />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field
             label="Carga padrão para novos colaboradores"
-            hint="Alterar o padrão não modifica os contratos já cadastrados."
+            hint="Carga contratual de referência. Alterar o padrão não modifica os contratos já cadastrados; a redução legal é aplicada por semana."
           >
             {(id) => (
               <select
@@ -96,7 +98,7 @@ export function Rules({
           </Field>
           <Field
             label="Limite diário, em minutos"
-            hint="504 = 8h24; 528 = 8h48. A distribuição exige autorização aplicável."
+            hint="504 = 8h24; 528 = 8h48. A vigência legal pode impor teto menor, mesmo com valor superior cadastrado."
           >
             {(id) => (
               <input
@@ -447,7 +449,8 @@ export function Shifts({
         </button>
       </div>
       <p className="text-sm text-[color:var(--app-muted)]">
-        40h em cinco dias = 8h00; 42h = 8h24; 44h = 8h48. Cadastre as distribuições realmente autorizadas.
+        40h em cinco dias = 8h00; 42h = 8h24; 44h = 8h48. Cadastre horários compatíveis com cada vigência; a autorização
+        de 8h24 não continua após 15/12/2027 neste regime.
       </p>
       <div className="space-y-3">
         {input.shifts.map((shift) => (

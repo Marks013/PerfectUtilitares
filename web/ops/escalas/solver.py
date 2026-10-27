@@ -8,6 +8,11 @@ from ortools.sat.python import cp_model
 
 ZONE = ZoneInfo("America/Sao_Paulo")
 MAX_SECONDS = 12
+TRANSITION_42_DATE = "2026-12-16"
+TRANSITION_40_DATE = "2027-12-16"
+CCT_PROFILE = "SINDECOMU_SUPERMARKETS_2026_2027"
+CCT_FROM = "2026-06-01"
+CCT_UNTIL = "2027-05-31"
 
 
 def days_between(start, end):
@@ -36,11 +41,70 @@ def occupied_dates(day, shift):
     return occupied
 
 
-def admissible(shift, policy):
+def legal_weekly_hours(day):
+    return 40 if day >= TRANSITION_40_DATE else 42 if day >= TRANSITION_42_DATE else 44
+
+
+def effective_weekly_hours(person, week_end):
+    # The lower target applies to the whole transition week; TS requires explicit acceptance.
+    return min(person["weeklyHours"], legal_weekly_hours(week_end))
+
+
+def sunday_limit(person):
+    protected = 2 if person.get("sundayRestRule") == "COMMERCE" else 1
+    return min(person["maxConsecutiveSundays"], protected)
+
+
+def reviewed_document(document, day, identifier):
+    return (isinstance(document, dict) and document.get("reviewed") is True
+            and isinstance(document.get(identifier), str) and bool(document[identifier].strip())
+            and isinstance(document.get("reviewedBy"), str) and bool(document["reviewedBy"].strip())
+            and isinstance(document.get("validFrom"), str) and isinstance(document.get("validUntil"), str)
+            and len(document["validFrom"]) == 10 and len(document["validUntil"]) == 10
+            and document["validFrom"] <= day <= document["validUntil"])
+
+
+def certificate_authorizes(policy, day, scope):
+    document = policy.get("operationalCertificate")
+    return (CCT_FROM <= day <= CCT_UNTIL and reviewed_document(document, day, "identifier")
+            and document.get(scope) is True)
+
+
+def cct_admissible(shift, policy, day):
+    if policy.get("normativeProfile") != CCT_PROFILE:
+        return True
+    if not CCT_FROM <= day <= CCT_UNTIL:
+        return False
+    for civil in occupied_dates(day, shift):
+        if date.fromisoformat(civil).weekday() == 6 and not certificate_authorizes(policy, civil, "sundays"):
+            return False
+        if civil in policy["holidayDates"] and not certificate_authorizes(policy, civil, "holidays"):
+            return False
     paid, _start, _end = shift_metrics(shift)
-    if paid > min(policy["dailyLimitMinutes"], 600):
+    extension_or_night = paid > 480 or any(s["kind"] != "BREAK" and (s["start"] < 300 or s["end"] > 1320)
+                                          for s in shift["segments"])
+    for segment in shift["segments"]:
+        if segment["kind"] == "BREAK":
+            continue
+        for offset in range(segment["start"] // 1440, (segment["end"] - 1) // 1440 + 1):
+            if extension_or_night and max(segment["start"], offset * 1440 + 1200) < min(segment["end"], (offset + 1) * 1440):
+                civil = (date.fromisoformat(day) + timedelta(days=offset)).isoformat()
+                if not certificate_authorizes(policy, civil, "after20"):
+                    return False
+    return True
+
+
+def admissible(shift, policy, day):
+    paid, _start, _end = shift_metrics(shift)
+    ceiling = 480 if day >= TRANSITION_40_DATE else 504 if day >= TRANSITION_42_DATE else 600
+    if paid > min(policy["dailyLimitMinutes"], ceiling):
         return False
     if paid > 480 and not policy["compensationAuthorized"]:
+        return False
+    if paid > 480 and TRANSITION_42_DATE <= day < TRANSITION_40_DATE:
+        if not reviewed_document(policy.get("collectiveAgreement"), day, "source"):
+            return False
+    if not cct_admissible(shift, policy, day):
         return False
     first, last = shift["segments"][0]["start"], shift["segments"][-1]["end"]
     meals = [s["end"] - s["start"] for s in shift["segments"]
@@ -49,12 +113,20 @@ def admissible(shift, policy):
     return required == 0 or max(meals, default=0) >= required
 
 
+def untimed_admissible(policy, day):
+    if policy.get("normativeProfile") != CCT_PROFILE:
+        return True
+    return (CCT_FROM <= day <= CCT_UNTIL
+            and (date.fromisoformat(day).weekday() != 6 or certificate_authorizes(policy, day, "sundays"))
+            and (day not in policy["holidayDates"] or certificate_authorizes(policy, day, "holidays")))
+
+
 def solve(data, force=None):
     started = time.monotonic()
     force = force or {}
     dates = days_between(data["startDate"], data["endDate"])
-    employees = sorted(data["employees"], key=lambda e: e["id"])
-    if not 1 <= len(employees) <= 150 or not 7 <= len(dates) <= 42 or len(dates) % 7:
+    employees = sorted((p for p in data["employees"] if p.get("planningEnabled") is not False), key=lambda e: e["id"])
+    if not 1 <= len(employees) <= 250 or not 7 <= len(dates) <= 42 or len(dates) % 7:
         raise ValueError("model bounds")
     policy, shifts = data["policy"], {s["id"]: s for s in data["shifts"]}
     metrics = {key: shift_metrics(value) for key, value in shifts.items()}
@@ -67,9 +139,9 @@ def solve(data, force=None):
         if time.monotonic() - started > MAX_SECONDS - 1:
             return _response("UNKNOWN", [], started)
         pid = person["id"]
-        prior = {a["date"]: a for a in person["history"]}
+        untimed = person.get("scheduleMode", "TIMED") == "UNTIMED"
+        prior = {a["date"]: a for a in person.get("planningHistory", []) + person["history"]}
         history[pid] = prior
-        options = [s for s in person["shiftIds"] if admissible(shifts[s], policy)]
         changed = []
         active[pid] = [d for d in dates if person["activeFrom"] <= d
                        and (not person.get("activeUntil") or d <= person["activeUntil"])]
@@ -81,23 +153,31 @@ def solve(data, force=None):
             current = {}
             closed = day in policy["closedDates"] or (
                 day in policy["holidayDates"] and day not in policy["authorizedHolidayDates"])
-            for sid in options:
+            for sid in ([] if untimed else person["shiftIds"]):
+                if not admissible(shifts[sid], policy, day):
+                    continue
                 current[sid] = model.new_bool_var(f"s:{pid}:{day}:{sid}")
                 occupied = occupied_dates(day, shifts[sid])
                 forbidden = any(d in policy["closedDates"] or (d in policy["holidayDates"] and d not in policy["authorizedHolidayDates"]) for d in occupied)
                 if closed or forbidden:
                     model.add(current[sid] == 0)
             choices[key] = current
-            model.add(work[key] == sum(current.values()))
+            if untimed:
+                if closed or not untimed_admissible(policy, day):
+                    model.add(work[key] == 0)
+            else:
+                model.add(work[key] == sum(current.values()))
             model.add(work[key] + off[key] == (0 if absent else 1))
             weekday = date.fromisoformat(day).weekday()
             if weekday in person["fixedOffDays"] and not absent:
                 model.add(off[key] == 1)
-            if day in policy["holidayDates"] and not policy["holidayRestAllowed"]:
+            if day in policy["holidayDates"] and (not policy["holidayRestAllowed"] or policy.get("normativeProfile") == CCT_PROFILE):
                 model.add(off[key] == 0)
             if old and old.get("locked") and not absent:
                 if old["kind"] == "OFF":
                     model.add(off[key] == 1)
+                elif old["kind"] == "DUTY" and untimed:
+                    model.add(work[key] == 1)
                 elif old.get("shiftId") in current:
                     model.add(current[old["shiftId"]] == 1)
                 else:
@@ -105,7 +185,8 @@ def solve(data, force=None):
             if force.get("employeeId") == pid and day in force.get("offDates", []):
                 model.add(off[key] == 1)
             if old and not absent:
-                same = off[key] if old["kind"] == "OFF" else current.get(old.get("shiftId"), 0)
+                same = (off[key] if old["kind"] == "OFF" else work[key]
+                        if old["kind"] == "DUTY" and untimed else current.get(old.get("shiftId"), 0))
                 changed.append(1 - same)
                 stability_terms.append(1 - same)
             if weekday in person["preferredOffDays"]:
@@ -128,15 +209,17 @@ def solve(data, force=None):
             if len(group) == 7 and not absences:
                 model.add(sum(work[pid, d] for d in group) == 5)
                 model.add(sum(off[pid, d] for d in group) == 2)
-                model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                          == person["weeklyHours"] * 60)
+                if not untimed:
+                    model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
+                              == effective_weekly_hours(person, dates[week + 6]) * 60)
             else:
                 model.add(sum(work[pid, d] for d in group) <= 5)
-            model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                      <= min(person["weeklyHours"], policy["weeklyLimit"]) * 60)
+            if not untimed:
+                model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
+                          <= min(effective_weekly_hours(person, dates[week + 6]), policy["weeklyLimit"]) * 60)
         _streaks(model, person, dates, work, off, prior, active[pid], policy)
         _rest(model, person, dates, choices, off, prior, shifts, policy)
-        _civil_rest(model, person, dates, choices, off, prior, shifts)
+        _civil_rest(model, person, dates, choices, work, off, prior, shifts)
         for day in active[pid]:
             if person["offPattern"] == "CONSECUTIVE":
                 neighbors = []
@@ -146,7 +229,7 @@ def solve(data, force=None):
                                       and person["offMode"] in ("FIXED", "MIXED")
                                       and 0 in person["fixedOffDays"]
                                       and (not person.get("activeUntil") or adjacent <= person["activeUntil"])
-                                      and not (adjacent in policy["holidayDates"] and not policy["holidayRestAllowed"]))
+                                      and not (adjacent in policy["holidayDates"] and (not policy["holidayRestAllowed"] or policy.get("normativeProfile") == CCT_PROFILE)))
                     neighbors.append(off.get((pid, adjacent), int(prior.get(adjacent, {}).get("kind") == "OFF" or fixed_boundary)))
                 model.add(off[pid, day] <= sum(neighbors))
         if person["offPattern"] == "PREFER_CONSECUTIVE":
@@ -157,9 +240,9 @@ def solve(data, force=None):
                     model.add_min_equality(pair, [off[pid, day], off[pid, tomorrow]])
                     preference_terms.append(-pair)
         sundays = [d for d in dates if date.fromisoformat(d).weekday() == 6 and d in active[pid]]
-        historical = sum(a["kind"] == "WORK" for d, a in prior.items() if date.fromisoformat(d).weekday() == 6)
+        historical = sum(a["kind"] in ("WORK", "DUTY") for d, a in prior.items() if date.fromisoformat(d).weekday() == 6)
         opportunities = max(1, sum(baseline.get((pid, d), {}).get("kind") != "ABSENCE" for d in sundays)
-                            + sum(date.fromisoformat(d).weekday() == 6 and a["kind"] in ("WORK", "OFF") for d, a in prior.items()))
+                            + sum(date.fromisoformat(d).weekday() == 6 and a["kind"] in ("WORK", "DUTY", "OFF") for d, a in prior.items()))
         sunday_totals[pid] = (sum(work[pid, d] for d in sundays) + historical, opportunities)
     if not _coverage(model, data, employees, choices, shifts, started):
         return _response("UNKNOWN", [], started)
@@ -167,8 +250,9 @@ def solve(data, force=None):
     groups = {}
     for person in employees:
         # Comparable opportunities only; absence/new-hire histories are not a debt.
-        key = (person["sector"], person["role"], person["maxConsecutiveSundays"],
-               person["weeklyHours"])
+        key = (person.get("scheduleMode", "TIMED"), person["sector"], person["role"], sunday_limit(person),
+               () if person.get("scheduleMode") == "UNTIMED" else
+               tuple(effective_weekly_hours(person, dates[index + 6]) for index in range(0, len(dates), 7)))
         groups.setdefault(key, []).append(person["id"])
     for index, members in enumerate(groups.values()):
         if len(members) < 2:
@@ -211,6 +295,8 @@ def solve(data, force=None):
                 item = {"employeeId": key[0], "date": day, "kind": "OFF"}
                 if old.get("kind") == "ABSENCE":
                     item["kind"] = "ABSENCE"
+                elif person.get("scheduleMode") == "UNTIMED" and solver.value(work[key]):
+                    item["kind"] = "DUTY"
                 else:
                     for sid, variable in choices[key].items():
                         if solver.value(variable):
@@ -237,18 +323,20 @@ def _streaks(model, person, dates, work, off, prior, active, policy):
         window = timeline[end - maximum:end + 1]
         if not any(d in active for d in window):
             continue
-        terms = [work.get((pid, d), int(prior.get(d, {}).get("kind") == "WORK")) for d in window]
+        terms = [work.get((pid, d), int(prior.get(d, {}).get("kind") in ("WORK", "DUTY"))) for d in window]
         model.add(sum(terms) <= maximum)
     sundays = [d for d in timeline if date.fromisoformat(d).weekday() == 6]
-    maximum = person["maxConsecutiveSundays"]
+    maximum = sunday_limit(person)
     for end in range(maximum, len(sundays)):
         window = sundays[end - maximum:end + 1]
         if any(d in active for d in window):
-            model.add(sum(work.get((pid, d), int(prior.get(d, {}).get("kind") == "WORK"))
+            model.add(sum(work.get((pid, d), int(prior.get(d, {}).get("kind") in ("WORK", "DUTY")))
                           for d in window) <= maximum)
 
 
 def _rest(model, person, dates, choices, off, prior, shifts, policy):
+    if person.get("scheduleMode") == "UNTIMED":
+        return  # No timestamps exist to establish an hourly rest interval.
     pid = person["id"]
     occupied = []
     for day, entry in prior.items():
@@ -275,12 +363,14 @@ def _rest(model, person, dates, choices, off, prior, shifts, policy):
                     model.add(variable + next_variable + resting <= 2)
 
 
-def _civil_rest(model, person, dates, choices, off, prior, shifts):
+def _civil_rest(model, person, dates, choices, work, off, prior, shifts):
     pid = person["id"]
     sunday_terms = {}
     for (employee, day), options in choices.items():
         if employee != pid:
             continue
+        if person.get("scheduleMode") == "UNTIMED" and date.fromisoformat(day).weekday() == 6:
+            sunday_terms.setdefault(day, []).append(work[pid, day])
         for sid, variable in options.items():
             for occupied in occupied_dates(day, shifts[sid]):
                 if occupied != day and (pid, occupied) in off:
@@ -288,9 +378,10 @@ def _civil_rest(model, person, dates, choices, off, prior, shifts):
                 if date.fromisoformat(occupied).weekday() == 6:
                     sunday_terms.setdefault(occupied, []).append(variable)
     for day, assignment in prior.items():
-        if assignment["kind"] != "WORK":
+        if assignment["kind"] not in ("WORK", "DUTY"):
             continue
-        for occupied in occupied_dates(day, shifts[assignment["shiftId"]]):
+        occupied_days = {day} if assignment["kind"] == "DUTY" else occupied_dates(day, shifts[assignment["shiftId"]])
+        for occupied in occupied_days:
             if (pid, occupied) in off:
                 model.add(off[pid, occupied] == 0)
             if date.fromisoformat(occupied).weekday() == 6:
@@ -306,7 +397,7 @@ def _civil_rest(model, person, dates, choices, off, prior, shifts):
         else:
             model.add(present == 0)
         occupied_sundays[day] = present
-    cap = person["maxConsecutiveSundays"]
+    cap = sunday_limit(person)
     for end in range(cap, len(sundays)):
         group = sundays[end - cap:end + 1]
         if group[-1] >= dates[0]:
@@ -331,7 +422,9 @@ def _coverage(model, data, employees, choices, shifts, started):
         for sid, variable in options.items():
             register(pid, day, sid, variable)
     for person in employees:
-        for assignment in person["history"]:
+        if person.get("scheduleMode") == "UNTIMED":
+            continue
+        for assignment in {a["date"]: a for a in person.get("planningHistory", []) + person["history"]}.values():
             if assignment["kind"] == "WORK":
                 register(person["id"], assignment["date"], assignment["shiftId"], 1)
     for demand in data["demands"]:

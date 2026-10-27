@@ -9,9 +9,9 @@ const resultSchema = z.strictObject({
   wallTimeSeconds: z.number().finite().min(0).max(60),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
-    kind: z.enum(["WORK", "OFF", "ABSENCE"]),
+    kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE"]),
     shiftId: z.string().max(100).optional(), locked: z.boolean().optional(),
-  })).max(6300),
+  })).max(10500),
 });
 
 export class EscalaSolverError extends Error {
@@ -28,7 +28,7 @@ export async function solveEscala(
   force: { employeeId?: string; offDates?: string[]; weekStart?: string; excludedOffPairs?: string[][] } = {},
 ): Promise<EscalaSolveResult> {
   const parsed = escalaInputSchema.parse(input);
-  if (force.employeeId && !parsed.employees.some((person) => person.id === force.employeeId)) {
+  if (force.employeeId && !parsed.employees.some((person) => person.id === force.employeeId && person.planningEnabled !== false)) {
     throw new Error("Colaborador da sugestão não pertence à escala.");
   }
   if (force.offDates?.some((day) => !isDate(day) || day < input.startDate || day > input.endDate)
@@ -66,6 +66,7 @@ export async function solveEscala(
       const assignments = new Map(result.assignments.map((item) => [`${item.employeeId}\0${item.date}`, item]));
       let expected = 0;
       for (const person of parsed.employees) {
+        if (person.planningEnabled === false) continue;
         for (const day of dateRange(parsed.startDate, parsed.endDate)) {
           if (day < person.activeFrom || (person.activeUntil && day > person.activeUntil)) continue;
           expected++;

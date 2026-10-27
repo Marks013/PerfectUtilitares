@@ -48,7 +48,7 @@ describe("Escalas import preview", () => {
   });
   it("rejects unsupported layouts, excessive rows and ZIP impostors", async () => {
     expect(() => previewEscalaRows([["FPRE131"], row()], options)).toThrow(/modelo/);
-    expect(() => previewEscalaRows([header, ...Array.from({ length: 151 }, row)], options)).toThrow(/150/);
+    expect(() => previewEscalaRows([header, ...Array.from({ length: 251 }, row)], options)).toThrow(/250/);
     await expect(previewEscalaImport(Buffer.from("not-xlsx"), "xlsx", options)).rejects.toThrow(/segurança/);
     await expect(previewEscalaImport(Buffer.from([0xff]), "csv", options)).rejects.toThrow();
   });

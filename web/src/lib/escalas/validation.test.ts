@@ -22,7 +22,7 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
     employees: [{
       id, registration: "0001", name: "Ana Silva", sector: "Reposição", role: "Repositor",
       weeklyHours: hours, shiftIds: ["day"], activeFrom: "2020-01-01", offMode: "VARIABLE", fixedOffDays: [],
-      offPattern: "ANY", maxConsecutiveSundays: 2, preferredOffDays: [], historyKnown: true,
+      offPattern: "ANY", maxConsecutiveSundays: 2, sundayRestRule: "COMMERCE", preferredOffDays: [], historyKnown: true,
       history: dateRange(addDays(startDate, -21), addDays(startDate, -1)).map(make),
     }],
     shifts: [{ id: "day", name: "Diurno", segments: [
@@ -73,8 +73,9 @@ describe("independent Escalas validation", () => {
   it("does not treat a historical gap as known rest", () => {
     const input = fixture();
     input.employees[0].history.splice(5, 1);
-    expect(codes(input)).toContain("HISTORY_PENDING");
-    expect(validateEscala(input).readyToPublish).toBe(false);
+    expect(codes(input)).toContain("HISTORY_UNVERIFIED");
+    expect(validateEscala(input).issues).toContainEqual(expect.objectContaining({ code: "HISTORY_UNVERIFIED", severity: "WARNING" }));
+    expect(validateEscala(input).readyToPublish).toBe(true);
   });
 
   it("does not request history before an actual admission", () => {
@@ -82,7 +83,7 @@ describe("independent Escalas validation", () => {
     input.employees[0].activeFrom = input.startDate;
     input.employees[0].historyKnown = false;
     input.employees[0].history = [];
-    expect(codes(input)).not.toContain("HISTORY_PENDING");
+    expect(codes(input)).not.toContain("HISTORY_UNVERIFIED");
     expect(validateEscala(input).readyToPublish).toBe(true);
   });
 
@@ -237,7 +238,7 @@ describe("independent Escalas validation", () => {
     input.demands = [];
     const result = validateEscala(input);
     expect(result.issues).toContainEqual(expect.objectContaining({ code: "ACTIVE_EMPLOYEES_PENDING" }));
-    expect(result.issues.map((issue) => issue.code)).not.toContain("HISTORY_PENDING");
+    expect(result.issues.map((issue) => issue.code)).not.toContain("HISTORY_UNVERIFIED");
     expect(result.readyToPublish).toBe(false);
   });
 

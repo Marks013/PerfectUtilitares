@@ -13,6 +13,7 @@ import {
   parseClock,
   replaceAssignment,
   responseMessage,
+  selectNormativeProfile,
 } from "./workspace-model";
 
 function employee(registration: string): EscalaEmployee {
@@ -86,14 +87,94 @@ describe("Escalas workspace model", () => {
     },
   );
 
-  it("requires actual admission and explicit history for a new person", () => {
+  it("leaves optional admission and history empty and uses protective Sundays for a new person", () => {
     const result = newEmployee(40, "horario-40");
     expect(result.activeFrom).toBe("");
     expect(result.historyKnown).toBe(false);
     expect(result.history).toEqual([]);
     expect(result.maxConsecutiveSundays).toBe(1);
+    expect(result.sundayRestRule).toBe("PROTECTIVE");
     expect(result.weeklyHours).toBe(40);
     expect(result.shiftIds).toEqual(["horario-40"]);
+  });
+
+  it.each([
+    ["2026-12", 44, [528, 504]],
+    ["2027-12", 42, [504, 480]],
+    ["2028-01", 44, [480]],
+    ["2026-12", 40, [480]],
+  ] as const)(
+    "prepares exact shift alternatives for %s without increasing a %ih contract",
+    (month, hours, expected) => {
+      const input = newInput("2", "Centro", month, hours);
+      const minutes = input.shifts.map((shift) =>
+        shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0),
+      );
+      expect(minutes).toEqual(expected);
+      expect(input.shifts[0].id).toBe("turno-inicial");
+      expect(input.defaultWeeklyHours).toBe(hours);
+      expect(input.policy.transitionWeekAccepted).toBe(false);
+      expect(input.policy.collectiveAgreement).toBeUndefined();
+      expect(input.policy.normativeProfile).toBe("CUSTOM");
+      expect(escalaInputSchema.safeParse(input).success).toBe(true);
+    },
+  );
+
+  it("keeps every selected initial shift for the transition without sharing mutable arrays", () => {
+    const shifts = ["turno-inicial", "turno-inicial-40h"];
+    const result = newEmployee(42, shifts);
+    expect(result.shiftIds).toEqual(shifts);
+    result.shiftIds.push("outro");
+    expect(shifts).toHaveLength(2);
+    expect(result.sundayRestRule).toBe("PROTECTIVE");
+  });
+
+  it("selects the CCT without changing contracts, shifts or closures and requires fresh evidence review", () => {
+    const input = newInput("2", "Centro", "2026-10", 40);
+    input.employees = [employee("0001")];
+    input.policy.closedDates = ["2026-10-30"];
+    input.policy.reviewed = true;
+    input.policy.collectiveAgreement = {
+      source: "Instrumento anterior",
+      validFrom: "2026-01-01",
+      validUntil: "2027-12-31",
+      reviewedBy: "Responsável",
+      reviewed: true,
+    };
+    input.policy.operationalCertificate = {
+      identifier: "Certidão anterior",
+      validFrom: "2026-01-01",
+      validUntil: "2027-12-31",
+      reviewedBy: "Responsável",
+      reviewed: true,
+      sundays: true,
+      holidays: false,
+      after20: false,
+    };
+    const selected = selectNormativeProfile(input, "SINDECOMU_SUPERMARKETS_2026_2027");
+    expect(selected.policy).toMatchObject({
+      source: expect.stringContaining("PR003084/2026"),
+      validFrom: "2026-06-01",
+      validUntil: "2027-05-31",
+      reviewed: false,
+      holidayRestAllowed: false,
+      maxConsecutiveWorkDays: 6,
+    });
+    expect(selected.policy.collectiveAgreement).toMatchObject({ source: "Instrumento anterior", reviewed: false });
+    expect(selected.policy.operationalCertificate).toMatchObject({
+      identifier: "Certidão anterior",
+      sundays: true,
+      reviewed: false,
+    });
+    expect(selected.employees).toEqual(input.employees);
+    expect(selected.shifts).toEqual(input.shifts);
+    expect(selected.policy.closedDates).toEqual(["2026-10-30"]);
+    expect(input.policy.reviewed).toBe(true);
+    expect(input.policy.collectiveAgreement.reviewed).toBe(true);
+    const custom = selectNormativeProfile(selected, "CUSTOM");
+    expect(custom.policy.source).toBe(selected.policy.source);
+    expect(custom.policy.validFrom).toBe(selected.policy.validFrom);
+    expect(custom.policy.reviewed).toBe(false);
   });
 
   it("replaces only the selected person and date, preserving locked decisions elsewhere", () => {
@@ -154,6 +235,15 @@ describe("Escalas workspace model", () => {
   it("does not allow duplicate registrations within one preview", () => {
     const input = newInput("1", "Centro", "2026-10", 42);
     expect(() => mergeImport(input, [employee("0001"), employee("0001")], [])).toThrow("matrícula já cadastrada");
+  });
+
+  it("accepts a 200-person branch in one import and rejects more than 250 without mutation", () => {
+    const input = newInput("1", "Centro", "2026-10", 42);
+    const people = Array.from({ length: 250 }, (_, index) => employee(String(index + 1)));
+    expect(mergeImport(input, people.slice(0, 200), []).employees).toHaveLength(200);
+    expect(mergeImport(input, people, []).employees).toHaveLength(250);
+    expect(() => mergeImport(input, [...people, employee("251")], [])).toThrow("250 colaboradores");
+    expect(input.employees).toHaveLength(0);
   });
 
   it("extracts structured errors without exposing raw server payloads", () => {

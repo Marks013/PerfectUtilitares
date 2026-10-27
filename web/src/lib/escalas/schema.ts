@@ -9,7 +9,7 @@ const weeklyHours = z.union([z.literal(40), z.literal(42), z.literal(44)]);
 const days = z.array(z.number().int().min(0).max(6)).max(7).refine((value) => new Set(value).size === value.length, "Dias duplicados");
 
 const assignment = z.strictObject({
-  employeeId: identifier, date, kind: z.enum(["WORK", "OFF", "ABSENCE"]),
+  employeeId: identifier, date, kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE"]),
   shiftId: identifier.optional(), locked: z.boolean().optional(),
 }).superRefine((value, context) => {
   if ((value.kind === "WORK") !== (value.shiftId !== undefined)) {
@@ -45,11 +45,18 @@ const shift = z.strictObject({
 const employee = z.strictObject({
   id: identifier, registration: label, name: label,
   sector: z.string().trim().max(160), role: z.string().trim().max(160), weeklyHours,
-  shiftIds: z.array(identifier).min(1).max(12), activeFrom: date, activeUntil: date.optional(),
+  shiftIds: z.array(identifier).max(12), activeFrom: z.union([date, z.literal("")]), activeUntil: date.optional(),
+  planningEnabled: z.boolean().optional(),
+  scheduleMode: z.enum(["TIMED", "UNTIMED"]).optional(),
+  planningExclusionReason: z.string().trim().max(240).optional(),
+  sourceSchedule: z.strictObject({ report: z.literal("FPRE136"), code: z.string().trim().max(40),
+    description: z.string().trim().max(180), weekday: z.string().trim().max(180), saturday: z.string().trim().max(180) }).optional(),
   offMode: z.enum(["VARIABLE", "MIXED", "FIXED"]), fixedOffDays: days,
   offPattern: z.enum(["ANY", "CONSECUTIVE", "PREFER_CONSECUTIVE"]),
   maxConsecutiveSundays: z.union([z.literal(1), z.literal(2)]), preferredOffDays: days,
+  sundayRestRule: z.enum(["PROTECTIVE", "UNREVIEWED", "CLT_386", "COMMERCE"]).optional(),
   historyKnown: z.boolean(), history: z.array(assignment).max(56),
+  planningHistory: z.array(assignment).max(56).optional(),
 }).superRefine((value, context) => {
   const expected = { VARIABLE: 0, MIXED: 1, FIXED: 2 }[value.offMode];
   if (value.fixedOffDays.length !== expected) context.addIssue({ code: "custom", path: ["fixedOffDays"], message: `Este modo exige ${expected} dia(s) fixo(s)` });
@@ -61,6 +68,18 @@ const policy = z.strictObject({
   source: z.string().trim().max(1000), validFrom: date, validUntil: date,
   reviewed: z.boolean(), reviewedBy: z.string().trim().max(160), weeklyLimit: weeklyHours,
   dailyLimitMinutes: z.number().int().min(1).max(600), compensationAuthorized: z.boolean(),
+  normativeProfile: z.enum(["CUSTOM", "SINDECOMU_SUPERMARKETS_2026_2027"]).optional(),
+  transitionWeekAccepted: z.boolean().optional(),
+  coverageReview: z.enum(["SUGGESTED", "CONFIRMED"]).optional(),
+  collectiveAgreement: z.strictObject({
+    source: z.string().trim().max(1000), validFrom: z.union([date, z.literal("")]), validUntil: z.union([date, z.literal("")]),
+    reviewedBy: z.string().trim().max(160), reviewed: z.boolean(),
+  }).refine((value) => !value.validFrom || !value.validUntil || value.validUntil >= value.validFrom, "Vigência do acordo inválida").optional(),
+  operationalCertificate: z.strictObject({
+    identifier: z.string().trim().max(160), validFrom: z.union([date, z.literal("")]), validUntil: z.union([date, z.literal("")]),
+    reviewedBy: z.string().trim().max(160), reviewed: z.boolean(),
+    sundays: z.boolean(), holidays: z.boolean(), after20: z.boolean(),
+  }).refine((value) => !value.validFrom || !value.validUntil || value.validUntil >= value.validFrom, "Vigência da certidão inválida").optional(),
   minInterShiftMinutes: z.number().int().min(660).max(1440),
   minWeeklyRestMinutes: z.number().int().min(2100).max(4320),
   minMealMinutes: z.number().int().min(30).max(180),
@@ -75,12 +94,12 @@ const policy = z.strictObject({
 export const escalaInputSchema = z.strictObject({
   schemaVersion: z.literal(1), branchCode: label, branchName: label, startDate: planningDate, endDate: planningDate,
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,
-  employees: z.array(employee).max(150), shifts: z.array(shift).max(40),
+  employees: z.array(employee).max(250), shifts: z.array(shift).max(120),
   demands: z.array(z.strictObject({
     id: identifier, date, sector: label, role: label.optional(),
     start: z.number().int().min(0).max(1439), end: z.number().int().min(1).max(1440),
-    minimum: z.number().int().min(0).max(150),
-  })).max(3000), assignments: z.array(assignment).max(6300),
+    minimum: z.number().int().min(0).max(250),
+  })).max(12000), assignments: z.array(assignment).max(10500),
 }).superRefine((value, context) => {
   if (!isDate(value.startDate) || !isDate(value.endDate)) return;
   const dates = value.endDate >= value.startDate && value.endDate <= addDays(value.startDate, 41) ? dateRange(value.startDate, value.endDate) : [];
@@ -112,6 +131,7 @@ export const escalaInputSchema = z.strictObject({
   value.employees.forEach((person, index) => {
     if (person.shiftIds.some((id) => !shiftIds.has(id))) context.addIssue({ code: "custom", path: ["employees", index, "shiftIds"], message: "Turno permitido inexistente" });
     checkAssignments(person.history, ["employees", index, "history"], person.id);
+    checkAssignments(person.planningHistory ?? [], ["employees", index, "planningHistory"], person.id);
     const duplicate = value.employees.slice(0, index).some((previous) => previous.registration === person.registration
       && previous.activeFrom <= (person.activeUntil ?? "2099-12-31")
       && person.activeFrom <= (previous.activeUntil ?? "2099-12-31"));

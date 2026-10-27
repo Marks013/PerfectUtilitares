@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import { strToU8, zipSync } from "fflate";
 import type { EscalaEmployee, EscalaWorkspace } from "./types";
 import { sortEmployees } from "./order";
+import { effectiveWeeklyHours, weeklyTargets } from "./labor-rules";
 
 function datesBetween(start: string, end: string) {
   const dates: string[] = [];
@@ -28,15 +29,15 @@ function exportRows(workspace: EscalaWorkspace) {
   const { input } = workspace;
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const assignments = new Map(input.assignments.map((assignment) => [`${assignment.employeeId}\0${assignment.date}`, assignment]));
-  const rows: (string | number)[][] = [["Filial", "Setor", "Cargo", "Matrícula", "Nome", "Data", "Situação", "Horário", "Minutos de jornada", "Carga contratual semanal", "Versão", "Estado"]];
+  const rows: (string | number)[][] = [["Filial", "Setor", "Cargo", "Matrícula", "Nome", "Data", "Situação", "Horário", "Minutos de jornada", "Carga semanal de referência", "Versão", "Estado", "Carga vigente nesta semana", "Regra dominical"]];
   for (const employee of sortEmployees(input.employees)) {
     for (const date of datesBetween(input.startDate, input.endDate)) {
       const item = assignments.get(`${employee.id}\0${date}`);
       const shift = item?.kind === "WORK" ? shifts.get(item.shiftId ?? "") : undefined;
       const minutes = shift?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0) ?? 0;
       const schedule = shift?.segments.filter((segment) => segment.kind === "WORK").map((segment) => `${duration(segment.start)}-${duration(segment.end)}`).join(" / ") ?? "";
-      const state = date < employee.activeFrom || (employee.activeUntil && date > employee.activeUntil) ? "Fora do vínculo" : !item ? "Não definido" : item.kind === "OFF" ? "Folga" : item.kind === "ABSENCE" ? "Ausência" : "Trabalho";
-      rows.push([`${input.branchCode} - ${input.branchName}`, employee.sector, employee.role, employee.registration, employee.name, date, state, schedule, minutes, employee.weeklyHours, workspace.revision, workspace.status === "PUBLISHED" ? "Publicada" : "Rascunho"]);
+      const state = employee.planningEnabled === false ? "Fora da geração" : date < employee.activeFrom || (employee.activeUntil && date > employee.activeUntil) ? "Fora do vínculo" : !item ? "Não definido" : item.kind === "OFF" ? "Folga" : item.kind === "ABSENCE" ? "Ausência" : item.kind === "DUTY" ? "Trabalho sem horário fixo" : "Trabalho";
+      rows.push([`${input.branchCode} - ${input.branchName}`, employee.sector, employee.role, employee.registration, employee.name, date, state, schedule, employee.scheduleMode === "UNTIMED" ? "Não apurados" : minutes, employee.scheduleMode === "UNTIMED" ? "Sem horário fixo" : employee.weeklyHours, workspace.revision, workspace.status === "PUBLISHED" ? "Publicada" : "Rascunho", employee.scheduleMode === "UNTIMED" ? "Não apurada" : employee.planningEnabled === false ? 0 : effectiveWeeklyHours(employee, date), employee.sundayRestRule === "COMMERCE" && employee.maxConsecutiveSundays === 2 ? "Comércio: uma folga em três domingos" : "Quinzenal protetiva"]);
     }
   }
   return rows;
@@ -46,7 +47,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace): Uint8Array {
   const rows = exportRows(workspace);
   const issues: (string | number)[][] = [["Estado", "Código", "Colaborador", "Data", "Conferência"]];
   const names = new Map(workspace.input.employees.map((employee) => [employee.id, `${employee.registration} - ${employee.name}`]));
-  for (const issue of workspace.validation.issues) issues.push([issue.severity === "ERROR" ? "Impedimento" : "Pendência", issue.code, issue.employeeId ? names.get(issue.employeeId) ?? "" : "", issue.date ?? "", issue.message]);
+  for (const issue of workspace.validation.issues) issues.push([issue.severity === "ERROR" ? "Impedimento" : issue.severity === "WARNING" ? "Limite de conferência" : "Pendência", issue.code, issue.employeeId ? names.get(issue.employeeId) ?? "" : "", issue.date ?? "", issue.message]);
   if (issues.length === 1) issues.push(["Conferido", "", "", "", "Sem impedimentos ou pendências nesta versão."]);
   return zipSync({
     "[Content_Types].xml": strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'),
@@ -76,7 +77,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace): Promise<Uint8
   const font = await document.embedFont(StandardFonts.Helvetica);
   const bold = await document.embedFont(StandardFonts.HelveticaBold);
   const { input } = workspace;
-  const employees = sortEmployees(input.employees);
+  const employees = sortEmployees(input.employees.filter((person) => person.planningEnabled !== false));
   const assignments = new Map(input.assignments.map((item) => [`${item.employeeId}\0${item.date}`, item]));
   const summaries = new Map(workspace.validation.summaries.map((item) => [item.employeeId, item]));
   const allDates = datesBetween(input.startDate, input.endDate);
@@ -95,7 +96,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace): Promise<Uint8
     y -= 19;
     write(`Escala 5x2 | ${input.startDate} a ${input.endDate} | Versão ${workspace.revision} | ${workspace.status === "PUBLISHED" ? "PUBLICADA" : "RASCUNHO"}`, margin, y, 10);
     y -= 17;
-    write("Legenda: F = Folga | A = Ausência | SV = Fora do vínculo | ? = Não definido | Turnos ao final", margin, y, 9);
+    write(`F = Folga | SH = Trabalho sem horário fixo | A = Ausência | SV = Fora do vínculo | ? = Não definido | ${input.employees.length - employees.length} fora da geração`, margin, y, 9);
     y -= 23;
     write("Matrícula / colaborador", margin, y, 10, true, labelWidth - 8);
     dates.forEach((date, index) => { write(`${date.slice(8)}/${date.slice(5, 7)} ${["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"][index]}`, margin + labelWidth + index * cellWidth, y, 10, true, cellWidth - 4); });
@@ -119,7 +120,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace): Promise<Uint8
       write(`${employee.registration} - ${employee.name}`, margin, y, 10, false, labelWidth - 8);
       dates.forEach((date, index) => {
         const item = assignments.get(`${employee.id}\0${date}`);
-        const value = date < employee.activeFrom || (employee.activeUntil && date > employee.activeUntil) ? "SV" : !item ? "?" : item.kind === "OFF" ? "F" : item.kind === "ABSENCE" ? "A" : shiftCodes.get(item.shiftId ?? "") ?? "?";
+        const value = date < employee.activeFrom || (employee.activeUntil && date > employee.activeUntil) ? "SV" : !item ? "?" : item.kind === "OFF" ? "F" : item.kind === "ABSENCE" ? "A" : item.kind === "DUTY" ? "SH" : shiftCodes.get(item.shiftId ?? "") ?? "?";
         write(value, margin + labelWidth + index * cellWidth, y, 9, false, cellWidth - 5);
       });
       y -= 19;
@@ -137,14 +138,19 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace): Promise<Uint8
       summaryGroup = group;
     }
     const summary = summaries.get(employee.id);
-    write(`${employee.registration} - ${employee.name} | Contrato ${employee.weeklyHours}h/semana | Previsto ${duration(summary?.workedMinutes ?? 0)} | ${summary?.workDays ?? 0} dias de trabalho`, margin, y, 10); y -= 18;
+    const targets = [...new Set(weeklyTargets(input, employee).map((week) => week.hours))].join("/");
+    write(employee.scheduleMode === "UNTIMED"
+      ? `${employee.registration} - ${employee.name} | Sem horário fixo | ${summary?.workDays ?? 0} dias de trabalho | ${summary?.offDays ?? 0} folgas | Horas não apuradas`
+      : `${employee.registration} - ${employee.name} | Referência ${employee.weeklyHours}h | Vigente ${targets}h/semana | Previsto ${duration(summary?.workedMinutes ?? 0)} | ${summary?.workDays ?? 0} dias`, margin, y, 10); y -= 18;
   }
   for (const shift of input.shifts) {
     if (y < 60) newPage([]);
     write(`${shiftCodes.get(shift.id)} - ${shift.name}: ${shift.segments.map((segment) => `${duration(segment.start)}-${duration(segment.end)} ${segment.kind === "WORK" ? "trabalho" : segment.kind === "BREAK" ? "intervalo" : "pausa remunerada"}`).join(" / ")}`, margin, y, 9); y -= 18;
   }
-  if (y < 75) newPage([]);
+  if (y < 105) newPage([]);
   write(`Conferência: ${workspace.validation.issues.filter((issue) => issue.severity === "ERROR").length} impedimentos e ${workspace.validation.issues.filter((issue) => issue.severity === "PENDING").length} pendências. Consulte a versão no sistema.`, margin, y - 10, 10, true);
+  const limited = workspace.validation.issues.some((issue) => issue.code === "HISTORY_UNVERIFIED");
+  if (limited) write("Continuidade real anterior não conferida. A proposta usa o planejamento informado; não comprova registros de ponto.", margin, y - 30, 9, true);
   const pages = document.getPages();
   pages.forEach((item, index) => { item.drawText(`PerfectUtilitares | Filial ${safePdfText(input.branchCode, font)} | ${index + 1}/${pages.length}`, { x: margin, y: 16, size: 8, font }); });
   document.setTitle(`Escala - Filial ${input.branchCode} - ${input.startDate}`);

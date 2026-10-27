@@ -10,10 +10,11 @@ function assignmentLabel(assignment: EscalaAssignment | undefined, input: Escala
   if (!assignment) return "Pendente";
   if (assignment.kind === "OFF") return "Folga";
   if (assignment.kind === "ABSENCE") return "Ausência";
+  if (assignment.kind === "DUTY") return "Trabalho sem horário fixo";
   return input.shifts.find((shift) => shift.id === assignment.shiftId)?.name ?? "Turno não encontrado";
 }
 
-function CellEditor({
+export function CellEditor({
   employee,
   date,
   assignment,
@@ -30,7 +31,9 @@ function CellEditor({
   onApply: (assignment: EscalaAssignment) => void;
   onCancel: () => void;
 }) {
-  const [kind, setKind] = useState<EscalaAssignment["kind"]>(assignment?.kind ?? "WORK");
+  const [kind, setKind] = useState<EscalaAssignment["kind"]>(
+    assignment?.kind ?? (employee.scheduleMode === "UNTIMED" ? "DUTY" : "WORK"),
+  );
   const [shiftId, setShiftId] = useState(assignment?.shiftId ?? employee.shiftIds[0] ?? "");
   const [locked, setLocked] = useState(assignment?.locked ?? false);
   const wasLocked = Boolean(assignment?.locked);
@@ -67,13 +70,15 @@ function CellEditor({
               onChange={(event) => setKind(event.target.value as EscalaAssignment["kind"])}
               className={controlClass}
             >
-              <option value="WORK">Trabalho</option>
+              {employee.scheduleMode === "UNTIMED"
+                ? <option value="DUTY">Trabalho sem horário fixo</option>
+                : <option value="WORK">Trabalho</option>}
               <option value="OFF">Folga</option>
               <option value="ABSENCE">Ausência</option>
             </select>
           )}
         </Field>
-        {kind === "WORK" && (
+        {kind === "WORK" && employee.scheduleMode !== "UNTIMED" && (
           <Field label="Turno autorizado">
             {(id) => (
               <select
@@ -278,7 +283,9 @@ export function Roster({
                   >
                     <span className="block break-words">{employee.name}</span>
                     <span className="block text-xs font-normal text-[color:var(--app-muted)]">
-                      {employee.registration} · {employee.weeklyHours}h por semana
+                      {employee.registration} · {employee.scheduleMode === "UNTIMED"
+                        ? "Sem horário fixo · horas não apuradas"
+                        : `${employee.weeklyHours}h por semana`}
                     </span>
                     {summary && (
                       <span className="block text-xs font-normal">
@@ -298,7 +305,7 @@ export function Roster({
                   {dates.map((date) => {
                     const assignment = assignments.get(`${employee.id}:${date}`);
                     const inactive =
-                      date < employee.activeFrom || Boolean(employee.activeUntil && date > employee.activeUntil);
+                      Boolean(employee.activeFrom && date < employee.activeFrom) || Boolean(employee.activeUntil && date > employee.activeUntil);
                     return (
                       <td key={date} className="border-b border-[color:var(--app-border)] p-1.5 align-top">
                         {inactive ? (

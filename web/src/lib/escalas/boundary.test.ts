@@ -23,7 +23,7 @@ function sundayMondayFixture(): EscalaInput {
     employees: [{
       id: "person-1", registration: "0001", name: "Ana Silva", sector: "Reposição", role: "Repositor",
       weeklyHours: 40, shiftIds: ["day"], activeFrom: "1995-05-01", offMode: "FIXED", fixedOffDays: [0, 6],
-      offPattern: "CONSECUTIVE", maxConsecutiveSundays: 2, preferredOffDays: [], historyKnown: true,
+      offPattern: "CONSECUTIVE", maxConsecutiveSundays: 2, sundayRestRule: "COMMERCE", preferredOffDays: [], historyKnown: true,
       history: dateRange(addDays(startDate, -21), addDays(startDate, -1)).map(assignment),
     }],
     shifts: [{ id: "day", name: "Diurno", segments: [
@@ -95,10 +95,10 @@ describe("explicit fixed off-day boundary reservations", () => {
     expect(fixedBoundaryReservations(input)).toEqual([]);
   });
 
-  it("still requires real prior history and does not backfill a previous Sunday", () => {
+  it("warns about missing real history and does not invent the previous Sunday for a required pair", () => {
     const input = sundayMondayFixture();
     input.employees[0].history.pop();
-    expect(validateEscala(input).issues).toContainEqual(expect.objectContaining({ code: "HISTORY_PENDING" }));
+    expect(validateEscala(input).issues).toContainEqual(expect.objectContaining({ code: "HISTORY_UNVERIFIED", severity: "WARNING" }));
     expect(validateEscala(input).issues).toContainEqual(expect.objectContaining({ code: "CONSECUTIVE_PENDING", date: input.startDate }));
     expect(validateEscala(input).readyToPublish).toBe(false);
   });
