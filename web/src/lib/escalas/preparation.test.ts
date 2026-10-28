@@ -269,8 +269,8 @@ describe("branch-wide proposal preparation", () => {
     const validation = validateEscala(input);
     const bytes = exportEscalaXlsx({ id: "w", revision: 1, status: "DRAFT", input, validation, canEdit: true, canPublish: true, updatedAt: "2028-01-03" });
     const archive = unzipSync(bytes);
-    expect(strFromU8(archive["xl/worksheets/sheet1.xml"])).toContain("Carga vigente nesta semana");
-    expect(strFromU8(archive["xl/worksheets/sheet1.xml"])).toContain("<v>40</v>");
-    expect(strFromU8(archive["xl/worksheets/sheet2.xml"])).toContain("Limite de conferência");
+    expect(strFromU8(archive["xl/worksheets/sheet4.xml"])).toContain("Carga vigente nesta semana");
+    expect(strFromU8(archive["xl/worksheets/sheet4.xml"])).toContain("<v>40</v>");
+    expect(strFromU8(archive["xl/worksheets/sheet2.xml"])).toContain("Informação");
   });
 });

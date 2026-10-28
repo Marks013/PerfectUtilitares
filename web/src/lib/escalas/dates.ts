@@ -45,3 +45,29 @@ export function absoluteMinute(date: string, minute: number): number {
   }
   throw new Error("Horário civil inexistente ou ambíguo na mudança de fuso");
 }
+
+/** Calendar presentation never truncates the solver or the continuity verifier. */
+export function monthBounds(month: string): { startDate: string; endDate: string } {
+  if (!/^(?:20)\d{2}-(?:0[1-9]|1[0-2])$/.test(month)) throw new Error("Mês inválido.");
+  const [year, number] = month.split("-").map(Number);
+  return { startDate: month + "-01", endDate: new Date(Date.UTC(year, number, 0)).toISOString().slice(0, 10) };
+}
+
+type PresentationPeriod = { startDate: string; endDate: string; visibleMonth?: string };
+
+export function visibleDates(input: PresentationPeriod): string[] {
+  if (input.visibleMonth) {
+    const month = monthBounds(input.visibleMonth);
+    if (month.startDate < input.startDate || month.endDate > input.endDate) throw new Error("O mês não está contido no horizonte técnico.");
+    return dateRange(month.startDate, month.endDate);
+  }
+  // Old monthly revisions did not store their month. Infer only an exact full-month horizon,
+  // keeping genuinely weekly legacy proposals unchanged and never rewriting their data.
+  const technical = dateRange(input.startDate, input.endDate);
+  if (!technical.length) return [];
+  const middle = technical[Math.floor(technical.length / 2)].slice(0, 7);
+  const month = monthBounds(middle);
+  if (weekStart(month.startDate) === input.startDate && addDays(month.endDate, 6 - dayOfWeek(month.endDate)) === input.endDate)
+    return dateRange(month.startDate, month.endDate);
+  return technical;
+}

@@ -102,7 +102,9 @@ test("FPRE131 totals allow analysis, general adjustment and selected rules", asy
   await page.getByRole("button", { name: "Adicionar regra", exact: true }).click();
   await page.getByLabel("Salário mínimo").fill("2.000,00");
   await page.getByLabel("Salário máximo").fill("2.200,00");
-  await page.getByLabel("Novo salário fixo").fill("2.300,00");
+  await page.getByRole("combobox", { name: /Cálculo da regra/ }).selectOption("fixed");
+  await expect(page.getByRole("combobox", { name: /Cálculo da regra/ })).toHaveValue("fixed");
+  await page.getByLabel("Novo salário fixo (R$)", { exact: true }).fill("2.300,00");
   await page.getByRole("button", { name: "Selecionar faixa", exact: true }).click();
   await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(3);
   await page.getByRole("radio", { name: /Somente selecionados nas regras/ }).check();

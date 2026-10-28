@@ -19,6 +19,7 @@ export function fixedBoundaryReservations(input: EscalaInput): EscalaAssignment[
     && person.fixedOffDays.includes(0)
     && person.activeFrom <= input.endDate
     && (!person.activeUntil || person.activeUntil >= monday)
-    && sundayOffs.has(person.id))
+    && sundayOffs.has(person.id)
+    && !(person.planningFuture ?? []).some((day) => day.date === monday && day.kind !== "OFF"))
     .map((person) => ({ employeeId: person.id, date: monday, kind: "OFF", locked: true }));
 }

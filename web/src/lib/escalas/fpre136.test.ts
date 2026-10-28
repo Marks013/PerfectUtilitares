@@ -18,7 +18,7 @@ describe("FPRE136 single report import", () => {
     expect(preview.totalRows).toBe(2);
     expect(preview.employees[0]).toMatchObject({ registration: "001", activeFrom: "", weeklyHours: 42, weeklyHoursMode: "BRANCH", planningEnabled: true, scheduleMode: "TIMED", historyKnown: false, history: [], sundayRestRule: "PROTECTIVE", maxConsecutiveSundays: 1,
       sourceSchedule: { report: "FPRE136", code: "0026", description: "07:00 11:00 13:00 16:20", weekday: "07:00-11:00 / 13:00-16:20", saturday: "07:00-11:00 / 13:00-16:20" } });
-    expect(preview.employees[1]).toMatchObject({ registration: "002", planningEnabled: true, scheduleMode: "UNTIMED", shiftIds: [], activeFrom: "", maxConsecutiveSundays: 1, sundayRestRule: "PROTECTIVE" });
+    expect(preview.employees[1]).toMatchObject({ registration: "002", planningEnabled: true, scheduleMode: "MISSING", shiftIds: [], activeFrom: "", maxConsecutiveSundays: 1, sundayRestRule: "PROTECTIVE" });
     expect(preview.shifts).toHaveLength(1);
     expect(preview.shifts[0].segments).toEqual([{ start: 420, end: 660, kind: "WORK" }, { start: 660, end: 780, kind: "BREAK" }, { start: 780, end: 980, kind: "WORK" }]);
     expect(JSON.stringify(preview)).not.toContain('"003"');

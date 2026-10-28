@@ -20,7 +20,7 @@ function shiftText(shift: EscalaShift) {
 export function hoursArePrepared(input: EscalaInput) {
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const weeks = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
-  return input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED")
+  return input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")
     .every((person) => weeks.every((start) => {
       const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
       const target = effectiveWeeklyHours(reference, start) * 12;
@@ -46,6 +46,7 @@ export function hoursProposalGroups(input: EscalaInput, proposed: EscalaInput) {
       return shift ? shiftText(shift) : "";
     }).join(" / ") || "Sem horário fixo";
     const proposal = person.planningEnabled === false ? [person.planningExclusionReason || "Fora da geração"]
+      : person.scheduleMode === "MISSING" ? ["Horário não informado · presença e folgas sem horas fictícias"]
       : person.scheduleMode === "UNTIMED" ? ["Rodízio sem horário fixo · horas não apuradas"]
       : person.shiftIds.flatMap((id) => {
         const shift = afterShifts.get(id);
@@ -65,11 +66,11 @@ export function HoursProposal({ input, disabled, onChange }: { input: EscalaInpu
   const [error, setError] = useState("");
   const current = preview?.source === input ? preview.input : null;
   const prepared = hoursArePrepared(input);
-  const timed = input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED");
+  const timed = input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING");
   const groups = current ? hoursProposalGroups(input, current) : [];
   return <section className={panelClass} aria-labelledby="escala-hours-title">
-    <h3 id="escala-hours-title" className="font-bold">Primeiro, escolher os horários propostos</h3>
-    <p className="text-sm">A carga semanal é distribuída em cinco dias: 40h = 8h00, 42h = 8h24 e 44h = 8h48. O intervalo original é preservado. Confira os novos horários antes de distribuir as folgas.</p>
+    <h3 id="escala-hours-title" className="font-bold">Alternativas de horário da proposta</h3>
+    <p className="text-sm">A carga semanal é distribuída em cinco dias: 40h = 8h00, 42h = 8h24 e 44h = 8h48. O intervalo original é preservado. A geração pode preparar as alternativas automaticamente. Use esta prévia somente quando quiser escolher a estratégia.</p>
     {prepared && <p className="text-sm font-semibold">Os horários incluídos já permitem a carga selecionada. Você pode seguir para as sugestões em massa ou preparar outra alternativa.</p>}
     {timed.length > 0 && <>
       <fieldset disabled={disabled} className="max-w-lg space-y-3">

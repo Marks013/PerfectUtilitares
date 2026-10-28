@@ -4,6 +4,7 @@ import type { EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "./ty
 
 /** Legacy references below the saved branch default may be individual contracts and are never raised. */
 export function planningWeeklyHours(person: EscalaEmployee, savedDefault: WeeklyHours, requested: WeeklyHours): Pick<EscalaEmployee, "weeklyHours" | "weeklyHoursMode"> {
+  if (person.weeklyHoursMode === "INDIVIDUAL") return { weeklyHours: person.weeklyHours, weeklyHoursMode: "INDIVIDUAL" };
   const branchReference = person.weeklyHoursMode === "BRANCH" || (person.weeklyHoursMode !== "INDIVIDUAL"
     && person.sourceSchedule?.report === "FPRE136" && person.weeklyHours === savedDefault);
   const individualMode = person.weeklyHoursMode ?? (person.sourceSchedule?.report === "FPRE136" ? "INDIVIDUAL" : undefined);
@@ -78,7 +79,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
   };
   const employees = input.employees.map((person): EscalaEmployee => {
     if (person.planningEnabled === false) return person;
-    if (person.scheduleMode === "UNTIMED") return { ...person, planningEnabled: true, planningExclusionReason: undefined, shiftIds: [] };
+    if ((person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return { ...person, planningEnabled: true, planningExclusionReason: undefined, shiftIds: [] };
     const source = originalShift(person);
     const base = person.sourceSchedule ? (source ? [source] : []) : person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
     // Never silently turn a short/undefined imported contract into a full-time journey.
@@ -98,7 +99,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
       planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });
   // Reference text remains on each imported employee; only keep referenced shift definitions.
-  const used = new Set([...employees.flatMap((person) => person.shiftIds), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
+  const used = new Set([...employees.flatMap((person) => person.shiftIds), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
   const retained = [...shifts.values()].filter((shift) => used.has(shift.id));
   if (retained.length > 120) throw new Error("A configuração gerou mais de 120 horários. Reduza as opções de horários da filial antes de aplicar.");
   return { ...input, defaultWeeklyHours: hours, employees, shifts: retained,
@@ -112,11 +113,11 @@ export function proposeCoverage(input: EscalaInput): EscalaInput {
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const existing = new Set(input.demands.map((demand) => `${demand.sector}\0${demand.date}`));
   const demands = input.demands.map((demand) => ({ ...demand }));
-  const sectors = [...new Set(input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED").map((person) => person.sector).filter(Boolean))];
+  const sectors = [...new Set(input.employees.filter((person) => person.planningEnabled !== false && (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")).map((person) => person.sector).filter(Boolean))];
   for (const sector of sectors) {
     for (const day of dateRange(input.startDate, input.endDate)) {
       if (input.policy.closedDates.includes(day) || existing.has(`${sector}\0${day}`)) continue;
-      const members = input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.sector === sector
+      const members = input.employees.filter((person) => person.planningEnabled !== false && (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING") && person.sector === sector
         && person.activeFrom <= day && (!person.activeUntil || person.activeUntil >= day));
       if (!members.length) continue;
       const intervals = members.map((person) => ({ id: person.id, shifts: person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => shift !== undefined && minutes(shift) === effectiveWeeklyHours(person, day) * 12) }));

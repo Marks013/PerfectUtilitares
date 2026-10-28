@@ -29,7 +29,7 @@ export type EscalaEmployee = {
   activeUntil?: string;
   planningEnabled?: boolean;
   /** DUTY assigns a workday without inventing a clock schedule or credited hours. */
-  scheduleMode?: "TIMED" | "UNTIMED";
+  scheduleMode?: "TIMED" | "MISSING" | "UNTIMED";
   planningExclusionReason?: string;
   sourceSchedule?: { report: "FPRE136"; code: string; description: string; weekday: string; saturday: string };
   offMode: "VARIABLE" | "MIXED" | "FIXED";
@@ -45,6 +45,8 @@ export type EscalaEmployee = {
   history: EscalaAssignment[];
   /** Prior published schedules, kept separate from actual attendance history. */
   planningHistory?: EscalaAssignment[];
+  /** Trusted following published days; context only, never monthly assignments or actual attendance. */
+  planningFuture?: EscalaAssignment[];
 };
 type EscalaDemand = {
   id: string;
@@ -93,6 +95,8 @@ export type EscalaInput = {
   branchName: string;
   startDate: string;
   endDate: string;
+  /** Civil month shown to users. Technical dates retain full weeks for continuity. */
+  visibleMonth?: string;
   defaultWeeklyHours: WeeklyHours;
   timeZone: "America/Sao_Paulo";
   policy: EscalaPolicy;

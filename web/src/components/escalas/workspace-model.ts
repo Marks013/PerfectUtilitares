@@ -65,6 +65,7 @@ export function newInput(branchCode: string, branchName: string, month: string, 
     branchCode: branchCode.trim(),
     branchName: branchName.trim(),
     ...period,
+    visibleMonth: month,
     defaultWeeklyHours: hours,
     timeZone: "America/Sao_Paulo",
     policy: {
@@ -131,7 +132,7 @@ export function newEmployee(hours: WeeklyHours, shiftId?: string | string[]): Es
 /** Resolve legacy branch references before changing the selected branch target. */
 export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours): EscalaInput {
   return { ...input, defaultWeeklyHours: hours, employees: input.employees.map((person) => ({
-    ...person, ...planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours),
+    ...person, ...planningWeeklyHours(person, input.defaultWeeklyHours, hours),
   })) };
 }
 

@@ -10,7 +10,7 @@ import { coverageDefinitionChanged, errorMessage, isCurrentResponse, responseMes
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
 
 export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status" | "updatedAt"> & {
-  input: Pick<EscalaInput, "branchCode" | "branchName" | "startDate" | "endDate">;
+  input: Pick<EscalaInput, "branchCode" | "branchName" | "startDate" | "endDate" | "visibleMonth">;
 };
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
@@ -230,6 +230,23 @@ export function useEscalasWorkspace() {
     });
   }
 
+  function deleteWorkspace() {
+    if (!workspace?.canEdit) return;
+    const deleting = workspace;
+    void run("Excluindo planejamento…", async (signal, isCurrent) => {
+      const result = await requestJson<{ deletedId: string }>("/api/escalas", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId: deleting.id, expectedRevision: deleting.revision }), signal,
+      });
+      if (isCurrent()) {
+        setWorkspaces((previous) => previous.filter((item) => item.id !== result.deletedId));
+        setWorkspace(null); setInput(null); setValidation(null); setDirty(false);
+        setGenerated(null); setPendingOpen(null); setResetKey((previous) => previous + 1);
+        setNotice("Planejamento e revisões excluídos. Os demais períodos foram preservados.");
+      }
+    });
+  }
+
   function discard() {
     if (workspace) {
       acceptWorkspace(workspace);
@@ -273,6 +290,7 @@ export function useEscalasWorkspace() {
     applyGenerated,
     publish,
     discard,
+    deleteWorkspace,
     resetKey,
     cancellable,
     cancelAnalysis,

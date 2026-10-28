@@ -5,9 +5,9 @@ import { escalaInputSchema } from "./schema";
 import { EscalaSolverError, solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
 import { compareBranches } from "./order";
-import { addDays, dateRange } from "./dates";
+import { addDays, dateRange, monthBounds, visibleDates } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
-import { publishedPlanningContext } from "./continuity";
+import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { prepareGeneration } from "./generation";
 import { confirmCoverageEstimates } from "./preparation";
 import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, SUPERMARKET_CCT } from "./labor-rules";
@@ -39,11 +39,15 @@ export async function listEscalas(actor: EscalaActor) {
     where: { tenantId: actor.tenantId, ...(branches ? { branchCode: { in: branches } } : {}) },
     orderBy: [{ branchCode: "asc" }, { startDate: "desc" }, { id: "asc" }],
   });
-  return rows.sort((a, b) => compareBranches(a, b) || b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).map((row) => ({
+  return rows.sort((a, b) => compareBranches(a, b) || b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).map((row) => {
+    const visible = visibleDates(row);
+    const month = visible[0]?.slice(0, 7);
+    const visibleMonth = month && visible[0] === monthBounds(month).startDate && visible.at(-1) === monthBounds(month).endDate ? month : undefined;
+    return ({
     id: row.id, revision: row.revision, status: row.status,
-    input: { branchCode: row.branchCode, branchName: row.branchName, startDate: row.startDate, endDate: row.endDate },
+    input: { branchCode: row.branchCode, branchName: row.branchName, startDate: row.startDate, endDate: row.endDate, ...(visibleMonth ? { visibleMonth } : {}) },
     updatedAt: row.updatedAt.toISOString(),
-  }));
+  }); });
 }
 
 export async function getEscala(actor: EscalaActor, id: string, revision?: number): Promise<EscalaWorkspace> {
@@ -157,7 +161,7 @@ function assertPublishedBoundary(input: EscalaInput, baseline: EscalaInput) {
 
 async function planningContext(actor: EscalaActor, id: string, input: EscalaInput) {
   const rows = await prisma.escalaWorkspace.findMany({
-    where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id }, startDate: { lt: input.startDate }, endDate: { gte: addDays(input.startDate, -21) } },
+    where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id }, startDate: { lte: addDays(input.endDate, 21) }, endDate: { gte: addDays(input.startDate, -21) } },
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
     select: { revisions: { where: { tenantId: actor.tenantId, status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
   });
@@ -169,7 +173,7 @@ async function planningContext(actor: EscalaActor, id: string, input: EscalaInpu
     if (!parsed.success) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Uma proposta publicada da filial não pôde ser conferida.");
     published.push(parsed.data);
   }
-  return publishedPlanningContext(input, published);
+  return preservePublishedDays(publishedPlanningContext(input, published), published);
 }
 
 export function preserveLockedAssignments(previous: EscalaInput, next: EscalaInput, canUnlock = false) {
@@ -230,7 +234,7 @@ function assertRevision(workspace: EscalaWorkspace, expectedRevision: number) {
 
 function requireSolverSetup(input: EscalaInput) {
   const included = input.employees.filter((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
-  const timed = included.filter((person) => person.scheduleMode !== "UNTIMED");
+  const timed = included.filter((person) => (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"));
   if (!included.length || (timed.length > 0 && (!input.shifts.length || timed.some((person) => !person.shiftIds.length)))) throw new EscalaError(422, "ESCALA_SETUP_REQUIRED", "Inclua pelo menos um colaborador e defina horários para quem tem jornada controlada. Pessoas sem horário fixo participam do rodízio de folgas sem turno fictício.");
   if (input.policy.normativeProfile === SUPERMARKET_CCT && input.policy.holidayRestAllowed) throw new EscalaError(422, "ESCALA_CCT_HOLIDAY_REST", "A CCT de supermercados veda compensar o DSR em feriado. Corrija a configuração antes de gerar.");
   if (input.policy.normativeProfile === SUPERMARKET_CCT && (input.startDate < CCT_FROM || input.endDate > CCT_UNTIL)) throw new EscalaError(422, "ESCALA_CCT_VALIDITY", "O período está fora da vigência da CCT PR003084/2026. Selecione e confira o instrumento aplicável antes de gerar.");
@@ -270,4 +274,36 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const validation = validateEscala(proposalInput);
   if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING"))) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
   return { result, proposalInput, validation, preparation: prepared.preparation };
+}
+
+/** Explicit deletion; FK Restrict requires removing the exact revisions in the same transaction. */
+export async function deleteEscala(actor: EscalaActor, id: string, expectedRevision: number) {
+  const row = await prisma.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId } });
+  if (!row) throw new EscalaError(404, "ESCALA_NOT_FOUND", "Planejamento não encontrado nesta empresa.");
+  const permission = await branchPermission(actor, row.branchCode);
+  requireEscalaPermission(permission, "edit");
+  if (row.revision !== expectedRevision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento mudou. Recarregue antes de excluir.");
+  await prisma.$transaction(async (tx) => {
+    const lockKey = "escalas-publication:" + JSON.stringify([actor.tenantId, row.branchCode]);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    const current = await tx.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId } });
+    if (!current || current.revision !== expectedRevision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento mudou durante a exclusão. Recarregue a lista.");
+    const published = await tx.escalaRevision.findFirst({ where: { tenantId: actor.tenantId, workspaceId: id, status: "PUBLISHED" }, select: { revision: true } });
+    if (published) {
+      requireEscalaPermission(permission, "publish");
+      // Published neighbouring periods may use shared technical days or planning history.
+      // No source IDs were stored in legacy snapshots: fail safely instead of destroying that context.
+      const dependencies = await tx.escalaWorkspace.findMany({ where: {
+        tenantId: actor.tenantId, branchCode: row.branchCode, id: { not: id },
+        startDate: { lte: addDays(row.endDate, 21) }, endDate: { gte: addDays(row.startDate, -21) },
+        revisions: { some: { status: "PUBLISHED", tenantId: actor.tenantId } },
+      }, select: { id: true } });
+      if (dependencies.length) throw new EscalaError(409, "ESCALA_DELETE_DEPENDENCY", "Há planejamentos publicados próximos que podem depender dos dias compartilhados ou do histórico desta filial. Revise essa continuidade antes de excluir; nenhuma revisão foi removida.");
+    }
+    await tx.escalaRevision.deleteMany({ where: { tenantId: actor.tenantId, workspaceId: id } });
+    const deleted = await tx.escalaWorkspace.deleteMany({ where: { tenantId: actor.tenantId, id, revision: expectedRevision } });
+    if (deleted.count !== 1) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento mudou durante a exclusão. Nenhum dado foi removido.");
+    await tx.auditLog.create({ data: { userId: actor.userId, action: "DELETE", entity: "EscalaWorkspace", entityId: id, metadata: { tenantId: actor.tenantId, revision: expectedRevision } } });
+  }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
+  return { deletedId: id };
 }

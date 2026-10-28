@@ -91,7 +91,7 @@ function HistoryEditor({
                     }}
                   >
                     <option value="">{outside ? "Sem vínculo" : "Não informado"}</option>
-                    {employee.scheduleMode === "UNTIMED"
+                    {(employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING")
                       ? <option value="DUTY">Trabalho sem horário fixo</option>
                       : <option value="WORK">Trabalho</option>}
                     <option value="OFF">Folga</option>
@@ -159,7 +159,7 @@ export function EmployeeEditor({
         !draft.registration.trim() ||
         !draft.sector.trim() ||
         !draft.role.trim() ||
-        (draft.planningEnabled !== false && draft.scheduleMode !== "UNTIMED" && !draft.shiftIds.length)
+        (draft.planningEnabled !== false && draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && !draft.shiftIds.length)
       )
         throw new Error("Preencha matrícula, nome, setor, cargo e, para incluir quem tem horário fixo, ao menos um turno autorizado.");
       if (input.employees.some((item) => item.id !== draft.id && item.registration === draft.registration.trim()))
@@ -349,17 +349,19 @@ export function EmployeeEditor({
           )}
         </Field>
       </div>
-      <Field label="Modo de horário" hint="Sem horário fixo participa do rodízio de trabalho e folgas, sem apuração de horas.">
+      <Field label="Modo de horário" hint="Diferencie horário ausente de enquadramento confirmado. Ambos permitem simular presença e folgas, sem apuração de horas nem cobertura por faixa.">
         {(id) => <select id={id} value={draft.scheduleMode ?? "TIMED"} className={controlClass}
           onChange={(event) => setDraft((previous) => ({
             ...previous,
-            scheduleMode: event.target.value as "TIMED" | "UNTIMED",
-            ...(event.target.value === "UNTIMED" ? { shiftIds: [] } : {}),
+            scheduleMode: event.target.value as EscalaEmployee["scheduleMode"],
+            ...(event.target.value !== "TIMED" ? { shiftIds: [] } : {}),
           }))}>
-          <option value="TIMED">Com horário</option>
-          <option value="UNTIMED">Sem horário fixo</option>
+          <option value="TIMED">Com horário informado</option>
+          <option value="MISSING">Horário não informado (simular presença e folgas)</option>
+          <option value="UNTIMED">Sem horário fixo · enquadramento conferido</option>
         </select>}
       </Field>
+      {draft.scheduleMode === "MISSING" && <p className="text-sm">Horário não informado: incluído no rodízio de presença e folgas, sem horas ou cobertura horária fictícias. Horários zerados e o título do cargo não confirmam dispensa de controle de jornada. Informe os horários quando disponíveis.</p>}
       {draft.scheduleMode === "UNTIMED" && <p className="text-sm">
         Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo seis dias seguidos de trabalho.
         Os dias de trabalho não recebem turno nem horas fictícias. A carga semanal é apenas uma referência cadastral.
@@ -369,7 +371,7 @@ export function EmployeeEditor({
         checked={draft.planningEnabled !== false}
         onChange={(checked) => change("planningEnabled", checked)}
       />
-      {draft.scheduleMode !== "UNTIMED" && <fieldset>
+      {draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && <fieldset>
         <legend className="text-sm font-semibold">Turnos autorizados</legend>
         <div className="flex flex-wrap gap-x-5">
           {input.shifts.map((shift) => (
@@ -503,7 +505,9 @@ export function Employees({
                 {employee.name} · {employee.registration}
               </p>
               <p className="text-xs text-[color:var(--app-muted)]">
-                {employee.sector} / {employee.role} · {employee.scheduleMode === "UNTIMED"
+                {employee.sector} / {employee.role} · {employee.scheduleMode === "MISSING"
+                  ? "Horário não informado · presença e folgas planejadas · horas não apuradas"
+                  : employee.scheduleMode === "UNTIMED"
                   ? "Sem horário fixo · incluído no rodízio de folgas · horas não apuradas"
                   : `referência ${employee.weeklyHours}h`}
                 {employee.maxConsecutiveSundays > 1 && employee.sundayRestRule !== "COMMERCE" &&

@@ -77,6 +77,170 @@ class SolverTests(unittest.TestCase):
     def assert_feasible(self, result):
         self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"), result)
 
+    def test_future_six_published_duties_require_last_current_day_off(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        make_untimed(person)
+        person["scheduleMode"] = "MISSING"
+        person["planningFuture"] = [{"employeeId": person["id"], "date": (date.fromisoformat(data["endDate"]) + timedelta(days=offset)).isoformat(),
+                                     "kind": "DUTY"} for offset in range(1, 7)]
+        original = copy.deepcopy(person["planningFuture"])
+        result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual(next(a for a in result["assignments"] if a["date"] == data["endDate"])["kind"], "OFF")
+        self.assertEqual(len(result["assignments"]), 7)
+        self.assertEqual(person["planningFuture"], original)
+        self.assertTrue(all(a["date"] <= data["endDate"] for a in result["assignments"]))
+        data["assignments"] = [{"employeeId": person["id"], "date": data["endDate"], "kind": "DUTY", "locked": True}]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
+    def test_next_published_sunday_protects_the_current_sunday(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        make_untimed(person)
+        person["sundayRestRule"] = "PROTECTIVE"
+        person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-15", "kind": "DUTY"}]
+        result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-08")["kind"], "OFF")
+        data["assignments"] = [{"employeeId": person["id"], "date": "2026-11-08", "kind": "DUTY", "locked": True}]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
+    def test_published_future_shift_preserves_intershift_rest(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        data["shifts"].append({"id": "late", "name": "Tarde", "segments": [
+            {"start": 780, "end": 1020, "kind": "WORK"}, {"start": 1020, "end": 1080, "kind": "BREAK"},
+            {"start": 1080, "end": 1320, "kind": "WORK"}]})
+        person["shiftIds"] = ["day", "late"]
+        person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "WORK", "shiftId": "day"}]
+        result = solve(data)
+        self.assert_feasible(result)
+        last = next(a for a in result["assignments"] if a["date"] == data["endDate"])
+        self.assertNotEqual(last.get("shiftId"), "late")
+        data["assignments"] = [{"employeeId": person["id"], "date": data["endDate"], "kind": "WORK", "shiftId": "late", "locked": True}]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
+    def test_published_future_rest_cannot_shorten_weekly_interval(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        data["shifts"].append({"id": "late", "name": "Tarde", "segments": [
+            {"start": 780, "end": 1020, "kind": "WORK"}, {"start": 1020, "end": 1080, "kind": "BREAK"},
+            {"start": 1080, "end": 1320, "kind": "WORK"}]})
+        person["shiftIds"] = ["day", "late"]
+        person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "OFF"},
+                                     {"employeeId": person["id"], "date": "2026-11-10", "kind": "WORK", "shiftId": "day"}]
+        data["assignments"] = [{"employeeId": person["id"], "date": data["endDate"], "kind": "WORK", "shiftId": "late", "locked": True}]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
+    def test_future_work_overrides_an_inferred_consecutive_rest_reservation(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        make_untimed(person)
+        person.update(offMode="FIXED", fixedOffDays=[0, 6], offPattern="CONSECUTIVE")
+        person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "DUTY"}]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
+    def test_first_future_consecutive_rest_preserves_its_current_neighbor(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        make_untimed(person)
+        person["offPattern"] = "CONSECUTIVE"
+        person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "OFF"},
+                                     {"employeeId": person["id"], "date": "2026-11-10", "kind": "DUTY"}]
+        result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual(next(a for a in result["assignments"] if a["date"] == data["endDate"])["kind"], "OFF")
+        data["assignments"] = [{"employeeId": person["id"], "date": data["endDate"], "kind": "DUTY", "locked": True}]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
+    def test_current_overnight_work_cannot_occupy_a_published_future_rest(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        data["shifts"].append({"id": "night", "name": "Noturno", "segments": [
+            {"start": 1200, "end": 1440, "kind": "WORK"}, {"start": 1440, "end": 1500, "kind": "BREAK"},
+            {"start": 1500, "end": 1740, "kind": "WORK"}]})
+        person["shiftIds"].append("night")
+        person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "OFF"}]
+        data["assignments"] = [{"employeeId": person["id"], "date": data["endDate"], "kind": "WORK", "shiftId": "night", "locked": True}]
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
+    def test_missing_clock_reference_plans_presence_without_fabricating_hours(self):
+        data = fixture(40)
+        make_untimed(data["employees"][0])
+        data["employees"][0]["scheduleMode"] = "MISSING"
+        data["shifts"] = []
+        result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual(sum(a["kind"] == "DUTY" for a in result["assignments"]), 5)
+        self.assertEqual(sum(a["kind"] == "OFF" for a in result["assignments"]), 2)
+        self.assertTrue(all("shiftId" not in a for a in result["assignments"]))
+        self.assertEqual(weekly_totals(data, result), {"2026-11-02": 0})
+
+    def test_untimed_leaders_rotate_weekends_without_emptying_the_sector(self):
+        data = fixture(40, people=4, weeks=4)
+        for index, person in enumerate(data["employees"]):
+            make_untimed(person)
+            person.update(history=[], historyKnown=False, role=f"Responsabilidade {index}",
+                          sundayRestRule="PROTECTIVE")
+        result = solve(data)
+        self.assert_feasible(result)
+        for day in days_between(data["startDate"], data["endDate"]):
+            entries = [a for a in result["assignments"] if a["date"] == day]
+            self.assertGreaterEqual(sum(a["kind"] == "DUTY" for a in entries), 2)
+        for person in data["employees"]:
+            entries = [a for a in result["assignments"] if a["employeeId"] == person["id"]]
+            for start in range(0, len(entries), 7):
+                self.assertEqual(sum(a["kind"] == "DUTY" for a in entries[start:start + 7]), 5)
+                self.assertEqual(sum(a["kind"] == "OFF" for a in entries[start:start + 7]), 2)
+            sundays = [a for a in entries if date.fromisoformat(a["date"]).weekday() == 6]
+            self.assertEqual(sum(a["kind"] == "DUTY" for a in sundays), 2)
+            self.assertTrue(all("shiftId" not in a for a in entries))
+
+    def test_single_untimed_leader_does_not_receive_every_weekend_automatically(self):
+        data = fixture(40, weeks=4)
+        person = data["employees"][0]
+        make_untimed(person)
+        person.update(history=[], historyKnown=False, sundayRestRule="PROTECTIVE")
+        result = solve(data)
+        self.assert_feasible(result)
+        sundays = [a for a in result["assignments"] if date.fromisoformat(a["date"]).weekday() == 6]
+        saturdays = [a for a in result["assignments"] if date.fromisoformat(a["date"]).weekday() == 5]
+        self.assertGreater(sum(a["kind"] == "DUTY" for a in sundays), 0)
+        self.assertGreater(sum(a["kind"] == "DUTY" for a in saturdays), 0)
+        self.assertGreater(sum(a["kind"] == "OFF" for a in sundays), 0)
+
+    def test_fixed_separated_rests_are_normal_and_do_not_require_consecutive_pair(self):
+        data = fixture(40)
+        data["employees"][0].update(offMode="FIXED", fixedOffDays=[1, 6], offPattern="ANY")
+        result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual([a["date"] for a in result["assignments"] if a["kind"] == "OFF"],
+                         ["2026-11-03", "2026-11-08"])
+
+    def test_locked_weekend_rests_override_soft_operational_balance(self):
+        data = fixture(40, people=3, weeks=2)
+        for person in data["employees"]:
+            make_untimed(person)
+        locked = [{"employeeId": person["id"], "date": "2026-11-08", "kind": "OFF", "locked": True}
+                  for person in data["employees"]]
+        data["assignments"] = locked
+        result = solve(data)
+        self.assert_feasible(result)
+        for entry in locked:
+            self.assertIn(entry, result["assignments"])
+
+    def test_equivalent_inputs_have_reproducible_daily_assignments(self):
+        data = fixture(40, people=3, weeks=2)
+        for person in data["employees"]:
+            make_untimed(person)
+            person.update(history=[], historyKnown=False)
+        first = solve(data)
+        second = solve(copy.deepcopy(data))
+        self.assert_feasible(first)
+        self.assert_feasible(second)
+        self.assertEqual(first["assignments"], second["assignments"])
+
     def test_unconfirmed_estimate_does_not_invent_staff_or_override_a_locked_rest(self):
         data = fixture(40)
         data["policy"]["coverageReview"] = "SUGGESTED"
@@ -87,6 +251,30 @@ class SolverTests(unittest.TestCase):
         self.assert_feasible(result)
         self.assertIn(data["assignments"][0], result["assignments"])
         self.assertEqual(len(result["assignments"]), 7)
+
+    def test_coverage_estimate_precedes_soft_sector_rest_distribution(self):
+        data = fixture(40, people=4, weeks=2)
+        data["policy"]["coverageReview"] = "SUGGESTED"
+        data["demands"] = [{"date": data["startDate"], "sector": "Reposição", "start": 480, "end": 720,
+                            "minimum": 4, "estimated": True}]
+        result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual(sum(a["kind"] == "WORK" for a in result["assignments"]
+                             if a["date"] == data["startDate"]), 4)
+
+    def test_saturday_rotation_uses_actual_history_opportunities(self):
+        data = fixture(40, people=2, weeks=2)
+        for entry in data["employees"][0]["history"]:
+            if entry["date"] in ("2026-10-17", "2026-10-24"):
+                entry.update(kind="WORK", shiftId="day")
+        data["demands"] = [{"date": day, "sector": "Reposição", "start": 480, "end": 720, "minimum": 1}
+                           for day in ("2026-11-07", "2026-11-14")]
+        result = solve(data)
+        self.assert_feasible(result)
+        counts = {pid: sum(a["kind"] == "WORK" and a["employeeId"] == pid
+                           and date.fromisoformat(a["date"]).weekday() == 5 for a in result["assignments"])
+                  for pid in ("p0", "p1")}
+        self.assertEqual(counts, {"p0": 0, "p1": 2})
 
     def test_estimated_coverage_is_prioritized_when_a_legal_solution_can_fill_it(self):
         data = fixture(40)
@@ -123,6 +311,15 @@ class SolverTests(unittest.TestCase):
         data["policy"]["coverageReview"] = "SUGGESTED"
         data["demands"] = [{"date": data["startDate"], "sector": "Reposição", "start": 480, "end": 720,
                             "minimum": 1, "estimated": True}]
+        self.assert_seed_survives_timeout(data)
+
+    def test_untimed_seed_survives_rotation_timeout_without_hourly_estimates(self):
+        data = fixture(40, people=3, weeks=2)
+        for person in data["employees"]:
+            make_untimed(person)
+        self.assert_seed_survives_timeout(data)
+
+    def assert_seed_survives_timeout(self, data):
         original = cp_model.CpSolver.solve
         calls = []
 
@@ -134,10 +331,15 @@ class SolverTests(unittest.TestCase):
             result = solve(data)
         self.assertEqual(calls, [True, False])
         self.assertEqual(result["status"], "FEASIBLE")
-        self.assertEqual(len(result["assignments"]), 7)
-        self.assertEqual(weekly_totals(data, result), {"2026-11-02": 2400})
-        self.assertEqual(sum(a["kind"] == "WORK" for a in result["assignments"]), 5)
-        self.assertEqual(sum(a["kind"] == "OFF" for a in result["assignments"]), 2)
+        days = len(days_between(data["startDate"], data["endDate"]))
+        self.assertEqual(len(result["assignments"]), len(data["employees"]) * days)
+        for person in data["employees"]:
+            entries = [a for a in result["assignments"] if a["employeeId"] == person["id"]]
+            for start in range(0, len(entries), 7):
+                self.assertEqual(sum(a["kind"] in ("WORK", "DUTY") for a in entries[start:start + 7]), 5)
+                self.assertEqual(sum(a["kind"] == "OFF" for a in entries[start:start + 7]), 2)
+        weekly_minutes = sum(person["weeklyHours"] * 60 for person in data["employees"] if person.get("scheduleMode") != "UNTIMED")
+        self.assertTrue(all(total == weekly_minutes for total in weekly_totals(data, result).values()))
 
     def test_untimed_without_shifts_gets_five_duties_two_rests_zero_minutes(self):
         data = fixture()

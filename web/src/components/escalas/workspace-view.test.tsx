@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { EscalaValidation, EscalaWorkspace } from "@/lib/escalas/types";
 import { Rules } from "./configuration";
+import { visibleDates } from "@/lib/escalas/dates";
+import { DeletePlan } from "./delete-plan";
 import { Employees, EmployeeEditor } from "./employees";
 import { Coverage, ImportEmployees } from "./coverage-import";
 import { LaborPolicyFields } from "./labor-policy-fields";
@@ -34,7 +36,7 @@ function sample() {
       activeFrom: "2020-01-01",
     },
   ];
-  input.assignments = [{ employeeId: "a", date: input.startDate, kind: "OFF", locked: true }];
+  input.assignments = [{ employeeId: "a", date: visibleDates(input)[0], kind: "OFF", locked: true }];
   const validation: EscalaValidation = {
     valid: true,
     readyToPublish: true,
@@ -60,11 +62,11 @@ describe("Escalas practical accessibility and publication states", () => {
     const { input, validation } = sample();
     input.employees = [{ ...input.employees[0], scheduleMode: "UNTIMED", shiftIds: [], planningEnabled: true }];
     const employee = input.employees[0];
-    input.assignments = [{ employeeId: employee.id, date: input.startDate, kind: "DUTY" }];
+    input.assignments = [{ employeeId: employee.id, date: visibleDates(input)[0], kind: "DUTY" }];
     validation.summaries = [{ employeeId: employee.id, workedMinutes: 0, workDays: 5, offDays: 2, maxStreak: 5, sundaysWorked: 1 }];
     const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false}
       canUnlock onChange={vi.fn()} />);
-    expect(html).toContain("Trabalho sem horário fixo");
+    expect(html).toContain("Trabalho sem controle de horário confirmado");
     expect(html).toContain("Sem horário fixo · horas não apuradas");
     expect(html).toContain("5 dias trabalhados · 2 folgas");
     expect(html).not.toContain("42h por semana");
@@ -72,6 +74,33 @@ describe("Escalas practical accessibility and publication states", () => {
     const result = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
     expect(result).toContain("Horas não apuradas");
     expect(result).not.toContain('class="p-2 tabular-nums">00:00');
+  });
+
+  it("distinguishes missing clock information from confirmed untimed status without crediting fictitious hours", () => {
+    const { input, validation } = sample();
+    input.employees = [{ ...input.employees[0], scheduleMode: "MISSING", shiftIds: [] }];
+    input.assignments = [{ employeeId: input.employees[0].id, date: visibleDates(input)[0], kind: "DUTY" }];
+    const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false} canUnlock onChange={vi.fn()} />);
+    expect(html).toContain("Horário não informado · horas não apuradas");
+    expect(html).toContain("Presença planejada sem horário informado");
+    expect(html).not.toContain("42h por semana");
+    const editor = renderToStaticMarkup(<CellEditor employee={input.employees[0]} date={visibleDates(input)[0]} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
+    expect(editor).toContain("não confirma dispensa de controle de jornada");
+    expect(editor).not.toContain("Turno autorizado");
+  });
+
+  it("identifies the exact planning and warns about irreversible deletion without deleting during rendering", () => {
+    const { workspace } = sample();
+    const onDelete = vi.fn();
+    const html = renderToStaticMarkup(<DeletePlan workspace={workspace} dirty busy={false} onDelete={onDelete} />);
+    expect(html).toContain("Filial 2 · Centro");
+    expect(html).toContain("01/10/2026 a 31/10/2026");
+    expect(html).toContain("revisão 4");
+    expect(html).toContain("Não pode ser desfeita");
+    expect(html).toContain("alterações locais ainda não salvas");
+    expect(html).toContain("Manter planejamento");
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(renderToStaticMarkup(<DeletePlan workspace={{ ...workspace, canEdit: false }} dirty={false} busy={false} onDelete={onDelete} />)).toBe("");
   });
 
   it("offers DUTY only for untimed day editing and keeps timed shift controls for timed employees", () => {
@@ -141,13 +170,15 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).toContain("0 impeditivos");
     expect(html).toContain("0 pendências");
     expect(html).toContain("Ana: Histórico anterior não verificado.");
+    expect(html).not.toContain("HISTORY_UNKNOWN");
+    expect(html).not.toContain("Referência técnica:");
     expect(html).not.toContain("Pendente ·");
     const publication = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />);
     expect(publication).toContain("Publicar proposta");
     expect(publication).toContain("não certifica");
   });
 
-  it("renders the week by sector/cargo/name, with explicit pending and locked day states", () => {
+  it("renders only the civil month by sector and name with pending and locked states", () => {
     const { input } = sample();
     const html = renderToStaticMarkup(
       <Roster
@@ -158,14 +189,17 @@ describe("Escalas practical accessibility and publication states", () => {
         onChange={vi.fn()}
       />,
     );
-    expect(html).toContain("Reposição / Repositor");
+    expect(html).toContain("Reposição");
+    expect(html).toContain("Organização: setor e nome A–Z");
+    expect(html).not.toContain("Reposição / Repositor");
+    expect((html.match(/scope="col"/g) ?? [])).toHaveLength(32);
     expect(html.indexOf('scope="row"') + html.slice(html.indexOf('scope="row"')).indexOf("Ana")).toBeLessThan(
       html.lastIndexOf("Zélia"),
     );
     expect(html).toContain("Pendente");
-    expect(html).toContain("Bloqueado");
+    expect(html).toContain(", bloqueado. Editar");
     expect(html).toContain("rolagem horizontal");
-    expect(html).toContain('aria-label="Ana, 28/09/2026: Folga, bloqueado. Editar"');
+    expect(html).toContain('aria-label="Ana, 01/10/2026: Folga, bloqueado. Editar"');
     expect(html).toContain("As sugestões em massa consideram todos os colaboradores incluídos da filial");
     expect(html).not.toContain("Sugerir folgas");
   });

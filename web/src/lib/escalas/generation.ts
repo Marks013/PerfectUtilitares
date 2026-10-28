@@ -15,7 +15,7 @@ export function prepareGeneration(input: EscalaInput): { input: EscalaInput; pre
   const excludedEmployeeIds: string[] = [];
   const employees = input.employees.map((person) => {
     if (person.planningEnabled === false || person.activeFrom > input.endDate || (person.activeUntil && person.activeUntil < input.startDate)
-      || person.scheduleMode === "UNTIMED") return person;
+      || (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return person;
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
     const hours = reference.weeklyHours;
     const targets = new Set(dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0
@@ -56,7 +56,7 @@ export function prepareGeneration(input: EscalaInput): { input: EscalaInput; pre
   const assignments = input.assignments.filter((item) => !excluded.has(item.employeeId)
     && !(adjusted.has(item.employeeId) && item.kind === "WORK" && !item.locked));
   const used = new Set([...employees.flatMap((person) => person.shiftIds), ...assignments.flatMap((item) => item.shiftId ? [item.shiftId] : []),
-    ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
+    ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
   const retained = [...shifts.values()].filter((shift) => used.has(shift.id));
   if (retained.length > 120) throw new EscalaError(422, "ESCALA_SHIFT_LIMIT", "A adaptação exige mais de 120 horários. Reduza o período ou as alternativas da filial antes de gerar.");
   const prepared: EscalaInput = { ...input, employees, shifts: retained, assignments };
@@ -65,5 +65,5 @@ export function prepareGeneration(input: EscalaInput): { input: EscalaInput; pre
   const proposal = generatedCoverageSlots ? covered : prepared;
   const included = employees.filter((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
   return { input: proposal, preparation: { adjustedEmployeeIds, excludedEmployeeIds, generatedCoverageSlots,
-    includedEmployees: included.length, untimedEmployees: included.filter((person) => person.scheduleMode === "UNTIMED").length } };
+    includedEmployees: included.length, untimedEmployees: included.filter((person) => (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")).length } };
 }

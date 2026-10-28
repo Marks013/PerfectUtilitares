@@ -17,7 +17,7 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   const issues: EscalaIssue[] = [];
   if (!input.employees.length) issues.push({ code: "EMPLOYEES_PENDING", severity: "PENDING", message: "Cadastre os colaboradores da filial." });
   else if (!input.employees.some((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate))) issues.push({ code: "ACTIVE_EMPLOYEES_PENDING", severity: "PENDING", message: "Nenhum colaborador está incluído na geração neste período." });
-  if (!input.shifts.length && input.employees.some((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED")) issues.push({ code: "SHIFTS_PENDING", severity: "PENDING", message: "Cadastre os horários permitidos antes de gerar a escala." });
+  if (!input.shifts.length && input.employees.some((person) => person.planningEnabled !== false && (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"))) issues.push({ code: "SHIFTS_PENDING", severity: "PENDING", message: "Cadastre os horários permitidos antes de gerar a escala." });
   if (!input.policy.reviewed || !input.policy.source || !input.policy.reviewedBy) issues.push({ code: "POLICY_PENDING", severity: "PENDING", message: "Confira a norma aplicável, sua fonte e o responsável pela validação antes da publicação." });
   if (input.policy.validFrom > input.startDate || input.policy.validUntil < input.endDate) issues.push({ code: "POLICY_VALIDITY", severity: "PENDING", message: "A vigência da norma não abrange todo o período da escala." });
   if (input.policy.coverageReview === "SUGGESTED") issues.push({ code: "COVERAGE_REVIEW_PENDING", severity: "PENDING", message: "Confira a cobertura sugerida para a filial, inclusive faixas com mínimo zero. A estimativa da equipe não comprova a demanda operacional." });
@@ -32,21 +32,21 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const journeys: WorkJourney[] = [];
   const prior = input.employees.flatMap((person) => {
-    const records = new Map([...(person.planningHistory ?? []), ...person.history].map((item) => [item.date, item]));
+    const records = new Map([...(person.planningHistory ?? []), ...person.history, ...(person.planningFuture ?? [])].map((item) => [item.date, item]));
     return [...records.values()];
   });
   const assignments = [...prior, ...input.assignments];
   for (const assignment of assignments) {
-    if (assignment.kind === "DUTY" && assignment.date >= input.startDate) issues.push(...validateUntimedDuty(input, assignment));
+    if (assignment.kind === "DUTY" && assignment.date >= input.startDate && assignment.date <= input.endDate) issues.push(...validateUntimedDuty(input, assignment));
     if (assignment.kind !== "WORK") continue;
     const shift = shifts.get(assignment.shiftId ?? "");
     if (!shift) continue; // Schema reports every unresolved reference.
     try {
       const journey = workJourney(assignment, shift);
       journeys.push(journey);
-      if (assignment.date >= input.startDate) issues.push(...validateJourney(input, journey));
-      else if (journey.occupiedDates.some((day) => day >= input.startDate)) {
-        issues.push(...validateJourney(input, journey).filter((issue) => (issue.code === "CLOSED_DATE" || issue.code === "HOLIDAY_WORK") && issue.date && issue.date >= input.startDate));
+      if (assignment.date >= input.startDate && assignment.date <= input.endDate) issues.push(...validateJourney(input, journey));
+      else if (assignment.date < input.startDate && journey.occupiedDates.some((day) => day >= input.startDate && day <= input.endDate)) {
+        issues.push(...validateJourney(input, journey).filter((issue) => (issue.code === "CLOSED_DATE" || issue.code === "HOLIDAY_WORK") && issue.date && issue.date >= input.startDate && issue.date <= input.endDate));
       }
     } catch {
       issues.push({ code: "CIVIL_TIME_INVALID", severity: "ERROR", employeeId: assignment.employeeId, date: assignment.date, message: "Horário inválido na transição do fuso; confira as datas e os horários reais." });

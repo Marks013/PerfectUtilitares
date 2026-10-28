@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin, requireSession } from "@/lib/api/security";
 import { branchPermission, escalaActor, requireEscalaPermission } from "@/lib/escalas/access";
-import { createEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala } from "@/lib/escalas/service";
+import { createEscala, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
 import { escalaFailure, escalaJson } from "./http";
 
@@ -65,5 +65,23 @@ export async function POST(request: Request) {
   } catch (error) { return escalaFailure(error); }
 }
 
-export function PATCH() { return methodNotAllowed(["GET", "POST"]); }
-export function DELETE() { return methodNotAllowed(["GET", "POST"]); }
+export function PATCH() { return methodNotAllowed(["GET", "POST", "DELETE"]); }
+
+export async function DELETE(request: Request) {
+  const guard = await requireSession();
+  if (!guard.ok) return guard.response;
+  const originError = requireSameOrigin(request);
+  if (originError) return originError;
+  const contentError = requireContentType(request, ["application/json"]) ?? requireMaxContentLength(request, 4096);
+  if (contentError) return contentError;
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+  const parsed = z.object({ workspaceId: id, expectedRevision: version.expectedRevision }).strict().safeParse(body.data);
+  if (!parsed.success) return jsonError(400, "ESCALA_INVALID_COMMAND", "Informe o planejamento selecionado e sua revisão atual para excluir.");
+  try {
+    const actor = escalaActor(guard.session);
+    const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-write", limit: 30, windowMs: 60_000 });
+    if (limited) return limited;
+    return escalaJson(await deleteEscala(actor, parsed.data.workspaceId, parsed.data.expectedRevision));
+  } catch (error) { return escalaFailure(error); }
+}

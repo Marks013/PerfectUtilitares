@@ -1,4 +1,4 @@
-import { absoluteMinute, addDays, dateRange, dayOfWeek } from "./dates";
+import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates } from "./dates";
 import type { EscalaAssignment, EscalaInput, EscalaIssue, EscalaShift } from "./types";
 import { certificateAuthorizes, collectiveExtensionAuthorized, dailyMinuteCeiling, SUPERMARKET_CCT, TRANSITION_42_DATE, TRANSITION_40_DATE } from "./labor-rules";
 
@@ -88,11 +88,12 @@ export function validateUntimedDuty(input: EscalaInput, assignment: EscalaAssign
 export function validateCoverage(input: EscalaInput, journeys: WorkJourney[]): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
   const issues: EscalaIssue[] = [];
   let minimumCoverageMargin: number | null = null;
+  const visible = new Set(visibleDates(input));
   const employees = new Map(input.employees.map((person) => [person.id, person]));
   const bySectorAndDate = new Map<string, WorkJourney[]>();
   for (const journey of journeys) {
     const employee = employees.get(journey.assignment.employeeId);
-    const sector = employee?.scheduleMode === "UNTIMED" ? undefined : employee?.sector;
+    const sector = (employee?.scheduleMode === "UNTIMED" || employee?.scheduleMode === "MISSING") ? undefined : employee?.sector;
     if (!sector) continue;
     for (const day of journey.occupiedDates) {
       const key = `${sector}\0${day}`;
@@ -114,7 +115,7 @@ export function validateCoverage(input: EscalaInput, journeys: WorkJourney[]): {
     for (let index = 0; index < points.length - 1; index++) {
       const present = new Set(intervals.filter((interval) => interval.start <= points[index] && interval.end >= points[index + 1]).map((interval) => interval.employeeId)).size;
       const margin = present - demand.minimum;
-      minimumCoverageMargin = minimumCoverageMargin === null ? margin : Math.min(minimumCoverageMargin, margin);
+      if (visible.has(demand.date)) minimumCoverageMargin = minimumCoverageMargin === null ? margin : Math.min(minimumCoverageMargin, margin);
       if (margin < 0 && !reported) {
         const minute = demand.start + points[index] - start;
         const estimated = demand.estimated === true && input.policy.coverageReview === "SUGGESTED";
@@ -125,8 +126,8 @@ export function validateCoverage(input: EscalaInput, journeys: WorkJourney[]): {
     }
   }
   const demandedDates = new Set(input.demands.map((demand) => `${demand.sector}\0${demand.date}`));
-  for (const sector of new Set(input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED").map((person) => person.sector).filter(Boolean))) {
-    const members = input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.sector === sector);
+  for (const sector of new Set(input.employees.filter((person) => person.planningEnabled !== false && (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")).map((person) => person.sector).filter(Boolean))) {
+    const members = input.employees.filter((person) => person.planningEnabled !== false && (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING") && person.sector === sector);
     const missing = dateRange(input.startDate, input.endDate).filter((day) => !input.policy.closedDates.includes(day)
       && members.some((person) => day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil))
       && !demandedDates.has(`${sector}\0${day}`));

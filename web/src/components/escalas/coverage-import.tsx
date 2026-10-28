@@ -110,15 +110,14 @@ export function ImportEmployees({
             Prévia: {preview.employees.length} colaboradores aceitos de {preview.totalRows} linhas.
           </p>
           <p className="text-sm">
-            A importação preserva os horários originais. Depois, confira a proposta de adaptação à carga semanal
-            e escolha os horários antes de sugerir as folgas para toda a filial.
+            A importação preserva os horários originais. A geração prepara alternativas válidas automaticamente; a prévia de horários continua disponível para ajustes opcionais.
           </p>
           {preview.report && <p className="text-sm">
             FPRE136 · filial {preview.report.branchCode} — {preview.report.branchName}: {preview.report.sourceEmployees}
             {" "}colaboradores na fonte; {preview.report.otherBranchesExcluded} de outras filiais ignorados;
-            {" "}{preview.report.missingSchedule} sem horário fixo, incluídos no rodízio de folgas.
+            {" "}{preview.report.missingSchedule} sem horário informado, incluídos na simulação de presença e folgas.
           </p>}
-          <p className="text-sm">Pessoas sem horário fixo participam do rodízio 5×2 e quinzenal de folgas sem receber turno ou horas fictícias. Para os demais cadastros, jornadas inferiores a 6h e horários sem adaptação precisam de conferência antes da geração.</p>
+          <p className="text-sm">Pessoas sem horário informado participam da simulação de presença e folgas, sem turno, horas ou cobertura horária fictícios. Isso não presume dispensa de controle de jornada. Para os demais cadastros, jornadas inferiores a 6h e horários sem adaptação precisam de conferência antes da geração.</p>
           {preview.issues.length > 0 && (
             <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm">
               {preview.issues.map((issue) => (
@@ -162,7 +161,7 @@ export function ImportEmployees({
                     <td className="p-2">
                       {employee.sector} / {employee.role}
                     </td>
-                    <td className="p-2">{employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : `${employee.weeklyHours}h`}</td>
+                    <td className="p-2">{employee.scheduleMode === "MISSING" ? "Horário não informado · horas não apuradas" : employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : `${employee.weeklyHours}h`}</td>
                   </tr>
                 ))}
               </tbody>

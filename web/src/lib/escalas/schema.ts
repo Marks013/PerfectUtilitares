@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { addDays, dateRange, dayOfWeek, isDate } from "./dates";
+import { addDays, dateRange, dayOfWeek, isDate, monthBounds } from "./dates";
 
 const identifier = z.string().trim().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u, "Identificador inválido");
 const label = z.string().trim().min(1).max(160);
@@ -48,7 +48,7 @@ const employee = z.strictObject({
   weeklyHoursMode: z.enum(["BRANCH", "INDIVIDUAL"]).optional(),
   shiftIds: z.array(identifier).max(12), activeFrom: z.union([date, z.literal("")]), activeUntil: date.optional(),
   planningEnabled: z.boolean().optional(),
-  scheduleMode: z.enum(["TIMED", "UNTIMED"]).optional(),
+  scheduleMode: z.enum(["TIMED", "MISSING", "UNTIMED"]).optional(),
   planningExclusionReason: z.string().trim().max(240).optional(),
   sourceSchedule: z.strictObject({ report: z.literal("FPRE136"), code: z.string().trim().max(40),
     description: z.string().trim().max(180), weekday: z.string().trim().max(180), saturday: z.string().trim().max(180) }).optional(),
@@ -58,6 +58,7 @@ const employee = z.strictObject({
   sundayRestRule: z.enum(["PROTECTIVE", "UNREVIEWED", "CLT_386", "COMMERCE"]).optional(),
   historyKnown: z.boolean(), history: z.array(assignment).max(56),
   planningHistory: z.array(assignment).max(56).optional(),
+  planningFuture: z.array(assignment).max(21).optional(),
 }).superRefine((value, context) => {
   const expected = { VARIABLE: 0, MIXED: 1, FIXED: 2 }[value.offMode];
   if (value.fixedOffDays.length !== expected) context.addIssue({ code: "custom", path: ["fixedOffDays"], message: `Este modo exige ${expected} dia(s) fixo(s)` });
@@ -94,6 +95,7 @@ const policy = z.strictObject({
 
 export const escalaInputSchema = z.strictObject({
   schemaVersion: z.literal(1), branchCode: label, branchName: label, startDate: planningDate, endDate: planningDate,
+  visibleMonth: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).optional(),
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,
   employees: z.array(employee).max(250), shifts: z.array(shift).max(120),
   demands: z.array(z.strictObject({
@@ -108,6 +110,11 @@ export const escalaInputSchema = z.strictObject({
   if (!dates.length || dates.length % 7 !== 0 || dayOfWeek(value.startDate) !== 0 || dayOfWeek(value.endDate) !== 6) {
     context.addIssue({ code: "custom", path: ["endDate"], message: "Selecione de 1 a 6 semanas completas, de segunda a domingo" });
   }
+  if (value.visibleMonth && /^20\d{2}-(0[1-9]|1[0-2])$/.test(value.visibleMonth)) {
+    const month = monthBounds(value.visibleMonth);
+    if (month.startDate < value.startDate || month.endDate > value.endDate)
+      context.addIssue({ code: "custom", path: ["visibleMonth"], message: "O horizonte técnico deve conter todo o mês selecionado" });
+  }
   for (const field of ["employees", "shifts", "demands"] as const) {
     const seen = new Set<string>();
     value[field].forEach((item, index) => {
@@ -117,7 +124,7 @@ export const escalaInputSchema = z.strictObject({
   }
   const employeeIds = new Set(value.employees.map((person) => person.id));
   const shiftIds = new Set(value.shifts.map((item) => item.id));
-  const checkAssignments = (entries: z.infer<typeof assignment>[], path: (string | number)[], personId?: string) => {
+  const checkAssignments = (entries: z.infer<typeof assignment>[], path: (string | number)[], personId?: string, future = false) => {
     const seen = new Set<string>();
     entries.forEach((entry, index) => {
       const key = `${entry.employeeId}\0${entry.date}`;
@@ -126,7 +133,7 @@ export const escalaInputSchema = z.strictObject({
       if (!employeeIds.has(entry.employeeId) || (personId && personId !== entry.employeeId)) context.addIssue({ code: "custom", path: [...path, index, "employeeId"], message: "Colaborador inválido" });
       if (entry.shiftId && !shiftIds.has(entry.shiftId)) context.addIssue({ code: "custom", path: [...path, index, "shiftId"], message: "Turno inexistente" });
       if (!personId && (entry.date < value.startDate || entry.date > value.endDate)) context.addIssue({ code: "custom", path: [...path, index, "date"], message: "Data fora da escala" });
-      if (personId && (entry.date >= value.startDate || entry.date < addDays(value.startDate, -56))) context.addIssue({ code: "custom", path: [...path, index, "date"], message: "Histórico deve estar nos 56 dias anteriores à escala" });
+      if (personId && (future ? entry.date <= value.endDate || entry.date > addDays(value.endDate, 21) : entry.date >= value.startDate || entry.date < addDays(value.startDate, -56))) context.addIssue({ code: "custom", path: [...path, index, "date"], message: future ? "Continuidade posterior deve estar nos 21 dias após a escala" : "Histórico deve estar nos 56 dias anteriores à escala" });
     });
   };
   checkAssignments(value.assignments, ["assignments"]);
@@ -134,6 +141,7 @@ export const escalaInputSchema = z.strictObject({
     if (person.shiftIds.some((id) => !shiftIds.has(id))) context.addIssue({ code: "custom", path: ["employees", index, "shiftIds"], message: "Turno permitido inexistente" });
     checkAssignments(person.history, ["employees", index, "history"], person.id);
     checkAssignments(person.planningHistory ?? [], ["employees", index, "planningHistory"], person.id);
+    checkAssignments(person.planningFuture ?? [], ["employees", index, "planningFuture"], person.id, true);
     const duplicate = value.employees.slice(0, index).some((previous) => previous.registration === person.registration
       && previous.activeFrom <= (person.activeUntil ?? "2099-12-31")
       && person.activeFrom <= (previous.activeUntil ?? "2099-12-31"));

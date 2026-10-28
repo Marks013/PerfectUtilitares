@@ -8,7 +8,7 @@ import { changeBranchWeeklyHours, coverageDefinitionChanged, newEmployee, newInp
 function reference() {
   const input = newInput("02", "Centro", "2026-11", 42);
   input.shifts = [{ id: "source", name: "44h em seis dias", segments: [{ start: 420, end: 660, kind: "WORK" }, { start: 660, end: 780, kind: "BREAK" }, { start: 780, end: 980, kind: "WORK" }] }];
-  input.employees = [{ ...newEmployee(44, "source"), id: "a", registration: "1", name: "Ana", role: "Repositor", sector: "Loja", sourceSchedule: { report: "FPRE136", code: "1", description: "44h", weekday: "07:00-11:00 13:00-16:20", saturday: "07:00-11:00 13:00-16:20" } }];
+  input.employees = [{ ...newEmployee(44, "source"), weeklyHoursMode: "BRANCH", id: "a", registration: "1", name: "Ana", role: "Repositor", sector: "Loja", sourceSchedule: { report: "FPRE136", code: "1", description: "44h", weekday: "07:00-11:00 13:00-16:20", saturday: "07:00-11:00 13:00-16:20" } }];
   return input;
 }
 
@@ -38,6 +38,16 @@ describe("explicit branch hours selection before mass days off", () => {
     expect(departure.employees[1].shiftIds).toEqual([]);
     expect(departure.employees[1].scheduleMode).toBe("UNTIMED");
     expect(prepareHoursProposal(input, "both").employees[0].shiftIds).toHaveLength(2);
+  });
+
+  it("preserves an explicitly individual 44-hour reference when the branch simulation selects 42 hours", () => {
+    const input = reference();
+    input.employees[0].weeklyHoursMode = "INDIVIDUAL";
+    const proposal = prepareHoursProposal(input, "arrival");
+    expect(proposal.employees[0].weeklyHours).toBe(44);
+    const shift = proposal.shifts.find((item) => item.id === proposal.employees[0].shiftIds[0]);
+    expect(shift?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)).toBe(528);
+    expect(input.employees[0].weeklyHours).toBe(44);
   });
 
   it("does not offer schedule adaptation for locked assignments", () => {

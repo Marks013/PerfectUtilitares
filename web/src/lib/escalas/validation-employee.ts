@@ -1,4 +1,4 @@
-import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
+import { addDays, dateRange, dayOfWeek, weekStart, visibleDates } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
@@ -12,16 +12,18 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
   const issues: EscalaIssue[] = [];
   const issue = (code: string, message: string, date?: string, severity: EscalaIssue["severity"] = "ERROR") => issues.push({ code, message, severity, employeeId: person.id, ...(date ? { date } : {}) });
   const current = input.assignments.filter((assignment) => assignment.employeeId === person.id);
-  const all = [...new Map([...(person.planningHistory ?? []), ...person.history, ...current].map((item) => [item.date, item])).values()].sort((left, right) => left.date.localeCompare(right.date));
+  const all = [...new Map([...(person.planningHistory ?? []), ...person.history, ...current, ...(person.planningFuture ?? [])].map((item) => [item.date, item])).values()].sort((left, right) => left.date.localeCompare(right.date));
   const byDate = new Map(all.map((assignment) => [assignment.date, assignment]));
   const reservedOffDates = new Set(reservations.filter((assignment) => assignment.employeeId === person.id).map((assignment) => assignment.date));
-  const currentWork = journeys.filter((journey) => journey.assignment.employeeId === person.id && journey.assignment.date >= input.startDate);
-  const untimed = person.scheduleMode === "UNTIMED";
+  const currentWork = journeys.filter((journey) => journey.assignment.employeeId === person.id && journey.assignment.date >= input.startDate && journey.assignment.date <= input.endDate);
+  const untimed = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
+  const visible = new Set(visibleDates(input));
+  const monthly = current.filter((assignment) => visible.has(assignment.date));
   const allWork = journeys.filter((journey) => journey.assignment.employeeId === person.id).sort((left, right) => left.start - right.start);
   const summary: EscalaEmployeeSummary = {
-    employeeId: person.id, workedMinutes: untimed ? 0 : currentWork.reduce((sum, journey) => sum + journey.minutes, 0),
-    workDays: current.filter((assignment) => assignment.kind === "WORK" || assignment.kind === "DUTY").length,
-    offDays: current.filter((assignment) => assignment.kind === "OFF").length,
+    employeeId: person.id, workedMinutes: untimed ? 0 : currentWork.filter((journey) => visible.has(journey.assignment.date)).reduce((sum, journey) => sum + journey.minutes, 0),
+    workDays: monthly.filter((assignment) => assignment.kind === "WORK" || assignment.kind === "DUTY").length,
+    offDays: monthly.filter((assignment) => assignment.kind === "OFF").length,
     maxStreak: 0, sundaysWorked: 0,
   };
   if (person.planningEnabled === false) {
@@ -30,6 +32,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
   }
   if (!person.sector || !person.role) issue("ORGANIZATION_PENDING", "Informe setor e cargo antes da publicação.", undefined, "PENDING");
   if (!untimed && !person.shiftIds.length) issue("EMPLOYEE_SHIFT_PENDING", "Nenhum horário de planejamento definido. Use a configuração em lote da filial ou mantenha este registro fora da geração.", undefined, "PENDING");
+  if (person.scheduleMode === "MISSING") issue("MISSING_SCHEDULE", "Horário não informado: presença e folgas podem ser simuladas, mas horas, intervalos e cobertura horária não foram verificados. Informe um horário ou confirme explicitamente o modo sem controle de horário antes da publicação.", undefined, "PENDING");
   if (untimed) issue("UNTIMED_REST_UNVERIFIED", "Sem horário fixo: o rodízio confere dias de trabalho, folgas e domingos. Horas e intervalos entre jornadas não foram apurados nem presumidos; o cadastro não certifica enquadramento de exceção da CLT.", undefined, "WARNING");
   if ((!person.sundayRestRule || person.sundayRestRule === "UNREVIEWED") && person.maxConsecutiveSundays > 1) issue("SUNDAY_RULE_PENDING", "Dois domingos consecutivos exigem enquadramento conferido na regra geral do comércio. A regra quinzenal protetiva pode ser usada para toda a equipe.", undefined, "PENDING");
   const sundayLimit = effectiveSundayLimit(person);
@@ -63,30 +66,31 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
     if (previousDate && addDays(previousDate, 1) !== assignment.date) streak = 0;
     streak = assignment.kind === "WORK" || assignment.kind === "DUTY" ? streak + 1 : 0;
     if (assignment.date >= input.startDate) {
-      summary.maxStreak = Math.max(summary.maxStreak, streak);
-      if (streak > input.policy.maxConsecutiveWorkDays) issue("WORK_STREAK", `Sequência de ${streak} jornadas: máximo de ${input.policy.maxConsecutiveWorkDays}; o sétimo dia deve ser descanso.`, assignment.date);
+      if (visible.has(assignment.date)) summary.maxStreak = Math.max(summary.maxStreak, streak);
+      if (streak > input.policy.maxConsecutiveWorkDays && addDays(assignment.date, -input.policy.maxConsecutiveWorkDays) <= input.endDate) issue("WORK_STREAK", `Sequência de ${streak} jornadas: máximo de ${input.policy.maxConsecutiveWorkDays}; o sétimo dia deve ser descanso.`, assignment.date);
     }
     previousDate = assignment.date;
   }
   for (let index = 1; index < allWork.length; index++) {
     const previous = allWork[index - 1];
     const next = allWork[index];
-    if (next.assignment.date < input.startDate) continue;
+    if (next.assignment.date < input.startDate || previous.assignment.date > input.endDate) continue;
     const rest = next.start - previous.end;
     if (rest < input.policy.minInterShiftMinutes) issue("INTER_SHIFT_REST", `Descanso de ${rest} minutos entre jornadas; mínimo de ${input.policy.minInterShiftMinutes}.`, next.assignment.date);
     if (interveningOffs(previous, next, byDate) && rest < input.policy.minWeeklyRestMinutes) issue("WEEKLY_REST", `Repouso com folga de ${rest} minutos; mínimo de ${input.policy.minWeeklyRestMinutes}.`, next.assignment.date);
   }
   const occupied = new Set([...allWork.flatMap((journey) => journey.occupiedDates), ...all.filter((assignment) => assignment.kind === "DUTY").map((assignment) => assignment.date)]);
   let sundayStreak = 0;
-  for (const day of dateRange(addDays(input.startDate, -21), input.endDate).filter((day) => dayOfWeek(day) === 6)) {
+  const continuityEnd = all.reduce((end, assignment) => assignment.date > end ? assignment.date : end, input.endDate);
+  for (const day of dateRange(addDays(input.startDate, -21), continuityEnd).filter((day) => dayOfWeek(day) === 6)) {
     const assignment = byDate.get(day);
     if (occupied.has(day)) sundayStreak++;
     else if (assignment?.kind === "OFF") sundayStreak = 0;
     else if (assignment?.kind === "ABSENCE" || !isActive(person, day)) sundayStreak = 0;
     else sundayStreak = 0; // Unknown history is separately blocking; do not claim it was rest.
     if (day >= input.startDate && occupied.has(day)) {
-      summary.sundaysWorked++;
-      if (sundayStreak > sundayLimit) issue("SUNDAY_ROTATION", `Mais de ${sundayLimit} domingo(s) consecutivo(s) trabalhado(s); confira o enquadramento e o histórico.`, day);
+      if (visible.has(day)) summary.sundaysWorked++;
+      if (sundayStreak > sundayLimit && addDays(day, -7 * sundayLimit) <= input.endDate) issue("SUNDAY_ROTATION", `Mais de ${sundayLimit} domingo(s) consecutivo(s) trabalhado(s); confira o enquadramento e o histórico.`, day);
     }
   }
   for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) {
@@ -112,10 +116,23 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
       for (const off of offs) {
         const before = addDays(off, -1);
         const after = addDays(off, 1);
-        if (byDate.get(before)?.kind === "OFF" || byDate.get(after)?.kind === "OFF" || reservedOffDates.has(after)) continue;
-        if (after > input.endDate || (before < input.startDate && !byDate.has(before))) issue("CONSECUTIVE_PENDING", "Folga consecutiva na fronteira depende de outro dia de descanso registrado no período adjacente.", off, "PENDING");
+        if (byDate.get(before)?.kind === "OFF" || byDate.get(after)?.kind === "OFF" || (reservedOffDates.has(after) && !byDate.has(after))) continue;
+        if ((after > input.endDate && !byDate.has(after)) || (before < input.startDate && !byDate.has(before))) issue("CONSECUTIVE_PENDING", "Folga consecutiva na fronteira depende de outro dia de descanso registrado no período adjacente.", off, "PENDING");
         else issue("CONSECUTIVE_OFF", "Folgas consecutivas obrigatórias não foram respeitadas.", off);
       }
+    }
+  }
+  for (const future of person.planningFuture ?? []) {
+    if (future.kind === "OFF" && allWork.some((journey) => journey.assignment.date <= input.endDate && journey.occupiedDates.includes(future.date)))
+      issue("OFF_OCCUPIED", "Uma jornada deste período ocupa uma folga já publicada no próximo período.", future.date);
+  }
+  if (person.offPattern === "CONSECUTIVE") {
+    for (const future of person.planningFuture ?? []) {
+      if (future.kind !== "OFF" || future.date !== addDays(input.endDate, 1)) continue;
+      const before = byDate.get(input.endDate), after = byDate.get(addDays(future.date, 1));
+      if (before?.kind === "OFF" || after?.kind === "OFF") continue;
+      if (!before || !after) issue("CONSECUTIVE_PENDING", "A primeira folga publicada no próximo período depende de outro descanso adjacente ainda não informado.", future.date, "PENDING");
+      else issue("CONSECUTIVE_OFF", "A alteração rompe o par de folgas consecutivas já publicado na fronteira do próximo período.", future.date);
     }
   }
   return { issues, summary };

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
+import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import { unzipSync, strFromU8 } from "fflate";
 import { readSheet } from "read-excel-file/node";
 import type { AppSession } from "@/auth";
@@ -36,18 +37,38 @@ describe("/api/escalas/export", () => {
     expect(content).not.toContain("<f>");
     expect(content).toContain("=FORMULA");
     const rows = await readSheet(bytes);
-    expect(rows[1].slice(1, 5)).toEqual(["Açougue", "Açougueiro", "0002", "=FORMULA"]);
-    const ana = rows.find((row) => row[4] === "Ána Silva" && row[5] === "2026-10-26");
-    expect(ana?.[8]).toBe(504);
-    expect(ana?.[9]).toBe(42);
+    expect(rows[3].slice(0, 4)).toEqual(["Setor", "Matrícula", "Colaborador", "Cargo"]);
+    expect(rows[3]).toHaveLength(11);
+    expect(rows[4].slice(0, 4)).toEqual(["Açougue", "0002", "=FORMULA", "Açougueiro"]);
+    const ana = rows.find((row) => row[2] === "Ána Silva");
+    expect(ana?.slice(4)).toEqual(["T01", "P", "P", "P", "P", "P", "P"]);
+    const details = await readSheet(bytes, "Jornadas");
+    const detail = details.find(row => row[2] === "Ána Silva");
+    expect(detail?.[4]).toBe(42);
+    expect(detail?.[7]).toBe("08:24");
+    expect(strFromU8(zip["xl/workbook.xml"])).toContain("$1:$4");
   });
-  it("exports a readable real PDF with a schedule and summary page", async () => {
+  it("exports a readable compact draft PDF without the removed load summary", async () => {
     const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/pdf");
-    const document = await PDFDocument.load(await response.arrayBuffer());
-    expect(document.getPageCount()).toBe(2);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const document = await PDFDocument.load(bytes);
+    expect(document.getPageCount()).toBe(1);
     expect(document.getTitle()).toContain("Filial 2");
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const loading = pdfjs.getDocument(pdfJsServerDocumentOptions(bytes));
+    const readable = await loading.promise;
+    try {
+      const page = await readable.getPage(1);
+      const content = await page.getTextContent();
+      const text = content.items.filter(item => "str" in item).map(item => item.str).join(" ");
+      expect(text).toContain("Ána Silva");
+      expect(text).toContain("=FORMULA");
+      expect(text).toContain("T01");
+      expect(text).toContain("RASCUNHO");
+      expect(text).not.toContain("Resumo de carga e turnos");
+    } finally { await loading.destroy(); }
   });
   it("fails closed for missing access and rejects invalid formats/versions", async () => {
     mocks.get.mockRejectedValue(new EscalaError(404, "ESCALA_NOT_FOUND", "Escala não encontrada."));

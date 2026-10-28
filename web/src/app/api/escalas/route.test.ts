@@ -4,10 +4,10 @@ import { EscalaError } from "@/lib/escalas/access";
 import { EscalaSolverError } from "@/lib/escalas/solver-client";
 import { DELETE, GET, PATCH, POST } from "./route";
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), rate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn() }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
-vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, saveEscala: mocks.save, generateEscala: mocks.generate, parseEscalaInput: (value: unknown) => value }));
+vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, saveEscala: mocks.save, generateEscala: mocks.generate, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
 const workspace = { id: "w1", revision: 1, status: "DRAFT", input, canEdit: true, canPublish: true };
@@ -21,6 +21,21 @@ beforeEach(() => {
 });
 
 describe("/api/escalas", () => {
+  it("deletes the selected private revision and reports safe failures", async () => {
+    const request = (body: unknown, origin = "http://localhost") => new Request("http://localhost/api/escalas", { method: "DELETE", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
+    mocks.remove.mockResolvedValue({ deletedId: "w1" });
+    const response = await DELETE(request({ workspaceId: "w1", expectedRevision: 1 }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ deletedId: "w1" });
+    expect(mocks.remove).toHaveBeenCalledWith({ userId: "u1", tenantId: "t1", admin: true }, "w1", 1);
+    expect((await DELETE(request({ workspaceId: "w1", expectedRevision: 0 }))).status).toBe(400);
+    expect((await DELETE(request({ workspaceId: "w1", expectedRevision: 1 }, "https://foreign.test"))).status).toBe(403);
+    mocks.remove.mockRejectedValue(new EscalaError(409, "ESCALA_DELETE_DEPENDENCY", "Outra proposta depende deste período."));
+    expect((await DELETE(request({ workspaceId: "w1", expectedRevision: 1 }))).status).toBe(409);
+    mocks.session = null;
+    expect((await DELETE(request({ workspaceId: "w1", expectedRevision: 1 }))).status).toBe(401);
+  });
   it("lists private tenant-scoped workspaces and gets an authorized workspace", async () => {
     const response = await GET(new Request("http://localhost/api/escalas"));
     expect(response.status).toBe(200);
@@ -75,7 +90,6 @@ describe("/api/escalas", () => {
   it("honors limits and method contracts", async () => {
     mocks.rate.mockResolvedValue(Response.json({ error: "limit" }, { status: 429 }));
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(429);
-    expect(PATCH().headers.get("allow")).toBe("GET, POST");
-    expect(DELETE().status).toBe(405);
+    expect(PATCH().headers.get("allow")).toBe("GET, POST, DELETE");
   });
 });

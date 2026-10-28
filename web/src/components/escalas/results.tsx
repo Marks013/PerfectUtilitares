@@ -156,7 +156,6 @@ function IssueDetails({ input, issues }: { input: EscalaInput; issues: EscalaIss
         return <li key={JSON.stringify([issue.code, issue.employeeId, issue.date, issue.message])} className="border-t border-[color:var(--app-border)] pt-2">
           {employee && <p className="font-semibold">{employee.sector} / {employee.role} · {employee.name} ({employee.registration})</p>}
           <p>{issue.date ? `${displayDate(issue.date)} · ` : ""}{employee ? `${employee.name}: ` : ""}{issue.message}</p>
-          <p className="text-xs text-[color:var(--app-muted)]">Referência técnica: {issue.code}</p>
         </li>;
       })}
     </ul>
@@ -288,7 +287,7 @@ export function ValidationResults({ input, validation, onResolve }: { input: Esc
                         {employee.name} · {employee.registration}
                       </span>
                     </th>
-                    <td className="p-2 tabular-nums">{employee.scheduleMode === "UNTIMED" ? "Horas não apuradas" : clock(summary.workedMinutes)}</td>
+                    <td className="p-2 tabular-nums">{(employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING") ? "Horas não apuradas" : clock(summary.workedMinutes)}</td>
                     <td className="p-2">
                       {summary.workDays} / {summary.offDays}
                     </td>
@@ -305,69 +304,27 @@ export function ValidationResults({ input, validation, onResolve }: { input: Esc
   );
 }
 
-export function Publication({
-  workspace,
-  validation,
-  dirty,
-  busy,
-  onPublish,
-}: {
-  workspace: EscalaWorkspace;
-  validation: EscalaValidation | null;
-  dirty: boolean;
-  busy: boolean;
-  onPublish: () => void;
+export function Publication({ workspace, validation, dirty, busy, onPublish }: {
+  workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; onPublish: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
-  const ready =
-    workspace.canPublish && !dirty && !busy && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
-  return (
-    <section className={panelClass} aria-labelledby="escala-publication-title">
-      <h2 id="escala-publication-title" className="text-lg font-bold">
-        Aprovar e publicar
-      </h2>
-      <p className="text-sm">
-        A publicação aprova internamente os dados da revisão {workspace.revision} e registra uma versão preservada.
-        Alterações posteriores formam uma nova proposta. Não há envio a colaboradores, integração com ponto ou
-        lançamento em folha. A aprovação interna preserva os limites de conferência informados e não certifica
-        conformidade legal completa.
-      </p>
-      <Check
-        label={`Conferi a equipe, os horários, a cobertura e as regras da filial ${workspace.input.branchCode} para esta revisão`}
-        checked={confirmed}
-        disabled={!ready}
-        onChange={setConfirmed}
-      />
-      <button type="button" className={primaryClass} disabled={!ready || !confirmed} onClick={onPublish}>
-        {workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}
-      </button>
-      {!ready && workspace.status !== "PUBLISHED" && (
-        <p className="text-sm text-[color:var(--app-muted)]">
-          Resolva todos os impeditivos e pendências, salve a revisão e utilize um perfil autorizado a aprovar.
-        </p>
-      )}
-      <div className="flex flex-wrap gap-3 border-t border-[color:var(--app-border)] pt-4">
-        {(["pdf", "xlsx"] as const).map((format) =>
-          !dirty && !busy ? (
-            <a
-              key={format}
-              href={`/api/escalas/export?id=${encodeURIComponent(workspace.id)}&revision=${workspace.revision}&format=${format}`}
-              download
-              className={buttonClass}
-            >
-              Baixar {format.toUpperCase()} {workspace.status === "DRAFT" ? "da proposta" : "publicado"}
-            </a>
-          ) : (
-            <button key={format} type="button" disabled className={buttonClass}>
-              Baixar {format.toUpperCase()}
-            </button>
-          ),
-        )}
-      </div>
-      <p className="text-xs text-[color:var(--app-muted)]">
-        Os arquivos usam a revisão salva, com identificação de rascunho quando aplicável. Salve as alterações para
-        exportar.
-      </p>
-    </section>
-  );
+  const ready = workspace.canPublish && !dirty && !busy && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
+  return <section className={panelClass} aria-labelledby="escala-publication-title">
+    <h2 id="escala-publication-title" className="text-lg font-bold">Exportar proposta</h2>
+    <p className="text-sm">PDF e Excel usam a mesma grade mensal da revisão salva {workspace.revision}. Advertências não impedem exportar um rascunho identificado.</p>
+    <div className="flex flex-wrap gap-3">
+      {(["pdf", "xlsx"] as const).map((format) => !dirty && !busy ? <a key={format}
+        href={`/api/escalas/export?id=${encodeURIComponent(workspace.id)}&revision=${workspace.revision}&format=${format}`}
+        download className={buttonClass}>Baixar {format.toUpperCase()} {workspace.status === "DRAFT" ? "da proposta" : "publicado"}</a>
+        : <button key={format} type="button" disabled className={buttonClass}>Baixar {format.toUpperCase()}</button>)}
+    </div>
+    <p className="text-xs text-[color:var(--app-muted)]">Os arquivos usam a revisão salva, com identificação de rascunho quando aplicável. Salve as alterações para exportar.</p>
+    <details className="space-y-3 border-t border-[color:var(--app-border)] pt-3">
+      <summary className="min-h-11 cursor-pointer py-2 font-semibold">Aprovação interna (opcional para simular e exportar)</summary>
+      <p className="text-sm">A publicação aprova internamente os dados da revisão {workspace.revision} e registra uma versão preservada. Alterações posteriores formam uma nova proposta. Não há envio a colaboradores, integração com ponto ou lançamento em folha. A aprovação interna preserva os limites de conferência informados e não certifica conformidade legal completa.</p>
+      <Check label={`Conferi a equipe, os horários, a cobertura e as regras da filial ${workspace.input.branchCode} para esta revisão`} checked={confirmed} disabled={!ready} onChange={setConfirmed} />
+      <button type="button" className={primaryClass} disabled={!ready || !confirmed} onClick={onPublish}>{workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}</button>
+      {!ready && workspace.status !== "PUBLISHED" && <p className="text-sm text-[color:var(--app-muted)]">Resolva todos os impeditivos e pendências, salve a revisão e utilize um perfil autorizado a aprovar. Isso não impede exportar o rascunho salvo.</p>}
+    </details>
+  </section>;
 }

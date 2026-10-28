@@ -37,11 +37,12 @@ describe("whole-branch generation preparation", () => {
   });
 
   it("honors an explicitly selected shorter branch target without increasing a shorter contract", () => {
-    const value = input(); value.defaultWeeklyHours = 40; value.employees[0].weeklyHoursMode = "INDIVIDUAL";
+    const value = input(); value.defaultWeeklyHours = 40; value.employees[0].weeklyHoursMode = "BRANCH";
     const prepared = prepareGeneration(value).input;
     expect(prepared.employees[0].weeklyHours).toBe(40);
     expect(prepared.employees[0].shiftIds.every((id) => minutes(prepared, id) === 480)).toBe(true);
     prepared.defaultWeeklyHours = 44;
+    prepared.employees[0].weeklyHoursMode = "INDIVIDUAL";
     expect(prepareGeneration(prepared).input.employees[0].weeklyHours).toBe(40);
   });
   it("preserves the selected start-preserving shift proposal instead of restoring every alternative", () => {
