@@ -112,7 +112,7 @@ def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit,
     upper = max([last, *(day for day in prior if day > last)])
     timeline = [(date.fromisoformat(lower) + timedelta(days=offset)).isoformat() for offset in range((date.fromisoformat(upper) - date.fromisoformat(lower)).days + 1)]
     working = lambda day: known.get(day, {}).get("kind") in ("WORK", "DUTY")
-    maximum = min(6, policy["maxConsecutiveWorkDays"])
+    maximum = min(5, policy["maxConsecutiveWorkDays"])
     streak = 0
     for day in timeline:
         streak = streak + 1 if working(day) else 0

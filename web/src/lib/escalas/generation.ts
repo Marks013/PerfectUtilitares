@@ -1,6 +1,6 @@
 import { EscalaError } from "./access";
 import { addDays, dateRange } from "./dates";
-import { effectiveWeeklyHours } from "./labor-rules";
+import { effectiveWeeklyHours, effectiveWorkDayLimit } from "./labor-rules";
 import { planningWeeklyHours, prepareRoster, proposeCoverage } from "./preparation";
 import type { EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
 
@@ -10,7 +10,7 @@ function paidMinutes(shift: EscalaShift): number {
 
 /** Prepare a preview, without approving documents, inventing attendance or overwriting branch decisions. */
 export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; preparation: EscalaGenerationPreparation } {
-  const input: EscalaInput = { ...rawInput, simulation: true };
+  const input: EscalaInput = { ...rawInput, simulation: true, policy: { ...rawInput.policy, maxConsecutiveWorkDays: effectiveWorkDayLimit(rawInput.policy) } };
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const adjustedEmployeeIds: string[] = [];
   const excludedEmployeeIds: string[] = [];

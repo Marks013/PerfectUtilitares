@@ -82,7 +82,8 @@ export function newInput(branchCode: string, branchName: string, month: string, 
       minInterShiftMinutes: 660,
       minWeeklyRestMinutes: 2100,
       minMealMinutes: 60,
-      maxConsecutiveWorkDays: 6,
+      allowShortMealSimulation: false,
+      maxConsecutiveWorkDays: 5,
       closedDates: [],
       holidayDates: [],
       authorizedHolidayDates: [],
@@ -150,7 +151,7 @@ export function scenarioDefinitionChanged(previous: EscalaInput, next: EscalaInp
 }
 
 export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidation | null): boolean {
-  if (input.needsRegeneration) return true;
+  if (input.needsRegeneration || input.policy.maxConsecutiveWorkDays > 5) return true;
   if (!validation?.issues.some((issue) => ['WEEKLY_MINUTES', 'WEEKLY_LIMIT'].includes(issue.code))) return false;
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   return input.employees.some((person) => person.scheduleMode !== "MISSING" && person.scheduleMode !== "UNTIMED"
@@ -199,7 +200,7 @@ export function selectNormativeProfile(
             validFrom: CCT_FROM,
             validUntil: CCT_UNTIL,
             holidayRestAllowed: false,
-            maxConsecutiveWorkDays: 6,
+            maxConsecutiveWorkDays: 5,
           }
         : {}),
     },

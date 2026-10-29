@@ -1,6 +1,20 @@
 import { addDays, dateRange, isDate, weekStart } from "./dates";
 import type { EscalaEmployee, EscalaInput, EscalaPolicy, WeeklyHours } from "./types";
 
+/** Operational invariant of this project's 5x2 planning model, not a general legal conclusion. */
+const MAX_CONSECUTIVE_WORK_DAYS = 5;
+
+export function effectiveWorkDayLimit(policy: Pick<EscalaPolicy, "maxConsecutiveWorkDays">): number {
+  return Math.min(MAX_CONSECUTIVE_WORK_DAYS, policy.maxConsecutiveWorkDays);
+}
+
+/** The four-hour threshold concerns a short-journey pause, never a daily or continuous-work cap. */
+export function minimumMealMinutes(policy: Pick<EscalaPolicy, "minMealMinutes" | "allowShortMealSimulation">, paidMinutes: number, simulation = false): number {
+  if (paidMinutes > 360) return policy.minMealMinutes;
+  if (paidMinutes <= 240) return 0;
+  return simulation && policy.allowShortMealSimulation === true ? 0 : 15;
+}
+
 // EC 141/2026, arts. 6 and 7. Saved policies cannot raise these ceilings.
 export const TRANSITION_42_DATE = "2026-12-16";
 export const TRANSITION_40_DATE = "2027-12-16";

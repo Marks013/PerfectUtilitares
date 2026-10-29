@@ -80,7 +80,7 @@ describe("Escalas practical accessibility and publication states", () => {
     validation.summaries = [{ employeeId: employee.id, workedMinutes: 0, workDays: 5, offDays: 2, maxStreak: 5, sundaysWorked: 1 }];
     const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false}
       canUnlock onChange={vi.fn()} />);
-    expect(html).toContain("Trabalho sem controle de horário confirmado");
+    expect(html).toContain("Não subordinado a horário, conforme condição expressamente informada");
     expect(html).toContain("Sem horário fixo · horas não apuradas");
     expect(html).toContain("5 dias trabalhados · 2 folgas");
     expect(html).not.toContain("42h por semana");
@@ -96,7 +96,7 @@ describe("Escalas practical accessibility and publication states", () => {
     input.assignments = [{ employeeId: input.employees[0].id, date: visibleDates(input)[0], kind: "DUTY" }];
     const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false} canUnlock onChange={vi.fn()} />);
     expect(html).toContain("Horário não informado · horas não apuradas");
-    expect(html).toContain("Presença planejada sem horário informado");
+    expect(html).toContain("presença diária planejada sem horário informado");
     expect(html).not.toContain("42h por semana");
     const editor = renderToStaticMarkup(<CellEditor employee={input.employees[0]} date={visibleDates(input)[0]} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
     expect(editor).toContain("não confirma dispensa de controle de jornada");
@@ -124,7 +124,7 @@ describe("Escalas practical accessibility and publication states", () => {
       date={input.startDate} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
     const untimed = renderEditor(true);
     expect(untimed).toContain('value="DUTY" selected=""');
-    expect(untimed).toContain("Trabalho sem horário fixo");
+    expect(untimed).toContain("ENC — Não subordinado a horário");
     expect(untimed).not.toContain('value="WORK"');
     expect(untimed).not.toContain("Turno autorizado");
     const timed = renderEditor(false);
@@ -180,9 +180,9 @@ describe("Escalas practical accessibility and publication states", () => {
     const { input, validation, workspace } = sample();
     validation.issues = [{ severity: "WARNING", code: "HISTORY_UNKNOWN", employeeId: "a", message: "Histórico anterior não verificado." }];
     const html = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
-    expect(html).toContain("Limites de conferência (1)");
-    expect(html).toContain("0 impeditivos");
-    expect(html).toContain("0 pendências");
+    expect(html).toContain("Informações e limites de conferência (1)");
+    expect(html).toContain("0 impedimento(s)");
+    expect(html).toContain("0 ponto(s) para revisar");
     expect(html).toContain("Histórico anterior não verificado.");
     expect(html).not.toContain("Ana: Histórico anterior não verificado.");
     expect(html).not.toContain("HISTORY_UNKNOWN");
@@ -207,11 +207,11 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).toContain("Reposição");
     expect(html).toContain("Organização: setor e nome A–Z");
     expect(html).not.toContain("Reposição / Repositor");
-    expect((html.match(/scope="col"/g) ?? [])).toHaveLength(32);
+    expect((html.match(/scope="col"/g) ?? [])).toHaveLength(36);
     expect(html.indexOf('scope="row"') + html.slice(html.indexOf('scope="row"')).indexOf("Ana")).toBeLessThan(
       html.lastIndexOf("Zélia"),
     );
-    expect(html).toContain("Pendente");
+    expect(html).toContain("Dia não processado");
     expect(html).toContain(", bloqueado. Editar");
     expect(html).toContain("rolagem horizontal");
     expect(html).toContain('aria-label="Ana, 01/10/2026: Folga, bloqueado. Editar"');

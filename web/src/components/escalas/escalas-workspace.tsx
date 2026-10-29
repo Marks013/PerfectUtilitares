@@ -5,10 +5,12 @@ import styles from "./escalas.module.css";
 import { useEffect, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
 import { compareBranches } from "@/lib/escalas/order";
+import type { EscalaExportMode } from "@/lib/escalas/presentation";
 import type { WeeklyHours } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
 import { Rules, Shifts } from "./configuration";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
+import { CoverageTimeline } from "./coverage-timeline";
 import { Coverage, ImportEmployees } from "./coverage-import";
 import { DeletePlan } from "./delete-plan";
 import { Employees } from "./employees";
@@ -78,6 +80,7 @@ export function EscalasWorkspace() {
   const model = useEscalasWorkspace();
   const { input, workspace } = model;
   const [area, setArea] = useState<Area>("team");
+  const [exportMode, setExportMode] = useState<EscalaExportMode>("both");
   const [reviewContext, setReviewContext] = useState<EscalaRecoveryRequest | null>(null);
   const [pendingReview, setPendingReview] = useState<EscalaRecoveryRequest | null>(null);
   const reviewSequence = useRef(0);
@@ -88,6 +91,7 @@ export function EscalasWorkspace() {
     if (openedWorkspace.current === workspace?.id) return;
     openedWorkspace.current = workspace?.id;
     setReviewContext(null);
+    setExportMode("both");
     setPendingReview(null);
     setArea(workspace?.input.assignments.length ? "roster" : "team");
   }, [workspace?.id, workspace?.input.assignments.length]);
@@ -178,15 +182,15 @@ export function EscalasWorkspace() {
         {model.outdated && hasRoster && <div role="status" className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-4 text-sm"><strong>Cenário alterado.</strong> A grade anterior fica visível para comparação, mas precisa ser gerada novamente antes de exportar.</div>}
         <Proposals input={input} generated={model.generated} disabled={!model.canEdit} onGenerated={model.applyGenerated} onDismiss={model.dismissProposals} />
         <div id="escala-roster" tabIndex={-1} className="min-w-0">
-          {hasRoster ? <Roster input={input} validation={model.validation} disabled={!model.canEdit} canUnlock={workspace.canPublish} onChange={model.update} /> : !model.generated && <div className={`${panelClass} ${styles.emptyState}`}><h2 className={styles.sectionTitle}>Sua escala mensal aparecerá aqui</h2><p className="mt-2 text-sm text-[color:var(--app-muted)]">{included ? "Escolha a jornada e gere a proposta. O algoritmo prepara os horários, as folgas e a cobertura estimada." : "Importe a equipe para começar."}</p>{!included && <button type="button" className={`${buttonClass} mt-4`} onClick={() => setArea("team")}>Importar equipe</button>}</div>}
+          {hasRoster ? <Roster input={input} review={reviewContext?.target === "roster" ? reviewContext : undefined} mode={exportMode} onModeChange={setExportMode} onReviewEmployee={employeeId => resolve("team", { employeeId })} validation={model.validation} disabled={!model.canEdit} canUnlock={workspace.canPublish} onChange={model.update} /> : !model.generated && <div className={`${panelClass} ${styles.emptyState}`}><h2 className={styles.sectionTitle}>Sua escala mensal aparecerá aqui</h2><p className="mt-2 text-sm text-[color:var(--app-muted)]">{included ? "Escolha a jornada e gere a proposta. O algoritmo prepara os horários, as folgas e a cobertura estimada." : "Importe a equipe para começar."}</p>{!included && <button type="button" className={`${buttonClass} mt-4`} onClick={() => setArea("team")}>Importar equipe</button>}</div>}
         </div>
         {hasRoster && <>
           <ValidationResults input={input} validation={model.validation} onResolve={model.canEdit ? resolve : undefined} />
-          <Publication key={`${workspace.id}:${workspace.revision}`} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy)} onPublish={model.publish} onRegenerate={model.generate} />
+          <Publication mode={exportMode} onModeChange={setExportMode} key={`${workspace.id}:${workspace.revision}`} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy)} onPublish={model.publish} onRegenerate={model.generate} />
         </>}
       </section>}
 
-      {area === "coverage" && <section id="escala-area-coverage" aria-label="Cobertura da filial"><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}
+      {area === "coverage" && <section id="escala-area-coverage" className={styles.stackSmall} aria-label="Cobertura da filial"><CoverageTimeline key={workspace.id} input={input} /><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}
 
       {area === "adjustments" && <section id="escala-area-adjustments" className={styles.stack} aria-label="Exceções do planejamento">
         <div id="escala-rules" tabIndex={-1}><Rules input={input} disabled={!model.canEdit} onChange={model.update} /></div>

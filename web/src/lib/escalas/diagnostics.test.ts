@@ -9,7 +9,7 @@ function person(id: string, role = "Padeiro"): EscalaEmployee {
 function fixture(): EscalaInput {
   return { schemaVersion: 1, branchCode: "01", branchName: "Filial de teste", startDate: "2026-10-26", endDate: "2026-12-06", visibleMonth: "2026-11", defaultWeeklyHours: 40, timeZone: "America/Sao_Paulo",
     policy: { source: "", validFrom: "2026-01-01", validUntil: "2026-12-31", reviewed: false, reviewedBy: "", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: false,
-      coverageReview: "SUGGESTED", minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+      coverageReview: "SUGGESTED", minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
     employees: [person("p1"), person("p2", "Balconista"), { ...person("duty"), scheduleMode: "MISSING", shiftIds: [] }, { ...person("excluded"), planningEnabled: false }],
     shifts: [{ id: "day", name: "Horário de teste", segments: [{ start: 480, end: 600, kind: "WORK" }, { start: 600, end: 630, kind: "PAID_BREAK" }, { start: 630, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 960, kind: "WORK" }] }],
     demands: [], assignments: [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: "day" }, { employeeId: "p2", date: "2026-11-02", kind: "WORK", shiftId: "day" }, { employeeId: "duty", date: "2026-11-02", kind: "DUTY" }, { employeeId: "excluded", date: "2026-11-02", kind: "WORK", shiftId: "day" }] };

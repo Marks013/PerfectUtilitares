@@ -61,6 +61,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   expect(preparing.status()).toBe(200);
   await page.reload();
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(imported.id);
+  await page.getByLabel("Visualização da escala", { exact: true }).selectOption("rest");
   const roster = page.getByRole("region", { name: "Grade mensal da filial", exact: true });
   await expect(roster).toBeVisible();
   await expect(roster.getByRole("columnheader")).toHaveCount(31);

@@ -12,7 +12,7 @@ function input(): EscalaInput {
     startDate: "2026-10-26", endDate: "2026-12-06", defaultWeeklyHours: 40, timeZone: "America/Sao_Paulo",
     policy: { source: "", reviewed: false, reviewedBy: "", validFrom: "2026-01-01", validUntil: "2027-12-31",
       weeklyLimit: 44, dailyLimitMinutes: 528, compensationAuthorized: false, minInterShiftMinutes: 660,
-      minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [],
+      minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [],
       holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
     employees: [{ id: "e", registration: "001", name: "Pessoa sintética", sector: "Loja", role: "Encarregado",
       weeklyHours: 40, shiftIds: [], scheduleMode: "MISSING", activeFrom: "", offMode: "VARIABLE", fixedOffDays: [],

@@ -18,7 +18,7 @@ function sundayMondayFixture(): EscalaInput {
       source: "Norma confirmada do cenário de teste", validFrom: "2026-01-01", validUntil: "2027-12-31",
       reviewed: true, reviewedBy: "Responsável de teste", weeklyLimit: 44, dailyLimitMinutes: 600,
       compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60,
-      maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false,
+      maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false,
     },
     employees: [{
       id: "person-1", registration: "0001", name: "Ana Silva", sector: "Reposição", role: "Repositor",

@@ -120,7 +120,8 @@ def admissible(shift, policy, day):
     first, last = shift["segments"][0]["start"], shift["segments"][-1]["end"]
     meals = [s["end"] - s["start"] for s in shift["segments"]
              if s["kind"] == "BREAK" and s["start"] > first and s["end"] < last]
-    required = policy["minMealMinutes"] if paid > 360 else (15 if paid > 240 else 0)
+    short_pause_flex = policy.get("_simulation") and policy.get("allowShortMealSimulation") is True
+    required = policy["minMealMinutes"] if paid > 360 else (15 if paid > 240 and not short_pause_flex else 0)
     return required == 0 or max(meals, default=0) >= required
 
 
@@ -430,7 +431,7 @@ def _streaks(model, person, dates, work, off, prior, active, policy):
     pid = person["id"]
     first = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
     timeline = days_between(first, max([dates[-1], *prior]))
-    maximum = min(6, policy["maxConsecutiveWorkDays"])
+    maximum = min(5, policy["maxConsecutiveWorkDays"])
     for end in range(maximum, len(timeline)):
         window = timeline[end - maximum:end + 1]
         if not any(d in active for d in window):

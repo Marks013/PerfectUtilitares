@@ -195,7 +195,7 @@ describe("Escalas workspace model", () => {
       validUntil: "2027-05-31",
       reviewed: false,
       holidayRestAllowed: false,
-      maxConsecutiveWorkDays: 6,
+      maxConsecutiveWorkDays: 5,
     });
     expect(selected.policy.collectiveAgreement).toMatchObject({ source: "Instrumento anterior", reviewed: false });
     expect(selected.policy.operationalCertificate).toMatchObject({

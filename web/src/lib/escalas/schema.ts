@@ -86,7 +86,9 @@ const policy = z.strictObject({
   minInterShiftMinutes: z.number().int().min(660).max(1440),
   minWeeklyRestMinutes: z.number().int().min(2100).max(4320),
   minMealMinutes: z.number().int().min(30).max(180),
+  // Six remains readable for legacy records; generation and validation always cap the model at five.
   maxConsecutiveWorkDays: z.number().int().min(1).max(6),
+  allowShortMealSimulation: z.boolean().optional(),
   closedDates: z.array(date).max(100), holidayDates: z.array(date).max(100),
   authorizedHolidayDates: z.array(date).max(100), holidayRestAllowed: z.boolean(), nightWorkReviewed: z.boolean(),
 }).superRefine((value, context) => {

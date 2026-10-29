@@ -15,6 +15,7 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   };
   const input = parsed.data;
   const issues: EscalaIssue[] = [];
+  if (input.policy.maxConsecutiveWorkDays > 5) issues.push({ code: "FIVE_BY_TWO_POLICY_OUTDATED", severity: "PENDING", message: "Este planejamento usa o limite antigo de 6 dias consecutivos. O modelo 5×2 agora permite no máximo 5, inclusive entre semanas e meses. Gere e aplique uma nova proposta para atualizar a grade; os dias salvos não foram alterados." });
   if (input.needsRegeneration) issues.push({ code: "SCENARIO_OUTDATED", severity: "PENDING", message: "O cenário foi alterado após a geração da grade. Gere e aplique uma nova proposta antes de exportar ou aprovar." });
   if (!input.employees.length) issues.push({ code: "EMPLOYEES_PENDING", severity: "PENDING", message: "Cadastre os colaboradores da filial." });
   else if (!input.employees.some((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate))) issues.push({ code: "ACTIVE_EMPLOYEES_PENDING", severity: "PENDING", message: "Nenhum colaborador está incluído na geração neste período." });

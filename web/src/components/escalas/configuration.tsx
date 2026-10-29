@@ -5,7 +5,8 @@ import styles from "./escalas.module.css";
 import type { EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { clock, HOURS, parseClock } from "./workspace-model";
-import { LaborPolicyFields } from "./labor-policy-fields";
+import { LaborPolicyFields, ShortMealSimulation } from "./labor-policy-fields";
+import { ShiftSummary } from "./shift-summary";
 
 function DateList({ label, value, onChange }: { label: string; value: string[]; onChange: (dates: string[]) => void }) {
   const [text, setText] = useState(value.join(", "));
@@ -45,7 +46,9 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
       <div><dt className="text-[color:var(--app-muted)]">Entre jornadas</dt><dd className="font-semibold">{clock(input.policy.minInterShiftMinutes)} mínimas</dd></div>
       <div><dt className="text-[color:var(--app-muted)]">Sequência máxima</dt><dd className="font-semibold">{input.policy.maxConsecutiveWorkDays} dias</dd></div>
     </dl>
+    {input.policy.maxConsecutiveWorkDays > 5 && <p className={styles.errorText}>Esta revisão usa um limite antigo de {input.policy.maxConsecutiveWorkDays} dias. O modelo 5×2 permite no máximo cinco dias consecutivos. Gere novamente para conferir a grade com esse limite.</p>}
     <fieldset disabled={disabled} className={styles.stackSmall}>
+      <ShortMealSimulation input={input} onChange={onChange} />
       <details className="space-y-4 border-t border-[color:var(--app-border)] pt-2">
         <summary className={styles.disclosureTrigger}>Datas e limites específicos da operação</summary>
         <DateList label="Datas de fechamento obrigatório" value={input.policy.closedDates} onChange={(value) => change("closedDates", value)} />
@@ -55,7 +58,7 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
             ["minInterShiftMinutes", "Interjornada mínima (minutos)", 660, 1440],
             ["minWeeklyRestMinutes", "Descanso semanal com interjornada (minutos)", 2100, 4320],
             ["minMealMinutes", "Intervalo de refeição mínimo (minutos)", 30, 180],
-            ["maxConsecutiveWorkDays", "Máximo de dias de trabalho consecutivos", 1, 6],
+            ["maxConsecutiveWorkDays", "Máximo de dias de trabalho consecutivos", 1, 5],
           ] as const).map(([field, label, minimum, maximum]) => <Field key={field} label={label}>{(id) => <input id={id} type="number" min={minimum} max={maximum} value={input.policy[field]} onChange={(event) => change(field, Number(event.target.value))} className={controlClass} />}</Field>)}
         </div>
       </details>
@@ -250,7 +253,7 @@ export function Shifts({
     <section className={panelClass} aria-labelledby="escala-shifts-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="escala-shifts-title" className={styles.sectionTitle}>
-          Horários autorizados
+          Turnos disponíveis para a proposta
         </h2>
         <button
           type="button"
@@ -263,7 +266,7 @@ export function Shifts({
               segments: [
                 { start: 480, end: 720, kind: "WORK" },
                 { start: 720, end: 780, kind: "BREAK" },
-                { start: 780, end: 1044, kind: "WORK" },
+                { start: 780, end: 780 + input.defaultWeeklyHours * 12 - 240, kind: "WORK" },
               ],
             })
           }
@@ -271,41 +274,7 @@ export function Shifts({
           Adicionar turno
         </button>
       </div>
-      <p className={styles.muted}>
-        40h em cinco dias = 8h00; 42h = 8h24; 44h = 8h48. Cadastre horários compatíveis com cada vigência; a autorização
-        de 8h24 não continua após 15/12/2027 neste regime.
-      </p>
-      <div className="space-y-3">
-        {input.shifts.map((shift) => (
-          <div
-            key={shift.id}
-            className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--app-border)] pb-3"
-          >
-            <div className="min-w-0">
-              <p className="font-semibold">
-                {shift.name} ·{" "}
-                {clock(
-                  shift.segments
-                    .filter((segment) => segment.kind !== "BREAK")
-                    .reduce((sum, segment) => sum + segment.end - segment.start, 0),
-                )}{" "}
-                computadas
-              </p>
-              <p className="break-words text-xs text-[color:var(--app-muted)]">
-                {shift.segments
-                  .map(
-                    (segment) =>
-                      `${clock(segment.start)}–${clock(segment.end)} ${segment.kind === "WORK" ? "trabalho" : segment.kind === "BREAK" ? "intervalo" : "pausa remunerada"}`,
-                  )
-                  .join(" · ")}
-              </p>
-            </div>
-            <button type="button" className={buttonClass} disabled={disabled} onClick={() => setEditing(shift)}>
-              Editar<span className="sr-only"> {shift.name}</span>
-            </button>
-          </div>
-        ))}
-      </div>
+      <ShiftSummary input={input} disabled={disabled} onEdit={setEditing} />
       {editing && (
         <fieldset disabled={disabled}>
           <ShiftEditor
@@ -315,7 +284,9 @@ export function Shifts({
             onSave={(shift) => {
               onChange({
                 ...input,
-                shifts: [...input.shifts.filter((item) => item.id !== shift.id), shift],
+                shifts: input.shifts.some((item) => item.id === shift.id)
+                  ? input.shifts.map((item) => item.id === shift.id ? shift : item)
+                  : [...input.shifts, shift],
               });
               setEditing(null);
             }}

@@ -15,7 +15,7 @@ function workspace(): EscalaWorkspace {
   const employee = { id: "e1", registration: "0001", name: "Ána Silva", sector: "Reposição", role: "Repositor", weeklyHours: 42 as const, shiftIds: ["day"], activeFrom: "2020-01-01", offMode: "VARIABLE" as const, fixedOffDays: [], offPattern: "ANY" as const, maxConsecutiveSundays: 1 as const, preferredOffDays: [], historyKnown: false, history: [] };
   return { id: "w1", revision: 3, status: "DRAFT", canEdit: true, canPublish: true, updatedAt: "2026-10-26",
     input: { schemaVersion: 1, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
-      policy: { source: "", validFrom: "2026-01-01", validUntil: "2027-01-01", reviewed: false, reviewedBy: "", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: false, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+      policy: { source: "", validFrom: "2026-01-01", validUntil: "2027-01-01", reviewed: false, reviewedBy: "", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: false, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
       employees: [employee, { ...employee, id: "e2", registration: "0002", name: "=FORMULA", sector: "Açougue", role: "Açougueiro" }],
       shifts: [{ id: "day", name: "Diurno", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
       assignments: [{ employeeId: "e1", date: "2026-10-26", kind: "WORK", shiftId: "day" }], demands: [] },
@@ -38,10 +38,10 @@ describe("/api/escalas/export", () => {
     expect(content).toContain("=FORMULA");
     const rows = await readSheet(bytes);
     expect(rows[3].slice(0, 4)).toEqual(["Setor", "Matrícula", "Colaborador", "Cargo"]);
-    expect(rows[3]).toHaveLength(11);
+    expect(rows[3]).toHaveLength(12);
     expect(rows[4].slice(0, 4)).toEqual(["Açougue", "0002", "=FORMULA", "Açougueiro"]);
     const ana = rows.find((row) => row[2] === "Ána Silva");
-    expect(ana?.slice(4)).toEqual(["T01", "P", "P", "P", "P", "P", "P"]);
+    expect(ana?.slice(5)).toEqual(["T01", "NP", "NP", "NP", "NP", "NP", "NP"]);
     const details = await readSheet(bytes, "Jornadas");
     const detail = details.find(row => row[2] === "Ána Silva");
     expect(detail?.[4]).toBe(42);
@@ -49,7 +49,7 @@ describe("/api/escalas/export", () => {
     expect(strFromU8(zip["xl/workbook.xml"])).toContain("$1:$4");
   });
   it("exports a readable compact draft PDF without the removed load summary", async () => {
-    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"));
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&mode=rest"));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/pdf");
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -88,4 +88,29 @@ describe("/api/escalas/export", () => {
     expect(await response.json()).toEqual(expect.objectContaining({ error: expect.objectContaining({ code: "ESCALA_SCENARIO_OUTDATED", message: expect.stringContaining("Gere") }) }));
   });
 
+});
+
+describe("/api/escalas/export mode boundaries", () => {
+  it.each(["rest", "hours", "both"] as const)("exports real %s worksheets from the authorized revision", async (mode) => {
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=xlsx&revision=3&mode=" + mode));
+    expect(response.status).toBe(200);
+    const bytes = new Uint8Array(await response.arrayBuffer()), archive = unzipSync(bytes), workbook = strFromU8(archive["xl/workbook.xml"]);
+    expect(workbook.includes('name="Escala"')).toBe(mode !== "hours");
+    expect(workbook.includes('name="Horarios"')).toBe(mode !== "rest");
+    if (mode !== "rest") {
+      const rows = await readSheet(Buffer.from(bytes), "Horarios");
+      expect(rows).toContainEqual(["2026-10-26", "Reposição", "0001", "Ána Silva", "Repositor", "T01", "08:00-12:00 / 13:00-17:24", "12:00-13:00", "08:24", "Turno planejado T01"]);
+    }
+    expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 3);
+  });
+  it("rejects an unknown export view without reading a workspace", async () => {
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&mode=invalid"));
+    expect(response.status).toBe(400); expect(mocks.get).not.toHaveBeenCalled();
+  });
+});
+
+it("requires recalculation of legacy six-day reports instead of silently exporting them", async () => {
+  const current = workspace(); current.input.policy.maxConsecutiveWorkDays = 6; mocks.get.mockResolvedValue(current);
+  const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=xlsx"));
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: { code: "ESCALA_SCENARIO_OUTDATED" } });
 });

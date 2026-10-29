@@ -123,7 +123,7 @@ describe("actionable grouped validation", () => {
     expect(groups[0].issues).toHaveLength(4000);
     expect(groups[0].guidance.target).toBe("generate");
     const html = renderToStaticMarkup(<ValidationResults input={reference()} validation={{ valid: true, readyToPublish: false, issues, summaries: [], minimumCoverageMargin: null }} onResolve={vi.fn()} />);
-    expect(html).toContain("Limites de conferência (1)");
+    expect(html).toContain("Pode continuar com revisão (1)");
     expect(html).toContain("Gerar proposta mensal");
     expect(html).toContain("Escala ainda não gerada");
     expect(html).not.toContain("Ver detalhes (4000)");
@@ -139,7 +139,7 @@ describe("actionable grouped validation", () => {
     ]);
     expect(groups.map((group) => group.guidance.target)).toEqual(["rules", "generate", "coverage"]);
     expect(groups[0].guidance.instruction).toContain("Antes de publicar");
-    expect(groups[2].guidance.instruction).toContain("mínimo zero");
+    expect(groups[2].guidance.instruction).toContain("necessidade operacional conhecida");
   });
 
   it("keeps estimated coverage gaps pending and shows them before applying the draft", () => {
@@ -147,7 +147,7 @@ describe("actionable grouped validation", () => {
     const issues = [{ code: "ESTIMATED_COVERAGE_GAP", severity: "PENDING" as const, date: input.startDate, message: "Loja: presente 1, estimativa 2, 08:00–12:00." }];
     const groups = groupValidationIssues(issues);
     expect(groups[0].guidance.target).toBe("coverage");
-    expect(groups[0].guidance.instruction).toContain("não aprova");
+    expect(groups[0].guidance.instruction).toContain("não prova falta de pessoal");
   });
 
   it("allows explicit coverage confirmation to freeze estimates without immediately invalidating that confirmation", () => {

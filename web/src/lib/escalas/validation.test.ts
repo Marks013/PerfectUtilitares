@@ -16,7 +16,7 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
       source: "Instrumento de referência confirmado para o cenário de teste", validFrom: "2026-01-01", validUntil: "2027-12-31",
       reviewed: true, reviewedBy: "Responsável de teste", weeklyLimit: 44, dailyLimitMinutes: 600,
       compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60,
-      maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [],
+      maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [],
       holidayRestAllowed: true, nightWorkReviewed: false,
     },
     employees: [{
@@ -118,7 +118,7 @@ describe("independent Escalas validation", () => {
     const input = fixture();
     input.assignments[0] = { employeeId: "person-1", date: input.startDate, kind: "ABSENCE" };
     const result = validateEscala(input);
-    expect(result.issues).toContainEqual(expect.objectContaining({ code: "PARTIAL_WEEK_PENDING", severity: "PENDING" }));
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "ABSENCE_AVAILABILITY", severity: "WARNING" }));
     expect(codes(input)).not.toContain("WEEKLY_MINUTES");
     expect(result.summaries[0].offDays).toBe(2);
     expect(result.summaries[0].workedMinutes).toBe(2016);

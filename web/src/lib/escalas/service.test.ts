@@ -19,7 +19,7 @@ const operator = { ...actor, admin: false };
 function input(): EscalaInput {
   return {
     schemaVersion: 1, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
-    policy: { source: "Instrumento validado no cenário", validFrom: "2026-01-01", validUntil: "2027-01-01", reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: true, nightWorkReviewed: false },
+    policy: { source: "Instrumento validado no cenário", validFrom: "2026-01-01", validUntil: "2027-01-01", reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: true, nightWorkReviewed: false },
     employees: [{ id: "e1", registration: "0001", name: "Ana", sector: "Reposição", role: "Repositor", weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-10-26", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, sundayRestRule: "CLT_386", preferredOffDays: [5, 6], historyKnown: false, history: [] }],
     shifts: [{ id: "day", name: "Diurno", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
     demands: Array.from({ length: 7 }, (_, index) => ({ id: `d${index}`, date: new Date(Date.UTC(2026, 9, 26 + index)).toISOString().slice(0, 10), sector: "Reposição", start: 480, end: 720, minimum: index < 5 ? 1 : 0 })),
@@ -158,6 +158,12 @@ describe("Escalas publication continuity", () => {
     previous.shifts.push({ id: "night", name: "Noturno", segments: [{ start: 1200, end: 1440, kind: "WORK" }, { start: 1440, end: 1500, kind: "BREAK" }, { start: 1500, end: 1740, kind: "WORK" }] });
     previous.employees[0].shiftIds.push("night");
     previous.assignments[6] = { employeeId: "e1", date: "2026-11-01", kind: "WORK", shiftId: "night" };
+    // Keep this case about inter-shift rest, not a separate six-day streak.
+    if (kind === "work") {
+      current.assignments[4] = { employeeId: "e1", date: "2026-11-06", kind: "OFF" };
+      current.assignments[5] = { employeeId: "e1", date: "2026-11-07", kind: "WORK", shiftId: "day" };
+      current.demands[4].minimum = 0; current.demands[5].minimum = 1;
+    }
     if (kind === "off") {
       current.assignments[0] = { employeeId: "e1", date: "2026-11-02", kind: "OFF" };
       current.assignments[5] = { employeeId: "e1", date: "2026-11-07", kind: "WORK", shiftId: "day" };

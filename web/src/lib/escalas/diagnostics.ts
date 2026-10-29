@@ -1,6 +1,6 @@
-import { absoluteMinute, visibleDates } from "./dates";
-import type { EscalaAssignment, EscalaInput, EscalaIssue } from "./types";
-import { workJourney } from "./validation-time";
+import { visibleDates } from "./dates";
+import type { EscalaInput, EscalaIssue } from "./types";
+import { buildCoveragePresence, coverageAt, coverageTimeline, sectorCoverageGaps, type CoveragePresence } from "./coverage-presence";
 
 export type CoverageGap = {
   date: string; sector: string; role?: string; start: number; end: number;
@@ -40,58 +40,31 @@ const issueLabels: Record<string, string> = {
 const coverageCodes = new Set(["COVERAGE_DEFICIT", "ESTIMATED_COVERAGE_GAP"]);
 
 /** Recalculate exact slices instead of trying to recover an interval from a prose warning. */
-function coverageGaps(input: EscalaInput, visible: ReadonlySet<string>): CoverageGap[] {
-  const people = new Map(input.employees.map(person => [person.id, person]));
-  const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
-  const assignments = new Map<string, EscalaAssignment>();
-  for (const person of input.employees) {
-    for (const record of [...(person.planningHistory ?? []), ...person.history, ...(person.planningFuture ?? [])]) assignments.set(`${record.employeeId}\0${record.date}`, record);
-  }
-  for (const record of input.assignments) assignments.set(`${record.employeeId}\0${record.date}`, record);
-  type Interval = { employeeId: string; role: string; start: number; end: number };
-  const intervalsBySectorDate = new Map<string, Interval[]>();
-  for (const assignment of assignments.values()) {
-    const person = people.get(assignment.employeeId), shift = shifts.get(assignment.shiftId ?? "");
-    if (assignment.kind !== "WORK" || !person || !shift || person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED"
-      || assignment.date < person.activeFrom || (person.activeUntil && assignment.date > person.activeUntil)) continue;
-    try {
-      const journey = workJourney(assignment, shift);
-      for (const day of journey.occupiedDates) {
-        if (!visible.has(day) || day < person.activeFrom || (person.activeUntil && day > person.activeUntil)) continue;
-        const key = `${person.sector}\0${day}`, intervals = intervalsBySectorDate.get(key) ?? [];
-        intervals.push(...journey.coverage.map(interval => ({ ...interval, employeeId: person.id, role: person.role })));
-        intervalsBySectorDate.set(key, intervals);
-      }
-    } catch {
-      // The independent verifier retains invalid civil-time diagnostics; no presence is invented here.
-    }
-  }
+function coverageGaps(input: EscalaInput, visible: ReadonlySet<string>, index: CoveragePresence): CoverageGap[] {
   type Demand = EscalaInput["demands"][number];
-  const groups = new Map<string, { demand: Demand; estimated: boolean; demands: Demand[] }>();
+  const groups = new Map<string, { demand: Demand; demands: Demand[] }>();
   for (const demand of input.demands) {
     if (!visible.has(demand.date) || demand.minimum <= 0) continue;
-    const estimated = demand.estimated === true;
-    const key = JSON.stringify([demand.date, demand.sector, demand.role ?? "", estimated]);
-    const group = groups.get(key) ?? { demand, estimated, demands: [] };
+    const key = JSON.stringify([demand.date, demand.sector, demand.role ?? "", demand.estimated === true]);
+    const group = groups.get(key) ?? { demand, demands: [] };
     group.demands.push(demand); groups.set(key, group);
   }
   const gaps: CoverageGap[] = [];
-  for (const { demand, estimated, demands } of groups.values()) {
-    const midnight = absoluteMinute(demand.date, 0);
-    const intervals = (intervalsBySectorDate.get(`${demand.sector}\0${demand.date}`) ?? []).filter(interval => !demand.role || interval.role === demand.role);
-    const points = [...new Set([...demands.flatMap(item => [item.start, item.end]), ...intervals.flatMap(interval => [interval.start - midnight, interval.end - midnight])])].sort((left, right) => left - right);
+  const timelineCache = new Map<string, ReturnType<typeof coverageTimeline>>();
+  for (const { demand, demands } of groups.values()) {
+    const key = demand.date + "\0" + demand.sector;
+    let timeline = timelineCache.get(key);
+    if (!timeline) { timeline = coverageTimeline(input, demand.date, demand.sector, index); timelineCache.set(key, timeline); }
     let previous: CoverageGap | undefined;
-    for (let index = 0; index < points.length - 1; index++) {
-      const start = points[index], end = points[index + 1];
-      const references = demands.filter(item => item.start <= start && item.end >= end);
+    for (const slice of timeline) {
+      const references = demands.filter(item => item.start <= slice.start && item.end >= slice.end);
       if (!references.length) { previous = undefined; continue; }
-      // Overlapping references constrain the same team, not separate additive staffing requirements.
       const minimum = Math.max(...references.map(item => item.minimum));
-      const present = new Set(intervals.filter(interval => interval.start <= midnight + start && interval.end >= midnight + end).map(interval => interval.employeeId)).size;
+      const present = coverageAt(index, demand.date, demand.sector, slice.start, demand.role).length;
       if (present >= minimum) { previous = undefined; continue; }
-      if (previous && previous.end === start && previous.present === present && previous.minimum === minimum) previous.end = end;
+      if (previous && previous.end === slice.start && previous.present === present && previous.minimum === minimum) previous.end = slice.end;
       else {
-        previous = { date: demand.date, sector: demand.sector, ...(demand.role ? { role: demand.role } : {}), start, end, present, minimum, missing: minimum - present, estimated };
+        previous = { date: demand.date, sector: demand.sector, ...(demand.role ? { role: demand.role } : {}), start: slice.start, end: slice.end, present, minimum, missing: minimum - present, estimated: demand.estimated === true };
         gaps.push(previous);
       }
     }
@@ -101,14 +74,15 @@ function coverageGaps(input: EscalaInput, visible: ReadonlySet<string>): Coverag
 
 /** Concise operational view; callers retain the original issues for the technical audit trail. */
 export function buildEscalaDiagnostics(input: EscalaInput, issues: readonly EscalaIssue[]) {
-  const visible = new Set(visibleDates(input)), coverage = coverageGaps(input, visible);
+  const visible = new Set(visibleDates(input)), presence = buildCoveragePresence(input), coverage = coverageGaps(input, visible, presence);
+  const coverageGroups = sectorCoverageGaps(input, presence);
   const groups = new Map<string, EscalaDiagnosticNotice>();
   let technicalIssueCount = 0;
   for (const issue of issues) {
     const definition = input.simulation && issue.code === "HOLIDAY_WORK" && issue.severity !== "ERROR"
       ? { label: "Trabalho em feriados", message: "Há jornadas propostas em feriados sem autorização informada. Essa autorização não foi presumida; confira antes da aplicação." }
       : globalNotices[issue.code];
-    if (!definition && issue.date && !visible.has(issue.date)) { technicalIssueCount++; continue; }
+    if (!definition && issue.date && !visible.has(issue.date) && !(issue.periodEnd && issue.periodEnd >= [...visible][0] && issue.date <= ([...visible].at(-1) ?? input.endDate))) { technicalIssueCount++; continue; }
     // Exact recalculation replaces abbreviated coverage messages, but legacy data without demands remains visible.
     if (input.demands.length && coverageCodes.has(issue.code)) continue;
     const code = definition?.code ?? issue.code, global = Boolean(definition);
@@ -117,12 +91,13 @@ export function buildEscalaDiagnostics(input: EscalaInput, issues: readonly Esca
       message: definition?.message ?? issue.message, count: 0, dates: [], employeeIds: [], global };
     if (["ERROR", "PENDING", "WARNING"].indexOf(issue.severity) < ["ERROR", "PENDING", "WARNING"].indexOf(group.severity)) group.severity = issue.severity;
     group.count++;
-    if (!global && issue.date && !group.dates.includes(issue.date)) group.dates.push(issue.date);
+    if (issue.date && !group.dates.includes(issue.date)) group.dates.push(issue.date);
+    if (issue.periodEnd && !group.dates.includes(issue.periodEnd)) group.dates.push(issue.periodEnd);
     if (issue.employeeId && !group.employeeIds.includes(issue.employeeId)) group.employeeIds.push(issue.employeeId);
     groups.set(key, group);
   }
   const notices = [...groups.values()];
   for (const notice of notices) { notice.dates.sort(); notice.employeeIds.sort(); }
   notices.sort((left, right) => ["ERROR", "PENDING", "WARNING"].indexOf(left.severity) - ["ERROR", "PENDING", "WARNING"].indexOf(right.severity) || Number(left.global) - Number(right.global) || left.label.localeCompare(right.label, "pt-BR"));
-  return { coverage, notices, technicalIssueCount, totalIssueCount: issues.length };
+  return { coverage, coverageGroups, notices, technicalIssueCount, totalIssueCount: issues.length };
 }

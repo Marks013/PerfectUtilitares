@@ -107,7 +107,7 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
       const zip = unzipSync(bytes);
       const sheet = strFromU8(zip["xl/worksheets/sheet1.xml"]);
       const visibleAbsences = [...expected].filter(key => key.slice(-10, -3) === "2026-11").length;
-      expect((sheet.match(/>A</g)?.length ?? 0) >= visibleAbsences).toBe(true);
+      expect((sheet.match(/>AF</g)?.length ?? 0) >= visibleAbsences).toBe(true);
     } else {
       expect(bytes.subarray(0, 4).toString()).toBe("%PDF");
       const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");

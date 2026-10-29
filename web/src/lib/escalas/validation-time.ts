@@ -1,6 +1,7 @@
 import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates } from "./dates";
+import { buildCoveragePresence, coverageAt, coverageTimeline } from "./coverage-presence";
 import type { EscalaAssignment, EscalaInput, EscalaIssue, EscalaShift } from "./types";
-import { certificateAuthorizes, collectiveExtensionAuthorized, dailyMinuteCeiling, SUPERMARKET_CCT, TRANSITION_42_DATE, TRANSITION_40_DATE } from "./labor-rules";
+import { certificateAuthorizes, collectiveExtensionAuthorized, dailyMinuteCeiling, minimumMealMinutes, SUPERMARKET_CCT, TRANSITION_42_DATE, TRANSITION_40_DATE } from "./labor-rules";
 
 export type WorkJourney = {
   assignment: EscalaAssignment;
@@ -43,7 +44,7 @@ function isNightShift(shift: EscalaShift): boolean {
 export function validateJourney(input: EscalaInput, journey: WorkJourney): EscalaIssue[] {
   const { assignment, shift, minutes } = journey;
   const issues: EscalaIssue[] = [];
-  const issue = (code: string, message: string, severity: "ERROR" | "PENDING" = "ERROR", date = assignment.date) => issues.push({ code, message, severity, employeeId: assignment.employeeId, date });
+  const issue = (code: string, message: string, severity: EscalaIssue["severity"] = "ERROR", date = assignment.date) => issues.push({ code, message, severity, employeeId: assignment.employeeId, date });
   if (minutes > input.policy.dailyLimitMinutes) issue("DAILY_LIMIT", "A jornada ultrapassa o limite diário autorizado.");
   if (minutes > 480 && !input.policy.compensationAuthorized) issue("COMPENSATION_REQUIRED", "Jornada superior a 8h exige distribuição/compensação autorizada.");
   if (minutes > dailyMinuteCeiling(assignment.date)) issue("DISTRIBUTION_DAILY_LIMIT", "A jornada supera a distribuição deste regime na data: até 8h24 na fase de 42 horas e até 8h na fase de 40 horas.");
@@ -54,8 +55,11 @@ export function validateJourney(input: EscalaInput, journey: WorkJourney): Escal
   const breaks = shift.segments.filter((segment) => segment.kind === "BREAK" && segment.start > first && segment.end < last);
   // Only an uninterrupted, unpaid interval is a meal; several short pauses are not summed.
   const meal = Math.max(0, ...breaks.map((segment) => segment.end - segment.start));
-  const minimum = minutes > 360 ? input.policy.minMealMinutes : minutes > 240 ? 15 : 0;
+  const minimum = minimumMealMinutes(input.policy, minutes, input.simulation);
   if (meal < minimum) issue("MEAL_INTERVAL", `Intervalo para refeição insuficiente: mínimo de ${minimum} minutos para esta jornada.`);
+  if (input.simulation && input.policy.allowShortMealSimulation && minutes > 240 && minutes <= 360 && meal < 15) {
+    issue("SIMULATION_SHORT_MEAL_FLEX", `Turno ${shift.name}: jornada de ${minutes} minutos simulada sem o intervalo mínimo de 15 minutos. A opção deste cenário flexibiliza somente a pausa de jornadas acima de 4h e até 6h; confira o horário antes de uso operacional. Não é autorização de regularidade.`, "PENDING");
+  }
   if (isNightShift(shift)) {
     if (!input.policy.nightWorkReviewed) issue("NIGHT_RULE_PENDING", "Horário noturno exige regra específica conferida, inclusive cômputo da hora noturna.", "PENDING");
     issue("NIGHT_CREDIT_PENDING", "Jornada noturna mantida em rascunho: esta versão calcula minutos civis e ainda não representa a hora noturna reduzida. A conferência da norma, sozinha, não libera a publicação.", "PENDING");
@@ -85,42 +89,26 @@ export function validateUntimedDuty(input: EscalaInput, assignment: EscalaAssign
   return issues;
 }
 
-export function validateCoverage(input: EscalaInput, journeys: WorkJourney[]): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
+export function validateCoverage(input: EscalaInput, _journeys: WorkJourney[]): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
   const issues: EscalaIssue[] = [];
   let minimumCoverageMargin: number | null = null;
   const visible = new Set(visibleDates(input));
-  const employees = new Map(input.employees.map((person) => [person.id, person]));
-  const bySectorAndDate = new Map<string, WorkJourney[]>();
-  for (const journey of journeys) {
-    const employee = employees.get(journey.assignment.employeeId);
-    const sector = (employee?.scheduleMode === "UNTIMED" || employee?.scheduleMode === "MISSING") ? undefined : employee?.sector;
-    if (!sector) continue;
-    for (const day of journey.occupiedDates) {
-      const key = `${sector}\0${day}`;
-      const existing = bySectorAndDate.get(key) ?? [];
-      existing.push(journey);
-      bySectorAndDate.set(key, existing);
-    }
-  }
+  const presence = buildCoveragePresence(input);
+  const timelines = new Map<string, ReturnType<typeof coverageTimeline>>();
   for (const demand of input.demands) {
-    const start = absoluteMinute(demand.date, demand.start);
-    const end = absoluteMinute(demand.date, demand.end);
-    const intervals = (bySectorAndDate.get(`${demand.sector}\0${demand.date}`) ?? []).filter((journey) => {
-      const person = employees.get(journey.assignment.employeeId);
-      return person?.sector === demand.sector && (!demand.role || person.role === demand.role);
-    }).flatMap((journey) => journey.coverage.map((interval) => ({ ...interval, employeeId: journey.assignment.employeeId })))
-      .filter((interval) => interval.end > start && interval.start < end);
-    const points = [...new Set([start, end, ...intervals.flatMap((interval) => [Math.max(start, interval.start), Math.min(end, interval.end)])])].sort((left, right) => left - right);
+    const key = demand.date + "\0" + demand.sector;
+    let timeline = timelines.get(key);
+    if (!timeline) { timeline = coverageTimeline(input, demand.date, demand.sector, presence); timelines.set(key, timeline); }
     let reported = false;
-    for (let index = 0; index < points.length - 1; index++) {
-      const present = new Set(intervals.filter((interval) => interval.start <= points[index] && interval.end >= points[index + 1]).map((interval) => interval.employeeId)).size;
+    for (const slice of timeline) {
+      if (slice.start < demand.start || slice.end > demand.end) continue;
+      const present = coverageAt(presence, demand.date, demand.sector, slice.start, demand.role).length;
       const margin = present - demand.minimum;
       if (visible.has(demand.date)) minimumCoverageMargin = minimumCoverageMargin === null ? margin : Math.min(minimumCoverageMargin, margin);
       if (margin < 0 && !reported) {
-        const minute = demand.start + points[index] - start;
         const estimated = demand.estimated === true;
         issues.push({ code: estimated ? "ESTIMATED_COVERAGE_GAP" : "COVERAGE_DEFICIT", severity: estimated ? "PENDING" : "ERROR", date: demand.date,
-          message: `${demand.sector}${demand.role ? ` / ${demand.role}` : ""}: ${present} presente(s), ${estimated ? "estimativa" : "mínimo"} ${demand.minimum}, a partir de ${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}.${estimated ? " Confira a necessidade e os horários desta faixa antes de confirmar a cobertura." : ""}` });
+          message: demand.sector + (demand.role ? " / " + demand.role : "") + ": " + present + " presente(s), " + (estimated ? "estimativa" : "mínimo") + " " + demand.minimum + ", a partir de " + String(Math.floor(slice.start / 60)).padStart(2, "0") + ":" + String(slice.start % 60).padStart(2, "0") + "." + (estimated ? " Compare a referência com a necessidade real; isso não comprova demanda operacional." : "") });
         reported = true;
       }
     }
@@ -131,7 +119,7 @@ export function validateCoverage(input: EscalaInput, journeys: WorkJourney[]): {
     const missing = dateRange(input.startDate, input.endDate).filter((day) => !input.policy.closedDates.includes(day)
       && members.some((person) => day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil))
       && !demandedDates.has(`${sector}\0${day}`));
-    if (missing.length) issues.push({ code: "COVERAGE_PENDING", severity: "PENDING", date: missing[0], message: `Setor ${sector}: ${missing.length} data(s) sem cobertura cadastrada, a partir de ${missing[0]}. Declare as faixas e o mínimo, inclusive zero quando autorizado. A conferência cobre somente as faixas declaradas.` });
+    if (missing.length) issues.push({ code: "COVERAGE_PENDING", severity: "PENDING", date: missing[0], message: `Setor ${sector}: ${missing.length} data(s) sem referência de cobertura, a partir de ${missing[0]}. A presença pode ser consultada por horário; não é possível concluir se atende à necessidade operacional nessas datas.` });
   }
   return { issues, minimumCoverageMargin };
 }

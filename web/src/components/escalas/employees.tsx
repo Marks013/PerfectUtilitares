@@ -1,10 +1,13 @@
 "use client";
 
+import styles from "./escalas.module.css";
+
 import { useEffect, useRef, useState } from "react";
 import { revealRecoveryElement, type EscalaRecoveryRequest } from "./recovery-navigation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { sortEmployees } from "@/lib/escalas/order";
 import { BulkControls } from "./bulk-controls";
+import { ExcludedEmployees } from "./excluded-employees";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { addDate, displayDate, HOURS, newEmployee, replaceAssignment, WEEKDAYS } from "./workspace-model";
 
@@ -364,14 +367,15 @@ export function EmployeeEditor({
       </Field>
       {draft.scheduleMode === "MISSING" && <p className="text-sm">Horário não informado: incluído no rodízio de presença e folgas, sem horas ou cobertura horária fictícias. Horários zerados e o título do cargo não confirmam dispensa de controle de jornada. Informe os horários quando disponíveis.</p>}
       {draft.scheduleMode === "UNTIMED" && <p className="text-sm">
-        Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo seis dias seguidos de trabalho.
+        Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo cinco dias seguidos de trabalho.
         Os dias de trabalho não recebem turno nem horas fictícias. A carga semanal é apenas uma referência cadastral.
       </p>}
       <Check
         label="Incluir colaborador no planejamento desta proposta"
         checked={draft.planningEnabled !== false}
-        onChange={(checked) => change("planningEnabled", checked)}
+        onChange={(checked) => setDraft((previous) => ({ ...previous, planningEnabled: checked, planningExclusionReason: checked ? undefined : "Não incluído manualmente nesta proposta." }))}
       />
+      {draft.planningEnabled === false && <Field label="Motivo da não inclusão" hint="Explique a decisão ou a informação que precisa ser corrigida. O cadastro permanece na equipe.">{(id) => <input id={id} maxLength={240} value={draft.planningExclusionReason ?? ""} onChange={(event) => change("planningExclusionReason", event.target.value)} className={controlClass} />}</Field>}
       {draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && <fieldset>
         <legend className="text-sm font-semibold">Turnos autorizados</legend>
         <div className="flex flex-wrap gap-x-5">
@@ -468,6 +472,9 @@ export function Employees({
       .toLocaleLowerCase("pt-BR")
       .includes(search.toLocaleLowerCase("pt-BR")),
   );
+  const included = employees.filter((employee) => employee.planningEnabled !== false);
+  const excluded = employees.filter((employee) => employee.planningEnabled === false);
+  const removingEmployee = input.employees.find((employee) => employee.id === removing);
   return (
     <section className={panelClass} aria-labelledby="escala-employees-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -511,8 +518,8 @@ export function Employees({
       {!input.employees.length && (
         <p className="text-sm">Nenhum colaborador cadastrado. Adicione a equipe ou importe o modelo abaixo.</p>
       )}
-      <div className="max-h-72 space-y-1 overflow-y-auto">
-        {employees.map((employee) => (
+      <section aria-label="Colaboradores incluídos" className="max-h-72 space-y-1 overflow-y-auto">
+        {included.map((employee) => (
           <div
             key={employee.id}
             className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--app-border)] py-2"
@@ -555,35 +562,20 @@ export function Employees({
                 <span className="sr-only"> {employee.name} da proposta</span>
               </button>
             </div>
-            {removing === employee.id && (
-              <div className="w-full space-y-2 p-2 text-sm" role="alert">
-                <p>Remover {employee.name} e suas atribuições desta proposta? Revisões já salvas serão preservadas.</p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    disabled={disabled}
-                    onClick={() => {
-                      onChange({
-                        ...input,
-                        employees: input.employees.filter((item) => item.id !== employee.id),
-                        assignments: input.assignments.filter((assignment) => assignment.employeeId !== employee.id),
-                      });
-                      if (editing?.id === employee.id) setEditing(null);
-                      setRemoving(null);
-                    }}
-                  >
-                    Confirmar remoção da proposta
-                  </button>
-                  <button type="button" className={buttonClass} onClick={() => setRemoving(null)}>
-                    Manter colaborador
-                  </button>
-                </div>
-              </div>
-            )}
+
           </div>
         ))}
-      </div>
+      </section>
+      {!included.length && input.employees.length > 0 && <p className="text-sm">Nenhum colaborador incluído corresponde à busca. Confira a relação de não incluídos abaixo.</p>}
+      <ExcludedEmployees employees={excluded} disabled={disabled} onEdit={setEditing} onRemove={(employee) => setRemoving(employee.id)} />
+      {removingEmployee && <div className={styles.feedback} role="alert">
+        <p>Remover {removingEmployee.name} e suas atribuições desta proposta? Revisões já salvas serão preservadas.</p>
+        <div className={styles.actions}><button type="button" className={buttonClass} disabled={disabled || input.assignments.some((assignment) => assignment.employeeId === removingEmployee.id && assignment.locked)} onClick={() => {
+          onChange({ ...input, employees: input.employees.filter((item) => item.id !== removingEmployee.id), assignments: input.assignments.filter((assignment) => assignment.employeeId !== removingEmployee.id) });
+          if (editing?.id === removingEmployee.id) setEditing(null);
+          setRemoving(null);
+        }}>Confirmar remoção da proposta</button><button type="button" className={buttonClass} onClick={() => setRemoving(null)}>Manter colaborador</button></div>
+      </div>}
       {editing && (
         <fieldset disabled={disabled}>
           <EmployeeEditor

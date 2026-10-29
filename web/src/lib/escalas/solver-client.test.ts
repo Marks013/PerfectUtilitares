@@ -10,7 +10,7 @@ function fixture(): EscalaInput {
     policy: { source: "Instrumento confirmado no teste", validFrom: "2026-01-01", validUntil: "2026-12-31",
       reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44, dailyLimitMinutes: 528,
       compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100,
-      minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [],
+      minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [],
       authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
     employees: [{ id: "p1", registration: "01", name: "Pessoa", sector: "Loja", role: "Repositor",
       weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-11-02", offMode: "VARIABLE", fixedOffDays: [],

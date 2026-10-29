@@ -83,7 +83,10 @@ export type EscalaPolicy = {
   minInterShiftMinutes: number;
   minWeeklyRestMinutes: number;
   minMealMinutes: number;
+  /** Model limit is five; six is accepted only to read and flag legacy scenarios. */
   maxConsecutiveWorkDays: number;
+  /** Opt-in draft exception for the 15-minute pause in journeys over four and up to six hours. */
+  allowShortMealSimulation?: boolean;
   /** Dates that may not be worked, and holiday work expressly authorized by the policy. */
   closedDates: string[];
   holidayDates: string[];
@@ -117,6 +120,8 @@ export type EscalaIssue = {
   severity: "ERROR" | "PENDING" | "WARNING";
   employeeId?: string;
   date?: string;
+  /** End of a concrete affected interval, not the first day of a repeated warning. */
+  periodEnd?: string;
 };
 export type EscalaEmployeeSummary = {
   employeeId: string;

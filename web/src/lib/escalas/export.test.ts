@@ -18,7 +18,7 @@ function fixture(month = "2026-11"): EscalaWorkspace {
   return { id: "plan", revision: 3, status: "DRAFT", canEdit: true, canPublish: true, updatedAt: "2026-10-27",
     input: { schemaVersion: 1, visibleMonth: month, branchCode: "08", branchName: "Filial de teste", startDate: start, endDate: end, defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
       policy: { source: "Cenário técnico", validFrom: "2026-01-01", validUntil: "2029-12-31", reviewed: false, reviewedBy: "", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: true,
-        minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+        minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
       employees: [person, { ...person, id: "manager", registration: "0002", name: "Ana Gerente", role: "Gerente", scheduleMode: "UNTIMED", shiftIds: [] },
         { ...person, id: "excluded", registration: "0003", name: "=1+1 Nome integral preservado", planningEnabled: false, planningExclusionReason: "Conferir a referência noturna" }],
       shifts: [{ id: "unused", name: "Alternativa não selecionada", segments: [{ start: 420, end: 900, kind: "WORK" }] },
@@ -77,31 +77,33 @@ describe("Escalas shared monthly presentation and real exports", () => {
 
   it("freezes useful identity columns and records complete print areas on every workbook sheet", () => {
     const archive = unzipSync(exportEscalaXlsx(fixture()));
-    for (const index of [2, 3]) expect(strFromU8(archive[`xl/worksheets/sheet${index}.xml`])).toContain('xSplit="2" ySplit="1" topLeftCell="C2"');
-    for (const index of [4, 5]) expect(strFromU8(archive[`xl/worksheets/sheet${index}.xml`])).toContain('xSplit="3" ySplit="1" topLeftCell="D2"');
+    for (const index of [3, 4]) expect(strFromU8(archive[`xl/worksheets/sheet${index}.xml`])).toContain('xSplit="2" ySplit="1" topLeftCell="C2"');
+    for (const index of [5, 6]) expect(strFromU8(archive[`xl/worksheets/sheet${index}.xml`])).toContain('xSplit="3" ySplit="1" topLeftCell="D2"');
     const workbook = strFromU8(archive["xl/workbook.xml"]);
-    expect(workbook.match(/name="_xlnm.Print_Area"/g)).toHaveLength(5);
+    expect(workbook.match(/name="_xlnm.Print_Area"/g)).toHaveLength(7);
     expect(workbook).toContain("'Desfalques'!$A:$C");
-    expect(workbook).toContain("'Escala'!$A:$D");
+    expect(workbook).toContain("'Escala'!$A:$E");
   });
   it("writes an actual monthly XLSX grid with frozen headers, safe text and secondary details", async () => {
     const workspace = fixture(), original = structuredClone(workspace), bytes = exportEscalaXlsx(workspace);
     const archive = unzipSync(bytes), main = strFromU8(archive["xl/worksheets/sheet1.xml"]);
     const rows = await readSheet(Buffer.from(bytes), "Escala");
-    expect(rows[3]).toHaveLength(34);
+    expect(rows[3]).toHaveLength(35);
     expect(rows[3].slice(0, 4)).toEqual(["Setor", "Matrícula", "Colaborador", "Cargo"]);
-    expect(rows[3][4]).toBe("01/11 Dom");
+    expect(rows[3][5]).toBe("01/11 Dom");
     expect(rows[3].at(-1)).toBe("30/11 Seg");
-    expect(rows.slice(4).map((row) => row[2])).toEqual(["=1+1 Nome integral preservado", "Ana Gerente", "Áurea Silva"]);
-    expect(rows[4].slice(4).every((value) => value === "EX")).toBe(true);
-    expect(rows[5]).toContain("SF");
-    expect(rows[6]).toContain("T02");
-    expect(main).toContain('xSplit="4" ySplit="4"');
+    expect(rows.slice(4).map((row) => row[2])).toEqual(["Ana Gerente", "Áurea Silva"]);
+    expect(rows[4]).toContain("ENC");
+    expect(rows[5]).toContain("T02");
+    const excluded = await readSheet(Buffer.from(bytes), "Excluidos");
+    expect(excluded[1]).toContain("=1+1 Nome integral preservado");
+    expect(excluded[1][0]).toBe("X");
+    expect(main).toContain('xSplit="5" ySplit="4"');
     expect(main).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
     expect(main).not.toContain("<f>");
     expect(strFromU8(archive["xl/styles.xml"])).toContain('wrapText="1"');
     expect(strFromU8(archive["xl/workbook.xml"])).toContain("$1:$4");
-    expect(strFromU8(archive["xl/worksheets/sheet2.xml"])).not.toContain("POLICY_PENDING");
+    expect(strFromU8(archive["xl/worksheets/sheet3.xml"])).not.toContain("POLICY_PENDING");
     const shifts = await readSheet(Buffer.from(bytes), "Turnos");
     expect(shifts.flat()).toContain("T02");
     expect(shifts.flat().join(" ")).toContain("08:00-12:00 / 13:00-17:00");
@@ -115,7 +117,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     const xlsx = exportEscalaXlsx(workspace), rows = await readSheet(Buffer.from(xlsx), "Escala");
     const pdf = await exportEscalaPdf(workspace), pages = await pdfContent(pdf), all = pages.flat();
     const text = all.map((item) => item.str).join(" ");
-    expect(rows[3]).toHaveLength(days + 4);
+    expect(rows[3]).toHaveLength(days + 5);
     expect(text).not.toContain("Resumo de carga e turnos");
     expect(text).not.toContain("Horas previstas");
     expect(text).not.toContain("POLICY_PENDING");
@@ -130,7 +132,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
       const identity = gridPage?.find((item) => item.str === `${row[1]} - ${row[2]}`);
       expect(identity).toBeDefined();
       const cells = gridPage?.filter((item) => item.str.trim().length > 0 && "transform" in item && "transform" in (identity ?? {}) && Math.abs(item.transform[5] - (identity as { transform: number[] }).transform[5]) < 0.1 && item.transform[4] > 300).map((item) => item.str);
-      expect(cells).toEqual(row.slice(4));
+      expect(cells).toEqual(row.slice(5));
     }
     expect(workspace).toEqual(before);
   }, 20000);
@@ -140,8 +142,8 @@ describe("Escalas shared monthly presentation and real exports", () => {
     const longName = "Pessoa com nome completo muito extenso para comprovar que nenhuma parte do nome foi descartada na impressão profissional";
     workspace.input.employees = Array.from({ length: 65 }, (_, index) => ({ ...workspace.input.employees[0], id: `p${index}`, registration: String(index).padStart(4, "0"), name: index ? `Pessoa ${index}` : longName }));
     workspace.input.assignments = [];
-    const bytes = await exportEscalaPdf(workspace), document = await PDFDocument.load(bytes);
-    expect(document.getPageCount()).toBeLessThanOrEqual(4);
+    const bytes = await exportEscalaPdf(workspace, "rest"), document = await PDFDocument.load(bytes);
+    expect(document.getPageCount()).toBeLessThanOrEqual(5);
     const pages = await pdfContent(bytes), text = pages.flat().map((item) => item.str).join(" ");
     expect(text.replace(/\s+/g, " ")).toContain(longName);
     expect(pages.filter((items) => items.some((item) => item.str === "Matrícula / colaborador")).length).toBeGreaterThan(1);
@@ -178,7 +180,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     workspace.status = "PUBLISHED";
     workspace.input.employees = [{ ...workspace.input.employees[0], name: '=Texto <integral> & "seguro" 😀\u0001\uffff' }];
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Escala");
-    expect(rows[3]).toHaveLength(11);
+    expect(rows[3]).toHaveLength(12);
     expect(rows[4][2]).toBe('=Texto <integral> & "seguro" 😀');
     const bytes = await exportEscalaPdf(workspace), document = await PDFDocument.load(bytes);
     expect(document.getPages().every((page) => page.getWidth() === 842 && page.getHeight() === 595)).toBe(true);
@@ -210,18 +212,16 @@ describe("Escalas shared monthly presentation and real exports", () => {
     const before = structuredClone(workspace), bytes = await exportEscalaPdf(workspace);
     const pages = await pdfContent(bytes), text = pages.flat().map(item => item.str).join(" ");
     expect(text).toContain("Desfalques de cobertura");
-    expect(text).toContain("Setor / função"); expect(text).toContain("Faltam");
+    expect(text).toContain("Funções a revisar"); expect(text).toContain("Presentes");
     expect(text).not.toContain("Mensagem antiga incompleta");
     expect(text).not.toContain("situações distintas neste grupo");
-    const items = pages.find(page => page.some(item => item.str === "Reposição / Repositor")) ?? [];
-    const row = items.find(item => item.str === "Reposição / Repositor") as { transform: number[] };
-    const values = items.filter(item => "transform" in item && Math.abs(item.transform[5] - row.transform[5]) < 0.1).map(item => item.str);
-    expect(values).toEqual(expect.arrayContaining(["Reposição / Repositor", "02/11, 09/11", "08:00-10:00", "1", "3", "2", "Estimada"]));
-    expect(text).toContain("10:00-11:00"); expect(text).toContain("Confirmada");
+    expect(text).toContain("Repositor: 1 presente(s), referência 3 estimada");
+    expect(text).toContain("02/11, 09/11"); expect(text).toContain("08:00-10:00");
+    expect(text).toContain("10:00-11:00"); expect(text).toContain("Mínimo informado");
     const table = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
-    expect(table[0]).toEqual(["Data", "Setor", "Função", "Início", "Fim", "Presentes", "Referência", "Faltam", "Base"]);
-    expect(table).toContainEqual(["2026-11-02", "Reposição", "Repositor", "08:00", "10:00", 1, 3, 2, "Estimada"]);
-    expect(table).toContainEqual(["2026-11-03", "Reposição", "Balconista", "10:00", "11:00", 0, 1, 1, "Confirmada"]);
+    expect(table[0]).toEqual(["Data", "Setor", "Início", "Fim", "Presentes no setor", "Referência do setor", "Base", "Situação", "Funções a revisar", "Ajuste sugerido"]);
+    expect(table).toContainEqual(["2026-11-02", "Reposição", "08:00", "10:00", 1, 3, "Estimada", "Abaixo da estimativa automática", "Repositor: 1 presente(s), referência 3 estimada", expect.stringContaining("Compare a estimativa")]);
+    expect(table).toContainEqual(["2026-11-03", "Reposição", "10:00", "11:00", 1, 1, "Mínimo informado", "Mínimo informado não atendido", "Balconista: 0 presente(s), referência 1 informada", expect.stringContaining("mínimo informado")]);
     expect(workspace).toEqual(before);
   }, 20000);
 
@@ -259,4 +259,28 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(text).toContain("não foi presumida");
   }, 20000);
 
+});
+
+describe("separate rest and hourly exports", () => {
+  it.each(["rest", "hours", "both"] as const)("exports the requested %s view as real PDF and XLSX with identical exact schedules", async (mode) => {
+    const workspace = fixture(), before = structuredClone(workspace);
+    const bytes = exportEscalaXlsx(workspace, mode), archive = unzipSync(bytes), workbook = strFromU8(archive["xl/workbook.xml"]);
+    expect(workbook.includes('name="Escala"')).toBe(mode !== "hours");
+    expect(workbook.includes('name="Horarios"')).toBe(mode !== "rest");
+    const excluded = await readSheet(Buffer.from(bytes), "Excluidos");
+    expect(excluded[1].slice(0, 5)).toEqual(["X", "Reposição", "0003", "=1+1 Nome integral preservado", "Repositor"]);
+    if (mode !== "rest") {
+      const rows = await readSheet(Buffer.from(bytes), "Horarios");
+      expect(rows.some((row) => row[2] === "0003")).toBe(false);
+      const work = rows.find((row) => row[2] === "0001" && row[5] === "T02");
+      expect(work?.slice(6, 9)).toEqual(["08:00-12:00 / 13:00-17:24", "12:00-13:00", "08:24"]);
+      expect(rows.some((row) => row[2] === "0002" && row[5] === "ENC" && row[8] === "Não apurada")).toBe(true);
+    }
+    const text = (await pdfContent(await exportEscalaPdf(workspace, mode))).flat().map((item) => item.str).join(" ");
+    expect(text.includes("Escala de folgas")).toBe(mode !== "hours");
+    expect(text.includes("Escala de horários")).toBe(mode !== "rest");
+    if (mode !== "hours") expect(text).toContain("ENC = Não subordinado a horário");
+    expect(text).toContain("Conferir a referência noturna");
+    expect(workspace).toEqual(before);
+  }, 20000);
 });

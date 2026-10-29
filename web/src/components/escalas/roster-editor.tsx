@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput } from "@/lib/escalas/types";
 import { buttonClass, Check, controlClass, Field, primaryClass } from "./controls";
@@ -32,6 +32,8 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
   employee: EscalaEmployee; date: string; assignment?: EscalaAssignment; input: EscalaInput; canUnlock: boolean;
   onApply: (assignment: EscalaAssignment) => void; onCancel: () => void;
 }) {
+  const editor = useRef<HTMLFormElement>(null);
+  useEffect(() => { editor.current?.scrollIntoView?.({ block: "nearest" }); editor.current?.focus(); }, []);
   const untimed = employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING";
   const [kind, setKind] = useState<EscalaAssignment["kind"]>(assignment?.kind ?? (untimed ? "DUTY" : "WORK"));
   const [shiftId, setShiftId] = useState(assignment?.shiftId ?? employee.shiftIds[0] ?? "");
@@ -40,7 +42,7 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
   const [error, setError] = useState("");
   const wasLocked = Boolean(assignment?.locked);
   const current = preview?.source === input ? preview : null;
-  return <form className={styles.editor} onSubmit={(event) => {
+  return <form ref={editor} id="escala-day-editor" tabIndex={-1} className={styles.editor} onSubmit={(event) => {
     event.preventDefault();
     setError("");
     try {
@@ -56,8 +58,8 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
     <fieldset disabled={Boolean(current)} className="space-y-3">
       <div className={styles.formGrid}>
         <Field label="Situação do dia">{(id) => <select id={id} disabled={wasLocked} value={kind} className={controlClass} onChange={(event) => setKind(event.target.value as EscalaAssignment["kind"])}>
-          {untimed ? <option value="DUTY">Trabalho sem horário fixo</option> : <option value="WORK">Trabalho</option>}
-          <option value="OFF">Folga</option><option value="ABSENCE">Ausência</option>
+          {untimed ? <option value="DUTY">{employee.scheduleMode === "UNTIMED" ? "ENC — Não subordinado a horário" : "NP — Horário não processado (presença diária)"}</option> : <option value="WORK">Trabalho</option>}
+          <option value="OFF">Folga</option><option value="ABSENCE">AF — Afastamento</option>
         </select>}</Field>
         {kind === "WORK" && !untimed && <Field label="Turno autorizado">{(id) => <select id={id} required disabled={wasLocked} value={shiftId} className={controlClass} onChange={(event) => setShiftId(event.target.value)}>
           <option value="">Selecione</option>

@@ -10,7 +10,7 @@ function input(): EscalaInput {
     schemaVersion: 1, branchCode: "08", branchName: "Filial de teste", startDate: "2026-10-26", endDate: "2026-11-01", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
     policy: { source: "", validFrom: "2026-01-01", validUntil: "2028-12-31", reviewed: false, reviewedBy: "", weeklyLimit: 44,
       dailyLimitMinutes: 600, compensationAuthorized: false, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60,
-      maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+      maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
     employees: [{ id: "p1", registration: "0001", name: "Pessoa de teste", sector: "Setor", role: "Cargo", weeklyHours: 42, shiftIds: ["source"], activeFrom: "",
       planningEnabled: true, scheduleMode: "TIMED", sourceSchedule: { report: "FPRE136", code: "0026", description: "Referência", weekday: "07:00-11:00 / 13:00-16:20", saturday: "07:00-11:00" },
       offMode: "MIXED", fixedOffDays: [2], offPattern: "PREFER_CONSECUTIVE", maxConsecutiveSundays: 2, sundayRestRule: "COMMERCE", preferredOffDays: [3], historyKnown: false, history: [] }],

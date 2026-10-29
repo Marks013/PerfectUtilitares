@@ -34,7 +34,7 @@ async function removeFixture(page: Page, id: string) {
 }
 async function generate(page: Page) {
   const response = page.waitForResponse(value => value.request().method() === "POST" && value.url().endsWith("/api/escalas") && value.request().postDataJSON()?.action === "GENERATE");
-  await page.getByRole("button", { name: /^(Gerar proposta mensal|Gerar nova proposta)$/ }).click();
+  await page.locator('section[aria-labelledby="escala-scenario-title"]').getByRole("button", { name: /^(Gerar proposta mensal|Gerar nova proposta)$/ }).click();
   const value = await response;
   expect(value.status()).toBe(200);
   return value.json();

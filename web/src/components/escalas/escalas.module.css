@@ -67,6 +67,44 @@
 .feedback[data-tone="warning"] { border-color: var(--app-warning-border); background: var(--app-warning-soft); }
 .progressTrack { inline-size: 100%; block-size: .375rem; overflow: hidden; border-radius: 999px; background: var(--app-border); }
 .progressFill { display: block; inline-size: 35%; block-size: 100%; border-radius: inherit; background: var(--app-action-blue); animation: progress-slide 1.35s ease-in-out infinite; }
+
+.shiftSummary { min-inline-size: 0; display: grid; gap: .75rem; }
+.shiftList, .teamList { min-inline-size: 0; margin: 0; padding: 0; list-style: none; }
+.shiftRow { min-inline-size: 0; display: grid; gap: .75rem; border-block-start: 1px solid var(--app-border); padding-block: 1rem; }
+.shiftIdentity { min-inline-size: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .75rem; }
+.shiftIdentity > strong { font-variant-numeric: tabular-nums; color: var(--app-action-blue); }
+.shiftFacts { min-inline-size: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem 1rem; margin: 0; font-size: .875rem; line-height: 1.55; }
+.shiftFacts > div { min-inline-size: 0; }
+.shiftFacts dt { font-weight: 650; }
+.shiftFacts dd { margin: .125rem 0 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.shiftFacts > div:first-child, .shiftFacts > div:last-child { grid-column: 1 / -1; }
+.shiftSecondary { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .75rem; }
+.shiftSecondary > details { min-inline-size: 0; flex: 1 1 18rem; }
+.referenceList { display: grid; gap: .75rem; list-style: none; padding: .5rem 0; font-size: .8125rem; line-height: 1.55; }
+.referenceList li { min-inline-size: 0; display: grid; overflow-wrap: anywhere; }
+.excludedList { min-inline-size: 0; border-block-start: 1px solid var(--app-border); padding-block-start: .5rem; }
+.teamRow { min-inline-size: 0; display: grid; gap: .75rem; border-block-end: 1px solid var(--app-border); padding-block: 1rem; }
+.teamIdentity { min-inline-size: 0; display: grid; justify-items: start; gap: .25rem; font-size: .875rem; line-height: 1.55; overflow-wrap: anywhere; }
+.exclusionReason { min-inline-size: 0; display: grid; gap: .375rem; font-size: .875rem; line-height: 1.55; overflow-wrap: anywhere; }
+ .coverageGapList { min-inline-size: 0; display: grid; gap: .75rem; margin: 0; padding: 0; list-style: none; }
+.reviewGroup { min-inline-size: 0; display: grid; gap: .75rem; }
+.reviewNotice { min-inline-size: 0; display: grid; gap: .625rem; padding: .875rem; border: 1px solid var(--app-border); border-inline-start: 3px solid var(--app-action-blue); border-radius: .5rem; font-size: .875rem; line-height: 1.55; overflow-wrap: anywhere; }
+.reviewNotice[data-severity="ERROR"] { border-inline-start-color: var(--app-danger-border); }
+.reviewNotice[data-severity="PENDING"] { border-inline-start-color: var(--app-warning-border); }
+.reviewContext { display: grid; gap: .25rem; margin: 0; }
+.reviewContext dt { font-weight: 650; }
+.reviewContext dd { margin: 0; }
+@media (min-width: 64rem) {
+  .shiftFacts { grid-template-columns: minmax(12rem, 2fr) minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(6rem, 1fr) minmax(9rem, 1.5fr); }
+  .shiftFacts > div:first-child, .shiftFacts > div:last-child { grid-column: auto; }
+}
+
+.timelinePlot { width: 100%; height: 180px; overflow: visible; color: var(--app-action-blue); }
+.timelineFrame { padding: 1rem .5rem; min-width: 0; border: 1px solid var(--app-border); border-radius: .75rem; }
+.timelineLegend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .875rem; }
+.timelineBar { fill: currentColor; opacity: .85; }
+.timelineEstimate { fill: none; stroke: var(--app-muted); stroke-dasharray: 5 4; stroke-width: 2; }
+.timelineMinimum { fill: none; stroke: var(--app-coral); stroke-width: 2; }
 @keyframes progress-slide { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 @media (min-width: 40rem) {
   .panel { padding: 1.25rem; }

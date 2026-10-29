@@ -1,7 +1,11 @@
 "use client";
 
 import { useRef, useState, type MouseEvent } from "react";
-import { buildEscalaDiagnostics } from "@/lib/escalas/diagnostics";
+import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
+import type { EscalaExportMode } from "@/lib/escalas/presentation";
+import { consolidateCoverageGaps } from "@/lib/escalas/coverage-presence";
+import type { EscalaRecoveryContext } from "./recovery-navigation";
+import styles from "./escalas.module.css";
 import { sortEmployees } from "@/lib/escalas/order";
 import type {
   EscalaAssignment,
@@ -9,7 +13,7 @@ import type {
   EscalaValidation,
   EscalaWorkspace,
 } from "@/lib/escalas/types";
-import { buttonClass, Check, panelClass, primaryClass } from "./controls";
+import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { clock, displayDate } from "./workspace-model";
 import { ProcessingBar } from "./workspace-feedback";
 import { groupValidationIssues, type ReviewTarget } from "./validation-guidance";
@@ -80,26 +84,45 @@ function Changes({ input, assignments }: { input: EscalaInput; assignments: Esca
   );
 }
 
-function CoverageGaps({ rows }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverage"] }) {
+type ResolveReview = (target: ReviewTarget, context?: EscalaRecoveryContext) => void;
+
+function CoverageGaps({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
   const [page, setPage] = useState(0);
-  const pages = Math.max(1, Math.ceil(rows.length / 15));
+  const groups = consolidateCoverageGaps(rows);
+  const pages = Math.max(1, Math.ceil(groups.length / 12));
   const current = Math.min(page, pages - 1);
-  if (!rows.length) return null;
-  return <div className="space-y-3">
-    <p className="text-sm font-semibold">{rows.length} faixa(s) com cobertura a ajustar</p>
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <caption className="sr-only">Faltas por setor, função, dia e faixa de horário</caption>
-        <thead><tr><th scope="col" className="p-2">Setor / função</th><th scope="col" className="p-2">Dia e faixa</th><th scope="col" className="p-2">Equipe faltante</th></tr></thead>
-        <tbody>{rows.slice(current * 15, current * 15 + 15).map((row) => <tr key={JSON.stringify([row.sector, row.role, row.date, row.start, row.end])} className="border-t border-[color:var(--app-border)]">
-          <th scope="row" className="p-2 font-normal"><strong>{row.sector}</strong>{row.role && <span className="block text-[color:var(--app-muted)]">{row.role}</span>}</th>
-          <td className="p-2 tabular-nums">{displayDate(row.date)}<span className="block">{clock(row.start)}–{clock(row.end)}</span></td>
-          <td className="p-2"><strong>Faltam {row.missing}</strong><span className="block text-xs text-[color:var(--app-muted)]">{row.present} presente(s) / {row.minimum} {row.estimated ? "estimados" : "necessários"}</span></td>
-        </tr>)}</tbody>
-      </table>
-    </div>
-    {pages > 1 && <div className="flex flex-wrap items-center gap-3"><button type="button" className={buttonClass} disabled={!current} onClick={() => setPage(current - 1)}>Anterior</button><span className="text-sm">Página {current + 1} de {pages}</span><button type="button" className={buttonClass} disabled={current + 1 === pages} onClick={() => setPage(current + 1)}>Próxima</button></div>}
+  if (!groups.length) return null;
+  return <div className={styles.reviewGroup}>
+    <div><h3 className="font-semibold">Cobertura por setor e horário</h3><p className={styles.muted}>Ocorrências equivalentes estão reunidas. A estimativa automática é uma referência de distribuição, não uma necessidade comprovada.</p></div>
+    <ul className={styles.coverageGapList}>
+      {groups.slice(current * 12, current * 12 + 12).map((row) => <li key={JSON.stringify([row.sector, row.dates, row.start, row.end, row.roles])} className={styles.reviewNotice} data-severity={row.estimated ? "WARNING" : "ERROR"}>
+        <div className={styles.header}><h4 className="font-semibold">{row.sector}</h4><span className={styles.statusTag}>{row.kind === "no-service" ? "Sem atendimento nesta faixa" : row.estimated ? "Abaixo da estimativa" : "Mínimo informado não atendido"}</span></div>
+        <p className="tabular-nums"><strong>{clock(row.start)}–{clock(row.end)}</strong> · {row.dates.length === 1 ? displayDate(row.dates[0]) : `${row.dates.length} dias entre ${displayDate(row.dates[0])} e ${displayDate(row.dates.at(-1) ?? row.dates[0])}`}</p>
+        <dl className={styles.reviewContext}><div><dt>Efetivamente trabalhando</dt><dd>{row.present} pessoa(s), sem contar intervalos, afastamentos ou horários indefinidos.</dd></div><div><dt>Referência utilizada</dt><dd>{row.minimum} pessoa(s) · {row.estimated ? "estimativa automática, não mínimo obrigatório" : "mínimo informado para a operação"}.</dd></div></dl>
+        {row.roles.length > 0 && <details><summary className={styles.disclosureTrigger}>Funções nesta faixa</summary><ul className={styles.referenceList}>{row.roles.map((role) => <li key={JSON.stringify([role.role, role.estimated])}>{role.role || "Equipe do setor"}: {role.present} trabalhando / {role.minimum} {role.estimated ? "na referência estimada" : "no mínimo informado"}.</li>)}</ul></details>}
+        <p><strong>Ajuste a avaliar:</strong> {row.suggestion}</p>
+        {row.dates.length > 1 && <details><summary className={styles.disclosureTrigger}>Consultar os {row.dates.length} dias</summary><p>{row.dates.map(displayDate).join(", ")}</p></details>}
+        {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.dates[0] })}>Conferir este setor e horário</button>}
+      </li>)}
+    </ul>
+    {pages > 1 && <div className={styles.actions}><button type="button" className={buttonClass} disabled={!current} onClick={() => setPage(current - 1)}>Anterior</button><span className="text-sm">Página {current + 1} de {pages}</span><button type="button" className={buttonClass} disabled={current + 1 === pages} onClick={() => setPage(current + 1)}>Próxima</button></div>}
   </div>;
+}
+
+function ReviewNotice({ notice, input, onResolve }: { notice: EscalaDiagnosticNotice; input: EscalaInput; onResolve?: ResolveReview }) {
+  const guidance = groupValidationIssues([{ code: notice.code, severity: notice.severity, message: notice.message }])[0]?.guidance;
+  const employees = sortEmployees(input.employees.filter((person) => notice.employeeIds.includes(person.id)));
+  const context: EscalaRecoveryContext = { ...(employees.length === 1 ? { employeeId: employees[0].id } : {}), ...(notice.dates[0] ? { date: notice.dates[0] } : {}) };
+  const title = ["Atenção", "Informação", "Impedimento"].includes(notice.label) ? guidance?.title : notice.label;
+  return <li className={styles.reviewNotice} data-severity={notice.severity}>
+    <h4 className="font-semibold">{title || "Revisão da proposta"}</h4>
+    <p>{notice.message}</p>
+    {notice.dates.length > 0 && <p className={styles.muted}><strong>Período afetado:</strong> {notice.dates.length === 1 ? displayDate(notice.dates[0]) : `${displayDate(notice.dates[0])} a ${displayDate(notice.dates.at(-1) ?? notice.dates[0])}`}{notice.dates.length > 1 ? ` · ${notice.dates.length} datas de referência` : ""}.</p>}
+    {employees.length === 1 && <p><strong>{employees[0].registration} · {employees[0].name}</strong><span className="block">{employees[0].sector} / {employees[0].role}</span></p>}
+    {guidance && guidance.instruction !== notice.message && <p><strong>{notice.severity === "ERROR" ? "Como corrigir:" : "Orientação:"}</strong> {guidance.instruction}</p>}
+    {(employees.length > 1 || notice.dates.length > 1) && <details><summary className={styles.disclosureTrigger}>Consultar pessoas e datas</summary>{notice.dates.length > 1 && <p className={styles.muted}>{notice.dates.map(displayDate).join(", ")}</p>}<ul className={styles.referenceList}>{employees.map((person) => <li key={person.id}><strong>{person.registration} · {person.name}</strong><span>{person.sector} / {person.role}</span>{onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("team", { employeeId: person.id, ...(notice.dates[0] ? { date: notice.dates[0] } : {}) })}>Conferir colaborador<span className="sr-only"> {person.name}</span></button>}</li>)}</ul></details>}
+    {onResolve && guidance?.target && <button type="button" className={buttonClass} onClick={() => onResolve(guidance.target as ReviewTarget, context)}>{guidance.action}</button>}
+  </li>;
 }
 
 export function Proposals({ input, generated, disabled, onGenerated, onDismiss }: {
@@ -111,30 +134,28 @@ export function Proposals({ input, generated, disabled, onGenerated, onDismiss }
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
-    {diagnostics.coverage.length > 0 && <CoverageGaps rows={diagnostics.coverage} />}
+    {diagnostics.coverageGroups.length > 0 && <CoverageGaps rows={diagnostics.coverageGroups} />}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
   </section>;
 }
 
-export function ValidationResults({ input, validation, onResolve }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: (target: ReviewTarget) => void }) {
+export function ValidationResults({ input, validation, onResolve }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: ResolveReview }) {
   if (!validation) return <section className={panelClass}><h2 className="text-lg font-bold">Resumo da revisão</h2><p className="text-sm">Os dados foram alterados. Gere a proposta novamente ou salve as edições manuais para atualizar os resultados.</p></section>;
   const diagnostics = buildEscalaDiagnostics(input, validation.issues);
   const errors = diagnostics.notices.filter((notice) => notice.severity === "ERROR");
-  const limits = diagnostics.notices.filter((notice) => notice.severity !== "ERROR");
+  const reviews = diagnostics.notices.filter((notice) => notice.severity === "PENDING");
+  const information = diagnostics.notices.filter((notice) => notice.severity === "WARNING");
   const reservations = validation.boundaryReservations ?? [];
-  const orderedEmployees = sortEmployees(input.employees);
-  const names = new Map(input.employees.map((employee) => [employee.id, employee.name]));
+  const orderedEmployees = sortEmployees(input.employees.filter((employee) => employee.planningEnabled !== false));
   return <section className={panelClass} aria-labelledby="escala-validation-title">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="escala-validation-title" className="text-lg font-bold">Resumo da revisão</h2><span className="text-sm">{errors.length} impeditivos · {limits.filter((notice) => notice.severity === "PENDING").length} pendências</span></div>
-    <p className="text-sm font-semibold">{errors.length ? "Há conflitos concretos para ajustar no rascunho." : diagnostics.coverage.length ? "Confira as faixas com falta de equipe." : "Nenhum conflito técnico detectado nas faixas conferidas."}</p>
-    {diagnostics.coverage.length > 0 && <CoverageGaps rows={diagnostics.coverage} />}
-    {errors.map((notice) => {
-      const guidance = groupValidationIssues([{ code: notice.code, severity: notice.severity, message: notice.message }])[0]?.guidance;
-      return <div key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} className="border-l-4 border-[color:var(--app-coral)] pl-3 text-sm"><h3 className="font-semibold">{notice.label}</h3>{!notice.global && notice.employeeIds.length > 0 && <p className="mt-1">{notice.employeeIds.map((id) => names.get(id) ?? "Colaborador não identificado").join(", ")}</p>}<p className="mt-1">{notice.message}</p>{notice.dates.length > 0 && <p className="mt-1 text-[color:var(--app-muted)]">{notice.dates.map(displayDate).join(", ")}</p>}{onResolve && guidance?.target && <button type="button" className={`${buttonClass} mt-2`} onClick={() => onResolve(guidance.target as ReviewTarget)}>{guidance.action}</button>}</div>;
-    })}
-    {limits.length > 0 && <details className="space-y-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">Limites de conferência ({limits.length})</summary><p className="text-sm text-[color:var(--app-muted)]">Pendências documentais e histórico incompleto não impedem o rascunho. A simulação não certifica conformidade legal completa.</p><ul className="space-y-3 text-sm">{limits.map((notice) => <li key={notice.code + notice.message} className="border-t border-[color:var(--app-border)] pt-3"><strong>{notice.label}</strong><p className="mt-1">{notice.message}</p>{notice.code === "DAY_PENDING" && onResolve && <button type="button" className={`${buttonClass} mt-2`} onClick={() => onResolve("generate")}>Gerar proposta mensal</button>}</li>)}</ul></details>}
+    <div className={styles.header}><h2 id="escala-validation-title" className={styles.sectionTitle}>Conferência da proposta</h2><span className="text-sm">{errors.length} impedimento(s) · {reviews.length} ponto(s) para revisar</span></div>
+    <p className="text-sm font-semibold">{errors.length ? "Corrija os impedimentos antes de aplicar a proposta." : diagnostics.coverageGroups.some((row) => !row.estimated) ? "Há mínimos informados que precisam de ajuste de cobertura." : diagnostics.coverageGroups.length ? "Confira a distribuição nos horários abaixo da estimativa automática." : "Nenhum impedimento técnico detectado nos dados conferidos."}</p>
+    {errors.length > 0 && <section className={styles.reviewGroup} aria-label="Impedimentos"><h3 className="font-semibold">Exige correção ({errors.length})</h3><ul className={styles.coverageGapList}>{errors.map((notice) => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul></section>}
+    {diagnostics.coverageGroups.length > 0 && <CoverageGaps rows={diagnostics.coverageGroups} onResolve={onResolve} />}
+    {reviews.length > 0 && <section className={styles.reviewGroup} aria-label="Pontos para revisar"><h3 className="font-semibold">Pode continuar com revisão ({reviews.length})</h3><p className={styles.muted}>Estes pontos não impedem o rascunho. Confira o impacto indicado antes de usar a proposta.</p><ul className={styles.coverageGapList}>{reviews.map((notice) => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul></section>}
+    {information.length > 0 && <details className={styles.reviewGroup}><summary className={styles.disclosureTrigger}>Informações e limites de conferência ({information.length})</summary><p className={styles.muted}>Tratamentos realizados e limites dos dados disponíveis. A simulação não certifica conformidade legal completa.</p><ul className={styles.coverageGapList}>{information.map((notice) => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul></details>}
     {reservations.length > 0 && <details className="space-y-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">Folgas fixas reservadas para continuidade</summary><p className="text-sm text-[color:var(--app-muted)]">Estas folgas precisam ser mantidas na próxima escala para preservar a continuidade. São reservas fora da proposta; não são dias publicados dentro deste horizonte.</p><ul className="max-h-80 space-y-3 overflow-y-auto text-sm">{orderedEmployees.map((employee) => {
       const dates = reservations.filter((reservation) => reservation.employeeId === employee.id).map((reservation) => reservation.date).sort();
       return dates.length ? <li key={employee.id} className="border-b border-[color:var(--app-border)] pb-3"><p className="font-semibold">{employee.sector || "Sem setor informado"} / {employee.role || "Sem cargo informado"}</p><p>{employee.name} · {employee.registration}</p><p>Folga fixa reservada: {dates.map(displayDate).join(", ")}</p></li> : null;
@@ -146,9 +167,11 @@ export function ValidationResults({ input, validation, onResolve }: { input: Esc
   </section>;
 }
 
-export function Publication({ workspace, validation, dirty, busy, outdated = false, onPublish, onRegenerate }: {
-  workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; outdated?: boolean; onPublish: () => void; onRegenerate?: () => void;
+export function Publication({ workspace, validation, dirty, busy, outdated = false, mode = "both", onModeChange, onPublish, onRegenerate }: {
+  workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; outdated?: boolean; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onPublish: () => void; onRegenerate?: () => void;
 }) {
+  const [localMode, setLocalMode] = useState<EscalaExportMode>(mode);
+  const selectedMode = onModeChange ? mode : localMode;
   const [confirmed, setConfirmed] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
   const [feedback, setFeedback] = useState("");
@@ -156,7 +179,7 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
   const exportingRef = useRef(false);
   const blocked = dirty || busy || outdated || Boolean(exporting);
   const ready = workspace.canPublish && !blocked && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
-  const url = (format: "pdf" | "xlsx") => `/api/escalas/export?id=${encodeURIComponent(workspace.id)}&revision=${workspace.revision}&format=${format}`;
+  const url = (format: "pdf" | "xlsx") => `/api/escalas/export?id=${encodeURIComponent(workspace.id)}&revision=${workspace.revision}&format=${format}&mode=${selectedMode}`;
   async function download(event: MouseEvent<HTMLAnchorElement>, format: "pdf" | "xlsx") {
     event.preventDefault();
     if (blocked || exportingRef.current) return;
@@ -170,7 +193,7 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
-      anchor.download = `escala-${workspace.input.branchCode.replace(/[^a-zA-Z0-9_-]/g, "-")}-${workspace.input.visibleMonth ?? workspace.input.startDate}-r${workspace.revision}.${format}`;
+      anchor.download = `escala-${workspace.input.branchCode.replace(/[^a-zA-Z0-9_-]/g, "-")}-${workspace.input.visibleMonth ?? workspace.input.startDate}-r${workspace.revision}-${selectedMode}.${format}`;
       document.body.append(anchor); anchor.click(); anchor.remove();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
       setFeedback(`${format.toUpperCase()} preparado. Download iniciado.`);
@@ -178,6 +201,7 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
     finally { exportingRef.current = false; setExporting(null); }
   }
   return <section className={panelClass} aria-labelledby="escala-publication-title">
+    <Field label="Conteúdo do PDF e XLSX">{id => <select id={id} className={controlClass} disabled={blocked} value={selectedMode} onChange={event => { const value = event.target.value as EscalaExportMode; if (onModeChange) onModeChange(value); else setLocalMode(value); }}><option value="rest">Somente escala de folgas</option><option value="hours">Somente escala de horários</option><option value="both">Folgas e horários</option></select>}</Field>
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-publication-title" className="text-lg font-bold">Exportar proposta</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">PDF e Excel usam a mesma grade mensal da revisão salva {workspace.revision}.</p></div><div className="flex flex-wrap gap-2">{(["pdf", "xlsx"] as const).map((format) => !blocked ? <a key={format} href={url(format)} download className={buttonClass} onClick={(event) => { void download(event, format); }}>Baixar {format.toUpperCase()}</a> : <button key={format} type="button" disabled className={buttonClass}>{exporting === format ? `Preparando ${format.toUpperCase()}…` : `Baixar ${format.toUpperCase()}`}</button>)}</div></div>
     {outdated ? <p className="text-sm"><strong>Cenário alterado.</strong> Gere e aplique uma proposta atualizada antes de exportar.{onRegenerate && <button type="button" className={`${buttonClass} mt-3 block`} disabled={busy} onClick={onRegenerate}>Gerar proposta atualizada</button>}</p> : dirty ? <p className="text-sm">Salve a revisão para exportar as edições atuais.</p> : <p className="text-xs text-[color:var(--app-muted)]">Rascunhos levam essa identificação; avisos da simulação não impedem o download.</p>}
     <p role="status" aria-live="polite" aria-atomic="true" className="text-sm">{exporting ? `Processando: preparando ${exporting.toUpperCase()} da revisão ${workspace.revision}…` : feedback}</p>

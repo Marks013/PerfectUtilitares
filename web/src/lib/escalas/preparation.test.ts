@@ -14,7 +14,7 @@ function fixture(startDate = "2026-11-02", hours: 40 | 42 | 44 = 42): EscalaInpu
   return {
     schemaVersion: 1, branchCode: "02", branchName: "Filial de teste", startDate, endDate, defaultWeeklyHours: hours, timeZone: "America/Sao_Paulo",
     policy: { source: "Norma do cenário", validFrom: "2026-01-01", validUntil: "2029-12-31", reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44,
-      dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6,
+      dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5,
       closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: true, nightWorkReviewed: false,
       collectiveAgreement: { source: "Acordo do cenário", validFrom: "2026-12-16", validUntil: "2027-12-15", reviewed: true, reviewedBy: "Responsável" } },
     employees: [{ id: "p1", registration: "0001", name: "Pessoa de teste", sector: "Setor", role: "Cargo", weeklyHours: hours, shiftIds: ["day"], activeFrom: "",
@@ -270,8 +270,8 @@ describe("branch-wide proposal preparation", () => {
     const validation = validateEscala(input);
     const bytes = exportEscalaXlsx({ id: "w", revision: 1, status: "DRAFT", input, validation, canEdit: true, canPublish: true, updatedAt: "2028-01-03" });
     const archive = unzipSync(bytes);
-    expect(strFromU8(archive["xl/worksheets/sheet4.xml"])).toContain("Carga proposta nesta semana");
-    expect(strFromU8(archive["xl/worksheets/sheet4.xml"])).toContain("<v>40</v>");
-    expect(strFromU8(archive["xl/worksheets/sheet2.xml"])).toContain("Informação");
+    expect(strFromU8(archive["xl/worksheets/sheet5.xml"])).toContain("Carga proposta nesta semana");
+    expect(strFromU8(archive["xl/worksheets/sheet5.xml"])).toContain("<v>40</v>");
+    expect(strFromU8(archive["xl/worksheets/sheet3.xml"])).toContain("Informação");
   });
 });
