@@ -1,6 +1,6 @@
 # Fluxo simples, persistência segura e acesso operacional de Escalas
 
-Estado: implementação concluída e em validação integrada de lançamento; ainda não publicada. Base publicada: e8676a1. Trabalho exclusivamente no servidor.
+Estado: concluído, publicado e verificado. Código em produção: 9361719e485986f2b0d6027b2edf6f7b5a5a9f4c. Base inicial: e8676a1. Trabalho exclusivamente no servidor.
 
 ## Decisões e limites
 
@@ -28,7 +28,7 @@ Estado: implementação concluída e em validação integrada de lançamento; ai
 - [x] 7. Implementar /escala e alias /escalas, senha operacional, sessão isolada e expiração/bloqueio; proteger todas as operações e arquivos no escopo autorizado. Regressões de Unimed obrigatórias se houver alteração da validação compartilhada.
 - [x] 8. Avaliar preferências auditáveis. Não prometer aprendizado de máquina sem benefício comprovado; registrar decisão e limites.
 - [x] 9. Validar falhas e sucesso com CSV real, persistência/recarga, expiração, segurança de escopo, responsividade e arquivos reais. Reaproveitar testes não afetados; gates globais e build apenas no fechamento do conjunto.
-- [ ] 10. Revisar diff, validar Compose protegido, commit autorizado, implantar e executar smoke real, registrar evidências e limitações.
+- [x] 10. Revisar diff, validar Compose protegido, commit autorizado, implantar e executar smoke real, registrar evidências e limitações.
 
 ## Plano de recuperação
 
@@ -81,3 +81,9 @@ Versão 0a5286b implantada com migração concluída e aplicação, worker, banc
 A apresentação de referências curtas foi corrigida para mostrar o limite diário efetivo da simulação, em vez de aparentar a carga de 42h como jornada integral calculada. É uma correção de texto/clareza, sem mudança de algoritmo, dados ou permissões. Testes de interface direcionados, lint e typecheck aprovados; não foram repetidos testes pesados de PDF ou segurança por essa alteração. A publicação complementar ainda será conferida visualmente.
 
 Atenção à recuperação de versões: a aplicação antiga modela autoria como obrigatória. Depois que houver revisões criadas por sessão compartilhada com autoria nula, não presumir que o Prisma de uma imagem antiga aceite esses registros. Um recuo exige versão de compatibilidade com autoria nullable ou plano explícito de restauração; não apagar revisões nem inventar autor para forçar compatibilidade.
+
+## Conclusão da entrega
+
+Todas as etapas deste checklist foram concluídas. Código em produção: 9361719e485986f2b0d6027b2edf6f7b5a5a9f4c. Reintegração das 19 exclusões automáticas legadas confirmada com arquivos históricos reais e revisões atuais: filial 07 revisão 11, filial 08 revisão 15, filial 11 revisão 10. As 120 ausências da filial 11 e os demais dados individuais foram preservados. Referências curtas aparecem com limite diário explícito; nenhuma carga contratual foi inventada.
+
+Smoke final aprovado: acesso protegido, redirecionamento, leitura autenticada, interface responsiva, central de revisão, rótulo de jornada curta, PDF e XLSX da revisão final realmente baixados e abertos. Evidência detalhada, faixas de desfalque e limitações em TESTE-GERACAO-COBERTURA-2026-10-29.md. Este fechamento altera somente documentação; não requer outro build. Nenhum push foi realizado nesta etapa.

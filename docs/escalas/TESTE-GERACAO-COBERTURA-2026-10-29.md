@@ -68,7 +68,7 @@ As faixas foram comparadas à presença real da proposta e às indicações do p
 
 Geração real executada no Hiper pela interface publicada. A jornada foi selecionada em 42h, a opção de manter entrada e intervalo foi aplicada explicitamente, e o rascunho foi confirmado antes da geração. Resultado FEASIBLE, conferência independente sem falhas; não se afirma ótimo matemático global. Proposta aplicada e salva, seguida de recarga e downloads reais da revisão correta.
 
-## Geração real publicada — Hiper
+## Geração real publicada — Hiper (primeira conferência, antes da recuperação do legado)
 
 - Código executado: 0a5286ba5b093d2fec00bccbe4a8680f3670186f. Revisão anterior 7; após sugestão de horários, geração e aplicação: 9. Situação DRAFT; nenhuma publicação formal.
 - Tempo da geração e conferência: 15.54 segundos; zero erros de página.
@@ -88,3 +88,42 @@ Exemplos efetivos da geração aplicada:
 | 09:00–13:00 / 15:00–19:24 | 13:00–15:00 | 08:24 | 6 |
 | 08:00–12:00 / 14:00–18:24 | 12:00–14:00 | 08:24 | 5 |
 | 06:30–10:30 / 12:30–16:54 | 10:30–12:30 | 08:24 | 4 |
+
+## Recuperação do legado e revisões finais
+
+As grades já salvas continham 19 exclusões automáticas herdadas, com o motivo exato “Jornada curta: não ampliada automaticamente”. Elas foram reintegradas por operações normais da API, com revisão otimista, geração, conferência independente, aplicação e leitura subsequente. Nenhum cadastro removido pelo usuário foi recriado, e nenhuma exclusão manual com outro motivo foi alterada. As matrículas foram comparadas com os arquivos históricos reais das revisões anteriores, sem expor dados pessoais neste relatório.
+
+| Filial | Revisão final | Pessoas incluídas | Exclusões legadas corrigidas | Referências curtas preservadas | Semanas-pessoa completas | Referência estimada atendida | Ausências preservadas |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 07 | 11 | 142 | 6 | 6 | 852 | 88.41% | 0 |
+| 08 | 15 | 81 | 6 | 6 | 486 | 86.84% | 0 |
+| 11 | 10 | 92 | 7 | 7 | 532 | 81.89% | 120 |
+
+Zero falhas nos critérios obrigatórios e zero indicações mensais de desfalque omitidas. Os grupos comparáveis da última conferência consideram também afastamentos, decisões bloqueadas, histórico conhecido e horários permitidos, evitando comparar pessoas com disponibilidades diferentes. A diferença observada permaneceu em até duas folgas mensais e um domingo trabalhado.
+
+Na filial 08, uma primeira comparação do teste incluiu os dias técnicos de outubro/dezembro porque a revisão legada não continha visibleMonth. O produto já inferia corretamente novembro a partir do horizonte mensal completo. O oráculo independente foi corrigido para comparar a cobertura mensal exibida; as verificações de jornadas e descansos continuam incluindo todo o horizonte técnico. Não houve alteração de dados para mascarar a comparação nem remoção de verificações de restrições.
+
+A menor cobertura da filial 11 é um resultado do cenário salvo, que conserva os 120 registros de afastamento, e não é comparável diretamente ao CSV sem essas ausências. Não foi prometida cobertura integral.
+
+## Exemplos atuais de desfalques na grade final
+
+| Filial | Setor | Data | Faixa | Trabalhando | Referência estimada | Pessoas adicionais estimadas na faixa |
+|---|---|---|---|---:|---:|---:|
+| 07 | AÇOUGUE | 2026-11-08 | 17:24–21:04 | 1 | 4 | 3 |
+| 07 | AÇOUGUE | 2026-11-22 | 17:24–21:04 | 1 | 4 | 3 |
+| 08 | AÇOUGUE | 2026-11-18 | 18:24–21:24 | 1 | 4 | 3 |
+| 08 | ADMINISTRATIVO | 2026-11-08 | 08:30–10:40 | 1 | 5 | 4 |
+| 11 | FRENTE DE CAIXA | 2026-11-08 | 11:30–13:00 | 3 | 9 | 6 |
+| 11 | FRENTE DE CAIXA | 2026-11-22 | 11:30–13:00 | 3 | 9 | 6 |
+
+A quantidade adicional respeita funções não intercambiáveis: pode ser maior que a simples subtração entre o total de pessoas do setor e a referência, se houver excedente de uma função e falta de outra. Não equivale automaticamente a vagas de contratação.
+
+## Conferência final em produção
+
+- Código publicado: 9361719e485986f2b0d6027b2edf6f7b5a5a9f4c. Aplicação, worker, solver e banco saudáveis; migração concluída.
+- /escala disponível por link com tela de senha; /escalas redireciona. APIs e sessão sem autorização retornam 401. O smoke autenticado não alterou a revisão lida.
+- Zero erros de página e zero respostas 5xx no smoke final. Larguras 375, 768 e 1280 px sem transbordamento; central de revisão e referências curtas conferidas na interface real.
+- Depois da recuperação do legado, Hiper revisão 11: PDF 144377 bytes e 16 páginas; XLSX 115122 bytes e 3 planilhas. Ambos realmente baixados e abertos com leitores independentes.
+- Regressões dos modos folgas/horários/ambos aprovadas no build de produção. Após a correção apenas explicativa da referência diária, foram reaproveitados os testes não afetados; os arquivos foram repetidos somente quando a revisão dos dados mudou.
+
+Conclusão: propostas viáveis e operacionalmente conferidas, com horários e folgas coerentes com os dados disponíveis. FEASIBLE não é prova de ótimo matemático global, e a cobertura automática continua sendo estimativa. Os desfalques restantes estão disponíveis por setor, horário e função para decisão operacional.
