@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { revealRecoveryElement, type EscalaRecoveryRequest } from "./recovery-navigation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { sortEmployees } from "@/lib/escalas/order";
 import { BulkControls } from "./bulk-controls";
@@ -179,8 +180,8 @@ export function EmployeeEditor({
     }
   }
   return (
-    <form onSubmit={submit} className={`${panelClass} border-[color:var(--app-teal)]`}>
-      <h3 className="font-semibold">
+    <form id="escala-employee-editor" tabIndex={-1} aria-labelledby="escala-employee-editor-title" onSubmit={submit} className={`${panelClass} border-[color:var(--app-teal)] focus:outline-2 focus:outline-[color:var(--app-action-blue)]`}>
+      <h3 id="escala-employee-editor-title" className="font-semibold">
         {input.employees.some((item) => item.id === employee.id) ? "Editar colaborador" : "Novo colaborador"}
       </h3>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -438,14 +439,30 @@ export function Employees({
   input,
   disabled,
   onChange,
+  review,
 }: {
   input: EscalaInput;
   disabled: boolean;
   onChange: (input: EscalaInput) => void;
+  review?: EscalaRecoveryRequest;
 }) {
   const [editing, setEditing] = useState<EscalaEmployee | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const reviewedRequest = useRef(0);
+  useEffect(() => {
+    if (!review?.employeeId || reviewedRequest.current === review.request) return;
+    const employee = input.employees.find((person) => person.id === review.employeeId);
+    if (!employee) return;
+    reviewedRequest.current = review.request;
+    setSearch("");
+    setEditing(employee);
+  }, [input.employees, review]);
+  useEffect(() => {
+    if (!review?.employeeId || editing?.id !== review.employeeId) return;
+    const editor = document.getElementById("escala-employee-editor");
+    if (editor) revealRecoveryElement(editor);
+  }, [editing, review]);
   const employees = sortEmployees(input.employees).filter((employee) =>
     `${employee.name} ${employee.registration} ${employee.sector} ${employee.role}`
       .toLocaleLowerCase("pt-BR")

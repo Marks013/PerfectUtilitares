@@ -123,19 +123,3 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
 export function proposeCoverage(input: EscalaInput): EscalaInput {
   return proposeAutomaticCoverage(input);
 }
-
-/** Persist approval on each minimum so a later setup change cannot turn it back into an estimate. */
-export function confirmCoverageEstimates(input: EscalaInput, previous?: EscalaInput): EscalaInput {
-  const approved = new Map(previous?.demands.filter((demand) => previous.policy.coverageReview === "CONFIRMED" || demand.estimated !== true).map((demand) => [demand.id, demand]));
-  let changed = false;
-  const demands = input.demands.map((demand) => {
-    if (!demand.estimated) return demand;
-    const prior = approved.get(demand.id);
-    const unchangedApproved = prior && prior.date === demand.date && prior.sector === demand.sector && prior.role === demand.role
-      && prior.start === demand.start && prior.end === demand.end && prior.minimum === demand.minimum;
-    if (input.policy.coverageReview !== "CONFIRMED" && !unchangedApproved) return demand;
-    changed = true;
-    return { ...demand, estimated: false };
-  });
-  return changed ? { ...input, demands } : input;
-}

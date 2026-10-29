@@ -30,7 +30,9 @@ describe("automatic coverage screen", () => {
     const html = renderToStaticMarkup(<Coverage input={input} disabled={false} onChange={vi.fn()} />);
     expect(html).toContain("meta automática");
     expect(html).toContain("mínimo obrigatório");
-    expect(html).toContain("1 mínimo(s) obrigatório(s)");
+    expect(html).toContain("1 faixa(s) marcada(s) como mínimo obrigatório");
+    expect(html).toContain("Voltar à cobertura automática");
+    expect(html).not.toContain("Confirmar uso de cobertura automática");
   });
 
   it("shows a truthful initial import status without invented progress", () => {

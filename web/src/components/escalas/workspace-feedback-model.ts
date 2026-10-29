@@ -1,5 +1,7 @@
-export type EscalaRecoveryAction = "team" | "coverage" | "rules" | "reload" | "generate" | "login";
-export type EscalaProblem = { message: string; explanation: string; tone: "error" | "warning"; action?: EscalaRecoveryAction; actionLabel?: string };
+import type { EscalaGenerationConflict } from "@/lib/escalas/types";
+
+export type EscalaRecoveryAction = "team" | "coverage" | "rules" | "reload" | "generate" | "login" | "roster";
+export type EscalaProblem = { message: string; explanation: string; tone: "error" | "warning"; action?: EscalaRecoveryAction; actionLabel?: string; conflicts?: EscalaGenerationConflict[]; outcome?: "not-generated" };
 
 /** Keep structured API context without exposing response bodies or stack traces in the workspace. */
 export class EscalaRequestError extends Error {
@@ -35,12 +37,17 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
   return problem("Não foi possível concluir esta ação.", "Sua equipe e suas alterações locais foram preservadas. Tente a mesma ação novamente; se continuar, informe o problema ao suporte.");
 }
 
-export function solverProblem(status: string, message = ""): EscalaProblem | null {
+export function solverProblem(status: string, message = "", conflicts: EscalaGenerationConflict[] = []): EscalaProblem | null {
   if (status === "OPTIMAL" || status === "FEASIBLE") return null;
-  if (status === "UNKNOWN") return { tone: "warning", message: "O cálculo terminou sem uma proposta no tempo disponível.", explanation: "Isso não significa que a escala seja impossível. Tente gerar novamente; se repetir, confira os horários e bloqueios da equipe.", action: "generate", actionLabel: "Gerar novamente" };
+  if (status === "UNKNOWN") return { outcome: "not-generated", tone: "warning", message: "O cálculo terminou sem uma proposta no tempo disponível.", explanation: "Isso não significa que a escala seja impossível. Tente gerar novamente; se repetir, confira os horários e bloqueios da equipe.", action: "generate", actionLabel: "Gerar novamente" };
   if (status === "INFEASIBLE") {
+    if (conflicts.length) return { outcome: "not-generated", tone: "warning", message: "Há condições específicas que impedem esta proposta.", explanation: "Confira os motivos abaixo. Nenhuma ausência, dia bloqueado ou exigência de cobertura foi alterada automaticamente.", conflicts, action: conflicts[0].target, actionLabel: recoveryActionLabel(conflicts[0].target) };
     const coverage = message.startsWith("Cobertura sem horário disponível");
-    return { tone: "warning", message: "As condições atuais não permitem montar uma proposta.", explanation: coverage ? message : "Confira os dias bloqueados, as folgas fixas, as ausências e os horários permitidos. Ajuste somente uma condição que puder ser flexibilizada.", action: coverage ? "coverage" : "team", actionLabel: coverage ? "Conferir cobertura" : "Conferir equipe e restrições" };
+    return { outcome: "not-generated", tone: "warning", message: "As condições atuais não permitem montar uma proposta.", explanation: coverage ? message : "O cálculo não identificou um único ajuste seguro. Abra a conferência dos dados; nenhum bloqueio, ausência ou mínimo foi alterado.", action: coverage ? "coverage" : "team", actionLabel: coverage ? "Conferir cobertura" : "Conferir equipe e restrições" };
   }
   return { tone: "error", message: "O cálculo encontrou um dado que não conseguiu processar.", explanation: "Confira os horários informados e tente gerar novamente. Se continuar, informe o problema ao suporte; a proposta anterior foi preservada.", action: "team", actionLabel: "Conferir horários" };
+}
+
+export function recoveryActionLabel(action: EscalaRecoveryAction): string {
+  return action === "coverage" ? "Conferir cobertura" : action === "roster" ? "Conferir dias na escala" : action === "rules" ? "Conferir regra indicada" : "Conferir equipe e restrições";
 }

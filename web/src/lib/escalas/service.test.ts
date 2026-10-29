@@ -435,23 +435,24 @@ describe("Escalas revision service", () => {
     expect(mocks.revision.create).toHaveBeenCalledWith({ data: expect.objectContaining({ revision: 2, status: "DRAFT" }) });
     expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", tenantId: "company-a", revision: 1 } }));
   });
-  it("persists confirmed estimates as hard minima so a later setup edit cannot relax them", async () => {
+  it("persists provisional estimates without treating a legacy global review as a mandatory minimum", async () => {
     const value = input(); value.policy.coverageReview = "CONFIRMED";
     value.demands = value.demands.map((demand) => ({ ...demand, estimated: true }));
     const saved = await saveEscala(actor, "w1", 1, value);
-    expect(saved.input.demands.every((demand) => demand.estimated === false)).toBe(true);
+    expect(saved.input.demands.every((demand) => demand.estimated === true)).toBe(true);
     const stored = mocks.revision.create.mock.calls[0][0].data.input as EscalaInput;
-    expect(stored.demands.every((demand) => demand.estimated === false)).toBe(true);
+    expect(stored.demands.every((demand) => demand.estimated === true)).toBe(true);
     expect(value.demands.every((demand) => demand.estimated === true)).toBe(true);
   });
-  it("freezes confirmed legacy minima even when the next save resets the branch review", async () => {
+  it("preserves explicit mandatory minima when a save resets the legacy branch review", async () => {
     const previous = input(); previous.policy.coverageReview = "CONFIRMED";
-    previous.demands = previous.demands.map((demand) => ({ ...demand, estimated: true }));
+    previous.demands = previous.demands.map((demand) => ({ ...demand, estimated: false }));
     useCurrent(previous);
     const next = structuredClone(previous); next.policy.coverageReview = "SUGGESTED";
     const result = await saveEscala(actor, "w1", 1, next);
     expect(result.input.policy.coverageReview).toBe("SUGGESTED");
     expect(result.input.demands.every((demand) => demand.estimated === false)).toBe(true);
+    expect(previous.demands.every((demand) => demand.estimated === false)).toBe(true);
   });
   it("rejects stale revisions before writes and enforces the transactional compare-and-swap", async () => {
     await expect(saveEscala(actor, "w1", 2, input())).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
@@ -598,4 +599,50 @@ describe("Escalas revision service", () => {
     expect(stale.needsRegeneration).toBe(true);
   });
 
+});
+
+describe("Generation conflict explanations", () => {
+  it("explains an infeasible mandatory coverage budget without blaming nonexistent locks or changing the workspace", async () => {
+    const value = input();
+    value.assignments = [];
+    value.demands = dateRange(value.startDate, value.endDate).flatMap((date) => value.shifts[0].segments.filter(segment => segment.kind === "WORK").map((segment, index) => ({ id: date + "-" + index, date, sector: "Reposição", start: segment.start, end: segment.end, minimum: 1, estimated: false })));
+    useCurrent(value);
+    const before = JSON.stringify(value);
+    mocks.solve.mockResolvedValue({ status: "INFEASIBLE", assignments: [], wallTimeSeconds: 0.1, message: "Nenhuma solução" });
+    const answer = await generateEscala(actor, "w1", 1);
+    expect(answer.result.status).toBe("INFEASIBLE");
+    expect(answer.result.conflicts).toContainEqual(expect.objectContaining({ code: "COVERAGE_WEEKLY_CAPACITY", target: "coverage", sector: "Reposição", message: expect.stringContaining("58h48") }));
+    expect(answer.result.conflicts?.[0].message).toContain("42h00");
+    expect(JSON.stringify(value)).toBe(before);
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("coverage provenance is preserved across every branch", () => {
+  it.each(["02", "07", "LOJA-OUTRA"])("never promotes an estimate while creating branch %s with a legacy global confirmation", async branch => {
+    const value = input(); value.branchCode = branch;
+    value.policy.coverageReview = "CONFIRMED";
+    value.demands[0].estimated = true;
+    value.demands[1].estimated = false;
+    const created = await createEscala(actor, value);
+    expect(created.input.demands[0].estimated).toBe(true);
+    expect(created.input.demands[1].estimated).toBe(false);
+    const persisted = mocks.revision.create.mock.calls[0][0].data.input as EscalaInput;
+    expect(persisted.demands[0].estimated).toBe(true);
+    expect(persisted.demands[1].estimated).toBe(false);
+  });
+  it.each(["CONFIRMED", "SUGGESTED"] as const)("never promotes an estimate when saving a legacy revision as %s", async review => {
+    const previous = input(); previous.policy.coverageReview = "CONFIRMED";
+    previous.demands[0].estimated = true;
+    previous.demands[1].estimated = false;
+    useCurrent(previous);
+    const next = structuredClone(previous); next.policy.coverageReview = review;
+    const saved = await saveEscala(actor, "w1", 1, next);
+    expect(saved.input.demands[0].estimated).toBe(true);
+    expect(saved.input.demands[1].estimated).toBe(false);
+    expect(previous.demands[0].estimated).toBe(true);
+    expect(previous.demands[1].estimated).toBe(false);
+  });
 });

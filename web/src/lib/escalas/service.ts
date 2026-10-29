@@ -4,12 +4,12 @@ import { allowedBranches, branchPermission, EscalaError, requireEscalaPermission
 import { escalaInputSchema } from "./schema";
 import { EscalaSolverError, solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
+import { findGenerationConflicts } from "./generation-conflicts";
 import { compareBranches } from "./order";
 import { addDays, dateRange, monthBounds, visibleDates } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { prepareGeneration } from "./generation";
-import { confirmCoverageEstimates } from "./preparation";
 import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, SUPERMARKET_CCT } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
 
@@ -65,7 +65,8 @@ export async function getEscala(actor: EscalaActor, id: string, revision?: numbe
 export async function createEscala(actor: EscalaActor, input: EscalaInput): Promise<EscalaWorkspace> {
   const permission = await branchPermission(actor, input.branchCode);
   requireEscalaPermission(permission, "edit");
-  input = confirmCoverageEstimates(publishedPlanningContext(input, []));
+  // Coverage provenance belongs to each row; legacy global review never promotes estimates.
+  input = publishedPlanningContext(input, []);
   const row = await prisma.$transaction(async (tx) => {
     const created = await tx.escalaWorkspace.create({ data: {
       tenantId: actor.tenantId, branchCode: input.branchCode, branchName: input.branchName,
@@ -197,7 +198,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
   preserveLockedAssignments(current.input, input, !publish && current.canPublish);
-  input = confirmCoverageEstimates(publishedPlanningContext(input, []), current.input);
+  input = publishedPlanningContext(input, []);
   let validation = validateEscala(input);
   const status = publish ? "PUBLISHED" : "DRAFT";
   const alreadyPublished = publish && current.status === "PUBLISHED";
@@ -265,7 +266,8 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const prepared = prepareGeneration(current.input);
   requireSolverSetup(prepared.input);
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
-  const result = await solveEscala(contextual);
+  const calculation = await solveEscala(contextual);
+  const result = calculation.status === "INFEASIBLE" ? { ...calculation, conflicts: findGenerationConflicts(contextual) } : calculation;
   const proposalInput = result.status === "FEASIBLE" || result.status === "OPTIMAL"
     ? parseEscalaInput({ ...contextual, needsRegeneration: false, assignments: result.assignments }) : contextual;
   preserveLockedAssignments(current.input, proposalInput);

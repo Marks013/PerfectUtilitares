@@ -58,7 +58,7 @@ type EscalaDemand = {
   start: number;
   end: number;
   minimum: number;
-  /** Automatic estimates stay provisional until an explicit branch-wide coverage review. */
+  /** Estimates remain provisional; a legacy branch-wide review never makes them mandatory. */
   estimated?: boolean;
 };
 export type EscalaPolicy = {
@@ -135,7 +135,18 @@ export type EscalaValidation = {
   /** Fixed day off just beyond the horizon needed to preserve a consecutive pair. */
   boundaryReservations?: EscalaAssignment[];
 };
+export type EscalaGenerationConflict = {
+  code: string;
+  message: string;
+  target: "team" | "coverage" | "rules" | "roster";
+  employeeId?: string;
+  date?: string;
+  sector?: string;
+  role?: string;
+};
 export type EscalaSolveResult = {
+  /** Concrete necessary-condition conflicts, never an invented diagnosis. */
+  conflicts?: EscalaGenerationConflict[];
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
   assignments: EscalaAssignment[];
   message: string;

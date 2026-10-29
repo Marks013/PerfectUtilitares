@@ -211,7 +211,7 @@ export function useEscalasWorkspace() {
             setGenerated(result);
             setNotice(result.validation.issues.length ? "Proposta concluída com avisos. Confira e aplique à escala." : "Proposta concluída. Confira e aplique à escala.");
           }
-          else { setProblem(solverProblem(result.result.status, result.result.message)); setNotice(result.result.message); }
+          else { setProblem(solverProblem(result.result.status, result.result.message, result.result.conflicts)); setNotice(result.result.message); }
         }
       },
       !dirty,

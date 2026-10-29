@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ProcessingBar } from "./workspace-feedback";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/types";
 import { sortEmployees } from "@/lib/escalas/order";
@@ -216,10 +216,12 @@ export function Coverage({
   input,
   disabled,
   onChange,
+  review,
 }: {
   input: EscalaInput;
   disabled: boolean;
   onChange: (input: EscalaInput) => void;
+  review?: { sector?: string; date?: string };
 }) {
   const [startDate, setStartDate] = useState(input.startDate);
   const [endDate, setEndDate] = useState(input.endDate);
@@ -231,6 +233,16 @@ export function Coverage({
   const [minimum, setMinimum] = useState(1);
   const [error, setError] = useState("");
   const [page, setPage] = useState(0);
+  const [filterSector, setFilterSector] = useState("");
+  const [filterDate, setFilterDate] = useState("");
+  const [resetRequested, setResetRequested] = useState(false);
+  const [notice, setNotice] = useState("");
+  useEffect(() => {
+    if (!review) return;
+    setFilterSector(review.sector ?? "");
+    setFilterDate(review.date ?? "");
+    setPage(0);
+  }, [review]);
   const demands = [...input.demands].sort(
     (a, b) =>
       a.date.localeCompare(b.date) ||
@@ -238,7 +250,8 @@ export function Coverage({
       (a.role ?? "").localeCompare(b.role ?? "", "pt-BR") ||
       a.start - b.start,
   );
-  const pages = Math.max(1, Math.ceil(demands.length / 15));
+  const filtered = demands.filter((demand) => (!filterSector || demand.sector === filterSector) && (!filterDate || demand.date === filterDate));
+  const pages = Math.max(1, Math.ceil(filtered.length / 15));
   const currentPage = Math.min(page, pages - 1);
   const summary = summarizeAutomaticCoverage(input);
   const explicitCount = demands.filter((demand) => demand.estimated !== true).length;
@@ -321,7 +334,17 @@ export function Coverage({
         </table>
       </div>
       {!summary.length && <p className="text-sm">Importe a equipe para o algoritmo dimensionar a cobertura.</p>}
-      <p className="text-sm">{explicitCount} mínimo(s) obrigatório(s) definido(s) manualmente. Esses valores são preservados; só a estimativa automática se ajusta.</p>
+      <p className="text-sm">{explicitCount} faixa(s) marcada(s) como mínimo obrigatório. Esses valores são preservados; só a estimativa automática se ajusta.</p>
+      {explicitCount > 0 && <div className="space-y-3 rounded-md border border-[color:var(--app-border)] p-3">
+        {!resetRequested ? <button type="button" disabled={disabled} className={buttonClass} onClick={() => setResetRequested(true)}>Voltar à cobertura automática</button> : <fieldset className="space-y-3" disabled={disabled} aria-label="Confirmar volta à cobertura automática">
+          <p className="text-sm">Isso retira os {explicitCount} mínimos obrigatórios deste rascunho. Ao gerar novamente, o algoritmo recalcula estimativas. Equipe, jornada, dias bloqueados e ausências não mudam. A revisão anterior permanece no histórico após salvar.</p>
+          <div className="flex flex-wrap gap-3"><button type="button" disabled={disabled} className={primaryClass} onClick={() => {
+            onChange({ ...input, demands: [], policy: { ...input.policy, coverageReview: "SUGGESTED" } });
+            setResetRequested(false); setNotice("Cobertura automática selecionada no rascunho. Gere novamente para recalcular as estimativas, depois revise a proposta.");
+          }}>Confirmar uso de cobertura automática</button><button type="button" className={buttonClass} onClick={() => setResetRequested(false)}>Manter mínimos atuais</button></div>
+        </fieldset>}
+      </div>}
+      {notice && <p role="status" className="text-sm">{notice}</p>}
       <details className="space-y-3">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">Mínimos obrigatórios (opcional)</summary>
       <p className="text-sm text-[color:var(--app-muted)]">Use somente quando houver uma necessidade operacional conhecida. O algoritmo respeita esse mínimo como obrigatório; um valor impossível será informado, não reduzido silenciosamente.</p>
@@ -467,15 +490,20 @@ export function Coverage({
         </fieldset>
       </form>
       </details>
-      <details className="space-y-3">
+      <details id="escala-coverage-required" className="space-y-3">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">
           Conferir faixas cadastradas ({demands.length})
         </summary>
         {!demands.length && (
           <p className="text-sm">As metas automáticas serão criadas ao gerar a proposta. Não é necessário preencher este cadastro para simular.</p>
         )}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Filtrar setor da cobertura">{(id) => <select id={id} className={controlClass} value={filterSector} onChange={(event) => { setFilterSector(event.target.value); setPage(0); }}><option value="">Todos os setores</option>{[...new Set(demands.map(demand => demand.sector))].sort((a,b) => a.localeCompare(b,"pt-BR")).map(value => <option key={value} value={value}>{value}</option>)}</select>}</Field>
+          <Field label="Filtrar dia da cobertura">{(id) => <input id={id} className={controlClass} type="date" min={input.startDate} max={input.endDate} value={filterDate} onChange={(event) => { setFilterDate(event.target.value); setPage(0); }} />}</Field>
+        </div>
+        <p className="text-sm">{filtered.length} faixas na seleção. Confira setor, dia, horário e mínimo; nenhuma faixa é alterada apenas por abrir a lista.</p>
         <div className="space-y-2">
-          {demands.slice(currentPage * 15, currentPage * 15 + 15).map((demand) => (
+          {filtered.slice(currentPage * 15, currentPage * 15 + 15).map((demand) => (
             <div
               key={demand.id}
               className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--app-border)] py-2 text-sm"

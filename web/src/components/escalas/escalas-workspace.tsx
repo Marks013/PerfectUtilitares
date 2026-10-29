@@ -12,6 +12,7 @@ import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./co
 import { Coverage, ImportEmployees } from "./coverage-import";
 import { DeletePlan } from "./delete-plan";
 import { Employees } from "./employees";
+import { recoveryArea, revealRecoveryTarget, type EscalaRecoveryContext, type EscalaRecoveryRequest } from "./recovery-navigation";
 import { HoursProposal } from "./hours-proposal";
 import { Proposals, Publication, ValidationResults } from "./results";
 import { Roster } from "./roster";
@@ -63,9 +64,9 @@ function comparePlans(a: WorkspaceSummary, b: WorkspaceSummary) {
 
 export function EscalasStatus({ busy, notice, cancellable, onCancel, failed = false, error = "", problem, onAction }: {
   busy: string; notice: string; cancellable: boolean; onCancel: () => void; failed?: boolean;
-  error?: string; problem?: EscalaProblem | null; onAction?: (action: EscalaRecoveryAction) => void;
+  error?: string; problem?: EscalaProblem | null; onAction?: (action: EscalaRecoveryAction, context?: EscalaRecoveryContext) => void;
 }) {
-  const stage = busy ? "Processando" : failed || error || problem?.tone === "error" ? "Falha" : problem?.tone === "warning" || /avisos|alterado|cancelada|pendências/i.test(notice) ? "Concluído com avisos" : notice ? "Concluído" : "Pronto";
+  const stage = busy ? "Processando" : problem?.outcome === "not-generated" ? "Proposta não gerada" : failed || error || problem?.tone === "error" ? "Falha" : problem?.tone === "warning" || /avisos|alterado|cancelada|pendências/i.test(notice) ? "Concluído com avisos" : notice ? "Concluído" : "Pronto";
   return <div className={styles.stackSmall}>
     <p className={styles.muted}><strong>{stage}.</strong>{!busy && !notice && !error && !problem && <span> Selecione a filial e o mês para planejar.</span>}</p>
     <WorkspaceFeedback busy={busy} notice={notice} error={error} problem={problem} onAction={onAction} />
@@ -77,31 +78,36 @@ export function EscalasWorkspace() {
   const model = useEscalasWorkspace();
   const { input, workspace } = model;
   const [area, setArea] = useState<Area>("team");
+  const [reviewContext, setReviewContext] = useState<EscalaRecoveryRequest | null>(null);
+  const [pendingReview, setPendingReview] = useState<EscalaRecoveryRequest | null>(null);
+  const reviewSequence = useRef(0);
   const errorRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (model.error) errorRef.current?.focus(); }, [model.error]);
+  useEffect(() => { if (model.error || model.problem) errorRef.current?.focus(); }, [model.error, model.problem]);
   const openedWorkspace = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (openedWorkspace.current === workspace?.id) return;
     openedWorkspace.current = workspace?.id;
+    setReviewContext(null);
+    setPendingReview(null);
     setArea(workspace?.input.assignments.length ? "roster" : "team");
   }, [workspace?.id, workspace?.input.assignments.length]);
   useEffect(() => { if (model.generated) setArea("roster"); }, [model.generated]);
-  function resolve(target: ReviewTarget) {
+  useEffect(() => {
+    if (!pendingReview || area !== recoveryArea(pendingReview.target)) return;
+    if (revealRecoveryTarget(pendingReview.target, document)) setPendingReview(null);
+  }, [area, pendingReview]);
+  function resolve(target: ReviewTarget, context: EscalaRecoveryContext = {}) {
     if (target === "generate") { model.generate(); return; }
-    const next: Area = target === "team" ? "team" : target === "coverage" ? "coverage" : "adjustments";
-    setArea(next);
-    requestAnimationFrame(() => {
-      const element = document.getElementById(`escala-${target}`) ?? document.getElementById(`escala-area-${next}`);
-      if (element instanceof HTMLDetailsElement) element.open = true;
-      element?.scrollIntoView({ behavior: "instant", block: "start" });
-      element?.focus({ preventScroll: true });
-    });
+    const review = { ...context, target, request: ++reviewSequence.current };
+    setReviewContext(review);
+    setPendingReview(review);
+    setArea(recoveryArea(target));
   }
-  function recover(action: EscalaRecoveryAction) {
+  function recover(action: EscalaRecoveryAction, context?: EscalaRecoveryContext) {
     if (model.busy) return;
     if (action === "reload") { if (workspace) model.open(workspace.id); return; }
     if (action === "login") return; // The feedback link opens a separate tab, preserving this draft.
-    resolve(action);
+    resolve(action, context);
   }
   const included = input?.employees.filter((person) => person.planningEnabled !== false).length ?? 0;
   const hasRoster = Boolean(input?.assignments.length);
@@ -160,7 +166,12 @@ export function EscalasWorkspace() {
         <div id="escala-team" tabIndex={-1}><h2 id="escala-team-title" className={styles.sectionTitle}>Equipe da filial</h2><p className={styles.muted}>{input.employees.length} importados · {included} incluídos. Horários originais ficam preservados para comparação.</p></div>
         <ImportEmployees input={input} disabled={!model.canEdit} onChange={model.update} />
         <AbsenceImport input={input} disabled={!model.canEdit} onChange={model.update} />
-        {input.employees.length > 0 && <details className={panelClass}><summary className={styles.disclosureTrigger}>Consultar equipe e restrições individuais</summary><Employees input={input} disabled={!model.canEdit} onChange={model.update} /></details>}
+        {input.employees.length > 0 && <details id="escala-team-restrictions" className={panelClass}><summary className={styles.disclosureTrigger}>Consultar equipe e restrições individuais</summary>
+          <div id="escala-team-review" tabIndex={-1} className="scroll-mt-24 rounded-md p-2 focus:outline-2 focus:outline-[color:var(--app-action-blue)]">
+            {reviewContext?.target === "team" && <p className={styles.muted}>Localize o colaborador indicado e use Editar para conferir folgas fixas e horários permitidos. Dias bloqueados e ausências aparecem na área Escala. Nada será alterado apenas por abrir esta conferência.</p>}
+          </div>
+          <Employees input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "team" ? reviewContext : undefined} />
+        </details>}
       </section>}
 
       {area === "roster" && <section id="escala-area-roster" className={styles.stackSmall} aria-label="Revisar escala mensal">
@@ -175,7 +186,7 @@ export function EscalasWorkspace() {
         </>}
       </section>}
 
-      {area === "coverage" && <section id="escala-area-coverage" aria-label="Cobertura da filial"><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} /></div></section>}
+      {area === "coverage" && <section id="escala-area-coverage" aria-label="Cobertura da filial"><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}
 
       {area === "adjustments" && <section id="escala-area-adjustments" className={styles.stack} aria-label="Exceções do planejamento">
         <div id="escala-rules" tabIndex={-1}><Rules input={input} disabled={!model.canEdit} onChange={model.update} /></div>

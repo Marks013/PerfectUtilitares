@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { unzipSync, strFromU8 } from "fflate";
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import { certificateAuthorizes, collectiveExtensionAuthorized, effectiveSundayLimit, effectiveWeeklyHours, legalWeeklyHours, transitionWeeks } from "./labor-rules";
-import { confirmCoverageEstimates, prepareRoster, proposeCoverage } from "./preparation";
+import { prepareRoster, proposeCoverage } from "./preparation";
 import { escalaInputSchema } from "./schema";
 import { validateEscala } from "./validation";
 import { exportEscalaXlsx } from "./export";
@@ -247,24 +247,6 @@ describe("branch-wide proposal preparation", () => {
     expect(proposed.demands.filter((demand) => demand.id !== "approved").every((demand) => demand.estimated === true)).toBe(true);
     expect(proposed.demands.some((demand) => demand.end === 1044)).toBe(true);
     expect(input).toEqual(original);
-  });
-  it("records confirmation on each provisional minimum without approving anything by itself", () => {
-    const input = proposeCoverage({ ...fixture(), demands: [] });
-    expect(confirmCoverageEstimates(input)).toBe(input);
-    const confirmed = confirmCoverageEstimates({ ...input, policy: { ...input.policy, coverageReview: "CONFIRMED" } });
-    expect(confirmed.demands.every((demand) => demand.estimated === false)).toBe(true);
-    expect(confirmed.demands.map(({ minimum }) => minimum)).toEqual(input.demands.map(({ minimum }) => minimum));
-    expect(confirmCoverageEstimates(confirmed)).toBe(confirmed);
-  });
-  it("keeps a previously approved legacy estimate hard after a setup change resets the global review", () => {
-    const previous = proposeCoverage({ ...fixture(), demands: [] });
-    previous.policy.coverageReview = "CONFIRMED";
-    const next = structuredClone(previous); next.policy.coverageReview = "SUGGESTED";
-    next.demands.push({ id: "new-estimate", date: next.startDate, sector: "Outro setor", start: 420, end: 660, minimum: 1, estimated: true });
-    const retained = confirmCoverageEstimates(next, previous);
-    expect(retained.demands.slice(0, -1).every((demand) => demand.estimated === false)).toBe(true);
-    expect(retained.demands.at(-1)?.estimated).toBe(true);
-    expect(next.demands[0].estimated).toBe(true);
   });
   it("uses a coherent opening reference and exactly twenty weekly staffing opportunities for four people", () => {
     const input = fixture(); input.assignments = []; input.demands = [];
