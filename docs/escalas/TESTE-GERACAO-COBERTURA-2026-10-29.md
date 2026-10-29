@@ -1,6 +1,6 @@
 # Verificação independente da geração e do dimensionamento de cobertura
 
-Data: 29/10/2026. Estado: validação pré-publicação; geração final pela interface em produção ainda pendente. CSV original FPRE136, sete filiais, novembro de 2026, cenário de 42h. Nenhum dado pessoal foi incluído neste relatório.
+Data: 29/10/2026. Estado: geração final executada pela interface em produção, com proposta aplicada e persistência conferida. CSV original FPRE136, sete filiais, novembro de 2026, cenário de 42h. Nenhum dado pessoal foi incluído neste relatório.
 
 ## Critérios independentes
 
@@ -66,4 +66,25 @@ As faixas foram comparadas à presença real da proposta e às indicações do p
 
 ## Estado do teste final
 
-Ainda será feita geração pela interface publicada, sugestão explícita de horários, conferência independente, aplicação, recarga e downloads reais. O resultado será acrescentado após sua execução, com revisão utilizada.
+Geração real executada no Hiper pela interface publicada. A jornada foi selecionada em 42h, a opção de manter entrada e intervalo foi aplicada explicitamente, e o rascunho foi confirmado antes da geração. Resultado FEASIBLE, conferência independente sem falhas; não se afirma ótimo matemático global. Proposta aplicada e salva, seguida de recarga e downloads reais da revisão correta.
+
+## Geração real publicada — Hiper
+
+- Código executado: 0a5286ba5b093d2fec00bccbe4a8680f3670186f. Revisão anterior 7; após sugestão de horários, geração e aplicação: 9. Situação DRAFT; nenhuma publicação formal.
+- Tempo da geração e conferência: 15.54 segundos; zero erros de página.
+- 136 colaboradores incluídos; 816 semanas-pessoa completas; maior sequência 5 dias; menor interjornada observada 756 minutos. Nenhuma falha independente.
+- Maior diferença mensal entre grupos comparáveis: 2 folgas e 1 domingo trabalhado.
+- Atendimento da referência estimada: 88.31%; zero indicações de desfalque omitidas; 1765 faixas indicadas conferidas contra presença recalculada. Não é garantia de atendimento operacional.
+- PDF: 140149 bytes; 16 páginas; arquivo realmente baixado e aberto após recarga.
+- XLSX: 111012 bytes; 4 planilhas; arquivo realmente baixado e aberto após recarga.
+
+Exemplos efetivos da geração aplicada:
+
+| Horário proposto | Intervalo | Trabalho efetivo | Pessoas nessa alternativa |
+|---|---|---|---:|
+| 10:40–14:00 / 16:00–21:04 | 14:00–16:00 | 08:24 | 40 |
+| 07:00–11:00 / 13:00–17:24 | 11:00–13:00 | 08:24 | 36 |
+| 08:00–11:30 / 13:30–18:24 | 11:30–13:30 | 08:24 | 15 |
+| 09:00–13:00 / 15:00–19:24 | 13:00–15:00 | 08:24 | 6 |
+| 08:00–12:00 / 14:00–18:24 | 12:00–14:00 | 08:24 | 5 |
+| 06:30–10:30 / 12:30–16:54 | 10:30–12:30 | 08:24 | 4 |

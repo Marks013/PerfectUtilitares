@@ -383,3 +383,17 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(write).toContain('role="status"');
   });
 });
+
+
+describe("short imported daily references", () => {
+  it("does not present the selected branch 42h as a calculated weekly journey for a four-hour daily reference", () => {
+    const { input, validation } = sample();
+    input.defaultWeeklyHours = 42;
+    input.employees = [{ ...input.employees[0], weeklyHours: 42, simulationDailyMinutes: 240 }];
+    const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false} canUnlock onChange={vi.fn()} />);
+    expect(html).toContain("04:00 por dia na simulação · referência curta, contrato semanal não apurado");
+    expect(html).not.toContain("42h por semana");
+    expect(input.employees[0].weeklyHours).toBe(42);
+    expect(input.employees[0].simulationDailyMinutes).toBe(240);
+  });
+});

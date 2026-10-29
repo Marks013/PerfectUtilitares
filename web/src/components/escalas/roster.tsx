@@ -11,7 +11,7 @@ import type { EscalaRecoveryRequest } from "./recovery-navigation";
 import { ShiftSummary } from "./shift-summary";
 import { CellEditor, SwapEditor } from "./roster-editor";
 import { applyRosterChanges, isCurrentRosterChange, rosterCoverageIssues, type RosterDay } from "./roster-model";
-import { displayDate, WEEKDAYS } from "./workspace-model";
+import { clock, displayDate, WEEKDAYS } from "./workspace-model";
 
 export { CellEditor } from "./roster-editor";
 
@@ -109,7 +109,7 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
               <th scope="row" className={styles.nameCell}>
                 <span className="block break-words">{employee.name}</span>
                 <span className="block text-xs font-normal text-[color:var(--app-muted)]">{employee.registration} · {employee.role}</span>
-                <span className="block text-xs font-normal text-[color:var(--app-muted)]">{employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : employee.scheduleMode === "MISSING" ? "Horário não informado · horas não apuradas" : `${employee.weeklyHours}h por semana`}</span>
+                <span className="block text-xs font-normal text-[color:var(--app-muted)]">{employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : employee.scheduleMode === "MISSING" ? "Horário não informado · horas não apuradas" : employee.simulationDailyMinutes !== undefined ? `${clock(employee.simulationDailyMinutes)} por dia na simulação · referência curta, contrato semanal não apurado` : `${employee.weeklyHours}h por semana`}</span>
                 <span className="block text-xs font-normal">Horário proposto: {scheduleByEmployee.get(employee.id)?.proposedVariants.length && (scheduleByEmployee.get(employee.id)?.proposedVariants.length ?? 0) > 1 ? "Varia no mês; consulte os horários" : scheduleByEmployee.get(employee.id)?.proposedSchedule}</span>
                 {(scheduleByEmployee.get(employee.id)?.proposedVariants.length ?? 0) > 1 && <details className="font-normal"><summary className="min-h-8 cursor-pointer py-1 text-xs">Ver variação dos horários</summary><ul className="max-w-64 whitespace-normal text-xs">{scheduleByEmployee.get(employee.id)?.proposedVariants.map((variant) => <li key={variant.shiftId}>{variant.code} · {variant.schedule} · dias {variant.dates.map((date) => date.slice(8)).join(", ")}</li>)}</ul></details>}
                 {employee.sourceSchedule && <details className="font-normal"><summary className="min-h-8 cursor-pointer py-1 text-xs">Horário importado</summary><p className="max-w-64 whitespace-normal text-xs">{employee.sourceSchedule.code} · {employee.sourceSchedule.description}<br />{employee.sourceSchedule.weekday}</p></details>}

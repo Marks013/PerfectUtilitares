@@ -73,3 +73,11 @@ Os 17 cenários únicos de Escalas passaram contra o build de produção: 14 na 
 A rodada de navegador dos arquivos gerais restantes concluiu 16 cenários e ignorou dois condicionais. A primeira execução geral foi interrompida sem conclusão; não é apresentada como uma suíte global integralmente aprovada. O fechamento comprova o módulo de Escalas e as dependências afetadas, além das checagens globais de código já registradas.
 
 Build inicial, worker e atualização necessária após o ajuste de dimensionamento dominical concluídos. Sem rebuild a cada edição; a publicação Docker ainda será realizada uma vez para o conjunto. Nenhum gate foi reduzido e nenhuma credencial foi modificada.
+
+## Execução publicada e último ajuste de apresentação
+
+Versão 0a5286b implantada com migração concluída e aplicação, worker, banco e solver saudáveis. Geração real no Hiper concluída e aplicada à revisão 9, sem falhas na conferência independente de 816 semanas-pessoa. PDF e XLSX reais foram baixados, abertos e identificados com essa revisão após recarga.
+
+A apresentação de referências curtas foi corrigida para mostrar o limite diário efetivo da simulação, em vez de aparentar a carga de 42h como jornada integral calculada. É uma correção de texto/clareza, sem mudança de algoritmo, dados ou permissões. Testes de interface direcionados, lint e typecheck aprovados; não foram repetidos testes pesados de PDF ou segurança por essa alteração. A publicação complementar ainda será conferida visualmente.
+
+Atenção à recuperação de versões: a aplicação antiga modela autoria como obrigatória. Depois que houver revisões criadas por sessão compartilhada com autoria nula, não presumir que o Prisma de uma imagem antiga aceite esses registros. Um recuo exige versão de compatibilidade com autoria nullable ou plano explícito de restauração; não apagar revisões nem inventar autor para forçar compatibilidade.
