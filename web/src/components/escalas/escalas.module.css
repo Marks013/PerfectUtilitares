@@ -103,7 +103,7 @@
 .timelineFrame { padding: 1rem .5rem; min-width: 0; border: 1px solid var(--app-border); border-radius: .75rem; }
 .timelineLegend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .875rem; }
 .timelineBar { fill: currentColor; opacity: .85; }
-.timelineEstimate { fill: none; stroke: var(--app-muted); stroke-dasharray: 5 4; stroke-width: 2; }
+.timelineEstimate { fill: none; stroke: var(--app-muted); stroke-dasharray: 5 4; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .timelineMinimum { fill: none; stroke: var(--app-coral); stroke-width: 2; }
 @keyframes progress-slide { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 @media (min-width: 40rem) {
@@ -138,3 +138,5 @@
 .cellButton { font-size: .8125rem; line-height: 1.4; }
 .offCell { font-weight: 700; }
 .primaryAction { color: var(--app-action-text); }
+
+.timelineAxis { display: flex; justify-content: space-between; gap: 1rem; font-size: .875rem; font-variant-numeric: tabular-nums; line-height: 1.5; }

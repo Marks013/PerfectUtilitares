@@ -33,16 +33,16 @@ export function CoverageTimeline({ input }: { input: EscalaInput }) {
     </div>
     {!timeline.length ? <p className={styles.muted}>Nenhum horário processado ou referência de cobertura nesta data e setor. Gere a proposta ou confira os horários da equipe.</p> : <>
       <figure className={styles.timelineFrame}>
-        <svg viewBox="0 0 780 180" role="img" aria-labelledby="escala-coverage-chart-title escala-coverage-chart-desc" className={styles.timelinePlot}>
+        <div className={styles.timelineAxis}><span>Pessoas: 0–{maximum}</span></div>
+        <svg viewBox="0 0 780 160" preserveAspectRatio="none" role="img" aria-labelledby="escala-coverage-chart-title escala-coverage-chart-desc" className={styles.timelinePlot}>
           <title id="escala-coverage-chart-title">Presença por horário em {sector}, {escalaDateLabel(date)}</title>
           <desc id="escala-coverage-chart-desc">Contagem de pessoas trabalhando em cada faixa exata. Consulte a faixa abaixo para ler valores e nomes. As barras não incluem intervalos.</desc>
           <line x1="36" x2="744" y1="148" y2="148" stroke="currentColor" />
-          <text x="5" y="32" fill="currentColor" fontSize="13">{maximum}</text><text x="18" y="150" fill="currentColor" fontSize="13">0</text>
           {timeline.map(slice => <rect key={slice.start} x={x(slice.start)} y={y(slice.present)} width={Math.max(0, x(slice.end) - x(slice.start))} height={148 - y(slice.present)} className={styles.timelineBar}><title>{escalaDuration(slice.start)}–{escalaDuration(slice.end)}: {slice.present} pessoa(s), mínimo {slice.minimum}, estimativa {slice.estimate}</title></rect>)}
           {timeline.some(slice => slice.minimum > 0) && <path d={line("minimum")} className={styles.timelineMinimum} />}
           {timeline.some(slice => slice.estimate > 0) && <path d={line("estimate")} className={styles.timelineEstimate} />}
-          <text x="36" y="174" fill="currentColor" fontSize="13">{escalaDuration(start)}</text><text x="744" y="174" textAnchor="end" fill="currentColor" fontSize="13">{escalaDuration(end)}</text>
         </svg>
+        <div className={styles.timelineAxis}><span>{escalaDuration(start)}</span><span>{escalaDuration(end)}</span></div>
         <figcaption className={styles.timelineLegend}><span>Barras: pessoas trabalhando</span><span>Linha contínua: mínimo informado</span><span>Linha tracejada: estimativa automática, não garantia</span></figcaption>
       </figure>
       <Field label="Faixa de horário e colaboradores">{id => <select id={id} className={controlClass} value={selected?.start ?? ""} onChange={event => setSelectedStart(Number(event.target.value))}>{timeline.map(slice => <option key={slice.start} value={slice.start}>{escalaDuration(slice.start)}–{escalaDuration(slice.end)} · {slice.present} trabalhando{slice.minimum ? " · mínimo " + slice.minimum : ""}{slice.estimate ? " · estimativa " + slice.estimate : ""}{slice.present === 0 ? " · sem presença" : ""}</option>)}</select>}</Field>
