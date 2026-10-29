@@ -58,6 +58,20 @@ function sample() {
 }
 
 describe("Escalas practical accessibility and publication states", () => {
+  it("does not ask for a second weekly journey in special rules", () => {
+    const { input } = sample();
+    const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
+    expect(html).not.toContain("Carga padrão para novos colaboradores");
+    expect(html).toContain("Premissas da simulação");
+  });
+
+  it("blocks stale exports with a direct regeneration action instead of exporting a previous 44h result", () => {
+    const { workspace, validation } = sample();
+    const html = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} outdated onPublish={vi.fn()} onRegenerate={vi.fn()} />);
+    expect(html).toContain("Cenário alterado");
+    expect(html).toContain("Gerar proposta atualizada");
+    expect(html).not.toContain("/api/escalas/export?");
+  });
   it("includes untimed managers in the day-off rotation and renders DUTY without inventing credited hours", () => {
     const { input, validation } = sample();
     input.employees = [{ ...input.employees[0], scheduleMode: "UNTIMED", shiftIds: [], planningEnabled: true }];
@@ -151,15 +165,15 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(upload).toContain("Baixar modelo CSV alternativo");
   });
 
-  it("requires an explicit branch-level review of suggested coverage, including zero minimums", () => {
+  it("offers automatic coverage without a mandatory administrative review or a fictitious daily staffing floor", () => {
     const { input } = sample();
     input.policy.coverageReview = "SUGGESTED";
     const html = renderToStaticMarkup(<Coverage input={input} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain("Sugerir cobertura pela equipe");
-    expect(html).toContain("Conferi a cobertura sugerida, inclusive faixas com mínimo zero");
-    expect(html).toContain("referência é de pelo menos uma pessoa");
-    expect(html).toMatch(/<input[^>]*\/><span>Conferi a cobertura sugerida/);
-    expect(html).not.toMatch(/<input[^>]*checked[^>]*\/><span>Conferi a cobertura sugerida/);
+    expect(html).toContain("Cobertura automática por setor");
+    expect(html).toContain("Mínimos obrigatórios (opcional)");
+    expect(html).toContain("não uma garantia de atendimento");
+    expect(html).not.toContain("Conferi a cobertura sugerida");
+    expect(html).not.toContain("referência é de pelo menos uma pessoa");
   });
 
   it("separates nonblocking verification limits from conflicts and discloses publication scope", () => {
@@ -169,7 +183,8 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).toContain("Limites de conferência (1)");
     expect(html).toContain("0 impeditivos");
     expect(html).toContain("0 pendências");
-    expect(html).toContain("Ana: Histórico anterior não verificado.");
+    expect(html).toContain("Histórico anterior não verificado.");
+    expect(html).not.toContain("Ana: Histórico anterior não verificado.");
     expect(html).not.toContain("HISTORY_UNKNOWN");
     expect(html).not.toContain("Referência técnica:");
     expect(html).not.toContain("Pendente ·");

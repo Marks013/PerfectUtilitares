@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { ProcessingBar } from "./workspace-feedback";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/types";
 import { sortEmployees } from "@/lib/escalas/order";
-import { proposeCoverage } from "@/lib/escalas/preparation";
+import { proposeAutomaticCoverage, summarizeAutomaticCoverage } from "@/lib/escalas/automatic-coverage";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import {
   clock,
@@ -40,13 +41,22 @@ export function ImportEmployees({
   disabled: boolean;
   onChange: (input: EscalaInput) => void;
 }) {
-  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [previewResult, setPreview] = useState<{ scenario: string; value: ImportPreview } | null>(null);
+  const scenario = JSON.stringify([input.branchCode, input.startDate, input.defaultWeeklyHours]);
+  const currentScenario = useRef(scenario);
+  currentScenario.current = scenario;
+  const inFlight = useRef(false);
+  const preview = previewResult?.scenario === scenario ? previewResult.value : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [status, setStatus] = useState("Selecione o arquivo para conferir a equipe.");
   async function analyze() {
-    if (!file || busy) return;
+    if (!file || inFlight.current || disabled) return;
+    inFlight.current = true;
+    const snapshot = scenario;
     setBusy(true);
+    setStatus("Conferindo arquivo e selecionando a equipe da filial…");
     setError("");
     setPreview(null);
     try {
@@ -58,13 +68,21 @@ export function ImportEmployees({
       const response = await fetch("/api/escalas/import", {
         method: "POST",
         body: form,
+        signal: AbortSignal.timeout(60_000),
       });
       const body = await response.json();
+      if (currentScenario.current !== snapshot) {
+        setStatus("O cenário mudou durante a conferência. Confira o arquivo novamente para usar a filial e a jornada atuais.");
+        return;
+      }
       if (!response.ok) throw new Error(responseMessage(body));
-      setPreview(body.preview);
+      setPreview({ scenario: snapshot, value: body.preview });
+      setStatus(body.preview.issues.length ? "Arquivo pronto com avisos. Confira os registros aceitos antes de aplicar." : "Arquivo pronto. Equipe conferida e disponível para aplicar.");
     } catch (cause) {
-      setError(errorMessage(cause));
+      setStatus("Não foi possível conferir o arquivo.");
+      setError(cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError") ? "A conferência demorou além do esperado. Seus dados foram preservados; confira a conexão e tente novamente." : errorMessage(cause));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -90,6 +108,7 @@ export function ImportEmployees({
             className={controlClass}
             onChange={(event) => {
               setFile(event.target.files?.[0] ?? null);
+              setStatus(event.target.files?.[0] ? "Arquivo selecionado. Clique em Conferir arquivo." : "Selecione o arquivo para conferir a equipe.");
               setPreview(null);
               setError("");
             }}
@@ -99,6 +118,9 @@ export function ImportEmployees({
       <button type="button" className={buttonClass} disabled={disabled || busy || !file} onClick={() => void analyze()}>
         {busy ? "Conferindo arquivo…" : "Conferir arquivo"}
       </button>
+      <p role="status" aria-live="polite" aria-atomic="true" className="text-sm text-[color:var(--app-muted)]">{status}</p>
+      {busy && <ProcessingBar label="Conferindo equipe do arquivo" />}
+      {previewResult && !preview && <p role="status" className="text-sm">A filial ou a jornada mudou. Confira o arquivo novamente antes de aplicar.</p>}
       {error && (
         <p role="alert" className="text-sm text-[color:var(--app-coral)]">
           {error}
@@ -117,7 +139,7 @@ export function ImportEmployees({
             {" "}colaboradores na fonte; {preview.report.otherBranchesExcluded} de outras filiais ignorados;
             {" "}{preview.report.missingSchedule} sem horário informado, incluídos na simulação de presença e folgas.
           </p>}
-          <p className="text-sm">Pessoas sem horário informado participam da simulação de presença e folgas, sem turno, horas ou cobertura horária fictícios. Isso não presume dispensa de controle de jornada. Para os demais cadastros, jornadas inferiores a 6h e horários sem adaptação precisam de conferência antes da geração.</p>
+          <p className="text-sm">Horários não informados não geram horas nem cobertura horária fictícias. Referências curtas são preservadas e sinalizadas para revisão, sem excluir a pessoa da proposta.</p>
           {preview.issues.length > 0 && (
             <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm">
               {preview.issues.map((issue) => (
@@ -174,6 +196,7 @@ export function ImportEmployees({
             onClick={() => {
               try {
                 onChange(mergeImport(input, preview.employees, preview.shifts));
+                setStatus(`Importação aplicada: ${preview.employees.length} colaboradores. ${preview.issues.length ? `Avisos do arquivo: ${preview.issues.length}. Os registros aceitos estão disponíveis para gerar a proposta.` : "Equipe pronta para gerar a proposta."}`);
                 setPreview(null);
                 setFile(null);
               } catch (cause) {
@@ -217,6 +240,8 @@ export function Coverage({
   );
   const pages = Math.max(1, Math.ceil(demands.length / 15));
   const currentPage = Math.min(page, pages - 1);
+  const summary = summarizeAutomaticCoverage(input);
+  const explicitCount = demands.filter((demand) => demand.estimated !== true).length;
   function submit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
@@ -249,11 +274,12 @@ export function Coverage({
         start: from,
         end: until,
         minimum,
+        estimated: false,
       }));
       const duplicates = additions.some((next) =>
         input.demands.some(
           (item) =>
-            item.date === next.date &&
+            item.estimated !== true && item.date === next.date &&
             item.sector === next.sector &&
             (item.role ?? "") === (next.role ?? "") &&
             item.start === next.start &&
@@ -264,43 +290,41 @@ export function Coverage({
         throw new Error(
           "Já existe cobertura com essas datas e faixas. Remova a configuração anterior ou ajuste a faixa.",
         );
-      onChange({ ...input, demands: [...input.demands, ...additions],
-        policy: { ...input.policy, ...(input.policy.coverageReview ? { coverageReview: "SUGGESTED" as const } : {}) },
-      });
+      onChange(proposeAutomaticCoverage({ ...input, demands: [...input.demands, ...additions] }));
     } catch (cause) {
       setError(errorMessage(cause));
     }
   }
   return (
     <section className={panelClass} aria-labelledby="escala-coverage-title">
-      <h2 id="escala-coverage-title" className="text-lg font-bold">
-        Cobertura mínima por setor
-      </h2>
+      <h2 id="escala-coverage-title" className="text-lg font-bold">Cobertura automática por setor</h2>
       <p className="text-sm text-[color:var(--app-muted)]">
-        Defina quem precisa estar trabalhando em cada faixa. Refeições e pausas não contam como atendimento. Faixas sem
-        demanda não têm mínimo operacional conferido.
+        As metas são definidas ao gerar a proposta, usando equipe, cargos, horários e capacidade de cinco dias por semana.
+        Mudanças na equipe ou na carga horária recalculam as estimativas. Você não precisa cadastrar faixas nem aprovar estimativas para simular.
       </p>
-      <p className="text-sm">
-        A sugestão estima a cobertura pelos horários e setores da equipe e pela disponibilidade em cinco de sete dias.
-        É uma proposta de dimensionamento, sem afirmar a necessidade real do mercado. Quando há possibilidade de
-        atendimento, a referência é de pelo menos uma pessoa; faixas sem disponibilidade podem ter zero. Confira a
-        necessidade real antes de aprovar. A sugestão não confirma a revisão.
-      </p>
-      <button type="button" className={buttonClass} disabled={disabled || !input.employees.length}
-        onClick={() => {
-          setError("");
-          try { onChange(proposeCoverage(input)); }
-          catch (cause) { setError(errorMessage(cause)); }
-        }}>Sugerir cobertura pela equipe</button>
-      {input.policy.coverageReview && <Check
-        label="Conferi a cobertura sugerida, inclusive faixas com mínimo zero"
-        checked={input.policy.coverageReview === "CONFIRMED"} disabled={disabled || !input.demands.length}
-        onChange={(checked) => onChange({ ...input, demands: checked ? input.demands.map((demand) => ({ ...demand, estimated: false })) : input.demands, policy: {
-          ...input.policy, coverageReview: checked ? "CONFIRMED" : "SUGGESTED",
-        } })}
-      />}
+      <p className="text-sm">Pausas não contam como atendimento. Pessoas sem horário participam do revezamento, mas não viram cobertura horária fictícia. Uma meta automática é uma referência de equilíbrio, não uma garantia de atendimento.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <caption className="sr-only">Equipe e metas automáticas de cobertura por setor e cargo</caption>
+          <thead><tr>
+            <th scope="col" className="p-2">Setor / cargo</th>
+            <th scope="col" className="p-2">Com horário</th>
+            <th scope="col" className="p-2">Sem horário</th>
+            <th scope="col" className="p-2">Meta por faixa</th>
+          </tr></thead>
+          <tbody>{summary.map((group) => <tr key={JSON.stringify([group.sector, group.role])}>
+            <th scope="row" className="p-2 font-medium">{group.sector || "Sem setor"}<span className="block font-normal text-[color:var(--app-muted)]">{group.role || "Cargo não informado"}</span></th>
+            <td className="p-2 tabular-nums">{group.timed}</td>
+            <td className="p-2 tabular-nums">{group.missing}</td>
+            <td className="p-2">{group.minimum === null ? (group.timed ? "Automática ao gerar" : "Apenas presença e folgas") : group.minimum === group.maximum ? `${group.minimum} pessoa(s)` : `${group.minimum}–${group.maximum} pessoa(s)`}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      {!summary.length && <p className="text-sm">Importe a equipe para o algoritmo dimensionar a cobertura.</p>}
+      <p className="text-sm">{explicitCount} mínimo(s) obrigatório(s) definido(s) manualmente. Esses valores são preservados; só a estimativa automática se ajusta.</p>
       <details className="space-y-3">
-        <summary className="min-h-11 cursor-pointer py-2 font-semibold">Ajustar um mínimo operacional (opcional)</summary>
+        <summary className="min-h-11 cursor-pointer py-2 font-semibold">Mínimos obrigatórios (opcional)</summary>
+      <p className="text-sm text-[color:var(--app-muted)]">Use somente quando houver uma necessidade operacional conhecida. O algoritmo respeita esse mínimo como obrigatório; um valor impossível será informado, não reduzido silenciosamente.</p>
       <form onSubmit={submit}>
         <fieldset disabled={disabled} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -448,7 +472,7 @@ export function Coverage({
           Conferir faixas cadastradas ({demands.length})
         </summary>
         {!demands.length && (
-          <p className="text-sm">Nenhuma faixa cadastrada. A publicação exige conferir a cobertura operacional.</p>
+          <p className="text-sm">As metas automáticas serão criadas ao gerar a proposta. Não é necessário preencher este cadastro para simular.</p>
         )}
         <div className="space-y-2">
           {demands.slice(currentPage * 15, currentPage * 15 + 15).map((demand) => (
@@ -458,26 +482,20 @@ export function Coverage({
             >
               <p>
                 {displayDate(demand.date)} · {demand.sector} / {demand.role || "Todos os cargos"} ·{" "}
-                {clock(demand.start)}–{clock(demand.end)} · mínimo {demand.minimum}
+                {clock(demand.start)}–{clock(demand.end)} · {demand.estimated ? "meta automática" : "mínimo obrigatório"} {demand.minimum}
               </p>
-              <button
+              {!demand.estimated && <button
                 type="button"
                 className={buttonClass}
                 disabled={disabled}
-                onClick={() =>
-                  onChange({
-                    ...input,
-                    demands: input.demands.filter((item) => item.id !== demand.id),
-                    policy: { ...input.policy, ...(input.policy.coverageReview ? { coverageReview: "SUGGESTED" as const } : {}) },
-                  })
-                }
+                onClick={() => onChange(proposeAutomaticCoverage({ ...input, demands: input.demands.filter((item) => item.id !== demand.id) }))}
               >
                 Remover
                 <span className="sr-only">
                   {" "}
                   faixa de {displayDate(demand.date)} às {clock(demand.start)}
                 </span>
-              </button>
+              </button>}
             </div>
           ))}
         </div>

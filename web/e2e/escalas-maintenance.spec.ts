@@ -12,11 +12,10 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   const suffix = Date.now().toString(36);
   const branch = `E2E-${suffix}`;
   await page.goto("/escalas");
-  await page.getByText("Criar proposta para uma filial", { exact: true }).click();
+  await page.getByText("Novo planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill(branch);
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Filial sintética E2E");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
-  await expect(page.getByLabel("Carga semanal padrão", { exact: true })).toHaveValue("40");
   const creating = page.waitForResponse((response) => response.request().method() === "POST"
     && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "CREATE");
   await page.getByRole("button", { name: "Iniciar planejamento", exact: true }).click();
@@ -37,7 +36,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
   const savingImport = page.waitForResponse((response) => response.request().method() === "POST"
     && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar e conferir revisão", exact: true }).click();
+  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
   const importedResponse = await savingImport;
   expect(importedResponse.status()).toBe(200);
   const imported: EscalaWorkspace = await importedResponse.json();
@@ -92,7 +91,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   await expect(brunoCell.locator("span").first()).toHaveText(originalCode ?? "");
   const savingSwap = page.waitForResponse((response) => response.request().method() === "POST"
     && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar e conferir revisão", exact: true }).click();
+  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
   expect((await savingSwap).status()).toBe(200);
   const persistedResponse = await page.request.get(`/api/escalas?id=${imported.id}`);
   expect(persistedResponse.status()).toBe(200);
@@ -102,6 +101,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     expect.objectContaining({ employeeId: bruno.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0], locked: true }),
   ]));
   await page.setViewportSize({ width: 375, height: 812 });
+  await page.getByRole("button", { name: "Ajustes", exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
   const confirmation = page.getByRole("dialog", { name: "Excluir este planejamento?", exact: true });
@@ -117,4 +117,89 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   expect((await page.request.get(`/api/escalas?id=${imported.id}`)).status()).toBe(404);
   const list = await page.request.get("/api/escalas").then((response) => response.json());
   expect(list.workspaces.some((workspace: { id: string }) => workspace.id === imported.id)).toBe(false);
+});
+
+test("one journey controls a full FPRE136 simulation, stale outputs and actual PDF/XLSX downloads across screen sizes", async ({ page }) => {
+  await page.goto("/escalas");
+  await page.getByText("Novo planejamento", { exact: true }).click();
+  await page.getByLabel("Código da filial", { exact: true }).fill("02");
+  await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Supermercado sintético E2E");
+  await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
+  const creating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "CREATE");
+  await page.getByRole("button", { name: "Iniciar planejamento", exact: true }).click();
+  const created: EscalaWorkspace = await (await creating).json();
+  const journey = page.getByLabel("Jornada semanal", { exact: true });
+  await expect(journey).toHaveCount(1);
+  await journey.selectOption("44");
+  const rows: string[][] = [["0001", "-", "Empresa sintética", "Pág.:", "1"], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"], ["02.01 , ICARAIMA, LOJA"], ["Horário:", "0026", "-", "07:00 11:00 13:00 16:20"]];
+  for (const [registration, name, role, zero, short] of [
+    ["001", "Ana Sintética", "Repositor", false, false],
+    ["002", "Bruno Sintético", "Repositor", false, false],
+    ["003", "Carla Sintética", "Encarregado", false, false],
+    ["004", "Diego Sintético", "Gerente", true, false],
+    ["005", "Eva Sintética", "Empacotador", false, true],
+  ] as const) {
+    rows.push([registration, "-", name, role, zero ? "00:00" : "07:00", "-", zero ? "00:00" : "11:00", zero || short ? "00:00" : "13:00", "-", zero || short ? "00:00" : "16:20"]);
+    rows.push(["Sábado:", zero ? "00:00" : "07:00", "-", zero ? "00:00" : "11:00", zero || short ? "00:00" : "13:00", "-", zero || short ? "00:00" : "16:20", zero ? "00:00" : "07:00", "0026"]);
+  }
+  const csv = rows.map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(",")).join("\r\n");
+  await page.getByLabel("Arquivo CSV ou XLSX", { exact: true }).setInputFiles({ name: "FPRE136-sintetico.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await page.getByRole("button", { name: "Conferir arquivo", exact: true }).click();
+  await expect(page.getByText("Prévia: 5 colaboradores aceitos de 5 linhas.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
+  await journey.selectOption("42");
+  await expect(page.getByText("08:24", { exact: true })).toBeVisible();
+  const generating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
+  await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
+  const generatedResponse = await generating;
+  expect(generatedResponse.status()).toBe(200);
+  const generated = await generatedResponse.json();
+  expect(["FEASIBLE", "OPTIMAL"]).toContain(generated.result.status);
+  expect(generated.validation.valid).toBe(true);
+  expect(generated.proposalInput.defaultWeeklyHours).toBe(42);
+  expect(generated.proposalInput.policy.compensationAuthorized).toBe(false);
+  expect(generated.proposalInput.policy.reviewed).toBe(false);
+  expect(generated.proposalInput.employees).toHaveLength(5);
+  expect(generated.proposalInput.employees.every((person: { planningEnabled?: boolean }) => person.planningEnabled !== false)).toBe(true);
+  const timed = generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "001");
+  const shift = generated.proposalInput.shifts.find((item: { id: string }) => item.id === timed.shiftIds[0]);
+  expect(timed.weeklyHours).toBe(42);
+  expect(timed.sourceSchedule.weekday).toBe("07:00-11:00 / 13:00-16:20");
+  expect(shift.segments.reduce((sum: number, segment: { kind: string; start: number; end: number }) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)).toBe(504);
+  expect(generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "004").scheduleMode).toBe("MISSING");
+  expect(generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "005").simulationDailyMinutes).toBe(240);
+  await expect(page.getByRole("heading", { name: "Proposta pronta para revisão", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
+  const saving = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
+  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  expect((await saving).status()).toBe(200);
+  await expect(page.getByRole("region", { name: "Grade mensal da filial", exact: true })).toBeVisible();
+  for (const format of ["PDF", "XLSX"] as const) {
+    const downloading = page.waitForEvent("download");
+    await page.getByRole("link", { name: `Baixar ${format}`, exact: true }).click();
+    const download = await downloading;
+    expect(await download.failure()).toBeNull();
+    const stream = await download.createReadStream();
+    if (!stream) throw new Error("No downloaded file stream");
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    const bytes = Buffer.concat(chunks);
+    expect(bytes.length).toBeGreaterThan(500);
+    expect(bytes.subarray(0, format === "PDF" ? 4 : 2).toString()).toBe(format === "PDF" ? "%PDF" : "PK");
+    await expect(page.getByText(`${format} preparado. Download iniciado.`, { exact: true })).toBeVisible();
+  }
+  await journey.selectOption("40");
+  await expect(page.getByText("Cenário alterado.", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Baixar PDF", exact: true })).toBeDisabled();
+  for (const width of [375, 768, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(journey).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Ajustes", exact: true }).click();
+  await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
+  await page.getByRole("dialog", { name: "Excluir este planejamento?", exact: true }).getByRole("button", { name: "Confirmar exclusão", exact: true }).click();
+  await expect(page.getByText("Planejamento e revisões excluídos. Os demais períodos foram preservados.", { exact: true })).toBeVisible();
+  expect((await page.request.get(`/api/escalas?id=${created.id}`)).status()).toBe(404);
 });

@@ -1,12 +1,10 @@
 import { useId, type ReactNode } from "react";
+import styles from "./escalas.module.css";
 
-export const controlClass =
-  "min-h-11 w-full min-w-0 app-radius-lg border border-[color:var(--app-border)] bg-[color:var(--app-input)] px-3 py-2 text-base text-[color:var(--app-fg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] disabled:opacity-50";
-export const buttonClass =
-  "inline-flex min-h-11 items-center justify-center gap-2 app-radius-lg border border-[color:var(--app-border)] px-4 py-2 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--app-teal)] disabled:cursor-not-allowed disabled:opacity-40";
-export const primaryClass = `${buttonClass} bg-[color:var(--app-teal)] text-[color:var(--app-canvas)]`;
-export const panelClass =
-  "space-y-4 app-radius-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-4 sm:p-5";
+export const controlClass = styles.control;
+export const buttonClass = styles.button;
+export const primaryClass = `${styles.button} ${styles.primaryAction}`;
+export const panelClass = styles.panel;
 
 export function Field({
   label,
@@ -19,12 +17,12 @@ export function Field({
 }) {
   const id = useId();
   return (
-    <div className="min-w-0 space-y-1.5">
-      <label className="block text-sm font-semibold" htmlFor={id}>
+    <div className={styles.field}>
+      <label className={styles.fieldLabel} htmlFor={id}>
         {label}
       </label>
       {children(id)}
-      {hint && <p className="text-xs text-[color:var(--app-muted)]">{hint}</p>}
+      {hint && <p className={styles.fieldHint}>{hint}</p>}
     </div>
   );
 }
@@ -41,13 +39,13 @@ export function Check({
   disabled?: boolean;
 }) {
   return (
-    <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm">
+    <label className={styles.check}>
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
-        className="size-5 shrink-0 accent-[color:var(--app-teal)]"
+        className={styles.checkInput}
       />
       <span>{label}</span>
     </label>

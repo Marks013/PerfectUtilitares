@@ -46,6 +46,7 @@ const employee = z.strictObject({
   id: identifier, registration: label, name: label,
   sector: z.string().trim().max(160), role: z.string().trim().max(160), weeklyHours,
   weeklyHoursMode: z.enum(["BRANCH", "INDIVIDUAL"]).optional(),
+  simulationDailyMinutes: z.number().int().min(1).max(600).optional(),
   shiftIds: z.array(identifier).max(12), activeFrom: z.union([date, z.literal("")]), activeUntil: date.optional(),
   planningEnabled: z.boolean().optional(),
   scheduleMode: z.enum(["TIMED", "MISSING", "UNTIMED"]).optional(),
@@ -94,6 +95,8 @@ const policy = z.strictObject({
 });
 
 export const escalaInputSchema = z.strictObject({
+  simulation: z.boolean().optional(),
+  needsRegeneration: z.boolean().optional(),
   schemaVersion: z.literal(1), branchCode: label, branchName: label, startDate: planningDate, endDate: planningDate,
   visibleMonth: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).optional(),
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,

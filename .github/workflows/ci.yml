@@ -82,6 +82,9 @@ jobs:
       - name: Deploy database migrations
         run: npm run prisma:generate && npm run db:deploy
 
+      - name: Prepare isolated scheduling processor
+        run: docker build -t web-escalas-solver ops/escalas
+
       - name: Run quality checks
         run: npm run quality
 

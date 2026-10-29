@@ -56,6 +56,34 @@ async function pdfContent(bytes: Uint8Array) {
 }
 
 describe("Escalas shared monthly presentation and real exports", () => {
+  it("prioritizes a dense estimated staffing report while retaining every mandatory gap and every Excel row", async () => {
+    const workspace = fixture();
+    workspace.input.demands = Array.from({ length: 80 }, (_, index) => ({ id: `auto-${index}`, date: "2026-11-02", sector: `Setor estimado ${String(index).padStart(2, "0")}`, role: "Função", start: 480, end: 540, minimum: index + 1, estimated: true }));
+    workspace.input.demands.push(...Array.from({ length: 28 }, (_, index) => ({ id: `hard-${index}`, date: "2026-11-03", sector: `Obrigatório ${String(index).padStart(2, "0")}`, role: "Função", start: 600, end: 660, minimum: 1, estimated: false })));
+    const before = structuredClone(workspace);
+    const pages = await pdfContent(await exportEscalaPdf(workspace));
+    const text = pages.flat().map(item => item.str).join(" ");
+    expect(text).toContain("24 de 80 grupos estimados");
+    expect(text).toContain("aba Desfalques do Excel");
+    expect(text).toContain("Setor estimado 79");
+    expect(text).not.toContain("Setor estimado 00");
+    for (let index = 0; index < 28; index++) expect(text).toContain(`Obrigatório ${String(index).padStart(2, "0")}`);
+    expect(pages.length).toBeLessThanOrEqual(6);
+    const all = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
+    expect(all).toHaveLength(109);
+    expect(all.some(row => row[1] === "Setor estimado 00")).toBe(true);
+    expect(workspace).toEqual(before);
+  }, 20000);
+
+  it("freezes useful identity columns and records complete print areas on every workbook sheet", () => {
+    const archive = unzipSync(exportEscalaXlsx(fixture()));
+    for (const index of [2, 3]) expect(strFromU8(archive[`xl/worksheets/sheet${index}.xml`])).toContain('xSplit="2" ySplit="1" topLeftCell="C2"');
+    for (const index of [4, 5]) expect(strFromU8(archive[`xl/worksheets/sheet${index}.xml`])).toContain('xSplit="3" ySplit="1" topLeftCell="D2"');
+    const workbook = strFromU8(archive["xl/workbook.xml"]);
+    expect(workbook.match(/name="_xlnm.Print_Area"/g)).toHaveLength(5);
+    expect(workbook).toContain("'Desfalques'!$A:$C");
+    expect(workbook).toContain("'Escala'!$A:$D");
+  });
   it("writes an actual monthly XLSX grid with frozen headers, safe text and secondary details", async () => {
     const workspace = fixture(), original = structuredClone(workspace), bytes = exportEscalaXlsx(workspace);
     const archive = unzipSync(bytes), main = strFromU8(archive["xl/worksheets/sheet1.xml"]);
@@ -170,4 +198,65 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(text).toContain("Sem ocorrências");
     expect(text).not.toContain("Horas previstas");
   }, 20000);
+
+  it("exports actionable deficit tables with exact dates, role, full interval and quantities", async () => {
+    const workspace = fixture(); workspace.input.policy.coverageReview = "SUGGESTED";
+    workspace.input.demands = ["2026-11-02", "2026-11-09"].flatMap((date, index) => [
+      { id: `first-${index}`, date, sector: "Reposição", role: "Repositor", start: 480, end: 540, minimum: 3, estimated: true },
+      { id: `second-${index}`, date, sector: "Reposição", role: "Repositor", start: 540, end: 600, minimum: 3, estimated: true },
+    ]);
+    workspace.input.demands.push({ id: "hard", date: "2026-11-03", sector: "Reposição", role: "Balconista", start: 600, end: 660, minimum: 1, estimated: false });
+    workspace.validation.issues = [{ code: "ESTIMATED_COVERAGE_GAP", severity: "PENDING", date: "2026-11-02", message: "Mensagem antiga incompleta: a partir de 08:00." }];
+    const before = structuredClone(workspace), bytes = await exportEscalaPdf(workspace);
+    const pages = await pdfContent(bytes), text = pages.flat().map(item => item.str).join(" ");
+    expect(text).toContain("Desfalques de cobertura");
+    expect(text).toContain("Setor / função"); expect(text).toContain("Faltam");
+    expect(text).not.toContain("Mensagem antiga incompleta");
+    expect(text).not.toContain("situações distintas neste grupo");
+    const items = pages.find(page => page.some(item => item.str === "Reposição / Repositor")) ?? [];
+    const row = items.find(item => item.str === "Reposição / Repositor") as { transform: number[] };
+    const values = items.filter(item => "transform" in item && Math.abs(item.transform[5] - row.transform[5]) < 0.1).map(item => item.str);
+    expect(values).toEqual(expect.arrayContaining(["Reposição / Repositor", "02/11, 09/11", "08:00-10:00", "1", "3", "2", "Estimada"]));
+    expect(text).toContain("10:00-11:00"); expect(text).toContain("Confirmada");
+    const table = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
+    expect(table[0]).toEqual(["Data", "Setor", "Função", "Início", "Fim", "Presentes", "Referência", "Faltam", "Base"]);
+    expect(table).toContainEqual(["2026-11-02", "Reposição", "Repositor", "08:00", "10:00", 1, 3, 2, "Estimada"]);
+    expect(table).toContainEqual(["2026-11-03", "Reposição", "Balconista", "10:00", "11:00", 0, 1, 1, "Confirmada"]);
+    expect(workspace).toEqual(before);
+  }, 20000);
+
+  it("shows history once, preserves concrete critical alerts and moves technical boundary details to Excel", async () => {
+    const workspace = fixture();
+    workspace.validation.issues = [
+      ...Array.from({ length: 9 }, (_, index) => ({ code: "HISTORY_UNVERIFIED", severity: "WARNING" as const, employeeId: ["p1", "manager", "excluded"][index % 3], date: "2026-10-26", message: "Histórico anterior não conferido: detalhe técnico preservado." })),
+      { code: "INTER_SHIFT_REST", severity: "ERROR", employeeId: "p1", date: "2026-10-31", message: "Descanso técnico de fronteira: 500 minutos." },
+      { code: "WORK_STREAK", severity: "ERROR", employeeId: "p1", date: "2026-11-02", message: "Sequência crítica de 7 jornadas; máximo de 6." },
+    ];
+    const text = (await pdfContent(await exportEscalaPdf(workspace))).flat().map(item => item.str).join(" ");
+    expect(text.match(/Histórico anterior não conferido/g)).toHaveLength(1);
+    expect(text).toContain("Sequência crítica de 7 jornadas; máximo de 6.");
+    expect(text).toContain("02/11");
+    expect(text).not.toContain("Descanso técnico de fronteira: 500 minutos.");
+    expect(text).toContain("verificação entre períodos");
+    const review = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Conferencia");
+    expect(review.flat().join(" ")).toContain("Descanso técnico de fronteira: 500 minutos.");
+    expect(review.flat().join(" ")).toContain("detalhe técnico preservado");
+  }, 20000);
+
+
+  it("shows the effective short-reference target without pretending that the branch load is an individual contract", async () => {
+    const workspace = fixture(); workspace.input.simulation = true;
+    workspace.input.employees[0].simulationDailyMinutes = 350;
+    workspace.validation.issues = ["p1", "manager"].map(employeeId => ({ code: "SHORT_REFERENCE_PRESERVED", severity: "PENDING", employeeId, message: "Referência curta individual preservada." }));
+    const rows = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Jornadas");
+    const target = rows.find(row => row[1] === "0001");
+    expect(target).toBeDefined();
+    expect(rows[0][4]).toBe("Carga proposta nesta semana");
+    expect(target?.[3]).toBe(42); expect(target?.[4]).toBe("29:10");
+    expect(target?.[8]).toContain("Referência curta preservada");
+    const text = (await pdfContent(await exportEscalaPdf(workspace))).flat().map(item => item.str).join(" ");
+    expect(text.match(/Referências curtas/g)).toHaveLength(1);
+    expect(text).toContain("não foi presumida");
+  }, 20000);
+
 });

@@ -118,7 +118,7 @@ export function validateCoverage(input: EscalaInput, journeys: WorkJourney[]): {
       if (visible.has(demand.date)) minimumCoverageMargin = minimumCoverageMargin === null ? margin : Math.min(minimumCoverageMargin, margin);
       if (margin < 0 && !reported) {
         const minute = demand.start + points[index] - start;
-        const estimated = demand.estimated === true && input.policy.coverageReview === "SUGGESTED";
+        const estimated = demand.estimated === true;
         issues.push({ code: estimated ? "ESTIMATED_COVERAGE_GAP" : "COVERAGE_DEFICIT", severity: estimated ? "PENDING" : "ERROR", date: demand.date,
           message: `${demand.sector}${demand.role ? ` / ${demand.role}` : ""}: ${present} presente(s), ${estimated ? "estimativa" : "mínimo"} ${demand.minimum}, a partir de ${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}.${estimated ? " Confira a necessidade e os horários desta faixa antes de confirmar a cobertura." : ""}` });
         reported = true;

@@ -485,11 +485,16 @@ describe("Escalas revision service", () => {
   });
   it("generates a preview and revalidates it without persisting", async () => {
     const result = await generateEscala(actor, "w1", 1);
-    expect(result.validation.readyToPublish).toBe(true);
+    expect(result.validation.valid).toBe(true);
+    expect(result.validation.readyToPublish).toBe(false);
+    expect(result.validation.issues.some(issue => issue.code === "COVERAGE_REVIEW_PENDING")).toBe(true);
     expect(result.proposalInput.assignments).toEqual(input().assignments);
     expect(mocks.transaction).not.toHaveBeenCalled();
     mocks.solve.mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 1, message: "Prazo encerrado" });
-    expect((await generateEscala(actor, "w1", 1)).proposalInput).toEqual(input());
+    const unfinished = await generateEscala(actor, "w1", 1);
+    expect(unfinished.proposalInput.simulation).toBe(true);
+    expect(unfinished.proposalInput.assignments).toEqual(input().assignments);
+    expect(unfinished.proposalInput.demands.filter(demand => demand.estimated !== true)).toEqual(input().demands);
   });
   it("rejects a generated response when another editor changed the revision", async () => {
     mocks.revision.findUnique.mockResolvedValueOnce(version()).mockResolvedValueOnce(version(input(), 2));
@@ -542,24 +547,55 @@ describe("Escalas revision service", () => {
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_SETUP_REQUIRED", status: 422 });
     expect(mocks.solve).not.toHaveBeenCalled();
   });
-  it("rejects forbidden CCT holiday rest and missing extended-day authorization as configuration", async () => {
+  it("retains the explicit holiday-rest restriction but permits a 42h draft without fabricating compensation", async () => {
     const cct = input(); cct.policy.normativeProfile = "SINDECOMU_SUPERMARKETS_2026_2027";
     useCurrent(cct);
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_CCT_HOLIDAY_REST", status: 422 });
     const extended = input(); extended.policy.compensationAuthorized = false;
     useCurrent(extended);
-    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_DAILY_EXTENSION_REQUIRED", status: 422 });
-    expect(mocks.solve).not.toHaveBeenCalled();
+    const proposal = await generateEscala(actor, "w1", 1);
+    expect(proposal.proposalInput.simulation).toBe(true);
+    expect(proposal.proposalInput.policy.compensationAuthorized).toBe(false);
+    expect(proposal.validation.valid).toBe(true);
+    expect(proposal.validation.readyToPublish).toBe(false);
+    expect(proposal.validation.issues.some(issue => issue.code === "COMPENSATION_REQUIRED" && issue.severity === "PENDING")).toBe(true);
+    expect(mocks.solve).toHaveBeenCalledOnce();
   });
   it("does not misclassify unsupported non-worked holidays as a staffing impossibility", async () => {
     const holiday = input(); holiday.policy.holidayRestAllowed = false; holiday.policy.holidayDates = ["2026-10-28"];
     mocks.revision.findUnique.mockResolvedValue(version(holiday));
-    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ status: 422, code: "ESCALA_HOLIDAY_POLICY_REQUIRED" });
-    expect(mocks.solve).not.toHaveBeenCalled();
+    const proposal = await generateEscala(actor, "w1", 1);
+    expect(proposal.proposalInput.policy.authorizedHolidayDates).toEqual([]);
+    expect(proposal.validation.issues.some(issue => issue.code === "HOLIDAY_WORK" && issue.severity === "PENDING")).toBe(true);
+    expect(proposal.validation.readyToPublish).toBe(false);
+    expect(mocks.solve).toHaveBeenCalledOnce();
+  });
+  it("cannot publish a support simulation whose authorizations are still pending", async () => {
+    const pending = { ...input(), simulation: true };
+    pending.policy.compensationAuthorized = false;
+    useCurrent(pending);
+    await expect(saveEscala(actor, "w1", 1, pending, true)).rejects.toMatchObject({ status: 422, code: "ESCALA_NOT_READY" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+    expect(mocks.audit.create).not.toHaveBeenCalled();
   });
   it("never returns a hard-invalid solved proposal for application", async () => {
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments.map((item) => ({ employeeId: item.employeeId, date: item.date, kind: "OFF" })), wallTimeSeconds: 0.1, message: "Resposta inconsistente" });
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
+  it("clears the persisted regeneration marker only for a successful verified proposal", async () => {
+    const stale = { ...input(), needsRegeneration: true };
+    useCurrent(stale);
+    const completed = await generateEscala(actor, "w1", 1);
+    expect(completed.proposalInput.needsRegeneration).toBe(false);
+    expect(completed.validation.issues.some(issue => issue.code === "SCENARIO_OUTDATED")).toBe(false);
+    expect(stale.needsRegeneration).toBe(true);
+    mocks.solve.mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 1, message: "Prazo encerrado" });
+    const unfinished = await generateEscala(actor, "w1", 1);
+    expect(unfinished.proposalInput.needsRegeneration).toBe(true);
+    expect(unfinished.validation.issues).toContainEqual(expect.objectContaining({ code: "SCENARIO_OUTDATED", severity: "PENDING" }));
+    expect(stale.needsRegeneration).toBe(true);
+  });
+
 });

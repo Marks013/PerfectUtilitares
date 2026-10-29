@@ -16,6 +16,7 @@ export async function GET(request: Request) {
   if (!parsed.success) return jsonError(400, "ESCALA_INVALID_EXPORT", "Informe uma escala, versão e formato válidos.");
   try {
     const workspace = await getEscala(escalaActor(guard.session), parsed.data.id, parsed.data.revision);
+    if (workspace.input.needsRegeneration) return jsonError(409, "ESCALA_SCENARIO_OUTDATED", "Gere e aplique uma nova proposta, depois salve a revisão para exportar o cenário atualizado.");
     const pdf = parsed.data.format === "pdf";
     const content = pdf ? await exportEscalaPdf(workspace) : exportEscalaXlsx(workspace);
     return new Response(Buffer.from(content), { headers: {

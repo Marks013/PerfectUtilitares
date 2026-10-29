@@ -2,7 +2,7 @@ import { addDays, dateRange, dayOfWeek, weekStart, visibleDates } from "./dates"
 import { fixedBoundaryReservations } from "./boundary";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
-import { effectiveSundayLimit, effectiveWeeklyHours } from "./labor-rules";
+import { effectiveSundayLimit, effectiveWeeklyMinutes } from "./labor-rules";
 
 function isActive(person: EscalaEmployee, day: string): boolean {
   return day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil);
@@ -100,7 +100,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
     const entries = active.map((day) => byDate.get(day));
     const weeklyWork = currentWork.filter((journey) => weekStart(journey.assignment.date) === start);
     const minutes = weeklyWork.reduce((sum, journey) => sum + journey.minutes, 0);
-    const target = effectiveWeeklyHours(person, start);
+    const target = effectiveWeeklyMinutes(person, start) / 60;
     if (!untimed && target > input.policy.weeklyLimit) issue("CONTRACT_LIMIT", "Carga contratual efetiva superior ao limite normativo cadastrado.", start);
     if (!untimed && (minutes > target * 60 || minutes > input.policy.weeklyLimit * 60)) issue("WEEKLY_LIMIT", `Semana com ${minutes} minutos excede a carga efetiva ou normativa; alvo de ${target * 60} minutos.`, start);
     if (entries.some((entry) => !entry)) continue;

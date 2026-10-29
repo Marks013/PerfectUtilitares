@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { EscalaError } from "./access";
 import { dateRange } from "./dates";
 import { prepareGeneration } from "./generation";
 import { prepareRoster } from "./preparation";
@@ -23,6 +22,13 @@ function input(): EscalaInput {
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 
 describe("whole-branch generation preparation", () => {
+  it("adapts a branch-managed reference without FPRE metadata to the single selected workload", () => {
+    const value = input(); value.employees[0].sourceSchedule = undefined;
+    value.employees[0].weeklyHoursMode = "BRANCH";
+    const prepared = prepareGeneration(value);
+    expect(prepared.input.employees[0].shiftIds.every(id => minutes(prepared.input, id) === 504)).toBe(true);
+    expect(prepared.input.employees[0].weeklyHours).toBe(42);
+  });
   it("adapts an imported 6x1 reference and supplies provisional coverage without approving any rule", () => {
     const value = input(); const original = structuredClone(value);
     const prepared = prepareGeneration(value);
@@ -94,9 +100,10 @@ describe("whole-branch generation preparation", () => {
     value.employees[0].sourceSchedule = { ...source, weekday: "07:00-11:00" };
     value.shifts[0].segments = [{ start: 420, end: 660, kind: "WORK" }];
     const prepared = prepareGeneration(value);
-    expect(prepared.preparation.excludedEmployeeIds).toEqual(["p1"]);
-    expect(prepared.input.employees[0]).toMatchObject({ planningEnabled: false, planningExclusionReason: "Jornada curta: não ampliada automaticamente", weeklyHours: 42 });
-    expect(prepared.preparation.includedEmployees).toBe(0);
+    expect(prepared.preparation.excludedEmployeeIds).toEqual([]);
+    expect(prepared.input.employees[0]).toMatchObject({ planningEnabled: true, simulationDailyMinutes: 240, weeklyHours: 42 });
+    expect(prepared.preparation.includedEmployees).toBe(1);
+    expect(prepared.input.employees[0].shiftIds.every((id) => minutes(prepared.input, id) === 240)).toBe(true);
     expect(prepared.input.employees).toHaveLength(1);
   });
 
@@ -118,30 +125,30 @@ describe("whole-branch generation preparation", () => {
     if (!source) throw new Error("Referência de teste ausente");
     value.employees[0].sourceSchedule = { ...source, weekday: "07:00-11:00" };
     value.assignments = [{ employeeId: "p1", date: value.startDate, kind, locked: kind === "OFF" }];
-    expect(() => prepareGeneration(value)).toThrow(EscalaError);
-    expect(() => prepareGeneration(value)).toThrow(/registros foram preservados/);
+    const prepared = prepareGeneration(value);
+    expect(prepared.preparation.excludedEmployeeIds).toEqual([]);
+    expect(prepared.input.assignments).toEqual(value.assignments);
+    expect(prepared.input.employees[0].simulationDailyMinutes).toBe(240);
     expect(value.employees[0].planningEnabled).toBe(true);
   });
 
-  it("keeps confirmed explicit demands unchanged and invalidates coverage review only when adding missing days", () => {
+  it("recalculates estimates without turning a legacy global review into confirmed operational minima", () => {
     const value = prepareGeneration(input()).input;
     value.policy.coverageReview = "CONFIRMED";
+    const explicit = { ...value.demands[0], id: "manual-zero", minimum: 0, estimated: false };
+    value.demands = [explicit, ...value.demands.slice(1)];
     const repeated = prepareGeneration(value);
     expect(repeated.preparation.adjustedEmployeeIds).toEqual([]);
-    expect(repeated.preparation.generatedCoverageSlots).toBe(0);
-    expect(repeated.input.demands).toEqual(value.demands);
-    expect(repeated.input.policy.coverageReview).toBe("CONFIRMED");
-    value.demands = value.demands.filter((demand) => demand.date === value.startDate);
-    const completed = prepareGeneration(value);
-    expect(completed.preparation.generatedCoverageSlots).toBeGreaterThan(0);
-    expect(completed.input.demands.filter((demand) => demand.date === value.startDate)).toEqual(value.demands.map((demand) => ({ ...demand, estimated: false })));
-    expect(completed.input.policy.coverageReview).toBe("SUGGESTED");
+    expect(repeated.preparation.generatedCoverageSlots).toBeGreaterThan(0);
+    expect(repeated.input.demands.find(demand => demand.id === explicit.id)).toEqual(explicit);
+    expect(repeated.input.demands.filter(demand => demand.id !== explicit.id).every(demand => demand.estimated === true)).toBe(true);
+    expect(repeated.input.policy.coverageReview).toBe("SUGGESTED");
   });
 
   it("keeps a complete custom coverage declaration, including zero minimums, byte-for-byte", () => {
     const value = input(); value.employees[0].sourceSchedule = undefined;
     value.demands = dateRange(value.startDate, value.endDate).map((date) => ({ id: `manual-${date}`, date, sector: "Setor", start: 420, end: 980, minimum: 0 }));
     value.policy.coverageReview = "CONFIRMED";
-    expect(prepareGeneration(value).input).toEqual(value);
+    expect(prepareGeneration(value).input).toEqual({ ...value, simulation: true });
   });
 });

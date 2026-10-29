@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { effectiveWeeklyHours } from "@/lib/escalas/labor-rules";
+import { effectiveWeeklyMinutes } from "@/lib/escalas/labor-rules";
 import { dateRange } from "@/lib/escalas/dates";
 import { sortEmployees } from "@/lib/escalas/order";
 import { planningWeeklyHours, prepareRoster } from "@/lib/escalas/preparation";
@@ -23,7 +23,7 @@ export function hoursArePrepared(input: EscalaInput) {
   return input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")
     .every((person) => weeks.every((start) => {
       const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
-      const target = effectiveWeeklyHours(reference, start) * 12;
+      const target = effectiveWeeklyMinutes({ ...person, ...reference }, start) / 5;
       return person.shiftIds.some((id) => { const shift = shifts.get(id); return shift && duration(shift) === target; });
     }));
 }

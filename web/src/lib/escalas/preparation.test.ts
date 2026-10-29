@@ -213,29 +213,40 @@ describe("branch-wide proposal preparation", () => {
     expect(result.issues).toContainEqual(expect.objectContaining({ code: "SUNDAY_ROTATION" }));
     expect(result.readyToPublish).toBe(false);
   });
-  it("suggests provisional coverage for a one-person sector without overwriting an existing sector/day", () => {
+  it("suggests five days of provisional one-person coverage while preserving explicit ranges, not skipping the whole date", () => {
     const input = prepareRoster(fixture(), 42);
     input.demands = [{ id: "existing", date: input.startDate, sector: "Setor", start: 420, end: 660, minimum: 1 }];
     const original = structuredClone(input);
     const proposed = proposeCoverage(input);
-    expect(proposed.demands.filter((demand) => demand.date === input.startDate)).toEqual(input.demands);
-    expect(proposed.demands.filter((demand) => demand.date !== input.startDate).some((demand) => demand.minimum === 1)).toBe(true);
-    expect(proposed.demands.filter((demand) => demand.date !== input.startDate).some((demand) => demand.minimum === 0)).toBe(true);
-    expect(proposed.demands.filter((demand) => demand.date !== input.startDate).every((demand) => demand.estimated === true)).toBe(true);
-    expect(proposed.demands.find((demand) => demand.id === "existing")?.estimated).toBeUndefined();
+    expect(proposed.demands.find((demand) => demand.id === "existing")).toEqual(input.demands[0]);
+    const estimates = proposed.demands.filter((demand) => demand.estimated === true);
+    expect(estimates.every((demand) => demand.role === "Cargo")).toBe(true);
+    expect(estimates.some((demand) => demand.date === input.startDate && demand.start === 780 && demand.end === 1044)).toBe(true);
+    expect(estimates.some((demand) => demand.date === input.startDate && demand.start < 660 && demand.end > 420)).toBe(false);
+    const afternoon = estimates.filter((demand) => demand.start === 780);
+    expect(afternoon).toHaveLength(7);
+    expect(afternoon.reduce((sum, demand) => sum + demand.minimum, 0)).toBe(5);
+    expect(afternoon.filter((demand) => demand.minimum === 0)).toHaveLength(2);
+    expect(estimates.some((demand) => demand.start < 780 && demand.end > 660)).toBe(false);
     expect(proposed.policy.coverageReview).toBe("SUGGESTED");
     expect(validateEscala(proposed).issues).toContainEqual(expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING" }));
     expect(input).toEqual(original);
   });
-  it("retains confirmed minima as hard requirements when missing days receive new estimates", () => {
+  it("retains explicit minima and recalculates stale estimates even when the legacy global review says CONFIRMED", () => {
     const input = fixture();
     input.policy.coverageReview = "CONFIRMED";
-    input.demands = [{ id: "approved", date: input.startDate, sector: "Setor", start: 420, end: 660, minimum: 1, estimated: true }];
+    input.demands = [
+      { id: "approved", date: input.startDate, sector: "Setor", start: 420, end: 660, minimum: 1, estimated: false },
+      { id: "stale", date: input.startDate, sector: "Setor", start: 780, end: 980, minimum: 99, estimated: true },
+    ];
+    const original = structuredClone(input);
     const proposed = proposeCoverage(input);
     expect(proposed.policy.coverageReview).toBe("SUGGESTED");
-    expect(proposed.demands[0]).toEqual({ ...input.demands[0], estimated: false });
-    expect(proposed.demands.slice(1).every((demand) => demand.estimated === true)).toBe(true);
-    expect(input.demands[0].estimated).toBe(true);
+    expect(proposed.demands.find((demand) => demand.id === "approved")).toEqual(input.demands[0]);
+    expect(proposed.demands.some((demand) => demand.id === "stale")).toBe(false);
+    expect(proposed.demands.filter((demand) => demand.id !== "approved").every((demand) => demand.estimated === true)).toBe(true);
+    expect(proposed.demands.some((demand) => demand.end === 1044)).toBe(true);
+    expect(input).toEqual(original);
   });
   it("records confirmation on each provisional minimum without approving anything by itself", () => {
     const input = proposeCoverage({ ...fixture(), demands: [] });
@@ -255,21 +266,29 @@ describe("branch-wide proposal preparation", () => {
     expect(retained.demands.at(-1)?.estimated).toBe(true);
     expect(next.demands[0].estimated).toBe(true);
   });
-  it("keeps alternative opening and closing coverage as estimates while counting each person only once", () => {
+  it("uses a coherent opening reference and exactly twenty weekly staffing opportunities for four people", () => {
     const input = fixture(); input.assignments = []; input.demands = [];
     input.shifts[0].segments[2].end = 980;
     input.employees = Array.from({ length: 4 }, (_, index) => ({ ...structuredClone(input.employees[0]), id: `p${index}`, registration: `00${index}` }));
     const prepared = prepareRoster(input, 42);
-    const demands = proposeCoverage(prepared).demands.filter((demand) => demand.date === input.startDate);
-    expect(demands.filter((demand) => demand.start < 420 || demand.end > 980).every((demand) => demand.minimum === 2 && demand.estimated === true)).toBe(true);
-    expect(demands.some((demand) => demand.start <= 420 && demand.end >= 660 && demand.minimum === 2)).toBe(true);
+    const demands = proposeCoverage(prepared).demands;
+    expect(demands.every((demand) => demand.estimated === true && demand.role === "Cargo")).toBe(true);
+    expect(demands.every((demand) => demand.start >= 420 && demand.end <= 1044)).toBe(true);
+    const opening = demands.filter((demand) => demand.start === 420 && demand.end === 660);
+    const closing = demands.filter((demand) => demand.start === 780 && demand.end === 1044);
+    expect(opening).toHaveLength(7);
+    expect(closing).toHaveLength(7);
+    expect(opening.reduce((sum, demand) => sum + demand.minimum, 0)).toBe(20);
+    expect(closing.reduce((sum, demand) => sum + demand.minimum, 0)).toBe(20);
+    expect(opening.map((demand) => demand.minimum).sort()).toEqual([2, 3, 3, 3, 3, 3, 3]);
+    expect(closing.map((demand) => demand.minimum)).toEqual(opening.map((demand) => demand.minimum));
   });
   it("exports effective weekly targets and the limits of verification", () => {
     const input = fixture("2028-01-03", 42);
     const validation = validateEscala(input);
     const bytes = exportEscalaXlsx({ id: "w", revision: 1, status: "DRAFT", input, validation, canEdit: true, canPublish: true, updatedAt: "2028-01-03" });
     const archive = unzipSync(bytes);
-    expect(strFromU8(archive["xl/worksheets/sheet4.xml"])).toContain("Carga vigente nesta semana");
+    expect(strFromU8(archive["xl/worksheets/sheet4.xml"])).toContain("Carga proposta nesta semana");
     expect(strFromU8(archive["xl/worksheets/sheet4.xml"])).toContain("<v>40</v>");
     expect(strFromU8(archive["xl/worksheets/sheet2.xml"])).toContain("Informação");
   });

@@ -7,6 +7,13 @@ export type RosterDay = { employeeId: string; date: string };
 export type RosterCoverageIssue = EscalaIssue & { sector: string };
 const key = (day: RosterDay) => `${day.employeeId}:${day.date}`;
 
+/** A metadata stamp does not invalidate undo; saved, reloaded or otherwise edited definitions do. */
+export function isCurrentRosterChange(applied: EscalaInput, current: EscalaInput): boolean {
+  if (applied.assignments !== current.assignments) return false;
+  const fields = Object.keys({ ...applied, ...current }) as (keyof EscalaInput)[];
+  return fields.every((field) => field === "needsRegeneration" || applied[field] === current[field]);
+}
+
 /** A confirmed edit never changes another cell or bypasses a previously locked decision. */
 export function applyRosterChanges(input: EscalaInput, changes: EscalaAssignment[], canUnlock = false): EscalaInput {
   const assignments = new Map(input.assignments.map((day) => [key(day), day]));

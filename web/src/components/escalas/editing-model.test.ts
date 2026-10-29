@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { visibleDates } from "@/lib/escalas/dates";
-import { applyRosterChanges, inspectRosterChanges, swapRosterDays } from "./roster-model";
+import { applyRosterChanges, inspectRosterChanges, isCurrentRosterChange, swapRosterDays } from "./roster-model";
 import { changeBranchWeeklyHours, newEmployee, newInput } from "./workspace-model";
 
 function sample() {
@@ -106,4 +106,23 @@ describe("monthly roster editing and operational feedback", () => {
     expect(impact.coverageIssues[0]).toMatchObject({ code: "ESTIMATED_COVERAGE_GAP", severity: "PENDING" });
     expect(impact.newErrors.some((issue) => issue.code === "ESTIMATED_COVERAGE_GAP")).toBe(false);
   });
+  it("keeps undo valid when the workspace only stamps regeneration metadata", () => {
+    const input = sample();
+    const applied = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "OFF" }]);
+    expect(isCurrentRosterChange(applied, applied)).toBe(true);
+    expect(isCurrentRosterChange(applied, { ...applied, needsRegeneration: false })).toBe(true);
+    const absence = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "ABSENCE" }]);
+    expect(isCurrentRosterChange(absence, { ...absence, needsRegeneration: true })).toBe(true);
+  });
+  it("invalidates undo after reload, another assignment or any scenario definition change", () => {
+    const applied = sample();
+    expect(isCurrentRosterChange(applied, JSON.parse(JSON.stringify(applied)))).toBe(false);
+    expect(isCurrentRosterChange(applied, { ...applied, assignments: [...applied.assignments] })).toBe(false);
+    expect(isCurrentRosterChange(applied, { ...applied, employees: [...applied.employees] })).toBe(false);
+    expect(isCurrentRosterChange(applied, { ...applied, shifts: [...applied.shifts] })).toBe(false);
+    expect(isCurrentRosterChange(applied, { ...applied, policy: { ...applied.policy } })).toBe(false);
+    expect(isCurrentRosterChange(applied, { ...applied, demands: [...applied.demands] })).toBe(false);
+    expect(isCurrentRosterChange(applied, { ...applied, branchName: "Outro planejamento" })).toBe(false);
+  });
+
 });

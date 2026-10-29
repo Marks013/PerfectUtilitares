@@ -6,8 +6,9 @@ import type {
   EscalaValidation,
   EscalaWorkspace,
 } from "@/lib/escalas/types";
-import { coverageDefinitionChanged, errorMessage, isCurrentResponse, responseMessage } from "./workspace-model";
+import { coverageDefinitionChanged, hasOutdatedResults, isCurrentResponse, responseMessage, scenarioDefinitionChanged } from "./workspace-model";
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
+import { EscalaRequestError, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
 
 export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status" | "updatedAt"> & {
   input: Pick<EscalaInput, "branchCode" | "branchName" | "startDate" | "endDate" | "visibleMonth">;
@@ -18,9 +19,9 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   try {
     body = await response.json();
   } catch {
-    throw new Error("O servidor não retornou uma resposta válida.");
+    throw new EscalaRequestError("INVALID_RESPONSE", response.status, "O servidor não retornou uma resposta válida.");
   }
-  if (!response.ok) throw new Error(responseMessage(body));
+  if (!response.ok) throw new EscalaRequestError(responseCode(body), response.status, responseMessage(body));
   return body as T;
 }
 
@@ -31,9 +32,11 @@ export function useEscalasWorkspace() {
   const [input, setInput] = useState<EscalaInput | null>(null);
   const [validation, setValidation] = useState<EscalaValidation | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState("");
+  const [outdated, setOutdated] = useState(false);
+  const [busy, setBusy] = useState("Carregando planejamentos…");
   const [cancellable, setCancellable] = useState(false);
   const [error, setError] = useState("");
+  const [problem, setProblem] = useState<EscalaProblem | null>(null);
   const [notice, setNotice] = useState("");
   const [generated, setGenerated] = useState<GeneratedProposal | null>(null);
   const [pendingOpen, setPendingOpen] = useState<string | null>(null);
@@ -48,12 +51,14 @@ export function useEscalasWorkspace() {
     const initial = new AbortController();
     void requestJson<{ workspaces: WorkspaceSummary[]; canCreate: boolean }>("/api/escalas", { signal: initial.signal })
       .then((result) => {
+        if (initial.signal.aborted) return;
         setWorkspaces(result.workspaces);
         setCanCreate(result.canCreate);
       })
       .catch((cause) => {
-        if (!initial.signal.aborted) setError(errorMessage(cause));
-      });
+        if (!initial.signal.aborted) { const next = toEscalaProblem(cause); setProblem(next); setError(next.message); }
+      })
+      .finally(() => { if (!initial.signal.aborted && !working.current) setBusy(""); });
     return () => {
       mounted.current = false;
       initial.abort();
@@ -61,10 +66,13 @@ export function useEscalasWorkspace() {
     };
   }, []);
 
-  const acceptWorkspace = useCallback((next: EscalaWorkspace) => {
+  const acceptWorkspace = useCallback((next: EscalaWorkspace, preserveOutdated = false) => {
+    setProblem(null);
+    setError("");
     setWorkspace(next);
     setInput(next.input);
     setValidation(next.validation);
+    setOutdated((previous) => (preserveOutdated && previous) || hasOutdatedResults(next.input, next.validation));
     setDirty(false);
     setResetKey((previous) => previous + 1);
     setGenerated(null);
@@ -86,11 +94,12 @@ export function useEscalasWorkspace() {
       setBusy(label);
       setCancellable(canCancel);
       setError("");
+      setProblem(null);
       setNotice("");
       try {
         await operation(abort.signal, isCurrent);
       } catch (cause) {
-        if (isCurrent()) setError(errorMessage(cause));
+        if (isCurrent()) { const next = toEscalaProblem(cause); setProblem(next); setError(next.message); }
       } finally {
         if (mounted.current && version === requestVersion.current) {
           working.current = false;
@@ -104,18 +113,21 @@ export function useEscalasWorkspace() {
   );
 
   const update = useCallback((next: EscalaInput) => {
-    setInput((previous) => {
-      const changedCoverage = previous && coverageDefinitionChanged(previous, next);
-      return changedCoverage && next.policy.coverageReview === "CONFIRMED"
-        ? { ...next, policy: { ...next.policy, coverageReview: "SUGGESTED" } }
-        : next;
-    });
+    if (working.current) return;
+    const changed = Boolean(input && scenarioDefinitionChanged(input, next));
+    const changedCoverage = Boolean(input && coverageDefinitionChanged(input, next));
+    const needsRegeneration = Boolean(next.needsRegeneration || (changed && input?.assignments.length));
+    const marked = Boolean(next.needsRegeneration) === needsRegeneration ? next : { ...next, needsRegeneration };
+    setInput(changedCoverage && marked.policy.coverageReview === "CONFIRMED"
+      ? { ...marked, policy: { ...marked.policy, coverageReview: "SUGGESTED" } } : marked);
+    if (changed) setOutdated(true);
     setDirty(true);
     setValidation(null);
     setGenerated(null);
-    setNotice("");
+    setNotice(changed ? "Cenário alterado. Gere novamente para atualizar horários, folgas e cobertura." : "Alteração aplicada ao rascunho. Salve para atualizar a revisão.");
     setError("");
-  }, []);
+    setProblem(null);
+  }, [input]);
 
   function open(id: string, discard = false) {
     if (dirty && !discard) {
@@ -140,14 +152,16 @@ export function useEscalasWorkspace() {
 
   function create(next: EscalaInput) {
     if (dirty) {
-      setError("Salve ou descarte a proposta atual antes de criar outra escala.");
+      const next = toEscalaProblem(new EscalaRequestError("ESCALA_UNSAVED_CHANGES", 0, ""));
+      setError(next.message);
+      setProblem(next);
       return;
     }
     void run("Criando proposta…", async (signal, isCurrent) => {
       const result = await post<EscalaWorkspace>({ action: "CREATE", input: next }, signal);
       if (isCurrent()) {
         acceptWorkspace(result);
-        setNotice("Proposta criada. Importe o FPRE136 e peça sugestões para toda a filial.");
+        setNotice("Planejamento pronto. Importe a equipe para começar.");
       }
     });
   }
@@ -165,7 +179,7 @@ export function useEscalasWorkspace() {
         signal,
       );
       if (isCurrent()) {
-        acceptWorkspace(result);
+        acceptWorkspace(result, true);
         setNotice("Revisão salva e conferida. A versão publicada anterior foi preservada.");
       }
     });
@@ -189,15 +203,15 @@ export function useEscalasWorkspace() {
       dirty ? "Salvando a equipe antes da análise…" : "Sugerindo folgas para toda a filial…",
       async (signal, isCurrent) => {
         const result = await requestMassGeneration({ workspace, input, dirty, signal, isCurrent, post,
-          onSaved: acceptWorkspace,
+          onSaved: (saved) => acceptWorkspace(saved, true),
           onSolving: () => { setBusy("Sugerindo folgas para toda a filial e conferindo a cobertura…"); setCancellable(true); },
         });
         if (result && isCurrent()) {
           if (["OPTIMAL", "FEASIBLE"].includes(result.result.status)) {
             setGenerated(result);
-            setNotice("Sugestão em massa pronta. Confira a prévia e aplique quando desejar.");
+            setNotice(result.validation.issues.length ? "Proposta concluída com avisos. Confira e aplique à escala." : "Proposta concluída. Confira e aplique à escala.");
           }
-          else setNotice(result.result.message);
+          else { setProblem(solverProblem(result.result.status, result.result.message)); setNotice(result.result.message); }
         }
       },
       !dirty,
@@ -208,12 +222,15 @@ export function useEscalasWorkspace() {
     if (!generated || !input) return;
     const next = generated.proposalInput;
     update(next);
+    // Applying a completed, independently validated proposal clears the persisted marker.
+    setInput((current) => current ? { ...current, needsRegeneration: false } : current);
     setValidation(generated.validation);
+    setOutdated(false);
     setNotice("Proposta aplicada à grade. Confira as mudanças e salve a nova revisão.");
   }
 
   function publish() {
-    if (!workspace?.canPublish || dirty || !validation?.readyToPublish) return;
+    if (!workspace?.canPublish || dirty || outdated || !validation?.readyToPublish) return;
     void run("Publicando revisão conferida…", async (signal, isCurrent) => {
       const result = await post<EscalaWorkspace>(
         {
@@ -240,7 +257,7 @@ export function useEscalasWorkspace() {
       });
       if (isCurrent()) {
         setWorkspaces((previous) => previous.filter((item) => item.id !== result.deletedId));
-        setWorkspace(null); setInput(null); setValidation(null); setDirty(false);
+        setWorkspace(null); setInput(null); setValidation(null); setDirty(false); setOutdated(false);
         setGenerated(null); setPendingOpen(null); setResetKey((previous) => previous + 1);
         setNotice("Planejamento e revisões excluídos. Os demais períodos foram preservados.");
       }
@@ -263,6 +280,8 @@ export function useEscalasWorkspace() {
     setBusy("");
     setCancellable(false);
     setGenerated(null);
+    setProblem(null);
+    setError("");
     setNotice(
       "Análise cancelada. A equipe salva antes da análise foi preservada. Respostas atrasadas serão ignoradas e nenhuma sugestão será aplicada.",
     );
@@ -275,8 +294,10 @@ export function useEscalasWorkspace() {
     input,
     validation,
     dirty,
+    outdated,
     busy,
     error,
+    problem,
     notice,
     generated,
     pendingOpen,

@@ -123,10 +123,11 @@ describe("actionable grouped validation", () => {
     expect(groups[0].issues).toHaveLength(4000);
     expect(groups[0].guidance.target).toBe("generate");
     const html = renderToStaticMarkup(<ValidationResults input={reference()} validation={{ valid: true, readyToPublish: false, issues, summaries: [], minimumCoverageMargin: null }} onResolve={vi.fn()} />);
-    expect(html).toContain("1 assunto(s) para resolver");
-    expect(html).toContain("Ver detalhes (4000)");
-    expect(html).toContain("Sugerir para toda a filial");
-    expect(html).toContain("Página 1 de 160");
+    expect(html).toContain("Limites de conferência (1)");
+    expect(html).toContain("Gerar proposta mensal");
+    expect(html).toContain("Escala ainda não gerada");
+    expect(html).not.toContain("Ver detalhes (4000)");
+    expect(html.length).toBeLessThan(10000);
     expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
 

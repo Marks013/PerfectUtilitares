@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import styles from "./escalas.module.css";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput } from "@/lib/escalas/types";
 import { buttonClass, Check, controlClass, Field, primaryClass } from "./controls";
 import { applyRosterChanges, inspectRosterChanges, swapRosterDays, type RosterDay } from "./roster-model";
@@ -11,16 +12,16 @@ type Preview = { source: EscalaInput; input: EscalaInput; impact: ReturnType<typ
 function Impact({ preview, confirm, cancel }: { preview: Preview; confirm: () => void; cancel: () => void }) {
   const { impact } = preview;
   const issues = [...impact.newErrors, ...impact.coverageIssues.filter((issue) => issue.severity !== "ERROR")];
-  return <section className="space-y-3 border-t border-[color:var(--app-border)] pt-3" aria-label="Impacto da alteração">
+  return <section className={styles.editorImpact} aria-label="Impacto da alteração">
     <p className="font-semibold">Prévia: {impact.changedDays} dia(s) alterado(s)</p>
     <p className="text-sm">Descansos e jornada dos colaboradores afetados foram conferidos, incluindo as fronteiras. A cobertura foi recalculada nos setores e dias afetados.</p>
     <p className="text-sm">{impact.newErrors.length ? `${impact.newErrors.length} novo(s) conflito(s). Você pode manter a simulação em rascunho, mas precisa resolvê-los antes de publicar.` : "Nenhum novo conflito obrigatório foi identificado nesta alteração."}</p>
-    {issues.length > 0 && <ul className="max-h-56 list-disc space-y-2 overflow-auto pl-5 text-sm">
+    {issues.length > 0 && <ul className={styles.editorIssues}>
       {issues.map((issue) => <li key={`${issue.code}:${issue.employeeId}:${issue.date}:${issue.message}`}>
         {issue.date ? `${displayDate(issue.date)} · ` : ""}{issue.message}
       </li>)}
     </ul>}
-    <div className="flex flex-wrap gap-3">
+    <div className={styles.actions}>
       <button type="button" className={primaryClass} onClick={confirm}>{impact.newErrors.length ? "Aplicar com conflitos ao rascunho" : "Confirmar alteração"}</button>
       <button type="button" className={buttonClass} onClick={cancel}>Voltar à edição</button>
     </div>
@@ -39,7 +40,7 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
   const [error, setError] = useState("");
   const wasLocked = Boolean(assignment?.locked);
   const current = preview?.source === input ? preview : null;
-  return <form className="space-y-4 app-radius-lg border border-[color:var(--app-teal)] p-4" onSubmit={(event) => {
+  return <form className={styles.editor} onSubmit={(event) => {
     event.preventDefault();
     setError("");
     try {
@@ -49,11 +50,11 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
     } catch (cause) { setError(errorMessage(cause)); }
   }}>
     <h3 className="font-semibold">{employee.name} · {displayDate(date)}</h3>
-    {employee.sourceSchedule && <p className="text-sm text-[color:var(--app-muted)]">Horário importado: {employee.sourceSchedule.weekday}. Referência {employee.sourceSchedule.code} · {employee.sourceSchedule.description}.</p>}
+    {employee.sourceSchedule && <p className={styles.muted}>Horário importado: {employee.sourceSchedule.weekday}. Referência {employee.sourceSchedule.code} · {employee.sourceSchedule.description}.</p>}
     {employee.scheduleMode === "MISSING" && <p className="text-sm">Horário não informado na importação. Presença e folgas podem ser simuladas; jornada e cobertura por horário não estão verificadas. Isso não confirma dispensa de controle de jornada.</p>}
     {wasLocked && <p className="text-sm">Esta decisão está bloqueada. Um aprovador pode desmarcar o bloqueio e salvar a revisão. Só depois poderá alterar a jornada.</p>}
     <fieldset disabled={Boolean(current)} className="space-y-3">
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className={styles.formGrid}>
         <Field label="Situação do dia">{(id) => <select id={id} disabled={wasLocked} value={kind} className={controlClass} onChange={(event) => setKind(event.target.value as EscalaAssignment["kind"])}>
           {untimed ? <option value="DUTY">Trabalho sem horário fixo</option> : <option value="WORK">Trabalho</option>}
           <option value="OFF">Folga</option><option value="ABSENCE">Ausência</option>
@@ -66,7 +67,7 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
       <Check label="Preservar esta decisão nas próximas gerações" checked={locked} disabled={wasLocked && !canUnlock} onChange={setLocked} />
       <button type="submit" className={primaryClass} disabled={wasLocked && (!canUnlock || locked)}>Conferir alteração</button>
     </fieldset>
-    {error && <p role="alert" className="text-sm text-[color:var(--app-coral)]">{error}</p>}
+    {error && <p role="alert" className={styles.errorText}>{error}</p>}
     {current && <Impact preview={current} confirm={() => onApply(current.assignment)} cancel={() => setPreview(null)} />}
     <button type="button" className={buttonClass} onClick={onCancel}>Cancelar edição</button>
   </form>;
@@ -78,8 +79,8 @@ export function SwapEditor({ input, first, dates, onApply }: { input: EscalaInpu
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState("");
   const current = preview?.source === input ? preview : null;
-  return <details className="space-y-3 border-t border-[color:var(--app-border)] pt-3">
-    <summary className="min-h-11 cursor-pointer py-2 font-semibold">Trocar este dia com outro colaborador ou outra data</summary>
+  return <details className={styles.editorImpact}>
+    <summary className={styles.disclosureTrigger}>Trocar este dia com outro colaborador ou outra data</summary>
     <p className="text-sm">Troque turnos ou folgas. A operação preserva os dois dias juntos e confere se o turno é permitido para cada pessoa.</p>
     <form className="space-y-3" onSubmit={(event) => {
       event.preventDefault(); setError("");
@@ -96,7 +97,7 @@ export function SwapEditor({ input, first, dates, onApply }: { input: EscalaInpu
         <button type="submit" className={buttonClass}>Conferir troca</button>
       </fieldset>
     </form>
-    {error && <p role="alert" className="text-sm text-[color:var(--app-coral)]">{error}</p>}
+    {error && <p role="alert" className={styles.errorText}>{error}</p>}
     {current && <Impact preview={current} confirm={() => onApply(current.input)} cancel={() => setPreview(null)} />}
   </details>;
 }

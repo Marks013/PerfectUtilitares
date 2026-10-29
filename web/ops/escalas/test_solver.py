@@ -5,7 +5,7 @@ from unittest.mock import patch
 from datetime import date, timedelta
 from ortools.sat.python import cp_model
 
-from solver import admissible, certificate_authorizes, days_between, effective_weekly_hours, legal_weekly_hours, occupied_dates, shift_metrics, solve, sunday_limit
+from solver import _feasibility_hints, admissible, certificate_authorizes, days_between, effective_weekly_hours, legal_weekly_hours, occupied_dates, shift_metrics, solve, sunday_limit
 
 
 def fixture(hours=42, people=1, weeks=1, start_date="2026-11-02", shift_hours=None):
@@ -286,7 +286,7 @@ class SolverTests(unittest.TestCase):
         self.assert_feasible(result)
         self.assertEqual(next(a for a in result["assignments"] if a["date"] == data["startDate"])["kind"], "WORK")
 
-    def test_manual_and_confirmed_minimums_never_become_soft_estimates(self):
+    def test_explicit_minimums_are_hard_and_estimate_provenance_is_not_overridden_by_a_global_flag(self):
         for provenance, review in ((False, "SUGGESTED"), (True, "CONFIRMED"), (True, None)):
             with self.subTest(estimated=provenance, review=review):
                 data = fixture(40)
@@ -294,7 +294,12 @@ class SolverTests(unittest.TestCase):
                 data["assignments"] = [{"employeeId": "p0", "date": data["startDate"], "kind": "OFF", "locked": True}]
                 data["demands"] = [{"date": data["startDate"], "sector": "Reposição", "start": 480, "end": 720,
                                     "minimum": 1, "estimated": provenance}]
-                self.assertEqual(solve(data)["status"], "INFEASIBLE")
+                result = solve(data)
+                if provenance:
+                    self.assert_feasible(result)
+                    self.assertEqual(next(a for a in result["assignments"] if a["date"] == data["startDate"])["kind"], "OFF")
+                else:
+                    self.assertEqual(result["status"], "INFEASIBLE")
 
     def test_estimate_without_any_matching_timed_person_stays_a_visible_gap(self):
         data = fixture(40)
@@ -863,6 +868,23 @@ class SingleImportTests(unittest.TestCase):
         self.assertFalse(admissible(data["shifts"][0], data["policy"], data["startDate"]))
 
 
+class SupermarketRoleBalanceTests(unittest.TestCase):
+    def test_leaders_in_distinct_sectors_are_not_concentrated_on_the_same_rests(self):
+        data = fixture(hours=40, people=4, weeks=2)
+        roles = ["ENC. PADARIA", "GERENTE", "ENC. FRENTE DE CAIXA", "ENC. ACOUGUE"]
+        for index, person in enumerate(data["employees"]):
+            person["role"] = roles[index]
+            person["sector"] = f"Setor {index}"
+            make_untimed(person)
+        result = solve(data)
+        self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"))
+        for day in days_between(data["startDate"], data["endDate"]):
+            present = sum(a["kind"] == "DUTY" and a["date"] == day for a in result["assignments"])
+            self.assertGreaterEqual(present, 2)
+        for person in data["employees"]:
+            self.assertEqual(sum(a["kind"] == "OFF" and a["employeeId"] == person["id"] for a in result["assignments"]), 4)
+
+
 if __name__ == "__main__":
     import sys
     if "--fixture" in sys.argv:
@@ -874,3 +896,101 @@ if __name__ == "__main__":
         print(json.dumps({"input": data, "result": result}))
     else:
         unittest.main()
+
+
+class SupportSimulationTests(unittest.TestCase):
+    def test_thousands_of_optional_role_targets_cannot_starve_initial_feasibility(self):
+        data = fixture(hours=42, people=150, weeks=6)
+        data["simulation"] = True
+        data["policy"]["compensationAuthorized"] = False
+        data["policy"]["coverageReview"] = "SUGGESTED"
+        for index, person in enumerate(data["employees"]):
+            person["role"] = f"role-{index}"
+            person.update(history=[], historyKnown=False)
+        data["demands"] = [{"date": day, "sector": person["sector"], "role": person["role"], "start": 480, "end": 720, "minimum": 1, "estimated": True}
+                           for day in days_between(data["startDate"], data["endDate"]) for person in data["employees"]]
+        result = solve(data)
+        self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"))
+        self.assertEqual(len(result["assignments"]), 6300)
+        rests_by_weekday = [sum(entry["kind"] == "OFF" and date.fromisoformat(entry["date"]).weekday() == weekday for entry in result["assignments"]) for weekday in range(7)]
+        self.assertTrue(all(total > 0 for total in rests_by_weekday), rests_by_weekday)
+
+    def test_large_supermarket_gets_a_complete_feasible_incumbent_before_soft_optimization(self):
+        data = fixture(hours=42, people=150, weeks=6)
+        data["simulation"] = True
+        data["policy"]["compensationAuthorized"] = False
+        result = solve(data)
+        self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"))
+        self.assertEqual(len(result["assignments"]), 150 * 42)
+        for person in data["employees"]:
+            rows = [a for a in result["assignments"] if a["employeeId"] == person["id"]]
+            self.assertEqual(sum(a["kind"] == "WORK" for a in rows), 30)
+            self.assertEqual(sum(a["kind"] == "OFF" for a in rows), 12)
+
+    def test_simulation_can_distribute_42h_without_fabricating_compensation(self):
+        data = fixture(hours=42)
+        data["policy"]["compensationAuthorized"] = False
+        data["simulation"] = True
+        before = copy.deepcopy(data)
+        result = solve(data)
+        self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"))
+        self.assertEqual(weekly_totals(data, result), {"2026-11-02": 2520})
+        self.assertEqual(data, before)
+
+    def test_short_reference_keeps_five_days_and_two_rests_without_full_time_hours(self):
+        data = fixture(hours=42)
+        data["simulation"] = True
+        data["employees"][0]["simulationDailyMinutes"] = 240
+        data["shifts"][0]["segments"] = [{"start": 480, "end": 720, "kind": "WORK"}]
+        result = solve(data)
+        self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"))
+        self.assertEqual(weekly_totals(data, result), {"2026-11-02": 1200})
+        self.assertEqual(sum(a["kind"] == "OFF" for a in result["assignments"]), 2)
+
+
+class BalancedWarmStartTests(unittest.TestCase):
+    def hints(self, data):
+        model = cp_model.CpModel()
+        dates = days_between(data["startDate"], data["endDate"])
+        active = {person["id"]: dates for person in data["employees"]}
+        work, off, choices = {}, {}, {}
+        for person in data["employees"]:
+            for day in dates:
+                key = person["id"], day
+                work[key], off[key] = model.new_bool_var("work"), model.new_bool_var("off")
+                choices[key] = {sid: model.new_bool_var(sid) for sid in person["shiftIds"]}
+        baseline = {(entry["employeeId"], entry["date"]): entry for entry in data["assignments"]}
+        metrics = {shift["id"]: shift_metrics(shift) for shift in data["shifts"]}
+        policy = {**data["policy"], "_simulation": data.get("simulation") is True}
+        _feasibility_hints(model, data["employees"], dates, off, work, choices, active, baseline, metrics, policy)
+        values = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
+        return {key: values[variable.index] for key, variable in off.items() if variable.index in values}, values, off, work
+
+    def test_warm_start_distributes_rests_across_every_weekday_and_rotates_sundays(self):
+        data = fixture(42, people=14, weeks=6)
+        rests, _, _, _ = self.hints(data)
+        self.assertEqual(len(rests), 14 * 42)
+        weekday_totals = [sum(value for (_, day), value in rests.items() if date.fromisoformat(day).weekday() == weekday) for weekday in range(7)]
+        self.assertTrue(all(total > 0 for total in weekday_totals), weekday_totals)
+        self.assertLess(max(weekday_totals) - min(weekday_totals), 45, weekday_totals)
+        for person in data["employees"]:
+            rows = [(day, rests[person["id"], day]) for day in days_between(data["startDate"], data["endDate"])]
+            self.assertEqual(sum(value for _, value in rows), 12)
+            sunday_rests = sum(value for day, value in rows if date.fromisoformat(day).weekday() == 6)
+            self.assertGreaterEqual(sunday_rests, 2)
+            self.assertLess(sunday_rests, 6)
+
+    def test_warm_start_preserves_absence_locked_work_and_fixed_rest(self):
+        data = fixture(42, people=2, weeks=2)
+        first = data["employees"][0]
+        first.update(offMode="MIXED", fixedOffDays=[2])
+        data["assignments"] = [
+            {"employeeId": "p0", "date": "2026-11-03", "kind": "WORK", "shiftId": "day", "locked": True},
+            {"employeeId": "p0", "date": "2026-11-05", "kind": "ABSENCE"},
+        ]
+        rests, values, off, work = self.hints(data)
+        self.assertEqual(rests["p0", "2026-11-04"], 1)
+        self.assertEqual(rests["p0", "2026-11-11"], 1)
+        self.assertEqual(values[work["p0", "2026-11-03"].index], 1)
+        self.assertEqual(values[work["p0", "2026-11-05"].index], 0)
+        self.assertEqual(values[off["p0", "2026-11-05"].index], 0)

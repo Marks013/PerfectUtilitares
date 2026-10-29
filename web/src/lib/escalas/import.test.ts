@@ -54,7 +54,10 @@ describe("Escalas import preview", () => {
   });
   it("accepts a real XLSX file produced from the same exact cell values", async () => {
     // The export is a valid archive; its operational layout must still be rejected, not guessed as an import.
-    const payload = { schemaVersion: 1, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", employees: [], shifts: [], assignments: [] } as unknown as EscalaInput;
+    const payload: EscalaInput = { schemaVersion: 1, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", defaultWeeklyHours: 40, timeZone: "America/Sao_Paulo",
+      policy: { source: "", validFrom: "2026-01-01", validUntil: "2026-12-31", reviewed: false, reviewedBy: "", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: false,
+        minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 6, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+      employees: [], shifts: [], demands: [], assignments: [] };
     const bytes = exportEscalaXlsx({ id: "w", revision: 1, status: "DRAFT", input: payload, canEdit: true, canPublish: true, validation: { valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: null }, updatedAt: "2026-10-26" });
     await expect(previewEscalaImport(Buffer.from(bytes), "xlsx", options)).rejects.toThrow(/modelo/);
   });

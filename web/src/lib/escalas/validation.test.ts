@@ -48,6 +48,9 @@ describe("independent Escalas validation", () => {
     expect(result.minimumCoverageMargin).toBe(-1);
     expect(result.issues).toContainEqual(expect.objectContaining({ code: "ESTIMATED_COVERAGE_GAP", severity: "PENDING", date: input.startDate }));
     input.policy.coverageReview = "CONFIRMED";
+    expect(validateEscala(input).valid).toBe(true);
+    expect(codes(input)).toContain("ESTIMATED_COVERAGE_GAP");
+    input.demands[0].estimated = false;
     expect(validateEscala(input).valid).toBe(false);
     expect(codes(input)).toContain("COVERAGE_DEFICIT");
   });
@@ -294,4 +297,13 @@ describe("independent Escalas validation", () => {
     expect(codes(input)).toContain("CONSECUTIVE_OFF");
     expect(codes(input)).toContain("CONSECUTIVE_PENDING");
   });
+  it("keeps a stale scenario technically inspectable but pending regeneration before approval", () => {
+    const input = { ...fixture(), needsRegeneration: true };
+    const result = validateEscala(input);
+    expect(result.valid).toBe(true);
+    expect(result.readyToPublish).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "SCENARIO_OUTDATED", severity: "PENDING" }));
+    expect(validateEscala({ ...input, needsRegeneration: false }).issues.some(issue => issue.code === "SCENARIO_OUTDATED")).toBe(false);
+  });
+
 });

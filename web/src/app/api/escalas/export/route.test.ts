@@ -79,4 +79,13 @@ describe("/api/escalas/export", () => {
     expect((await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"))).status).toBe(401);
     expect(POST().status).toBe(405);
   });
+  it.each(["pdf", "xlsx"])("rejects %s exports of a persisted stale scenario with a direct recovery message", async (format) => {
+    const current = workspace();
+    current.input = { ...current.input, needsRegeneration: true };
+    mocks.get.mockResolvedValue(current);
+    const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=${format}`));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: expect.objectContaining({ code: "ESCALA_SCENARIO_OUTDATED", message: expect.stringContaining("Gere") }) }));
+  });
+
 });

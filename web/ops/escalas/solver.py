@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
+from hints import balanced_rest_hints
+
 ZONE = ZoneInfo("America/Sao_Paulo")
 MAX_SECONDS = 12
 TRANSITION_42_DATE = "2026-12-16"
@@ -52,6 +54,13 @@ def effective_weekly_hours(person, week_end):
     return min(person["weeklyHours"], legal_weekly_hours(week_end))
 
 
+def effective_weekly_minutes(person, week_end, simulation=False):
+    target = effective_weekly_hours(person, week_end) * 60
+    if simulation and person.get("simulationDailyMinutes") is not None:
+        target = min(target, person["simulationDailyMinutes"] * 5)
+    return target
+
+
 def sunday_limit(person):
     protected = 2 if person.get("sundayRestRule") == "COMMERCE" else 1
     return min(person["maxConsecutiveSundays"], protected)
@@ -73,7 +82,7 @@ def certificate_authorizes(policy, day, scope):
 
 
 def cct_admissible(shift, policy, day):
-    if policy.get("normativeProfile") != CCT_PROFILE:
+    if policy.get("_simulation") or policy.get("normativeProfile") != CCT_PROFILE:
         return True
     if not CCT_FROM <= day <= CCT_UNTIL:
         return False
@@ -101,9 +110,9 @@ def admissible(shift, policy, day):
     ceiling = 480 if day >= TRANSITION_40_DATE else 504 if day >= TRANSITION_42_DATE else 600
     if paid > min(policy["dailyLimitMinutes"], ceiling):
         return False
-    if paid > 480 and not policy["compensationAuthorized"]:
+    if paid > 480 and not policy["compensationAuthorized"] and not policy.get("_simulation"):
         return False
-    if paid > 480 and TRANSITION_42_DATE <= day < TRANSITION_40_DATE:
+    if paid > 480 and TRANSITION_42_DATE <= day < TRANSITION_40_DATE and not policy.get("_simulation"):
         if not reviewed_document(policy.get("collectiveAgreement"), day, "source"):
             return False
     if not cct_admissible(shift, policy, day):
@@ -116,6 +125,8 @@ def admissible(shift, policy, day):
 
 
 def untimed_admissible(policy, day):
+    if policy.get("_simulation"):
+        return True
     if policy.get("normativeProfile") != CCT_PROFILE:
         return True
     return (CCT_FROM <= day <= CCT_UNTIL
@@ -134,7 +145,8 @@ def solve(data):
     employees = sorted((p for p in data["employees"] if p.get("planningEnabled") is not False), key=lambda e: e["id"])
     if not 1 <= len(employees) <= 250 or not 7 <= len(dates) <= 42 or len(dates) % 7:
         raise ValueError("model bounds")
-    policy, shifts = data["policy"], {s["id"]: s for s in data["shifts"]}
+    policy = {**data["policy"], "_simulation": data.get("simulation") is True}
+    shifts = {s["id"]: s for s in data["shifts"]}
     metrics = {key: shift_metrics(value) for key, value in shifts.items()}
     baseline = {(a["employeeId"], a["date"]): a for a in data["assignments"]}
     model = cp_model.CpModel()
@@ -163,13 +175,13 @@ def solve(data):
             work[key] = model.new_bool_var(f"w:{pid}:{day}")
             current = {}
             closed = day in policy["closedDates"] or (
-                day in policy["holidayDates"] and day not in policy["authorizedHolidayDates"])
+                day in policy["holidayDates"] and day not in policy["authorizedHolidayDates"] and not policy.get("_simulation"))
             for sid in ([] if untimed else person["shiftIds"]):
                 if not admissible(shifts[sid], policy, day):
                     continue
                 current[sid] = model.new_bool_var(f"s:{pid}:{day}:{sid}")
                 occupied = occupied_dates(day, shifts[sid])
-                forbidden = any(d in policy["closedDates"] or (d in policy["holidayDates"] and d not in policy["authorizedHolidayDates"]) for d in occupied)
+                forbidden = any(d in policy["closedDates"] or (d in policy["holidayDates"] and d not in policy["authorizedHolidayDates"] and not policy.get("_simulation")) for d in occupied)
                 if closed or forbidden:
                     model.add(current[sid] == 0)
             choices[key] = current
@@ -215,12 +227,12 @@ def solve(data):
                 model.add(sum(off[pid, d] for d in group) == 2)
                 if not untimed:
                     model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                              == effective_weekly_hours(person, dates[week + 6]) * 60)
+                              == effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]))
             else:
                 model.add(sum(work[pid, d] for d in group) <= 5)
             if not untimed:
                 model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                          <= min(effective_weekly_hours(person, dates[week + 6]), policy["weeklyLimit"]) * 60)
+                          <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60))
         _streaks(model, person, dates, work, off, boundary, active[pid], policy)
         _rest(model, person, dates, choices, off, boundary, shifts, metrics, policy)
         civil_weekends = _civil_rest(model, person, dates, choices, work, off, boundary, shifts)
@@ -259,11 +271,48 @@ def solve(data):
             opportunities = max(1, sum(baseline.get((pid, d), {}).get("kind") != "ABSENCE" for d in weekends)
                                 + known)
             weekend_totals[weekday][pid] = (sum(civil_weekends[d] for d in weekends) + historical, opportunities)
-    coverage = _coverage(model, data, employees, choices, shifts, started)
-    if coverage is False:
+    hard_coverage = _coverage(model, data, employees, choices, shifts, started, "HARD")
+    if hard_coverage is False:
         return _response("UNKNOWN", [], started)
+    if isinstance(hard_coverage, str):
+        return _response("INFEASIBLE", [], started, hard_coverage)
+    # Find a mandatory-feasible incumbent before adding thousands of optional staffing goals.
+    # Optional optimization must never consume the only opportunity to return a complete draft.
+    if MAX_SECONDS - (time.monotonic() - started) < 0.1:
+        return _response("UNKNOWN", [], started)
+    _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy)
+    remaining = MAX_SECONDS - (time.monotonic() - started)
+    if remaining < 0.1:
+        return _response("UNKNOWN", [], started)
+    seed_variables = [model.get_int_var_from_proto_index(index) for index in range(len(model.proto.variables))]
+    seed = cp_model.CpSolver()
+    seed.parameters.max_time_in_seconds = min(2, remaining)
+    seed.parameters.stop_after_first_solution = True
+    seed.parameters.num_search_workers = 1
+    seed.parameters.random_seed = 37
+    # Validate the proposed warm start before symmetry reduction can discard it.
+    # Fixing is confined to this solver invocation; the model remains unrestricted.
+    # A rejected proposal is not evidence that the actual scheduling model is infeasible.
+    seed.parameters.fix_variables_to_their_hinted_value = True
+    seed_status = seed.solve(model)
+    if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        remaining = MAX_SECONDS - (time.monotonic() - started)
+        if remaining < 0.1:
+            return _response("UNKNOWN", [], started)
+        seed.parameters.fix_variables_to_their_hinted_value = False
+        seed.parameters.max_time_in_seconds = min(6, remaining)
+        seed_status = seed.solve(model)
+        if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return _response(seed.status_name(seed_status), [], started)
+    result = _read_assignments(seed, employees, active, baseline, work, choices)
+    model.clear_hints()
+    for variable in seed_variables:
+        model.add_hint(variable, seed.value(variable))
+    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED")
+    if coverage is False:
+        return _response("FEASIBLE", result, started)
     if isinstance(coverage, str):
-        return _response("INFEASIBLE", [], started, coverage)
+        return _response("FEASIBLE", result, started)
     fairness = []
     groups = {}
     for person in employees:
@@ -293,10 +342,10 @@ def solve(data):
     objectives = [sum(coverage), sum(concentration), sum(fairness), sum(rotation),
                   sum(people_changed), sum(stability_terms), sum(preference_terms), sum(tie_terms)]
     objectives = [objective for objective in objectives if not isinstance(objective, int)]
-    result, status_name, proven = None, "UNKNOWN", True
+    status_name, proven = "FEASIBLE", True
     # Establish a legal incumbent before spending the bounded budget on soft goals.
     # This seed does not lock a staffing objective or relax a mandatory condition.
-    phases = [None] + objectives
+    phases = objectives
     hint_variables = [model.get_int_var_from_proto_index(index) for index in range(len(model.proto.variables))]
     for index, objective in enumerate(phases):
         remaining = MAX_SECONDS - (time.monotonic() - started)
@@ -308,8 +357,9 @@ def solve(data):
         else:
             model.minimize(objective)
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = (min(4, remaining / 2) if objective is None else remaining
-                                                if index == 1 else min(remaining, 3))
+        solver.parameters.max_time_in_seconds = (min(4, remaining / 2) if objective is None else
+                                                min(remaining, max(0.15, remaining * (0.55 if index == 0 else 0.5)))
+                                                if index < len(phases) - 1 else remaining)
         solver.parameters.stop_after_first_solution = objective is None
         solver.parameters.num_search_workers = 1
         solver.parameters.random_seed = 37
@@ -322,24 +372,7 @@ def solve(data):
                 return _response(status_name, [], started)
             proven = False
             break
-        result = []
-        for person in employees:
-            for day in active[person["id"]]:
-                key = person["id"], day
-                old = baseline.get(key, {})
-                item = {"employeeId": key[0], "date": day, "kind": "OFF"}
-                if old.get("kind") == "ABSENCE":
-                    item["kind"] = "ABSENCE"
-                elif has_no_clock(person) and solver.value(work[key]):
-                    item["kind"] = "DUTY"
-                else:
-                    for sid, variable in choices[key].items():
-                        if solver.value(variable):
-                            item.update(kind="WORK", shiftId=sid)
-                            break
-                if old.get("locked"):
-                    item["locked"] = True
-                result.append(item)
+        result = _read_assignments(solver, employees, active, baseline, work, choices)
         model.clear_hints()
         for variable in hint_variables:
             model.add_hint(variable, solver.value(variable))
@@ -347,11 +380,50 @@ def solve(data):
             continue
         if status == cp_model.FEASIBLE:
             proven = False
-            break  # Never trade away a higher-priority objective not proved optimal.
-        model.add(objective == solver.value(objective))
+            # Preserve the best higher-priority incumbent, while reserving time for operational balance.
+            # This is bounded lexicographic improvement, not proof that any unfinished objective is optimal.
+            model.add(objective <= solver.value(objective))
+        else:
+            model.add(objective == solver.value(objective))
     if result is None:
         return _response("UNKNOWN", [], started)
     return _response("OPTIMAL" if proven else "FEASIBLE", result, started)
+
+
+def _read_assignments(solver, employees, active, baseline, work, choices):
+    result = []
+    for person in employees:
+        for day in active[person["id"]]:
+            key = person["id"], day
+            old = baseline.get(key, {})
+            item = {"employeeId": key[0], "date": day, "kind": "OFF"}
+            if old.get("kind") == "ABSENCE":
+                item["kind"] = "ABSENCE"
+            elif has_no_clock(person) and solver.value(work[key]):
+                item["kind"] = "DUTY"
+            else:
+                for sid, variable in choices[key].items():
+                    if solver.value(variable):
+                        item.update(kind="WORK", shiftId=sid)
+                        break
+            if old.get("locked"):
+                item["locked"] = True
+            result.append(item)
+    return result
+
+
+def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy):
+    """A balanced complete candidate when available, never a mandatory constraint."""
+    proposals = balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit)
+    for person in employees:
+        pid = person["id"]
+        for day, entry in proposals.get(pid, {}).items():
+            key = pid, day
+            is_work = entry["kind"] in ("WORK", "DUTY")
+            model.add_hint(off[key], int(entry["kind"] == "OFF"))
+            model.add_hint(work[key], int(is_work))
+            for sid, variable in choices[key].items():
+                model.add_hint(variable, int(is_work and sid == entry.get("shiftId")))
 
 
 def _streaks(model, person, dates, work, off, prior, active, policy):
@@ -390,9 +462,20 @@ def _historical_weekdays(prior, shifts, start, weekday):
 def _rest_distribution(model, employees, dates, off, active, baseline, history, policy):
     """Soft daily presence and rotation goals; never invent a staffing minimum."""
     sectors, concentration, rotation = {}, [], []
+    leadership = []
     for person in employees:
-        sectors.setdefault(person["sector"], []).append(person["id"])
-    for sector_index, members in enumerate(sectors.values()):
+        sectors.setdefault(("sector", person["sector"]), []).append(person["id"])
+        # Job labels guide soft operational balance, never legal classification or qualifications.
+        role = person["role"].strip().upper()
+        if role:
+            sectors.setdefault(("role", person["sector"], role), []).append(person["id"])
+        if role.startswith("ENC.") or "ENCARREGAD" in role or "GERENTE" in role:
+            leadership.append(person["id"])
+    if len(leadership) > 1:
+        sectors[("leadership",)] = leadership
+    # A homogeneous sector and its only role are the same group, not twice the weight.
+    unique_groups = {tuple(sorted(members)): members for members in sectors.values()}
+    for sector_index, members in enumerate(unique_groups.values()):
         if len(members) < 2:
             continue
         for day in dates:
@@ -502,7 +585,7 @@ def _civil_rest(model, person, dates, choices, work, off, prior, shifts):
     return occupied_weekends
 
 
-def _coverage(model, data, employees, choices, shifts, started):
+def _coverage(model, data, employees, choices, shifts, started, scope="ALL"):
     by_id = {p["id"]: p for p in employees}
     index = {}
     shortages = []
@@ -527,6 +610,11 @@ def _coverage(model, data, employees, choices, shifts, started):
             if assignment["kind"] == "WORK" and assignment["date"] >= (date.fromisoformat(data["startDate"]) - timedelta(days=1)).isoformat():
                 register(person["id"], assignment["date"], assignment["shiftId"], 1)
     for demand_index, demand in enumerate(data["demands"]):
+        estimated = demand.get("estimated") is True
+        if (scope == "HARD" and estimated) or (scope == "ESTIMATED" and not estimated):
+            continue
+        if demand["minimum"] == 0:
+            continue  # A zero floor adds no constraint or shortage; keep it only in the reported estimates.
         if time.monotonic() - started > MAX_SECONDS - 1:
             return False
         begin, finish = instant(demand["date"], demand["start"]), instant(demand["date"], demand["end"])
@@ -539,7 +627,7 @@ def _coverage(model, data, employees, choices, shifts, started):
                 intervals.append((left, right, variable))
                 points.update((left, right))
         ordered = sorted(points)
-        estimated = demand.get("estimated") is True and data["policy"].get("coverageReview") == "SUGGESTED"
+        estimated = demand.get("estimated") is True
         for interval_index, (left, right) in enumerate(zip(ordered, ordered[1:])):
             available = [v for start, end, v in intervals if start <= left and end >= right]
             if estimated:

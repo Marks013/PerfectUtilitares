@@ -1,5 +1,5 @@
-import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
-import { CCT_FROM, CCT_UNTIL, legalWeeklyHours, SUPERMARKET_CCT } from "@/lib/escalas/labor-rules";
+import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaValidation, WeeklyHours } from "@/lib/escalas/types";
+import { CCT_FROM, CCT_UNTIL, effectiveWeeklyMinutes, legalWeeklyHours, SUPERMARKET_CCT } from "@/lib/escalas/labor-rules";
 import { planningWeeklyHours } from "@/lib/escalas/preparation";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
@@ -131,12 +131,41 @@ export function newEmployee(hours: WeeklyHours, shiftId?: string | string[]): Es
 
 /** Resolve legacy branch references before changing the selected branch target. */
 export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours): EscalaInput {
-  return { ...input, defaultWeeklyHours: hours, employees: input.employees.map((person) => ({
-    ...person, ...planningWeeklyHours(person, input.defaultWeeklyHours, hours),
-  })) };
+  if (input.defaultWeeklyHours === hours) return input;
+  return { ...input, defaultWeeklyHours: hours,
+    employees: input.employees.map((person) => ({ ...person, ...planningWeeklyHours(person, input.defaultWeeklyHours, hours) })),
+    demands: input.demands.filter((demand) => !demand.estimated),
+  };
+}
+
+/** Changes that make a previously generated scenario obsolete. Manual day edits remain intentional. */
+function absenceDays(input: EscalaInput): string {
+  return JSON.stringify(input.assignments.filter((item) => item.kind === "ABSENCE").map((item) => JSON.stringify([item.employeeId, item.date])).sort());
+}
+
+export function scenarioDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
+  if (absenceDays(previous) !== absenceDays(next)) return true;
+  if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
+  return (['employees', 'shifts', 'demands', 'policy'] as const).some((key) => previous[key] !== next[key] && JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
+}
+
+export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidation | null): boolean {
+  if (input.needsRegeneration) return true;
+  if (!validation?.issues.some((issue) => ['WEEKLY_MINUTES', 'WEEKLY_LIMIT'].includes(issue.code))) return false;
+  const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
+  return input.employees.some((person) => person.scheduleMode !== "MISSING" && person.scheduleMode !== "UNTIMED"
+    && input.assignments.some((assignment) => {
+      if (assignment.employeeId !== person.id || assignment.kind !== "WORK") return false;
+      const shift = shifts.get(assignment.shiftId ?? "");
+      if (!shift) return false;
+      const minutes = shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
+      return minutes !== effectiveWeeklyMinutes(person, assignment.date) / 5;
+    }));
 }
 
 export function coverageDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
+  if (absenceDays(previous) !== absenceDays(next)) return true;
+  if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
   if (previous.employees !== next.employees || previous.shifts !== next.shifts) return true;
   if (previous.demands === next.demands) return false;
   return previous.demands.length !== next.demands.length || previous.demands.some((before, index) => {

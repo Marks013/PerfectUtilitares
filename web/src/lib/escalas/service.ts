@@ -237,8 +237,8 @@ function requireSolverSetup(input: EscalaInput) {
   const timed = included.filter((person) => (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"));
   if (!included.length || (timed.length > 0 && (!input.shifts.length || timed.some((person) => !person.shiftIds.length)))) throw new EscalaError(422, "ESCALA_SETUP_REQUIRED", "Inclua pelo menos um colaborador e defina horários para quem tem jornada controlada. Pessoas sem horário fixo participam do rodízio de folgas sem turno fictício.");
   if (input.policy.normativeProfile === SUPERMARKET_CCT && input.policy.holidayRestAllowed) throw new EscalaError(422, "ESCALA_CCT_HOLIDAY_REST", "A CCT de supermercados veda compensar o DSR em feriado. Corrija a configuração antes de gerar.");
-  if (input.policy.normativeProfile === SUPERMARKET_CCT && (input.startDate < CCT_FROM || input.endDate > CCT_UNTIL)) throw new EscalaError(422, "ESCALA_CCT_VALIDITY", "O período está fora da vigência da CCT PR003084/2026. Selecione e confira o instrumento aplicável antes de gerar.");
-  if (input.policy.normativeProfile === SUPERMARKET_CCT && input.demands.some((demand) => demand.minimum > 0
+  if (!input.simulation && input.policy.normativeProfile === SUPERMARKET_CCT && (input.startDate < CCT_FROM || input.endDate > CCT_UNTIL)) throw new EscalaError(422, "ESCALA_CCT_VALIDITY", "O período está fora da vigência da CCT PR003084/2026. Selecione e confira o instrumento aplicável antes de gerar.");
+  if (!input.simulation && input.policy.normativeProfile === SUPERMARKET_CCT && input.demands.some((demand) => demand.minimum > 0
     && ((new Date(`${demand.date}T12:00:00Z`).getUTCDay() === 0 && !certificateAuthorizes(input.policy, demand.date, "sundays"))
       || (input.policy.holidayDates.includes(demand.date) && !certificateAuthorizes(input.policy, demand.date, "holidays"))))) throw new EscalaError(422, "ESCALA_CERTIFICATE_REQUIRED", "A cobertura exige domingo ou feriado sem certidão sindical conferida para esta filial. Confira a autorização antes de gerar.");
   const minutes = new Map(input.shifts.map((shift) => [shift.id, shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)]));
@@ -246,7 +246,7 @@ function requireSolverSetup(input: EscalaInput) {
     && person.shiftIds.every((shiftId) => (minutes.get(shiftId) ?? Infinity) > Math.min(input.policy.dailyLimitMinutes, dailyMinuteCeiling(date)))))) {
     throw new EscalaError(422, "ESCALA_DAILY_LIMIT", "Os horários excedem o limite diário na vigência selecionada. Reaplique a configuração em lote da equipe para propor horários compatíveis; um acordo não amplia o teto deste regime.");
   }
-  if (dateRange(input.startDate, input.endDate).some((date) => !collectiveExtensionAuthorized(input.policy, date)
+  if (!input.simulation && dateRange(input.startDate, input.endDate).some((date) => !collectiveExtensionAuthorized(input.policy, date)
     && timed.some((person) => person.activeFrom <= date && (!person.activeUntil || person.activeUntil >= date)
       && person.shiftIds.every((shiftId) => (minutes.get(shiftId) ?? Infinity) > 480)))) {
     throw new EscalaError(422, "ESCALA_DAILY_EXTENSION_REQUIRED", "A carga escolhida em 5×2 exige mais de 8 horas por dia. Confira a autorização de compensação da filial em Regras trabalhistas; a partir de 16/12/2026, informe também o acordo coletivo vigente. Para simular uma jornada de 8 horas, escolha expressamente 40 horas semanais e gere novamente. Nenhuma carga ou autorização foi alterada automaticamente.");
@@ -255,7 +255,7 @@ function requireSolverSetup(input: EscalaInput) {
     && !input.policy.authorizedHolidayDates.includes(date)
     && included.some((person) => date >= person.activeFrom && (!person.activeUntil || date <= person.activeUntil)
       && !input.assignments.some((item) => item.employeeId === person.id && item.date === date && item.kind === "ABSENCE")));
-  if (unsupportedHoliday) throw new EscalaError(422, "ESCALA_HOLIDAY_POLICY_REQUIRED", "Confirme o tratamento do feriado não trabalhado. Esta versão não possui estado próprio de feriado remunerado e não o converterá em DSR, ausência ou horas a repor. Registre a regra aplicável antes de gerar.");
+  if (unsupportedHoliday && !input.simulation) throw new EscalaError(422, "ESCALA_HOLIDAY_POLICY_REQUIRED", "Confirme o tratamento do feriado não trabalhado. Esta versão não possui estado próprio de feriado remunerado e não o converterá em DSR, ausência ou horas a repor. Registre a regra aplicável antes de gerar.");
 }
 
 export async function generateEscala(actor: EscalaActor, id: string, expectedRevision: number) {
@@ -267,7 +267,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
   const result = await solveEscala(contextual);
   const proposalInput = result.status === "FEASIBLE" || result.status === "OPTIMAL"
-    ? parseEscalaInput({ ...contextual, assignments: result.assignments }) : contextual;
+    ? parseEscalaInput({ ...contextual, needsRegeneration: false, assignments: result.assignments }) : contextual;
   preserveLockedAssignments(current.input, proposalInput);
   const latest = await getEscala(actor, id);
   assertRevision(latest, expectedRevision);

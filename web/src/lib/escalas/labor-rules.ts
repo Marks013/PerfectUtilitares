@@ -17,6 +17,11 @@ export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">
   return Math.min(person.weeklyHours, legalWeeklyHours(addDays(weekStart(start), 6))) as WeeklyHours;
 }
 
+/** Civil-minute target for a support scenario; a short reference is not a verified contract. */
+export function effectiveWeeklyMinutes(person: Pick<EscalaEmployee, "weeklyHours" | "simulationDailyMinutes">, start: string): number {
+  return Math.min(effectiveWeeklyHours(person, start) * 60, person.simulationDailyMinutes === undefined ? Infinity : person.simulationDailyMinutes * 5);
+}
+
 export function transitionWeeks(input: Pick<EscalaInput, "startDate" | "endDate">): string[] {
   return [TRANSITION_42_DATE, TRANSITION_40_DATE]
     .filter((day) => day >= input.startDate && day <= input.endDate && weekStart(day) !== day)

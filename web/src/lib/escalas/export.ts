@@ -1,7 +1,8 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import type { EscalaWorkspace } from "./types";
-import { weeklyTargets } from "./labor-rules";
+import { effectiveWeeklyMinutes, weeklyTargets } from "./labor-rules";
+import { buildEscalaDiagnostics, type CoverageGap } from "./diagnostics";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration } from "./presentation";
 
 function xml(value: unknown) {
@@ -34,9 +35,9 @@ function issueMessageParts(messages: string[]): string[] {
 
 const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="10"/><color rgb="FF142E2A"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="7"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF173F38"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF0F6F4"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCF0E4"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF1CE"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8E9EB"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><bottom style="hair"><color rgb="FFD8E4DF"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="7"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 
-function sheet(rows: (string | number)[][], widths: number[], grid = false) {
+function sheet(rows: (string | number)[][], widths: number[], grid = false, frozenColumns = grid ? 4 : 0) {
   const header = grid ? 4 : 1, last = `${column(widths.length - 1)}${rows.length}`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ${grid ? 'xSplit="4" ySplit="4" topLeftCell="E5" activePane="bottomRight"' : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="28"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="28"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
     const title = grid && index < 3;
     const lines = title ? 1 : Math.max(1, ...row.map((value, cell) => String(value).split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(1, widths[cell] - 2))), 0)));
     const height = index === header - 1 ? 36 : Math.min(409, Math.max(28, lines * 14 + 8));
@@ -49,6 +50,7 @@ function sheet(rows: (string | number)[][], widths: number[], grid = false) {
 
 export function exportEscalaXlsx(workspace: EscalaWorkspace): Uint8Array {
   const model = buildEscalaPresentation(workspace);
+  const diagnostics = buildEscalaDiagnostics(workspace.input, workspace.validation.issues);
   const main: (string | number)[][] = [[model.branch], [`Escala 5x2 | ${model.period} | Versão ${workspace.revision} | ${model.state}`], [model.legend],
     ["Setor", "Matrícula", "Colaborador", "Cargo", ...model.dates.map(escalaDateLabel)],
     ...model.people.map(({ employee, cells }) => [employee.sector, employee.registration, employee.name, employee.role, ...cells.map((cell) => cell.code)])];
@@ -59,24 +61,34 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace): Uint8Array {
   if (!model.issues.length) review.push(["Conferido", "Proposta", 0, "", "Sem ocorrências registradas nesta versão. A simulação não certifica a execução da jornada."]);
   const turns: (string | number)[][] = [["Código", "Turno", "Referência importada", "Horário original", "Sábado original", "Entrada", "Intervalo", "Saída", "Jornada diária", "Horário proposto", "Alterações em relação ao original"]];
   for (const shift of model.shifts) turns.push([shift.code, shift.name, shift.sources.map((source) => `${source.code} - ${source.description}`).join("\n") || "Não informada", shift.sources.map((source) => source.weekday).join("\n") || "Não informado", shift.sources.map((source) => source.saturday).join("\n") || "Não informado", shift.entry, shift.interval, shift.exit, shift.daily, shift.schedule, shift.sources.map((source) => source.changes).join("\n") || "Sem referência original para comparação"]);
-  const details: (string | number)[][] = [["Setor", "Matrícula", "Colaborador", "Carga semanal de referência", "Carga vigente nesta semana", "Dias de trabalho", "Folgas", "Horas planejadas no mês", "Limites da conferência"]];
+  const details: (string | number)[][] = [["Setor", "Matrícula", "Colaborador", "Carga semanal de referência", "Carga proposta nesta semana", "Dias de trabalho", "Folgas", "Horas planejadas no mês", "Limites da conferência"]];
   const visible = new Set(model.dates), shifts = new Map(workspace.input.shifts.map((shift) => [shift.id, shift]));
   for (const { employee } of model.people) {
     const untimed = employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING";
     const assignments = workspace.input.assignments.filter((assignment) => employee.planningEnabled !== false && assignment.employeeId === employee.id && visible.has(assignment.date) && assignment.date >= employee.activeFrom && (!employee.activeUntil || assignment.date <= employee.activeUntil));
-    const hours = [...new Set(weeklyTargets(workspace.input, employee).map((week) => week.hours))];
+    const hours = [...new Set(weeklyTargets(workspace.input, employee).map((week) => effectiveWeeklyMinutes(employee, week.start)))].map(minutes => minutes % 60 === 0 ? minutes / 60 : escalaDuration(minutes));
     const minutes = assignments.reduce((sum, assignment) => sum + (assignment.kind === "WORK" ? shifts.get(assignment.shiftId ?? "")?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0) ?? 0 : 0), 0);
-    details.push([employee.sector, employee.registration, employee.name, untimed ? "Não apurada" : employee.weeklyHours, untimed ? "Não apurada" : hours.length === 1 ? hours[0] : hours.join(" / "), assignments.filter((assignment) => assignment.kind === "WORK" || assignment.kind === "DUTY").length, assignments.filter((assignment) => assignment.kind === "OFF").length, untimed ? "Não apuradas" : escalaDuration(minutes), employee.planningEnabled === false ? employee.planningExclusionReason || "Não incluído" : untimed ? "Presença diária sem apuração de horas ou cobertura horária. Não certifica enquadramento jurídico." : "Proposta de jornada; confira ocorrências e horários originais."]);
+    details.push([employee.sector, employee.registration, employee.name, untimed ? "Não apurada" : employee.weeklyHours, untimed ? "Não apurada" : hours.length === 1 ? hours[0] : hours.join(" / "), assignments.filter((assignment) => assignment.kind === "WORK" || assignment.kind === "DUTY").length, assignments.filter((assignment) => assignment.kind === "OFF").length, untimed ? "Não apuradas" : escalaDuration(minutes), employee.planningEnabled === false ? employee.planningExclusionReason || "Não incluído" : untimed ? "Presença diária sem apuração de horas ou cobertura horária. Não certifica enquadramento jurídico." : employee.simulationDailyMinutes !== undefined ? "Referência curta preservada em simulação; carga contratual individual não confirmada. Confira a referência original antes da aplicação." : "Proposta de jornada; confira ocorrências e horários originais."]);
   }
-  const sheets = [{ name: "Escala", rows: main, widths: [24, 12, 42, 26, ...model.dates.map(() => 6)], grid: true }, { name: "Conferencia", rows: review, widths: [18, 26, 14, 40, 110], grid: false }, { name: "Turnos", rows: turns, widths: [10, 30, 40, 38, 38, 12, 28, 12, 16, 38, 80], grid: false }, { name: "Jornadas", rows: details, widths: [24, 14, 42, 22, 26, 18, 14, 24, 80], grid: false }];
+  const gaps: (string | number)[][] = [["Data", "Setor", "Função", "Início", "Fim", "Presentes", "Referência", "Faltam", "Base"],
+    ...diagnostics.coverage.map(gap => [gap.date, gap.sector, gap.role ?? "Todas as funções", escalaDuration(gap.start), escalaDuration(gap.end), gap.present, gap.minimum, gap.missing, gap.estimated ? "Estimada" : "Confirmada"])];
+  const sheets = [{ name: "Escala", frozenColumns: 4, rows: main, widths: [24, 12, 42, 26, ...model.dates.map(() => 6)], grid: true }, { name: "Conferencia", frozenColumns: 2, rows: review, widths: [18, 26, 14, 40, 110], grid: false }, { name: "Turnos", frozenColumns: 2, rows: turns, widths: [10, 30, 40, 38, 38, 12, 28, 12, 16, 38, 80], grid: false }, { name: "Jornadas", frozenColumns: 3, rows: details, widths: [24, 14, 42, 22, 26, 18, 14, 24, 80], grid: false }, { name: "Desfalques", frozenColumns: 3, rows: gaps, widths: [16, 26, 30, 12, 12, 14, 14, 12, 18], grid: false }];
+  const printDefinitions = sheets.map((entry, index) => {
+    const name = `'${entry.name}'`;
+    const rows = `${name}!$1:$${entry.grid ? 4 : 1}`;
+    const columns = `${name}!$A:$${column(entry.frozenColumns - 1)}`;
+    const area = `${name}!$A$1:$${column(entry.widths.length - 1)}$${entry.rows.length}`;
+    return '<definedName name="_xlnm.Print_Titles" localSheetId="' + index + '">' + rows + "," + columns + '</definedName>'
+      + '<definedName name="_xlnm.Print_Area" localSheetId="' + index + '">' + area + '</definedName>';
+  }).join("");
   const files: Record<string, Uint8Array> = {
     "[Content_Types].xml": strToU8(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${sheets.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`),
     "_rels/.rels": strToU8('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
-    "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((entry, index) => `<sheet name="${entry.name}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets><definedNames>${sheets.map((entry, index) => `<definedName name="_xlnm.Print_Titles" localSheetId="${index}">'${entry.name}'!$1:$${entry.grid ? 4 : 1}</definedName>`).join("")}</definedNames></workbook>`),
+    "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((entry, index) => `<sheet name="${entry.name}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets><definedNames>${printDefinitions}</definedNames></workbook>`),
     "xl/_rels/workbook.xml.rels": strToU8(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`),
     "xl/styles.xml": strToU8(XLSX_STYLES),
   };
-  for (const [index, entry] of sheets.entries()) files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheet(entry.rows, entry.widths, entry.grid));
+  for (const [index, entry] of sheets.entries()) files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheet(entry.rows, entry.widths, entry.grid, entry.frozenColumns));
   return zipSync(files, { level: 6 });
 }
 
@@ -106,6 +118,7 @@ function wrapText(text: string, width: number, font: PDFFont, size: number): str
 
 export async function exportEscalaPdf(workspace: EscalaWorkspace): Promise<Uint8Array> {
   const model = buildEscalaPresentation(workspace), document = await PDFDocument.create();
+  const diagnostics = buildEscalaDiagnostics(workspace.input, workspace.validation.issues);
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
   const width = model.dates.length > 21 ? 1191 : 842, height = model.dates.length > 21 ? 842 : 595;
   const margin = 26, labelWidth = 300, cellWidth = (width - 2 * margin - labelWidth) / Math.max(1, model.dates.length);
@@ -116,7 +129,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace): Promise<Uint8
     page = document.addPage([width, height]); y = height - margin;
     for (const line of wrapText(model.branch, width - 2 * margin, bold, 13)) { write(line, margin, y, 13, true); y -= 18; }
     write(`Escala 5x2 | ${model.period} | Versão ${workspace.revision} | ${model.state}`, margin, y, 10); y -= 17;
-    for (const line of wrapText(model.legend, width - 2 * margin, font, 8)) { write(line, margin, y, 8); y -= 12; }
+    if (grid) for (const line of wrapText(model.legend, width - 2 * margin, font, 8)) { write(line, margin, y, 8); y -= 12; }
     y -= 8;
     if (grid) {
       write("Matrícula / colaborador", margin, y, 9, true);
@@ -174,14 +187,61 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace): Promise<Uint8
     }
     y -= 5;
   }
-  section("Conferência da proposta");
-  if (!model.issues.length) paragraph("Sem ocorrências registradas nesta versão.");
-  for (const issue of model.issues) {
-    paragraph(`${issue.label} | ${issue.context} | ${issue.count} ${issue.count === 1 ? "ocorrência" : "ocorrências"}${issue.dates.length ? ` | ${issue.dates.length} data(s), de ${issue.dates.sort()[0]} a ${issue.dates.at(-1)}` : ""}`, 9, true);
-    paragraph(issue.messages[0]);
-    if (issue.messages.length > 1) paragraph(`${issue.messages.length} situações distintas neste grupo. Consulte os detalhes por dia na escala ou na aba Conferencia do Excel.`);
+  if (diagnostics.coverage.length) {
+    section("Desfalques de cobertura");
+    paragraph("Faltam = referência menos pessoas presentes na faixa. Estimada é uma meta automática, não um mínimo operacional confirmado.");
+    const grouped = new Map<string, { gap: CoverageGap; dates: string[] }>();
+    for (const gap of diagnostics.coverage) {
+      const key = JSON.stringify([gap.sector, gap.role ?? "", gap.start, gap.end, gap.present, gap.minimum, gap.missing, gap.estimated]);
+      const group = grouped.get(key) ?? { gap, dates: [] };
+      if (!group.dates.includes(gap.date)) group.dates.push(gap.date);
+      grouped.set(key, group);
+    }
+    const score = ({ gap, dates }: { gap: CoverageGap; dates: string[] }) => gap.missing * (gap.end - gap.start) * dates.length;
+    const ranked = [...grouped.values()].sort((left, right) => score(right) - score(left) || right.gap.missing - left.gap.missing
+      || left.gap.sector.localeCompare(right.gap.sector, "pt-BR") || (left.gap.role ?? "").localeCompare(right.gap.role ?? "", "pt-BR") || left.gap.start - right.gap.start);
+    const required = ranked.filter(group => !group.gap.estimated);
+    const estimated = ranked.filter(group => group.gap.estimated);
+    const priorities = [...required, ...estimated.slice(0, 24)];
+    if (estimated.length > 24) paragraph(
+      "Prioridades: 24 de " + estimated.length + " grupos estimados, por volume de pessoas-minuto em falta. "
+      + "Todos os " + required.length + " grupos de mínimo obrigatório estão incluídos. As " + diagnostics.coverage.length
+      + " faixas por dia estão integralmente na aba Desfalques do Excel."
+    );
+    const widths = [0.25, 0.25, 0.13, 0.09, 0.1, 0.08, 0.1].map(ratio => (width - 2 * margin) * ratio);
+    const headings = ["Setor / função", "Dia(s)", "Horário", "Presentes", "Referência", "Faltam", "Base"];
+    const tableHeader = () => {
+      if (y < 85) newPage(false);
+      let x = margin;
+      headings.forEach((heading, index) => { write(heading, x + 3, y, 8, true); x += widths[index]; });
+      y -= 17;
+    };
+    tableHeader();
+    for (const { gap, dates } of priorities) {
+      const cells = [gap.sector + (gap.role ? ` / ${gap.role}` : ""), dates.sort().map(date => `${date.slice(8)}/${date.slice(5, 7)}`).join(", "),
+        `${escalaDuration(gap.start)}-${escalaDuration(gap.end)}`, String(gap.present), String(gap.minimum), String(gap.missing), gap.estimated ? "Estimada" : "Confirmada"];
+      const lines = cells.map((cell, index) => wrapText(cell, widths[index] - 7, font, 8));
+      const rowHeight = Math.max(...lines.map(values => values.length)) * 11 + 8;
+      if (y - rowHeight < 45) { newPage(false); paragraph("Desfalques de cobertura (continuação)", 11, true); tableHeader(); }
+      page.drawRectangle({ x: margin, y: y - rowHeight + 12, width: width - 2 * margin, height: rowHeight, color: rgb(0.95, 0.97, 0.96) });
+      let x = margin;
+      lines.forEach((values, index) => { values.forEach((line, position) => { write(line, x + 3, y - position * 11, 8, index === 5); }); x += widths[index]; });
+      y -= rowHeight;
+    }
   }
-  paragraph("Simulação de planejamento: não certifica conformidade legal integral nem registros de ponto. SF representa presença diária, não disponibilidade ilimitada ou cobertura horária.", 8);
+  section("Conferência da proposta");
+  if (!diagnostics.notices.length && !diagnostics.coverage.length) paragraph("Sem ocorrências registradas no mês exibido.");
+  const employees = new Map(workspace.input.employees.map(employee => [employee.id, employee]));
+  for (const notice of diagnostics.notices) {
+    const severity = notice.severity === "ERROR" ? "Impedimento" : notice.severity === "PENDING" ? "Atenção" : "Informação";
+    const affected = notice.global ? (notice.employeeIds.length ? ` | ${notice.employeeIds.length} colaborador(es)` : "")
+      : notice.employeeIds.map(id => { const person = employees.get(id); return person ? ` | ${person.sector} / ${person.registration} - ${person.name}` : ""; }).join("");
+    paragraph(`${severity} | ${notice.label}${affected}${!notice.global && notice.count > 1 ? ` | ${notice.count} ocorrências` : ""}`, 9, true);
+    if (notice.dates.length) paragraph(`Dia(s): ${notice.dates.map(date => `${date.slice(8)}/${date.slice(5, 7)}`).join(", ")}`);
+    paragraph(notice.message);
+  }
+  if (diagnostics.technicalIssueCount) paragraph(`${diagnostics.technicalIssueCount}${diagnostics.technicalIssueCount === 1 ? " verificação entre períodos está detalhada" : " verificações entre períodos estão detalhadas"} na aba Conferencia do Excel.`);
+  paragraph("Proposta de apoio: não certifica conformidade legal nem registros de ponto.", 8);
   const pages = document.getPages();
   pages.forEach((item, index) => { item.drawText(`PerfectUtilitares | Filial ${safePdfText(workspace.input.branchCode, font)} | ${index + 1}/${pages.length}`, { x: margin, y: 16, size: 8, font }); });
   document.setTitle(`Escala - Filial ${workspace.input.branchCode} - ${model.dates[0] ?? workspace.input.startDate}`);

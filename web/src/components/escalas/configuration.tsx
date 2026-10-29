@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import styles from "./escalas.module.css";
 import type { EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
-import { changeBranchWeeklyHours, clock, HOURS, parseClock } from "./workspace-model";
+import { clock, HOURS, parseClock } from "./workspace-model";
 import { LaborPolicyFields } from "./labor-policy-fields";
 
 function DateList({ label, value, onChange }: { label: string; value: string[]; onChange: (dates: string[]) => void }) {
@@ -32,227 +33,52 @@ function DateList({ label, value, onChange }: { label: string; value: string[]; 
   );
 }
 
-export function Rules({
-  input,
-  disabled,
-  onChange,
-}: {
-  input: EscalaInput;
-  disabled: boolean;
-  onChange: (input: EscalaInput) => void;
-}) {
+export function Rules({ input, disabled, onChange }: { input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void }) {
   function change<K extends keyof EscalaPolicy>(field: K, value: EscalaPolicy[K]) {
     onChange({ ...input, policy: { ...input.policy, reviewed: false, [field]: value } });
   }
-  return (
-    <section className={panelClass} aria-labelledby="escala-rules-title">
-      <h2 id="escala-rules-title" className="text-lg font-bold">
-        Regras e vigências da filial
-      </h2>
-      <p className="text-sm text-[color:var(--app-muted)]">
-        O cadastro não certifica a vigência da convenção. Fonte, enquadramento e revisão precisam ser conferidos pelo
-        responsável antes da publicação.
-      </p>
-      <fieldset disabled={disabled} className="space-y-4">
-        <LaborPolicyFields input={input} onChange={onChange} />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field
-            label="Carga padrão para novos colaboradores"
-            hint="Carga contratual de referência. Alterar o padrão não modifica os contratos já cadastrados; a redução legal é aplicada por semana."
-          >
-            {(id) => (
-              <select
-                id={id}
-                value={input.defaultWeeklyHours}
-                onChange={(event) =>
-                  onChange(changeBranchWeeklyHours(input, Number(event.target.value) as WeeklyHours))
-                }
-                className={controlClass}
-              >
-                {HOURS.map((hours) => (
-                  <option key={hours} value={hours}>
-                    {hours} horas
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-          <Field label="Limite semanal da norma aplicável">
-            {(id) => (
-              <select
-                id={id}
-                value={input.policy.weeklyLimit}
-                onChange={(event) => change("weeklyLimit", Number(event.target.value) as WeeklyHours)}
-                className={controlClass}
-              >
-                {HOURS.map((hours) => (
-                  <option key={hours} value={hours}>
-                    {hours} horas
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-          <Field
-            label="Limite diário, em minutos"
-            hint="504 = 8h24; 528 = 8h48. A vigência legal pode impor teto menor, mesmo com valor superior cadastrado."
-          >
-            {(id) => (
-              <input
-                id={id}
-                type="number"
-                min={1}
-                max={600}
-                step={1}
-                value={input.policy.dailyLimitMinutes}
-                onChange={(event) => change("dailyLimitMinutes", Number(event.target.value))}
-                className={controlClass}
-              />
-            )}
-          </Field>
-          <div className="sm:col-span-2 lg:col-span-3">
-            <Field label="Fonte normativa e cláusulas aplicáveis">
-              {(id) => (
-                <input
-                  id={id}
-                  maxLength={1000}
-                  value={input.policy.source}
-                  onChange={(event) => change("source", event.target.value)}
-                  className={controlClass}
-                />
-              )}
-            </Field>
-          </div>
-          <Field label="Início da vigência">
-            {(id) => (
-              <input
-                id={id}
-                type="date"
-                value={input.policy.validFrom}
-                onChange={(event) => change("validFrom", event.target.value)}
-                className={controlClass}
-              />
-            )}
-          </Field>
-          <Field label="Fim da vigência">
-            {(id) => (
-              <input
-                id={id}
-                type="date"
-                value={input.policy.validUntil}
-                onChange={(event) => change("validUntil", event.target.value)}
-                className={controlClass}
-              />
-            )}
-          </Field>
-          <Field label="Responsável pela revisão">
-            {(id) => (
-              <input
-                id={id}
-                maxLength={160}
-                value={input.policy.reviewedBy}
-                onChange={(event) => change("reviewedBy", event.target.value)}
-                className={controlClass}
-              />
-            )}
-          </Field>
+  return <section className={panelClass} aria-labelledby="escala-rules-title">
+    <div><h2 id="escala-rules-title" className={styles.sectionTitle}>Premissas da simulação</h2><p className={styles.subtitle}>O algoritmo aplica os descansos e preserva as restrições informadas. Nada aqui precisa ser preenchido para gerar um rascunho.</p></div>
+    <dl className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
+      <div><dt className="text-[color:var(--app-muted)]">Regime</dt><dd className="font-semibold">5 dias + 2 folgas</dd></div>
+      <div><dt className="text-[color:var(--app-muted)]">Jornada escolhida</dt><dd className="font-semibold">{input.defaultWeeklyHours}h · {clock(input.defaultWeeklyHours * 12)} por dia</dd></div>
+      <div><dt className="text-[color:var(--app-muted)]">Entre jornadas</dt><dd className="font-semibold">{clock(input.policy.minInterShiftMinutes)} mínimas</dd></div>
+      <div><dt className="text-[color:var(--app-muted)]">Sequência máxima</dt><dd className="font-semibold">{input.policy.maxConsecutiveWorkDays} dias</dd></div>
+    </dl>
+    <fieldset disabled={disabled} className={styles.stackSmall}>
+      <details className="space-y-4 border-t border-[color:var(--app-border)] pt-2">
+        <summary className={styles.disclosureTrigger}>Datas e limites específicos da operação</summary>
+        <DateList label="Datas de fechamento obrigatório" value={input.policy.closedDates} onChange={(value) => change("closedDates", value)} />
+        <DateList label="Feriados do período" value={input.policy.holidayDates} onChange={(value) => change("holidayDates", value)} />
+        <div className={styles.formGrid}>
+          {([
+            ["minInterShiftMinutes", "Interjornada mínima (minutos)", 660, 1440],
+            ["minWeeklyRestMinutes", "Descanso semanal com interjornada (minutos)", 2100, 4320],
+            ["minMealMinutes", "Intervalo de refeição mínimo (minutos)", 30, 180],
+            ["maxConsecutiveWorkDays", "Máximo de dias de trabalho consecutivos", 1, 6],
+          ] as const).map(([field, label, minimum, maximum]) => <Field key={field} label={label}>{(id) => <input id={id} type="number" min={minimum} max={maximum} value={input.policy[field]} onChange={(event) => change(field, Number(event.target.value))} className={controlClass} />}</Field>)}
         </div>
-        <Check
-          label="Distribuição diária e compensação acima de oito horas autorizadas no regime aplicável"
-          checked={input.policy.compensationAuthorized}
-          onChange={(value) => change("compensationAuthorized", value)}
-        />
-        <Check
-          label="Conferi a fonte, a categoria, o município e a vigência para todo o período"
-          checked={input.policy.reviewed}
-          onChange={(value) => change("reviewed", value)}
-        />
-        <details className="space-y-4 border-t border-[color:var(--app-border)] pt-3">
-          <summary className="min-h-11 cursor-pointer py-2 font-semibold">
-            Descansos, feriados e parâmetros avançados
-          </summary>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Interjornada mínima (minutos)">
-              {(id) => (
-                <input
-                  id={id}
-                  type="number"
-                  min={660}
-                  max={1440}
-                  value={input.policy.minInterShiftMinutes}
-                  onChange={(event) => change("minInterShiftMinutes", Number(event.target.value))}
-                  className={controlClass}
-                />
-              )}
-            </Field>
-            <Field label="Descanso semanal com interjornada (minutos)">
-              {(id) => (
-                <input
-                  id={id}
-                  type="number"
-                  min={2100}
-                  max={4320}
-                  value={input.policy.minWeeklyRestMinutes}
-                  onChange={(event) => change("minWeeklyRestMinutes", Number(event.target.value))}
-                  className={controlClass}
-                />
-              )}
-            </Field>
-            <Field label="Intervalo de refeição mínimo (minutos)">
-              {(id) => (
-                <input
-                  id={id}
-                  type="number"
-                  min={30}
-                  max={180}
-                  value={input.policy.minMealMinutes}
-                  onChange={(event) => change("minMealMinutes", Number(event.target.value))}
-                  className={controlClass}
-                />
-              )}
-            </Field>
-            <Field label="Máximo de dias de trabalho consecutivos" hint="O sétimo dia consecutivo nunca é permitido.">
-              {(id) => (
-                <input
-                  id={id}
-                  type="number"
-                  min={1}
-                  max={6}
-                  value={input.policy.maxConsecutiveWorkDays}
-                  onChange={(event) => change("maxConsecutiveWorkDays", Number(event.target.value))}
-                  className={controlClass}
-                />
-              )}
-            </Field>
-          </div>
-          <DateList
-            label="Datas de fechamento obrigatório"
-            value={input.policy.closedDates}
-            onChange={(value) => change("closedDates", value)}
-          />
-          <DateList
-            label="Feriados do período"
-            value={input.policy.holidayDates}
-            onChange={(value) => change("holidayDates", value)}
-          />
-          <DateList
-            label="Feriados com trabalho expressamente autorizado"
-            value={input.policy.authorizedHolidayDates}
-            onChange={(value) => change("authorizedHolidayDates", value)}
-          />
-          <Check
-            label="Norma aplicável permite considerar o feriado como folga de rodízio"
-            checked={input.policy.holidayRestAllowed}
-            onChange={(value) => change("holidayRestAllowed", value)}
-          />
-          <p className="text-sm text-[color:var(--app-muted)]">
-            Turnos noturnos podem ser preparados em rascunho. A publicação permanece pendente enquanto o cômputo
-            específico da hora noturna não estiver implantado e conferido.
-          </p>
-        </details>
-      </fieldset>
-    </section>
-  );
+      </details>
+      <details className="space-y-4 border-t border-[color:var(--app-border)] pt-2">
+        <summary className={styles.disclosureTrigger}>Revisão documental para publicação interna</summary>
+        <p className={styles.muted}>Opcional para simular e exportar rascunhos. Registre somente informações reais já conferidas para a filial; uma proposta não comprova autorização.</p>
+        <LaborPolicyFields input={input} onChange={onChange} />
+        <Field label="Fonte normativa e cláusulas aplicáveis">{(id) => <input id={id} maxLength={1000} value={input.policy.source} onChange={(event) => change("source", event.target.value)} className={controlClass} />}</Field>
+        <div className={styles.formGrid}>
+          <Field label="Início da vigência">{(id) => <input id={id} type="date" value={input.policy.validFrom} onChange={(event) => change("validFrom", event.target.value)} className={controlClass} />}</Field>
+          <Field label="Fim da vigência">{(id) => <input id={id} type="date" value={input.policy.validUntil} onChange={(event) => change("validUntil", event.target.value)} className={controlClass} />}</Field>
+          <Field label="Responsável pela revisão">{(id) => <input id={id} maxLength={160} value={input.policy.reviewedBy} onChange={(event) => change("reviewedBy", event.target.value)} className={controlClass} />}</Field>
+          <Field label="Limite semanal da norma aplicável" hint="Limite normativo, não a jornada selecionada para o cenário.">{(id) => <select id={id} value={input.policy.weeklyLimit} onChange={(event) => change("weeklyLimit", Number(event.target.value) as WeeklyHours)} className={controlClass}>{HOURS.map((hours) => <option key={hours} value={hours}>{hours} horas</option>)}</select>}</Field>
+          <Field label="Limite diário, em minutos" hint="Um teto informado não constitui autorização de compensação.">{(id) => <input id={id} type="number" min={1} max={600} value={input.policy.dailyLimitMinutes} onChange={(event) => change("dailyLimitMinutes", Number(event.target.value))} className={controlClass} />}</Field>
+        </div>
+        <Check label="Distribuição diária e compensação acima de oito horas autorizadas no regime aplicável" checked={input.policy.compensationAuthorized} onChange={(value) => change("compensationAuthorized", value)} />
+        <Check label="Conferi a fonte, a categoria, o município e a vigência para todo o período" checked={input.policy.reviewed} onChange={(value) => change("reviewed", value)} />
+        <DateList label="Feriados com trabalho expressamente autorizado" value={input.policy.authorizedHolidayDates} onChange={(value) => change("authorizedHolidayDates", value)} />
+        <Check label="Norma aplicável permite considerar o feriado como folga de rodízio" checked={input.policy.holidayRestAllowed} onChange={(value) => change("holidayRestAllowed", value)} />
+        <p className={styles.muted}>Turnos noturnos participam do rascunho. O cômputo específico da hora noturna continua identificado como limitação de conferência.</p>
+      </details>
+    </fieldset>
+  </section>;
 }
 
 type SegmentDraft = {
@@ -324,7 +150,7 @@ function ShiftEditor({
           />
         )}
       </Field>
-      <p className="text-sm text-[color:var(--app-muted)]">
+      <p className={styles.muted}>
         Use HH:MM. Após a meia-noite, continue a contagem: 25:00 significa 01:00 do dia seguinte. Refeições e pausas não
         cobrem atendimento.
       </p>
@@ -384,11 +210,11 @@ function ShiftEditor({
         </div>
       ))}
       {error && (
-        <p role="alert" className="text-sm text-[color:var(--app-coral)]">
+        <p role="alert" className={styles.errorText}>
           {error}
         </p>
       )}
-      <div className="flex flex-wrap gap-3">
+      <div className={styles.actions}>
         <button
           type="button"
           className={buttonClass}
@@ -423,7 +249,7 @@ export function Shifts({
   return (
     <section className={panelClass} aria-labelledby="escala-shifts-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="escala-shifts-title" className="text-lg font-bold">
+        <h2 id="escala-shifts-title" className={styles.sectionTitle}>
           Horários autorizados
         </h2>
         <button
@@ -445,7 +271,7 @@ export function Shifts({
           Adicionar turno
         </button>
       </div>
-      <p className="text-sm text-[color:var(--app-muted)]">
+      <p className={styles.muted}>
         40h em cinco dias = 8h00; 42h = 8h24; 44h = 8h48. Cadastre horários compatíveis com cada vigência; a autorização
         de 8h24 não continua após 15/12/2027 neste regime.
       </p>

@@ -3,6 +3,10 @@ import { escalaInputSchema } from "@/lib/escalas/schema";
 import type { EscalaEmployee, EscalaShift } from "@/lib/escalas/types";
 import {
   addDate,
+  changeBranchWeeklyHours,
+  coverageDefinitionChanged,
+  scenarioDefinitionChanged,
+  hasOutdatedResults,
   clock,
   datesBetween,
   isCurrentResponse,
@@ -28,6 +32,39 @@ function employee(registration: string): EscalaEmployee {
 }
 
 describe("Escalas workspace model", () => {
+  it("uses one scenario journey and discards stale estimates without changing original references or explicit constraints", () => {
+    const input = newInput("02", "Centro", "2026-11", 44);
+    input.employees = [
+      { ...employee("one"), weeklyHours: 44, weeklyHoursMode: "BRANCH", sourceSchedule: { report: "FPRE136", code: "old", description: "Original", weekday: "08:00-12:00 / 13:00-17:48", saturday: "08:00-12:00" } },
+      { ...employee("two"), weeklyHours: 40, weeklyHoursMode: "INDIVIDUAL" },
+    ];
+    input.demands = [
+      { id: "estimate", sector: "Reposição", date: "2026-11-02", start: 480, end: 540, minimum: 2, estimated: true },
+      { id: "confirmed", sector: "Reposição", date: "2026-11-02", start: 540, end: 600, minimum: 1 },
+    ];
+    input.assignments = [{ employeeId: input.employees[0].id, date: "2026-11-02", kind: "OFF", locked: true }];
+    const next = changeBranchWeeklyHours(input, 42);
+    expect(next.defaultWeeklyHours).toBe(42);
+    expect(next.employees.map(person => person.weeklyHours)).toEqual([42, 40]);
+    expect(next.demands).toEqual([input.demands[1]]);
+    expect(next.employees[0].sourceSchedule).toEqual(input.employees[0].sourceSchedule);
+    expect(next.assignments).toEqual(input.assignments);
+    expect(input.defaultWeeklyHours).toBe(44);
+  });
+
+  it("invalidates planning outputs after hours, team or constraints change but not after manual day editing", () => {
+    const input = newInput("02", "Centro", "2026-11", 44);
+    expect(scenarioDefinitionChanged(input, structuredClone(input))).toBe(false);
+    expect(scenarioDefinitionChanged(input, { ...input, defaultWeeklyHours: 42 })).toBe(true);
+    expect(coverageDefinitionChanged(input, { ...input, defaultWeeklyHours: 42 })).toBe(true);
+    expect(scenarioDefinitionChanged(input, { ...input, policy: { ...input.policy, closedDates: ["2026-11-03"] } })).toBe(true);
+    expect(scenarioDefinitionChanged(input, { ...input, assignments: [{ employeeId: "one", date: "2026-11-02", kind: "OFF" }] })).toBe(false);
+    const previous = { ...input, defaultWeeklyHours: 42 as const, employees: [{ ...employee("one"), id: "one", weeklyHours: 42 as const }], assignments: [{ employeeId: "one", date: "2026-11-02", kind: "WORK" as const, shiftId: input.shifts[0].id }] };
+    const validation = { valid: false, readyToPublish: false, summaries: [], minimumCoverageMargin: null, issues: [{ code: "WEEKLY_MINUTES", severity: "ERROR" as const, message: "Old target" }] };
+    expect(hasOutdatedResults(previous, validation)).toBe(true);
+    expect(hasOutdatedResults({ ...previous, defaultWeeklyHours: 44, employees: [{ ...previous.employees[0], weeklyHours: 44 }] }, validation)).toBe(false);
+    expect(hasOutdatedResults(input, null)).toBe(false);
+  });
   it.each([
     [40, 480],
     [42, 504],
@@ -276,4 +313,24 @@ describe("Escalas workspace model", () => {
     expect(isCurrentResponse(new AbortController().signal, currentVersion, currentVersion)).toBe(true);
     expect(isCurrentResponse(new AbortController().signal, responseVersion, currentVersion)).toBe(false);
   });
+  it("invalidates the scenario and coverage when absence days change, but not when only work/off cells change", () => {
+    const input = newInput("02", "Centro", "2026-11", 42);
+    const manual = { ...input, assignments: [{ employeeId: "a", date: "2026-11-04", kind: "OFF" as const }] };
+    expect(scenarioDefinitionChanged(input, manual)).toBe(false);
+    expect(coverageDefinitionChanged(input, manual)).toBe(false);
+    const absent = { ...manual, assignments: [{ employeeId: "a", date: "2026-11-04", kind: "ABSENCE" as const }] };
+    expect(scenarioDefinitionChanged(manual, absent)).toBe(true);
+    expect(coverageDefinitionChanged(manual, absent)).toBe(true);
+    expect(scenarioDefinitionChanged(absent, { ...absent, assignments: [...absent.assignments].reverse() })).toBe(false);
+    expect(coverageDefinitionChanged(absent, { ...absent, assignments: absent.assignments.map((item) => ({ ...item, locked: true })) })).toBe(false);
+  });
+
+  it("retains an explicit regeneration requirement after JSON save and reload without weekly errors", () => {
+    const input = { ...newInput("02", "Centro", "2026-11", 42), needsRegeneration: true };
+    const reopened = JSON.parse(JSON.stringify(input));
+    expect(escalaInputSchema.safeParse(reopened).success).toBe(true);
+    expect(hasOutdatedResults(reopened, null)).toBe(true);
+    expect(hasOutdatedResults({ ...reopened, needsRegeneration: false }, null)).toBe(false);
+  });
+
 });

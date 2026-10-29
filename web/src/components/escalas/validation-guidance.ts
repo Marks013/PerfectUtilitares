@@ -4,6 +4,7 @@ export type ReviewTarget = "generate" | "rules" | "coverage" | "team" | "roster"
 type Guidance = { title: string; instruction: string; target?: ReviewTarget; action?: string };
 
 const GUIDANCE: Record<string, Guidance> = {
+  SCENARIO_OUTDATED: { title: "Atualizar a proposta", instruction: "O cenário mudou. Gere e aplique uma nova proposta para atualizar horários, folgas e cobertura, depois salve a revisão.", target: "generate", action: "Gerar proposta atualizada" },
   DAY_PENDING: { title: "Folgas ainda não geradas", instruction: "Peça uma sugestão em massa. O sistema distribui trabalho e folgas para toda a equipe incluída, preservando as decisões bloqueadas.", target: "generate", action: "Sugerir para toda a filial" },
   POLICY_PENDING: { title: "Confirmar as regras da filial", instruction: "Você pode gerar e conferir o rascunho. Antes de publicar, informe a norma aplicável e o responsável, e confirme a revisão uma vez para a filial.", target: "rules", action: "Conferir regras da filial" },
   POLICY_VALIDITY: { title: "Ajustar a vigência da norma", instruction: "A norma informada precisa abranger todo o período da escala.", target: "rules", action: "Conferir vigência" },

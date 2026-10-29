@@ -23,6 +23,8 @@ export type EscalaEmployee = {
   weeklyHours: WeeklyHours;
   /** FPRE136 has no contract-hours field; a branch reference remains adjustable until individually overridden. */
   weeklyHoursMode?: "BRANCH" | "INDIVIDUAL";
+  /** Short imported clock retained for a draft; never evidence of a contractual weekly workload. */
+  simulationDailyMinutes?: number;
   shiftIds: string[];
   /** Empty means employment dates are unknown; it never represents a new admission. */
   activeFrom: string;
@@ -91,6 +93,10 @@ export type EscalaPolicy = {
 };
 export type EscalaInput = {
   schemaVersion: 1;
+  /** Support scenario: missing administrative evidence remains a publication pending, not approval. */
+  simulation?: boolean;
+  /** UI scenario changed after a roster existed; persists across saved revisions and reloads. */
+  needsRegeneration?: boolean;
   branchCode: string;
   branchName: string;
   startDate: string;

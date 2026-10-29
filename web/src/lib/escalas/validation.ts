@@ -15,6 +15,7 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   };
   const input = parsed.data;
   const issues: EscalaIssue[] = [];
+  if (input.needsRegeneration) issues.push({ code: "SCENARIO_OUTDATED", severity: "PENDING", message: "O cenário foi alterado após a geração da grade. Gere e aplique uma nova proposta antes de exportar ou aprovar." });
   if (!input.employees.length) issues.push({ code: "EMPLOYEES_PENDING", severity: "PENDING", message: "Cadastre os colaboradores da filial." });
   else if (!input.employees.some((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate))) issues.push({ code: "ACTIVE_EMPLOYEES_PENDING", severity: "PENDING", message: "Nenhum colaborador está incluído na geração neste período." });
   if (!input.shifts.length && input.employees.some((person) => person.planningEnabled !== false && (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"))) issues.push({ code: "SHIFTS_PENDING", severity: "PENDING", message: "Cadastre os horários permitidos antes de gerar a escala." });
@@ -55,6 +56,14 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   const boundaryReservations = fixedBoundaryReservations(input);
   const results = sortEmployees(input.employees).map((person) => validateEmployee(input, person, journeys, boundaryReservations));
   issues.push(...results.flatMap((result) => result.issues));
+  if (input.simulation) {
+    const evidencePending = new Set(["COMPENSATION_REQUIRED", "COLLECTIVE_AGREEMENT_REQUIRED", "HOLIDAY_WORK", "CCT_SUNDAY_CERTIFICATE", "CCT_HOLIDAY_CERTIFICATE", "CCT_NIGHT_CERTIFICATE"]);
+    for (const issue of issues) if (evidencePending.has(issue.code) && issue.severity === "ERROR") issue.severity = "PENDING";
+  }
+  for (const person of input.employees) if (person.planningEnabled !== false && person.simulationDailyMinutes !== undefined) issues.push({
+    code: "SHORT_REFERENCE_PRESERVED", severity: "PENDING", employeeId: person.id,
+    message: "Referência curta preservada na simulação, sem ampliação automática. A carga contratual individual não consta no arquivo e precisa de conferência antes da aplicação.",
+  });
   const coverage = validateCoverage(input, journeys);
   issues.push(...coverage.issues);
   return {

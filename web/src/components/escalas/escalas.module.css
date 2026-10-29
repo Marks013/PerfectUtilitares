@@ -1,0 +1,102 @@
+@layer components {
+/* Escalas: shared controls, workspace, roster and feedback. Reuses the application theme. */
+.workspace { min-inline-size: 0; color: var(--app-fg); display: grid; gap: 1.25rem; }
+.stack { min-inline-size: 0; display: grid; gap: 1.25rem; }
+.stackSmall { min-inline-size: 0; display: grid; gap: 1rem; }
+.panel { min-inline-size: 0; display: grid; gap: 1rem; padding: 1rem; border: 1px solid var(--app-border); border-radius: 1rem; background: var(--app-surface); }
+.header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.brand { min-inline-size: 0; display: flex; align-items: center; gap: .75rem; }
+.brandIcon { inline-size: 2rem; block-size: 2rem; flex: 0 0 auto; color: var(--app-action-blue); }
+.title { margin: 0; font-size: clamp(1.375rem, 2vw, 1.75rem); font-weight: 750; line-height: 1.2; text-wrap: balance; }
+.workflowTag { max-inline-size: 100%; border: 1px solid var(--app-border); border-radius: .75rem; padding: .5rem .75rem; background: var(--app-surface); font-size: .8125rem; line-height: 1.5; color: var(--app-muted); }
+.muted { color: var(--app-muted); font-size: .875rem; line-height: 1.55; overflow-wrap: anywhere; }
+.subtitle { margin-block-start: .25rem; color: var(--app-muted); font-size: .875rem; line-height: 1.55; }
+.sectionTitle { min-inline-size: 0; margin: 0; font-size: 1.125rem; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.scenario { border-color: var(--app-action-blue); }
+.contextBar { min-inline-size: 0; display: flex; flex-direction: column; gap: 1rem; padding-block-start: 1rem; border-block-start: 1px solid var(--app-border); }
+.journeyField { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+.actions { min-inline-size: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.mainActions { min-inline-size: 0; display: flex; flex-wrap: wrap; gap: .5rem; }
+.statusTag { display: inline-flex; max-inline-size: 100%; align-items: center; gap: .375rem; border-radius: .5rem; padding: .375rem .625rem; background: var(--app-input); color: var(--app-muted); font-size: .8125rem; font-weight: 650; line-height: 1.4; }
+.navigation { min-inline-size: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .375rem; border-block-end: 1px solid var(--app-border); padding-block-end: .75rem; }
+.navigation .areaTab { min-inline-size: 0; padding-inline: .375rem; overflow-wrap: anywhere; }
+.areaTab[aria-pressed="true"] { background: var(--app-input); border-color: var(--app-action-blue); box-shadow: inset 0 -2px 0 var(--app-action-blue); color: var(--app-fg); }
+.disclosure { min-inline-size: 0; border-block-start: 1px solid var(--app-border); padding-block-start: .5rem; }
+.disclosureTrigger { min-block-size: 2.75rem; padding-block: .625rem; cursor: pointer; font-size: .875rem; font-weight: 650; line-height: 1.5; }
+.disclosureBody { padding-block-start: .75rem; }
+.formGrid { display: grid; min-inline-size: 0; gap: 1rem; }
+.field { min-inline-size: 0; display: grid; gap: .375rem; }
+.fieldLabel { display: block; font-size: .875rem; font-weight: 650; line-height: 1.4; }
+.fieldHint { color: var(--app-muted); font-size: .8125rem; line-height: 1.55; }
+.control { min-inline-size: 0; min-block-size: 2.75rem; inline-size: 100%; border: 1px solid var(--app-border-strong); border-radius: .75rem; padding: .625rem .75rem; background: var(--app-input); color: var(--app-fg); font-size: 1rem; line-height: 1.4; }
+.button { min-inline-size: 0; min-block-size: 2.75rem; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; border: 1px solid var(--app-border-strong); border-radius: .75rem; padding: .625rem 1rem; background: transparent; color: var(--app-fg); font-size: .875rem; font-weight: 650; line-height: 1.4; text-align: center; text-decoration: none; cursor: pointer; touch-action: manipulation; transition: background-color 140ms ease, border-color 140ms ease; }
+.button:hover:not(:disabled) { background: var(--app-input); border-color: var(--app-action-blue); }
+.primaryAction { background: var(--app-action-blue); border-color: var(--app-action-blue); color: var(--app-action-text); }
+.primaryAction:hover:not(:disabled) { background: var(--app-action-blue-hover); border-color: var(--app-action-blue-hover); }
+.control:disabled, .button:disabled { cursor: not-allowed; opacity: .5; }
+.check { display: flex; align-items: center; gap: .75rem; min-block-size: 2.75rem; cursor: pointer; font-size: .875rem; line-height: 1.5; }
+.checkInput { inline-size: 1.25rem; block-size: 1.25rem; flex: 0 0 auto; accent-color: var(--app-action-blue); }
+.errorText { color: var(--app-danger-text); font-size: .875rem; line-height: 1.5; }
+.emptyState { padding-block: 2.5rem; text-align: center; }
+.roster { min-inline-size: 0; }
+.rosterScroll { max-inline-size: 100%; max-block-size: 70vh; max-block-size: min(70dvh, 44rem); overflow: auto; border: 1px solid var(--app-border); border-radius: .75rem; scroll-padding: 4rem 1rem 1rem 14.5rem; overscroll-behavior-inline: contain; }
+.rosterTable { inline-size: 100%; border-collapse: separate; border-spacing: 0; text-align: left; font-size: .875rem; }
+.tableHead { position: sticky; inset-block-start: 0; z-index: 20; }
+.headerRow { background: var(--app-input); }
+.nameHeading { position: sticky; inset-inline-start: 0; z-index: 30; min-inline-size: 14rem; max-inline-size: 18rem; padding: .75rem; background: var(--app-input); }
+.nameCell { position: sticky; inset-inline-start: 0; z-index: 10; min-inline-size: 14rem; max-inline-size: 18rem; padding: .75rem; border-block-end: 1px solid var(--app-border); background: var(--app-surface); font-weight: 400; vertical-align: top; }
+.dayHeading { min-inline-size: 3.5rem; padding: .75rem .25rem; background: var(--app-input); text-align: center; }
+.sectorHeading { padding: .625rem .75rem; border-block: 1px solid var(--app-border); background: var(--app-input); font-weight: 700; }
+.sectorName { position: sticky; inset-inline-start: .75rem; }
+.dayCell { border-block-end: 1px solid var(--app-border); padding: .1875rem; vertical-align: top; }
+.cellButton { min-inline-size: 2.75rem; min-block-size: 2.75rem; inline-size: 100%; border: 1px solid var(--app-border); border-radius: .5rem; padding: .625rem .25rem; background: var(--app-surface); color: var(--app-fg); font-size: .8125rem; line-height: 1.4; text-align: center; cursor: pointer; touch-action: manipulation; }
+.cellButton:hover:not(:disabled) { border-color: var(--app-action-blue); background: var(--app-input); }
+.gapCell { border-color: var(--app-danger-border); }
+.offCell { background: var(--app-success-soft); color: var(--app-success-text); font-weight: 700; }
+.inactiveCell { display: block; padding: .75rem .25rem; color: var(--app-muted); font-size: .8125rem; text-align: center; }
+.coverageLink { min-block-size: 2.75rem; display: flex; align-items: center; justify-content: center; border-block-end: 2px solid var(--app-danger-border); color: var(--app-fg); font-weight: 700; }
+.editor { min-inline-size: 0; display: grid; gap: 1rem; border: 1px solid var(--app-action-blue); border-radius: .75rem; padding: 1rem; }
+.editorImpact { display: grid; gap: .75rem; border-block-start: 1px solid var(--app-border); padding-block-start: 1rem; }
+.editorIssues { max-block-size: 14rem; overflow: auto; display: grid; gap: .5rem; padding-inline-start: 1.25rem; list-style: disc; font-size: .875rem; line-height: 1.55; }
+.feedback { min-inline-size: 0; display: grid; gap: .75rem; border: 1px solid var(--app-border); border-radius: .75rem; padding: 1rem; background: var(--app-surface); color: var(--app-fg); }
+.feedbackHeader { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-weight: 700; line-height: 1.4; }
+.feedbackText { min-inline-size: 0; color: var(--app-muted); font-size: .875rem; line-height: 1.55; overflow-wrap: anywhere; }
+.feedbackActions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.feedbackError { border-color: var(--app-danger-border); background: var(--app-danger-soft); }
+.feedbackSuccess { border-color: var(--app-success-border); background: var(--app-success-soft); }
+.feedback[data-tone="warning"] { border-color: var(--app-warning-border); background: var(--app-warning-soft); }
+.progressTrack { inline-size: 100%; block-size: .375rem; overflow: hidden; border-radius: 999px; background: var(--app-border); }
+.progressFill { display: block; inline-size: 35%; block-size: 100%; border-radius: inherit; background: var(--app-action-blue); animation: progress-slide 1.35s ease-in-out infinite; }
+@keyframes progress-slide { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
+@media (min-width: 40rem) {
+  .panel { padding: 1.25rem; }
+  .formGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .contextBar { flex-direction: row; flex-wrap: wrap; align-items: flex-end; }
+  .journeyField { inline-size: 14rem; }
+  .mainActions { margin-inline-start: auto; }
+}
+@media (min-width: 64rem) { .formGridWide { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 39.999rem) {
+  .workflowTag { inline-size: 100%; }
+  .mainActions > .button { flex: 1 1 10rem; }
+  .nameHeading, .nameCell { min-inline-size: 12rem; max-inline-size: 14rem; }
+  .rosterScroll { scroll-padding-inline-start: 12.5rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+  .progressFill { animation: none; transform: translateX(90%); opacity: .7; }
+}
+}
+
+/* Foundation resets font and focus outside layers; these scoped rules preserve their accessible intent. */
+.control:focus-visible, .button:focus-visible, .checkInput:focus-visible, .disclosureTrigger:focus-visible, .workspace summary:focus-visible { outline: 2px solid var(--app-action-blue); outline-offset: 3px; }
+.rosterScroll:focus-visible { outline: 2px solid var(--app-action-blue); outline-offset: 3px; }
+.cellButton:focus-visible { outline: 2px solid var(--app-action-blue); outline-offset: -3px; }
+.coverageLink:focus-visible { outline: 2px solid var(--app-action-blue); outline-offset: -3px; }
+.feedbackFocus:focus { outline: 2px solid var(--app-action-blue); outline-offset: 3px; border-radius: .75rem; }
+.cellButton:disabled { cursor: default; }
+.control { font-size: 1rem; line-height: 1.4; }
+.button { font-size: .875rem; font-weight: 650; line-height: 1.4; }
+.cellButton { font-size: .8125rem; line-height: 1.4; }
+.offCell { font-weight: 700; }
+.primaryAction { color: var(--app-action-text); }
