@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 test("monthly planning imports, previews real coverage loss, edits, undoes, swaps and safely deletes with persistence", async ({ page }) => {
   const suffix = Date.now().toString(36);
   const branch = `E2E-${suffix}`;
-  await page.goto("/escalas");
+  await page.goto("/escala");
   await page.getByText("Novo planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill(branch);
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Filial sintética E2E");
@@ -36,7 +36,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
   const savingImport = page.waitForResponse((response) => response.request().method() === "POST"
     && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
   const importedResponse = await savingImport;
   expect(importedResponse.status()).toBe(200);
   const imported: EscalaWorkspace = await importedResponse.json();
@@ -81,6 +81,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   await expect(roster.getByRole("link", { name: /02\/11\/2026:.*cobertura/ })).toBeVisible();
   await roster.getByRole("button", { name: "Desfazer última alteração", exact: true }).click();
   await expect(anaCell.locator("span").first()).toHaveText(originalCode ?? "");
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
 
   await anaCell.click();
   await page.getByText("Trocar este dia com outro colaborador ou outra data", { exact: true }).click();
@@ -92,7 +93,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   await expect(brunoCell.locator("span").first()).toHaveText(originalCode ?? "");
   const savingSwap = page.waitForResponse((response) => response.request().method() === "POST"
     && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await savingSwap).status()).toBe(200);
   const persistedResponse = await page.request.get(`/api/escalas?id=${imported.id}`);
   expect(persistedResponse.status()).toBe(200);
@@ -121,7 +122,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
 });
 
 test("one journey controls a full FPRE136 simulation, stale outputs and actual PDF/XLSX downloads across screen sizes", async ({ page }) => {
-  await page.goto("/escalas");
+  await page.goto("/escala");
   await page.getByText("Novo planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Supermercado sintético E2E");
@@ -172,10 +173,12 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   await expect(page.getByRole("heading", { name: "Proposta pronta para revisão", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
   const saving = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await saving).status()).toBe(200);
   await expect(page.getByRole("region", { name: "Grade mensal da filial", exact: true })).toBeVisible();
   for (const format of ["PDF", "XLSX"] as const) {
+    await page.getByRole("button", { name: `Gerar ${format}`, exact: true }).click();
+    await expect(page.getByRole("link", { name: `Baixar ${format}`, exact: true })).toBeVisible();
     const downloading = page.waitForEvent("download");
     await page.getByRole("link", { name: `Baixar ${format}`, exact: true }).click();
     const download = await downloading;
@@ -187,12 +190,12 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
     const bytes = Buffer.concat(chunks);
     expect(bytes.length).toBeGreaterThan(500);
     expect(bytes.subarray(0, format === "PDF" ? 4 : 2).toString()).toBe(format === "PDF" ? "%PDF" : "PK");
-    await expect(page.getByText(`${format} preparado. Download iniciado.`, { exact: true })).toBeVisible();
+    await expect(page.getByRole("article", { name: `Arquivo ${format}`, exact: true }).getByText("Pronto para baixar", { exact: true })).toBeVisible();
   }
   await journey.selectOption("40");
   await expect(page.getByText("Cenário alterado.", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Baixar PDF", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
   for (const width of [375, 768, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

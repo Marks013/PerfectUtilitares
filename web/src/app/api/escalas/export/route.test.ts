@@ -9,6 +9,7 @@ import { EscalaError } from "@/lib/escalas/access";
 import { GET, POST } from "./route";
 
 const mocks = vi.hoisted(() => ({ session: null as AppSession | null, get: vi.fn() }));
+vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: vi.fn(async () => null) }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/escalas/service", () => ({ getEscala: mocks.get }));
 function workspace(): EscalaWorkspace {
@@ -39,12 +40,13 @@ describe("/api/escalas/export", () => {
     const rows = await readSheet(bytes);
     expect(rows[3].slice(0, 4)).toEqual(["Setor", "Matrícula", "Colaborador", "Cargo"]);
     expect(rows[3]).toHaveLength(12);
-    expect(rows[4].slice(0, 4)).toEqual(["Açougue", "0002", "=FORMULA", "Açougueiro"]);
+    expect(rows.some(row => row[0] === "Setor: Açougue")).toBe(true);
+    expect(rows.find(row => row[2] === "=FORMULA")?.slice(0, 4)).toEqual(["Açougue", "0002", "=FORMULA", "Açougueiro"]);
     const ana = rows.find((row) => row[2] === "Ána Silva");
     expect(ana?.slice(5)).toEqual(["T01", "NP", "NP", "NP", "NP", "NP", "NP"]);
-    const details = await readSheet(bytes, "Jornadas");
+    const details = await readSheet(bytes, "Horarios");
     const detail = details.find(row => row[2] === "Ána Silva");
-    expect(detail?.[4]).toBe(42);
+    expect(detail?.[4]).toBe("T01");
     expect(detail?.[7]).toBe("08:24");
     expect(strFromU8(zip["xl/workbook.xml"])).toContain("$1:$4");
   });
@@ -99,7 +101,7 @@ describe("/api/escalas/export mode boundaries", () => {
     expect(workbook.includes('name="Horarios"')).toBe(mode !== "rest");
     if (mode !== "rest") {
       const rows = await readSheet(Buffer.from(bytes), "Horarios");
-      expect(rows).toContainEqual(["2026-10-26", "Reposição", "0001", "Ána Silva", "Repositor", "T01", "08:00-12:00 / 13:00-17:24", "12:00-13:00", "08:24", "Turno planejado T01"]);
+      expect(rows).toContainEqual(["Reposição", "0001", "Ána Silva", "Repositor", "T01", "08:00-12:00 / 13:00-17:24", "12:00-13:00", "08:24"]);
     }
     expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 3);
   });

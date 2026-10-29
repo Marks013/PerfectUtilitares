@@ -8,7 +8,7 @@ export class EscalaError extends Error {
   }
 }
 
-export type EscalaActor = { userId: string; tenantId: string; admin: boolean };
+export type EscalaActor = { userId: string | null; tenantId: string; admin: boolean; moduleSessionId?: string };
 export type EscalaPermission = { canEdit: boolean; canPublish: boolean };
 
 export function escalaActor(session: AppSession): EscalaActor {
@@ -19,7 +19,9 @@ export function escalaActor(session: AppSession): EscalaActor {
 }
 
 export async function branchPermission(actor: EscalaActor, branchCode: string): Promise<EscalaPermission> {
+  if (actor.moduleSessionId) return { canEdit: true, canPublish: false };
   if (actor.admin) return { canEdit: true, canPublish: true };
+  if (!actor.userId) throw new EscalaError(403, "ESCALA_BRANCH_FORBIDDEN", "Este acesso não permite consultar a filial.");
   const access = await prisma.escalaBranchAccess.findUnique({
     where: { tenantId_userId_branchCode: { tenantId: actor.tenantId, userId: actor.userId, branchCode } },
     select: { role: true },
@@ -31,7 +33,8 @@ export async function branchPermission(actor: EscalaActor, branchCode: string): 
 }
 
 export async function allowedBranches(actor: EscalaActor): Promise<string[] | null> {
-  if (actor.admin) return null;
+  if (actor.moduleSessionId || actor.admin) return null;
+  if (!actor.userId) return [];
   const grants = await prisma.escalaBranchAccess.findMany({
     where: { tenantId: actor.tenantId, userId: actor.userId, role: { in: ["VIEWER", "PLANNER", "APPROVER"] } },
     select: { branchCode: true },

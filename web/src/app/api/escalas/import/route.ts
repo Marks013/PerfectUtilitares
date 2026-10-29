@@ -1,7 +1,8 @@
+import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
-import { enforcePersistentRateLimit, jsonError, methodNotAllowed, requireContentType, requireMaxContentLength, requireSameOrigin, requireSession } from "@/lib/api/security";
+import { enforcePersistentRateLimit, jsonError, methodNotAllowed, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
 import { readMultipartBody } from "@/lib/api/multipart";
-import { branchPermission, escalaActor, requireEscalaPermission } from "@/lib/escalas/access";
+import { branchPermission, requireEscalaPermission } from "@/lib/escalas/access";
 import { isAbsenceImportDate, previewFphi105Import } from "@/lib/escalas/fphi105";
 import { ESCALA_IMPORT_TEMPLATE, previewEscalaImport } from "@/lib/escalas/import";
 import { XlsxSecurityError } from "@/lib/spreadsheets/xlsx-security";
@@ -22,16 +23,15 @@ const absenceOptions = z.object({
 }).refine((value) => value.endDate >= value.startDate && Date.parse(value.endDate) - Date.parse(value.startDate) <= 41 * 86_400_000);
 
 export async function GET() {
-  const guard = await requireSession();
+  const guard = await requireEscalaAccess();
   if (!guard.ok) return guard.response;
   try {
-    escalaActor(guard.session);
     return new Response(`\uFEFF${ESCALA_IMPORT_TEMPLATE}`, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="modelo-escalas.csv"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", Vary: "Cookie" } });
   } catch (error) { return escalaFailure(error); }
 }
 
 export async function POST(request: Request) {
-  const guard = await requireSession();
+  const guard = await requireEscalaAccess();
   if (!guard.ok) return guard.response;
   const originError = requireSameOrigin(request);
   if (originError) return originError;
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   if (!extension || !mimeTypes.includes(file.type)) return jsonError(415, "ESCALA_IMPORT_TYPE", "O arquivo deve ser CSV ou XLSX, com conteúdo compatível.");
   if (purpose === "ABSENCES" && extension !== "csv") return jsonError(415, "ESCALA_IMPORT_TYPE", "Envie o relatório FPHI105 em CSV.");
   try {
-    const actor = escalaActor(guard.session);
+    const actor = guard.actor;
     const branchCode = absences?.success ? absences.data.branchCode : parsed.success ? parsed.data.branchCode : "";
     requireEscalaPermission(await branchPermission(actor, branchCode), "edit");
     const buffer = Buffer.from(await file.arrayBuffer());

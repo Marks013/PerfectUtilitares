@@ -46,38 +46,6 @@ function scheduleText(shift: EscalaShift, breaks: boolean) {
     .map((segment) => `${escalaDuration(segment.start)}-${escalaDuration(segment.end)}${segment.kind === "PAID_BREAK" ? " (pausa remunerada)" : ""}`).join(" / ");
 }
 
-function changeDescription(source: NonNullable<EscalaEmployee["sourceSchedule"]>, shift: EscalaShift): string {
-  const times = [...source.weekday.matchAll(/\b(\d{2}):(\d{2})\b/g)].map((match) => Number(match[1]) * 60 + Number(match[2]));
-  const work = shift.segments.filter((segment) => segment.kind === "WORK");
-  if (times.length !== 4 || !work.length || times[1] <= times[0] || times[3] <= times[2]) return "Referência original preservada; compare com a proposta. Não foi presumida uma jornada original.";
-  const before = times[1] - times[0] + times[3] - times[2];
-  const after = shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
-  const first = work[0].start, last = work.at(-1)?.end ?? first;
-  const interval = scheduleText(shift, true), originalInterval = `${escalaDuration(times[1])}-${escalaDuration(times[2])}`;
-  return [first === times[0] ? `Entrada mantida (${escalaDuration(first)})` : `Entrada de ${escalaDuration(times[0])} para ${escalaDuration(first)}`,
-    interval === originalInterval ? `intervalo mantido (${interval})` : `intervalo de ${originalInterval} para ${interval || "não informado"}`,
-    last === times[3] ? `saída mantida (${escalaDuration(last)})` : `saída de ${escalaDuration(times[3])} para ${escalaDuration(last)}`,
-    `jornada de ${escalaDuration(before)} para ${escalaDuration(after)}`].join("; ");
-}
-
-function presentationIssues(workspace: EscalaWorkspace) {
-  const people = new Map(workspace.input.employees.map((employee) => [employee.id, employee]));
-  const visible = new Set(visibleDates(workspace.input));
-  const groups = new Map<string, { severity: "ERROR" | "PENDING" | "WARNING"; label: string; context: string; count: number; dates: string[]; messages: string[] }>();
-  for (const issue of workspace.validation.issues) {
-    const person = issue.employeeId ? people.get(issue.employeeId) : undefined;
-    const local = person?.sector ?? (/COVERAGE/.test(issue.code) ? issue.message.split(":")[0] : "Proposta");
-    const context = issue.date && !visible.has(issue.date) ? `${local} — verificação técnica entre períodos` : local;
-    const key = `${issue.severity}\0${issue.code}\0${context}`;
-    const group = groups.get(key) ?? { severity: issue.severity, label: issue.severity === "ERROR" ? "Impedimento" : issue.severity === "PENDING" ? "Atenção" : "Informação", context, count: 0, dates: [], messages: [] };
-    group.count++;
-    if (issue.date && !group.dates.includes(issue.date)) group.dates.push(issue.date);
-    if (!group.messages.includes(issue.message)) group.messages.push(issue.message);
-    groups.set(key, group);
-  }
-  return [...groups.values()].sort((left, right) => ["ERROR", "PENDING", "WARNING"].indexOf(left.severity) - ["ERROR", "PENDING", "WARNING"].indexOf(right.severity));
-}
-
 /** Exact schedule interpretation shared by screen, PDF and Excel; no clock rounding or role inference. */
 export function buildEscalaSchedule(input: EscalaInput) {
   const dates = visibleDates(input), codes = escalaShiftCodes(input);
@@ -113,27 +81,8 @@ export function buildEscalaSchedule(input: EscalaInput) {
 /** One immutable interpretation for screen cells, PDF and Excel. Technical boundary days remain in input. */
 export function buildEscalaPresentation(workspace: EscalaWorkspace) {
   const { input } = workspace, base = buildEscalaSchedule(input);
-  const { dates, codes, people } = base;
-  const visible = new Set(dates), included = new Map(people.map(({ employee }) => [employee.id, employee]));
-  const used = input.assignments.filter((assignment) => {
-    const employee = included.get(assignment.employeeId);
-    return assignment.kind === "WORK" && visible.has(assignment.date) && employee && employee.scheduleMode !== "UNTIMED" && employee.scheduleMode !== "MISSING"
-      && assignment.date >= employee.activeFrom && (!employee.activeUntil || assignment.date <= employee.activeUntil);
-  });
-  const usedIds = new Set(used.map((assignment) => assignment.shiftId));
-  const shifts = input.shifts.filter((shift) => usedIds.has(shift.id)).map((shift) => {
-    const userIds = new Set(used.filter((assignment) => assignment.shiftId === shift.id).map((assignment) => assignment.employeeId));
-    const users = input.employees.filter((employee) => userIds.has(employee.id));
-    const sources = new Map(users.filter((employee) => employee.sourceSchedule)
-      .map((employee) => { const source = employee.sourceSchedule as NonNullable<EscalaEmployee["sourceSchedule"]>; return [JSON.stringify(source), source]; }));
-    const work = shift.segments.filter((segment) => segment.kind === "WORK");
-    return { id: shift.id, code: codes.get(shift.id) as string, name: shift.name, schedule: scheduleText(shift, false), interval: scheduleText(shift, true) || "Sem intervalo informado",
-      entry: work.length ? escalaDuration(work[0].start) : "Não informada", exit: work.length ? escalaDuration(work.at(-1)?.end ?? 0) : "Não informada",
-      daily: escalaDuration(shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)),
-      employeeCount: userIds.size, sectors: [...new Set(users.map((employee) => employee.sector))].sort((a, b) => a.localeCompare(b, "pt-BR")),
-      sources: [...sources.values()].map((source) => ({ ...source, changes: changeDescription(source, shift) })) };
-  });
-  return { ...base, shifts, issues: presentationIssues(workspace),
+  const { dates } = base;
+  return { ...base,
     branch: `Filial ${input.branchCode} - ${input.branchName}`, period: `${dates[0] ?? input.startDate} a ${dates.at(-1) ?? input.endDate}`,
     state: workspace.status === "PUBLISHED" ? "PUBLICADA" : "RASCUNHO" };
 }

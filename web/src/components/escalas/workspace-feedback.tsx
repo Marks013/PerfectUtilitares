@@ -26,8 +26,7 @@ export function WorkspaceFeedback({ busy, notice, error, problem, onAction }: {
       {onAction && <button type="button" className={buttonClass} onClick={() => onAction(conflict.target, { employeeId: conflict.employeeId, date: conflict.date, sector: conflict.sector, role: conflict.role })}>{recoveryActionLabel(conflict.target)}</button>}
     </li>)}</ol> : null}
     {problem?.action && !problem.conflicts?.length && <div className={styles.feedbackActions}>
-      {problem.action === "login" ? <a className={buttonClass} href="/login?callbackUrl=%2Fescalas" target="_blank" rel="noopener noreferrer">{problem.actionLabel ?? "Entrar novamente"}</a>
-        : onAction && <button type="button" className={buttonClass} onClick={() => { if (problem.action) onAction(problem.action); }}>{problem.actionLabel ?? "Conferir dados"}</button>}
+      {onAction && <button type="button" className={buttonClass} onClick={() => { if (problem.action) onAction(problem.action); }}>{problem.actionLabel ?? "Conferir dados"}</button>}
     </div>}
   </section>;
 }

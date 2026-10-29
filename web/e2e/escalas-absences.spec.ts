@@ -27,7 +27,7 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   const teamFile = await readFile(process.env.E2E_REAL_CSV_PATH!);
   const absenceFile = await readFile(process.env.E2E_REAL_ABSENCES_PATH!);
   await loginAsAdmin(page);
-  await page.goto("/escalas");
+  await page.goto("/escala");
   await page.getByText("Novo planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Validação privada de férias");
@@ -87,12 +87,14 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   expect(proposal.employees.length === employees.length && proposal.employees.every(person => person.planningEnabled !== false)).toBe(true);
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
   const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await saving).status()).toBe(200);
   const saved: EscalaWorkspace = await page.request.get("/api/escalas?id=" + created.id).then(response => response.json());
   const persisted = new Set(saved.input.assignments.filter(item => item.kind === "ABSENCE").map(item => item.employeeId + ":" + item.date));
   expect([...expected].every(key => persisted.has(key))).toBe(true);
   for (const format of ["PDF", "XLSX"] as const) {
+    await page.getByRole("button", { name: "Gerar " + format, exact: true }).click();
+    await expect(page.getByRole("link", { name: "Baixar " + format, exact: true })).toBeVisible();
     const downloading = page.waitForEvent("download");
     await page.getByRole("link", { name: "Baixar " + format, exact: true }).click();
     const download = await downloading;
@@ -153,7 +155,7 @@ test("optional absence preview preserves existing absences and locked work befor
   expect(createdResponse.status()).toBe(201);
   const created: EscalaWorkspace = await createdResponse.json();
   disposableId = created.id;
-  await page.goto("/escalas");
+  await page.goto("/escala");
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
   await page.getByRole("button", { name: "Equipe", exact: true }).click();
   await page.getByText("Importar afastamentos e férias (opcional)", { exact: true }).click();
@@ -176,7 +178,7 @@ test("optional absence preview preserves existing absences and locked work befor
   await page.getByRole("button", { name: "Aplicar afastamentos à proposta", exact: true }).click();
   await expect(page.getByText("5 dias de afastamento aplicados à proposta.", { exact: false })).toBeVisible();
   const savingAbsences = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
   const staleResponse = await savingAbsences;
   expect(staleResponse.status()).toBe(200);
   const stale: EscalaWorkspace = await staleResponse.json();
@@ -184,7 +186,7 @@ test("optional absence preview preserves existing absences and locked work befor
   expect((await page.request.get("/api/escalas/export?id=" + stale.id + "&revision=" + stale.revision + "&format=xlsx")).status()).toBe(409);
   await page.reload();
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
-  await expect(page.getByRole("button", { name: "Baixar PDF", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
   const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
   await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
   const generatedResponse = await generating;
@@ -200,10 +202,12 @@ test("optional absence preview preserves existing absences and locked work befor
   expect(proposal.assignments).toContainEqual(expect.objectContaining(input.assignments[1]));
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
   const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await saving).status()).toBe(200);
   const saved: EscalaWorkspace = await page.request.get("/api/escalas?id=" + created.id).then(response => response.json());
   expect(saved.input.assignments).toEqual(proposal.assignments);
+  await page.getByRole("button", { name: "Gerar XLSX", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Baixar XLSX", exact: true })).toBeVisible();
   const downloading = page.waitForEvent("download");
   await page.getByRole("link", { name: "Baixar XLSX", exact: true }).click();
   const download = await downloading;

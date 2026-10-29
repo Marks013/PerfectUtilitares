@@ -8,9 +8,9 @@ const date = "2026-11-01";
 const codes = escalaShiftCodes({ shifts: [{ id: "a", name: "Original", segments: [] }, { id: "b", name: "Proposto", segments: [] }] });
 
 describe("shared Escalas presentation", () => {
-  it("orders by sector then employee name, never by job title", () => {
+  it("orders by sector, role and employee name without changing allocation priority", () => {
     const people = [person, { ...person, id: "b", name: "Zélia", role: "Auxiliar" }, { ...person, id: "c", name: "Bia", sector: "Açougue" }];
-    expect(sortEmployees(people).map((employee) => employee.id)).toEqual(["c", "a", "b"]);
+    expect(sortEmployees(people).map((employee) => employee.id)).toEqual(["c", "b", "a"]);
     expect(people.map((employee) => employee.id)).toEqual(["a", "b", "c"]);
   });
   it("keeps the same shift code when only one shift is used", () => {

@@ -1,9 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HoursProposal, hoursArePrepared, hoursProposalGroups, prepareHoursProposal } from "./hours-proposal";
 import { groupValidationIssues } from "./validation-guidance";
 import { ValidationResults } from "./results";
 import { changeBranchWeeklyHours, coverageDefinitionChanged, newEmployee, newInput } from "./workspace-model";
+
+const review = vi.hoisted(() => ({ view: "errors" }));
+vi.mock("react", async (original) => {
+  const actual = await original<typeof import("react")>();
+  return { ...actual, useState: (initial: unknown) => actual.useState(initial === "errors" ? review.view : initial) };
+});
+afterEach(() => { review.view = "errors"; });
 
 function reference() {
   const input = newInput("02", "Centro", "2026-11", 42);
@@ -50,16 +57,19 @@ describe("explicit branch hours selection before mass days off", () => {
     expect(input.employees[0].weeklyHours).toBe(44);
   });
 
-  it("does not offer schedule adaptation for locked assignments", () => {
+  it("preserves locked assignments while offering compatible schedule adaptation", () => {
     const input = reference();
-    input.assignments = [{ employeeId: "a", date: input.startDate, kind: "OFF", locked: true }];
-    expect(() => prepareHoursProposal(input, "arrival")).toThrow("bloqueados");
+    input.assignments = [{ employeeId: "a", date: input.startDate, kind: "OFF", locked: true }, { employeeId: "a", date: "2026-10-27", kind: "WORK", shiftId: "source", locked: true }];
+    const proposal = prepareHoursProposal(input, "arrival");
+    expect(proposal.assignments).toEqual(input.assignments);
+    expect(proposal.employees[0].planningEnabled).not.toBe(false);
+    expect(proposal.shifts.some(shift => shift.id === "source")).toBe(true);
   });
 
   it("renders an explicit preview selection without silently applying schedule changes", () => {
     const input = reference();
     const html = renderToStaticMarkup(<HoursProposal input={input} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain("Ver proposta de horários para 42h");
+    expect(html).toContain("Ajustar horários no rascunho");
     expect(html).toContain("Manter entrada e intervalo, ajustar a saída");
     expect(html).not.toContain("Escolher estes horários e continuar");
     expect(input.employees[0].shiftIds).toEqual(["source"]);
@@ -122,6 +132,7 @@ describe("actionable grouped validation", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].issues).toHaveLength(4000);
     expect(groups[0].guidance.target).toBe("generate");
+    review.view = "reviews";
     const html = renderToStaticMarkup(<ValidationResults input={reference()} validation={{ valid: true, readyToPublish: false, issues, summaries: [], minimumCoverageMargin: null }} onResolve={vi.fn()} />);
     expect(html).toContain("Pode continuar com revisão (1)");
     expect(html).toContain("Gerar proposta mensal");

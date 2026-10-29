@@ -73,7 +73,7 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
       const id = `imp-${createHash("sha256").update(registration).digest("hex").slice(0, 24)}`;
       const sundayRule = normalized(rows[0]?.[7]) === "regradomingos" ? bounded(row[7], 30).toUpperCase() : "";
       if (sundayRule && !["UNREVIEWED", "CLT_386", "COMMERCE"].includes(sundayRule)) throw new Error("RegraDomingos deve ser CLT_386 (quinzenal), COMMERCE (três semanas) ou UNREVIEWED. O enquadramento não será inferido pelo nome.");
-      result.employees.push({ id, registration, name, sector, role, weeklyHours: weeklyHours as WeeklyHours, shiftIds: [shift.id],
+      result.employees.push({ id, registration, name, sector, role, weeklyHours: weeklyHours as WeeklyHours, weeklyHoursMode: hoursText === "" ? "BRANCH" : "INDIVIDUAL", shiftIds: [shift.id],
         activeFrom: admission, offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: sundayRule === "COMMERCE" ? 2 : 1,
         sundayRestRule: sundayRule === "COMMERCE" ? "COMMERCE" : sundayRule === "CLT_386" ? "CLT_386" : "UNREVIEWED",
         preferredOffDays: [], historyKnown: false, history: [] });

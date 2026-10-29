@@ -216,6 +216,7 @@ model Tenant {
   unimedDocumentTemplates UnimedDocumentTemplate[]
   unimedEmailEvents       UnimedEmailEvent[]
   presenceEvents          PresenceEvent[]
+  escalaModuleSessions    EscalaModuleSession[]
   escalaWorkspaces        EscalaWorkspace[]
   escalaAccesses          EscalaBranchAccess[]
   createdAt               DateTime                       @default(now())
@@ -249,7 +250,9 @@ model EscalaRevision {
   revision    Int
   status      String
   input       Json
-  createdById String
+  createdById String?
+  accessChannel String @default("ACCOUNT")
+  moduleSessionId String?
   createdAt   DateTime @default(now())
 
   @@unique([tenantId, workspaceId, revision])
@@ -1115,4 +1118,17 @@ model UnimedDocumentTemplate {
 
   @@unique([tenantId, kind, version])
   @@index([tenantId, kind, active])
+}
+
+model EscalaModuleSession {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, expiresAt])
+  @@index([expiresAt, revokedAt])
 }

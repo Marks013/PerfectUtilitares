@@ -12,7 +12,7 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   test.setTimeout(180000);
   const csv = await readFile(process.env.E2E_REAL_CSV_PATH!);
   await loginAsAdmin(page);
-  await page.goto("/escalas");
+  await page.goto("/escala");
   await page.getByText("Novo planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Validação privada isolada");
@@ -65,9 +65,11 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   }
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
   const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await saving).status()).toBe(200);
   for (const format of ["PDF", "XLSX"] as const) {
+    await page.getByRole("button", { name: "Gerar " + format, exact: true }).click();
+    await expect(page.getByRole("link", { name: "Baixar " + format, exact: true })).toBeVisible();
     const downloading = page.waitForEvent("download");
     await page.getByRole("link", { name: "Baixar " + format, exact: true }).click();
     const download = await downloading;

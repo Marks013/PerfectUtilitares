@@ -1,36 +1,34 @@
 "use client";
 
 import { useState } from "react";
+import { isDate } from "@/lib/escalas/dates";
+import { NumberField } from "./number-field";
 import styles from "./escalas.module.css";
-import type { EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "@/lib/escalas/types";
-import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
-import { clock, HOURS, parseClock } from "./workspace-model";
+import type { EscalaInput, EscalaPolicy, EscalaShift } from "@/lib/escalas/types";
+import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
+import { clock, parseClock } from "./workspace-model";
 import { LaborPolicyFields, ShortMealSimulation } from "./labor-policy-fields";
 import { ShiftSummary } from "./shift-summary";
 
 function DateList({ label, value, onChange }: { label: string; value: string[]; onChange: (dates: string[]) => void }) {
   const [text, setText] = useState(value.join(", "));
+  const [error, setError] = useState("");
   return (
-    <Field label={label} hint="Datas AAAA-MM-DD separadas por vírgula. Aplicadas ao sair do campo.">
+    <div><Field label={label} hint="Datas AAAA-MM-DD separadas por vírgula. Aplicadas ao sair do campo.">
       {(id) => (
         <input
           id={id}
           value={text}
           onChange={(event) => setText(event.target.value)}
-          onBlur={() =>
-            onChange([
-              ...new Set(
-                text
-                  .split(",")
-                  .map((date) => date.trim())
-                  .filter(Boolean),
-              ),
-            ])
-          }
+          onBlur={() => {
+            const dates = [...new Set(text.split(",").map(date => date.trim()).filter(Boolean))];
+            if (dates.some(date => !isDate(date))) { setError("Há uma data incompleta ou inválida. Complete no formato AAAA-MM-DD; as datas anteriores foram preservadas."); return; }
+            setError(""); onChange(dates);
+          }}
           className={controlClass}
         />
       )}
-    </Field>
+    </Field>{error && <p role="alert" className={styles.errorText}>{error}</p>}</div>
   );
 }
 
@@ -59,27 +57,10 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
             ["minWeeklyRestMinutes", "Descanso semanal com interjornada (minutos)", 2100, 4320],
             ["minMealMinutes", "Intervalo de refeição mínimo (minutos)", 30, 180],
             ["maxConsecutiveWorkDays", "Máximo de dias de trabalho consecutivos", 1, 5],
-          ] as const).map(([field, label, minimum, maximum]) => <Field key={field} label={label}>{(id) => <input id={id} type="number" min={minimum} max={maximum} value={input.policy[field]} onChange={(event) => change(field, Number(event.target.value))} className={controlClass} />}</Field>)}
+          ] as const).map(([field, label, minimum, maximum]) => <NumberField key={field} label={label} min={minimum} max={maximum} value={input.policy[field]} onChange={value => change(field, value)} />)}
         </div>
       </details>
-      <details className="space-y-4 border-t border-[color:var(--app-border)] pt-2">
-        <summary className={styles.disclosureTrigger}>Revisão documental para publicação interna</summary>
-        <p className={styles.muted}>Opcional para simular e exportar rascunhos. Registre somente informações reais já conferidas para a filial; uma proposta não comprova autorização.</p>
-        <LaborPolicyFields input={input} onChange={onChange} />
-        <Field label="Fonte normativa e cláusulas aplicáveis">{(id) => <input id={id} maxLength={1000} value={input.policy.source} onChange={(event) => change("source", event.target.value)} className={controlClass} />}</Field>
-        <div className={styles.formGrid}>
-          <Field label="Início da vigência">{(id) => <input id={id} type="date" value={input.policy.validFrom} onChange={(event) => change("validFrom", event.target.value)} className={controlClass} />}</Field>
-          <Field label="Fim da vigência">{(id) => <input id={id} type="date" value={input.policy.validUntil} onChange={(event) => change("validUntil", event.target.value)} className={controlClass} />}</Field>
-          <Field label="Responsável pela revisão">{(id) => <input id={id} maxLength={160} value={input.policy.reviewedBy} onChange={(event) => change("reviewedBy", event.target.value)} className={controlClass} />}</Field>
-          <Field label="Limite semanal da norma aplicável" hint="Limite normativo, não a jornada selecionada para o cenário.">{(id) => <select id={id} value={input.policy.weeklyLimit} onChange={(event) => change("weeklyLimit", Number(event.target.value) as WeeklyHours)} className={controlClass}>{HOURS.map((hours) => <option key={hours} value={hours}>{hours} horas</option>)}</select>}</Field>
-          <Field label="Limite diário, em minutos" hint="Um teto informado não constitui autorização de compensação.">{(id) => <input id={id} type="number" min={1} max={600} value={input.policy.dailyLimitMinutes} onChange={(event) => change("dailyLimitMinutes", Number(event.target.value))} className={controlClass} />}</Field>
-        </div>
-        <Check label="Distribuição diária e compensação acima de oito horas autorizadas no regime aplicável" checked={input.policy.compensationAuthorized} onChange={(value) => change("compensationAuthorized", value)} />
-        <Check label="Conferi a fonte, a categoria, o município e a vigência para todo o período" checked={input.policy.reviewed} onChange={(value) => change("reviewed", value)} />
-        <DateList label="Feriados com trabalho expressamente autorizado" value={input.policy.authorizedHolidayDates} onChange={(value) => change("authorizedHolidayDates", value)} />
-        <Check label="Norma aplicável permite considerar o feriado como folga de rodízio" checked={input.policy.holidayRestAllowed} onChange={(value) => change("holidayRestAllowed", value)} />
-        <p className={styles.muted}>Turnos noturnos participam do rascunho. O cômputo específico da hora noturna continua identificado como limitação de conferência.</p>
-      </details>
+      <LaborPolicyFields input={input} onChange={onChange} />
     </fieldset>
   </section>;
 }

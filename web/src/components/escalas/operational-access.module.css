@@ -1,0 +1,19 @@
+.card {
+  width: 100%;
+  max-width: 30rem;
+  margin-inline: auto;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid var(--app-border);
+  border-radius: 1.5rem;
+  background: var(--app-card);
+  box-shadow: var(--app-card-shadow);
+}
+.icon { width: 2rem; height: 2rem; color: var(--app-teal); margin-bottom: 1rem; }
+.title { font-size: 1.5rem; font-weight: 800; line-height: 1.3; }
+.description { margin-top: .75rem; color: var(--app-muted); line-height: 1.5; }
+.form { display: grid; gap: .75rem; margin-top: 1.5rem; }
+.label { font-weight: 700; }
+.form button, .form input, .accessBar button { min-height: 2.75rem; }
+.error { color: var(--app-danger-text); padding-block: .5rem; font-weight: 600; }
+.accessBar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+.accessBar p { color: var(--app-muted); font-size: .875rem; }

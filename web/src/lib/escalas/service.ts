@@ -18,6 +18,10 @@ type WorkspaceRow = {
   startDate: string; endDate: string; revision: number; status: string; updatedAt: Date;
 };
 
+function actorProvenance(actor: EscalaActor) {
+  return actor.moduleSessionId ? { accessChannel: "ESCALAS_MODULE_PASSWORD", moduleSessionId: actor.moduleSessionId } : {};
+}
+
 function snapshotJson(input: EscalaInput): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(input)) as Prisma.InputJsonValue;
 }
@@ -73,9 +77,9 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput): Prom
       startDate: input.startDate, endDate: input.endDate,
     } });
     await tx.escalaRevision.create({ data: { tenantId: actor.tenantId, workspaceId: created.id, revision: 1,
-      status: "DRAFT", input: snapshotJson(input), createdById: actor.userId } });
+      status: "DRAFT", input: snapshotJson(input), createdById: actor.userId, ...actorProvenance(actor) } });
     await tx.auditLog.create({ data: { userId: actor.userId, action: "CREATE", entity: "EscalaWorkspace", entityId: created.id,
-      metadata: { tenantId: actor.tenantId, revision: 1, employeeCount: input.employees.length } } });
+      metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision: 1, employeeCount: input.employees.length } } });
     return created;
   });
   return view(row, input, permission);
@@ -221,9 +225,9 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     });
     if (updated.count !== 1) throw new EscalaError(409, "ESCALA_STALE_REVISION", "Esta escala foi alterada por outra pessoa. Recarregue a versão atual antes de continuar.");
     await tx.escalaRevision.create({ data: { tenantId: actor.tenantId, workspaceId: id, revision, status,
-      input: snapshotJson(input), createdById: actor.userId } });
+      input: snapshotJson(input), createdById: actor.userId, ...actorProvenance(actor) } });
     await tx.auditLog.create({ data: { userId: actor.userId, action: publish ? "PUBLISH" : "UPDATE", entity: "EscalaWorkspace", entityId: id,
-      metadata: { tenantId: actor.tenantId, revision, previousRevision: expectedRevision, employeeCount: input.employees.length } } });
+      metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision, previousRevision: expectedRevision, employeeCount: input.employees.length } } });
   }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
   if (alreadyPublished) return current;
   return { ...current, revision, status, input, validation, updatedAt: updatedAt.toISOString() } as EscalaWorkspace;
@@ -305,7 +309,7 @@ export async function deleteEscala(actor: EscalaActor, id: string, expectedRevis
     await tx.escalaRevision.deleteMany({ where: { tenantId: actor.tenantId, workspaceId: id } });
     const deleted = await tx.escalaWorkspace.deleteMany({ where: { tenantId: actor.tenantId, id, revision: expectedRevision } });
     if (deleted.count !== 1) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento mudou durante a exclusão. Nenhum dado foi removido.");
-    await tx.auditLog.create({ data: { userId: actor.userId, action: "DELETE", entity: "EscalaWorkspace", entityId: id, metadata: { tenantId: actor.tenantId, revision: expectedRevision } } });
+    await tx.auditLog.create({ data: { userId: actor.userId, action: "DELETE", entity: "EscalaWorkspace", entityId: id, metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision: expectedRevision } } });
   }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
   return { deletedId: id };
 }

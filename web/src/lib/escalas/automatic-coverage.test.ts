@@ -118,3 +118,54 @@ describe("automatic provisional coverage", () => {
     expect(sunday.some(item => item.minimum === 0)).toBe(true);
   });
 });
+
+
+describe("Sunday-aware estimated staffing budgets", () => {
+  it("does not suggest five-sevenths of staff on every Sunday when alternating rest permits one-half", () => {
+    const input = fixture(14); input.endDate = "2026-11-15";
+    const proposal = proposeAutomaticCoverage(input);
+    for (const sunday of ["2026-11-08", "2026-11-15"]) {
+      const morning = proposal.demands.find(row => row.date === sunday && row.start === 480);
+      expect(morning?.minimum).toBe(7);
+    }
+    for (const week of [["2026-11-02", "2026-11-08"], ["2026-11-09", "2026-11-15"]]) expect(proposal.demands.filter(row => row.date >= week[0] && row.date <= week[1]).reduce((sum, row) => sum + (row.end - row.start) * row.minimum, 0)).toBe(14 * 5 * 480);
+    expect(proposal.employees).toEqual(input.employees); expect(proposal.assignments).toEqual(input.assignments);
+  });
+  it("alternates rounding for a single comparable worker instead of suggesting every Sunday or none", () => {
+    const input = fixture(1); input.endDate = "2026-11-29";
+    const proposal = proposeAutomaticCoverage(input);
+    const sundays = ["2026-11-08", "2026-11-15", "2026-11-22", "2026-11-29"];
+    const targets = sundays.map(date => proposal.demands.find(row => row.date === date && row.start === 480)?.minimum);
+    expect(targets.filter(value => value === 1)).toHaveLength(2); expect(targets.filter(value => value === 0)).toHaveLength(2);
+    expect(targets[0]).not.toBe(targets[1]); expect(targets[1]).not.toBe(targets[2]);
+  });
+  it("retains explicit operational minima and known locked work rather than reducing them to an estimate", () => {
+    const input = fixture(1); const sunday = "2026-11-08";
+    input.assignments = [{ employeeId: "e0", date: sunday, kind: "WORK", shiftId: "day", locked: true }];
+    input.demands = [{ id: "real", date: sunday, sector: "Loja", role: "Repositor", start: 480, end: 720, minimum: 1, estimated: false }];
+    const proposal = proposeAutomaticCoverage(input);
+    expect(proposal.demands).toContainEqual(input.demands[0]); expect(proposal.assignments).toEqual(input.assignments);
+    expect(proposal.demands.find(row => row.date === sunday && row.start === 780)?.minimum).toBe(1);
+  });
+  it("does not suggest work on a Sunday already incompatible with declared previous Sunday work", () => {
+    const input = fixture(2); input.employees.forEach(person => { person.historyKnown = true; person.history = [{ employeeId: person.id, date: "2026-11-01", kind: "WORK", shiftId: "day" }]; });
+    const proposal = proposeAutomaticCoverage(input);
+    expect(proposal.demands.filter(row => row.date === "2026-11-08").every(row => row.minimum === 0)).toBe(true);
+  });
+});
+
+
+describe("Sunday reference provenance", () => {
+  it("uses an explicit two-Sunday rotation only where that individual rule was informed", () => {
+    const input = fixture(3); input.employees.forEach(person => { person.sundayRestRule = "COMMERCE"; person.maxConsecutiveSundays = 2; });
+    const estimated = proposeAutomaticCoverage(input);
+    expect(estimated.demands.find(row => row.date === "2026-11-08" && row.start === 480)?.minimum).toBe(2);
+    expect(estimated.employees).toEqual(input.employees);
+  });
+  it("never turns an old unlocked draft assignment into mandatory history for new estimates", () => {
+    const input = fixture(4); input.endDate = "2026-11-15";
+    const baseline = proposeAutomaticCoverage(input);
+    const withDraft = proposeAutomaticCoverage({ ...input, assignments: input.employees.map(person => ({ employeeId: person.id, date: "2026-11-08", kind: "WORK", shiftId: "day", locked: false })) });
+    expect(withDraft.demands).toEqual(baseline.demands);
+  });
+});

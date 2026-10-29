@@ -11,7 +11,7 @@ describe("Escalas import preview", () => {
   it("preserves registration text, requires organization, separates meal from work and keeps history unknown", async () => {
     const preview = await previewEscalaImport(Buffer.from(`\uFEFF${header.join(";")}\n${row().join(";")}`), "csv", options);
     expect(preview.issues).toEqual([]);
-    expect(preview.employees[0]).toMatchObject({ registration: "0001", name: "Ana Silva", weeklyHours: 42, activeFrom: "2020-01-01", historyKnown: false });
+    expect(preview.employees[0]).toMatchObject({ registration: "0001", name: "Ana Silva", weeklyHours: 42, weeklyHoursMode: "INDIVIDUAL", activeFrom: "2020-01-01", historyKnown: false });
     expect(preview.shifts[0].segments).toEqual([{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }]);
     expect(ESCALA_IMPORT_TEMPLATE).toContain("Admissao");
   });
@@ -44,6 +44,7 @@ describe("Escalas import preview", () => {
     const value: unknown[] = row(); value[4] = ""; value[6] = new Date("2020-01-01T00:00:00Z");
     const preview = previewEscalaRows([header, value, []], { ...options, defaultWeeklyHours: 40 });
     expect(preview.employees[0].weeklyHours).toBe(40);
+    expect(preview.employees[0].weeklyHoursMode).toBe("BRANCH");
     expect(preview.issues).toEqual([]);
   });
   it("rejects unsupported layouts, excessive rows and ZIP impostors", async () => {

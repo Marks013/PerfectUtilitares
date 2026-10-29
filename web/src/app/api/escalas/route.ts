@@ -1,6 +1,7 @@
+import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
-import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin, requireSession } from "@/lib/api/security";
-import { branchPermission, escalaActor, requireEscalaPermission } from "@/lib/escalas/access";
+import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
+import { branchPermission, requireEscalaPermission } from "@/lib/escalas/access";
 import { createEscala, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
 import { escalaFailure, escalaJson } from "./http";
@@ -18,21 +19,21 @@ const command = z.discriminatedUnion("action", [
 ]);
 
 export async function GET(request: Request) {
-  const guard = await requireSession();
+  const guard = await requireEscalaAccess();
   if (!guard.ok) return guard.response;
   try {
-    const actor = escalaActor(guard.session);
+    const actor = guard.actor;
     const requestedId = new URL(request.url).searchParams.get("id");
     if (requestedId !== null) {
       if (!id.safeParse(requestedId).success) return jsonError(400, "ESCALA_INVALID_ID", "Identificador de escala inválido.");
       return escalaJson(await getEscala(actor, requestedId));
     }
-    return escalaJson({ workspaces: await listEscalas(actor), canCreate: actor.admin });
+    return escalaJson({ workspaces: await listEscalas(actor), canCreate: actor.admin || Boolean(actor.moduleSessionId) });
   } catch (error) { return escalaFailure(error); }
 }
 
 export async function POST(request: Request) {
-  const guard = await requireSession();
+  const guard = await requireEscalaAccess();
   if (!guard.ok) return guard.response;
   const originError = requireSameOrigin(request);
   if (originError) return originError;
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
   const parsed = command.safeParse(body.data);
   if (!parsed.success) return jsonError(400, "ESCALA_INVALID_COMMAND", "A ação ou os dados da requisição são inválidos.");
   try {
-    const actor = escalaActor(guard.session);
+    const actor = guard.actor;
     const data = parsed.data;
     const expensive = data.action === "GENERATE";
     const limited = await enforcePersistentRateLimit(request, { keyPrefix: expensive ? "escalas-solver" : "escalas-write", limit: expensive ? 6 : 30, windowMs: expensive ? 600_000 : 60_000 });
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
 export function PATCH() { return methodNotAllowed(["GET", "POST", "DELETE"]); }
 
 export async function DELETE(request: Request) {
-  const guard = await requireSession();
+  const guard = await requireEscalaAccess();
   if (!guard.ok) return guard.response;
   const originError = requireSameOrigin(request);
   if (originError) return originError;
@@ -79,7 +80,7 @@ export async function DELETE(request: Request) {
   const parsed = z.object({ workspaceId: id, expectedRevision: version.expectedRevision }).strict().safeParse(body.data);
   if (!parsed.success) return jsonError(400, "ESCALA_INVALID_COMMAND", "Informe o planejamento selecionado e sua revisão atual para excluir.");
   try {
-    const actor = escalaActor(guard.session);
+    const actor = guard.actor;
     const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-write", limit: 30, windowMs: 60_000 });
     if (limited) return limited;
     return escalaJson(await deleteEscala(actor, parsed.data.workspaceId, parsed.data.expectedRevision));

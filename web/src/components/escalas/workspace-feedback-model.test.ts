@@ -35,12 +35,18 @@ describe("plain language planning recovery", () => {
     expect(solverProblem("INFEASIBLE", "Cobertura sem horário disponível em 2026-11-02.")).toMatchObject({ tone: "warning", action: "coverage" });
     expect(toEscalaProblem(new EscalaRequestError("ESCALA_SETUP_REQUIRED", 422, "raw"))).toMatchObject({ action: "team" });
   });
-  it("keeps an expired login recoverable in another tab and hides unknown server detail", () => {
+  it("keeps an expired module session recoverable without discarding the draft and hides unknown server detail", () => {
     expect(toEscalaProblem(new EscalaRequestError("AUTH_REQUIRED", 401, "raw"))).toMatchObject({ action: "login" });
     const problem = toEscalaProblem(new EscalaRequestError("OTHER", 500, "credential-secret/private-person"));
     expect(JSON.stringify(problem)).not.toContain("credential-secret");
     expect(JSON.stringify(problem)).not.toContain("private-person");
     expect(problem.explanation).toContain("preservad");
+  });
+  it("requires reconciliation for an uncertain save without claiming success", () => {
+    const problem = toEscalaProblem(new EscalaRequestError("ESCALA_SAVE_UNCERTAIN", 0, "raw"));
+    expect(problem.message).toContain("não pôde ser confirmada");
+    expect(problem.explanation).toContain("consultaremos a revisão salva");
+    expect(problem.explanation).not.toContain("raw");
   });
   it("provides network and rate-limit recovery without inventing a countdown", () => {
     expect(toEscalaProblem(new TypeError("Failed to fetch")).message).toContain("conexão");

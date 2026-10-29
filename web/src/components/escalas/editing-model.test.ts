@@ -114,15 +114,13 @@ describe("monthly roster editing and operational feedback", () => {
     const absence = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "ABSENCE" }]);
     expect(isCurrentRosterChange(absence, { ...absence, needsRegeneration: true })).toBe(true);
   });
-  it("invalidates undo after reload, another assignment or any scenario definition change", () => {
+  it("retains undo across an identical autosave acknowledgement but rejects real scenario or cell changes", () => {
     const applied = sample();
-    expect(isCurrentRosterChange(applied, JSON.parse(JSON.stringify(applied)))).toBe(false);
-    expect(isCurrentRosterChange(applied, { ...applied, assignments: [...applied.assignments] })).toBe(false);
-    expect(isCurrentRosterChange(applied, { ...applied, employees: [...applied.employees] })).toBe(false);
-    expect(isCurrentRosterChange(applied, { ...applied, shifts: [...applied.shifts] })).toBe(false);
-    expect(isCurrentRosterChange(applied, { ...applied, policy: { ...applied.policy } })).toBe(false);
-    expect(isCurrentRosterChange(applied, { ...applied, demands: [...applied.demands] })).toBe(false);
+    expect(isCurrentRosterChange(applied, JSON.parse(JSON.stringify(applied)))).toBe(true);
+    expect(isCurrentRosterChange(applied, { ...applied, assignments: [...applied.assignments] })).toBe(true);
+    expect(isCurrentRosterChange(applied, { ...applied, employees: [...applied.employees] })).toBe(true);
+    expect(isCurrentRosterChange(applied, { ...applied, assignments: [{ ...applied.assignments[0], locked: true }, ...applied.assignments.slice(1)] })).toBe(false);
+    expect(isCurrentRosterChange(applied, { ...applied, employees: applied.employees.map(person => ({ ...person, name: "Alterado" })) })).toBe(false);
     expect(isCurrentRosterChange(applied, { ...applied, branchName: "Outro planejamento" })).toBe(false);
   });
-
 });

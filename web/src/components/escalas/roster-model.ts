@@ -1,3 +1,4 @@
+import { sameDraft } from "./draft-persistence";
 import { addDays, isDate } from "@/lib/escalas/dates";
 import type { EscalaAssignment, EscalaInput, EscalaIssue } from "@/lib/escalas/types";
 import { validateEscala } from "@/lib/escalas/validation";
@@ -7,11 +8,9 @@ export type RosterDay = { employeeId: string; date: string };
 export type RosterCoverageIssue = EscalaIssue & { sector: string };
 const key = (day: RosterDay) => `${day.employeeId}:${day.date}`;
 
-/** A metadata stamp does not invalidate undo; saved, reloaded or otherwise edited definitions do. */
+/** A confirmed edit remains undoable across autosave acknowledgements; real scenario changes invalidate it. */
 export function isCurrentRosterChange(applied: EscalaInput, current: EscalaInput): boolean {
-  if (applied.assignments !== current.assignments) return false;
-  const fields = Object.keys({ ...applied, ...current }) as (keyof EscalaInput)[];
-  return fields.every((field) => field === "needsRegeneration" || applied[field] === current[field]);
+  return sameDraft({ ...applied, needsRegeneration: false }, { ...current, needsRegeneration: false });
 }
 
 /** A confirmed edit never changes another cell or bypasses a previously locked decision. */

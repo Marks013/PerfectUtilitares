@@ -4,7 +4,8 @@ import { EscalaError } from "@/lib/escalas/access";
 import { EscalaSolverError } from "@/lib/escalas/solver-client";
 import { DELETE, GET, PATCH, POST } from "./route";
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn() }));
+vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, saveEscala: mocks.save, generateEscala: mocks.generate, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
@@ -17,7 +18,7 @@ beforeEach(() => {
   mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
   mocks.list.mockResolvedValue([workspace]); mocks.get.mockResolvedValue(workspace); mocks.create.mockResolvedValue(workspace); mocks.save.mockResolvedValue({ ...workspace, revision: 2 });
   mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input, validation: { valid: true }, preparation: { adjustedEmployeeIds: [], excludedEmployeeIds: [], generatedCoverageSlots: 7, includedEmployees: 81, untimedEmployees: 12 } });
-  mocks.rate.mockResolvedValue(null);
+  mocks.rate.mockResolvedValue(null); mocks.module.mockResolvedValue(null);
 });
 
 describe("/api/escalas", () => {
@@ -92,4 +93,14 @@ describe("/api/escalas", () => {
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(429);
     expect(PATCH().headers.get("allow")).toBe("GET, POST, DELETE");
   });
+});
+
+it("uses a verified module company for successful query/create/save/generate, ignoring client scope attempts", async () => {
+  mocks.session = null; mocks.module.mockResolvedValue({ id: "module-1", tenantId: "default-company", expiresAt: new Date("2030-01-01") });
+  const actor = { userId: null, tenantId: "default-company", admin: false, moduleSessionId: "module-1" };
+  const listing = await GET(new Request("http://localhost/api/escalas?tenantId=foreign"));
+  expect(listing.status).toBe(200); expect(await listing.json()).toMatchObject({ canCreate: true }); expect(mocks.list).toHaveBeenLastCalledWith(actor);
+  expect((await POST(command({ action: "CREATE", input }))).status).toBe(201); expect(mocks.create).toHaveBeenLastCalledWith(actor, input);
+  expect((await POST(command({ action: "SAVE", id: "w1", expectedRevision: 1, input }))).status).toBe(200); expect(mocks.save).toHaveBeenLastCalledWith(actor, "w1", 1, input);
+  expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(200); expect(mocks.generate).toHaveBeenLastCalledWith(actor, "w1", 1);
 });

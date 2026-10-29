@@ -38,8 +38,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const commitments = input.assignments.filter((item) => item.employeeId === person.id && (item.locked || item.kind === "ABSENCE"));
     if (candidate.planningEnabled === false) {
       if (commitments.length) throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", "Há um horário importado incompatível com a jornada 5×2 e dias bloqueados ou ausências já registrados. Confira as exceções da equipe antes de gerar; os registros foram preservados.");
-      excludedEmployeeIds.push(person.id);
-      return { ...person, planningEnabled: false, planningExclusionReason: candidate.planningExclusionReason };
+      throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", `Não foi possível adaptar o horário de ${person.registration} · ${person.name} (${person.sector}) para a jornada escolhida. Ninguém foi excluído. Use Ajustar horários para manter a saída ou confira o horário individual; bloqueios e afastamentos permanecem preservados.`);
     }
     for (const shift of prepared.shifts) {
       const existing = shifts.get(shift.id);

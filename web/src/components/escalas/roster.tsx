@@ -15,9 +15,9 @@ import { displayDate, WEEKDAYS } from "./workspace-model";
 
 export { CellEditor } from "./roster-editor";
 
-export function Roster({ input, validation, disabled, canUnlock, onChange, mode, onModeChange, onReviewEmployee, review }: {
+export function Roster({ input, validation, disabled, canUnlock, onChange, mode, onModeChange, onReviewEmployee, onReviewCoverage, onUndo, review }: {
   input: EscalaInput; validation: EscalaValidation | null; disabled: boolean; canUnlock: boolean; onChange: (input: EscalaInput) => void;
-  review?: EscalaRecoveryRequest; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onReviewEmployee?: (employeeId: string) => void;
+  review?: EscalaRecoveryRequest; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onReviewEmployee?: (employeeId: string) => void; onReviewCoverage?: () => void; onUndo?: (previous: EscalaInput, applied: EscalaInput) => Promise<boolean>;
 }) {
   const [localMode, setLocalMode] = useState<EscalaExportMode>("both");
   const view = mode ?? localMode;
@@ -47,7 +47,7 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
     setHoursDate(review.date);
   }, [review, input.employees, input.startDate, input.endDate]);
   const selectedEmployee = selected ? input.employees.find((person) => person.id === selected.employeeId) : undefined;
-  const canUndo = Boolean(undo && isCurrentRosterChange(undo.applied, input));
+  const canUndo = useMemo(() => Boolean(undo && isCurrentRosterChange(undo.applied, input)), [undo, input]);
   const missingCoverage = !input.demands.some((demand) => dates.includes(demand.date) && (!sector || demand.sector === sector));
   function apply(next: EscalaInput) {
     setUndo({ previous: input, applied: next });
@@ -56,15 +56,17 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
     setNotice("Alteração aplicada ao rascunho. A cobertura foi atualizada. Você pode desfazer antes de outra alteração ou salvamento.");
   }
   let lastSector = "";
+  let lastHoursSector = "";
   return <section className={`${panelClass} ${styles.roster}`} aria-label="Grade mensal da filial">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 id="escala-roster-title" className={styles.sectionTitle}>Escala de folgas e horários</h2>
       <button type="button" className={buttonClass} disabled={disabled || !canUndo} onClick={() => {
         if (!undo || !isCurrentRosterChange(undo.applied, input)) return;
+        if (onUndo) { void onUndo(undo.previous, undo.applied).then(restored => { if (restored) { setUndo(null); setSelected(null); setNotice("Última alteração desfeita e salva. A proposta anterior foi restaurada."); } }); return; }
         onChange(undo.previous); setUndo(null); setSelected(null); setNotice("Última alteração desfeita. A proposta anterior foi restaurada.");
       }}>Desfazer última alteração</button>
     </div>
-    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Organização: setor e nome A–Z. Selecione um dia para editar ou trocar; pendência não equivale a folga.</p>
+    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Organização: setor, cargo, nome e horário crescente. Selecione um dia para editar ou trocar; pendência não equivale a folga.</p>
     <div className={styles.formGrid}>
       <Field label="Visualização da escala">{(id) => <select id={id} className={controlClass} value={view} onChange={(event) => { const next = event.target.value as EscalaExportMode; setLocalMode(next); onModeChange?.(next); }}>
         <option value="rest">Somente folgas</option><option value="hours">Somente horários</option><option value="both">Folgas e horários</option>
@@ -83,7 +85,7 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
       // biome-ignore lint/a11y/noNoninteractiveTabindex: The monthly table must remain keyboard-scrollable in read-only mode.
       tabIndex={0} aria-label="Grade mensal da equipe, com rolagem horizontal e vertical">
       <table className={styles.rosterTable}>
-        <caption className="sr-only">Filial {input.branchCode}. Mês completo. Colaboradores por setor e nome. Legenda e alertas de cobertura ao lado da grade.</caption>
+        <caption className="sr-only">Filial {input.branchCode}. Mês completo. Colaboradores por setor, cargo e nome. Legenda e alertas de cobertura ao lado da grade.</caption>
         <thead className={styles.tableHead}>
           <tr className={styles.headerRow}>
             <th scope="col" className={styles.nameHeading}>Colaborador</th>
@@ -122,7 +124,7 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
                 return <td key={date} className={styles.dayCell}>
                   {employee.planningEnabled === false || inactive ? <span className={styles.inactiveCell} title={label.description}>{label.code}</span>
                     : <button type="button" disabled={disabled} onClick={() => setSelected({ employeeId: employee.id, date })}
-                      className={`${styles.cellButton} ${gap ? styles.gapCell : ""} ${assignment?.kind === "OFF" ? styles.offCell : ""}`}
+                      className={styles.cellButton} data-kind={assignment?.kind ?? "PENDING"} data-code={label.code} data-locked={Boolean(assignment?.locked)}
                       title={`${label.description}${gap ? ". Setor com cobertura a conferir" : ""}`}
                       aria-label={`${employee.name}, ${displayDate(date)}: ${label.description}${assignment?.locked ? ", bloqueado" : ""}. Editar`}>
                       <span>{label.code}</span>{assignment?.locked && <span className="block text-[10px]" aria-hidden="true">fixo</span>}
@@ -140,10 +142,11 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
       <p className={styles.muted}>Horários exatos da proposta neste dia. Intervalos, folgas, afastamentos e horários não processados não representam presença horária.</p>
       <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Mesmos colaboradores e filtros da escala de folgas.</caption>
         <thead><tr><th scope="col" className="p-2">Colaborador / função</th><th scope="col" className="p-2">Horário proposto</th><th scope="col" className="p-2">Intervalo</th><th scope="col" className="p-2">Total / situação</th></tr></thead>
-        <tbody>{displayed.map((employee) => {
+        <tbody>{displayed.flatMap((employee) => {
+          const heading = employee.sector !== lastHoursSector; lastHoursSector = employee.sector;
           const cell = scheduleByEmployee.get(employee.id)?.cells.find((item) => item.date === currentDate);
-          return <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal"><span className="block">{employee.registration} · {employee.name}</span><span className="block text-xs">{employee.sector} · {employee.role}</span></th>
-            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia não processado"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span><button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV"} onClick={() => setSelected({ employeeId: employee.id, date: currentDate })}>Revisar dia</button></td></tr>;
+          return [...(heading ? [<tr key={"hours-sector-" + employee.sector}><th scope="rowgroup" colSpan={4} className={styles.sectorHeading}>{employee.sector || "Sem setor informado"}</th></tr>] : []), <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal"><span className="block">{employee.registration} · {employee.name}</span><span className="block text-xs">{employee.sector} · {employee.role}</span></th>
+            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia não processado"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span><button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV"} onClick={() => setSelected({ employeeId: employee.id, date: currentDate })}>Revisar dia</button></td></tr>];
         })}</tbody>
       </table></div>
     </section>}
@@ -159,12 +162,7 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
     </details>}
     <p className="text-xs text-[color:var(--app-muted)]">As sugestões em massa consideram todos os colaboradores incluídos da filial, inclusive os ocultos pelos filtros. Os dias técnicos adjacentes continuam sendo conferidos, sem entrar nos totais mensais.</p>
     <p role="status" aria-live="polite" className="text-sm">{notice}</p>
-    {coverage.length > 0 && <section aria-label="Detalhes da cobertura" className="space-y-3">
-      {[...new Set(coverage.map((issue) => issue.date))].map((date) => <details key={date} id={`escala-cobertura-${date}`} className="scroll-mt-24 border-t border-[color:var(--app-border)] pt-2">
-        <summary className={styles.disclosureTrigger}>{displayDate(date ?? dates[0])} · cobertura a conferir</summary>
-        <ul className="space-y-2 text-sm">{coverage.filter((issue) => issue.date === date).map((issue) => <li key={`${issue.sector}:${issue.message}`}><strong>{issue.severity === "ERROR" ? "Mínimo confirmado" : "Estimativa"}</strong> · {issue.message}</li>)}</ul>
-      </details>)}
-    </section>}
+    {coverage.length > 0 && <details id="escala-coverage-roster" className={styles.disclosure}><summary className={styles.disclosureTrigger}>Cobertura a conferir ({coverage.length} faixas)</summary><div className={styles.reviewScroller}><ul className={styles.referenceList}>{coverage.map((issue, index) => <li id={index === coverage.findIndex(row => row.date === issue.date) ? `escala-cobertura-${issue.date}` : undefined} key={JSON.stringify([issue.date, issue.sector, issue.code, issue.message])}><strong>{issue.severity === "ERROR" ? "Mínimo informado" : "Estimativa"}</strong> · {issue.message}</li>)}</ul></div>{onReviewCoverage && <button type="button" className={buttonClass} onClick={onReviewCoverage}>Abrir central de revisão</button>}</details>}
     {selected && selectedEmployee && <fieldset disabled={disabled} className="space-y-3">
       <CellEditor key={`${selected.employeeId}:${selected.date}:${assignments.get(`${selected.employeeId}:${selected.date}`)?.locked}`} employee={selectedEmployee} date={selected.date}
         assignment={assignments.get(`${selected.employeeId}:${selected.date}`)} input={input} canUnlock={canUnlock}

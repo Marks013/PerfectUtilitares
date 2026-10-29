@@ -23,9 +23,10 @@ describe("honest accessible processing feedback", () => {
     expect(html.match(/Atualizado em outra aba/g)).toHaveLength(1);
   });
   it("keeps the current draft open when authentication must be renewed", () => {
-    const html = renderToStaticMarkup(<WorkspaceFeedback busy="" error="Sessão encerrada" notice="" problem={{ message: "Sessão encerrada", explanation: "Entre novamente em outra aba.", tone: "error", action: "login", actionLabel: "Entrar novamente" }} />);
-    expect(html).toContain('target="_blank"');
-    expect(html).toContain('rel="noopener noreferrer"');
-    expect(html).toContain("/login?callbackUrl=%2Fescalas");
+    const html = renderToStaticMarkup(<WorkspaceFeedback busy="" error="Sessão encerrada" notice="" problem={{ message: "Sessão encerrada", explanation: "Digite a senha novamente. O rascunho será preservado.", tone: "error", action: "login", actionLabel: "Liberar acesso novamente" }} onAction={vi.fn()} />);
+    expect(html).toContain("Liberar acesso novamente");
+    expect(html).toContain("<button");
+    expect(html).not.toContain("/login?callbackUrl");
+    expect(html).not.toContain('target="_blank"');
   });
 });

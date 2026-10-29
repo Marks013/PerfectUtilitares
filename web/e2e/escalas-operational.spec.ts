@@ -24,7 +24,7 @@ test("exact operational clocks, excluded relation, responsive graph and all thre
   expect(response.status()).toBe(201);
   let workspace: EscalaWorkspace = await response.json();
   try {
-    await page.goto("/escalas");
+    await page.goto("/escala");
     await page.getByLabel("Selecionar filial e período",{exact:true}).selectOption(workspace.id);
     const grade = page.locator('[aria-label="Grade mensal da equipe, com rolagem horizontal e vertical"]');
     await expect(grade).toBeVisible();
@@ -53,6 +53,8 @@ test("exact operational clocks, excluded relation, responsive graph and all thre
       if(mode==="hours") await expect(grade).toHaveCount(0); else await expect(grade).toBeVisible();
       for(const format of ["pdf","xlsx"]) {
         const exporting=page.waitForResponse(r=>r.url().includes("/api/escalas/export") && r.url().includes("format="+format));
+        await page.getByRole("button",{name:"Gerar "+format.toUpperCase(),exact:true}).click();
+        await expect(page.getByRole("link",{name:"Baixar "+format.toUpperCase(),exact:true})).toBeVisible();
         const downloading=page.waitForEvent("download");
         await page.getByRole("link",{name:"Baixar "+format.toUpperCase(),exact:true}).click();
         const exported=await exporting;expect(exported.status()).toBe(200);expect(new URL(exported.url()).searchParams.get("mode")).toBe(mode);
@@ -79,14 +81,14 @@ test("short-journey pause flexibility requires an explicit scenario choice, surv
     input.employees=[{...newEmployee(42,"short"),id:"short-person",registration:"1",name:"Pessoa jornada curta",sector:"Loja",role:"Apoio",simulationDailyMinutes:300,activeFrom:""}];
     input.shifts=[{id:"short",name:"Cinco horas sem pausa",segments:[{start:480,end:780,kind:"WORK"}]}];
     const create=await page.request.post("/api/escalas",{headers:{origin},data:{action:"CREATE",input}});expect(create.status()).toBe(201);let workspace:EscalaWorkspace=await create.json();ids.push(workspace.id);
-    const generate=()=>page.request.post("/api/escalas",{headers:{origin},data:{action:"GENERATE",id:workspace.id,expectedRevision:workspace.revision}});
+    const generate=async()=>{const response=await page.request.post("/api/escalas",{headers:{origin},data:{action:"GENERATE",id:workspace.id,expectedRevision:workspace.revision}});expect(response.status()).toBe(200);return response;};
     expect((await (await generate()).json()).result.status).toBe("INFEASIBLE");
-    await page.goto("/escalas");await page.getByLabel("Selecionar filial e período",{exact:true}).selectOption(workspace.id);
+    await page.goto("/escala");await page.getByLabel("Selecionar filial e período",{exact:true}).selectOption(workspace.id);
     await page.getByRole("button",{name:"Ajustes",exact:true}).click();
     const toggle=page.getByRole("checkbox",{name:/15min/});
     await expect(toggle).not.toBeChecked();await toggle.check();
     const saving=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/api/escalas")&&r.request().postDataJSON()?.action==="SAVE");
-    await page.getByRole("button",{name:"Salvar revisão",exact:true}).click();expect((await saving).status()).toBe(200);
+    await expect(page.locator('[data-state="saved"]')).toBeVisible();expect((await saving).status()).toBe(200);
     workspace=await page.request.get("/api/escalas?id="+workspace.id).then(r=>r.json());expect(workspace.input.policy.allowShortMealSimulation).toBe(true);
     const generated=await (await generate()).json();expect(["FEASIBLE","OPTIMAL"]).toContain(generated.result.status);expect(generated.validation.valid).toBe(true);expect(generated.validation.readyToPublish).toBe(false);
     expect(generated.validation.issues.some((issue:{code:string})=>issue.code==="SIMULATION_SHORT_MEAL_FLEX")).toBe(true);

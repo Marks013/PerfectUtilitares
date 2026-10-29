@@ -4,6 +4,7 @@ import { ESCALA_IMPORT_TEMPLATE } from "@/lib/escalas/import";
 import { DELETE, GET, POST } from "./route";
 
 const mocks = vi.hoisted(() => ({ session: null as AppSession | null, rate: vi.fn(), grant: vi.fn() }));
+vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: vi.fn(async () => null) }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaBranchAccess: { findUnique: mocks.grant } } }));

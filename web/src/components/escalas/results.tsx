@@ -1,8 +1,7 @@
 "use client";
 
-import { useRef, useState, type MouseEvent } from "react";
+import { useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
-import type { EscalaExportMode } from "@/lib/escalas/presentation";
 import { consolidateCoverageGaps } from "@/lib/escalas/coverage-presence";
 import type { EscalaRecoveryContext } from "./recovery-navigation";
 import styles from "./escalas.module.css";
@@ -11,11 +10,9 @@ import type {
   EscalaAssignment,
   EscalaInput,
   EscalaValidation,
-  EscalaWorkspace,
 } from "@/lib/escalas/types";
-import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
+import { buttonClass, panelClass, primaryClass } from "./controls";
 import { clock, displayDate } from "./workspace-model";
-import { ProcessingBar } from "./workspace-feedback";
 import { groupValidationIssues, type ReviewTarget } from "./validation-guidance";
 
 function changesBetween(previous: EscalaAssignment[], next: EscalaAssignment[]) {
@@ -134,79 +131,52 @@ export function Proposals({ input, generated, disabled, onGenerated, onDismiss }
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
-    {diagnostics.coverageGroups.length > 0 && <CoverageGaps rows={diagnostics.coverageGroups} />}
+    {diagnostics.coverageGroups.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir desfalques desta proposta ({diagnostics.coverageGroups.length})</summary><div className={styles.reviewScroller}><CoverageGaps rows={diagnostics.coverageGroups} /></div></details>}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
   </section>;
 }
 
-export function ValidationResults({ input, validation, onResolve }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: ResolveReview }) {
-  if (!validation) return <section className={panelClass}><h2 className="text-lg font-bold">Resumo da revisão</h2><p className="text-sm">Os dados foram alterados. Gere a proposta novamente ou salve as edições manuais para atualizar os resultados.</p></section>;
+export type ReviewSection = "errors" | "reviews" | "coverage" | "information";
+
+export function ValidationResults({ input, validation, onResolve, section, onSectionChange }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: ResolveReview; section?: ReviewSection; onSectionChange?: (section: ReviewSection) => void }) {
+  const [selectedView, setView] = useState<ReviewSection>();
+  if (!validation) return <section className={panelClass}><h2 className={styles.sectionTitle}>Revisão do cenário</h2><p className="text-sm">A edição ainda não foi conferida. Aguarde o salvamento ou gere uma proposta para atualizar os resultados.</p></section>;
   const diagnostics = buildEscalaDiagnostics(input, validation.issues);
-  const errors = diagnostics.notices.filter((notice) => notice.severity === "ERROR");
-  const reviews = diagnostics.notices.filter((notice) => notice.severity === "PENDING");
-  const information = diagnostics.notices.filter((notice) => notice.severity === "WARNING");
+  const errors = diagnostics.notices.filter(notice => notice.severity === "ERROR");
+  const reviews = diagnostics.notices.filter(notice => notice.severity === "PENDING");
+  const information = diagnostics.notices.filter(notice => notice.severity === "WARNING");
   const reservations = validation.boundaryReservations ?? [];
-  const orderedEmployees = sortEmployees(input.employees.filter((employee) => employee.planningEnabled !== false));
+  const employees = sortEmployees(input.employees.filter(person => person.planningEnabled !== false));
+  const view = section ?? selectedView ?? (errors.length ? "errors" : diagnostics.coverageGroups.length ? "coverage" : reviews.length ? "reviews" : information.length ? "information" : "errors");
+  const notices = view === "errors" ? errors : view === "reviews" ? reviews : information;
+  const menus = [{ id: "errors", label: "Erros", count: errors.length }, { id: "reviews", label: "Avisos", count: reviews.length }, { id: "coverage", label: "Desfalques", count: diagnostics.coverageGroups.length }, { id: "information", label: "Informações", count: information.length }] as const;
   return <section className={panelClass} aria-labelledby="escala-validation-title">
-    <div className={styles.header}><h2 id="escala-validation-title" className={styles.sectionTitle}>Conferência da proposta</h2><span className="text-sm">{errors.length} impedimento(s) · {reviews.length} ponto(s) para revisar</span></div>
-    <p className="text-sm font-semibold">{errors.length ? "Corrija os impedimentos antes de aplicar a proposta." : diagnostics.coverageGroups.some((row) => !row.estimated) ? "Há mínimos informados que precisam de ajuste de cobertura." : diagnostics.coverageGroups.length ? "Confira a distribuição nos horários abaixo da estimativa automática." : "Nenhum impedimento técnico detectado nos dados conferidos."}</p>
-    {errors.length > 0 && <section className={styles.reviewGroup} aria-label="Impedimentos"><h3 className="font-semibold">Exige correção ({errors.length})</h3><ul className={styles.coverageGapList}>{errors.map((notice) => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul></section>}
-    {diagnostics.coverageGroups.length > 0 && <CoverageGaps rows={diagnostics.coverageGroups} onResolve={onResolve} />}
-    {reviews.length > 0 && <section className={styles.reviewGroup} aria-label="Pontos para revisar"><h3 className="font-semibold">Pode continuar com revisão ({reviews.length})</h3><p className={styles.muted}>Estes pontos não impedem o rascunho. Confira o impacto indicado antes de usar a proposta.</p><ul className={styles.coverageGapList}>{reviews.map((notice) => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul></section>}
-    {information.length > 0 && <details className={styles.reviewGroup}><summary className={styles.disclosureTrigger}>Informações e limites de conferência ({information.length})</summary><p className={styles.muted}>Tratamentos realizados e limites dos dados disponíveis. A simulação não certifica conformidade legal completa.</p><ul className={styles.coverageGapList}>{information.map((notice) => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul></details>}
-    {reservations.length > 0 && <details className="space-y-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">Folgas fixas reservadas para continuidade</summary><p className="text-sm text-[color:var(--app-muted)]">Estas folgas precisam ser mantidas na próxima escala para preservar a continuidade. São reservas fora da proposta; não são dias publicados dentro deste horizonte.</p><ul className="max-h-80 space-y-3 overflow-y-auto text-sm">{orderedEmployees.map((employee) => {
-      const dates = reservations.filter((reservation) => reservation.employeeId === employee.id).map((reservation) => reservation.date).sort();
-      return dates.length ? <li key={employee.id} className="border-b border-[color:var(--app-border)] pb-3"><p className="font-semibold">{employee.sector || "Sem setor informado"} / {employee.role || "Sem cargo informado"}</p><p>{employee.name} · {employee.registration}</p><p>Folga fixa reservada: {dates.map(displayDate).join(", ")}</p></li> : null;
-    })}</ul></details>}
-    <details className="space-y-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">Conferência por colaborador (opcional)</summary><div className="max-h-80 overflow-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Apuração por colaborador no mês da proposta</caption><thead><tr><th scope="col" className="p-2">Setor / cargo / colaborador</th><th scope="col" className="p-2">Horas computadas</th><th scope="col" className="p-2">Trabalho / folgas</th><th scope="col" className="p-2">Maior sequência</th><th scope="col" className="p-2">Domingos trabalhados</th></tr></thead><tbody>{orderedEmployees.map((employee) => {
-      const summary = validation.summaries.find((item) => item.employeeId === employee.id);
-      return summary ? <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal">{employee.sector} / {employee.role}<span className="block font-semibold">{employee.name} · {employee.registration}</span></th><td className="p-2 tabular-nums">{employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING" ? "Horas não apuradas" : clock(summary.workedMinutes)}</td><td className="p-2">{summary.workDays} / {summary.offDays}</td><td className="p-2">{summary.maxStreak} dias</td><td className="p-2">{summary.sundaysWorked}</td></tr> : null;
-    })}</tbody></table></div></details>
+    <div className={styles.header}><h2 id="escala-validation-title" className={styles.sectionTitle}>Central de revisão</h2><span className={styles.muted}>{errors.length} erro(s) · {reviews.length} aviso(s)</span></div>
+    <p className="text-sm">{errors.length ? "Há impedimentos técnicos. Escolha uma ocorrência para conferir a correção sugerida." : "Nenhum impedimento técnico detectado. Avisos e estimativas ficam separados para consulta opcional."}</p>
+    <fieldset className={styles.reviewTabs}><legend className="sr-only">Tipo de revisão</legend>{menus.map(menu => <button type="button" key={menu.id} className={buttonClass} aria-pressed={view === menu.id} aria-controls="escala-review-content" onClick={() => { setView(menu.id); onSectionChange?.(menu.id); }}>{menu.label} ({menu.count})</button>)}</fieldset>
+    <section id="escala-review-content" className={styles.reviewScroller} aria-label={(menus.find(menu => menu.id === view)?.label ?? "Revisão") + " da escala"}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the review region.
+      tabIndex={0}>
+      {view === "coverage" ? diagnostics.coverageGroups.length ? <CoverageGaps rows={diagnostics.coverageGroups} onResolve={onResolve} /> : <p>Nenhum desfalque detectado nas faixas com referência disponível.</p> : <>
+        <h3 className="font-semibold">{view === "errors" ? "Exige correção (" + errors.length + ")" : view === "reviews" ? "Pode continuar com revisão (" + reviews.length + ")" : "Informações e limites de conferência (" + information.length + ")"}</h3>
+        {!notices.length && <p className={styles.muted}>Nenhuma ocorrência nesta categoria.</p>}
+        <ul className={styles.coverageGapList}>{notices.map(notice => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul>
+      </>}
+      {view === "information" && <div className={styles.stackSmall}>
+        <p className={styles.muted}>A simulação apoia o planejamento. A cobertura automática é estimativa; horários não informados e histórico indisponível limitam as conclusões correspondentes.</p>
+        {reservations.length > 0 && <section><h3 className="font-semibold">Folgas fixas reservadas para continuidade</h3><ul>{employees.map(person => {
+          const dates = reservations.filter(day => day.employeeId === person.id).map(day => day.date).sort();
+          return dates.length ? <li key={person.id}>{person.registration} · {person.name}: {dates.map(displayDate).join(", ")}</li> : null;
+        })}</ul></section>}
+        <table className="w-full text-left text-sm"><caption className="py-2 text-left font-semibold">Apuração por colaborador</caption><thead><tr><th scope="col" className="p-2">Setor / cargo / colaborador</th><th scope="col" className="p-2">Horas</th><th scope="col" className="p-2">Trabalho / folgas</th><th scope="col" className="p-2">Sequência máxima</th><th scope="col" className="p-2">Domingos trabalhados</th></tr></thead><tbody>{employees.map(person => {
+          const summary = validation.summaries.find(item => item.employeeId === person.id);
+          return summary ? <tr key={person.id}><th scope="row" className="p-2 font-normal">{person.sector} / {person.role}<span className="block font-semibold">{person.name} · {person.registration}</span></th><td className="p-2">{person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING" ? "Não apuradas" : clock(summary.workedMinutes)}</td><td className="p-2">{summary.workDays} / {summary.offDays}</td><td className="p-2">{summary.maxStreak} dias</td><td className="p-2">{summary.sundaysWorked}</td></tr> : null;
+        })}</tbody></table>
+      </div>}
+    </section>
   </section>;
 }
 
-export function Publication({ workspace, validation, dirty, busy, outdated = false, mode = "both", onModeChange, onPublish, onRegenerate }: {
-  workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; outdated?: boolean; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onPublish: () => void; onRegenerate?: () => void;
-}) {
-  const [localMode, setLocalMode] = useState<EscalaExportMode>(mode);
-  const selectedMode = onModeChange ? mode : localMode;
-  const [confirmed, setConfirmed] = useState(false);
-  const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
-  const [feedback, setFeedback] = useState("");
-  const [error, setError] = useState("");
-  const exportingRef = useRef(false);
-  const blocked = dirty || busy || outdated || Boolean(exporting);
-  const ready = workspace.canPublish && !blocked && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
-  const url = (format: "pdf" | "xlsx") => `/api/escalas/export?id=${encodeURIComponent(workspace.id)}&revision=${workspace.revision}&format=${format}&mode=${selectedMode}`;
-  async function download(event: MouseEvent<HTMLAnchorElement>, format: "pdf" | "xlsx") {
-    event.preventDefault();
-    if (blocked || exportingRef.current) return;
-    exportingRef.current = true;
-    setExporting(format); setFeedback(""); setError("");
-    try {
-      const response = await fetch(url(format), { cache: "no-store", signal: AbortSignal.timeout(60_000) });
-      if (!response.ok) throw new Error("Não foi possível preparar o arquivo. Salve a revisão e tente novamente.");
-      const blob = await response.blob();
-      if (!blob.size) throw new Error("O arquivo retornou vazio. Tente exportar novamente.");
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = `escala-${workspace.input.branchCode.replace(/[^a-zA-Z0-9_-]/g, "-")}-${workspace.input.visibleMonth ?? workspace.input.startDate}-r${workspace.revision}-${selectedMode}.${format}`;
-      document.body.append(anchor); anchor.click(); anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      setFeedback(`${format.toUpperCase()} preparado. Download iniciado.`);
-    } catch (cause) { setError(cause instanceof Error && cause.name !== "TimeoutError" ? cause.message : "A exportação demorou além do esperado. Os dados foram preservados; tente novamente."); }
-    finally { exportingRef.current = false; setExporting(null); }
-  }
-  return <section className={panelClass} aria-labelledby="escala-publication-title">
-    <Field label="Conteúdo do PDF e XLSX">{id => <select id={id} className={controlClass} disabled={blocked} value={selectedMode} onChange={event => { const value = event.target.value as EscalaExportMode; if (onModeChange) onModeChange(value); else setLocalMode(value); }}><option value="rest">Somente escala de folgas</option><option value="hours">Somente escala de horários</option><option value="both">Folgas e horários</option></select>}</Field>
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-publication-title" className="text-lg font-bold">Exportar proposta</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">PDF e Excel usam a mesma grade mensal da revisão salva {workspace.revision}.</p></div><div className="flex flex-wrap gap-2">{(["pdf", "xlsx"] as const).map((format) => !blocked ? <a key={format} href={url(format)} download className={buttonClass} onClick={(event) => { void download(event, format); }}>Baixar {format.toUpperCase()}</a> : <button key={format} type="button" disabled className={buttonClass}>{exporting === format ? `Preparando ${format.toUpperCase()}…` : `Baixar ${format.toUpperCase()}`}</button>)}</div></div>
-    {outdated ? <p className="text-sm"><strong>Cenário alterado.</strong> Gere e aplique uma proposta atualizada antes de exportar.{onRegenerate && <button type="button" className={`${buttonClass} mt-3 block`} disabled={busy} onClick={onRegenerate}>Gerar proposta atualizada</button>}</p> : dirty ? <p className="text-sm">Salve a revisão para exportar as edições atuais.</p> : <p className="text-xs text-[color:var(--app-muted)]">Rascunhos levam essa identificação; avisos da simulação não impedem o download.</p>}
-    <p role="status" aria-live="polite" aria-atomic="true" className="text-sm">{exporting ? `Processando: preparando ${exporting.toUpperCase()} da revisão ${workspace.revision}…` : feedback}</p>
-    {exporting && <ProcessingBar label={`Preparando arquivo ${exporting.toUpperCase()}`} />}
-    {error && <p role="alert" className="text-sm text-[color:var(--app-coral)]">{error}</p>}
-    <details className="space-y-3 border-t border-[color:var(--app-border)] pt-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">Aprovação interna (opcional)</summary><p className="text-sm">Preserva uma revisão conferida e não certifica conformidade legal completa. Não há envio a colaboradores, integração com ponto ou lançamento em folha.</p><Check label={`Conferi a equipe, os horários, a cobertura e as regras da filial ${workspace.input.branchCode} para esta revisão`} checked={confirmed} disabled={!ready} onChange={setConfirmed} /><button type="button" className={primaryClass} disabled={!ready || !confirmed} onClick={onPublish}>{workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}</button>{!ready && workspace.status !== "PUBLISHED" && <p className="text-sm text-[color:var(--app-muted)]">A aprovação exige revisão salva, conferida e perfil autorizado. Isso não impede exportar um rascunho atualizado.</p>}</details>
-  </section>;
-}
+export { Publication } from "./publication";

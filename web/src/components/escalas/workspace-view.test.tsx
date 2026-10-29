@@ -12,6 +12,7 @@ import { Proposals, Publication, ValidationResults } from "./results";
 import { CellEditor, Roster } from "./roster";
 import { newEmployee, newInput } from "./workspace-model";
 
+
 function sample() {
   const input = newInput("2", "Centro", "2026-10", 42);
   input.employees = [
@@ -68,7 +69,7 @@ describe("Escalas practical accessibility and publication states", () => {
   it("blocks stale exports with a direct regeneration action instead of exporting a previous 44h result", () => {
     const { workspace, validation } = sample();
     const html = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} outdated onPublish={vi.fn()} onRegenerate={vi.fn()} />);
-    expect(html).toContain("Cenário alterado");
+    expect(html).toContain("A grade está desatualizada");
     expect(html).toContain("Gerar proposta atualizada");
     expect(html).not.toContain("/api/escalas/export?");
   });
@@ -85,8 +86,8 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).toContain("5 dias trabalhados · 2 folgas");
     expect(html).not.toContain("42h por semana");
     expect(html).not.toContain("Turno não encontrado");
-    const result = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
-    expect(result).toContain("Horas não apuradas");
+    const result = renderToStaticMarkup(<ValidationResults section="information" input={input} validation={validation} />);
+    expect(result).toContain("Não apuradas");
     expect(result).not.toContain('class="p-2 tabular-nums">00:00');
   });
 
@@ -181,8 +182,8 @@ describe("Escalas practical accessibility and publication states", () => {
     validation.issues = [{ severity: "WARNING", code: "HISTORY_UNKNOWN", employeeId: "a", message: "Histórico anterior não verificado." }];
     const html = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
     expect(html).toContain("Informações e limites de conferência (1)");
-    expect(html).toContain("0 impedimento(s)");
-    expect(html).toContain("0 ponto(s) para revisar");
+    expect(html).toContain("0 erro(s)");
+    expect(html).toContain("0 aviso(s)");
     expect(html).toContain("Histórico anterior não verificado.");
     expect(html).not.toContain("Ana: Histórico anterior não verificado.");
     expect(html).not.toContain("HISTORY_UNKNOWN");
@@ -190,7 +191,7 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).not.toContain("Pendente ·");
     const publication = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />);
     expect(publication).toContain("Publicar proposta");
-    expect(publication).toContain("não certifica");
+    expect(publication).toContain("O salvamento automático não publica");
   });
 
   it("renders only the civil month by sector and name with pending and locked states", () => {
@@ -205,7 +206,7 @@ describe("Escalas practical accessibility and publication states", () => {
       />,
     );
     expect(html).toContain("Reposição");
-    expect(html).toContain("Organização: setor e nome A–Z");
+    expect(html).toContain("Organização: setor, cargo, nome e horário crescente");
     expect(html).not.toContain("Reposição / Repositor");
     expect((html.match(/scope="col"/g) ?? [])).toHaveLength(36);
     expect(html.indexOf('scope="row"') + html.slice(html.indexOf('scope="row"')).indexOf("Ana")).toBeLessThan(
@@ -222,9 +223,11 @@ describe("Escalas practical accessibility and publication states", () => {
   it("keeps individual reconciliation collapsed and identifies unsaved validation", () => {
     const { input, validation } = sample();
     const pending = renderToStaticMarkup(<ValidationResults input={input} validation={null} />);
-    expect(pending).toContain("Os dados foram alterados");
+    expect(pending).toContain("A edição ainda não foi conferida");
     const html = renderToStaticMarkup(<ValidationResults input={input} validation={validation} />);
-    expect(html).toContain("Conferência por colaborador (opcional)");
+    expect(html).toContain("Central de revisão");
+    expect(html).toContain("Informações (0)");
+    expect(html).not.toContain("Apuração por colaborador");
     expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
 
@@ -240,7 +243,7 @@ describe("Escalas practical accessibility and publication states", () => {
       activeFrom: "2020-01-01",
     });
     const html = renderToStaticMarkup(
-      <ValidationResults
+      <ValidationResults section="information"
         input={input}
         validation={{
           ...validation,
@@ -253,9 +256,10 @@ describe("Escalas practical accessibility and publication states", () => {
       />,
     );
     expect(html).toContain("Folgas fixas reservadas para continuidade");
-    expect(html).toContain("precisam ser mantidas na próxima escala");
-    expect(html).toContain("não são dias publicados dentro deste horizonte");
-    expect(html).toContain("Folga fixa reservada: 02/11/2026");
+    expect(html).toContain("02/11/2026");
+    expect(html).toContain("03 · Bruno");
+    expect(html).toContain("01 · Ana");
+    expect(html).toContain("02 · Zélia");
     expect(html.indexOf("Bruno")).toBeLessThan(html.indexOf("Ana"));
     expect(html.indexOf("Ana")).toBeLessThan(html.indexOf("Zélia"));
     expect(html).not.toMatch(/<details[^>]*\sopen/);
@@ -296,9 +300,12 @@ describe("Escalas practical accessibility and publication states", () => {
     const html = renderToStaticMarkup(
       <Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />,
     );
-    expect(html).toContain("revision=4&amp;format=pdf");
-    expect(html).toContain("revision=4&amp;format=xlsx");
-    expect(html).toContain("Não há envio a colaboradores");
+    expect(html).toContain("revisão salva 4");
+    expect(html).toContain("Gerar PDF");
+    expect(html).toContain("Gerar XLSX");
+    expect(html).toContain("Ainda não gerado");
+    expect(html).not.toContain("Baixar PDF");
+    expect(html).not.toContain("/api/escalas/export");
   });
 
   it("shows full-plan preview changes and never applies an invalid solver result", () => {
@@ -329,18 +336,18 @@ describe("Escalas practical accessibility and publication states", () => {
   it("does not offer a checkbox that purports to certify night-hour accounting", () => {
     const { input } = sample();
     const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain("cômputo específico da hora noturna");
+    expect(html).toContain("Documentos e autorizações não são exigidos para simular");
     expect(html).not.toContain("Regras específicas do trabalho noturno foram conferidas");
   });
 
-  it("explains dated weekly ceilings and leaves collective authorization unconfirmed", () => {
+  it("keeps documentary references in the backend without presenting duplicate authorization forms", () => {
     const input = newInput("2", "Centro", "2027-12", 42);
     const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain("De 16/12/2026 a 15/12/2027");
-    expect(html).toContain("Desde 16/12/2027");
-    expect(html).toContain("13/12/2027 a 19/12/2027");
-    expect(html).toContain("Adotar carga menor em toda a semana de transição");
-    expect(html).toContain("Identificação e cláusula do instrumento coletivo");
+    expect(html).toContain("Documentos e autorizações não são exigidos para simular");
+    expect(html).not.toContain("Identificação e cláusula do instrumento coletivo");
+    expect(html).not.toContain("Responsável pela revisão");
+    expect(input.policy.reviewed).toBe(false);
+    expect(input.policy.compensationAuthorized).toBe(false);
     expect(html).not.toMatch(/<input[^>]*checked/);
     expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
@@ -352,17 +359,15 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).not.toContain("Identificação da certidão");
   });
 
-  it("shows the CCT safeguards and separate certificate scopes without inventing an authorization", () => {
+  it("preserves an existing CCT reference without inventing certificate authorization or showing administrative fields", () => {
     const { input } = sample();
     input.policy.normativeProfile = "SINDECOMU_SUPERMARKETS_2026_2027";
     const html = renderToStaticMarkup(<LaborPolicyFields input={input} onChange={vi.fn()} />);
-    expect(html).toContain("PR003084/2026");
-    expect(html).toContain("não afasta o descanso dominical quinzenal das mulheres");
-    expect(html).toContain("não significa fechamento automático de toda atividade interna");
-    expect(html).toContain("A CCT homologada não é a certidão individual da empresa");
-    expect(html).toContain("Certidão autoriza domingos");
-    expect(html).toContain("Certidão autoriza feriados");
-    expect(html).toContain("Certidão autoriza prorrogação e trabalho noturno após 20h");
+    expect(html).toContain("Dados administrativos já registrados permanecem preservados");
+    expect(html).not.toContain("Certidão autoriza domingos");
+    expect(html).not.toContain("Certidão autoriza feriados");
+    expect(input.policy.normativeProfile).toBe("SINDECOMU_SUPERMARKETS_2026_2027");
+    expect(input.policy.operationalCertificate).toBeUndefined();
     expect(html).not.toMatch(/<input[^>]*checked/);
   });
 

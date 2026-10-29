@@ -1,4 +1,4 @@
-import { addDays, dateRange, isDate, weekStart } from "./dates";
+import { addDays, isDate, weekStart } from "./dates";
 import type { EscalaEmployee, EscalaInput, EscalaPolicy, WeeklyHours } from "./types";
 
 /** Operational invariant of this project's 5x2 planning model, not a general legal conclusion. */
@@ -66,10 +66,4 @@ export function certificateAuthorizes(policy: EscalaPolicy, day: string, scope: 
   return Boolean(day >= CCT_FROM && day <= CCT_UNTIL && certificate?.reviewed
     && certificate.identifier.trim() && certificate.reviewedBy.trim() && certificate[scope]
     && isDate(certificate.validFrom) && isDate(certificate.validUntil) && certificate.validFrom <= day && certificate.validUntil >= day);
-}
-
-export function weeklyTargets(input: EscalaInput, person: EscalaEmployee): { start: string; hours: WeeklyHours }[] {
-  return dateRange(input.startDate, input.endDate).filter((day) => weekStart(day) === day
-    && person.activeFrom <= addDays(day, 6) && (!person.activeUntil || person.activeUntil >= day))
-    .map((start) => ({ start, hours: effectiveWeeklyHours(person, start) }));
 }

@@ -89,11 +89,14 @@ describe("Escalas readable operational review", () => {
     ]};
     const html = renderToStaticMarkup(<ValidationResults input={input} validation={validation} onResolve={vi.fn()} />);
     expect(html).toContain("Exige correção (1)");
-    expect(html).toContain("Pode continuar com revisão (1)");
-    expect(html).toContain("Informações e limites de conferência (1)");
-    expect(html).toContain("101 · Pessoa incluída"); expect(html).toContain("102 · Outra pessoa");
+    expect(html).toContain("Avisos (1)");
+    expect(html).toContain("Informações (1)");
+    expect(html).toContain("101 · Pessoa incluída"); expect(html).not.toContain("102 · Outra pessoa");
+    const informational = renderToStaticMarkup(<ValidationResults input={input} validation={{ ...validation, issues: validation.issues.filter(issue => issue.severity === "WARNING") }} onResolve={vi.fn()} />);
+    expect(informational).toContain("Informações e limites de conferência (1)");
+    expect(informational).toContain("102 · Outra pessoa");
     expect(html).toContain("Período afetado");
-    expect(html).toContain("Nenhuma correção é necessária por esse tratamento");
+    expect(informational).toContain("Nenhuma correção é necessária por esse tratamento");
     expect(html).toContain("Conferir sequência na escala");
     expect(html).not.toContain("Atenção");
     expect(html).not.toContain("exige regra específica");

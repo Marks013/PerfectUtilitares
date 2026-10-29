@@ -652,3 +652,22 @@ describe("coverage provenance is preserved across every branch", () => {
     expect(previous.demands[1].estimated).toBe(false);
   });
 });
+
+describe("Shared operational provenance", () => {
+  const shared = { tenantId: "company-a", userId: null, admin: false, moduleSessionId: "operational-session" };
+  it("creates and saves a real draft revision without assigning shared actions to an individual account", async () => {
+    const created = await createEscala(shared, input());
+    expect(created.canEdit).toBe(true); expect(created.canPublish).toBe(false);
+    expect(mocks.revision.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ createdById: null, accessChannel: "ESCALAS_MODULE_PASSWORD", moduleSessionId: "operational-session", tenantId: "company-a" }) });
+    const saved = await saveEscala(shared, "w1", 1, input());
+    expect(saved.revision).toBe(2);
+    expect(mocks.audit.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ userId: null, metadata: expect.objectContaining({ accessChannel: "ESCALAS_MODULE_PASSWORD", moduleSessionId: "operational-session", tenantId: "company-a", previousRevision: 1 }) }) });
+    await expect(saveEscala(shared, "w1", 1, input(), true)).rejects.toMatchObject({ status: 403, code: "ESCALA_ACTION_FORBIDDEN" });
+  });
+  it("never resolves a foreign workspace or revision merely because the browser knows its id", async () => {
+    mocks.workspace.findFirst.mockResolvedValue(null);
+    await expect(getEscala(shared, "foreign-workspace")).rejects.toMatchObject({ status: 404 });
+    expect(mocks.workspace.findFirst).toHaveBeenLastCalledWith({ where: { id: "foreign-workspace", tenantId: "company-a" } });
+    expect(mocks.revision.findUnique).not.toHaveBeenCalled();
+  });
+});

@@ -1,5 +1,5 @@
 import { addDays, dateRange, dayOfWeek } from "./dates";
-import { effectiveWeeklyMinutes } from "./labor-rules";
+import { effectiveSundayLimit, effectiveWeeklyMinutes } from "./labor-rules";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 
 type Demand = EscalaInput["demands"][number];
@@ -34,9 +34,14 @@ function referenceShift(person: EscalaEmployee, shifts: Map<string, EscalaShift>
 
 function key(sector: string, role: string) { return JSON.stringify([sector, role]); }
 
-function tieOrder(group: Group, monday: string) {
+function groupHash(group: Group) {
   let hash = 0;
   for (const character of key(group.sector, group.role)) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
+  return hash;
+}
+
+function tieOrder(group: Group, monday: string) {
+  const hash = groupHash(group);
   const week = Math.floor(Date.parse(`${monday}T00:00:00Z`) / 604800000);
   const rotation = (hash + week) % 7;
   // Spread rounding opportunities rather than permanently assigning the same weekend off.
@@ -48,9 +53,18 @@ function tieOrder(group: Group, monday: string) {
 
 function roundedTargets(expected: number[], group: Group, monday: string, days: string[]) {
   const targets = expected.map((value) => Math.floor(value + 1e-9));
-  const remainder = Math.max(0, Math.floor(expected.reduce((sum, value) => sum + value, 0) + 1e-9) - targets.reduce((sum, value) => sum + value, 0));
+  const total = Math.floor(expected.reduce((sum, value) => sum + value, 0) + 1e-9);
+  const sunday = days.findIndex(day => dayOfWeek(day) === 6);
+  if (sunday >= 0) {
+    const fraction = Math.max(0, expected[sunday] - Math.floor(expected[sunday] + 1e-9));
+    const phase = Math.floor(Date.parse(`${monday}T00:00:00Z`) / 604800000) + groupHash(group) % 97;
+    const extra = Math.floor((phase + 1) * fraction + 1e-9) - Math.floor(phase * fraction + 1e-9);
+    const otherTargets = targets.reduce((sum, value, index) => sum + (index === sunday ? 0 : value), 0);
+    targets[sunday] = Math.min(Math.max(0, total - otherTargets), targets[sunday] + extra);
+  }
+  const remainder = Math.max(0, total - targets.reduce((sum, value) => sum + value, 0));
   const order = tieOrder(group, monday);
-  const ranked = expected.map((value, index) => ({ index, fraction: value - targets[index] }))
+  const ranked = expected.map((value, index) => ({ index, fraction: value - targets[index] })).filter(item => item.index !== sunday)
     .sort((a, b) => Math.abs(a.fraction - b.fraction) > 1e-9 ? b.fraction - a.fraction
       : order.indexOf(dayOfWeek(days[a.index])) - order.indexOf(dayOfWeek(days[b.index])));
   for (const item of ranked.slice(0, remainder)) targets[item.index]++;
@@ -89,14 +103,24 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
         const item = assignments.get(JSON.stringify([person.id, day]));
         return item?.locked && item.kind === "WORK";
       });
-      const freeDays = available.length - forced.length;
-      const weight = freeDays ? Math.min(1, Math.max(0, 5 - forced.length) / freeDays) : 0;
+      const free = available.filter(day => !forced.includes(day));
+      const freeWeekdays = free.filter(day => dayOfWeek(day) !== 6);
+      const sunday = free.find(day => dayOfWeek(day) === 6);
+      const remaining = Math.max(0, 5 - forced.length);
+      const history = new Map([...(person.planningHistory ?? []), ...person.history, ...input.assignments.filter(day => day.employeeId === person.id && day.locked), ...(person.planningFuture ?? [])].map(day => [day.date, day]));
+      const limit = effectiveSundayLimit(person);
+      const worked = (date: string) => ["WORK", "DUTY"].includes(history.get(date)?.kind ?? "");
+      const unavailableSunday = sunday && [1, -1].some(direction => Array.from({ length: limit }, (_, index) => addDays(sunday, direction * 7 * (index + 1))).every(worked));
+      // A 5/7 reference ignores alternating Sunday rest. Keep the weekly budget,
+      // but reserve at most the explicit Sunday rotation's share for a free Sunday.
+      const sundayWeight = sunday && !unavailableSunday ? Math.min(remaining, limit / (limit + 1)) : 0;
+      const weekdayWeight = freeWeekdays.length ? Math.min(1, Math.max(0, remaining - sundayWeight) / freeWeekdays.length) : 0;
       const groupKey = key(person.sector, person.role);
       const group = groups.get(groupKey) ?? { sector: person.sector, role: person.role, contributions: [] };
       for (const day of available) {
         const item = assignments.get(JSON.stringify([person.id, day]));
         const locked = item?.locked && item.kind === "WORK";
-        group.contributions.push({ date: day, shift: locked && item.shiftId ? shifts.get(item.shiftId) ?? shift : shift, weight: locked ? 1 : weight });
+        group.contributions.push({ date: day, shift: locked && item.shiftId ? shifts.get(item.shiftId) ?? shift : shift, weight: locked ? 1 : dayOfWeek(day) === 6 ? sundayWeight : weekdayWeight });
       }
       groups.set(groupKey, group);
     }

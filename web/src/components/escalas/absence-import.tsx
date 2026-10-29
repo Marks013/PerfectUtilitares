@@ -125,6 +125,7 @@ export function AbsenceImport({ input, disabled, onChange }: {
       const response = await fetch("/api/escalas/import", { method: "POST", body: form, signal: operationController.signal });
       const body = await response.json().catch(() => { throw new Error("O servidor não conseguiu responder à conferência."); });
       if (!active()) return;
+      if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
       if (!response.ok) throw new Error(responseMessage(body));
       const data: AbsenceImportPreview = body.preview;
       setPreview({ data, key: snapshot.key });

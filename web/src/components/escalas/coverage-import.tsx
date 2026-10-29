@@ -75,6 +75,7 @@ export function ImportEmployees({
         setStatus("O cenário mudou durante a conferência. Confira o arquivo novamente para usar a filial e a jornada atuais.");
         return;
       }
+      if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
       if (!response.ok) throw new Error(responseMessage(body));
       setPreview({ scenario: snapshot, value: body.preview });
       setStatus(body.preview.issues.length ? "Arquivo pronto com avisos. Confira os registros aceitos antes de aplicar." : "Arquivo pronto. Equipe conferida e disponível para aplicar.");
@@ -164,7 +165,7 @@ export function ImportEmployees({
                     Setor / cargo
                   </th>
                   <th scope="col" className="p-2">
-                    Carga
+                    Referência semanal
                   </th>
                 </tr>
               </thead>
@@ -183,7 +184,7 @@ export function ImportEmployees({
                     <td className="p-2">
                       {employee.sector} / {employee.role}
                     </td>
-                    <td className="p-2">{employee.scheduleMode === "MISSING" ? "Horário não informado · horas não apuradas" : employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : `${employee.weeklyHours}h`}</td>
+                    <td className="p-2">{employee.scheduleMode === "MISSING" ? "Horário não informado · horas não apuradas" : employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : `${employee.weeklyHours}h · ${employee.weeklyHoursMode === "INDIVIDUAL" ? "carga informada no arquivo" : "cenário da filial; contrato não informado"}`}</td>
                   </tr>
                 ))}
               </tbody>

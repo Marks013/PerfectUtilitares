@@ -1,3 +1,4 @@
+import { readSheet } from "read-excel-file/node";
 import { describe, expect, it } from "vitest";
 import { unzipSync, strFromU8 } from "fflate";
 import { addDays, dateRange, dayOfWeek } from "./dates";
@@ -265,13 +266,14 @@ describe("branch-wide proposal preparation", () => {
     expect(opening.map((demand) => demand.minimum).sort()).toEqual([2, 3, 3, 3, 3, 3, 3]);
     expect(closing.map((demand) => demand.minimum)).toEqual(opening.map((demand) => demand.minimum));
   });
-  it("exports effective weekly targets and the limits of verification", () => {
+  it("exports the effective proposed daily target without administrative verification tabs", async () => {
     const input = fixture("2028-01-03", 42);
     const validation = validateEscala(input);
     const bytes = exportEscalaXlsx({ id: "w", revision: 1, status: "DRAFT", input, validation, canEdit: true, canPublish: true, updatedAt: "2028-01-03" });
     const archive = unzipSync(bytes);
-    expect(strFromU8(archive["xl/worksheets/sheet5.xml"])).toContain("Carga proposta nesta semana");
-    expect(strFromU8(archive["xl/worksheets/sheet5.xml"])).toContain("<v>40</v>");
-    expect(strFromU8(archive["xl/worksheets/sheet3.xml"])).toContain("Informação");
+    const rows = await readSheet(Buffer.from(bytes), "Horarios");
+    expect(rows.find(row => row[1] === "0001")?.[7]).toBe("08:00");
+    expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/name="(?:Conferencia|Jornadas|Turnos)"/);
+    expect(validation.issues.some(issue => issue.code === "HISTORY_UNVERIFIED")).toBe(true);
   });
 });

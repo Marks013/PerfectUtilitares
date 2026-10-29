@@ -20,7 +20,7 @@ async function fixture(page: Page, locked = false) {
   const response = await page.request.post("/api/escalas", { headers: { origin }, data: { action: "CREATE", input } });
   expect(response.status()).toBe(201);
   const workspace: EscalaWorkspace = await response.json();
-  await page.goto("/escalas");
+  await page.goto("/escala");
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
   return workspace;
 }
@@ -78,7 +78,7 @@ test("real infeasible coverage explains the budget, opens the correct filters an
     expect(generated.proposalInput.demands.every((demand: { estimated?: boolean }) => demand.estimated === true)).toBe(true);
     await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
     const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-    await page.getByRole("button", { name: "Salvar revisão", exact: true }).click();
+    await expect(page.locator('[data-state="saved"]')).toBeVisible();
     expect((await saving).status()).toBe(200);
     const saved: EscalaWorkspace = await page.request.get("/api/escalas?id=" + workspace.id).then(response => response.json());
     expect(saved.input.demands.every(demand => demand.estimated === true)).toBe(true);
