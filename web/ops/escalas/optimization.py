@@ -57,7 +57,23 @@ def _movable_people(variables, values, groups, limit=36):
     return selected
 
 
-def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None):
+def _coverage_people(groups, shortages, values, limit=36):
+    """Release the complete sectors with the largest remaining Sunday shortage.
+
+    Keep every week movable: transferring one Sunday's rest can require an
+    exchange with a distant week to preserve each person's Sunday rotation.
+    """
+    snapshot = Snapshot(values)
+    ranked = sorted(((snapshot.value(sum(shortages.get(sector, []))), sector, tuple(sorted(members)))
+                     for sector, members in groups.items()), reverse=True)
+    selected = set()
+    for shortage, _sector, members in ranked:
+        if shortage > 0 and len(selected | set(members)) <= limit:
+            selected.update(members)
+    return selected
+
+
+def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None):
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
         raise ValueError('incomplete optimization incumbent')
@@ -115,6 +131,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             search_model = model.clone()
             movable_people = (_movable_people(variables, values, employee_groups or [])
                               if names[index] == 'SUNDAY_BALANCE' else set())
+            if names[index] == 'SUNDAY_COVERAGE':
+                movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
             weeks = (len(dates) + 6) // 7
             first = (index - 1) % weeks
             movable_weeks = sorted({first, (first + 1) % weeks})

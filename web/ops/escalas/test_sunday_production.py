@@ -360,5 +360,73 @@ class SectorCoverageTests(unittest.TestCase):
         self.assertEqual(Snapshot(values).value(sum(terms['Acougue'])), 60)
 
 
+class SundayCoveragePriorityTests(unittest.TestCase):
+    def test_sector_guards_preserve_weekly_coverage_not_only_sunday(self):
+        model = cp_model.CpModel()
+        trade = model.new_bool_var('trade')
+        first = 3 * trade
+        second = 10 * (1 - trade)
+        actual, _, _ = improve(model, [first + second], {trade.index: 0},
+                                time.monotonic() + 1, ['COVERAGE'],
+                                protected_groups={'COVERAGE': [first, second]})
+        # The global objective alone would exchange ten missing minutes in one
+        # sector for three in another, worsening a previously covered sector.
+        self.assertEqual(actual[trade.index], 0)
+
+    def test_weekly_and_sunday_sector_totals_have_distinct_durations(self):
+        from solver import _coverage
+        data = fixture(people=1)
+        sector = data['employees'][0]['sector']
+        days = ['2026-11-02', '2026-11-08']
+        data['demands'] = [{'sector': sector, 'date': day, 'start': 480, 'end': 540,
+                            'minimum': 1, 'estimated': True} for day in days]
+        model = cp_model.CpModel()
+        present = [model.new_bool_var(day) for day in days]
+        values = {v.index: 0 for v in present}
+        sundays, sectors = {}, {}
+        terms = _coverage(model, data, data['employees'],
+                          {('p0', day): {'day': v} for day, v in zip(days, present)},
+                          {'day': data['shifts'][0]}, time.monotonic(), 'ESTIMATED',
+                          values, sundays, sectors)
+        snapshot = Snapshot(values)
+        self.assertEqual(snapshot.value(sum(terms)), 120)
+        self.assertEqual(snapshot.value(sum(sectors[sector])), 120)
+        self.assertEqual(snapshot.value(sum(sundays[sector])), 60)
+
+    def test_coverage_neighborhood_keeps_the_whole_largest_real_sector(self):
+        from optimization import _coverage_people
+        groups = {'large': [f'p{i}' for i in range(34)], 'small': ['x', 'y', 'z']}
+        model = cp_model.CpModel()
+        large = model.new_int_var(0, 100, 'large-gap')
+        small = model.new_int_var(0, 100, 'small-gap')
+        selected = _coverage_people(groups, {'large': [large], 'small': [small]},
+                                     {large.index: 100, small.index: 20})
+        self.assertEqual(selected, set(groups['large']))
+
+    def test_sunday_coverage_can_exchange_rests_across_the_whole_month(self):
+        model = cp_model.CpModel()
+        days = [(date(2026, 11, 2) + timedelta(days=n)).isoformat() for n in range(28)]
+        rests = [model.new_bool_var(f'o:p:{day}') for day in days]
+        first, last = rests[6], rests[27]
+        model.add(first == last)
+        for variable in rests:
+            if variable.index not in (first.index, last.index):
+                model.add(variable == 0)
+        # Keep the existing total unchanged: moving the gap from Sunday to a
+        # weekday is beneficial only to the explicit Sunday objective.
+        total = model.new_int_var(0, 0, 'total-delta')
+        padding = [model.new_int_var(0, 0, f'padding:{i}') for i in range(3000)]
+        values = {v.index: int(v.index in (first.index, last.index))
+                  for v in [*rests, total, *padding]}
+        actual, proven, phases = improve(
+            model, [total, first], values, time.monotonic() + 2,
+            ['COVERAGE', 'SUNDAY_COVERAGE'], coverage_groups={'Caixa': ['p']},
+            sunday_coverage={'Caixa': [first]})
+        self.assertEqual(actual[first.index], 0)
+        self.assertEqual(actual[last.index], 0)
+        self.assertFalse(proven)
+        self.assertEqual(phases[-1]['searchScope'], 'SELECTED_PEOPLE')
+
+
 if __name__ == '__main__':
     unittest.main()

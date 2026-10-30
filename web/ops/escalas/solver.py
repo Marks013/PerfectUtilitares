@@ -359,7 +359,8 @@ def solve(data, control=None):
     for variable in seed_variables:
         model.add_hint(variable, seed.value(variable))
     sunday_coverage = {}
-    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage)
+    sector_coverage = {}
+    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage)
     if coverage is False:
         return _response("FEASIBLE", result, started)
     if isinstance(coverage, str):
@@ -379,7 +380,8 @@ def solve(data, control=None):
     # Unconfirmed staffing estimates are planning goals, never approved minima.
     # Prioritize their person-minute shortages before rotation and preferences.
     concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values)
-    goals = [("COVERAGE", sum(coverage)), ("SUNDAY_BALANCE", sum(sundays)),
+    sunday_objective = sum(term for terms in sunday_coverage.values() for term in terms)
+    goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective), ("SUNDAY_BALANCE", sum(sundays)),
              ("SATURDAY_BALANCE", sum(saturdays)),
              ("REST_DISTRIBUTION", sum(concentration)), ("REST_ROTATION", sum(rotation)),
              ("PEOPLE_CHANGED", sum(people_changed)), ("STABILITY", sum(stability_terms)),
@@ -394,7 +396,11 @@ def solve(data, control=None):
                       for variable in options.values()})
     values, proven, phases = improve(model, [objective for _, objective in goals], values,
                                      started + MAX_SECONDS, [name for name, _ in goals], control=control,
-                                     protected_groups={goals[0][0]: sundays + [sum(terms) for terms in sunday_coverage.values()]} if goals else {}, employee_groups=list(groups.values()),
+                                     protected_groups={goals[0][0]: sundays + [sum(terms) for terms in sunday_coverage.values()]
+                                                       + [sum(terms) for terms in sector_coverage.values()]} if goals else {},
+                                     employee_groups=list(groups.values()),
+                                     coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
+                                                      for sector in sunday_coverage}, sunday_coverage=sunday_coverage,
                                      decision_variables=decisions)
     # Existing protected learner records are retained, never allocated or counted as workforce.
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_learner_records(data)
@@ -648,7 +654,7 @@ def _civil_rest(model, person, dates, choices, work, off, prior, shifts):
     return occupied_weekends
 
 
-def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None):
+def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None, sector_terms=None):
     relevant = [d for d in data['demands'] if d['minimum'] > 0
                 and not (scope == 'HARD' and d.get('estimated') is True)
                 and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
@@ -723,6 +729,8 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
         shortage = model.new_int_var(0, minimum, f'coverage-gap:{index}')
         model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
         shortages.append(weight * shortage)
+        if sector_terms is not None:
+            sector_terms.setdefault(sector, []).append(weight * shortage)
         if sunday_terms is not None and sunday_weight:
             sunday_terms.setdefault(sector, []).append(sunday_weight * shortage)
         if values is not None:

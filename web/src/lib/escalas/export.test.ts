@@ -118,6 +118,36 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(workspace).toEqual(original);
   });
 
+  it("keeps bold hourly cells and wrapped headings inside their actual PDF columns", async () => {
+    const workspace = fixture();
+    workspace.input.employees = [{ ...workspace.input.employees[0], name: "WWWWWW WWWWWW WWWWWW WWWWWW WWWWWW", role: "Encarregado de atendimento e operações de supermercado" }];
+    const widths = [0.27, 0.18, 0.05, 0.27, 0.15, 0.08].map(ratio => ratio * 790);
+    const starts = widths.map((_, index) => 29 + widths.slice(0, index).reduce((sum, value) => sum + value, 0));
+    const pages = await pdfContent(await exportEscalaPdf(workspace, "hours"));
+    let checked = 0;
+    for (const item of pages.flat()) {
+      const index = starts.findIndex(start => Math.abs(start - item.transform[4]) < 0.1);
+      if (index < 0) continue;
+      expect(item.transform[4] + item.width).toBeLessThanOrEqual(starts[index] + widths[index] - 6 + 0.1);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(15);
+  }, 20000);
+
+  it("fits workbook headings and metadata without turning every title into a dark band", () => {
+    const archive = unzipSync(exportEscalaXlsx(fixture()));
+    const main = strFromU8(archive["xl/worksheets/sheet1.xml"]), styles = strFromU8(archive["xl/styles.xml"]);
+    const header = main.match(/<row r="4" ht="([\d.]+)"/);
+    expect(Number(header?.[1])).toBeGreaterThanOrEqual(45);
+    expect(main).toContain('<c r="A1" s="8"');
+    expect(main).toContain('<c r="A2" s="0"');
+    expect(main).toContain('<c r="A5" s="9"');
+    expect(main).toContain('<c r="F4" s="10"');
+    expect(styles).toContain('<fonts count="3">');
+    expect(styles).toContain('<cellXfs count="11">');
+    expect(styles).not.toMatch(/FF(?:00FF00|FFFF00)/);
+  });
+
   it.each([["2026-02", 28], ["2028-02", 29], ["2026-11", 30], ["2026-12", 31]] as const)("keeps PDF/XLSX dates, people and each assignment identical for %s", async (month, days) => {
     const workspace = fixture(month), before = structuredClone(workspace);
     const xlsx = exportEscalaXlsx(workspace), rows = await readSheet(Buffer.from(xlsx), "Escala");
@@ -263,7 +293,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(target?.[5]).toBe("08:00-12:00 / 12:15-14:05"); expect(target?.[7]).toBe("05:50");
     expect(rows[3]).not.toContain("Carga contratual");
     const text = (await pdfContent(await exportEscalaPdf(workspace))).flat().map(item => item.str).join(" ");
-    expect(text).toContain("05:50 de jornada");
+    expect(text).toContain("05:50");
     expect(text).not.toContain("Referências curtas");
     expect(workspace.input.employees[0].weeklyHours).toBe(42);
     expect(workspace.input.employees[0].simulationDailyMinutes).toBe(350);

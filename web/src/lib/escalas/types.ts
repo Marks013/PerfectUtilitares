@@ -155,7 +155,7 @@ export type EscalaGenerationConflict = {
   role?: string;
 };
 type EscalaOptimizationPhase = {
-  objective: "COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK";
+  objective: "COVERAGE" | "SUNDAY_COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK";
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
   wallTimeSeconds: number;
   budgetSeconds: number;

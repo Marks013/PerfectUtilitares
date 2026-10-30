@@ -36,6 +36,22 @@ function completeAssignments(): EscalaInput["assignments"] {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it("accepts all ten active objectives including Sunday coverage without losing assignments", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const objectives = ["COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"];
+    const optimization = { budgetSeconds: 12, unattemptedObjectives: [], phases: objectives.map(objective => ({
+      objective, status: "FEASIBLE", wallTimeSeconds: 0.1, budgetSeconds: 0.2,
+      initialValue: 500, incumbentValue: 400, searchScope: "GLOBAL",
+    })) };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 2, optimization,
+    })));
+    const result = await solveEscala(fixture());
+    expect(result.optimization).toEqual(optimization);
+    expect(result.assignments).toEqual(completeAssignments());
+    expect(result.optimization?.phases[1].objective).toBe("SUNDAY_COVERAGE");
+  });
+
   it("accepts the maximum assignment count with Unicode IDs without narrowing the data contract", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const data = fixture(); data.endDate = "2026-12-13";

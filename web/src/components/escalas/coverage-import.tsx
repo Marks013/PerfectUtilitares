@@ -91,9 +91,9 @@ export function ImportEmployees({
     <details className={panelClass} open={!input.employees.length || undefined}>
       <summary className="min-h-11 cursor-pointer py-2 font-semibold">Importar equipe com prévia</summary>
       <p className="text-sm text-[color:var(--app-muted)]">
-        Importe somente o relatório FPRE136 em CSV (recomendado) ou XLSX. A filial atual é selecionada no relatório;
-        registros de outras filiais não entram nesta proposta. Não é necessário outro arquivo, admissão ou histórico
-        individual. A importação não remove matrículas ausentes nem publica a escala.
+        Use o FPRE136 em CSV (recomendado) ou XLSX. A equipe desta filial é separada automaticamente.
+        Não é necessário outro arquivo. Primeiro confira a prévia; depois aplique os registros aceitos.
+        Os horários originais e os colaboradores já cadastrados são preservados.
       </p>
       <details>
         <summary className="min-h-11 cursor-pointer py-2 text-sm">Usar outro formato (opcional)</summary>

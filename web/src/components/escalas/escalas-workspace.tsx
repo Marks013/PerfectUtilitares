@@ -25,22 +25,25 @@ import { WorkspaceFeedback } from "./workspace-feedback";
 import type { EscalaProblem, EscalaRecoveryAction } from "./workspace-feedback-model";
 import { changeBranchWeeklyHours, clock, displayDate, errorMessage, HOURS, newInput } from "./workspace-model";
 
-type Area = "team" | "roster" | "coverage" | "review" | "adjustments";
+type Area = "team" | "generate" | "roster" | "coverage" | "review" | "adjustments";
 const AREAS: { id: Area; label: string }[] = [
-  { id: "team", label: "Equipe" },
-  { id: "roster", label: "Escala" },
+  { id: "team", label: "Importar equipe" },
+  { id: "generate", label: "Escolher jornada e gerar" },
+  { id: "roster", label: "Revisar e exportar" },
+];
+const TOOLS: { id: Area; label: string }[] = [
   { id: "coverage", label: "Cobertura" },
   { id: "review", label: "Revisão e suporte" },
   { id: "adjustments", label: "Ajustes" },
 ];
 
-function CreatePlan({ disabled, create }: { disabled: boolean; create: (input: ReturnType<typeof newInput>) => void }) {
+function CreatePlan({ disabled, create, initial = false }: { disabled: boolean; create: (input: ReturnType<typeof newInput>) => void; initial?: boolean }) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [error, setError] = useState("");
-  return <details className={styles.disclosure}>
-    <summary className={styles.disclosureTrigger}>Novo planejamento</summary>
+  return <details className={styles.disclosure} open={initial || undefined}>
+    <summary className={styles.disclosureTrigger}>Criar planejamento</summary>
     <form className={styles.disclosureBody} onSubmit={(event) => {
       event.preventDefault();
       setError("");
@@ -66,11 +69,12 @@ function comparePlans(a: WorkspaceSummary, b: WorkspaceSummary) {
   return compareBranches(a.input, b.input) || b.input.startDate.localeCompare(a.input.startDate) || a.id.localeCompare(b.id);
 }
 
-export function EscalasStatus({ busy, notice, cancellable, onCancel, cancelLabel = "Cancelar análise", failed = false, error = "", problem, onAction, pendingSave = false }: {
+export function EscalasStatus({ busy, notice, cancellable, onCancel, cancelLabel = "Cancelar análise", failed = false, error = "", problem, onAction, pendingSave = false, hasWorkspace = false }: {
   busy: string; notice: string; cancellable: boolean; onCancel: () => void; cancelLabel?: string; failed?: boolean;
-  error?: string; problem?: EscalaProblem | null; pendingSave?: boolean; onAction?: (action: EscalaRecoveryAction, context?: EscalaRecoveryContext) => void;
+  error?: string; problem?: EscalaProblem | null; pendingSave?: boolean; hasWorkspace?: boolean; onAction?: (action: EscalaRecoveryAction, context?: EscalaRecoveryContext) => void;
 }) {
   if (pendingSave && !busy && !error && !problem) return <p role="status" className={styles.muted}>Alterações no rascunho. Aguardando confirmação do salvamento automático.</p>;
+  if (hasWorkspace && !busy && !notice && !error && !problem && !failed) return null;
   const stage = busy ? /cancelamento|Cancelando/.test(busy) ? "Cancelando" : "Processando" : notice.startsWith("Cálculo cancelado.") ? "Cancelado" : problem?.outcome === "not-generated" ? "Proposta não gerada" : failed || error || problem?.tone === "error" ? "Falha" : problem?.tone === "warning" || /avisos|alterado|cancelada|pendências/i.test(notice) ? "Concluído com avisos" : notice ? "Concluído" : "Pronto";
   return <div className={styles.stackSmall}>
     <p className={styles.muted}><strong>{stage}.</strong>{!busy && !notice && !error && !problem && <span> Selecione a filial e o mês para planejar.</span>}</p>
@@ -99,8 +103,8 @@ export function EscalasWorkspace() {
     setReviewContext(null);
     setExportMode("both");
     setPendingReview(null);
-    setArea(workspace?.input.assignments.length ? "roster" : "team");
-  }, [workspace?.id, workspace?.input.assignments.length]);
+    setArea(workspace?.input.assignments.length ? "roster" : workspace?.input.employees.length ? "generate" : "team");
+  }, [workspace?.id, workspace?.input.assignments.length, workspace?.input.employees.length]);
   useEffect(() => { if (model.generated) setArea("roster"); }, [model.generated]);
   useEffect(() => {
     if (!pendingReview || !visited.has(area) || area !== recoveryArea(pendingReview.target)) return;
@@ -133,9 +137,9 @@ export function EscalasWorkspace() {
     <header className={styles.header}>
       <div className={styles.brand}>
         <CalendarDays className={styles.brandIcon} aria-hidden="true" />
-        <div><h1 className={styles.title}>Escalas 5×2</h1><p className={styles.muted}>Planejamento mensal para a operação do supermercado.</p></div>
+        <div><h1 className={styles.title}>Escalas 5×2</h1><p className={styles.muted}>Sua equipe, os horários e as folgas em um só lugar.</p></div>
       </div>
-      <span className={styles.workflowTag}>Importar · gerar · revisar · exportar</span>
+      <span className={styles.workflowTag}>Planejamento para supermercados</span>
     </header>
 
     <section className={panelClass} aria-labelledby="escala-list-title">
@@ -144,7 +148,7 @@ export function EscalasWorkspace() {
         <option value="">Selecione um planejamento</option>
         {[...model.workspaces].sort(comparePlans).map((item) => <option key={item.id} value={item.id}>Filial {item.input.branchCode} · {item.input.branchName} · {item.input.visibleMonth ?? `${displayDate(visibleDates(item.input)[0])} a ${displayDate(visibleDates(item.input).at(-1) ?? item.input.endDate)}`} · {item.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</option>)}
       </select>}</Field> : <p className={styles.muted}>{model.canCreate ? "Comece pela filial e pelo mês. A equipe e a jornada serão definidas neste planejamento." : "Nenhum planejamento disponível para seu acesso."}</p>}
-      {model.canCreate && <CreatePlan disabled={Boolean(model.busy || model.dirty || model.recovery)} create={model.create} />}
+      {model.canCreate && <CreatePlan initial={!model.workspaces.length} disabled={Boolean(model.busy || model.dirty || model.recovery)} create={model.create} />}
     </section>
     {model.pendingOpen && <div className={`${panelClass} border-[color:var(--app-coral)]`} role="alert">
       <p>Há alterações não salvas neste planejamento.</p>
@@ -157,7 +161,7 @@ export function EscalasWorkspace() {
     {conflict && input && <section className={panelClass} role="alert" aria-label="Comparar conflito de revisão"><h2 className={styles.sectionTitle}>Escolha como continuar sem sobrescrever em silêncio</h2><p>Servidor: revisão {conflict.revision}, {conflict.input.employees.length} colaboradores, {conflict.input.defaultWeeklyHours}h. Sua edição: {input.employees.length} colaboradores, {input.defaultWeeklyHours}h.</p><p>Usar sua edição substituirá o conteúdo do rascunho salvo na próxima revisão. A versão anterior permanece no histórico; bloqueios continuam protegidos pelo servidor.</p><details><summary className={styles.disclosureTrigger}>Conferir equipe e horários da revisão salva</summary><div className={styles.reviewScroller}><ul>{conflict.input.employees.map(person => <li key={person.id}>{person.registration} · {person.name} · {person.sector} / {person.role} · {person.weeklyHours}h · {person.planningEnabled === false ? "não incluído" : "incluído"}<span className="block">Horários: {person.shiftIds.map(id => conflict?.input.shifts.find(shift => shift.id === id)?.segments.map(segment => clock(segment.start) + "–" + clock(segment.end) + (segment.kind === "BREAK" ? " (intervalo)" : "")).join(" / ")).join("; ") || "Sem horário fixo"}. Folgas fixas: {person.fixedOffDays.length ? person.fixedOffDays.map(day => ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"][day]).join(", ") : "nenhuma"}. {conflict.input.assignments.filter(day => day.employeeId === person.id && day.kind === "ABSENCE").length} dias de ausência; {conflict.input.assignments.filter(day => day.employeeId === person.id && day.locked).length} dias bloqueados.</span></li>)}</ul></div></details><div className={styles.actions}><button type="button" className={buttonClass} onClick={model.closeConflict}>Manter edição aberta sem substituir</button><button type="button" className={buttonClass} onClick={model.useServerRevision}>Usar revisão do servidor e descartar edição local</button><button type="button" className={primaryClass} disabled={!conflict.canEdit} onClick={model.rebaseDraft}>Usar minha edição sobre a revisão {conflict.revision}</button></div></section>}
     {!model.localBackup && model.dirty && <p role="alert" className={styles.errorText}>O navegador não conseguiu guardar uma cópia temporária. Não recarregue nem feche esta aba antes da confirmação do salvamento.</p>}
     {model.recovery && workspace && <section className={panelClass} role="alert" aria-label="Rascunho recuperável"><h2 className={styles.sectionTitle}>Há um rascunho preservado neste navegador</h2><p>Originado na revisão {model.recovery.baseRevision}; a revisão salva atual é {workspace.revision}. {model.recovery.baseRevision !== workspace.revision ? "Restaurar usará seu rascunho como conteúdo da próxima revisão, substituindo o conteúdo atual após o salvamento. Confira antes de escolher. O histórico será mantido." : "Você pode retomar a edição sem refazer a importação."}</p><div className={styles.actions}><button type="button" className={primaryClass} onClick={model.recoverDraft}>Restaurar meu rascunho sobre a revisão {workspace.revision}</button><button type="button" className={buttonClass} onClick={model.ignoreRecovery}>Manter somente a revisão salva</button></div></section>}
-    <div ref={errorRef} tabIndex={-1} className={styles.feedbackFocus}><EscalasStatus pendingSave={model.dirty} busy={model.busy} notice={model.notice} error={model.error} problem={model.problem} onAction={recover} failed={Boolean(model.error)} cancellable={model.cancellable} onCancel={model.cancelAnalysis} cancelLabel={model.cancelLabel} /></div>
+    <div ref={errorRef} tabIndex={-1} className={styles.feedbackFocus}><EscalasStatus hasWorkspace={Boolean(workspace)} pendingSave={model.dirty} busy={model.busy} notice={model.notice} error={model.error} problem={model.problem} onAction={recover} failed={Boolean(model.error)} cancellable={model.cancellable} onCancel={model.cancelAnalysis} cancelLabel={model.cancelLabel} /></div>
 
     {input && workspace && <div key={workspace.id} className={styles.stack}>
       <section className={`${panelClass} ${styles.scenario}`} aria-labelledby="escala-scenario-title">
@@ -167,30 +171,36 @@ export function EscalasWorkspace() {
           </div>
           <span role="status" className={styles.saveStatus} data-state={model.saveState}>{SAVE_LABEL[model.saveState]} · {workspace.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</span>
         </div>
+      </section>
+      <nav aria-label="Etapas do planejamento" className={styles.guidedNavigation}>
+        {AREAS.map((item, index) => <button key={item.id} type="button" aria-current={area === item.id ? "step" : undefined} aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={styles.guidedStep} onClick={() => setArea(item.id)}><span className={styles.stepNumber} aria-hidden="true">{index + 1}</span><span><strong>{item.label}</strong><small>{item.id === "team" ? included ? `${included} colaboradores incluídos` : "Use o relatório da sua equipe" : item.id === "generate" ? `${input.defaultWeeklyHours} horas por semana · modelo 5×2` : hasRoster ? "Escala disponível para conferir" : "Confira antes de baixar os arquivos"}</small></span></button>)}
+      </nav>
+      <section hidden={area !== "generate"} inert={area !== "generate"} id="escala-area-generate" className={`${panelClass} ${styles.generationPanel}`} aria-labelledby="escala-generate-title">
+        <div><p className={styles.eyebrow}>PASSO 2 · O ALGORITMO FAZ A DISTRIBUIÇÃO</p><h2 id="escala-generate-title" className={styles.sectionTitle}>Escolha a jornada e gere sua escala</h2><p className={styles.muted}>Os horários, as folgas e a cobertura estimada são calculados juntos. Você revisa antes de aplicar.</p></div>
         <div className={styles.contextBar}>
           <fieldset disabled={!model.canEdit} className={styles.journeyField}>
             <Field label="Jornada semanal">{(id) => <select id={id} value={input.defaultWeeklyHours} className={controlClass} onChange={(event) => model.update(changeBranchWeeklyHours(input, Number(event.target.value) as WeeklyHours))}>{HOURS.map((hours) => <option key={hours} value={hours}>{hours} horas</option>)}</select>}</Field>
           </fieldset>
-          <p className={styles.muted}><strong className="text-[color:var(--app-fg)]">{clock(input.defaultWeeklyHours * 12)}</strong> de trabalho por dia, em 5 dias.<br />Intervalos não computados à parte; exceções individuais preservadas.</p>
-          <button type="button" className={buttonClass} onClick={() => resolve("intervals")}>Intervalos de jornadas curtas</button>
+          <p className={styles.muted}><strong className="text-[color:var(--app-fg)]">{clock(input.defaultWeeklyHours * 12)}</strong> de trabalho por dia, em 5 dias.<br />O intervalo fica à parte. Férias, bloqueios e exceções individuais são preservados.</p>
           <div className={styles.mainActions}>
             {model.dirty && <button type="button" className={buttonClass} disabled={!model.canEdit || model.saveState === "saving"} onClick={model.save}>{["error", "conflict", "invalid"].includes(model.saveState) ? "Tentar salvar" : "Salvar agora"}</button>}
-            <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hasRoster ? "Gerar nova proposta" : "Gerar proposta mensal"}</button>
+            <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hasRoster ? "Gerar nova proposta" : "Gerar escala e horários"}</button>
           </div>
         </div>
+        {!included && <div className={styles.nextStep}><p>Primeiro importe a equipe da filial. Nenhuma configuração adicional é necessária para começar.</p><button type="button" className={buttonClass} onClick={() => setArea("team")}>Voltar para importar equipe</button></div>}
+        {input.employees.length > 0 && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
+        <button type="button" className={`${buttonClass} ${styles.quietAction}`} onClick={() => resolve("intervals")}>Ajustar pausas de jornadas curtas (opcional)</button>
         {!workspace.canEdit && <p className={styles.muted}>Acesso de consulta nesta filial.</p>}
       </section>
 
-      {input.employees.length > 0 && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
-      <Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onRegenerate={model.generate} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} />
-
-      <nav aria-label="Áreas do planejamento" className={styles.navigation}>
-        {AREAS.map((item) => <button key={item.id} type="button" aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={`${buttonClass} ${styles.areaTab}`} onClick={() => setArea(item.id)}>{item.label}</button>)}
-      </nav>
+      <details className={styles.optionalTools} open={TOOLS.some(item => item.id === area) || undefined}>
+        <summary className={styles.disclosureTrigger}>Ferramentas e ajustes opcionais</summary>
+        <nav aria-label="Áreas do planejamento" className={styles.actions}>{TOOLS.map(item => <button key={item.id} type="button" aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={`${buttonClass} ${styles.areaTab}`} onClick={() => setArea(item.id)}>{item.label}</button>)}</nav>
+      </details>
 
       {visited.has("team") && <section hidden={area !== "team"} inert={area !== "team"} id="escala-area-team" aria-labelledby="escala-team-title" className={styles.stackSmall}>
-        <div id="escala-team" tabIndex={-1}><h2 id="escala-team-title" className={styles.sectionTitle}>Equipe da filial</h2><p className={styles.muted}>{input.employees.length} importados · {included} incluídos. Horários originais ficam preservados para comparação.</p></div>
-        <ImportEmployees input={input} disabled={!model.canEdit} onChange={model.update} />
+        <div id="escala-team" tabIndex={-1}><p className={styles.eyebrow}>PASSO 1 · IMPORTE O ARQUIVO</p><h2 id="escala-team-title" className={styles.sectionTitle}>Equipe da filial</h2><p className={styles.muted}>{included ? `${included} colaboradores incluídos. Você pode seguir para gerar ou atualizar o arquivo abaixo.` : "Selecione o relatório FPRE136. O sistema separa a filial e organiza a equipe para você."}</p></div>
+        <ImportEmployees input={input} disabled={!model.canEdit} onChange={(next) => { model.update(next); setArea("generate"); }} />
         <AbsenceImport input={input} disabled={!model.canEdit} onChange={model.update} />
         {input.employees.length > 0 && <details id="escala-team-restrictions" className={panelClass}><summary className={styles.disclosureTrigger}>Consultar equipe e restrições individuais</summary>
           <div id="escala-team-review" tabIndex={-1} className="scroll-mt-24 rounded-md p-2 focus:outline-2 focus:outline-[color:var(--app-action-blue)]">
@@ -198,15 +208,17 @@ export function EscalasWorkspace() {
           </div>
           <Employees input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "team" ? reviewContext : undefined} />
         </details>}
+        {included > 0 && <div className={styles.nextStep}><div><strong>Equipe pronta para o próximo passo</strong><p className={styles.muted}>Férias e afastamentos são opcionais. Você pode importá-los acima antes de gerar.</p></div><button type="button" className={primaryClass} onClick={() => setArea("generate")}>Continuar para jornada e geração</button></div>}
       </section>}
 
       {visited.has("roster") && <section hidden={area !== "roster"} inert={area !== "roster"} id="escala-area-roster" className={styles.stackSmall} aria-label="Revisar escala mensal">
+        <div><p className={styles.eyebrow}>PASSO 3 · CONFIRA O RESULTADO</p><h2 className={styles.sectionTitle}>Revise a escala e baixe os arquivos</h2><p className={styles.muted}>Confira os horários e as folgas. Para ajustar um dia, selecione a célula na grade.</p></div>
         {model.outdated && hasRoster && <div role="status" className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-4 text-sm"><strong>Cenário alterado.</strong> A grade anterior fica visível para comparação, mas precisa ser gerada novamente antes de exportar.</div>}
         <Proposals input={input} generated={model.generated} disabled={!model.canEdit} onGenerated={model.applyGenerated} onDismiss={model.dismissProposals} />
         <div id="escala-roster" tabIndex={-1} className="min-w-0">
           {hasRoster ? <Roster key={workspace.id} input={input} review={reviewContext?.target === "roster" ? reviewContext : undefined} mode={exportMode} onModeChange={setExportMode} onReviewEmployee={employeeId => resolve("team", { employeeId })} onReviewCoverage={() => { setReviewSection("coverage"); setArea("review"); }} validation={model.validation} disabled={!model.canEdit} canUnlock={workspace.canPublish} onUndo={model.undoRoster} onChange={model.update} /> : !model.generated && <div className={`${panelClass} ${styles.emptyState}`}><h2 className={styles.sectionTitle}>Sua escala mensal aparecerá aqui</h2><p className="mt-2 text-sm text-[color:var(--app-muted)]">{included ? "Escolha a jornada e gere a proposta. O algoritmo prepara os horários, as folgas e a cobertura estimada." : "Importe a equipe para começar."}</p>{!included && <button type="button" className={`${buttonClass} mt-4`} onClick={() => setArea("team")}>Importar equipe</button>}</div>}
         </div>
-        {hasRoster && <button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir erros, avisos e orientações</button>}
+        {hasRoster && <><div className={styles.actions}><button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Onde falta gente?</button><button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir avisos e orientações</button><button type="button" className={buttonClass} onClick={() => setArea("generate")}>Mudar jornada ou gerar novamente</button></div><Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onRegenerate={model.generate} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} /></>}
       </section>}
 
       {visited.has("coverage") && <section hidden={area !== "coverage"} inert={area !== "coverage"} id="escala-area-coverage" className={styles.stackSmall} aria-label="Cobertura da filial"><CoverageTimeline key={workspace.id} input={input} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}

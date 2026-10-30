@@ -7,7 +7,7 @@ import { dateRange } from "./dates";
 import { isRestPlanningExcludedRole } from "./eligibility";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 
-const objectiveName = z.enum(["COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"]);
+const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"]);
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -15,7 +15,7 @@ const resultSchema = z.strictObject({
   wallTimeSeconds: z.number().finite().min(0).max(60),
   optimization: z.strictObject({
     budgetSeconds: z.number().finite().min(0).max(60),
-    unattemptedObjectives: z.array(objectiveName).max(9).optional(),
+    unattemptedObjectives: z.array(objectiveName).max(10).optional(),
     phases: z.array(z.strictObject({
       objective: objectiveName,
       status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -27,7 +27,7 @@ const resultSchema = z.strictObject({
       initialValue: z.number().finite().int().optional(),
       movableWeeks: z.number().int().min(1).max(6).optional(),
       movablePeople: z.number().int().min(1).max(250).optional(),
-    })).max(9),
+    })).max(10),
   }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
