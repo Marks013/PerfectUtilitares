@@ -35,15 +35,21 @@ def _linear_value(terms, values):
     return total
 
 
-def _objective_floor(model, terms):
+def _objective_floor(model, terms, domain_bounds=None):
     """A proven bound from integer domains, including negative coefficients."""
     indexes, coefficients, offset = terms
     lower = offset
     for index, coefficient in zip(indexes, coefficients):
-        domain = tuple(model.proto.variables[index if index >= 0 else -index - 1].domain)
-        if not domain:
-            return None
-        minimum, maximum = domain[0], domain[-1]
+        canonical = index if index >= 0 else -index - 1
+        bounds = domain_bounds.get(canonical) if domain_bounds is not None else None
+        if bounds is None:
+            domain = tuple(model.proto.variables[canonical].domain)
+            if not domain:
+                return None
+            bounds = domain[0], domain[-1]
+            if domain_bounds is not None:
+                domain_bounds[canonical] = bounds
+        minimum, maximum = bounds
         if index < 0:
             minimum, maximum = -maximum, -minimum
         lower += coefficient * (minimum if coefficient >= 0 else maximum)
@@ -148,6 +154,9 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         plans = plans[:first] + [('SECONDARY_POLISH', None, list(zip(names[first:], objectives[first:])))]
     names = [name for name, _objective, _members in plans]
     protected_groups, active_groups = protected_groups or {}, []
+    # Original variable domains do not change during improve. Neighborhoods fix
+    # only cloned domains and must never populate or read this cache.
+    domain_bounds = {}
     _replace_hints(model, values)
     for index, (name, objective, members) in enumerate(plans):
         if control is not None:
@@ -163,7 +172,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             for member_name, member in members:
                 initial = Snapshot(values).value(member)
                 model.add(member <= initial)
-                floor = _objective_floor(model, _expression_terms(member))
+                floor = _objective_floor(model, _expression_terms(member), domain_bounds)
                 weight = max(1, min(1000, 100000 // max(1, initial - floor)))
                 weighted.append(weight * member)
                 member_values.append({'objective': member_name, 'initialValue': initial, 'incumbentValue': initial})
@@ -186,7 +195,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         incumbent = _linear_value(terms, values)
         # A new search may not worsen even its own goal relative to the known draft.
         model.add(objective <= incumbent)
-        lower = _objective_floor(model, terms)
+        lower = _objective_floor(model, terms, domain_bounds)
         if lower == incumbent:
             model.add(objective == incumbent)
             phases.append({'objective': names[index], 'status': 'OPTIMAL',
@@ -223,16 +232,14 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             movable = {day for week in movable_weeks for day in dates[week * 7:week * 7 + 7]}
             # Sunday exchanges need both dates and their surrounding weekly rests.
             # Free selected complete groups for all weeks, not an isolated Sunday.
-            for variable in variables:
-                if control is not None:
+            for offset, (variable_index, (person, day)) in enumerate(decision_variables.items()):
+                if control is not None and offset % 128 == 0:
                     control.checkpoint()
-                if variable.index in decision_variables:
-                    person, day = decision_variables[variable.index]
-                    fixed = person not in movable_people if movable_people else day not in movable
-                    if fixed:
-                        domain = search_model.proto.variables[variable.index].domain
-                        domain.clear()
-                        domain.extend([values[variable.index], values[variable.index]])
+                fixed = person not in movable_people if movable_people else day not in movable
+                if fixed:
+                    domain = search_model.proto.variables[variable_index].domain
+                    domain.clear()
+                    domain.extend([values[variable_index], values[variable_index]])
         # Model setup belongs to this phase's share, not the later objectives.
         # Do not start a presolve with too little time to use the known incumbent.
         budget = min(budget - (time.monotonic() - preparation_started), deadline - time.monotonic() - 0.10)

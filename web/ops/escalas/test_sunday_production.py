@@ -11,6 +11,52 @@ from weekend_balance import available_weekends, weekend_objectives
 
 
 class ProductionSundayTests(unittest.TestCase):
+    def test_original_domain_bound_cache_is_reused_without_reading_fixed_clone_domains(self):
+        from optimization import _objective_floor
+        model = cp_model.CpModel()
+        variable = model.new_int_var(-3, 8, 'value')
+        cache = {}
+        terms = ((variable.index,), (-2,), 5)
+        self.assertEqual(_objective_floor(model, terms, cache), -11)
+        self.assertEqual(cache, {variable.index: (-3, 8)})
+        clone = model.clone()
+        clone.proto.variables[variable.index].domain.clear()
+        clone.proto.variables[variable.index].domain.extend([0, 0])
+        self.assertEqual(_objective_floor(clone, terms), 5)
+        self.assertEqual(_objective_floor(model, terms, cache), -11)
+        self.assertEqual(tuple(model.proto.variables[variable.index].domain), (-3, 8))
+
+    def test_direct_decision_fixing_preserves_every_other_sector_and_cancel_checkpoints(self):
+        model = cp_model.CpModel()
+        days = [(date(2026, 11, 2) + timedelta(days=i)).isoformat() for i in range(42)]
+        work = {(pid, day): model.new_bool_var(f'w:{pid}:{day}') for pid in ('p', 'q', 'r', 's', 't', 'u') for day in days}
+        changed = {pid: model.new_bool_var('changed:' + pid) for pid in ('p', 'q')}
+        padding = [model.new_int_var(0, 0, f'padding:{i}') for i in range(3000)]
+        values = {variable.index: 0 for variable in [*work.values(), *changed.values(), *padding]}
+        values[work['p', days[0]].index] = 1
+        values[changed['p'].index] = 1
+        decisions = {variable.index: key for key, variable in work.items()}
+        testcase = self
+        class Inspect:
+            checkpoints = 0
+            def checkpoint(self):
+                self.checkpoints += 1
+            def solve(self, engine, current):
+                for index, (pid, _day) in decisions.items():
+                    if pid != 'p':
+                        testcase.assertEqual(tuple(current.proto.variables[index].domain), (values[index], values[index]))
+                return engine.solve(current)
+        control = Inspect()
+        actual, _, phases = improve(model, [0, work['p', days[0]], -work['q', days[0]]], values,
+            time.monotonic() + 2, ['COVERAGE', 'STABILITY', 'PREFERENCES'], control=control,
+            decision_variables=decisions, coverage_groups={'first': ['p'], 'other': ['q', 'r', 's', 't', 'u']})
+        self.assertGreaterEqual(control.checkpoints, 3)
+        self.assertEqual(actual[work['p', days[0]].index], 0)
+        self.assertEqual(actual[work['q', days[0]].index], 0)
+        self.assertEqual(tuple(model.proto.variables[work['q', days[0]].index].domain), (0, 1))
+        self.assertEqual(phases[-1]['searchScope'], 'SELECTED_PEOPLE')
+        self.assertEqual(phases[-1]['movablePeople'], 1)
+
     def test_joint_polish_can_exchange_distant_weeks_in_its_bounded_sector(self):
         model = cp_model.CpModel()
         days = [(date(2026, 11, 2) + timedelta(days=i)).isoformat() for i in range(21)]
