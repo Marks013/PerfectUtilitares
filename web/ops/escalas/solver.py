@@ -1,5 +1,7 @@
 """Integer-minute CP-SAT model; approval additionally requires the independent TS verifier."""
 import hashlib
+import unicodedata
+import re
 import time
 from functools import lru_cache
 from datetime import date, datetime, time as civil_time, timedelta
@@ -8,6 +10,7 @@ from zoneinfo import ZoneInfo
 from ortools.sat.python import cp_model
 
 from hints import balanced_rest_hints
+from optimization import Snapshot, improve, remember
 
 ZONE = ZoneInfo("America/Sao_Paulo")
 MAX_SECONDS = 12
@@ -105,6 +108,19 @@ def cct_admissible(shift, policy, day):
     return True
 
 
+def maximum_meal_minutes(policy, day):
+    document = policy.get('mealIntervalAgreement')
+    if not reviewed_document(document, day, 'source'):
+        return 120
+    try:
+        date.fromisoformat(document['validFrom'])
+        date.fromisoformat(document['validUntil'])
+    except (ValueError, TypeError):
+        return 120
+    maximum = document.get('maximumMinutes')
+    return maximum if type(maximum) is int and 121 <= maximum <= 360 else 120
+
+
 def admissible(shift, policy, day):
     paid, _start, _end = shift_metrics(shift)
     ceiling = 480 if day >= TRANSITION_40_DATE else 504 if day >= TRANSITION_42_DATE else 600
@@ -120,6 +136,8 @@ def admissible(shift, policy, day):
     first, last = shift["segments"][0]["start"], shift["segments"][-1]["end"]
     meals = [s["end"] - s["start"] for s in shift["segments"]
              if s["kind"] == "BREAK" and s["start"] > first and s["end"] < last]
+    if paid > 360 and max(meals, default=0) > maximum_meal_minutes(policy, day) and not policy.get('_simulation'):
+        return False
     short_pause_flex = policy.get("_simulation") and policy.get("allowShortMealSimulation") is True
     required = policy["minMealMinutes"] if paid > 360 else (15 if paid > 240 and not short_pause_flex else 0)
     return required == 0 or max(meals, default=0) >= required
@@ -138,6 +156,16 @@ def untimed_admissible(policy, day):
 def has_no_clock(person):
     # Missing imported clocks do not establish exemption from working-time control.
     return person.get("scheduleMode") in ("UNTIMED", "MISSING")
+
+
+def excluded_apprentice(person):
+    role = unicodedata.normalize('NFKD', person.get('role', '')).encode('ascii', 'ignore').decode().upper()
+    return re.sub('[^A-Z0-9]+', ' ', role).strip() in ('AUX DE SERVICOS EM SUPER', 'JOVEM APRENDIZ', 'APRENDIZ')
+
+
+def retained_learner_records(data):
+    retained = {p['id'] for p in data['employees'] if p.get('planningEnabled') is False and excluded_apprentice(p)}
+    return [dict(a) for a in data['assignments'] if a['employeeId'] in retained and (a.get('locked') or a['kind'] == 'ABSENCE')]
 
 
 def solve(data):
@@ -182,7 +210,7 @@ def solve(data):
                     continue
                 current[sid] = model.new_bool_var(f"s:{pid}:{day}:{sid}")
                 occupied = occupied_dates(day, shifts[sid])
-                forbidden = any(d in policy["closedDates"] or (d in policy["holidayDates"] and d not in policy["authorizedHolidayDates"] and not policy.get("_simulation")) for d in occupied)
+                forbidden = any(baseline.get((pid, d), {}).get("kind") == "ABSENCE" or d in policy["closedDates"] or (d in policy["holidayDates"] and d not in policy["authorizedHolidayDates"] and not policy.get("_simulation")) for d in occupied)
                 if closed or forbidden:
                     model.add(current[sid] == 0)
             choices[key] = current
@@ -289,7 +317,7 @@ def solve(data):
     seed = cp_model.CpSolver()
     seed.parameters.max_time_in_seconds = min(2, remaining)
     seed.parameters.stop_after_first_solution = True
-    seed.parameters.num_search_workers = 1
+    seed.parameters.num_workers = 1
     seed.parameters.random_seed = 37
     # Validate the proposed warm start before symmetry reduction can discard it.
     # Fixing is confined to this solver invocation; the model remains unrestricted.
@@ -305,11 +333,12 @@ def solve(data):
         seed_status = seed.solve(model)
         if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return _response(seed.status_name(seed_status), [], started)
-    result = _read_assignments(seed, employees, active, baseline, work, choices)
+    result = _read_assignments(seed, employees, active, baseline, work, choices) + retained_learner_records(data)
+    values = {variable.index: seed.value(variable) for variable in seed_variables}
     model.clear_hints()
     for variable in seed_variables:
         model.add_hint(variable, seed.value(variable))
-    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED")
+    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values)
     if coverage is False:
         return _response("FEASIBLE", result, started)
     if isinstance(coverage, str):
@@ -328,67 +357,36 @@ def solve(data):
         for weekday in (5, 6):
             maximum = model.new_int_var(0, 10000, f"max-weekend:{weekday}:{index}")
             minimum = model.new_int_var(0, 10000, f"min-weekend:{weekday}:{index}")
-            totals = []
+            totals, scores = [], []
             for pid in members:
                 score = model.new_int_var(0, 10000, f"weekend-rate:{weekday}:{pid}")
                 total, opportunities = weekend_totals[weekday][pid]
                 model.add_division_equality(score, total * 10000, opportunities)
                 totals.append(score)
+                scores.append(seed.value(total) * 10000 // opportunities)
+                remember(model, values, score, scores[-1])
             model.add_max_equality(maximum, totals)
             model.add_min_equality(minimum, totals)
+            remember(model, values, maximum, max(scores))
+            remember(model, values, minimum, min(scores))
             fairness.append(maximum - minimum)
     # Unconfirmed staffing estimates are planning goals, never approved minima.
     # Prioritize their person-minute shortages before rotation and preferences.
-    concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy)
-    objectives = [sum(coverage), sum(concentration), sum(fairness), sum(rotation),
-                  sum(people_changed), sum(stability_terms), sum(preference_terms), sum(tie_terms)]
-    objectives = [objective for objective in objectives if not isinstance(objective, int)]
-    status_name, proven = "FEASIBLE", True
+    concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values)
+    goals = [("COVERAGE", sum(coverage)), ("WEEKEND_BALANCE", sum(fairness)),
+             ("REST_DISTRIBUTION", sum(concentration)), ("REST_ROTATION", sum(rotation)),
+             ("PEOPLE_CHANGED", sum(people_changed)), ("STABILITY", sum(stability_terms)),
+             ("PREFERENCES", sum(preference_terms)), ("TIE_BREAK", sum(tie_terms))]
+    goals = [(name, objective) for name, objective in goals if not isinstance(objective, int)]
     # Establish a legal incumbent before spending the bounded budget on soft goals.
     # This seed does not lock a staffing objective or relax a mandatory condition.
-    phases = objectives
-    hint_variables = [model.get_int_var_from_proto_index(index) for index in range(len(model.proto.variables))]
-    for index, objective in enumerate(phases):
-        remaining = MAX_SECONDS - (time.monotonic() - started)
-        if remaining < 0.1:
-            proven = False
-            break
-        if objective is None:
-            model.clear_objective()
-        else:
-            model.minimize(objective)
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = (min(4, remaining / 2) if objective is None else
-                                                min(remaining, max(0.15, remaining * (0.55 if index == 0 else 0.5)))
-                                                if index < len(phases) - 1 else remaining)
-        solver.parameters.stop_after_first_solution = objective is None
-        solver.parameters.num_search_workers = 1
-        solver.parameters.random_seed = 37
-        status = solver.solve(model)
-        status_name = solver.status_name(status)
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            if objective is None and status == cp_model.UNKNOWN:
-                continue
-            if result is None:
-                return _response(status_name, [], started)
-            proven = False
-            break
-        result = _read_assignments(solver, employees, active, baseline, work, choices)
-        model.clear_hints()
-        for variable in hint_variables:
-            model.add_hint(variable, solver.value(variable))
-        if objective is None:
-            continue
-        if status == cp_model.FEASIBLE:
-            proven = False
-            # Preserve the best higher-priority incumbent, while reserving time for operational balance.
-            # This is bounded lexicographic improvement, not proof that any unfinished objective is optimal.
-            model.add(objective <= solver.value(objective))
-        else:
-            model.add(objective == solver.value(objective))
-    if result is None:
-        return _response("UNKNOWN", [], started)
-    return _response("OPTIMAL" if proven else "FEASIBLE", result, started)
+    values, proven, phases = improve(model, [objective for _, objective in goals], values,
+                                     started + MAX_SECONDS, [name for name, _ in goals])
+    # Existing protected learner records are retained, never allocated or counted as workforce.
+    result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_learner_records(data)
+    response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
+    response['optimization'] = {'budgetSeconds': MAX_SECONDS, 'phases': phases}
+    return response
 
 
 def _read_assignments(solver, employees, active, baseline, work, choices):
@@ -460,7 +458,7 @@ def _historical_weekdays(prior, shifts, start, weekday):
     return len(occupied), len(known | occupied)
 
 
-def _rest_distribution(model, employees, dates, off, active, baseline, history, policy):
+def _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values=None):
     """Soft daily presence and rotation goals; never invent a staffing minimum."""
     sectors, concentration, rotation = {}, [], []
     leadership = []
@@ -491,6 +489,8 @@ def _rest_distribution(model, employees, dates, off, active, baseline, history, 
             deviation = model.new_int_var(0, len(eligible) * 7, f"sector-rest:{sector_index}:{day}")
             model.add_abs_equality(deviation, 7 * sum(off[pid, day] for pid in eligible) - 2 * len(eligible))
             concentration.append(deviation)
+            if values is not None:
+                remember(model, values, deviation, abs(7 * sum(values[off[pid, day].index] for pid in eligible) - 2 * len(eligible)))
     first = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
     for person in employees:
         pid = person["id"]
@@ -506,6 +506,9 @@ def _rest_distribution(model, employees, dates, off, active, baseline, history, 
             deviation = model.new_int_var(0, 7 * opportunities, f"weekday-rest:{pid}:{weekday}")
             model.add_abs_equality(deviation, 7 * rests - 2 * opportunities)
             rotation.append(deviation)
+            if values is not None:
+                rests_value = sum(values[off[pid, day].index] for day in available) + sum(entry["kind"] == "OFF" for entry in known)
+                remember(model, values, deviation, abs(7 * rests_value - 2 * opportunities))
     return concentration, rotation
 
 
@@ -513,30 +516,49 @@ def _rest(model, person, dates, choices, off, prior, shifts, metrics, policy):
     if has_no_clock(person):
         return  # No timestamps exist to establish an hourly rest interval.
     pid = person["id"]
-    occupied = []
+    events = {}
     first_relevant = (date.fromisoformat(dates[0]) - timedelta(days=5)).isoformat()
     for day, entry in prior.items():
         if entry["kind"] == "WORK" and day >= first_relevant:
-            occupied.append((day, entry["shiftId"], 1))
+            events.setdefault(day, []).append((entry["shiftId"], 1))
     for (employee, day), options in choices.items():
-        if employee == pid:
-            occupied.extend((day, sid, variable) for sid, variable in options.items())
-    occupied.sort(key=lambda item: (item[0], item[1]))
-    for i, (day, sid, variable) in enumerate(occupied):
-        finish = instant(day, metrics[sid][2])
-        for next_day, next_sid, next_variable in occupied[i + 1:]:
-            delta = (date.fromisoformat(next_day) - date.fromisoformat(day)).days
+        if employee == pid and options:
+            events.setdefault(day, []).extend(options.items())
+    origin, daily = instant(dates[0], 0), []
+    for day, options in sorted(events.items()):
+        starts = [int(instant(day, metrics[sid][1]) - origin) for sid, _ in options]
+        finishes = [int(instant(day, metrics[sid][2]) - origin) for sid, _ in options]
+        variables = [variable for _, variable in options]
+        if len(options) == 1 and isinstance(variables[0], int) and variables[0] == 1:
+            daily.append((day, date.fromisoformat(day).toordinal(), starts[0], finishes[0], 1, starts[0], finishes[0]))
+            continue
+        present = model.new_bool_var(f'rest-present:{pid}:{day}')
+        model.add_max_equality(present, variables)
+        low, high = min(starts) - 1, max(finishes) + 1
+        begin = model.new_int_var(min(starts), high, f'rest-start:{pid}:{day}')
+        finish = model.new_int_var(low, max(finishes), f'rest-end:{pid}:{day}')
+        model.add_min_equality(begin, [start + (1 - variable) * (high - start)
+                                       for start, variable in zip(starts, variables)])
+        model.add_max_equality(finish, [end - (1 - variable) * (end - low)
+                                       for end, variable in zip(finishes, variables)])
+        daily.append((day, date.fromisoformat(day).toordinal(), begin, finish, present, min(starts), max(finishes)))
+    for index, (day, ordinal, _begin, finish, present, _earliest, latest) in enumerate(daily):
+        for next_day, next_ordinal, begin, _finish, next_present, earliest, _latest in daily[index + 1:]:
+            delta = next_ordinal - ordinal
             if delta > 5:
                 break
-            if delta == 0 or not (dates[0] <= day <= dates[-1] or dates[0] <= next_day <= dates[-1]):
+            if not (dates[0] <= day <= dates[-1] or dates[0] <= next_day <= dates[-1]):
                 continue
-            gap = instant(next_day, metrics[next_sid][1]) - finish
-            if gap < policy["minInterShiftMinutes"]:
-                model.add(variable + next_variable <= 1)
-            elif gap < policy["minWeeklyRestMinutes"] and delta > 1:
+            conditions = [v for v in (present, next_present) if not isinstance(v, int)]
+            if earliest - latest < policy['minInterShiftMinutes']:
+                model.add(begin - finish >= policy['minInterShiftMinutes']).only_enforce_if(conditions)
+            if delta > 1 and earliest - latest < policy['minWeeklyRestMinutes']:
                 for middle in days_between(day, next_day)[1:-1]:
-                    resting = off.get((pid, middle), int(prior.get(middle, {}).get("kind") == "OFF"))
-                    model.add(variable + next_variable + resting <= 2)
+                    resting = off.get((pid, middle), int(prior.get(middle, {}).get('kind') == 'OFF'))
+                    if isinstance(resting, int) and not resting:
+                        continue
+                    enforcement = conditions + ([] if isinstance(resting, int) else [resting])
+                    model.add(begin - finish >= policy['minWeeklyRestMinutes']).only_enforce_if(enforcement)
 
 
 def _civil_rest(model, person, dates, choices, work, off, prior, shifts):
@@ -586,10 +608,15 @@ def _civil_rest(model, person, dates, choices, work, off, prior, shifts):
     return occupied_weekends
 
 
-def _coverage(model, data, employees, choices, shifts, started, scope="ALL"):
+def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None):
+    relevant = [d for d in data['demands'] if d['minimum'] > 0
+                and not (scope == 'HARD' and d.get('estimated') is True)
+                and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
+    if not relevant:
+        return []
     by_id = {p["id"]: p for p in employees}
     index = {}
-    shortages = []
+    shortages, grouped = [], {}
 
     def register(pid, day, sid, variable):
         person = by_id[pid]
@@ -610,7 +637,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL"):
         for assignment in {a["date"]: a for a in person.get("planningHistory", []) + person["history"]}.values():
             if assignment["kind"] == "WORK" and assignment["date"] >= (date.fromisoformat(data["startDate"]) - timedelta(days=1)).isoformat():
                 register(person["id"], assignment["date"], assignment["shiftId"], 1)
-    for demand_index, demand in enumerate(data["demands"]):
+    for demand_index, demand in enumerate(relevant):
         estimated = demand.get("estimated") is True
         if (scope == "HARD" and estimated) or (scope == "ESTIMATED" and not estimated):
             continue
@@ -633,15 +660,30 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL"):
             available = [v for start, end, v in intervals if start <= left and end >= right]
             if estimated:
                 if demand["minimum"] > 0:
-                    shortage = model.new_int_var(0, demand["minimum"], f"coverage-gap:{demand_index}:{interval_index}")
-                    model.add(sum(available) + shortage >= demand["minimum"])
-                    shortages.append(int(right - left) * shortage)
+                    fixed = sum(v for v in available if isinstance(v, int))
+                    variables = [v for v in available if not isinstance(v, int)]
+                    minimum = max(0, demand['minimum'] - fixed)
+                    if not minimum:
+                        continue
+                    # Repeated role/sector intervals with identical presence share one shortage.
+                    # Their durations are added, so the person-minute objective is unchanged.
+                    key = (minimum, tuple(sorted(v.index for v in variables)))
+                    if key not in grouped:
+                        grouped[key] = [variables, 0]
+                    grouped[key][1] += int(right - left)
                 continue
             if not available and demand["minimum"] > 0:
                 minute = int(left - instant(demand["date"], 0))
                 return (f"Cobertura sem horário disponível em {demand['date']} às {minute // 60:02d}:{minute % 60:02d}. "
                         "Confira os turnos permitidos, intervalos de refeição, setor e cargo da faixa antes de alterar o efetivo.")
-            model.add(sum(available) >= demand["minimum"])
+            model.add(cp_model.LinearExpr.sum(available) >= demand["minimum"])
+    for index, ((minimum, _), (variables, weight)) in enumerate(grouped.items()):
+        shortage = model.new_int_var(0, minimum, f'coverage-gap:{index}')
+        model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
+        shortages.append(weight * shortage)
+        if values is not None:
+            present = sum(values[v.index] for v in variables)
+            remember(model, values, shortage, max(0, minimum - present))
     return shortages
 
 

@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import type { EscalaInput, EscalaWorkspace } from "./types";
+import { sortScheduleEntries } from "./order";
 import { buildCoveragePresence, consolidateCoverageGaps, coverageTimeline, sectorCoverageGaps, type CoveragePresence, type SectorCoverageGap } from "./coverage-presence";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
 
@@ -17,20 +18,20 @@ function column(index: number) {
   return name;
 }
 
-const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="10"/><color rgb="FF142E2A"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="7"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF173F38"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF0F6F4"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCF0E4"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF1CE"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8E9EB"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><bottom style="hair"><color rgb="FFD8E4DF"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="7"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="10"/><color rgb="FF1E293B"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="7"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF243B53"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F7FA"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE4E9F7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF9E7E7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE9EEF4"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><left style="thin"><color rgb="FFD1D9E3"/></left><right style="thin"><color rgb="FFD1D9E3"/></right><top style="thin"><color rgb="FFD1D9E3"/></top><bottom style="thin"><color rgb="FFD1D9E3"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 
 function sheet(rows: (string | number)[][], widths: number[], grid = false, frozenColumns = grid ? 5 : 0, sectors: number[] = []) {
   const header = 4, last = `${column(widths.length - 1)}${rows.length}`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="28"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 75 : 90}" zoomScaleNormal="100"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
     const title = index < 3 || sectors.includes(index);
     const lines = title ? 1 : Math.max(1, ...row.map((value, cell) => String(value).split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(1, widths[cell] - 2))), 0)));
-    const height = index === header - 1 ? 36 : Math.min(409, Math.max(28, lines * 14 + 8));
+    const height = index < 2 ? 20 : index === 2 ? 30 : index === header - 1 ? 30 : sectors.includes(index) ? 24 : Math.min(409, Math.max(22, lines * 13 + 6));
     return `<row r="${index + 1}" ht="${height}" customHeight="1">${row.map((value, cell) => {
-      const style = index === header - 1 || title ? 1 : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC"].includes(String(value)) ? 6 : index % 2 ? 2 : 3;
+      const style = index === header - 1 || title ? 1 : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC"].includes(String(value)) ? 6 : grid && cell >= frozenColumns ? 7 : index % 2 ? 2 : 3;
       const text = String(value).includes('\nDesfalque: ') ? String(value).split('\n').map(line => `<r>${line.startsWith('Desfalque: ') ? '<rPr><b/><color rgb="FF9A3412"/></rPr>' : ''}<t xml:space="preserve">${xml(line)}${line.startsWith('Desfalque: ') ? '' : '\n'}</t></r>`).join('') : `<t xml:space="preserve">${xml(value)}</t>`;
       return typeof value === "number" ? `<c r="${column(cell)}${index + 1}" s="${style}"><v>${value}</v></c>` : `<c r="${column(cell)}${index + 1}" s="${style}" t="inlineStr"><is>${text}</is></c>`;
     }).join("")}</row>`;
-  }).join("")}</sheetData><autoFilter ref="A${header}:${last}"/>${`<mergeCells count="${3 + sectors.length}">${[1, 2, 3, ...sectors.map(index => index + 1)].map((row) => `<mergeCell ref="A${row}:${column(widths.length - 1)}${row}"/>`).join("")}</mergeCells>`}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.15" footer="0.15"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;LPerfectUtilitares&amp;RPágina &amp;P de &amp;N</oddFooter></headerFooter></worksheet>`;
+  }).join("")}</sheetData><autoFilter ref="A${header}:${last}"/>${`<mergeCells count="${3 + sectors.length}">${[1, 2, 3, ...sectors.map(index => index + 1)].map((row) => `<mergeCell ref="A${row}:${column(widths.length - 1)}${row}"/>`).join("")}</mergeCells>`}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.15" footer="0.15"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;LPerfectUtilitares&amp;RPágina &amp;P de &amp;N</oddFooter></headerFooter></worksheet>`;
 }
 
 type ReportPerson = ReturnType<typeof buildEscalaPresentation>["people"][number];
@@ -48,6 +49,11 @@ function proposedRows(person: ReportPerson) {
   const code = person.cells.some(cell => cell.code === "ENC") ? "ENC" : person.cells.some(cell => cell.code === "NP") ? "NP"
     : person.cells.every(cell => cell.code === "AF") ? "AF" : person.cells.every(cell => cell.code === "FV") ? "FV" : "—";
   return [{ code, schedule: person.proposedSchedule, interval: "Não se aplica", daily: "Não apurada", entry: Infinity }];
+}
+
+/** Flatten before ordering: a person's later variant must not precede someone else's earlier shift. */
+function hourEntries(model: ReturnType<typeof buildEscalaPresentation>) {
+  return sortScheduleEntries(model.hoursPeople.flatMap(person => proposedRows(person).map(row => ({ employee: person.employee, ...row }))));
 }
 
 /** The envelope is observed/reference data, never an invented store opening time. */
@@ -81,15 +87,21 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const hours = [...metadata("Escala de horários", "Horários propostos; intervalos não contam como presença. Variantes reais permanecem separadas."),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada diária"]];
   let sector: string | undefined;
-  for (const person of model.people) {
+  for (const person of model.restPeople) {
     const { employee, cells, proposedSchedule } = person;
     if (sector !== employee.sector) {
       sectors.main.push(main.length); main.push(["Setor: " + (employee.sector || "Não informado")]);
-      sectors.hours.push(hours.length); hours.push(["Setor: " + (employee.sector || "Não informado")]);
       sector = employee.sector;
     }
     main.push([employee.sector, employee.registration, employee.name, employee.role, proposedSchedule, ...cells.map(cell => cell.code)]);
-    for (const row of proposedRows(person)) hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily]);
+  }
+  sector = undefined;
+  for (const row of hourEntries(model)) {
+    const { employee } = row;
+    if (sector !== employee.sector) {
+      sectors.hours.push(hours.length); hours.push(["Setor: " + (employee.sector || "Não informado")]); sector = employee.sector;
+    }
+    hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily]);
   }
   const gaps = [...metadata("Desfalques de cobertura", "Faixa analisada: horários conhecidos e referências do setor. Estimada = referência automática."),
     ["Data", "Setor", "Horário", "Presentes", "Referência", "Base", "Funções a revisar", "Situação"]];
@@ -107,8 +119,8 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     excluded.push([code, employee.sector, employee.registration, employee.name, employee.role, reason]);
   }
   const sheets = [
-    ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [24, 12, 42, 26, 46, ...model.dates.map(() => 6)], grid: true, sectors: sectors.main }] : []),
-    ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [24, 12, 42, 26, 14, 46, 32, 18], grid: false, sectors: sectors.hours }] : []),
+    ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [14, 9, 28, 20, 32, ...model.dates.map(() => 4.5)], grid: true, sectors: sectors.main }] : []),
+    ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [16, 9, 30, 23, 9, 38, 26, 14], grid: false, sectors: sectors.hours }] : []),
     ...(diagnostics.coverageGroups.length ? [{ name: "Desfalques", frozenColumns: 2, rows: gaps, widths: [16, 26, 45, 14, 16, 22, 56, 42], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [12, 24, 12, 42, 26, 64], grid: false, sectors: sectors.excluded }] : []),
   ];
@@ -179,18 +191,18 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   const diagnostics = { coverageGroups: sectorCoverageGaps(workspace.input, presence) };
   const windows = coverageWindows(workspace.input, diagnostics.coverageGroups, presence);
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
-  const width = model.dates.length > 21 ? 1191 : 842, height = model.dates.length > 21 ? 842 : 595;
-  const margin = 26, labelWidth = 300, cellWidth = (width - 2 * margin - labelWidth) / Math.max(1, model.dates.length);
+  const width = 842, height = 595; // A4 landscape, including full monthly grids.
+  const margin = 26, labelWidth = 260, cellWidth = (width - 2 * margin - labelWidth) / Math.max(1, model.dates.length);
   let page!: PDFPage;
   let y = 0;
   const write = (text: string, x: number, baseline: number, size = 9, strong = false) => page.drawText(safePdfText(text, strong ? bold : font), { x, y: baseline, size, font: strong ? bold : font, color: rgb(0.08, 0.16, 0.18) });
   const newPage = (grid: boolean) => {
     page = document.addPage([width, height]); y = height - margin;
-    for (const line of wrapText(model.branch, width - 2 * margin, bold, 13)) { write(line, margin, y, 13, true); y -= 18; }
-    write(`Escala 5x2 | ${model.period} | Versão ${workspace.revision} | ${model.state}`, margin, y, 10); y -= 17;
+    for (const line of wrapText(model.branch, width - 2 * margin, bold, 12)) { write(line, margin, y, 12, true); y -= 16; }
+    write(`Escala 5x2 | ${model.period} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
     if (grid) for (const line of wrapText(model.legend, width - 2 * margin, font, 8)) { write(line, margin, y, 8); y -= 12; }
     if (workspace.input.simulation && workspace.input.policy.allowShortMealSimulation) { write("Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h.", margin, y, 8); y -= 13; }
-    y -= 8;
+    y -= 5;
     if (grid) {
       write("Matrícula / colaborador", margin, y, 9, true);
       model.dates.forEach((date, index) => {
@@ -212,7 +224,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   if (mode !== "hours") paragraph("Escala de folgas", 11, true);
   else paragraph(model.legend, 8);
   let sector = "";
-  for (const { employee, cells, proposedSchedule, proposedVariants } of mode === "hours" ? [] : model.people) {
+  for (const { employee, cells, proposedSchedule, proposedVariants } of mode === "hours" ? [] : model.restPeople) {
     const names = wrapText(`${employee.registration} - ${employee.name}`, labelWidth - 12, font, 9);
     const roles = wrapText(employee.role, labelWidth - 12, font, 7.5);
     const proposed = wrapText(proposedVariants.length > 1 ? "Horário variável: " + proposedVariants.map((entry) => entry.code).join(", ") + " (ver horários)" : "Horário proposto: " + proposedSchedule, labelWidth - 12, font, 7);
@@ -221,18 +233,22 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     const sectorHeight = sectorLines.length * 12 + 8;
     if (y - rowHeight - (sector !== employee.sector ? sectorHeight : 0) < 45) { newPage(true); sector = ""; }
     if (sector !== employee.sector || !sector) {
-      page.drawRectangle({ x: margin, y: y - sectorHeight + 13, width: width - 2 * margin, height: sectorHeight, color: rgb(0.9, 0.95, 0.94) });
+      page.drawRectangle({ x: margin, y: y - sectorHeight + 13, width: width - 2 * margin, height: sectorHeight, color: rgb(0.88, 0.92, 0.97) });
       for (const line of sectorLines) { write(line, margin + 4, y, 9, true); y -= 12; }
       y -= 8; sector = employee.sector;
     }
-    names.forEach((line, index) => { write(line, margin, y - index * 12); });
+    page.drawRectangle({ x: margin, y: y - rowHeight + 12, width: labelWidth, height: rowHeight, color: rgb(0.97, 0.98, 0.99), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
+    names.forEach((line, index) => { write(line, margin + 3, y - index * 12); });
     roles.forEach((line, index) => { write(line, margin, y - names.length * 12 - index * 10, 7.5); });
     proposed.forEach((line, index) => { write(line, margin, y - names.length * 12 - roles.length * 10 - index * 9, 7); });
     cells.forEach((cell, index) => {
       const x = margin + labelWidth + index * cellWidth;
-      if (cell.code === "F") page.drawRectangle({ x, y: y - rowHeight + 12, width: cellWidth - 1, height: rowHeight - 2, color: rgb(0.87, 0.94, 0.89) });
-      else if (cell.code === "NP") page.drawRectangle({ x, y: y - rowHeight + 12, width: cellWidth - 1, height: rowHeight - 2, color: rgb(1, 0.95, 0.82) });
-      write(cell.code, x + 2, y, 7.5, cell.code === "F");
+      const fill = cell.code === "F" ? rgb(0.89, 0.91, 0.97) : cell.code === "NP" ? rgb(0.98, 0.91, 0.91)
+        : ["AF", "ENC", "FV"].includes(cell.code) ? rgb(0.91, 0.94, 0.97) : rgb(1, 1, 1);
+      page.drawRectangle({ x, y: y - rowHeight + 12, width: cellWidth, height: rowHeight, color: fill, borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
+      const codeSize = cell.code.length > 2 ? 7 : 7.5;
+      const codeFont = cell.code === "F" ? bold : font;
+      write(cell.code, x + Math.max(1, (cellWidth - codeFont.widthOfTextAtSize(cell.code, codeSize)) / 2), y, codeSize, cell.code === "F");
     });
     y -= rowHeight;
   }
@@ -242,13 +258,29 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     section("Escala de horários");
     paragraph("Horários propostos por colaborador. Variantes reais permanecem separadas; intervalos não contam como presença.");
     let hoursSector: string | undefined;
-    for (const person of model.people) {
-      const { employee } = person;
-      if (hoursSector !== employee.sector) { section(employee.sector || "Setor não informado"); hoursSector = employee.sector; }
-      if (y < 95) newPage(false);
-      paragraph(employee.registration + " - " + employee.name + " | " + employee.role, 9, true);
-      for (const row of proposedRows(person)) paragraph(row.code + " | " + row.schedule + (row.daily === "Não apurada" ? "" : " | Intervalo " + row.interval + " | " + row.daily + " de jornada"));
-      y -= 4;
+    const widths = [0.25, 0.16, 0.05, 0.29, 0.17, 0.08].map(ratio => ratio * (width - 2 * margin));
+    const headings = ["Matrícula / colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada"];
+    const hoursHeader = () => {
+      let x = margin;
+      headings.forEach((heading, index) => { write(heading, x + 3, y, 8, true); x += widths[index]; });
+      y -= 16;
+    };
+    for (const row of hourEntries(model)) {
+      const { employee } = row;
+      const cells = [employee.registration + " - " + employee.name, employee.role, row.code, row.schedule, row.interval, row.daily === "Não apurada" ? "—" : row.daily + " de jornada"];
+      const lines = cells.map((value, index) => wrapText(value, widths[index] - 7, font, 8.5));
+      const rowHeight = Math.max(...lines.map(value => value.length)) * 11 + 8;
+      if (y - rowHeight - (hoursSector !== employee.sector ? 45 : 0) < 45) { newPage(false); hoursSector = undefined; }
+      if (hoursSector !== employee.sector) {
+        section(employee.sector || "Setor não informado"); hoursSector = employee.sector; hoursHeader();
+      }
+      let x = margin;
+      lines.forEach((values, index) => {
+        page.drawRectangle({ x, y: y - rowHeight + 11, width: widths[index], height: rowHeight, color: rgb(0.98, 0.99, 1), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
+        values.forEach((value, line) => { write(value, x + 3, y - line * 11, 8.5, index === 0); });
+        x += widths[index];
+      });
+      y -= rowHeight;
     }
   }
   if (model.excluded.length) {

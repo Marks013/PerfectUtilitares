@@ -53,12 +53,12 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
   }}>
     <h3 className="font-semibold">{employee.name} · {displayDate(date)}</h3>
     {employee.sourceSchedule && <p className={styles.muted}>Horário importado: {employee.sourceSchedule.weekday}. Referência {employee.sourceSchedule.code} · {employee.sourceSchedule.description}.</p>}
-    {employee.scheduleMode === "MISSING" && <p className="text-sm">Horário não informado na importação. Presença e folgas podem ser simuladas; jornada e cobertura por horário não estão verificadas. Isso não confirma dispensa de controle de jornada.</p>}
+    {employee.scheduleMode === "MISSING" && <p className="text-sm">Essa pessoa participa normalmente das folgas. Sem horário fixo informado, ela não entra na contagem por hora.</p>}
     {wasLocked && <p className="text-sm">Esta decisão está bloqueada. Um aprovador pode desmarcar o bloqueio e salvar a revisão. Só depois poderá alterar a jornada.</p>}
     <fieldset disabled={Boolean(current)} className="space-y-3">
       <div className={styles.formGrid}>
         <Field label="Situação do dia">{(id) => <select id={id} disabled={wasLocked} value={kind} className={controlClass} onChange={(event) => setKind(event.target.value as EscalaAssignment["kind"])}>
-          {untimed ? <option value="DUTY">{employee.scheduleMode === "UNTIMED" ? "ENC — Não subordinado a horário" : "NP — Horário não processado (presença diária)"}</option> : <option value="WORK">Trabalho</option>}
+          {untimed ? <option value="DUTY">{employee.scheduleMode === "UNTIMED" || employee.sourceSchedule?.weekday.replace(/[^0-9]/g, "").match(/^0+$/) ? "ENC — Sem horário fixo" : "NP — Horário ainda não informado"}</option> : <option value="WORK">Trabalho</option>}
           <option value="OFF">Folga</option><option value="ABSENCE">AF — Afastamento</option>
         </select>}</Field>
         {kind === "WORK" && !untimed && <Field label="Turno autorizado">{(id) => <select id={id} required disabled={wasLocked} value={shiftId} className={controlClass} onChange={(event) => setShiftId(event.target.value)}>

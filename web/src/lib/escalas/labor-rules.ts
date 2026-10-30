@@ -15,6 +15,16 @@ export function minimumMealMinutes(policy: Pick<EscalaPolicy, "minMealMinutes" |
   return simulation && policy.allowShortMealSimulation === true ? 0 : 15;
 }
 
+/** An unrelated collective agreement never authorizes a longer meal interval implicitly. */
+export function maximumMealMinutes(policy: Pick<EscalaPolicy, "mealIntervalAgreement">, day: string): number {
+  const agreement = policy.mealIntervalAgreement;
+  return agreement?.reviewed && agreement.source.trim() && agreement.reviewedBy.trim()
+    && isDate(agreement.validFrom) && isDate(agreement.validUntil)
+    && agreement.validFrom <= day && agreement.validUntil >= day
+    && Number.isInteger(agreement.maximumMinutes) && agreement.maximumMinutes >= 121 && agreement.maximumMinutes <= 360
+    ? agreement.maximumMinutes : 120;
+}
+
 // EC 141/2026, arts. 6 and 7. Saved policies cannot raise these ceilings.
 export const TRANSITION_42_DATE = "2026-12-16";
 export const TRANSITION_40_DATE = "2027-12-16";

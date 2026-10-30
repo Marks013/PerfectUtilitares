@@ -22,6 +22,22 @@ function input(): EscalaInput {
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 
 describe("whole-branch generation preparation", () => {
+  it("excludes company-confirmed apprentices without deleting protected absence or locked records", () => {
+    const value = input();
+    value.employees[0].role = "AUX. DE SERVIÇOS EM SUPER";
+    value.assignments = [
+      { employeeId: "p1", date: value.startDate, kind: "WORK", shiftId: "source", locked: true },
+      { employeeId: "p1", date: "2026-10-27", kind: "ABSENCE" },
+      { employeeId: "p1", date: "2026-10-28", kind: "OFF" },
+    ];
+    const before = JSON.stringify(value);
+    const result = prepareGeneration(value);
+    expect(result.input.employees[0].planningEnabled).toBe(false);
+    expect(result.preparation.excludedEmployeeIds).toEqual(["p1"]);
+    expect(result.input.assignments).toEqual(value.assignments.slice(0, 2));
+    expect(result.preparation.includedEmployees).toBe(0);
+    expect(JSON.stringify(value)).toBe(before);
+  });
   it("adapts a branch-managed reference without FPRE metadata to the single selected workload", () => {
     const value = input(); value.employees[0].sourceSchedule = undefined;
     value.employees[0].weeklyHoursMode = "BRANCH";

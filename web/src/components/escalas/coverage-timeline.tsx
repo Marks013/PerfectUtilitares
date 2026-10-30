@@ -1,17 +1,26 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
 import { buildCoveragePresence, coverageTimeline } from "@/lib/escalas/coverage-presence";
 import { buildEscalaSchedule, escalaDateLabel, escalaDuration } from "@/lib/escalas/presentation";
 import type { EscalaInput } from "@/lib/escalas/types";
 import { controlClass, Field, panelClass } from "./controls";
 import styles from "./escalas.module.css";
+import type { EscalaRecoveryRequest } from "./recovery-navigation";
 
-export function CoverageTimeline({ input }: { input: EscalaInput }) {
+export function CoverageTimeline({ input, review }: { input: EscalaInput; review?: EscalaRecoveryRequest }) {
   const dates = useMemo(() => visibleDates(input), [input]);
   const sectors = useMemo(() => [...new Set(input.employees.filter(person => person.planningEnabled !== false).map(person => person.sector).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")), [input]);
   const [selectedDate, setSelectedDate] = useState(""), [selectedSector, setSelectedSector] = useState(""), [selectedStart, setSelectedStart] = useState<number | null>(null);
+  const reviewedRequest = useRef(0);
+  useEffect(() => {
+    if (!review || reviewedRequest.current === review.request) return;
+    reviewedRequest.current = review.request;
+    if (review.date && dates.includes(review.date)) setSelectedDate(review.date);
+    if (review.sector && sectors.includes(review.sector)) setSelectedSector(review.sector);
+    setSelectedStart(review.start ?? null);
+  }, [review, dates, sectors]);
   const date = dates.includes(selectedDate) ? selectedDate : dates[0] ?? input.startDate;
   const sector = sectors.includes(selectedSector) ? selectedSector : sectors[0] ?? "";
   const index = useMemo(() => buildCoveragePresence(input), [input]);
@@ -23,9 +32,9 @@ export function CoverageTimeline({ input }: { input: EscalaInput }) {
   const x = (minute: number) => 36 + (minute - start) / Math.max(1, end - start) * 708;
   const y = (count: number) => 148 - count / maximum * 120;
   const line = (field: "minimum" | "estimate") => timeline.map((slice, position) => (position ? "L" : "M") + x(slice.start) + " " + y(slice[field]) + " L" + x(slice.end) + " " + y(slice[field])).join(" ");
-  return <section className={panelClass} aria-labelledby="escala-presence-title">
+  return <section id="escala-coverage-timeline" tabIndex={-1} className={panelClass} aria-labelledby="escala-presence-title">
     <div><h2 id="escala-presence-title" className={styles.sectionTitle}>Colaboradores por horário</h2>
-      <p className={styles.muted}>Presença efetiva na proposta. Intervalos, folgas, afastamentos e horários não processados não entram na contagem.</p></div>
+      <p className={styles.muted}>Presença efetiva na proposta. Intervalos, folgas, afastamentos e pessoas sem horário fixo não entram na contagem por hora.</p></div>
     {input.needsRegeneration && <p role="status" className={styles.muted}>Grade anterior: gere e aplique a nova proposta para atualizar esta visão.</p>}
     <div className={styles.formGrid}>
       <Field label="Data da cobertura">{id => <select id={id} className={controlClass} value={date} onChange={event => { setSelectedDate(event.target.value); setSelectedStart(null); }}>{dates.map(day => <option key={day} value={day}>{escalaDateLabel(day)}</option>)}</select>}</Field>

@@ -184,6 +184,7 @@ test("the main workspace prepares real files for the exact saved revision and in
     await page.getByLabel("Jornada semanal", { exact: true }).selectOption("40");
     await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
+    await page.locator("#escala-adjust-hours-title").click();
     await page.getByRole("button", { name: "Ajustar horários no rascunho", exact: true }).click();
     const solving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
     await page.locator('section[aria-labelledby="escala-scenario-title"]').getByRole("button", { name: "Gerar nova proposta", exact: true }).click();

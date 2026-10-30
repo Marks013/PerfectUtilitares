@@ -114,6 +114,23 @@ describe("independent Escalas validation", () => {
     expect(validateEscala(input).readyToPublish).toBe(true);
   });
 
+  it("rejects overnight work occupying a preserved absence, even in simulation", () => {
+    const input = fixture();
+    input.simulation = true;
+    input.demands = [];
+    input.shifts.push({ id: "night-absence", name: "Noturno", segments: [
+      { start: 1200, end: 1440, kind: "WORK" }, { start: 1440, end: 1500, kind: "BREAK" },
+      { start: 1500, end: 1764, kind: "WORK" },
+    ] });
+    input.employees[0].shiftIds.push("night-absence");
+    input.assignments[0] = { employeeId: "person-1", date: input.startDate, kind: "WORK", shiftId: "night-absence", locked: true };
+    input.assignments[1] = { employeeId: "person-1", date: addDays(input.startDate, 1), kind: "ABSENCE" };
+    const before = JSON.stringify(input);
+    const result = validateEscala(input);
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "ABSENCE_OCCUPIED", severity: "ERROR", date: addDays(input.startDate, 1) }));
+    expect(JSON.stringify(input)).toBe(before);
+  });
   it("does not convert absences to off days or fictitious compensation hours", () => {
     const input = fixture();
     input.assignments[0] = { employeeId: "person-1", date: input.startDate, kind: "ABSENCE" };

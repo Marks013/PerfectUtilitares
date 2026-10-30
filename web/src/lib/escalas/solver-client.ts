@@ -1,12 +1,25 @@
 import { z } from "zod";
 import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
+import { isRestPlanningExcludedRole } from "./eligibility";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
   message: z.string().max(1000),
   wallTimeSeconds: z.number().finite().min(0).max(60),
+  optimization: z.strictObject({
+    budgetSeconds: z.number().finite().min(0).max(60),
+    phases: z.array(z.strictObject({
+      objective: z.enum(["COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"]),
+      status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
+      wallTimeSeconds: z.number().finite().min(0).max(60),
+      budgetSeconds: z.number().finite().min(0).max(60),
+      incumbentValue: z.number().finite().int(),
+      bestBound: z.number().finite().optional(),
+      searchScope: z.enum(["ROLLING_WEEK"]).optional(),
+    })).max(8),
+  }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
     kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE"]),
@@ -47,7 +60,8 @@ export async function solveEscala(
       // Revalidate references and dates, independently of the processor's contract.
       escalaInputSchema.parse({ ...parsed, assignments: result.assignments });
       const assignments = new Map(result.assignments.map((item) => [`${item.employeeId}\0${item.date}`, item]));
-      let expected = 0;
+      const retained = new Set(parsed.employees.filter(person => person.planningEnabled === false && isRestPlanningExcludedRole(person.role)).map(person => person.id));
+      let expected = parsed.assignments.filter(item => retained.has(item.employeeId) && (item.locked || item.kind === "ABSENCE")).length;
       for (const person of parsed.employees) {
         if (person.planningEnabled === false) continue;
         for (const day of dateRange(parsed.startDate, parsed.endDate)) {

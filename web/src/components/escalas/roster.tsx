@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import { dayOfWeek, visibleDates } from "@/lib/escalas/dates";
-import { sortEmployees } from "@/lib/escalas/order";
+import { sortEmployees, sortHoursEmployees } from "@/lib/escalas/order";
 import { assignmentPresentation, buildEscalaSchedule, escalaShiftCodes, type EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, EscalaValidation } from "@/lib/escalas/types";
 import { buttonClass, controlClass, Field, panelClass } from "./controls";
@@ -35,14 +35,22 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
   const assignments = useMemo(() => new Map(input.assignments.map((day) => [`${day.employeeId}:${day.date}`, day])), [input.assignments]);
   const codes = useMemo(() => escalaShiftCodes(input), [input]);
   const coverage = useMemo(() => rosterCoverageIssues(input, dates, sector), [input, dates, sector]);
-  const employees = sortEmployees(input.employees.filter((person) => person.planningEnabled !== false)).filter((person) => (!sector || person.sector === sector)
-    && `${person.name} ${person.registration} ${person.role}`.toLocaleLowerCase("pt-BR").includes(filter.toLocaleLowerCase("pt-BR")));
-  const pages = Math.max(1, Math.ceil(employees.length / 20));
+  const matches = (person: EscalaInput["employees"][number]) => (!sector || person.sector === sector)
+    && [person.name, person.registration, person.role].join(" ").toLocaleLowerCase("pt-BR").includes(filter.toLocaleLowerCase("pt-BR"));
+  const restEmployees = sortEmployees(presentation.restPeople.map(person => person.employee)).filter(matches);
+  const hoursEmployees = sortHoursEmployees(input).filter(person => person.planningEnabled !== false).filter(matches);
+  const employees = view === "hours" ? hoursEmployees : restEmployees;
+  const pages = Math.max(1, Math.ceil((view === "both" ? Math.max(restEmployees.length, hoursEmployees.length) : employees.length) / 20));
   const currentPage = Math.min(page, pages - 1);
-  const displayed = employees.slice(currentPage * 20, currentPage * 20 + 20);
+  const displayed = restEmployees.slice(currentPage * 20, currentPage * 20 + 20);
+  const displayedHours = hoursEmployees.slice(currentPage * 20, currentPage * 20 + 20);
+  const reviewedRequest = useRef(0);
   useEffect(() => {
-    if (!review?.employeeId || !review.date || !input.employees.some(person => person.id === review.employeeId && person.planningEnabled !== false)) return;
+    if (!review?.employeeId || !review.date || reviewedRequest.current === review.request || !input.employees.some(person => person.id === review.employeeId && person.planningEnabled !== false)) return;
     if (review.date < input.startDate || review.date > input.endDate) return;
+    reviewedRequest.current = review.request;
+    setFilter("");
+    setSector("");
     setSelected({ employeeId: review.employeeId, date: review.date });
     setHoursDate(review.date);
   }, [review, input.employees, input.startDate, input.endDate]);
@@ -66,7 +74,7 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
         onChange(undo.previous); setUndo(null); setSelected(null); setNotice("Última alteração desfeita. A proposta anterior foi restaurada.");
       }}>Desfazer última alteração</button>
     </div>
-    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Organização: setor, cargo, nome e horário crescente. Selecione um dia para editar ou trocar; pendência não equivale a folga.</p>
+    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Setores de A–Z. Nas folgas: cargo e nome. Nos horários: entrada crescente, cargo e nome. Selecione um dia para revisar.</p>
     <div className={styles.formGrid}>
       <Field label="Visualização da escala">{(id) => <select id={id} className={controlClass} value={view} onChange={(event) => { const next = event.target.value as EscalaExportMode; setLocalMode(next); onModeChange?.(next); }}>
         <option value="rest">Somente folgas</option><option value="hours">Somente horários</option><option value="both">Folgas e horários</option>
@@ -109,12 +117,14 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
               <th scope="row" className={styles.nameCell}>
                 <span className="block break-words">{employee.name}</span>
                 <span className="block text-xs font-normal text-[color:var(--app-muted)]">{employee.registration} · {employee.role}</span>
-                <span className="block text-xs font-normal text-[color:var(--app-muted)]">{employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : employee.scheduleMode === "MISSING" ? "Horário não informado · horas não apuradas" : employee.simulationDailyMinutes !== undefined ? `${clock(employee.simulationDailyMinutes)} por dia na simulação · referência curta, contrato semanal não apurado` : `${employee.weeklyHours}h por semana`}</span>
-                <span className="block text-xs font-normal">Horário proposto: {scheduleByEmployee.get(employee.id)?.proposedVariants.length && (scheduleByEmployee.get(employee.id)?.proposedVariants.length ?? 0) > 1 ? "Varia no mês; consulte os horários" : scheduleByEmployee.get(employee.id)?.proposedSchedule}</span>
+                <details className={styles.rosterFacts}><summary>Consultar horário proposto</summary>
+                <span className="block text-xs font-normal text-[color:var(--app-muted)]">{employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING" ? "Folgas planejadas · sem horário fixo" : employee.simulationDailyMinutes !== undefined ? clock(employee.simulationDailyMinutes) + " por dia · horário reduzido mantido" : employee.weeklyHours + "h por semana"}</span>
+                <p className="max-w-64 whitespace-normal text-xs">{scheduleByEmployee.get(employee.id)?.proposedVariants.length && (scheduleByEmployee.get(employee.id)?.proposedVariants.length ?? 0) > 1 ? "Varia no mês; consulte os horários" : scheduleByEmployee.get(employee.id)?.proposedSchedule}</p>
                 {(scheduleByEmployee.get(employee.id)?.proposedVariants.length ?? 0) > 1 && <details className="font-normal"><summary className="min-h-8 cursor-pointer py-1 text-xs">Ver variação dos horários</summary><ul className="max-w-64 whitespace-normal text-xs">{scheduleByEmployee.get(employee.id)?.proposedVariants.map((variant) => <li key={variant.shiftId}>{variant.code} · {variant.schedule} · dias {variant.dates.map((date) => date.slice(8)).join(", ")}</li>)}</ul></details>}
                 {employee.sourceSchedule && <details className="font-normal"><summary className="min-h-8 cursor-pointer py-1 text-xs">Horário importado</summary><p className="max-w-64 whitespace-normal text-xs">{employee.sourceSchedule.code} · {employee.sourceSchedule.description}<br />{employee.sourceSchedule.weekday}</p></details>}
                 {summary && <span className="block text-xs font-normal">{summary.workDays} dias trabalhados · {summary.offDays} folgas</span>}
                 {employee.planningEnabled === false && <span className="block text-xs font-normal text-[color:var(--app-coral)]">Não incluído · {employee.planningExclusionReason || "Conferência necessária"}</span>}
+                </details>
               </th>
               {dates.map((date) => {
                 const assignment = assignments.get(`${employee.id}:${date}`);
@@ -139,14 +149,14 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
     {view !== "rest" && <section aria-labelledby="escala-hours-title" className="space-y-3">
       <h3 id="escala-hours-title" className={styles.sectionTitle}>Escala de horários</h3>
       <Field label="Dia dos horários propostos">{(id) => <select id={id} className={controlClass} value={currentDate} onChange={(event) => { setHoursDate(event.target.value); setSelected(null); }}>{dates.map((date) => <option key={date} value={date}>{displayDate(date)}</option>)}</select>}</Field>
-      <p className={styles.muted}>Horários exatos da proposta neste dia. Intervalos, folgas, afastamentos e horários não processados não representam presença horária.</p>
-      <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Mesmos colaboradores e filtros da escala de folgas.</caption>
+      <p className={styles.muted}>Horários exatos da proposta neste dia. Pausas, folgas, afastamentos e pessoas sem horário fixo não entram na contagem por hora.</p>
+      <div className="overflow-x-auto"><table className={styles.hoursTable}><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Mesmos colaboradores e filtros da escala de folgas.</caption>
         <thead><tr><th scope="col" className="p-2">Colaborador / função</th><th scope="col" className="p-2">Horário proposto</th><th scope="col" className="p-2">Intervalo</th><th scope="col" className="p-2">Total / situação</th></tr></thead>
-        <tbody>{displayed.flatMap((employee) => {
+        <tbody>{displayedHours.flatMap((employee) => {
           const heading = employee.sector !== lastHoursSector; lastHoursSector = employee.sector;
           const cell = scheduleByEmployee.get(employee.id)?.cells.find((item) => item.date === currentDate);
           return [...(heading ? [<tr key={"hours-sector-" + employee.sector}><th scope="rowgroup" colSpan={4} className={styles.sectorHeading}>{employee.sector || "Sem setor informado"}</th></tr>] : []), <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal"><span className="block">{employee.registration} · {employee.name}</span><span className="block text-xs">{employee.sector} · {employee.role}</span></th>
-            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia não processado"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span><button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV"} onClick={() => setSelected({ employeeId: employee.id, date: currentDate })}>Revisar dia</button></td></tr>];
+            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia ainda sem definição"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span><button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV"} onClick={() => setSelected({ employeeId: employee.id, date: currentDate })}>Revisar dia</button></td></tr>];
         })}</tbody>
       </table></div>
     </section>}

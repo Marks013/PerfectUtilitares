@@ -78,6 +78,11 @@ const policy = z.strictObject({
     source: z.string().trim().max(1000), validFrom: z.union([date, z.literal("")]), validUntil: z.union([date, z.literal("")]),
     reviewedBy: z.string().trim().max(160), reviewed: z.boolean(),
   }).refine((value) => !value.validFrom || !value.validUntil || value.validUntil >= value.validFrom, "Vigência do acordo inválida").optional(),
+  mealIntervalAgreement: z.strictObject({
+    source: z.string().trim().max(1000), validFrom: z.union([date, z.literal("")]), validUntil: z.union([date, z.literal("")]),
+    reviewedBy: z.string().trim().max(160), reviewed: z.boolean(),
+    maximumMinutes: z.number().int().min(121).max(360),
+  }).refine((value) => !value.validFrom || !value.validUntil || value.validUntil >= value.validFrom, "Vigência do acordo de intervalo inválida").optional(),
   operationalCertificate: z.strictObject({
     identifier: z.string().trim().max(160), validFrom: z.union([date, z.literal("")]), validUntil: z.union([date, z.literal("")]),
     reviewedBy: z.string().trim().max(160), reviewed: z.boolean(),

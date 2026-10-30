@@ -84,7 +84,11 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   const proposal: EscalaInput = generated.proposalInput;
   const absent = new Set(proposal.assignments.filter(item => item.kind === "ABSENCE").map(item => item.employeeId + ":" + item.date));
   expect([...expected].every(key => absent.has(key))).toBe(true);
-  expect(proposal.employees.length === employees.length && proposal.employees.every(person => person.planningEnabled !== false)).toBe(true);
+  expect(proposal.employees.length).toBe(employees.length);
+  const learnerIds = new Set(employees.filter(person => person.role === "AUX. DE SERVIÇOS EM SUPER").map(person => person.id));
+  expect(proposal.employees.filter(person => person.planningEnabled === false).map(person => person.id).sort()).toEqual([...learnerIds].sort());
+  expect(proposal.assignments.filter(item => learnerIds.has(item.employeeId)).every(item => item.kind === "ABSENCE" || item.locked)).toBe(true);
+  expect(generated.validation.issues.some((issue: { code: string }) => issue.code === "PARTIAL_WEEK_PENDING")).toBe(false);
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
   const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
   await expect(page.locator('[data-state="saved"]')).toBeVisible();

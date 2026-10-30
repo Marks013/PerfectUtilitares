@@ -148,8 +148,9 @@ describe("actionable grouped validation", () => {
       { code: "COVERAGE_PENDING", severity: "PENDING", message: "Setor sem demanda" },
       { code: "COVERAGE_REVIEW_PENDING", severity: "PENDING", message: "Estimar demanda" },
     ]);
-    expect(groups.map((group) => group.guidance.target)).toEqual(["rules", "generate", "coverage"]);
-    expect(groups[0].guidance.instruction).toContain("Antes de publicar");
+    expect(groups.map((group) => group.guidance.target)).toEqual([undefined, "generate", "coverage"]);
+    expect(groups[0].guidance.instruction).toContain("antes da publicação");
+    expect(groups[0].guidance.action).toBeUndefined();
     expect(groups[2].guidance.instruction).toContain("necessidade operacional conhecida");
   });
 

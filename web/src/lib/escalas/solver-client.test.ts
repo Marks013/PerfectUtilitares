@@ -35,6 +35,26 @@ describe("isolated schedule processor client", () => {
     expect(fetch).toHaveBeenCalledWith(new URL("http://escalas-solver:8080/solve"), expect.objectContaining({ method: "POST" }));
     expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).toEqual({ input: fixture() });
   });
+  it("preserves bounded numeric phase diagnostics on a real-shaped success response", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const optimization = { budgetSeconds: 12, phases: [
+      { objective: "COVERAGE", status: "UNKNOWN", wallTimeSeconds: 6, budgetSeconds: 6, incumbentValue: 1200 },
+      { objective: "PREFERENCES", status: "OPTIMAL", wallTimeSeconds: 0.1, budgetSeconds: 0.2, incumbentValue: -2, bestBound: -2 },
+    ] };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Proposta", wallTimeSeconds: 6.5, optimization })));
+    expect((await solveEscala(fixture())).optimization).toEqual(optimization);
+    optimization.phases[0].incumbentValue = Number.POSITIVE_INFINITY;
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+  it("accepts only the retained protected records of a disabled apprentice", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const data = fixture();
+    data.employees.push({ ...data.employees[0], id: "learner", registration: "02", role: "AUX. DE SERVIÇOS EM SUPER", planningEnabled: false });
+    const absence = { employeeId: "learner", date: "2026-11-02", kind: "ABSENCE" as const };
+    data.assignments.push(absence);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: [...completeAssignments(), absence], message: "Pronto", wallTimeSeconds: 1 })));
+    expect((await solveEscala(data)).assignments).toContainEqual(absence);
+  });
   it("preserves unavailability and busy as separate conditions", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 429 })));

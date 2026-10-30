@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { EscalaError } from "./access";
 import type { EscalaImportPreview, ImportOptions } from "./import";
 import { sortEmployees } from "./order";
+import { applyRestEligibility } from "./eligibility";
 import type { EscalaShift } from "./types";
 
 const cell = (value: unknown) => String(value ?? "").trim();
@@ -86,7 +87,7 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
       registrations.add(registration);
     } catch (error) { result.issues.push({ line: record.line, message: error instanceof Error ? error.message : "Linha FPRE136 inválida." }); }
   }
-  result.employees = sortEmployees(result.employees);
+  result.employees = sortEmployees(result.employees.map(applyRestEligibility));
   result.shifts = [...shifts.values()];
   return result;
 }

@@ -12,8 +12,8 @@ import type {
   EscalaValidation,
 } from "@/lib/escalas/types";
 import { buttonClass, panelClass, primaryClass } from "./controls";
-import { clock, displayDate } from "./workspace-model";
-import { groupValidationIssues, type ReviewTarget } from "./validation-guidance";
+import { addDate, clock, displayDate } from "./workspace-model";
+import { groupValidationIssues, isReviewInformation, reviewNoticeText, type ReviewTarget } from "./validation-guidance";
 
 function changesBetween(previous: EscalaAssignment[], next: EscalaAssignment[]) {
   const before = new Map(previous.map((item) => [`${item.employeeId}:${item.date}`, item]));
@@ -86,20 +86,20 @@ type ResolveReview = (target: ReviewTarget, context?: EscalaRecoveryContext) => 
 function CoverageGaps({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
   const [page, setPage] = useState(0);
   const groups = consolidateCoverageGaps(rows);
-  const pages = Math.max(1, Math.ceil(groups.length / 12));
+  const pages = Math.max(1, Math.ceil(groups.length / 8));
   const current = Math.min(page, pages - 1);
   if (!groups.length) return null;
   return <div className={styles.reviewGroup}>
     <div><h3 className="font-semibold">Cobertura por setor e horário</h3><p className={styles.muted}>Ocorrências equivalentes estão reunidas. A estimativa automática é uma referência de distribuição, não uma necessidade comprovada.</p></div>
     <ul className={styles.coverageGapList}>
-      {groups.slice(current * 12, current * 12 + 12).map((row) => <li key={JSON.stringify([row.sector, row.dates, row.start, row.end, row.roles])} className={styles.reviewNotice} data-severity={row.estimated ? "WARNING" : "ERROR"}>
+      {groups.slice(current * 8, current * 8 + 8).map((row) => <li key={JSON.stringify([row.sector, row.dates, row.start, row.end, row.roles])} className={styles.reviewNotice} data-severity={row.estimated ? "WARNING" : "ERROR"}>
         <div className={styles.header}><h4 className="font-semibold">{row.sector}</h4><span className={styles.statusTag}>{row.kind === "no-service" ? "Sem atendimento nesta faixa" : row.estimated ? "Abaixo da estimativa" : "Mínimo informado não atendido"}</span></div>
         <p className="tabular-nums"><strong>{clock(row.start)}–{clock(row.end)}</strong> · {row.dates.length === 1 ? displayDate(row.dates[0]) : `${row.dates.length} dias entre ${displayDate(row.dates[0])} e ${displayDate(row.dates.at(-1) ?? row.dates[0])}`}</p>
         <dl className={styles.reviewContext}><div><dt>Efetivamente trabalhando</dt><dd>{row.present} pessoa(s), sem contar intervalos, afastamentos ou horários indefinidos.</dd></div><div><dt>Referência utilizada</dt><dd>{row.minimum} pessoa(s) · {row.estimated ? "estimativa automática, não mínimo obrigatório" : "mínimo informado para a operação"}.</dd></div></dl>
         {row.roles.length > 0 && <details><summary className={styles.disclosureTrigger}>Funções nesta faixa</summary><ul className={styles.referenceList}>{row.roles.map((role) => <li key={JSON.stringify([role.role, role.estimated])}>{role.role || "Equipe do setor"}: {role.present} trabalhando / {role.minimum} {role.estimated ? "na referência estimada" : "no mínimo informado"}.</li>)}</ul></details>}
         <p><strong>Ajuste a avaliar:</strong> {row.suggestion}</p>
         {row.dates.length > 1 && <details><summary className={styles.disclosureTrigger}>Consultar os {row.dates.length} dias</summary><p>{row.dates.map(displayDate).join(", ")}</p></details>}
-        {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.dates[0] })}>Conferir este setor e horário</button>}
+        {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.dates[0], start: row.start })}>Conferir este setor e horário</button>}
       </li>)}
     </ul>
     {pages > 1 && <div className={styles.actions}><button type="button" className={buttonClass} disabled={!current} onClick={() => setPage(current - 1)}>Anterior</button><span className="text-sm">Página {current + 1} de {pages}</span><button type="button" className={buttonClass} disabled={current + 1 === pages} onClick={() => setPage(current + 1)}>Próxima</button></div>}
@@ -110,15 +110,20 @@ function ReviewNotice({ notice, input, onResolve }: { notice: EscalaDiagnosticNo
   const guidance = groupValidationIssues([{ code: notice.code, severity: notice.severity, message: notice.message }])[0]?.guidance;
   const employees = sortEmployees(input.employees.filter((person) => notice.employeeIds.includes(person.id)));
   const context: EscalaRecoveryContext = { ...(employees.length === 1 ? { employeeId: employees[0].id } : {}), ...(notice.dates[0] ? { date: notice.dates[0] } : {}) };
-  const title = ["Atenção", "Informação", "Impedimento"].includes(notice.label) ? guidance?.title : notice.label;
+  const simple = reviewNoticeText(notice.code);
+  const title = simple?.title ?? (["Atenção", "Informação", "Impedimento"].includes(notice.label) ? guidance?.title : notice.label);
+  const message = simple?.message ?? notice.message;
+  if (notice.code === "ABSENCE_OCCUPIED" && context.date) context.date = addDate(context.date, -1);
+  const informationOnly = isReviewInformation(notice.code, notice.severity);
   return <li className={styles.reviewNotice} data-severity={notice.severity}>
     <h4 className="font-semibold">{title || "Revisão da proposta"}</h4>
-    <p>{notice.message}</p>
+    <p>{message}</p>
     {notice.dates.length > 0 && <p className={styles.muted}><strong>Período afetado:</strong> {notice.dates.length === 1 ? displayDate(notice.dates[0]) : `${displayDate(notice.dates[0])} a ${displayDate(notice.dates.at(-1) ?? notice.dates[0])}`}{notice.dates.length > 1 ? ` · ${notice.dates.length} datas de referência` : ""}.</p>}
     {employees.length === 1 && <p><strong>{employees[0].registration} · {employees[0].name}</strong><span className="block">{employees[0].sector} / {employees[0].role}</span></p>}
-    {guidance && guidance.instruction !== notice.message && <p><strong>{notice.severity === "ERROR" ? "Como corrigir:" : "Orientação:"}</strong> {guidance.instruction}</p>}
+    {!informationOnly && guidance && guidance.instruction !== message && <p><strong>{notice.severity === "ERROR" ? "Como corrigir:" : "Orientação:"}</strong> {guidance.instruction}</p>}
     {(employees.length > 1 || notice.dates.length > 1) && <details><summary className={styles.disclosureTrigger}>Consultar pessoas e datas</summary>{notice.dates.length > 1 && <p className={styles.muted}>{notice.dates.map(displayDate).join(", ")}</p>}<ul className={styles.referenceList}>{employees.map((person) => <li key={person.id}><strong>{person.registration} · {person.name}</strong><span>{person.sector} / {person.role}</span>{onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("team", { employeeId: person.id, ...(notice.dates[0] ? { date: notice.dates[0] } : {}) })}>Conferir colaborador<span className="sr-only"> {person.name}</span></button>}</li>)}</ul></details>}
-    {onResolve && guidance?.target && <button type="button" className={buttonClass} onClick={() => onResolve(guidance.target as ReviewTarget, context)}>{guidance.action}</button>}
+    {simple && simple.message !== notice.message && <details><summary className={styles.disclosureTrigger}>Detalhes da conferência</summary><p className={styles.muted}>{notice.message}</p></details>}
+    {onResolve && guidance?.target && (!informationOnly || guidance.target !== "rules") && <button type="button" className={buttonClass} onClick={() => onResolve(guidance.target as ReviewTarget, context)}>{guidance.action}</button>}
   </li>;
 }
 
@@ -145,8 +150,8 @@ export function ValidationResults({ input, validation, onResolve, section, onSec
   if (!validation) return <section className={panelClass}><h2 className={styles.sectionTitle}>Revisão do cenário</h2><p className="text-sm">A edição ainda não foi conferida. Aguarde o salvamento ou gere uma proposta para atualizar os resultados.</p></section>;
   const diagnostics = buildEscalaDiagnostics(input, validation.issues);
   const errors = diagnostics.notices.filter(notice => notice.severity === "ERROR");
-  const reviews = diagnostics.notices.filter(notice => notice.severity === "PENDING");
-  const information = diagnostics.notices.filter(notice => notice.severity === "WARNING");
+  const reviews = diagnostics.notices.filter(notice => notice.severity === "PENDING" && !isReviewInformation(notice.code, notice.severity));
+  const information = diagnostics.notices.filter(notice => notice.severity === "WARNING" || isReviewInformation(notice.code, notice.severity));
   const reservations = validation.boundaryReservations ?? [];
   const employees = sortEmployees(input.employees.filter(person => person.planningEnabled !== false));
   const view = section ?? selectedView ?? (errors.length ? "errors" : diagnostics.coverageGroups.length ? "coverage" : reviews.length ? "reviews" : information.length ? "information" : "errors");
@@ -172,7 +177,7 @@ export function ValidationResults({ input, validation, onResolve, section, onSec
         })}</ul></section>}
         <table className="w-full text-left text-sm"><caption className="py-2 text-left font-semibold">Apuração por colaborador</caption><thead><tr><th scope="col" className="p-2">Setor / cargo / colaborador</th><th scope="col" className="p-2">Horas</th><th scope="col" className="p-2">Trabalho / folgas</th><th scope="col" className="p-2">Sequência máxima</th><th scope="col" className="p-2">Domingos trabalhados</th></tr></thead><tbody>{employees.map(person => {
           const summary = validation.summaries.find(item => item.employeeId === person.id);
-          return summary ? <tr key={person.id}><th scope="row" className="p-2 font-normal">{person.sector} / {person.role}<span className="block font-semibold">{person.name} · {person.registration}</span></th><td className="p-2">{person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING" ? "Não apuradas" : clock(summary.workedMinutes)}</td><td className="p-2">{summary.workDays} / {summary.offDays}</td><td className="p-2">{summary.maxStreak} dias</td><td className="p-2">{summary.sundaysWorked}</td></tr> : null;
+          return summary ? <tr key={person.id}><th scope="row" className="p-2 font-normal">{person.sector} / {person.role}<span className="block font-semibold">{person.name} · {person.registration}</span></th><td className="p-2">{person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING" ? "Sem horário fixo" : clock(summary.workedMinutes)}</td><td className="p-2">{summary.workDays} / {summary.offDays}</td><td className="p-2">{summary.maxStreak} dias</td><td className="p-2">{summary.sundaysWorked}</td></tr> : null;
         })}</tbody></table>
       </div>}
     </section>

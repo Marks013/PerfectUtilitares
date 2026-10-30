@@ -334,7 +334,10 @@ class SolverTests(unittest.TestCase):
 
         with patch.object(cp_model.CpSolver, "solve", solve_seed_then_timeout):
             result = solve(data)
-        self.assertEqual(calls, [True, False])
+        self.assertGreaterEqual(len(calls), 3)
+        self.assertTrue(calls[0])
+        self.assertTrue(all(not flag for flag in calls[1:]))
+        self.assertTrue(all(phase['status'] == 'UNKNOWN' for phase in result['optimization']['phases']))
         self.assertEqual(result["status"], "FEASIBLE")
         days = len(days_between(data["startDate"], data["endDate"]))
         self.assertEqual(len(result["assignments"]), len(data["employees"]) * days)

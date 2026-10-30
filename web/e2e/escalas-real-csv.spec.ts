@@ -48,11 +48,14 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   expect(proposed.policy.compensationAuthorized).toBe(false);
   expect(proposed.policy.reviewed).toBe(false);
   expect(proposed.employees.length).toBe(originalEmployees.length);
-  expect(proposed.employees.every(person => person.planningEnabled !== false && person.weeklyHours === 42)).toBe(true);
+  const learnerIds = new Set(originalEmployees.filter(person => person.role === "AUX. DE SERVIÇOS EM SUPER").map(person => person.id));
+  expect(proposed.employees.filter(person => person.planningEnabled === false).map(person => person.id).sort()).toEqual([...learnerIds].sort());
+  expect(proposed.employees.every(person => person.weeklyHours === 42)).toBe(true);
   const originals = new Map(originalEmployees.map(person => [person.id, JSON.stringify(person.sourceSchedule)]));
   expect(proposed.employees.every(person => JSON.stringify(person.sourceSchedule) === originals.get(person.id))).toBe(true);
   for (const person of proposed.employees) {
     const rows = proposed.assignments.filter(item => item.employeeId === person.id);
+    if (learnerIds.has(person.id)) { expect(rows).toEqual([]); continue; }
     expect(rows.length > 0).toBe(true);
     for (let week = 0; week < rows.length; week += 7) {
       const group = rows.slice(week, week + 7);
@@ -84,7 +87,10 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
     if (format === "XLSX") {
       const zip = unzipSync(bytes);
       const main = strFromU8(zip["xl/worksheets/sheet1.xml"]);
-      expect(proposed.employees.every(person => main.includes(">" + person.registration + "<"))).toBe(true);
+      expect(proposed.employees.filter(person => !learnerIds.has(person.id)).every(person => main.includes(">" + person.registration + "<"))).toBe(true);
+      const allSheets = Object.entries(zip).filter(([name]) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)).map(([, bytes]) => strFromU8(bytes)).join(" ");
+      expect(proposed.employees.every(person => allSheets.includes(">" + person.registration + "<"))).toBe(true);
+      expect(proposed.employees.filter(person => learnerIds.has(person.id)).every(person => !main.includes(">" + person.registration + "<"))).toBe(true);
       expect(strFromU8(zip["xl/workbook.xml"])).toContain("Desfalques");
     }
     await download.delete();

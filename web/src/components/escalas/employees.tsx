@@ -353,7 +353,7 @@ export function EmployeeEditor({
           )}
         </Field>
       </div>
-      <Field label="Modo de horário" hint="Diferencie horário ausente de enquadramento confirmado. Ambos permitem simular presença e folgas, sem apuração de horas nem cobertura por faixa.">
+      <Field label="Horário de trabalho" hint="Sem horário fixo, o sistema planeja as folgas, mas não conta essa pessoa por hora.">
         {(id) => <select id={id} value={draft.scheduleMode ?? "TIMED"} className={controlClass}
           onChange={(event) => setDraft((previous) => ({
             ...previous,
@@ -365,7 +365,7 @@ export function EmployeeEditor({
           <option value="UNTIMED">Sem horário fixo · enquadramento conferido</option>
         </select>}
       </Field>
-      {draft.scheduleMode === "MISSING" && <p className="text-sm">Horário não informado: incluído no rodízio de presença e folgas, sem horas ou cobertura horária fictícias. Horários zerados e o título do cargo não confirmam dispensa de controle de jornada. Informe os horários quando disponíveis.</p>}
+      {draft.scheduleMode === "MISSING" && <p className="text-sm">Essa pessoa participa das folgas. Se o arquivo trouxe horários zerados, eles ficam identificados como sem horário fixo (ENC). Acrescente um horário somente se houver uma referência real.</p>}
       {draft.scheduleMode === "UNTIMED" && <p className="text-sm">
         Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo cinco dias seguidos de trabalho.
         Os dias de trabalho não recebem turno nem horas fictícias. A carga semanal é apenas uma referência cadastral.
@@ -501,7 +501,7 @@ export function Employees({
         </button>
       </div>
       <p className="text-sm text-[color:var(--app-muted)]">
-        Cadastros e alterações ficam na proposta até salvar a revisão. Setor e cargo são informações distintas.
+        A importação já prepara a equipe. Abra um cadastro somente para ajustar uma exceção. Alterações são salvas automaticamente.
       </p>
       <BulkControls input={input} disabled={disabled} onChange={onChange} />
       <Field label="Localizar colaborador, matrícula, setor ou cargo">
@@ -530,9 +530,9 @@ export function Employees({
               </p>
               <p className="text-xs text-[color:var(--app-muted)]">
                 {employee.sector} / {employee.role} · {employee.scheduleMode === "MISSING"
-                  ? "Horário não informado · presença e folgas planejadas · horas não apuradas"
+                  ? "Sem horário fixo · folgas planejadas"
                   : employee.scheduleMode === "UNTIMED"
-                  ? "Sem horário fixo · incluído no rodízio de folgas · horas não apuradas"
+                  ? "ENC · sem horário fixo · folgas planejadas"
                   : `referência ${employee.weeklyHours}h`}
                 {employee.maxConsecutiveSundays > 1 && employee.sundayRestRule !== "COMMERCE" &&
                   " · domingos: enquadramento pendente"}

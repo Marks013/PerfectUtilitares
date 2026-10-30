@@ -81,13 +81,13 @@ describe("Escalas practical accessibility and publication states", () => {
     validation.summaries = [{ employeeId: employee.id, workedMinutes: 0, workDays: 5, offDays: 2, maxStreak: 5, sundaysWorked: 1 }];
     const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false}
       canUnlock onChange={vi.fn()} />);
-    expect(html).toContain("Não subordinado a horário, conforme condição expressamente informada");
-    expect(html).toContain("Sem horário fixo · horas não apuradas");
+    expect(html).toContain("Sem horário fixo: participa das folgas");
+    expect(html).toContain("Folgas planejadas · sem horário fixo");
     expect(html).toContain("5 dias trabalhados · 2 folgas");
     expect(html).not.toContain("42h por semana");
     expect(html).not.toContain("Turno não encontrado");
     const result = renderToStaticMarkup(<ValidationResults section="information" input={input} validation={validation} />);
-    expect(result).toContain("Não apuradas");
+    expect(result).toContain("Sem horário fixo");
     expect(result).not.toContain('class="p-2 tabular-nums">00:00');
   });
 
@@ -96,11 +96,11 @@ describe("Escalas practical accessibility and publication states", () => {
     input.employees = [{ ...input.employees[0], scheduleMode: "MISSING", shiftIds: [] }];
     input.assignments = [{ employeeId: input.employees[0].id, date: visibleDates(input)[0], kind: "DUTY" }];
     const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false} canUnlock onChange={vi.fn()} />);
-    expect(html).toContain("Horário não informado · horas não apuradas");
+    expect(html).toContain("Folgas planejadas · sem horário fixo");
     expect(html).toContain("presença diária planejada sem horário informado");
     expect(html).not.toContain("42h por semana");
     const editor = renderToStaticMarkup(<CellEditor employee={input.employees[0]} date={visibleDates(input)[0]} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
-    expect(editor).toContain("não confirma dispensa de controle de jornada");
+    expect(editor).toContain("não entra na contagem por hora");
     expect(editor).not.toContain("Turno autorizado");
   });
 
@@ -125,7 +125,7 @@ describe("Escalas practical accessibility and publication states", () => {
       date={input.startDate} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
     const untimed = renderEditor(true);
     expect(untimed).toContain('value="DUTY" selected=""');
-    expect(untimed).toContain("ENC — Não subordinado a horário");
+    expect(untimed).toContain("ENC — Sem horário fixo");
     expect(untimed).not.toContain('value="WORK"');
     expect(untimed).not.toContain("Turno autorizado");
     const timed = renderEditor(false);
@@ -206,7 +206,7 @@ describe("Escalas practical accessibility and publication states", () => {
       />,
     );
     expect(html).toContain("Reposição");
-    expect(html).toContain("Organização: setor, cargo, nome e horário crescente");
+    expect(html).toContain("Setores de A–Z");
     expect(html).not.toContain("Reposição / Repositor");
     expect((html.match(/scope="col"/g) ?? [])).toHaveLength(36);
     expect(html.indexOf('scope="row"') + html.slice(html.indexOf('scope="row"')).indexOf("Ana")).toBeLessThan(
@@ -336,14 +336,14 @@ describe("Escalas practical accessibility and publication states", () => {
   it("does not offer a checkbox that purports to certify night-hour accounting", () => {
     const { input } = sample();
     const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain("Documentos e autorizações não são exigidos para simular");
+    expect(html).toContain("Você pode gerar o rascunho sem preencher documentos");
     expect(html).not.toContain("Regras específicas do trabalho noturno foram conferidas");
   });
 
   it("keeps documentary references in the backend without presenting duplicate authorization forms", () => {
     const input = newInput("2", "Centro", "2027-12", 42);
     const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain("Documentos e autorizações não são exigidos para simular");
+    expect(html).toContain("Você pode gerar o rascunho sem preencher documentos");
     expect(html).not.toContain("Identificação e cláusula do instrumento coletivo");
     expect(html).not.toContain("Responsável pela revisão");
     expect(input.policy.reviewed).toBe(false);
@@ -363,7 +363,7 @@ describe("Escalas practical accessibility and publication states", () => {
     const { input } = sample();
     input.policy.normativeProfile = "SINDECOMU_SUPERMARKETS_2026_2027";
     const html = renderToStaticMarkup(<LaborPolicyFields input={input} onChange={vi.fn()} />);
-    expect(html).toContain("Dados administrativos já registrados permanecem preservados");
+    expect(html).toContain("A conferência formal é separada do planejamento");
     expect(html).not.toContain("Certidão autoriza domingos");
     expect(html).not.toContain("Certidão autoriza feriados");
     expect(input.policy.normativeProfile).toBe("SINDECOMU_SUPERMARKETS_2026_2027");
@@ -391,7 +391,7 @@ describe("short imported daily references", () => {
     input.defaultWeeklyHours = 42;
     input.employees = [{ ...input.employees[0], weeklyHours: 42, simulationDailyMinutes: 240 }];
     const html = renderToStaticMarkup(<Roster input={input} validation={validation} disabled={false} canUnlock onChange={vi.fn()} />);
-    expect(html).toContain("04:00 por dia na simulação · referência curta, contrato semanal não apurado");
+    expect(html).toContain("04:00 por dia · horário reduzido mantido");
     expect(html).not.toContain("42h por semana");
     expect(input.employees[0].weeklyHours).toBe(42);
     expect(input.employees[0].simulationDailyMinutes).toBe(240);

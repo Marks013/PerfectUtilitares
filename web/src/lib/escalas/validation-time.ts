@@ -1,7 +1,7 @@
 import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates } from "./dates";
 import { buildCoveragePresence, coverageAt, coverageTimeline } from "./coverage-presence";
 import type { EscalaAssignment, EscalaInput, EscalaIssue, EscalaShift } from "./types";
-import { certificateAuthorizes, collectiveExtensionAuthorized, dailyMinuteCeiling, minimumMealMinutes, SUPERMARKET_CCT, TRANSITION_42_DATE, TRANSITION_40_DATE } from "./labor-rules";
+import { certificateAuthorizes, collectiveExtensionAuthorized, dailyMinuteCeiling, maximumMealMinutes, minimumMealMinutes, SUPERMARKET_CCT, TRANSITION_42_DATE, TRANSITION_40_DATE } from "./labor-rules";
 
 export type WorkJourney = {
   assignment: EscalaAssignment;
@@ -57,6 +57,10 @@ export function validateJourney(input: EscalaInput, journey: WorkJourney): Escal
   const meal = Math.max(0, ...breaks.map((segment) => segment.end - segment.start));
   const minimum = minimumMealMinutes(input.policy, minutes, input.simulation);
   if (meal < minimum) issue("MEAL_INTERVAL", `Intervalo para refeição insuficiente: mínimo de ${minimum} minutos para esta jornada.`);
+  const maximum = maximumMealMinutes(input.policy, assignment.date);
+  if (minutes > 360 && meal > maximum) {
+    issue("MEAL_INTERVAL_EXCESSIVE", `Turno ${shift.name}: intervalo de ${meal} minutos acima do limite de ${maximum} minutos conferido para esta data. Ajuste o horário ou confira um acordo específico, vigente e revisado que permita esse intervalo. A simulação não comprova autorização.`, input.simulation ? "PENDING" : "ERROR");
+  }
   if (input.simulation && input.policy.allowShortMealSimulation && minutes > 240 && minutes <= 360 && meal < 15) {
     issue("SIMULATION_SHORT_MEAL_FLEX", `Turno ${shift.name}: jornada de ${minutes} minutos simulada sem o intervalo mínimo de 15 minutos. A opção deste cenário flexibiliza somente a pausa de jornadas acima de 4h e até 6h; confira o horário antes de uso operacional. Não é autorização de regularidade.`, "PENDING");
   }

@@ -43,6 +43,7 @@ async function pdfContent(bytes: Uint8Array) {
     for (let index = 1; index <= document.numPages; index++) {
       const page = await document.getPage(index), content = await page.getTextContent();
       const viewport = page.getViewport({ scale: 1 });
+      expect(viewport.width).toBe(842); expect(viewport.height).toBe(595);
       const items = content.items.filter((item) => "str" in item);
       for (const item of items) if ("transform" in item) {
         expect(item.transform[4]).toBeGreaterThanOrEqual(25);
@@ -68,7 +69,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(text).toContain("Setor estimado 79");
     expect(text).not.toContain("Setor estimado 00");
     for (let index = 0; index < 28; index++) expect(text).toContain(`Obrigatório ${String(index).padStart(2, "0")}`);
-    expect(pages.length).toBeLessThanOrEqual(6);
+    expect(pages.length).toBeLessThanOrEqual(9); // A4 uses more pages than the former A3 report.
     const all = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
     expect(all.filter(row => /^2026-11-/.test(String(row[0])))).toHaveLength(108);
     expect(all.some(row => row[1] === "Setor estimado 00")).toBe(true);
@@ -100,6 +101,10 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(excluded.find(row => row[0] === "X")).toContain("=1+1 Nome integral preservado");
     expect(excluded[4][0]).toBe("Setor: Reposição");
     expect(main).toContain('xSplit="5" ySplit="4"');
+    expect(main).toContain('zoomScale="75"');
+    expect(main).toContain('paperSize="9"');
+    expect(main).toContain('r="1" ht="20"');
+    expect(strFromU8(archive["xl/styles.xml"])).toContain('<left style="thin">');
     expect(main).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
     expect(main).not.toContain("<f>");
     expect(strFromU8(archive["xl/styles.xml"])).toContain('wrapText="1"');
@@ -133,7 +138,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     for (const row of rows.slice(4).filter(row => row[1])) {
       const identity = gridPage?.find((item) => item.str === `${row[1]} - ${row[2]}`);
       expect(identity).toBeDefined();
-      const cells = gridPage?.filter((item) => item.str.trim().length > 0 && "transform" in item && "transform" in (identity ?? {}) && Math.abs(item.transform[5] - (identity as { transform: number[] }).transform[5]) < 0.1 && item.transform[4] > 300).map((item) => item.str);
+      const cells = gridPage?.filter((item) => item.str.trim().length > 0 && "transform" in item && "transform" in (identity ?? {}) && Math.abs(item.transform[5] - (identity as { transform: number[] }).transform[5]) < 0.1 && item.transform[4] > 280).flatMap((item) => item.str.trim().split(/\s+/));
       expect(cells).toEqual(row.slice(5));
     }
     expect(workspace).toEqual(before);
@@ -145,7 +150,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     workspace.input.employees = Array.from({ length: 65 }, (_, index) => ({ ...workspace.input.employees[0], id: `p${index}`, registration: String(index).padStart(4, "0"), name: index ? `Pessoa ${index}` : longName }));
     workspace.input.assignments = [];
     const bytes = await exportEscalaPdf(workspace, "rest"), document = await PDFDocument.load(bytes);
-    expect(document.getPageCount()).toBeLessThanOrEqual(5);
+    expect(document.getPageCount()).toBeLessThanOrEqual(8); // Full names remain readable on A4.
     const pages = await pdfContent(bytes), text = pages.flat().map((item) => item.str).join(" ");
     expect(text.replace(/\s+/g, " ")).toContain(longName);
     expect(pages.filter((items) => items.some((item) => item.str === "Matrícula / colaborador")).length).toBeGreaterThan(1);
@@ -285,7 +290,7 @@ describe("separate rest and hourly exports", () => {
     const text = (await pdfContent(await exportEscalaPdf(workspace, mode))).flat().map((item) => item.str).join(" ");
     expect(text.includes("Escala de folgas")).toBe(mode !== "hours");
     expect(text.includes("Escala de horários")).toBe(mode !== "rest");
-    if (mode !== "hours") expect(text).toContain("ENC = Não subordinado a horário");
+    if (mode !== "hours") expect(text).toContain("ENC = Sem horário fixo");
     expect(text).toContain("Conferir a referência noturna");
     expect(workspace).toEqual(before);
   }, 20000);

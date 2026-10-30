@@ -31,6 +31,13 @@ describe("shared Escalas presentation", () => {
     expect(assignmentPresentation({ ...person, scheduleMode: "MISSING" }, date, duty, codes)).toEqual({ code: "NP", description: "Horário não processado: presença diária planejada sem horário informado; defina um horário para apurar horas e cobertura" });
     expect(assignmentPresentation({ ...person, scheduleMode: "UNTIMED" }, date, duty, codes).code).toBe("ENC");
   });
+  it("labels an imported all-zero clock as ENC, without implying a legal exemption", () => {
+    const zero = { ...person, scheduleMode: "MISSING" as const, sourceSchedule: { report: "FPRE136" as const, code: "000", description: "Sem horário fixo", weekday: "00:00-00:00 / 00:00-00:00", saturday: "00:00-00:00", sunday: "00:00-00:00" } };
+    const duty = { employeeId: "a", date, kind: "DUTY" as const };
+    expect(assignmentPresentation(zero, date, duty, codes)).toEqual({ code: "ENC", description: expect.stringContaining("Sem horário fixo") });
+    expect(assignmentPresentation(zero, date, { ...duty, kind: "OFF" }, codes).code).toBe("F");
+    expect(assignmentPresentation(zero, date, undefined, codes).code).toBe("NP");
+  });
   it("uses civil date labels and keeps next-day offsets explicit", () => {
     expect(escalaDateLabel(date)).toBe("01/11 Dom");
     expect(escalaDuration(1500)).toBe("25:00");

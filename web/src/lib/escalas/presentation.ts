@@ -1,8 +1,9 @@
 import { visibleDates } from "./dates";
-import { sortEmployees } from "./order";
+import { compareProposedSchedules, sortEmployees, sortHoursEmployees } from "./order";
+import { isRestPlanningExcludedRole } from "./eligibility";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaWorkspace } from "./types";
 
-const ESCALA_LEGEND = "F = Folga | T01/T02 = Turno | ENC = Não subordinado a horário | NP = Não processado | AF = Afastado | FV = Fora do vínculo | X = Não incluído ou não considerado";
+const ESCALA_LEGEND = "F = Folga | T01/T02 = Turno | ENC = Sem horário fixo | NP = Não processado | AF = Afastado | FV = Fora do vínculo | X = Não incluído ou não considerado";
 export type EscalaExportMode = "rest" | "hours" | "both";
 const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
@@ -31,7 +32,9 @@ export function assignmentPresentation(employee: EscalaEmployee, date: string, a
   if (!assignment) return { code: "NP", description: "Dia não processado: gere a proposta ou selecione um turno, uma folga ou um afastamento" };
   if (assignment.kind === "OFF") return { code: "F", description: "Folga" };
   if (assignment.kind === "ABSENCE") return { code: "AF", description: "Afastado; não conta como folga nem como presença na cobertura" };
-  if (employee.scheduleMode === "UNTIMED") return { code: "ENC", description: "Não subordinado a horário, conforme condição expressamente informada; horas e cobertura horária não apuradas" };
+  const sourceClocks = employee.sourceSchedule?.weekday.match(/\d{2}:\d{2}/g) ?? [];
+  const allZeroSource = employee.scheduleMode === "MISSING" && sourceClocks.length > 0 && sourceClocks.every(clock => clock === "00:00");
+  if (employee.scheduleMode === "UNTIMED" || allZeroSource) return { code: "ENC", description: "Sem horário fixo: participa das folgas; não entra na contagem de pessoas por horário" };
   if (assignment.kind === "DUTY" || employee.scheduleMode === "MISSING") return { code: "NP", description: "Horário não processado: presença diária planejada sem horário informado; defina um horário para apurar horas e cobertura" };
   const code = codes.get(assignment.shiftId ?? "");
   return code ? { code, description: `Turno planejado ${code}` } : { code: "NP", description: "Horário não processado: turno não encontrado; selecione um turno válido" };
@@ -66,16 +69,21 @@ export function buildEscalaSchedule(input: EscalaInput) {
       const entry = variants.get(cell.shiftId) ?? { shiftId: cell.shiftId, code: cell.code, schedule: cell.schedule, interval: cell.interval, daily: cell.daily, dates: [] };
       entry.dates.push(cell.date); variants.set(cell.shiftId, entry);
     }
-    const proposedVariants = [...variants.values()];
+    const proposedVariants = [...variants.values()].sort((left, right) => compareProposedSchedules(left.schedule, right.schedule));
     const proposedSchedule = proposedVariants.length === 1 ? proposedVariants[0].schedule
       : proposedVariants.length > 1 ? "Varia no mês: " + proposedVariants.map((entry) => entry.code + " " + entry.schedule).join(" | ")
-      : employee.scheduleMode === "UNTIMED" ? "ENC — condição expressamente informada"
+      : cells.some((cell) => cell.code === "ENC") ? "ENC — Sem horário fixo"
       : cells.some((cell) => cell.code === "NP") ? "NP — horário ainda não processado" : "Sem trabalho com horário neste período";
     return { employee, cells, proposedSchedule, proposedVariants };
   });
   const excluded = sortEmployees(input.employees.filter((employee) => employee.planningEnabled === false))
     .map((employee) => ({ employee, ...exclusionPresentation(employee) }));
-  return { dates, codes, people, excluded, legend: ESCALA_LEGEND };
+  const byEmployee = new Map(people.map(person => [person.employee.id, person]));
+  const hoursPeople = sortHoursEmployees(input).flatMap(employee => {
+    const person = byEmployee.get(employee.id); return person ? [person] : [];
+  });
+  const restPeople = people.filter(person => !isRestPlanningExcludedRole(person.employee.role));
+  return { dates, codes, people, hoursPeople, restPeople, excluded, legend: ESCALA_LEGEND };
 }
 
 /** One immutable interpretation for screen cells, PDF and Excel. Technical boundary days remain in input. */

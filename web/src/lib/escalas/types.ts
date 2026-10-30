@@ -76,6 +76,11 @@ export type EscalaPolicy = {
   collectiveAgreement?: {
     source: string; validFrom: string; validUntil: string; reviewedBy: string; reviewed: boolean;
   };
+  /** Specific, reviewed evidence for an unpaid meal interval above the general two-hour ceiling. */
+  mealIntervalAgreement?: {
+    source: string; validFrom: string; validUntil: string; reviewedBy: string; reviewed: boolean;
+    maximumMinutes: number;
+  };
   operationalCertificate?: {
     identifier: string; validFrom: string; validUntil: string; reviewedBy: string; reviewed: boolean;
     sundays: boolean; holidays: boolean; after20: boolean;
@@ -149,7 +154,19 @@ export type EscalaGenerationConflict = {
   sector?: string;
   role?: string;
 };
+type EscalaOptimizationPhase = {
+  objective: "COVERAGE" | "REST_DISTRIBUTION" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK";
+  status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
+  wallTimeSeconds: number;
+  budgetSeconds: number;
+  incumbentValue: number;
+  bestBound?: number;
+  searchScope?: "ROLLING_WEEK";
+};
+
 export type EscalaSolveResult = {
+  /** Numeric diagnostics only; no employee identifiers or personal payload. */
+  optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[] };
   /** Concrete necessary-condition conflicts, never an invented diagnosis. */
   conflicts?: EscalaGenerationConflict[];
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";

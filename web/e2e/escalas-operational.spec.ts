@@ -29,7 +29,7 @@ test("exact operational clocks, excluded relation, responsive graph and all thre
     const grade = page.locator('[aria-label="Grade mensal da equipe, com rolagem horizontal e vertical"]');
     await expect(grade).toBeVisible();
     await expect(grade).not.toContainText("Pessoa fora da proposta");
-    await expect(grade).toContainText("Horário proposto: 09:36-14:00 / 16:00-20:00");
+    await expect(grade).toContainText("09:36-14:00 / 16:00-20:00");
     await page.getByRole("button",{name:"Cobertura",exact:true}).click();
     await page.getByLabel("Data da cobertura",{exact:true}).selectOption("2026-11-02");
     await page.getByLabel("Setor no gráfico",{exact:true}).selectOption("Reposição");
@@ -85,7 +85,8 @@ test("short-journey pause flexibility requires an explicit scenario choice, surv
     expect((await (await generate()).json()).result.status).toBe("INFEASIBLE");
     await page.goto("/escala");await page.getByLabel("Selecionar filial e período",{exact:true}).selectOption(workspace.id);
     await page.getByRole("button",{name:"Ajustes",exact:true}).click();
-    const toggle=page.getByRole("checkbox",{name:/15min/});
+    await page.getByRole("button",{name:"Intervalos de jornadas curtas",exact:true}).click();
+    const toggle=page.getByRole("checkbox",{name:"Simular jornadas de 4 a 6 horas sem pausa",exact:true});
     await expect(toggle).not.toBeChecked();await toggle.check();
     const saving=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/api/escalas")&&r.request().postDataJSON()?.action==="SAVE");
     await expect(page.locator('[data-state="saved"]')).toBeVisible();expect((await saving).status()).toBe(200);

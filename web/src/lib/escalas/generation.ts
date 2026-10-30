@@ -1,4 +1,5 @@
 import { EscalaError } from "./access";
+import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility";
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit } from "./labor-rules";
 import { planningWeeklyHours, prepareRoster, proposeCoverage } from "./preparation";
@@ -14,7 +15,9 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const adjustedEmployeeIds: string[] = [];
   const excludedEmployeeIds: string[] = [];
-  const employees = input.employees.map((person) => {
+  const employees = input.employees.map((original) => {
+    const person = applyRestEligibility(original);
+    if (isRestPlanningExcludedRole(person.role)) excludedEmployeeIds.push(person.id);
     if (person.planningEnabled === false || person.activeFrom > input.endDate || (person.activeUntil && person.activeUntil < input.startDate)
       || (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return person;
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
@@ -56,7 +59,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const adjusted = new Set(adjustedEmployeeIds);
   const excluded = new Set(excludedEmployeeIds);
   // An incompatible unlocked workday is replaced by the solve. Absences, OFF choices and locks remain available.
-  const assignments = input.assignments.filter((item) => !excluded.has(item.employeeId)
+  const assignments = input.assignments.filter((item) => (!excluded.has(item.employeeId) || item.locked || item.kind === "ABSENCE")
     && !(adjusted.has(item.employeeId) && item.kind === "WORK" && !item.locked));
   const used = new Set([...employees.flatMap((person) => person.shiftIds), ...assignments.flatMap((item) => item.shiftId ? [item.shiftId] : []),
     ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);

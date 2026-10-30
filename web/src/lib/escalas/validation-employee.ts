@@ -1,5 +1,6 @@
 import { addDays, dateRange, dayOfWeek, weekStart, visibleDates } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
+import { isRestPlanningExcludedRole } from "./eligibility";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, effectiveWorkDayLimit } from "./labor-rules";
@@ -27,7 +28,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
     maxStreak: 0, sundaysWorked: 0,
   };
   if (person.planningEnabled === false) {
-    if (current.length) issue("DISABLED_ASSIGNMENT", "Há atribuições para uma pessoa fora da geração. Remova as atribuições ou inclua a pessoa na proposta.");
+    if (current.some(entry => !isRestPlanningExcludedRole(person.role) || (!entry.locked && entry.kind !== "ABSENCE"))) issue("DISABLED_ASSIGNMENT", "Há atribuições para uma pessoa fora da geração. Remova as atribuições ou inclua a pessoa na proposta.");
     return { issues, summary };
   }
   if (!person.sector || !person.role) issue("ORGANIZATION_PENDING", "Informe setor e cargo antes da publicação.", undefined, "PENDING");
@@ -59,6 +60,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
     if ((assignment.kind === "WORK" || assignment.kind === "DUTY") && person.fixedOffDays.includes(dayOfWeek(day))) issue("FIXED_OFF", "Trabalho em dia de folga fixa aprovada.", day);
     if (assignment.kind === "OFF" && !input.policy.holidayRestAllowed && input.policy.holidayDates.includes(day)) issue("HOLIDAY_REST", "A regra aplicável não permite compensar o descanso semanal neste feriado.", day);
     if (assignment.kind === "OFF" && allWork.some((journey) => journey.assignment.date !== day && journey.occupiedDates.includes(day))) issue("OFF_OCCUPIED", "O dia marcado como folga ainda contém trabalho de uma jornada anterior.", day);
+    if (assignment.kind === "ABSENCE" && allWork.some((journey) => journey.occupiedDates.includes(day))) issue("ABSENCE_OCCUPIED", "O afastamento coincide com trabalho de uma jornada que atravessa a meia-noite. Ajuste o horário ou o dia anterior; o afastamento deve permanecer preservado.", day);
   }
   const maximumWorkDays = effectiveWorkDayLimit(input.policy);
   let streak = 0;

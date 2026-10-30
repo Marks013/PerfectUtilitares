@@ -56,14 +56,25 @@ describe("lean operational files", () => {
     expect(workbook).not.toMatch(/Conferencia|Jornadas|Turnos/);
     expect(source).toEqual(before);
   });
-  it("separates sectors, orders roles before names, and keeps exact variants without day lists", async () => {
+  it("separates sectors and groups exact schedules before roles and names without day lists", async () => {
     const bytes = exportEscalaXlsx(scenario(), "hours"), rows = await readSheet(Buffer.from(bytes), "Horarios");
     expect(rows.some(row => row[0] === "Setor: Açougue")).toBe(true);
     expect(rows.some(row => row[0] === "Setor: Padaria")).toBe(true);
     const people = rows.filter(row => ["01", "02", "03"].includes(String(row[1])));
-    expect(people.map(row => row[1])).toEqual(["03", "01", "01", "02"]);
+    expect(people.map(row => row[1])).toEqual(["03", "01", "02", "01"]);
     expect(people.filter(row => row[1] === "01").map(row => row[5])).toEqual(["08:00-12:00 / 13:00-17:24", "09:00-13:00 / 14:00-18:24"]);
     expect(rows.flat().join(" ")).not.toMatch(/2026-11-02|02\/11|Dia\(s\)|Dias com/);
+  });
+  it("keeps an apprentice out of rest grids while preserving the hourly view", async () => {
+    const source = scenario();
+    source.input.employees.push({ ...source.input.employees[0], id: "learner", registration: "99", name: "Aprendiz Sintético", role: "AUX. DE SERVIÇOS EM SUPER" });
+    source.input.assignments.push({ employeeId: "learner", date: "2026-11-02", kind: "WORK", shiftId: "a" });
+    const bytes = exportEscalaXlsx(source);
+    const rest = await readSheet(Buffer.from(bytes), "Escala"), hours = await readSheet(Buffer.from(bytes), "Horarios");
+    expect(rest.some(row => row[1] === "99")).toBe(false);
+    expect(hours.some(row => row[1] === "99")).toBe(true);
+    expect(await pdfText(await exportEscalaPdf(source, "rest"))).not.toContain("Aprendiz Sintético");
+    expect(await pdfText(await exportEscalaPdf(source, "hours"))).toContain("Aprendiz Sintético");
   });
   it("prints only proposed schedule variants and excludes support warnings", async () => {
     const text = await pdfText(await exportEscalaPdf(scenario(), "hours"));

@@ -85,6 +85,9 @@ jobs:
       - name: Prepare isolated scheduling processor
         run: docker build -t web-escalas-solver ops/escalas
 
+      - name: Run scheduling solver regressions
+        run: docker run --rm --read-only --network none --env PYTHONDONTWRITEBYTECODE=1 --volume "$PWD/ops/escalas:/model:ro" --workdir /model --entrypoint python web-escalas-solver -B -m unittest discover -s . -p 'test_*.py'
+
       - name: Run quality checks
         run: npm run quality
 

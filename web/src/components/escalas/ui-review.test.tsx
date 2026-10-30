@@ -122,6 +122,7 @@ describe("Escalas readable operational review", () => {
     expect(groups[0].guidance.instruction).toContain("15 minutos");
     expect(groups[0].guidance.instruction).toContain("não dispensa intervalos de jornadas maiores");
     expect(groups[1].guidance.instruction).toContain("não a jornada contratual");
-    expect(groups.every((group) => group.guidance.target === "team")).toBe(true);
+    expect(groups[0].guidance.target).toBe("intervals");
+    expect(groups[1].guidance.target).toBe("team");
   });
 });
