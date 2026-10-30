@@ -242,7 +242,8 @@ adminUrl.searchParams.delete("schema");
 const testUrl = databaseUrl(name, database);
 const temp = await mkdtemp(path.join(os.tmpdir(), "perfectutilitares-e2e-"));
 await mkdir(path.join(temp, "pdf-storage"), { recursive: true });
-const runtimeCwd = productionBuild ? path.join(cwd, ".next", "standalone") : cwd;
+const standaloneCwd = path.resolve(cwd, process.env.E2E_STANDALONE_DIR || ".next/standalone");
+const runtimeCwd = productionBuild ? standaloneCwd : cwd;
 const pdfWorkerHeartbeatPath = path.join(
   runtimeCwd,
   "data",
@@ -354,7 +355,7 @@ try {
   if (productionBuild) {
     // Match the standalone image layout without changing the production service.
     // The existing build and compiled worker must be supplied by the caller.
-    const standalone = path.join(cwd, ".next", "standalone");
+    const standalone = standaloneCwd;
     await access(path.join(standalone, "server.js"));
     await access(path.join(cwd, "dist", "pdf-worker.mjs"));
     for (const relative of [

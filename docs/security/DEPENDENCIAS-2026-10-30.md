@@ -59,4 +59,8 @@ O npm informa depreciação de @opentelemetry/sdk-trace-base@2.12.0, requerido p
 
 ### Liberação
 
-Build e validação do pacote compilado ainda pendentes neste checkpoint. Não há mudança de regras do solver nem ativação da estratégia experimental. O CI remoto será conferido pelo usuário, conforme solicitado.
+O primeiro build passou, mas a análise do Next sinalizou inclusão de todo o projeto a partir da abertura do segredo externo do solver. A leitura recebeu a anotação oficial turbopackIgnore: o arquivo é montado somente em runtime e não é um asset. O_NOFOLLOW, O_NONBLOCK, permissões privadas, tamanho, conteúdo e fechamento do descritor permanecem intactos. Referência: https://github.com/vercel/next.js/pull/95144.
+
+O runner E2E aceita agora E2E_STANDALONE_DIR para testar um pacote compilado em diretório novo e exclusivo. O padrão anterior permanece inalterado. O .env legado de .next/standalone, já em 0600, não foi copiado, movido, exposto ou alterado. Uma execução contra o pacote anterior não foi considerada evidência da nova versão; a validação final será contra o novo artefato identificado.
+
+TypeScript, sintaxe do runner, lint do transporte e 21 testes focados de transporte/operações passaram após o ajuste. É necessária uma segunda construção para incorporar e conferir esta correção de empacotamento; nenhuma suíte geral será repetida. Build final, teste do pacote correto e implantação ainda pendentes neste checkpoint. Não há mudança de regras do solver nem ativação da estratégia experimental. O CI remoto será conferido pelo usuário, conforme solicitado.

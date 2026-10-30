@@ -11,10 +11,11 @@ function secret(): string {
   const path = process.env.ESCALAS_SOLVER_SECRET_FILE || "/run/secrets/escalas_solver_secret";
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    // This protected file is mounted at runtime, not a project asset to bundle.
+    descriptor = openSync(/* turbopackIgnore: true */ path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = fstatSync(descriptor);
     if (!info.isFile() || (info.mode & 0o077) !== 0 || info.size < 43 || info.size > 129) throw new Error("Invalid secret file");
-    const value = readFileSync(descriptor, "utf8").trim();
+    const value = readFileSync(/* turbopackIgnore: true */ descriptor, "utf8").trim();
     if (!/^[A-Za-z0-9_-]{43,128}$/.test(value)) throw new Error("Invalid secret");
     return value;
   } catch {
