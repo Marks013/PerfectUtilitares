@@ -353,7 +353,10 @@ def solve(data, control=None):
         model.add_hint(variable, seed.value(variable))
     sunday_coverage = {}
     sector_coverage = {}
-    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage)
+    visible_sunday_coverage = {}
+    visible_sector_coverage = {}
+    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage,
+                         visible_sunday_coverage, visible_sector_coverage)
     if coverage is False:
         return _response("FEASIBLE", result, started)
     if isinstance(coverage, str):
@@ -390,7 +393,9 @@ def solve(data, control=None):
     values, proven, phases = improve(model, [objective for _, objective in goals], values,
                                      started + MAX_SECONDS, [name for name, _ in goals], control=control,
                                      protected_groups={goals[0][0]: sundays + [sum(terms) for terms in sunday_coverage.values()]
-                                                       + [sum(terms) for terms in sector_coverage.values()]} if goals else {},
+                                                       + [sum(terms) for terms in sector_coverage.values()]
+                                                       + [sum(terms) for terms in visible_sunday_coverage.values()]
+                                                       + [sum(terms) for terms in visible_sector_coverage.values()]} if goals else {},
                                      employee_groups=list(groups.values()),
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
                                                       for sector in sunday_coverage}, sunday_coverage=sunday_coverage,
@@ -644,7 +649,7 @@ def _civil_rest(model, person, dates, choices, work, off, prior, shifts):
     return occupied_weekends
 
 
-def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None, sector_terms=None):
+def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None, sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None):
     relevant = [d for d in data['demands'] if d['minimum'] > 0
                 and not (scope == 'HARD' and d.get('estimated') is True)
                 and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
@@ -705,17 +710,22 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                     # Their durations are added, so the person-minute objective is unchanged.
                     key = (minimum, tuple(sorted(v.index for v in variables)), demand['sector'])
                     if key not in grouped:
-                        grouped[key] = [variables, 0, 0]
+                        grouped[key] = [variables, 0, 0, 0, 0]
                     grouped[key][1] += int(right - left)
-                    if date.fromisoformat(demand['date']).weekday() == 6:
+                    is_sunday = date.fromisoformat(demand['date']).weekday() == 6
+                    if is_sunday:
                         grouped[key][2] += int(right - left)
+                    if data.get('visibleMonth') and demand['date'].startswith(data['visibleMonth'] + '-'):
+                        grouped[key][3] += int(right - left)
+                        if is_sunday:
+                            grouped[key][4] += int(right - left)
                 continue
             if not available and demand["minimum"] > 0:
                 minute = int(left - instant(demand["date"], 0))
                 return (f"Cobertura sem horário disponível em {demand['date']} às {minute // 60:02d}:{minute % 60:02d}. "
                         "Confira os turnos permitidos, intervalos de refeição, setor e cargo da faixa antes de alterar o efetivo.")
             model.add(cp_model.LinearExpr.sum(available) >= demand["minimum"])
-    for index, ((minimum, _, sector), (variables, weight, sunday_weight)) in enumerate(grouped.items()):
+    for index, ((minimum, _, sector), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight)) in enumerate(grouped.items()):
         shortage = model.new_int_var(0, minimum, f'coverage-gap:{index}')
         model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
         shortages.append(weight * shortage)
@@ -723,6 +733,12 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
             sector_terms.setdefault(sector, []).append(weight * shortage)
         if sunday_terms is not None and sunday_weight:
             sunday_terms.setdefault(sector, []).append(sunday_weight * shortage)
+        # Retain horizon guards and also protect the month presented in UI/exports.
+        # Reuse the same shortage variables; no additional solve or date relaxation.
+        if visible_sector_terms is not None and visible_weight:
+            visible_sector_terms.setdefault(sector, []).append(visible_weight * shortage)
+        if visible_sunday_terms is not None and visible_sunday_weight:
+            visible_sunday_terms.setdefault(sector, []).append(visible_sunday_weight * shortage)
         if values is not None:
             present = sum(values[v.index] for v in variables)
             remember(model, values, shortage, max(0, minimum - present))

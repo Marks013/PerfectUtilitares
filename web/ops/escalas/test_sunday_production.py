@@ -11,6 +11,46 @@ from weekend_balance import available_weekends, weekend_objectives
 
 
 class ProductionSundayTests(unittest.TestCase):
+    def test_a_border_gain_cannot_pay_for_a_visible_month_sector_or_sunday_loss(self):
+        from solver import _coverage
+        for protect_visible in (False, True):
+            with self.subTest(protect_visible=protect_visible):
+                data = fixture(40, weeks=6, start_date='2026-10-26')
+                data['visibleMonth'] = '2026-11'
+                data['employees'][0]['history'] = []
+                data['demands'] = [
+                    {'id': 'border', 'date': '2026-12-06', 'sector': 'Reposição', 'start': 480, 'end': 720, 'minimum': 1, 'estimated': True},
+                    {'id': 'visible', 'date': '2026-11-01', 'sector': 'Reposição', 'start': 480, 'end': 600, 'minimum': 1, 'estimated': True},
+                ]
+                model = cp_model.CpModel()
+                border, visible = model.new_bool_var('border'), model.new_bool_var('visible')
+                model.add(border + visible == 1)
+                choices = {('p0', '2026-12-06'): {'day': border}, ('p0', '2026-11-01'): {'day': visible}}
+                values = {border.index: 0, visible.index: 1}
+                sectors, sundays, monthly_sectors, monthly_sundays = {}, {}, {}, {}
+                goals = _coverage(model, data, data['employees'], choices, {shift['id']: shift for shift in data['shifts']},
+                                  time.monotonic(), 'ESTIMATED', values, sundays, sectors, monthly_sundays, monthly_sectors)
+                self.assertEqual(Snapshot(values).value(sum(goals)), 240)
+                self.assertEqual(Snapshot(values).value(sum(monthly_sectors['Reposição'])), 0)
+                self.assertEqual(Snapshot(values).value(sum(monthly_sundays['Reposição'])), 0)
+                guards = [sum(terms) for terms in sectors.values()] + [sum(terms) for terms in sundays.values()]
+                if protect_visible:
+                    guards += [sum(terms) for terms in monthly_sectors.values()] + [sum(terms) for terms in monthly_sundays.values()]
+                result, _, _ = improve(model, [sum(goals)], values, time.monotonic() + 1, ['COVERAGE'], protected_groups={'COVERAGE': guards})
+                self.assertEqual(result[visible.index], int(protect_visible))
+                self.assertEqual(Snapshot(result).value(sum(goals)), 240 if protect_visible else 120)
+
+    def test_no_visible_month_does_not_invent_monthly_guard_scope(self):
+        from solver import _coverage
+        data = fixture(40)
+        data['demands'] = [{'id': 'd', 'date': data['startDate'], 'sector': 'Reposição', 'start': 480, 'end': 720, 'minimum': 1, 'estimated': True}]
+        model = cp_model.CpModel()
+        choice = model.new_bool_var('work')
+        monthly_sundays, monthly_sectors = {}, {}
+        _coverage(model, data, data['employees'], {('p0', data['startDate']): {'day': choice}}, {'day': data['shifts'][0]},
+                  time.monotonic(), visible_sunday_terms=monthly_sundays, visible_sector_terms=monthly_sectors)
+        self.assertEqual((monthly_sundays, monthly_sectors), ({}, {}))
+
     def test_an_incomplete_sector_does_not_discard_an_exact_sector_candidate(self):
         from unittest.mock import patch
         data = fixture(40, people=2)
