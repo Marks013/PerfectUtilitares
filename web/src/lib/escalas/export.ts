@@ -5,6 +5,10 @@ import { sortScheduleEntries } from "./order";
 import { buildCoveragePresence, consolidateCoverageGaps, coverageTimeline, sectorCoverageGaps, type CoveragePresence, type SectorCoverageGap } from "./coverage-presence";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
 
+function reportPeriod(value: string): string {
+  return value.replace(/(\d{4})-(\d{2})-(\d{2})/g, "$3/$2/$1");
+}
+
 function xml(value: unknown) {
   const text = [...String(value ?? "")].filter((character) => {
     const point = character.codePointAt(0) ?? 0;
@@ -58,7 +62,8 @@ function spreadsheetFragments(text: string, width: number, maximumLines = 24): s
 
 function sheet(rows: (string | number)[][], widths: number[], grid = false, frozenColumns = grid ? 5 : 0, sectors: number[] = []) {
   const header = 4, last = `${column(widths.length - 1)}${rows.length}`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 75 : 90}" zoomScaleNormal="100"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
+  const activeCell = `${column(frozenColumns)}${header + 1}`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 75 : 90}" zoomScaleNormal="100"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/><selection pane="${frozenColumns ? "bottomRight" : "bottomLeft"}" activeCell="${activeCell}" sqref="${activeCell}"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
     const title = index < 3 || sectors.includes(index);
     const available = title ? widths.reduce((sum, width) => sum + width, 0) - 2 : 0;
     const lines = Math.max(1, ...row.map((value, cell) => spreadsheetLines(String(value), title ? available : widths[cell])));
@@ -117,7 +122,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const metadata = (title: string, description = ""): (string | number)[][] => [[model.branch],
-    [title + " | " + model.period + " | Revisão " + workspace.revision + " | " + model.state + simulation], [description]];
+    [title + " | " + reportPeriod(model.period) + " | Revisão " + workspace.revision + " | " + model.state + simulation], [description]];
   const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[], gaps: [] as number[] };
   const main = [...metadata("Escala de folgas", model.legend),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(escalaDateLabel)]];
@@ -165,7 +170,9 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [14, 9, 26, 19, 8, 32, 20, 12], grid: false, sectors: sectors.hours }] : []),
     ...(diagnostics.coverageGroups.length ? [{ name: "Desfalques", frozenColumns: 2, rows: gaps, widths: [12, 19, 30, 10, 11, 16, 34, 28], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
-  ];
+  ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
+  // Excel filters and sorting need contiguous records, not merged sector separator rows.
+  // Each record already retains its sector; PDF keeps the visual sector bands.
   const printDefinitions = sheets.map((entry, index) => {
     const name = `'${entry.name}'`;
     const rows = `${name}!$1:$4`;
@@ -236,6 +243,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   const presence = buildCoveragePresence(workspace.input);
   const diagnostics = { coverageGroups: sectorCoverageGaps(workspace.input, presence) };
   const windows = coverageWindows(workspace.input, diagnostics.coverageGroups, presence);
+  let reportTitle = mode === "hours" ? "Escala de horários" : "Escala de folgas";
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
   const width = 842, height = 595; // A4 landscape, including full monthly grids.
   const margin = 26, labelWidth = 260, cellWidth = (width - 2 * margin - labelWidth) / Math.max(1, model.dates.length);
@@ -245,7 +253,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   const newPage = (grid: boolean) => {
     page = document.addPage([width, height]); y = height - margin;
     for (const line of wrapText(model.branch, width - 2 * margin, bold, 12)) { write(line, margin, y, 12, true); y -= 16; }
-    write(`Escala 5x2 | ${model.period} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
+    write(`${reportTitle} | 5x2 | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
     if (grid) for (const line of wrapText(model.legend, width - 2 * margin, font, 8)) { write(line, margin, y, 8); y -= 12; }
     if (workspace.input.simulation && workspace.input.policy.allowShortMealSimulation) { write("Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h.", margin, y, 8); y -= 13; }
     y -= 5;
@@ -339,19 +347,24 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   }
   if (!model.people.length) paragraph("Nenhum colaborador incluído nesta proposta.");
   if (mode !== "rest") {
+    reportTitle = "Escala de horários";
     if (mode === "both") newPage(false);
     section("Escala de horários");
     paragraph("Horários propostos por colaborador. Variantes reais permanecem separadas; intervalos não contam como presença.");
     let hoursSector: string | undefined;
     const widths = [0.27, 0.18, 0.05, 0.27, 0.15, 0.08].map(ratio => ratio * (width - 2 * margin));
     const headings = ["Matrícula / colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada"];
+    const headerHeight = Math.max(...headings.map((heading, index) => wrapText(heading, widths[index] - 7, bold, 8).length)) * 11 + 8;
     const hoursHeader = () => tableHeadings(headings, widths);
     for (const row of hourEntries(model)) {
       const { employee } = row;
       const cells = [employee.registration + " - " + employee.name, employee.role, row.code, row.schedule, row.interval, row.daily === "Não apurada" ? "—" : row.daily];
       const lines = cells.map((value, index) => wrapText(value, widths[index] - 7, index === 0 ? bold : font, 8.5));
       const rowHeight = Math.max(...lines.map(value => value.length)) * 11 + 8;
-      if (y - rowHeight - (hoursSector !== employee.sector ? 45 : 0) < 45) { newPage(false); hoursSector = undefined; }
+      const sectorHeight = 8 + wrapText(employee.sector || "Setor não informado", width - 2 * margin, bold, 11).length * 15 + headerHeight;
+      // Match paginatedRow: ordinary rows stay whole; oversized rows start with one visible line.
+      const firstFragmentHeight = rowHeight <= 400 ? rowHeight : 19;
+      if (y - firstFragmentHeight - (hoursSector !== employee.sector ? sectorHeight : 0) < 45) { newPage(false); hoursSector = undefined; }
       if (hoursSector !== employee.sector) {
         section(employee.sector || "Setor não informado"); hoursSector = employee.sector; hoursHeader();
       }

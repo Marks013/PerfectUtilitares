@@ -96,10 +96,10 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(rows.filter(row => row[1]).slice(1).map((row) => row[2])).toEqual(["Ana Gerente", "Áurea Silva"]);
     expect(rows.find(row => row[1] === "0002")).toContain("ENC");
     expect(rows.find(row => row[1] === "0001")).toContain("T02");
-    expect(rows[4][0]).toBe("Setor: Reposição");
+    expect(rows[4][0]).toBe("Reposição");
     const excluded = await readSheet(Buffer.from(bytes), "Excluidos");
     expect(excluded.find(row => row[0] === "X")).toContain("=1+1 Nome integral preservado");
-    expect(excluded[4][0]).toBe("Setor: Reposição");
+    expect(excluded[4][1]).toBe("Reposição");
     expect(main).toContain('xSplit="5" ySplit="4"');
     expect(main).toContain('zoomScale="75"');
     expect(main).toContain('paperSize="9"');
@@ -141,7 +141,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(Number(header?.[1])).toBeGreaterThanOrEqual(45);
     expect(main).toContain('<c r="A1" s="8"');
     expect(main).toContain('<c r="A2" s="0"');
-    expect(main).toContain('<c r="A5" s="9"');
+    expect(main).toContain('<c r="A5" s="3"');
     expect(main).toContain('<c r="F4" s="10"');
     expect(styles).toContain('<fonts count="3">');
     expect(styles).toContain('<cellXfs count="11">');
@@ -162,7 +162,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(text).toContain("08:00-12:00 / 13:00-17:24");
     expect(text).not.toContain("Conferência da proposta");
     expect(text).not.toContain("Alternativa não selecionada");
-    expect(text).toContain(`${month}-01 a ${month}-${days}`);
+    expect(text).toContain(`01/${month.slice(5)}/${month.slice(0, 4)} a ${days}/${month.slice(5)}/${month.slice(0, 4)}`);
     const gridPage = pages.find((items) => items.some((item) => item.str === "0001 - Áurea Silva"));
     expect(gridPage).toBeDefined();
     for (const row of rows.slice(4).filter(row => row[1])) {

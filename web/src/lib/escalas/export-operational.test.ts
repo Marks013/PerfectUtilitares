@@ -49,6 +49,20 @@ async function pdfText(bytes: Uint8Array) {
 }
 
 describe("lean operational files", () => {
+  it("keeps Excel filtering over records only and selects the usable frozen pane", () => {
+    const archive = unzipSync(exportEscalaXlsx(scenario()));
+    for (const [path, data] of Object.entries(archive)) if (/worksheets\/sheet\d+\.xml$/.test(path)) {
+      const xml = strFromU8(data);
+      expect(xml).not.toContain("Setor:");
+      expect([...xml.matchAll(/<mergeCell ref="[^"]+"/g)]).toHaveLength(3);
+      expect(xml).toContain('<selection pane="bottomRight"');
+      const editable = xml.match(/topLeftCell="([A-Z]+5)"/)?.[1];
+      expect(editable).toBeTruthy();
+      expect(xml).toContain('activeCell="' + editable + '"');
+      expect(xml).toContain('sqref="' + editable + '"');
+    }
+  });
+
   it("exports only selected operational views, retaining data without support worksheets", async () => {
     const source = scenario(), before = structuredClone(source);
     const archive = unzipSync(exportEscalaXlsx(source)), workbook = strFromU8(archive["xl/workbook.xml"]);
@@ -58,8 +72,8 @@ describe("lean operational files", () => {
   });
   it("separates sectors and groups exact schedules before roles and names without day lists", async () => {
     const bytes = exportEscalaXlsx(scenario(), "hours"), rows = await readSheet(Buffer.from(bytes), "Horarios");
-    expect(rows.some(row => row[0] === "Setor: Açougue")).toBe(true);
-    expect(rows.some(row => row[0] === "Setor: Padaria")).toBe(true);
+    expect(rows.slice(4).map(row => row[0])).toEqual(["Açougue", "Padaria", "Padaria", "Padaria"]);
+    expect(rows.slice(4).every(row => row[1] && row[2])).toBe(true);
     const people = rows.filter(row => ["01", "02", "03"].includes(String(row[1])));
     expect(people.map(row => row[1])).toEqual(["03", "01", "02", "01"]);
     expect(people.filter(row => row[1] === "01").map(row => row[5])).toEqual(["08:00-12:00 / 13:00-17:24", "09:00-13:00 / 14:00-18:24"]);
@@ -80,7 +94,7 @@ describe("lean operational files", () => {
     const text = await pdfText(await exportEscalaPdf(scenario(), "hours"));
     expect(text).toContain("08:00-12:00 / 13:00-17:24");
     expect(text).toContain("09:00-13:00 / 14:00-18:24");
-    const schedule = text.split("Escala de horários")[1].split("Desfalques de cobertura")[0];
+    const schedule = text.split("Horários propostos por colaborador.")[1].split("Desfalques de cobertura")[0];
     expect(schedule).not.toMatch(/02\/11|03\/11|Dia\(s\)|Folga/);
     expect(text).not.toMatch(/Conferência da proposta|Informação administrativa|certifica conformidade|Histórico anterior/);
   }, 20000);

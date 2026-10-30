@@ -28,6 +28,28 @@ function crowded(): EscalaWorkspace {
 }
 
 describe("large but valid operational reports", () => {
+  it("keeps each hourly sector heading beside its first employee on A4", async () => {
+    const workspace = crowded();
+    workspace.input.demands = [];
+    workspace.input.employees.forEach((person, index) => { person.sector = `Setor ${String(index).padStart(2, "0")}`; });
+    const drawn: { text: string; page: PDFPage }[] = [];
+    const original = PDFPage.prototype.drawText;
+    const spy = vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: PDFPage, text, options) {
+      drawn.push({ text, page: this });
+      return original.call(this, text, options);
+    });
+    try {
+      await exportEscalaPdf(workspace, "hours");
+      for (const person of workspace.input.employees) {
+        const heading = drawn.find(item => item.text === person.sector);
+        const employee = drawn.find(item => item.text === person.registration + " - " + person.name);
+        expect(heading, person.sector).toBeDefined();
+        expect(employee, person.name).toBeDefined();
+        expect(heading?.page, person.sector).toBe(employee?.page);
+      }
+    } finally { spy.mockRestore(); }
+  });
+
   it("paginates oversized coverage rows without drawing below the page or losing any role", async () => {
     const workspace = crowded(), drawn: { text: string; y: number }[] = [];
     const original = PDFPage.prototype.drawText;

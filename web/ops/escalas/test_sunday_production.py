@@ -11,6 +11,62 @@ from weekend_balance import available_weekends, weekend_objectives
 
 
 class ProductionSundayTests(unittest.TestCase):
+    def test_a_too_short_phase_is_unattempted_not_reported_as_optimal(self):
+        from unittest.mock import patch
+        model = cp_model.CpModel()
+        goal = model.new_bool_var('goal')
+        values = {goal.index: 1}
+        with patch('optimization._phase_budget', return_value=.05), patch.object(cp_model.CpSolver, 'solve') as search:
+            actual, proven, phases = improve(model, [goal], values, time.monotonic() + 1, ['STABILITY'])
+        search.assert_not_called()
+        self.assertEqual(actual, values)
+        self.assertFalse(proven)
+        self.assertEqual(phases, [])
+
+    def test_bulk_hints_preserve_exact_indexes_and_values_after_replacement(self):
+        from optimization import _replace_hints
+        model = cp_model.CpModel()
+        first, second = model.new_bool_var('first'), model.new_int_var(-3, 4, 'second')
+        model.add_hint(first, 0)
+        _replace_hints(model, {second.index: -2, first.index: 1})
+        actual = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
+        self.assertEqual(actual, {first.index: 1, second.index: -2})
+        self.assertEqual(len(model.proto.solution_hint.vars), 2)
+
+    def test_secondary_budget_reserves_real_time_for_stability_and_preferences(self):
+        from optimization import _phase_budget
+        names = ['COVERAGE', 'SUNDAY_COVERAGE', 'SUNDAY_BALANCE', 'SATURDAY_BALANCE',
+                 'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED', 'STABILITY', 'PREFERENCES', 'TIE_BREAK']
+        remaining, allocations = 10.0, {}
+        for index, name in enumerate(names):
+            budget = _phase_budget(remaining, names, index)
+            allocations[name] = budget
+            self.assertGreater(budget, 0)
+            remaining -= budget
+        self.assertAlmostEqual(allocations['COVERAGE'], 5.5)
+        self.assertGreater(allocations['STABILITY'], .5)
+        self.assertGreater(allocations['PREFERENCES'], .25)
+        self.assertGreater(allocations['SUNDAY_BALANCE'], allocations['SATURDAY_BALANCE'])
+        self.assertLess(allocations['TIE_BREAK'], allocations['PREFERENCES'])
+        self.assertAlmostEqual(sum(allocations.values()), 10.0)
+
+    def test_secondary_goals_improve_without_spending_coverage_or_sunday_guards(self):
+        model = cp_model.CpModel()
+        coverage = model.new_int_var(0, 0, 'coverage')
+        sunday = model.new_int_var(0, 0, 'sunday')
+        fairness = model.new_bool_var('fairness')
+        stability = model.new_bool_var('stability')
+        preference = model.new_bool_var('preference')
+        values = {coverage.index: 0, sunday.index: 0, fairness.index: 1, stability.index: 1, preference.index: 0}
+        actual, proven, phases = improve(model, [coverage, fairness, stability, -preference], values,
+            time.monotonic() + 1, ['COVERAGE', 'SUNDAY_BALANCE', 'STABILITY', 'PREFERENCES'],
+            protected_groups={'COVERAGE': [coverage, sunday]})
+        self.assertEqual([actual[v.index] for v in (coverage, sunday, fairness, stability, preference)], [0, 0, 0, 0, 1])
+        self.assertFalse(proven)
+        self.assertEqual([phase['objective'] for phase in phases], ['COVERAGE', 'SUNDAY_BALANCE', 'STABILITY', 'PREFERENCES'])
+        self.assertEqual(phases[0]['budgetSeconds'], 0)
+        self.assertTrue(all(phase['status'] == 'OPTIMAL' for phase in phases))
+
     def test_a_border_gain_cannot_pay_for_a_visible_month_sector_or_sunday_loss(self):
         from solver import _coverage
         for protect_visible in (False, True):

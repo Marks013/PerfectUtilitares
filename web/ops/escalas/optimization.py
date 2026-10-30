@@ -94,6 +94,27 @@ def _coverage_people(groups, shortages, values, limit=36):
     return selected
 
 
+def _replace_hints(model, values):
+    # The complete incumbent already uses proto indexes. Avoid Python add_hint
+    # calls for every auxiliary variable between short optimization phases.
+    model.clear_hints()
+    model.proto.solution_hint.vars.extend(values.keys())
+    model.proto.solution_hint.values.extend(values.values())
+
+
+def _phase_budget(remaining, names, index):
+    """Keep coverage first, without geometrically starving the last real goals."""
+    if index == len(names) - 1:
+        return remaining
+    if names[index] == 'COVERAGE':
+        return remaining * .55
+    weights = {'SUNDAY_COVERAGE': 3, 'SUNDAY_BALANCE': 3, 'SATURDAY_BALANCE': 1,
+               'REST_DISTRIBUTION': 1, 'REST_ROTATION': 1, 'PEOPLE_CHANGED': 1,
+               'STABILITY': 2, 'PREFERENCES': 1, 'TIE_BREAK': .25}
+    pending = [weights.get(name, 1) for name in names[index:]]
+    return remaining * pending[0] / sum(pending)
+
+
 def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None):
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
@@ -108,9 +129,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
     dates = sorted({day for _pid, day in decision_variables.values()})
     names = names or [f'OBJECTIVE_{i + 1}' for i in range(len(objectives))]
     protected_groups, active_groups = protected_groups or {}, []
-    model.clear_hints()
-    for variable in variables:
-        model.add_hint(variable, values[variable.index])
+    _replace_hints(model, values)
     for index, objective in enumerate(objectives):
         if control is not None:
             control.checkpoint()
@@ -118,6 +137,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         if remaining < 0.1:
             proven = False
             break
+        preparation_started = time.monotonic()
         model.minimize(objective)
         active_groups.extend(protected_groups.get(names[index], []))
         for variable in active_groups:
@@ -139,9 +159,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
             continue
-        later = len(objectives) - index - 1
-        reserve = min(0.12 * later, remaining * 0.5)
-        budget = remaining if not later else min(remaining - reserve, max(0.1, remaining * (0.55 if index == 0 else 0.5)))
+        budget = _phase_budget(remaining, names, index)
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
         engine.parameters.num_workers = 1
@@ -174,11 +192,13 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                     person, day = decision_variables[variable.index]
                     fixed = person not in movable_people if movable_people else day not in movable
                     if fixed:
-                        search_model.add(search_model.get_int_var_from_proto_index(variable.index) == values[variable.index])
-        budget = min(budget, deadline - time.monotonic() - 0.10)
-        if budget < 0.05:
+                        search_model.add(variable == values[variable.index])
+        # Model setup belongs to this phase's share, not the later objectives.
+        # Do not start a presolve with too little time to use the known incumbent.
+        budget = min(budget - (time.monotonic() - preparation_started), deadline - time.monotonic() - 0.10)
+        if budget < 0.10:
             proven = False
-            break
+            continue
         engine.parameters.max_time_in_seconds = budget
         started = time.monotonic()
         status = engine.solve(search_model) if control is None else control.solve(engine, search_model)
@@ -208,9 +228,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         for variable in active_groups:
             model.add(variable <= Snapshot(values).value(variable))
         phase.update(incumbentValue=best, bestBound=engine.best_objective_bound)
-        model.clear_hints()
-        for variable in variables:
-            model.add_hint(variable, values[variable.index])
+        _replace_hints(model, values)
         if status == cp_model.OPTIMAL and not restricted:
             model.add(objective == best)
         else:
