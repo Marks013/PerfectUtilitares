@@ -1,6 +1,6 @@
 # Validação de solver, interface e exportações — 29/10/2026
 
-Estado: implementação e verificação pré-implantação concluídas; implantação autorizada pelo usuário em 29/10/2026.
+Estado: implementação, verificação e implantação concluídas. Autorização em 29/10/2026; conferência pós-publicação em 30/10/2026.
 
 ## Método
 
@@ -63,13 +63,29 @@ O segredo entre serviços e cancelamento cooperativo não foram alterados nesta 
 
 ## Fechamento de validação
 
-- Quality chamado uma vez. Prisma, tipos, lint,20 verificações operacionais e288 arquivos Vitest passaram:2.140 testes aprovados e3 condicionais ignorados. Cobertura:65,20% linhas,63,29% statements,59,27% funções e56,05% branches; gates não foram reduzidos.
-- O gate parou por um benchmark sem comando npm registrado e um tipo exportado sem uso externo. Ambos foram corrigidos; etapas restantes foram retomadas sem repetir as suítes já aprovadas. Dead-code,377 módulos e73/73 rotas dedicadas com caminho2xx passaram.
-- Rodada ampla de navegador:59 passaram,5 condicionais ignorados e5 falharam. Três dependiam de rótulo/abertura de controles alterados, uma revelou destino errado de mínimos obrigatórios (corrigido com regressão) e uma atingiu429 do rate limit de Unimed. Não foi afrouxada proteção.
+- Quality chamado uma vez. Prisma, tipos, lint, 20 verificações operacionais e 288 arquivos Vitest passaram: 2.140 testes aprovados e 3 condicionais ignorados. Cobertura: 65,20% linhas, 63,29% statements, 59,27% funções e 56,05% branches; gates não foram reduzidos.
+- O gate parou por um benchmark sem comando npm registrado e um tipo exportado sem uso externo. Ambos foram corrigidos; etapas restantes foram retomadas sem repetir as suítes já aprovadas. Dead-code, 377 módulos e 73/73 rotas dedicadas com caminho 2xx passaram.
+- Rodada ampla de navegador: 59 passaram, 5 condicionais ignorados e 5 falharam. Três dependiam de rótulo/abertura de controles alterados, uma revelou destino errado de mínimos obrigatórios (corrigido com regressão) e uma atingiu 429 do rate limit de Unimed. Não foi afrouxada proteção.
 - Reteste no bundle de produção: quatro dos cinco casos passaram; o controle de pausa exigia abrir a seção opcional, conforme o novo fluxo. Após corrigir a navegação do teste, uma rodada isolada nova com os CSV privados aprovou os cinco casos: importação/geração/exportação real, férias, proteção de registros, pausa curta e polimento.
-- Novo teste de polimento verifica ordenação crescente, setores, ENC, ausência de aprendiz na grade de folgas, atalho de pausa, correção de cobertura e375/768/1280px. Nenhum dado real é capturado em screenshots/traces. Evidência visual foi obtida exclusivamente com pessoas sintéticas.
-- PDF sintético A4 renderizado por Poppler e inspecionado; nomes, grades e desfalques permanecem dentro da página. XLSX aberto por leitores reais nos testes. A inspeção identificou verde herdado e linhas altas na UI; corrigidos com tokens próprios azul/lavanda e uma única expansão por pessoa.36 testes de interface, lint e tipos passaram após o polimento, exigindo atualização justificada do build.
+- Novo teste de polimento verifica ordenação crescente, setores, ENC, ausência de aprendiz na grade de folgas, atalho de pausa, correção de cobertura e larguras de 375/768/1280 px. Nenhum dado real é capturado em screenshots/traces. Evidência visual foi obtida exclusivamente com pessoas sintéticas.
+- PDF sintético A4 renderizado por Poppler e inspecionado; nomes, grades e desfalques permanecem dentro da página. XLSX aberto por leitores reais nos testes. A inspeção identificou verde herdado e linhas altas na UI; corrigidos com tokens próprios azul/lavanda e uma única expansão por pessoa. 36 testes de interface, lint e tipos passaram após o polimento, exigindo atualização justificada do build.
 - Build de produção passou. Compose validado com acesso aos arquivos protegidos, sem imprimir ou alterar segredos.
 - Imagens de recuperação preservadas em web-{app,pdf-worker,migrate,escalas-solver}:rollback-polish-20261029. Fonte do fallback de solver foi comparada por hash ao baseline antes de rotular a recuperação. Banco e volumes não foram alterados por migração nesta etapa.
 
-A revisão exata implantada e os health checks serão registrados após o comando de publicação. Push não foi autorizado nesta etapa e não será executado.
+## Conferência pós-publicação
+
+Código implantado: 2b1ea269309b344c3dc2afebf9af840898846447. O publicador nativo concluiu com código zero. App, worker PDF, solver e banco estavam healthy; o migrador terminou com código zero. App, worker e migrador identificam a mesma revisão nas labels de imagem. O solver não possui essa label; seus quatro arquivos executáveis foram comparados por SHA-256 com o código commitado e todos coincidiram.
+
+Os comandos nativos app-readiness e pdf-worker-healthcheck retornaram zero. Não se presume a existência de endpoints públicos /api/health ou /api/ready.
+
+O Chromium acessou a aplicação HTTPS real usando uma sessão operacional temporária criada somente para a verificação, sem trocar senha ou remover sessões de usuários. A sessão foi excluída no finally. Foram conferidos:
+
+- Acesso autenticado ao planejamento existente, revisão 11, sem mudar sua revisão.
+- Opção explícita de intervalo curto, grade de folgas e visualização de horários.
+- Larguras de 375, 768 e 1280 px sem overflow horizontal da página.
+- Geração e download reais de PDF (197.647 bytes, 26 páginas A4 horizontais) e XLSX (114.253 bytes, três abas, incluindo Escala e Horarios), lidos em memória e descartados.
+- Zero erros JavaScript de página; API protegida retorna 401 sem sessão; /escalas redireciona para /escala.
+
+A inspeção visual detalhada usou somente dados sintéticos na etapa isolada. Não foram gravados dados pessoais da produção em imagens, traces ou relatórios. Este smoke não é um teste de digitação da senha de acesso nem altera grades para repetir geração em produção; geração e persistência foram validadas nos testes isolados com os CSV originais.
+
+O commit posterior de fechamento altera somente estes documentos; o bundle de produção permanece identificado pelo commit de código acima. Git será conferido limpo após esse registro. Push não autorizado nesta etapa e não executado.

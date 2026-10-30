@@ -1,6 +1,6 @@
 # Correções do solver de Escalas — 29/10/2026
 
-Estado: implementação e verificações pré-implantação concluídas. Base inicial: 43e28c5. Relatório e evidência agregada: VALIDACAO-SOLVER-E-UI-2026-10-29.md e benchmark-solver-2026-10-29.json. Implantação autorizada; falta somente confirmar a revisão publicada e saúde.
+Estado: etapas deste plano concluídas e implantadas. Base inicial: 43e28c5. Código publicado: 2b1ea269309b344c3dc2afebf9af840898846447. Saúde dos serviços e teste autenticado de interface/exportações confirmados após a publicação, em 30/10/2026. Relatório e evidência agregada: VALIDACAO-SOLVER-E-UI-2026-10-29.md e benchmark-solver-2026-10-29.json. A documentação de fechamento é um commit posterior, sem alteração do bundle implantado. Push não executado.
 
 ## Objetivo e limites
 
