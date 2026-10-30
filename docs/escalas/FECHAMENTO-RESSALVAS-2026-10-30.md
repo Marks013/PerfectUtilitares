@@ -61,7 +61,7 @@ Antes de remover referências históricas remotas: preservar tags de arquivo par
 
 ## Recuperação e identificação da publicação
 
-App e solver foram implantados como par compatível com autenticação obrigatória, sem bypass. As imagens anteriores e o banco foram preservados; a migração é aditiva. Código funcional no commit 0eb884b; revisão de imagem publicada 7d1dad9aebd566bf17e3811d7562ea073fded4c6. A revisão posterior de rotina de testes/documentação não exige reconstruir o bundle publicado. A igualdade remota e remoção das branches históricas serão verificadas após o push.
+App e solver foram implantados como par compatível com autenticação obrigatória, sem bypass. As imagens anteriores e o banco foram preservados; a migração é aditiva. Código funcional no commit 0eb884b; revisão de imagem publicada 7d1dad9aebd566bf17e3811d7562ea073fded4c6. A revisão posterior de rotina de testes/documentação não exige reconstruir o bundle publicado. O push foi aceito após a linearização autorizada. A igualdade remota foi conferida e as referências históricas foram arquivadas antes da remoção.
 
 
 ## Reteste final antes da publicação
@@ -90,3 +90,10 @@ Limitação mantida: os novos objetivos dominicais não foram aprovados nem ativ
 ## Publicação Git: histórico linear
 
 O GitHub recusou o primeiro push por exigir histórico linear. Nenhuma referência remota mudou na tentativa atômica. Após autorização explícita, o histórico local original foi preservado em archive/2026-10-30/server-before-linearization, e somente a consolidação/fechamento ainda não publicados foram linearizados. A árvore completa permaneceu idêntica por SHA-1 de objeto Git; a produção não foi reconstruída ou alterada por essa operação. O registro completo fica em docs/git/CONSOLIDACAO-MAIN-2026-10-30.md.
+
+
+## Git consolidado e publicado
+
+Main tornou-se a única branch ativa local e remota; oito branches remotas e duas locais foram removidas, com seus commits preservados por tags. As 11 tags de recuperação foram publicadas e verificadas. HEAD/origin/main coincidiam e não havia alterações sem commit na conferência. O histórico remoto não foi forçado e as proteções do GitHub permaneceram intactas.
+
+A implementação de segurança/cancelamento/ordenação continua na revisão de produção7d1dad9, preservada pela tag de backup; os commits posteriores modificam rotina isolada de testes e documentação. A candidata de novos objetivos permanece fora da imagem de produção e não é anunciada como correção concluída.

@@ -19,7 +19,7 @@ Foram preservadas tags de arquivo para todas as pontas históricas abaixo. Commi
 
 Revisão após consolidação histórica: `6d359e9cb4d1d1f50461c54513616c7f955d06a4`. Árvore preservada: sim.
 
-As referências de branch só serão removidas após confirmar o push da main e de todas as tags de recuperação. As tags não são branches ativas: preservam os commits para recuperação. O resultado remoto final será registrado no fechamento de implantação.
+Após confirmar o push da main e das tags de recuperação, foram removidas oito branches remotas e duas locais. A main é a única branch ativa. As 11 tags de arquivo, incluindo o backup anterior à linearização, preservam os commits para recuperação; tags não são branches ativas.
 
 
 ## Recuperação autorizada do histórico linear
@@ -33,3 +33,10 @@ O push atômico inicial foi recusado por GH006, sem alterar nenhuma referência 
 - Zero merge commit no intervalo de publicação origin/main..HEAD. Não foram alteradas proteções do GitHub nem reescrito histórico remoto.
 
 O histórico exclusivo de fix/unimed-automatic-operator-name permanece recuperável por sua tag de arquivo. Seu patch já está integrado de forma equivalente; não será reimportado para satisfazer ancestralidade artificial. A remoção dessa referência requer comprovar equivalência e preservação da tag no remoto.
+
+
+## Resultado remoto verificado
+
+O push linear foi aceito sem force push nem alteração de proteção. Na conferência de publicação, HEAD e origin/main apontavam para f94eded8c5d3fa65f9805a1b23258dbfe3186ff7; ahead/behind era0/0, com worktree limpo. Todas as 11 tags foram verificadas no remoto antes da remoção das referências antigas. Nenhum código de branch divergente substituiu a fonte do servidor.
+
+Este registro documental é enviado em commit posterior, sem mudança do runtime implantado. A conferência final exige novamente igualdade HEAD/origin/main e ausência de alterações pendentes.

@@ -129,7 +129,7 @@ Aceite: nenhum falso OPTIMAL; valores e métricas conferidos por avaliador indep
 - [ ] Vaga e recursos liberados; novo cálculo funciona após cancelamento, erro e timeout.
 - [ ] Testes HTTP, banco e navegador reais aprovados; benchmark repetido nas sete filiais com recursos comparáveis.
 - [ ] Quality, build, migração e Compose aprovados; implantação e recuperação comprovadas quando autorizadas.
-- [ ] Documentação/evidências atualizadas; situação de commit/push declarada sem ambiguidade.
+- [x] Documentação/evidências atualizadas; situação de commit/push declarada sem ambiguidade.
 
 Nenhum item fica marcado por expectativa. Se uma meta não for demonstrada, continua pendente com a causa e evidência correspondentes.
 
