@@ -1,6 +1,6 @@
 # Fechamento parcial das ressalvas — 30/10/2026
 
-Estado: etapa de segurança, cancelamento e ordenação validada para publicação. Capacidade operacional recuperada e retestes concluídos. A troca do algoritmo permanece reprovada e isolada; não é uma declaração de conclusão integral do plano.
+Estado: segurança, cancelamento e ordenação implantados e conferidos em produção. Capacidade recuperada e retestes concluídos. A troca do algoritmo permanece reprovada e isolada; não é uma declaração de conclusão integral do plano.
 
 ## O que foi implementado
 
@@ -59,9 +59,9 @@ As branches locais de Reajuste já são ancestrais de main. A única referência
 
 Antes de remover referências históricas remotas: preservar tags de arquivo para cada ponta e conferir cobertura por main/equivalência. Nenhum segredo, fixture privada, temporário ou alteração do checkout local do Windows deve entrar no commit. O checkout local não é fonte de publicação.
 
-## Recuperação e fechamento ainda a registrar
+## Recuperação e identificação da publicação
 
-App e solver devem ser implantados como par compatível com autenticação obrigatória. Não usar bypass sem segredo. Preservar imagens anteriores e banco; migração é aditiva. Registrar depois da publicação: commit de código, saúde, smoke autenticado, controle de cancelamento em produção, commit documental e igualdade entre HEAD e origin/main. Enquanto isso não ocorrer, este documento não afirma que houve implantação/push.
+App e solver foram implantados como par compatível com autenticação obrigatória, sem bypass. As imagens anteriores e o banco foram preservados; a migração é aditiva. Código funcional no commit 0eb884b; revisão de imagem publicada 7d1dad9aebd566bf17e3811d7562ea073fded4c6. A revisão posterior de rotina de testes/documentação não exige reconstruir o bundle publicado. A igualdade remota e remoção das branches históricas serão verificadas após o push.
 
 
 ## Reteste final antes da publicação
@@ -71,3 +71,17 @@ A etapa geral foi retomada no bundle de produção: 66 aprovados, cinco condicio
 Também passaram os 11 E2E dedicados com os CSV privados, 123 testes Python, 54 testes focados finais de autenticação/API/cancelamento, TypeScript, dead-code, modularidade (381 módulos) e 73/73 rotas funcionais. O build não foi repetido por ajustes de teste/documentação. A política de capacidade permanece 80%/30 GiB.
 
 Imagens anteriores preservadas em web-{app,pdf-worker,migrate,escalas-solver}:rollback-control-20261030. O smoke posterior à publicação usará somente sessão e planejamento sintéticos temporários, com remoção dos próprios registros. Não haverá aplicação automática em grade existente.
+
+
+## Conferência real após a implantação
+
+- Publicador nativo terminou com código zero. App, worker PDF, solver e banco healthy; migrador terminou com zero. Labels de app/worker/migrador identificam 7d1dad9.
+- SHA-256 de todos os oito arquivos Python executados coincide com a revisão publicada. candidate_solver.py está ausente da imagem. Chamadas internas sem credencial retornam401; readiness nativo do app e worker retorna zero.
+- Chromium acessou o HTTPS real com sessão operacional temporária. Criou somente um planejamento sintético de60 pessoas, iniciou cálculo, confirmou cancelamento em501ms e recebeu409 para o resultado cancelado.
+- Em seguida, nova geração retornou FEASIBLE,2520 atribuições e validação independente aprovada. A revisão salva e suas atribuições permaneceram intactas; nenhum resultado foi aplicado automaticamente.
+- Telas375/768/1280px sem overflow, atalho de pausa acessível, zero errosJavaScript, guarda pública401 e alias /escalas preservados.
+- O planejamento sintético e a sessão temporária foram removidos no fechamento. Nenhuma grade existente foi modificada pelo smoke.
+- Após implantação/GC de cache, disco observado em60% com75GB livres. Não se confundem61,09GB de contabilidade lógica de cache com espaço físico recuperado imediatamente.
+- A rotina isolada foi ajustada para preservar arquivo secreto de teste0600 tanto no UID do host quanto no UID1001 do solver, sem relaxar permissões ou usar segredo de produção. Dois E2E reais de cancelamento/isolamento passaram novamente em34,1s. Isso altera somente o harness de testes, não o runtime.
+
+Limitação mantida: os novos objetivos dominicais não foram aprovados nem ativados. O teste de501ms é observação de uma operação, não garantia universal de latência. O algoritmo vigente preserva a política previamente implantada.
