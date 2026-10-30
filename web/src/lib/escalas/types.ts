@@ -92,6 +92,8 @@ export type EscalaPolicy = {
   maxConsecutiveWorkDays: number;
   /** Opt-in draft exception for the 15-minute pause in journeys over four and up to six hours. */
   allowShortMealSimulation?: boolean;
+  /** Planning preference: rebalance automatic two-block proposals up to 4h30 per block; absent means enabled. */
+  limitContinuousWorkBlocks?: boolean;
   /** Dates that may not be worked, and holiday work expressly authorized by the policy. */
   closedDates: string[];
   holidayDates: string[];

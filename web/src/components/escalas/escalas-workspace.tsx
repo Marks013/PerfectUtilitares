@@ -16,7 +16,7 @@ import { DeletePlan } from "./delete-plan";
 import { SAVE_LABEL } from "./draft-persistence";
 import { Employees } from "./employees";
 import { recoveryArea, revealRecoveryTarget, type EscalaRecoveryContext, type EscalaRecoveryRequest } from "./recovery-navigation";
-import { HoursProposal } from "./hours-proposal";
+import { ContinuousWorkOption, HoursProposal } from "./hours-proposal";
 import { Proposals, Publication, ValidationResults, type ReviewSection } from "./results";
 import { Roster } from "./roster";
 import { useEscalasWorkspace, type WorkspaceSummary } from "./use-escalas-workspace";
@@ -188,6 +188,7 @@ export function EscalasWorkspace() {
           </div>
         </div>
         {!included && <div className={styles.nextStep}><p>Primeiro importe a equipe da filial. Nenhuma configuração adicional é necessária para começar.</p><button type="button" className={buttonClass} onClick={() => setArea("team")}>Voltar para importar equipe</button></div>}
+        <ContinuousWorkOption input={input} disabled={!model.canEdit} onChange={model.update} />
         {input.employees.length > 0 && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
         <button type="button" className={`${buttonClass} ${styles.quietAction}`} onClick={() => resolve("intervals")}>Ajustar pausas de jornadas curtas (opcional)</button>
         {!workspace.canEdit && <p className={styles.muted}>Acesso de consulta nesta filial.</p>}

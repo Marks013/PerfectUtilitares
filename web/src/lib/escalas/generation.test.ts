@@ -22,6 +22,62 @@ function input(): EscalaInput {
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 
 describe("whole-branch generation preparation", () => {
+  it("does not overwrite a manually edited proposal that retained its old identifier", () => {
+    const value = input();
+    const reference = value.employees[0].sourceSchedule;
+    if (!reference) throw new Error("Referência ausente");
+    reference.weekday = "07:00-12:00 / 14:00-16:20";
+    value.policy.limitContinuousWorkBlocks = false;
+    const selected = prepareRoster(value, 42, "EXCLUDE", "PRESERVE_START");
+    selected.shifts[0].segments[0].end += 5;
+    selected.shifts[0].segments[1].start += 5;
+    selected.shifts[0].segments[1].end += 5;
+    selected.shifts[0].segments[2].start += 5;
+    selected.policy.limitContinuousWorkBlocks = true;
+    const result = prepareGeneration(selected);
+    expect(result.preparation.adjustedEmployeeIds).toEqual([]);
+    expect(result.input.shifts).toEqual(selected.shifts);
+  });
+  it.each(["PRESERVE_START", "PRESERVE_END"] as const)("rebalances and restores an automatic %s proposal when the preference changes", strategy => {
+    const value = input();
+    const reference = value.employees[0].sourceSchedule;
+    if (!reference) throw new Error("Referência ausente");
+    reference.weekday = "07:00-12:00 / 14:00-16:20";
+    value.policy.limitContinuousWorkBlocks = false;
+    const original = prepareRoster(value, 42, "EXCLUDE", strategy);
+    const sourceShift = original.shifts.find(shift => shift.id === original.employees[0].shiftIds[0]);
+    if (!sourceShift) throw new Error("Proposta original ausente");
+    original.policy.limitContinuousWorkBlocks = true;
+    const balanced = prepareGeneration(original);
+    expect(balanced.preparation.adjustedEmployeeIds).toEqual(["p1"]);
+    const shift = balanced.input.shifts.find(item => item.id === balanced.input.employees[0].shiftIds[0]);
+    if (!shift) throw new Error("Proposta equilibrada ausente");
+    expect(shift.segments[0].start).toBe(sourceShift.segments[0].start);
+    expect(shift.segments.at(-1)?.end).toBe(sourceShift.segments.at(-1)?.end);
+    expect(Math.max(...shift.segments.filter(segment => segment.kind === "WORK").map(segment => segment.end - segment.start))).toBeLessThanOrEqual(270);
+    balanced.input.policy.limitContinuousWorkBlocks = false;
+    const restored = prepareGeneration(balanced.input);
+    expect(restored.input.shifts.find(item => item.id === restored.input.employees[0].shiftIds[0])).toEqual(sourceShift);
+    expect(restored.input.employees[0].sourceSchedule).toEqual(value.employees[0].sourceSchedule);
+  });
+  it("updates old automatic proposals but retains a locked long block and all protected records", () => {
+    const value = input();
+    const reference = value.employees[0].sourceSchedule;
+    if (!reference) throw new Error("Referência ausente");
+    reference.weekday = "07:00-10:20 / 12:20-16:20";
+    value.policy.limitContinuousWorkBlocks = false;
+    const original = prepareRoster(value, 42, "EXCLUDE", "PRESERVE_START");
+    const oldShift = original.shifts[0];
+    original.policy.limitContinuousWorkBlocks = undefined;
+    original.assignments = [{ employeeId: "p1", date: original.startDate, kind: "WORK", shiftId: oldShift.id, locked: true },
+      { employeeId: "p1", date: "2026-10-27", kind: "ABSENCE" }, { employeeId: "p1", date: "2026-10-28", kind: "OFF" }];
+    const prepared = prepareGeneration(original);
+    expect(prepared.input.assignments).toEqual(original.assignments);
+    expect(prepared.input.shifts.find(shift => shift.id === oldShift.id)).toEqual(oldShift);
+    expect(prepared.input.employees[0].shiftIds).toContain(oldShift.id);
+    expect(prepared.input.employees[0].shiftIds.some(id => id !== oldShift.id)).toBe(true);
+  });
+
   it("excludes company-confirmed apprentices without deleting protected absence or locked records", () => {
     const value = input();
     value.employees[0].role = "AUX. DE SERVIÇOS EM SUPER";

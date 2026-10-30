@@ -2,7 +2,7 @@ import { EscalaError } from "./access";
 import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility";
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit } from "./labor-rules";
-import { planningWeeklyHours, prepareRoster, proposeCoverage } from "./preparation";
+import { planningWeeklyHours, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
 import type { EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
 
 function paidMinutes(shift: EscalaShift): number {
@@ -27,12 +27,17 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       .map((date) => effectiveWeeklyHours({ weeklyHours: hours }, date) * 12));
     const allowed = person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
     // Preserve custom distributions. Imported references require adaptation from 6x1 to the requested 5x2 target.
-    const needsAdjustment = hours !== person.weeklyHours || ((person.sourceSchedule || person.weeklyHoursMode === "BRANCH") && [...targets].some((target) => !allowed.some((shift) => paidMinutes(shift) === target)));
+    const refreshed = allowed.map(shift => refreshProposedWorkBlocks(person, shift, input.policy.limitContinuousWorkBlocks !== false));
+    const needsBlockBalance = refreshed.some((shift, index) => shift.id !== allowed[index].id);
+    const needsHoursAdjustment = hours !== person.weeklyHours || ((person.sourceSchedule || person.weeklyHoursMode === "BRANCH") && [...targets].some((target) => !allowed.some((shift) => paidMinutes(shift) === target)));
+    const needsAdjustment = needsBlockBalance || needsHoursAdjustment;
     if (!needsAdjustment) return person;
     // Start from the existing arrival; a narrower search also produces more stable previews.
     // Keep an explicitly selected set of shifts above, and try departure only when arrival is unsafe.
     const rosterReference = { ...input, employees: [person], assignments: [] };
-    let prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_START");
+    let prepared = needsBlockBalance && !needsHoursAdjustment
+      ? { ...rosterReference, shifts: refreshed, employees: [{ ...person, shiftIds: refreshed.map(shift => shift.id) }] }
+      : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_START");
     if (prepared.employees[0].planningEnabled === false) prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_END");
     // Prefer a daytime adaptation. Retain short/night references as a bounded civil-minute simulation when needed.
     if (prepared.employees[0].planningEnabled === false) prepared = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_START");

@@ -57,8 +57,26 @@ function originalShift(person: EscalaEmployee): EscalaShift | null {
   return { id: "original", name: "Referência FPRE136", segments };
 }
 
-/** Candidate proposals only: preserve meal times and either arrival or departure. */
-function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false): EscalaShift[] {
+/** Rebuild only an identified automatic FPRE proposal, retaining its selected endpoints. */
+export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: EscalaShift, enabled: boolean): EscalaShift {
+  if (!proposal.id.startsWith("prep-") || proposal.id !== shiftId(proposal)) return proposal;
+  const source = originalShift(person);
+  if (!source) return proposal;
+  return adjustedShifts(source, minutes(proposal), "BOTH", true, enabled)
+    .find(candidate => candidate.segments[0].start === proposal.segments[0].start
+      && candidate.segments.at(-1)?.end === proposal.segments.at(-1)?.end) ?? proposal;
+}
+
+/** Planning preference for automatic split shifts, unrelated to the short-journey pause rule. */
+export function requiresWorkBlockBalance(shift: EscalaShift): boolean {
+  const [first, meal, last] = shift.segments;
+  return shift.segments.length === 3 && first.kind === "WORK" && meal.kind === "BREAK" && last.kind === "WORK"
+    && first.end === meal.start && meal.end === last.start
+    && (first.end - first.start > 270 || last.end - last.start > 270);
+}
+
+/** Candidate proposals only: preserve meal duration and either arrival or departure. */
+function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false, limitWorkBlocks = true): EscalaShift[] {
   const delta = target - minutes(source);
   const positions = source.segments.flatMap((segment, index) => segment.kind === "WORK" ? [index] : []);
   if (!positions.length || (!simulation && source.segments.some((segment) => segment.kind !== "BREAK" && (segment.start < 300 || segment.end > 1320)))) return [];
@@ -68,6 +86,18 @@ function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | 
     const copy = structuredClone(source);
     if (anchor === "arrival") copy.segments[positions[positions.length - 1]].end += delta;
     else copy.segments[positions[0]].start -= delta;
+    if (limitWorkBlocks && requiresWorkBlockBalance(copy)) {
+      if (target > 540) continue;
+      const [first, meal, last] = copy.segments;
+      const length = first.end - first.start;
+      const bounded = Math.min(270, Math.max(target - 270, length));
+      const offset = bounded - length;
+      // Move the meal, never shorten it or change the proposed arrival/departure.
+      first.end += offset;
+      meal.start += offset;
+      meal.end += offset;
+      last.start += offset;
+    }
     if (copy.segments.some((segment, index) => segment.end <= segment.start || segment.start < (simulation ? 0 : 300) || segment.end > (simulation ? 2880 : 1320)
       || (index > 0 && segment.start < copy.segments[index - 1].end))) continue;
     copy.id = shiftId(copy);
@@ -102,8 +132,8 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     const { weeklyHours } = reference;
     const targets = new Set<number>();
     for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) targets.add(Math.min(effectiveWeeklyHours({ weeklyHours }, start) * 12, simulationDailyMinutes ?? Infinity));
-    let candidates = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy, input.simulation)));
-    if (!candidates.length && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation));
+    let candidates = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks !== false)));
+    if (!candidates.length && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks !== false));
     candidates.forEach(register);
     const shiftIds = [...new Set(candidates.map((shift) => shift.id))].slice(0, 12);
     return { ...person, ...reference, simulationDailyMinutes, shiftIds, planningEnabled: shiftIds.length > 0,

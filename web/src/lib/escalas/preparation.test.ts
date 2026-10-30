@@ -98,6 +98,51 @@ describe("dated legal limits and one-file planning", () => {
   });
 });
 
+describe("automatic split-shift work-block preference", () => {
+  it("balances two short-journey blocks without dispensing with or inventing a pause", () => {
+    const input = fixture(); input.simulation = true;
+    input.employees[0].sourceSchedule = { report: "FPRE136", code: "short", description: "Curta", weekday: "07:00-11:40 / 12:40-13:00", saturday: "07:00-11:40" };
+    const result = prepareRoster(input, 42, "EXCLUDE", "PRESERVE_START");
+    const shift = result.shifts[0];
+    expect(shift.segments).toEqual([{ start: 420, end: 690, kind: "WORK" }, { start: 690, end: 750, kind: "BREAK" }, { start: 750, end: 780, kind: "WORK" }]);
+    expect(paid(result, shift.id)).toBe(300);
+    expect(result.policy.allowShortMealSimulation).toBeUndefined();
+  });
+  it.each([200, 210, 220, 230, 240])("balances a %i-minute opening block into exact 8h24 without moving endpoints", firstMinutes => {
+    const input = fixture();
+    input.shifts[0].segments = [{ start: 420, end: 420 + firstMinutes, kind: "WORK" },
+      { start: 420 + firstMinutes, end: 540 + firstMinutes, kind: "BREAK" },
+      { start: 540 + firstMinutes, end: 1044, kind: "WORK" }];
+    const before = structuredClone(input);
+    const result = prepareRoster(input, 42, "EXCLUDE", "PRESERVE_START");
+    const shift = result.shifts.find(item => item.id === result.employees[0].shiftIds[0]);
+    if (!shift) throw new Error("Proposta ausente");
+    expect(shift?.segments[0].start).toBe(420);
+    expect(shift?.segments.at(-1)?.end).toBe(1044);
+    expect(shift?.segments.filter(segment => segment.kind === "WORK").map(segment => segment.end - segment.start))
+      .toEqual([Math.max(234, firstMinutes), 504 - Math.max(234, firstMinutes)]);
+    expect(shift.segments[1].end - shift.segments[1].start).toBe(120);
+    expect(paid(result, result.employees[0].shiftIds[0])).toBe(504);
+    expect(input).toEqual(before);
+  });
+  it("defaults legacy settings to enabled and keeps an explicit disabled preference", () => {
+    const legacy = fixture();
+    expect(escalaInputSchema.parse(legacy).policy.limitContinuousWorkBlocks).toBe(true);
+    legacy.policy.limitContinuousWorkBlocks = false;
+    expect(escalaInputSchema.parse(legacy).policy.limitContinuousWorkBlocks).toBe(false);
+    legacy.shifts[0].segments = [{ start: 420, end: 620, kind: "WORK" }, { start: 620, end: 740, kind: "BREAK" }, { start: 740, end: 980, kind: "WORK" }];
+    const result = prepareRoster(legacy, 42, "EXCLUDE", "PRESERVE_START");
+    expect(result.shifts[0].segments).toEqual([{ start: 420, end: 620, kind: "WORK" }, { start: 620, end: 740, kind: "BREAK" }, { start: 740, end: 1044, kind: "WORK" }]);
+  });
+  it("supports 44h as 8h48 with blocks of 4h18 and 4h30, without changing the unpaid meal", () => {
+    const result = prepareRoster(fixture("2026-11-02", 44), 44, "EXCLUDE", "PRESERVE_START");
+    const shift = result.shifts[0];
+    expect(shift.segments.filter(segment => segment.kind === "WORK").map(segment => segment.end - segment.start)).toEqual([258, 270]);
+    expect(shift.segments[1].end - shift.segments[1].start).toBe(120);
+    expect(paid(result, shift.id)).toBe(528);
+  });
+});
+
 describe("branch-wide proposal preparation", () => {
   it("adapts 7h20 reference to exact 8h24, preserving meals, source and either endpoint", () => {
     const input = fixture();
@@ -109,7 +154,7 @@ describe("branch-wide proposal preparation", () => {
     expect(prepared.employees[0].shiftIds.map((id) => paid(prepared, id))).toEqual([504, 504]);
     expect(prepared.employees[0].sourceSchedule).toEqual(input.employees[0].sourceSchedule);
     expect(prepared.assignments).toEqual([]);
-    expect(prepared.shifts.filter((shift) => shift.id.startsWith("prep-")).every((shift) => shift.segments[1].start === 660 && shift.segments[1].end === 780)).toBe(true);
+    expect(prepared.shifts.filter((shift) => shift.id.startsWith("prep-")).every((shift) => shift.segments[1].end - shift.segments[1].start === 120)).toBe(true);
     expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
     expect(input).toEqual(original);
   });
@@ -128,13 +173,13 @@ describe("branch-wide proposal preparation", () => {
     input.shifts[0].segments = [{ start: 420, end: 660, kind: "WORK" }];
     expect(prepareRoster(input, 42).employees[0].planningEnabled).toBe(false);
   });
-  it.each([["PRESERVE_START", 420, 1044], ["PRESERVE_END", 356, 980]] as const)("keeps the explicitly selected %s strategy with the original unpaid meal", (strategy, start, end) => {
+  it.each([["PRESERVE_START", 420, 1044, 660], ["PRESERVE_END", 356, 980, 626]] as const)("keeps the explicitly selected %s strategy and unpaid meal duration", (strategy, start, end, mealStart) => {
     const input = fixture();
     input.employees[0].sourceSchedule = { report: "FPRE136", code: "0026", description: "Referência", weekday: "07:00-11:00 / 13:00-16:20", saturday: "07:00-11:00" };
     const prepared = prepareRoster(input, 42, "EXCLUDE", strategy);
     expect(prepared.employees[0].shiftIds).toHaveLength(1);
     const shift = prepared.shifts.find((item) => item.id === prepared.employees[0].shiftIds[0]);
-    expect(shift?.segments).toEqual([{ start, end: 660, kind: "WORK" }, { start: 660, end: 780, kind: "BREAK" }, { start: 780, end, kind: "WORK" }]);
+    expect(shift?.segments).toEqual([{ start, end: mealStart, kind: "WORK" }, { start: mealStart, end: mealStart + 120, kind: "BREAK" }, { start: mealStart + 120, end, kind: "WORK" }]);
     expect(paid(prepared, prepared.employees[0].shiftIds[0])).toBe(504);
     expect(input.employees[0].sourceSchedule.weekday).toBe("07:00-11:00 / 13:00-16:20");
   });

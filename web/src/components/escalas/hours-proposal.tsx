@@ -5,11 +5,24 @@ import styles from "./escalas.module.css";
 import { effectiveWeeklyMinutes } from "@/lib/escalas/labor-rules";
 import { dateRange } from "@/lib/escalas/dates";
 import { sortEmployees } from "@/lib/escalas/order";
-import { planningWeeklyHours } from "@/lib/escalas/preparation";
+import { planningWeeklyHours, requiresWorkBlockBalance } from "@/lib/escalas/preparation";
 import { adaptCompatibleSchedules, type ScheduleException } from "@/lib/escalas/schedule-adaptation";
 import type { EscalaInput, EscalaShift } from "@/lib/escalas/types";
-import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
-import { clock, errorMessage } from "./workspace-model";
+import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
+import { changeContinuousWorkLimit, clock, errorMessage } from "./workspace-model";
+
+export function ContinuousWorkOption({ input, disabled, onChange }: { input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void }) {
+  const enabled = input.policy.limitContinuousWorkBlocks !== false;
+  const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
+  const longLocked = enabled && input.assignments.some(day => {
+    const shift = day.locked && day.kind === "WORK" && day.shiftId ? shifts.get(day.shiftId) : undefined;
+    return shift && requiresWorkBlockBalance(shift);
+  });
+  return <div className={styles.stackSmall}>
+    <div><Check label="Limitar cada bloco a 4h30" checked={enabled} disabled={disabled} onChange={checked => onChange(changeContinuousWorkLimit(input, checked))} /><p className={styles.muted}>Redistribui os dois períodos de trabalho, mantendo a jornada e a duração do intervalo.</p></div>
+    {longLocked && <p role="status" className={styles.muted}>Este horário está bloqueado e foi mantido. Desbloqueie o dia se quiser ajustar os períodos de trabalho.</p>}
+  </div>;
+}
 
 type Anchor = "arrival" | "departure" | "both";
 function duration(shift: EscalaShift) {

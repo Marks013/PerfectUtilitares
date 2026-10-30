@@ -139,6 +139,12 @@ export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours):
   };
 }
 
+/** Only changes the proposal preference; imported clocks and locked assignments remain untouched. */
+export function changeContinuousWorkLimit(input: EscalaInput, enabled: boolean): EscalaInput {
+  if ((input.policy.limitContinuousWorkBlocks !== false) === enabled) return input;
+  return { ...input, policy: { ...input.policy, limitContinuousWorkBlocks: enabled } };
+}
+
 /** Changes that make a previously generated scenario obsolete. Manual day edits remain intentional. */
 function absenceDays(input: EscalaInput): string {
   return JSON.stringify(input.assignments.filter((item) => item.kind === "ABSENCE").map((item) => JSON.stringify([item.employeeId, item.date])).sort());
@@ -166,6 +172,7 @@ export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidat
 
 export function coverageDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
   if (absenceDays(previous) !== absenceDays(next)) return true;
+  if ((previous.policy.limitContinuousWorkBlocks !== false) !== (next.policy.limitContinuousWorkBlocks !== false)) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
   if (previous.employees !== next.employees || previous.shifts !== next.shifts) return true;
   if (previous.demands === next.demands) return false;
