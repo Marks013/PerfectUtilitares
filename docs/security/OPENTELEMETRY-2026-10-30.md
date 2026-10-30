@@ -1,6 +1,6 @@
 # Eliminação da dependência OpenTelemetry obsoleta
 
-Data: 30/10/2026. Execução diretamente no servidor. Estado: gate completo aprovado; construção e implantação em andamento.
+Data: 30/10/2026. Execução diretamente no servidor. Estado: correção concluída e implantada.
 
 ## Diagnóstico
 
@@ -39,4 +39,12 @@ Sentry 11.10.0 estável remove essa dependência. Os engines publicados aceitam 
 
 ## Fechamento
 
-Pendente neste checkpoint: construção, E2E do artefato, implantação e sincronização Git. Este documento será atualizado com a evidência real da liberação, sem considerar testes pulados como executados.
+- Revisão da aplicação e do worker PDF implantada: `38fb31430dc619c386713051b48f3d99552a21bc`.
+- Uma única construção de produção, concluída com TypeScript aprovado e zero avisos npm de depreciação. O gate geral também foi executado uma única vez. Não houve redução de proteção, alias de pacote ou supressão de aviso.
+- Artefato extraído da imagem com a revisão conferida, sem arquivos de ambiente copiados: 18 E2E aprovados e 1 condicional pulado em 3,2 minutos. O pacote legado `.next/standalone` e seu arquivo privado foram preservados; o teste utilizou diretório novo e exclusivo.
+- Implantação das mesmas imagens, sem reconstrução e sem recriar PostgreSQL ou solver. Nenhuma migração ou seed foi executada em produção nesta etapa. Os quatro serviços estão saudáveis; os checks de aplicação e worker passaram.
+- Prova no worker ativo, Node 24.20.0: SDK Sentry 11.10.0 capturou exceção e span com transporte somente em memória. O pacote obsoleto não existe no runtime. Na aplicação ativa, as três versões Sentry declaradas são 11.10.0 e o pacote antigo também está ausente.
+- Imagens anteriores mantidas nas tags `rollback-otel-20261030` de `web-app`, `web-pdf-worker`, `web-migrate` e `web-escalas-solver`. O artefato exportado exclusivamente para esta tarefa foi removido após os testes. Dados, credenciais e caches compartilhados foram preservados.
+- A verificação pública já estava iniciada quando o usuário a dispensou; terminou antes da interrupção e não foi repetida. Nenhuma nova suíte foi executada após a orientação de reduzir a apuração. O CI remoto não foi acompanhado.
+
+O aviso transitivo foi eliminado por migração oficial. A integração Sentry permanece disponível, com coleta restrita e sem alterar DSN ou tokens de produção. A amostragem por sessão segue a semântica da nova versão, conforme descrito no plano. As evidências desta correção não significam execução de fixtures condicionais puladas ou entrega de eventos a um serviço externo.
