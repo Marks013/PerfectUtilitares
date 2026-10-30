@@ -85,3 +85,8 @@ Imagens anteriores preservadas em web-{app,pdf-worker,migrate,escalas-solver}:ro
 - A rotina isolada foi ajustada para preservar arquivo secreto de teste0600 tanto no UID do host quanto no UID1001 do solver, sem relaxar permissões ou usar segredo de produção. Dois E2E reais de cancelamento/isolamento passaram novamente em34,1s. Isso altera somente o harness de testes, não o runtime.
 
 Limitação mantida: os novos objetivos dominicais não foram aprovados nem ativados. O teste de501ms é observação de uma operação, não garantia universal de latência. O algoritmo vigente preserva a política previamente implantada.
+
+
+## Publicação Git: histórico linear
+
+O GitHub recusou o primeiro push por exigir histórico linear. Nenhuma referência remota mudou na tentativa atômica. Após autorização explícita, o histórico local original foi preservado em archive/2026-10-30/server-before-linearization, e somente a consolidação/fechamento ainda não publicados foram linearizados. A árvore completa permaneceu idêntica por SHA-1 de objeto Git; a produção não foi reconstruída ou alterada por essa operação. O registro completo fica em docs/git/CONSOLIDACAO-MAIN-2026-10-30.md.

@@ -2,7 +2,7 @@
 
 O servidor `/home/ubuntu/PerfectUtilitares` é a fonte única autorizada. A `main` remota deve espelhar esse estado. Nenhum arquivo do checkout local foi importado.
 
-Foram preservadas tags de arquivo para todas as pontas históricas abaixo. Commits já ancestrais não foram reaplicados; o único histórico não ancestral tinha patch equivalente já integrado. A junção por estratégia `ours` registrou essa ancestralidade sem mudar a árvore do servidor, comprovada por hash. Não houve reset nem force push.
+Foram preservadas tags de arquivo para todas as pontas históricas abaixo. Commits já ancestrais não foram reaplicados; o único histórico não ancestral tinha patch equivalente já integrado. Foi criada uma junção por estratégia `ours`, sem alteração de arquivos. O GitHub recusou esse merge pela regra de histórico linear; a recuperação autorizada está descrita abaixo. Não houve reset nem force push.
 
 | Origem | Branch histórica | Commit | Tag de recuperação |
 | --- | --- | --- | --- |
@@ -20,3 +20,16 @@ Foram preservadas tags de arquivo para todas as pontas históricas abaixo. Commi
 Revisão após consolidação histórica: `6d359e9cb4d1d1f50461c54513616c7f955d06a4`. Árvore preservada: sim.
 
 As referências de branch só serão removidas após confirmar o push da main e de todas as tags de recuperação. As tags não são branches ativas: preservam os commits para recuperação. O resultado remoto final será registrado no fechamento de implantação.
+
+
+## Recuperação autorizada do histórico linear
+
+O push atômico inicial foi recusado por GH006, sem alterar nenhuma referência remota. O usuário autorizou linearizar somente os três commits locais não publicados após a implementação, preservando os originais.
+
+- Backup anotado: archive/2026-10-30/server-before-linearization, apontando para06658e269e41b997a04616003203d11a45504333. Ele preserva também a revisão7d1dad9 usada pelas imagens em produção e o merge6d359e9.
+- A implementação0eb884b e todo o histórico anterior foram mantidos. O merge deixou de integrar a ancestralidade da main, e os dois commits documentais posteriores foram reaplicados linearmente.
+- Ponta linear antes desta atualização documental:7fb677b23fb6515da7087ebcf2d203e7a1c7e1a6.
+- Árvore antes/depois:2501a1e5ff82b49efeb99be4b32f3240ddc9b263, idêntica. Nenhum código ou serviço de produção mudou.
+- Zero merge commit no intervalo de publicação origin/main..HEAD. Não foram alteradas proteções do GitHub nem reescrito histórico remoto.
+
+O histórico exclusivo de fix/unimed-automatic-operator-name permanece recuperável por sua tag de arquivo. Seu patch já está integrado de forma equivalente; não será reimportado para satisfazer ancestralidade artificial. A remoção dessa referência requer comprovar equivalência e preservação da tag no remoto.
