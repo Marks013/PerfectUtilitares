@@ -45,3 +45,23 @@ def weekend_objectives(model, groups, weekend_totals, seed, values, control=None
             remember(model, values, spread, max(scores) - min(scores))
             goals[weekday].append(spread)
     return goals[6], goals[5]
+
+
+def preserve_sunday_presence(model, employees, days, work, values, control=None):
+    """Do not empty a sector that is staffed in the feasible Sunday reference.
+
+    This protects the incumbent, not an approved staffing minimum or hourly
+    coverage. A sector already empty or wholly absent creates no new demand.
+    """
+    sectors = {}
+    for person in employees:
+        sectors.setdefault(person['sector'], []).append(person['id'])
+    for day in days:
+        if date.fromisoformat(day).weekday() != 6:
+            continue
+        for members in sectors.values():
+            if control is not None:
+                control.checkpoint()
+            present = [work[pid, day] for pid in members if (pid, day) in work]
+            if any(values[variable.index] for variable in present):
+                model.add(sum(present) >= 1)

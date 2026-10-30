@@ -1,10 +1,11 @@
 """Deterministic warm-start proposals. CP-SAT still verifies every mandatory rule."""
 import hashlib
+import time
 from datetime import date, timedelta
 from itertools import combinations
 
 
-def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit):
+def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit, deadline=None, control=None):
     """Balance opportunities before the bounded optimizer adds optional staffing goals.
 
     These are variable hints only. No target is converted into a staffing constraint,
@@ -27,6 +28,10 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     counts, result = {}, {}
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
     for person in sorted(employees, key=lambda item: hashlib.sha256(item["id"].encode()).digest()):
+        if control is not None:
+            control.checkpoint()
+        if deadline is not None and time.monotonic() >= deadline:
+            return result
         pid = person["id"]
         available = set(active[pid])
         prior = {entry["date"]: entry for entry in person.get("planningHistory", []) + person["history"] + person.get("planningFuture", [])}
@@ -45,6 +50,10 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
         # Check each selected week against preceding work and Sunday rotation.
         beam = [(0.0, {}, history_rests)]
         for week in range(0, len(dates), 7):
+            if control is not None:
+                control.checkpoint()
+            if deadline is not None and time.monotonic() >= deadline:
+                return result
             group = [day for day in dates[week:week + 7] if day in available]
             if not group:
                 continue
@@ -72,7 +81,10 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                     new_weekdays = weekday_rests.copy()
                     for day in rests:
                         weekday = weekdays[day]
-                        total += sum((2 * counts.get((index, day), 0) + 1) / len(unique[index]) for index in memberships[pid])
+                        # Sunday rotation can synchronize otherwise identical teams.
+                        # Prefer staggered sector rests; this remains only a hint.
+                        importance = 3 if weekday == 6 else 1
+                        total += importance * sum((2 * counts.get((index, day), 0) + 1) / len(unique[index]) for index in memberships[pid])
                         total += 0.15 * (2 * new_weekdays[weekday] + 1)
                         new_weekdays[weekday] += 1
                         if weekday in person["preferredOffDays"]:
@@ -85,13 +97,25 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                 beam = []
                 break
             next_beam.sort(key=lambda item: item[0])
-            # Rank cheaply first; expensive temporal checks stop at the first valid
-            # proposal. This warm start must not consume the solver's time budget.
+            # Keep two distinct Sunday trajectories through the whole month.
+            # A greedy first week can force the same rest parity on the sector.
+            # Rank first and skip duplicate Sunday patterns before temporal checks.
             beam = []
+            signatures = set()
             for candidate in next_beam:
+                if control is not None:
+                    control.checkpoint()
+                if deadline is not None and time.monotonic() >= deadline:
+                    return result
+                signature = tuple(day for day, entry in candidate[1].items()
+                                  if weekdays[day] == 6 and entry['kind'] == 'OFF')
+                if signature in signatures:
+                    continue
                 if _compatible(person, candidate[1], prior, metrics, policy, instant, sunday_limit, final_week):
-                    beam = [candidate]
-                    break
+                    beam.append(candidate)
+                    signatures.add(signature)
+                    if len(beam) == 2:
+                        break
             if not beam:
                 break
         if not beam:

@@ -1,5 +1,7 @@
 # Fechamento parcial das ressalvas — 30/10/2026
 
+> Registro histórico. O aperfeiçoamento posterior do algoritmo e seus limites atuais estão em [DOMINGOS-2026-10-30.md](DOMINGOS-2026-10-30.md). A candidata integral descrita abaixo continua reprovada; não foi promovida silenciosamente.
+
 Estado: segurança, cancelamento e ordenação implantados e conferidos em produção. Capacidade recuperada e retestes concluídos. A troca do algoritmo permanece reprovada e isolada; não é uma declaração de conclusão integral do plano.
 
 ## O que foi implementado
