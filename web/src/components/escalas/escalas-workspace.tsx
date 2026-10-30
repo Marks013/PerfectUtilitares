@@ -12,6 +12,7 @@ import { Rules, Shifts } from "./configuration";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { CoverageTimeline } from "./coverage-timeline";
 import { Coverage, ImportEmployees } from "./coverage-import";
+import { EstimatedCoverageNotice } from "./coverage-notice";
 import { DeletePlan } from "./delete-plan";
 import { SAVE_LABEL } from "./draft-persistence";
 import { Employees } from "./employees";
@@ -133,6 +134,7 @@ export function EscalasWorkspace() {
   }
   const included = input?.employees.filter((person) => person.planningEnabled !== false).length ?? 0;
   const hasRoster = Boolean(input?.assignments.length);
+  const hasCalculatedRoster = Boolean(input?.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY" || day.kind === "OFF"));
   return <div className={styles.workspace}>
     <header className={styles.header}>
       <div className={styles.brand}>
@@ -189,6 +191,7 @@ export function EscalasWorkspace() {
         </div>
         {!included && <div className={styles.nextStep}><p>Primeiro importe a equipe da filial. Nenhuma configuração adicional é necessária para começar.</p><button type="button" className={buttonClass} onClick={() => setArea("team")}>Voltar para importar equipe</button></div>}
         <ContinuousWorkOption input={input} disabled={!model.canEdit} onChange={model.update} />
+        <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />
         {input.employees.length > 0 && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
         <button type="button" className={`${buttonClass} ${styles.quietAction}`} onClick={() => resolve("intervals")}>Ajustar pausas de jornadas curtas (opcional)</button>
         {!workspace.canEdit && <p className={styles.muted}>Acesso de consulta nesta filial.</p>}
@@ -213,6 +216,7 @@ export function EscalasWorkspace() {
       </section>}
 
       {visited.has("roster") && <section hidden={area !== "roster"} inert={area !== "roster"} id="escala-area-roster" className={styles.stackSmall} aria-label="Revisar escala mensal">
+        <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />
         <div><p className={styles.eyebrow}>PASSO 3 · CONFIRA O RESULTADO</p><h2 className={styles.sectionTitle}>Revise a escala e baixe os arquivos</h2><p className={styles.muted}>Confira os horários e as folgas. Para ajustar um dia, selecione a célula na grade.</p></div>
         {model.outdated && hasRoster && <div role="status" className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-4 text-sm"><strong>Cenário alterado.</strong> A grade anterior fica visível para comparação, mas precisa ser gerada novamente antes de exportar.</div>}
         <Proposals input={input} generated={model.generated} disabled={!model.canEdit} onGenerated={model.applyGenerated} onDismiss={model.dismissProposals} />

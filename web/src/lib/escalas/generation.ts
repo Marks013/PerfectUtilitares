@@ -27,7 +27,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       .map((date) => effectiveWeeklyHours({ weeklyHours: hours }, date) * 12));
     const allowed = person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
     // Preserve custom distributions. Imported references require adaptation from 6x1 to the requested 5x2 target.
-    const refreshed = allowed.map(shift => refreshProposedWorkBlocks(person, shift, input.policy.limitContinuousWorkBlocks !== false));
+    const refreshed = allowed.map(shift => refreshProposedWorkBlocks(person, shift, input.policy.limitContinuousWorkBlocks === true));
     const needsBlockBalance = refreshed.some((shift, index) => shift.id !== allowed[index].id);
     const needsHoursAdjustment = hours !== person.weeklyHours || ((person.sourceSchedule || person.weeklyHoursMode === "BRANCH") && [...targets].some((target) => !allowed.some((shift) => paidMinutes(shift) === target)));
     const needsAdjustment = needsBlockBalance || needsHoursAdjustment;

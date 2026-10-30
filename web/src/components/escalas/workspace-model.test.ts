@@ -33,25 +33,30 @@ function employee(registration: string): EscalaEmployee {
 }
 
 describe("Escalas workspace model", () => {
-  it("toggles the default-on work-block preference and invalidates scenario and coverage without changing imported data", () => {
+  it("toggles the default-off work-block preference and invalidates scenario and coverage without changing imported data", () => {
     const input = newInput("07", "Hiper", "2026-11", 42);
     delete input.policy.limitContinuousWorkBlocks;
     input.employees = [employee("one")];
     input.assignments = [{ employeeId: input.employees[0].id, date: "2026-11-02", kind: "WORK", shiftId: input.shifts[0].id, locked: true }];
-    expect(changeContinuousWorkLimit(input, true)).toBe(input);
-    const off = changeContinuousWorkLimit(input, false);
+    expect(changeContinuousWorkLimit(input, false)).toBe(input);
+    const on = changeContinuousWorkLimit(input, true);
+    expect(on.policy.limitContinuousWorkBlocks).toBe(true);
+    expect(on.defaultWeeklyHours).toBe(42);
+    expect(on.employees).toBe(input.employees);
+    expect(on.shifts).toBe(input.shifts);
+    expect(on.assignments).toBe(input.assignments);
+    expect(on.policy.allowShortMealSimulation).toBe(input.policy.allowShortMealSimulation);
+    expect(scenarioDefinitionChanged(input, on)).toBe(true);
+    expect(coverageDefinitionChanged(input, on)).toBe(true);
+    const off = changeContinuousWorkLimit(on, false);
     expect(off.policy.limitContinuousWorkBlocks).toBe(false);
     expect(off.defaultWeeklyHours).toBe(42);
     expect(off.employees).toBe(input.employees);
     expect(off.shifts).toBe(input.shifts);
     expect(off.assignments).toBe(input.assignments);
     expect(off.policy.allowShortMealSimulation).toBe(input.policy.allowShortMealSimulation);
-    expect(scenarioDefinitionChanged(input, off)).toBe(true);
-    expect(coverageDefinitionChanged(input, off)).toBe(true);
-    const on = changeContinuousWorkLimit(off, true);
-    expect(on.policy.limitContinuousWorkBlocks).toBe(true);
-    expect(scenarioDefinitionChanged(off, on)).toBe(true);
-    expect(coverageDefinitionChanged(off, on)).toBe(true);
+    expect(scenarioDefinitionChanged(on, off)).toBe(true);
+    expect(coverageDefinitionChanged(on, off)).toBe(true);
   });
   it("uses one scenario journey and discards stale estimates without changing original references or explicit constraints", () => {
     const input = newInput("02", "Centro", "2026-11", 44);

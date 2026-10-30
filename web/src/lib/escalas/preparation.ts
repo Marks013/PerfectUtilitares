@@ -76,7 +76,7 @@ export function requiresWorkBlockBalance(shift: EscalaShift): boolean {
 }
 
 /** Candidate proposals only: preserve meal duration and either arrival or departure. */
-function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false, limitWorkBlocks = true): EscalaShift[] {
+function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false, limitWorkBlocks = false): EscalaShift[] {
   const delta = target - minutes(source);
   const positions = source.segments.flatMap((segment, index) => segment.kind === "WORK" ? [index] : []);
   if (!positions.length || (!simulation && source.segments.some((segment) => segment.kind !== "BREAK" && (segment.start < 300 || segment.end > 1320)))) return [];
@@ -132,8 +132,8 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     const { weeklyHours } = reference;
     const targets = new Set<number>();
     for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) targets.add(Math.min(effectiveWeeklyHours({ weeklyHours }, start) * 12, simulationDailyMinutes ?? Infinity));
-    let candidates = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks !== false)));
-    if (!candidates.length && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks !== false));
+    let candidates = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true)));
+    if (!candidates.length && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true));
     candidates.forEach(register);
     const shiftIds = [...new Set(candidates.map((shift) => shift.id))].slice(0, 12);
     return { ...person, ...reference, simulationDailyMinutes, shiftIds, planningEnabled: shiftIds.length > 0,

@@ -15,7 +15,7 @@ function fixture(startDate = "2026-11-02", hours: 40 | 42 | 44 = 42): EscalaInpu
   return {
     schemaVersion: 1, branchCode: "02", branchName: "Filial de teste", startDate, endDate, defaultWeeklyHours: hours, timeZone: "America/Sao_Paulo",
     policy: { source: "Norma do cenário", validFrom: "2026-01-01", validUntil: "2029-12-31", reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44,
-      dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5,
+      dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, limitContinuousWorkBlocks: true,
       closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: true, nightWorkReviewed: false,
       collectiveAgreement: { source: "Acordo do cenário", validFrom: "2026-12-16", validUntil: "2027-12-15", reviewed: true, reviewedBy: "Responsável" } },
     employees: [{ id: "p1", registration: "0001", name: "Pessoa de teste", sector: "Setor", role: "Cargo", weeklyHours: hours, shiftIds: ["day"], activeFrom: "",
@@ -125,8 +125,11 @@ describe("automatic split-shift work-block preference", () => {
     expect(paid(result, result.employees[0].shiftIds[0])).toBe(504);
     expect(input).toEqual(before);
   });
-  it("defaults legacy settings to enabled and keeps an explicit disabled preference", () => {
+  it("defaults legacy settings to disabled and preserves an explicitly enabled preference", () => {
     const legacy = fixture();
+    legacy.policy.limitContinuousWorkBlocks = undefined;
+    expect(escalaInputSchema.parse(legacy).policy.limitContinuousWorkBlocks).toBe(false);
+    legacy.policy.limitContinuousWorkBlocks = true;
     expect(escalaInputSchema.parse(legacy).policy.limitContinuousWorkBlocks).toBe(true);
     legacy.policy.limitContinuousWorkBlocks = false;
     expect(escalaInputSchema.parse(legacy).policy.limitContinuousWorkBlocks).toBe(false);

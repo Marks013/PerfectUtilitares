@@ -68,7 +68,7 @@ describe("whole-branch generation preparation", () => {
     value.policy.limitContinuousWorkBlocks = false;
     const original = prepareRoster(value, 42, "EXCLUDE", "PRESERVE_START");
     const oldShift = original.shifts[0];
-    original.policy.limitContinuousWorkBlocks = undefined;
+    original.policy.limitContinuousWorkBlocks = true;
     original.assignments = [{ employeeId: "p1", date: original.startDate, kind: "WORK", shiftId: oldShift.id, locked: true },
       { employeeId: "p1", date: "2026-10-27", kind: "ABSENCE" }, { employeeId: "p1", date: "2026-10-28", kind: "OFF" }];
     const prepared = prepareGeneration(original);

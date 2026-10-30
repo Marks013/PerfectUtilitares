@@ -12,7 +12,7 @@ import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } fro
 import { changeContinuousWorkLimit, clock, errorMessage } from "./workspace-model";
 
 export function ContinuousWorkOption({ input, disabled, onChange }: { input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void }) {
-  const enabled = input.policy.limitContinuousWorkBlocks !== false;
+  const enabled = input.policy.limitContinuousWorkBlocks === true;
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const longLocked = enabled && input.assignments.some(day => {
     const shift = day.locked && day.kind === "WORK" && day.shiftId ? shifts.get(day.shiftId) : undefined;

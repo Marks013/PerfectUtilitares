@@ -94,7 +94,7 @@ const policy = z.strictObject({
   // Six remains readable for legacy records; generation and validation always cap the model at five.
   maxConsecutiveWorkDays: z.number().int().min(1).max(6),
   allowShortMealSimulation: z.boolean().optional(),
-  limitContinuousWorkBlocks: z.boolean().default(true),
+  limitContinuousWorkBlocks: z.boolean().default(false),
   closedDates: z.array(date).max(100), holidayDates: z.array(date).max(100),
   authorizedHolidayDates: z.array(date).max(100), holidayRestAllowed: z.boolean(), nightWorkReviewed: z.boolean(),
 }).superRefine((value, context) => {

@@ -4,19 +4,22 @@ import { ContinuousWorkOption } from "./hours-proposal";
 import { newInput } from "./workspace-model";
 
 describe("optional continuous-work limit", () => {
-  it("starts checked for an older plan without the field and can display an explicit opt-out", () => {
+  it("starts unchecked for an older plan and preserves explicit opt-in or opt-out", () => {
     const input = newInput("07", "Hiper", "2026-11", 42);
     delete input.policy.limitContinuousWorkBlocks;
     const render = () => renderToStaticMarkup(<ContinuousWorkOption input={input} disabled={false} onChange={vi.fn()} />);
     expect(render()).toContain("Limitar cada bloco a 4h30");
+    expect(render()).not.toContain('checked=""');
+    input.policy.limitContinuousWorkBlocks = true;
     expect(render()).toContain('checked=""');
     input.policy.limitContinuousWorkBlocks = false;
     expect(render()).not.toContain('checked=""');
-    expect(render()).toContain("sem mudar a jornada semanal nem a duração do intervalo");
+    expect(render()).toContain("mantendo a jornada e a duração do intervalo");
   });
 
   it("warns only for a locked long block, never claiming that its clock was changed", () => {
     const input = newInput("08", "Tiradentes", "2026-11", 42);
+    input.policy.limitContinuousWorkBlocks = true;
     input.shifts = [{ id: "long", name: "Original", segments: [{ start: 420, end: 750, kind: "WORK" }, { start: 750, end: 870, kind: "BREAK" }, { start: 870, end: 1044, kind: "WORK" }] }];
     input.assignments = [{ employeeId: "p", date: "2026-11-02", kind: "WORK", shiftId: "long", locked: true }];
     const before = JSON.stringify(input);
