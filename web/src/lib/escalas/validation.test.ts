@@ -37,6 +37,36 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
 function codes(input: EscalaInput) { return validateEscala(input).issues.map((issue) => issue.code); }
 
 describe("independent Escalas validation", () => {
+  it.each(["Repositor", "AUX. DE SERVIÇOS EM SUPER"])("preserves protected records outside generation without counting coverage: %s", (role) => {
+    const input = fixture(40);
+    const disabled = { ...structuredClone(input.employees[0]), id: "disabled", registration: "0002", planningEnabled: false, role };
+    disabled.history = [];
+    input.employees.push(disabled);
+    input.assignments.push(
+      { employeeId: disabled.id, date: input.startDate, kind: "ABSENCE" },
+      { employeeId: disabled.id, date: addDays(input.startDate, 1), kind: "WORK", shiftId: "day", locked: true },
+    );
+    const baseline = validateEscala(input);
+    expect(baseline.valid).toBe(true);
+    expect(baseline.issues.filter((issue) => issue.employeeId === disabled.id)).toEqual([]);
+    input.demands[1].minimum = 2;
+    const result = validateEscala(input);
+    expect(result.minimumCoverageMargin).toBe(-1);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "COVERAGE_DEFICIT", date: addDays(input.startDate, 1) }));
+    expect(result.issues).not.toContainEqual(expect.objectContaining({ code: "DISABLED_ASSIGNMENT" }));
+  });
+
+  it.each(["WORK", "OFF"] as const)("rejects new unlocked %s records outside generation", (kind) => {
+    const input = fixture(40);
+    const disabled = { ...structuredClone(input.employees[0]), id: "disabled", registration: "0002", planningEnabled: false };
+    disabled.history = [];
+    input.employees.push(disabled);
+    input.assignments.push({ employeeId: disabled.id, date: input.startDate, kind, ...(kind === "WORK" ? { shiftId: "day" } : {}) });
+    const result = validateEscala(input);
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "DISABLED_ASSIGNMENT", employeeId: disabled.id, severity: "ERROR" }));
+  });
+
   it("keeps an unconfirmed estimated coverage gap visible without claiming the draft is ready", () => {
     const input = fixture(40);
     input.policy.coverageReview = "SUGGESTED";
