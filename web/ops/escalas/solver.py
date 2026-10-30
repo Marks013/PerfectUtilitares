@@ -427,31 +427,28 @@ def _read_assignments(solver, employees, active, baseline, work, choices):
 
 
 def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy, deadline=None, control=None, prefer_baseline=True):
-    """Reuse a complete draft when possible; CP-SAT verifies it before improvement."""
-    complete = prefer_baseline and all(
-        not active[person['id']] or any((person['id'], day) in baseline for day in active[person['id']])
-        for person in employees)
-    proposals = {}
-    if complete:
-        for person in employees:
-            pid = person['id']
-            proposals[pid] = {}
-            for day in active[pid]:
-                old = baseline.get((pid, day), {})
-                if old.get('kind') in ('OFF', 'ABSENCE'):
-                    entry = old
-                elif has_no_clock(person):
-                    entry = {'kind': 'DUTY'}
-                else:
-                    week = dates.index(day) // 7 * 7
-                    target = effective_weekly_minutes(person, dates[week + 6], policy['_simulation']) / 5
-                    sid = old.get('shiftId') if old.get('shiftId') in choices[pid, day] else min(
-                        choices[pid, day], key=lambda sid: (abs(metrics[sid][0] - target), sid), default=None)
-                    entry = {'kind': 'WORK', 'shiftId': sid}
-                proposals[pid][day] = entry
-    else:
-        proposals = balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
+    """Reuse exact complete sectors; CP-SAT verifies the combined draft."""
+    sectors = {}
+    for person in employees:
+        sectors.setdefault(person['sector'], []).append(person)
+    comparable = {sector for sector, members in sectors.items() if prefer_baseline and all(
+        (old := baseline.get((person['id'], day))) is not None
+        and (old['kind'] in ('OFF', 'ABSENCE')
+             or (old['kind'] == 'DUTY' and has_no_clock(person))
+             or (old['kind'] == 'WORK' and not has_no_clock(person)
+                 and old.get('shiftId') in choices[person['id'], day]))
+        for person in members for day in active[person['id']])}
+    # Never repair the saved draft while declaring it the comparison baseline.
+    # The fixed-hint CP-SAT pass checks this exact candidate against current rules.
+    # If it fails, the unrestricted fallback remains free to repair the schedule.
+    remaining = [person for person in employees if person['sector'] not in comparable]
+    proposals = (balanced_rest_hints(remaining, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
                                         deadline=deadline, control=control)
+                 if remaining else {})
+    for person in employees:
+        if person['sector'] in comparable:
+            pid = person['id']
+            proposals[pid] = {day: baseline[pid, day] for day in active[pid]}
     for person in employees:
         pid = person["id"]
         for day, entry in proposals.get(pid, {}).items():
@@ -461,7 +458,7 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
             model.add_hint(work[key], int(is_work))
             for sid, variable in choices[key].items():
                 model.add_hint(variable, int(is_work and sid == entry.get("shiftId")))
-    return complete
+    return bool(comparable)
 
 
 def _streaks(model, person, dates, work, off, prior, active, policy):

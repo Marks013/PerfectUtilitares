@@ -5,12 +5,116 @@ from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
 from optimization import Snapshot, improve, _movable_people, _coverage_people
-from solver import solve
+from solver import _feasibility_hints, solve
 from test_solver import fixture
 from weekend_balance import available_weekends, weekend_objectives
 
 
 class ProductionSundayTests(unittest.TestCase):
+    def test_an_incomplete_sector_does_not_discard_an_exact_sector_candidate(self):
+        from unittest.mock import patch
+        data = fixture(40, people=2)
+        data['employees'][1]['sector'] = 'Caixa'
+        dates = [(date.fromisoformat(data['startDate']) + timedelta(days=i)).isoformat() for i in range(7)]
+        model = cp_model.CpModel()
+        active = {person['id']: dates for person in data['employees']}
+        off = {(person['id'], day): model.new_bool_var(f'off-{person["id"]}-{day}') for person in data['employees'] for day in dates}
+        work = {key: model.new_bool_var('work-' + str(key)) for key in off}
+        choices = {key: {'day': model.new_bool_var('day-' + str(key))} for key in off}
+        baseline = {('p0', day): {'employeeId': 'p0', 'date': day, 'kind': 'WORK', 'shiftId': 'day'} for day in dates}
+        baseline['p1', dates[0]] = {'employeeId': 'p1', 'date': dates[0], 'kind': 'OFF'}
+        replacement = {'p1': {day: {'kind': 'OFF'} for day in dates}}
+        with patch('solver.balanced_rest_hints', return_value=replacement) as balanced:
+            reused = _feasibility_hints(model, data['employees'], dates, off, work, choices, active, baseline, {}, {})
+        self.assertTrue(reused)
+        self.assertEqual([person['id'] for person in balanced.call_args.args[0]], ['p1'])
+        hinted = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
+        for day in dates:
+            self.assertEqual(hinted[work['p0', day].index], 1)
+            self.assertEqual(hinted[choices['p0', day]['day'].index], 1)
+            self.assertEqual(hinted[off['p0', day].index], 0)
+            self.assertEqual(hinted[work['p1', day].index], 0)
+            self.assertEqual(hinted[off['p1', day].index], 1)
+
+    def test_sector_guards_start_from_the_exact_validated_saved_roster(self):
+        from unittest.mock import patch
+        data = fixture(40, people=2)
+        data['employees'][1]['sector'] = 'Caixa'
+        days = [(date.fromisoformat(data['startDate']) + timedelta(days=i)).isoformat() for i in range(7)]
+        data['assignments'] = [{'employeeId': person['id'], 'date': day, 'kind': 'WORK' if i < 5 else 'OFF',
+                                **({'shiftId': 'day'} if i < 5 else {})}
+                               for person in data['employees'] for i, day in enumerate(days)]
+        data['demands'] = [{'id': f'{person["id"]}-{day}', 'date': day, 'sector': person['sector'],
+                            'start': 480, 'end': 720, 'minimum': 1, 'estimated': True}
+                           for person in data['employees'] for day in days]
+        def inspect_guards(model, objectives, values, deadline, names, **kwargs):
+            snapshot = Snapshot(values)
+            self.assertEqual({sector: snapshot.value(sum(terms)) for sector, terms in kwargs['sunday_coverage'].items()},
+                             {'Reposição': 240, 'Caixa': 240})
+            bounds = [snapshot.value(term) for term in kwargs['protected_groups'][names[0]]]
+            self.assertEqual(bounds[-2:], [480, 480])
+            return values, False, []
+        with patch('solver.improve', side_effect=inspect_guards) as optimize:
+            result = solve(data)
+        self.assertEqual(optimize.call_count, 1)
+        self.assertEqual(result['assignments'], data['assignments'])
+
+    def test_changed_weekly_hours_do_not_lock_an_obsolete_saved_shift(self):
+        import copy
+        data = fixture(40)
+        old = copy.deepcopy(data['shifts'][0])
+        old['id'] = 'old-42h'
+        old['segments'][-1]['end'] += 24
+        data['shifts'].append(old)
+        data['employees'][0]['shiftIds'].append(old['id'])
+        data['assignments'] = [{'employeeId': 'p0', 'date': (date.fromisoformat(data['startDate']) + timedelta(days=i)).isoformat(),
+                                'kind': 'WORK' if i < 5 else 'OFF', **({'shiftId': old['id']} if i < 5 else {})} for i in range(7)]
+        result = solve(data)
+        self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
+        working = [entry for entry in result['assignments'] if entry['kind'] == 'WORK']
+        self.assertEqual(len(working), 5)
+        self.assertTrue(all(entry['shiftId'] == 'day' for entry in working))
+
+    def test_only_complete_exact_saved_rosters_are_baseline_candidates(self):
+        from unittest.mock import patch
+        data = fixture(40)
+        person = data['employees'][0]
+        dates = [(date.fromisoformat(data['startDate']) + timedelta(days=i)).isoformat() for i in range(7)]
+        active = {person['id']: dates}
+        records = [{'employeeId': person['id'], 'date': day, 'kind': 'WORK', 'shiftId': 'day'} for day in dates]
+        for case in ('complete', 'incomplete', 'unknown-shift', 'wrong-duty'):
+            with self.subTest(case=case):
+                model = cp_model.CpModel()
+                off = {(person['id'], day): model.new_bool_var('off-' + day) for day in dates}
+                work = {(person['id'], day): model.new_bool_var('work-' + day) for day in dates}
+                choices = {key: {'day': model.new_bool_var('day-' + key[1])} for key in off}
+                entries = [dict(record) for record in records]
+                if case == 'incomplete':
+                    entries.pop()
+                elif case == 'unknown-shift':
+                    entries[0]['shiftId'] = 'retired'
+                elif case == 'wrong-duty':
+                    entries[0]['kind'] = 'DUTY'
+                baseline = {(entry['employeeId'], entry['date']): entry for entry in entries}
+                with patch('solver.balanced_rest_hints', return_value={}) as balanced:
+                    exact = _feasibility_hints(model, [person], dates, off, work, choices, active, baseline, {'day': (480,)}, {'_simulation': False})
+                self.assertEqual(exact, case == 'complete')
+                self.assertEqual(balanced.call_count, int(case != 'complete'))
+                if exact:
+                    hinted = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
+                    for key in work:
+                        self.assertEqual(hinted[work[key].index], 1)
+                        self.assertEqual(hinted[off[key].index], 0)
+                        self.assertEqual(hinted[choices[key]['day'].index], 1)
+
+    def test_invalid_saved_roster_does_not_become_a_hard_constraint(self):
+        data = fixture(40)
+        data['assignments'] = [{'employeeId': 'p0', 'date': (date.fromisoformat(data['startDate']) + timedelta(days=i)).isoformat(),
+                                'kind': 'WORK', 'shiftId': 'day'} for i in range(7)]
+        result = solve(data)
+        self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
+        self.assertEqual(sum(entry['kind'] == 'WORK' for entry in result['assignments']), 5)
+
     def test_disabled_people_keep_only_their_existing_protected_records(self):
         data = fixture(people=2)
         data['employees'][1]['planningEnabled'] = False

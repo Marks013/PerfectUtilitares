@@ -48,6 +48,14 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       if (commitments.length) throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", "Há um horário importado incompatível com a jornada 5×2 e dias bloqueados ou ausências já registrados. Confira as exceções da equipe antes de gerar; os registros foram preservados.");
       throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", `Não foi possível adaptar o horário de ${person.registration} · ${person.name} (${person.sector}) para a jornada escolhida. Ninguém foi excluído. Use Ajustar horários para manter a saída ou confira o horário individual; bloqueios e afastamentos permanecem preservados.`);
     }
+    const proposedSchedules = candidate.shiftIds.map((id) => JSON.stringify(prepared.shifts.find((shift) => shift.id === id)?.segments)).sort();
+    const currentSchedules = allowed.map((shift) => JSON.stringify(shift.segments)).sort();
+    const unchangedSchedules = JSON.stringify(proposedSchedules) === JSON.stringify(currentSchedules);
+    // Rechecking a preserved short reference must not discard an unchanged saved roster.
+    // A real journey, clock-reference or permitted-shift change still invalidates its workdays.
+    if (hours === person.weeklyHours && candidate.simulationDailyMinutes === person.simulationDailyMinutes && unchangedSchedules) {
+      return { ...person, ...reference };
+    }
     for (const shift of prepared.shifts) {
       const existing = shifts.get(shift.id);
       if (existing && JSON.stringify(existing.segments) !== JSON.stringify(shift.segments)) {

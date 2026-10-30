@@ -22,6 +22,29 @@ function input(): EscalaInput {
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 
 describe("whole-branch generation preparation", () => {
+  it("retains a saved short-reference roster when preparation changes no scheduling semantics", () => {
+    const value = input();
+    value.startDate = "2026-10-26"; value.endDate = "2026-12-06"; value.simulation = true;
+    const reference = value.employees[0].sourceSchedule;
+    if (!reference) throw new Error("Referência ausente");
+    reference.weekday = "07:00-10:00 / 12:00-14:50";
+    value.shifts[0].segments = [{ start: 420, end: 600, kind: "WORK" }, { start: 600, end: 720, kind: "BREAK" }, { start: 720, end: 890, kind: "WORK" }];
+    const prepared = prepareRoster(value, 42, "EXCLUDE", "PRESERVE_START");
+    const shiftId = prepared.employees[0].shiftIds[0];
+    const days = dateRange(prepared.startDate, prepared.endDate);
+    prepared.assignments = days.map((date, index) => ({ employeeId: "p1", date, kind: index % 7 < 5 ? "WORK" : "OFF", ...(index % 7 < 5 ? { shiftId } : {}) }));
+    prepared.assignments[0].locked = true;
+    prepared.assignments[1] = { employeeId: "p1", date: days[1], kind: "ABSENCE" };
+    const original = structuredClone(prepared);
+    const result = prepareGeneration(prepared);
+    expect(result.preparation.adjustedEmployeeIds).toEqual([]);
+    expect(result.input.assignments).toEqual(original.assignments);
+    expect(result.input.employees[0].simulationDailyMinutes).toBe(350);
+    expect(result.input.employees[0].weeklyHours).toBe(42);
+    expect(result.input.shifts).toEqual(original.shifts);
+    expect(prepared).toEqual(original);
+  });
+
   it("does not overwrite a manually edited proposal that retained its old identifier", () => {
     const value = input();
     const reference = value.employees[0].sourceSchedule;

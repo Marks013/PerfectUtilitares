@@ -969,8 +969,13 @@ class BalancedWarmStartTests(unittest.TestCase):
         values = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
         return {key: values[variable.index] for key, variable in off.items() if variable.index in values}, values, off, work
 
-    def test_warm_start_distributes_rests_across_every_weekday_and_rotates_sundays(self):
+    def test_warm_start_distributes_initial_import_rests_and_rotates_sundays(self):
         data = fixture(42, people=14, weeks=6)
+        # Initial import: no previous rest distribution is known. The separate
+        # history case below must not assume future Saturdays are mandatory.
+        for person in data["employees"]:
+            person.update(historyKnown=False, history=[])
+        before = copy.deepcopy(data)
         rests, _, _, _ = self.hints(data)
         self.assertEqual(len(rests), 14 * 42)
         weekday_totals = [sum(value for (_, day), value in rests.items() if date.fromisoformat(day).weekday() == weekday) for weekday in range(7)]
@@ -982,6 +987,28 @@ class BalancedWarmStartTests(unittest.TestCase):
             sunday_rests = sum(value for day, value in rows if date.fromisoformat(day).weekday() == 6)
             self.assertGreaterEqual(sunday_rests, 2)
             self.assertLess(sunday_rests, 6)
+
+        self.assertEqual(data, before)
+
+    def test_warm_start_accounts_for_known_weekend_rests(self):
+        data = fixture(42, people=14, weeks=6)
+        before = copy.deepcopy(data)
+        rests, _, _, _ = self.hints(data)
+        self.assertEqual(len(rests), 14 * 42)
+        for person in data["employees"]:
+            # The fixture already has three weekends off before this period.
+            previous_saturdays = [entry for entry in person["history"] if date.fromisoformat(entry["date"]).weekday() == 5]
+            self.assertEqual([entry["kind"] for entry in previous_saturdays], ["OFF"] * 3)
+            rows = [(day, rests[person["id"], day]) for day in days_between(data["startDate"], data["endDate"])]
+            for start in range(0, 42, 7):
+                self.assertEqual(sum(value for _, value in rows[start:start + 7]), 2)
+            sunday_rests = sum(value for day, value in rows if date.fromisoformat(day).weekday() == 6)
+            self.assertGreaterEqual(sunday_rests, 2)
+            self.assertLess(sunday_rests, 6)
+        weekday_totals = [sum(value for (_, day), value in rests.items() if date.fromisoformat(day).weekday() == weekday) for weekday in range(7)]
+        self.assertTrue(all(total > 0 for total in weekday_totals[:5]), weekday_totals)
+        self.assertLess(max(weekday_totals) - min(weekday_totals), 45, weekday_totals)
+        self.assertEqual(data, before)
 
     def test_warm_start_preserves_absence_locked_work_and_fixed_rest(self):
         data = fixture(42, people=2, weeks=2)
