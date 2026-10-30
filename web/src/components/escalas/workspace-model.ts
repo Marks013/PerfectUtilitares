@@ -1,6 +1,7 @@
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaValidation, WeeklyHours } from "@/lib/escalas/types";
 import { CCT_FROM, CCT_UNTIL, effectiveWeeklyMinutes, legalWeeklyHours, SUPERMARKET_CCT } from "@/lib/escalas/labor-rules";
 import { planningWeeklyHours } from "@/lib/escalas/preparation";
+import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const HOURS: WeeklyHours[] = [40, 42, 44];
@@ -62,7 +63,7 @@ export function newInput(branchCode: string, branchName: string, month: string, 
   ];
   return {
     schemaVersion: 1,
-    branchCode: branchCode.trim(),
+    branchCode: canonicalBranchCode(branchCode),
     branchName: branchName.trim(),
     ...period,
     visibleMonth: month,

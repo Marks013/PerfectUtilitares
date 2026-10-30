@@ -1,3 +1,4 @@
+import { canonicalBranchCode } from "./branch-code";
 import { createHash } from "node:crypto";
 import { EscalaError } from "./access";
 import { fixedBoundaryReservations } from "./boundary";
@@ -28,7 +29,7 @@ export function publishedPlanningContext(input: EscalaInput, published: EscalaIn
     const signatures = new Map<string, string>();
     if (person.planningEnabled === false) return clean;
     for (const peer of published) {
-      if (peer.branchCode !== input.branchCode) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A versão publicada não corresponde à filial desta proposta.");
+      if (canonicalBranchCode(peer.branchCode) !== canonicalBranchCode(input.branchCode)) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A versão publicada não corresponde à filial desta proposta.");
       const sources = peer.employees.filter((source) => source.registration === person.registration);
       for (const assignment of [...peer.assignments, ...fixedBoundaryReservations(peer)]) {
         const source = sources.find((candidate) => candidate.id === assignment.employeeId && active(candidate, assignment.date));
@@ -69,7 +70,7 @@ export function preservePublishedDays(input: EscalaInput, published: EscalaInput
   const employees = input.employees.map(person => {
     const allowed = new Set(person.shiftIds);
     for (const peer of published) {
-      if (peer.branchCode !== input.branchCode) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A referência publicada pertence a outra filial.");
+      if (canonicalBranchCode(peer.branchCode) !== canonicalBranchCode(input.branchCode)) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A referência publicada pertence a outra filial.");
       const sources = peer.employees.filter(source => source.registration === person.registration);
       for (const item of [...peer.assignments, ...fixedBoundaryReservations(peer)]) {
         if (item.date < input.startDate || item.date > input.endDate) continue;

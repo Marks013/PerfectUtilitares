@@ -4,13 +4,67 @@ import unittest
 from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
-from optimization import Snapshot, improve, _movable_people
+from optimization import Snapshot, improve, _movable_people, _coverage_people
 from solver import solve
 from test_solver import fixture
 from weekend_balance import available_weekends, weekend_objectives
 
 
 class ProductionSundayTests(unittest.TestCase):
+    def test_disabled_people_keep_only_their_existing_protected_records(self):
+        data = fixture(people=2)
+        data['employees'][1]['planningEnabled'] = False
+        absence = {'employeeId': 'p1', 'date': '2026-11-02', 'kind': 'ABSENCE'}
+        locked = {'employeeId': 'p1', 'date': '2026-11-03', 'kind': 'WORK',
+                  'shiftId': 'day', 'locked': True}
+        data['assignments'] = [absence, locked,
+                               {'employeeId': 'p1', 'date': '2026-11-04', 'kind': 'OFF'}]
+        result = solve(data)
+        self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
+        self.assertEqual([a for a in result['assignments'] if a['employeeId'] == 'p1'],
+                         [absence, locked])
+        self.assertEqual(len(result['assignments']), 9)
+
+    def test_retained_disabled_work_does_not_satisfy_staffing_demand(self):
+        data = fixture(people=2)
+        data['employees'][1].update(planningEnabled=False, sector='Caixa')
+        locked = {'employeeId': 'p1', 'date': '2026-11-03', 'kind': 'WORK',
+                  'shiftId': 'day', 'locked': True}
+        data['assignments'] = [locked]
+        data['demands'] = [{'id': 'required', 'date': '2026-11-03', 'sector': 'Caixa',
+                            'start': 480, 'end': 720, 'minimum': 1}]
+        result = solve(data)
+        self.assertEqual(result['status'], 'INFEASIBLE')
+        self.assertEqual(result['assignments'], [])
+        self.assertEqual(data['assignments'], [locked])
+
+    def test_a_proven_floor_does_not_consume_search_for_negative_preferences(self):
+        from unittest.mock import patch
+        model = cp_model.CpModel()
+        balanced = model.new_int_var(0, 0, 'already-balanced')
+        preference = model.new_bool_var('preference')
+        values = {balanced.index: 0, preference.index: 0}
+        with patch('optimization.cp_model.CpSolver', wraps=cp_model.CpSolver) as search:
+            actual, proven, phases = improve(
+                model, [balanced, -preference], values, time.monotonic() + 1,
+                ['SUNDAY_BALANCE', 'PREFERENCES'])
+        self.assertEqual(search.call_count, 1)
+        self.assertEqual(actual[preference.index], 1)
+        self.assertTrue(proven)
+        self.assertEqual(phases[0]['budgetSeconds'], 0)
+        self.assertEqual(phases[0]['bestBound'], 0)
+        self.assertEqual(phases[1]['incumbentValue'], -1)
+
+    def test_large_sectors_are_not_silently_excluded_from_monthly_search(self):
+        members = [f'p{i:02}' for i in range(40)]
+        self.assertEqual(_coverage_people({'Caixa': members}, {'Caixa': [10]}, {}),
+                         set(members))
+        model = cp_model.CpModel()
+        rates = [model.new_int_var(0, 10000, f'weekend-rate:6:{pid}') for pid in members]
+        values = {variable.index: 0 if i % 2 else 10000
+                  for i, variable in enumerate(rates)}
+        self.assertEqual(_movable_people(rates, values, [members]), set(members))
+
     def test_snapshot_evaluates_a_linear_total_without_a_search(self):
         model = cp_model.CpModel()
         x = model.new_int_var(0, 4, 'x')

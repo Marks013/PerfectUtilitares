@@ -18,7 +18,7 @@ function fixture(): EscalaInput {
     timeZone: "America/Sao_Paulo",
     policy: { source: "Instrumento confirmado no teste", validFrom: "2026-01-01", validUntil: "2026-12-31",
       reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44, dailyLimitMinutes: 528,
-      compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100,
+      compensationAuthorized: true, limitContinuousWorkBlocks: false, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100,
       minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [],
       authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
     employees: [{ id: "p1", registration: "01", name: "Pessoa", sector: "Loja", role: "Repositor",
@@ -124,14 +124,18 @@ describe("isolated schedule processor client", () => {
     optimization.phases[0].incumbentValue = Number.POSITIVE_INFINITY;
     await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
   });
-  it("accepts only the retained protected records of a disabled apprentice", async () => {
+  it.each(["Repositor", "AUX. DE SERVIÇOS EM SUPER"])("retains only protected records of a disabled %s", async role => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const data = fixture();
-    data.employees.push({ ...data.employees[0], id: "learner", registration: "02", role: "AUX. DE SERVIÇOS EM SUPER", planningEnabled: false });
+    data.employees.push({ ...data.employees[0], id: "learner", registration: "02", role, planningEnabled: false });
     const absence = { employeeId: "learner", date: "2026-11-02", kind: "ABSENCE" as const };
-    data.assignments.push(absence);
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: [...completeAssignments(), absence], message: "Pronto", wallTimeSeconds: 1 })));
-    expect((await solveEscala(data)).assignments).toContainEqual(absence);
+    const locked = { employeeId: "learner", date: "2026-11-03", kind: "WORK" as const, shiftId: "day", locked: true };
+    data.assignments.push(absence, locked);
+    const assignments = [...completeAssignments(), absence, locked];
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments, message: "Pronto", wallTimeSeconds: 1 })));
+    expect((await solveEscala(data)).assignments).toEqual(assignments);
+    assignments.push({ employeeId: "learner", date: "2026-11-04", kind: "OFF" });
+    await expect(solveEscala(data)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
   });
   it("preserves unavailability and busy as separate conditions", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");

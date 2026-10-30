@@ -6,12 +6,17 @@ import { readSheet } from "read-excel-file/node";
 import type { AppSession } from "@/auth";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { EscalaError } from "@/lib/escalas/access";
+import { createEscalaExportCache } from "@/lib/escalas/export-cache";
+import { ResourceCapacityError } from "@/lib/system/resource-capacity";
 import { GET, POST } from "./route";
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, get: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, get: vi.fn(), limit: vi.fn(), capacity: vi.fn(), cache: null as unknown as ReturnType<typeof createEscalaExportCache> }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: vi.fn(async () => null) }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/escalas/service", () => ({ getEscala: mocks.get }));
+vi.mock("@/lib/api/security", async original => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.limit }));
+vi.mock("@/lib/system/resource-capacity", async original => ({ ...await original<typeof import("@/lib/system/resource-capacity")>(), assertResourceCapacity: mocks.capacity }));
+vi.mock("@/lib/escalas/export-cache", async original => ({ ...await original<typeof import("@/lib/escalas/export-cache")>(), escalaExportCache: { get: (key: string, generate: () => Promise<Uint8Array>) => mocks.cache.get(key, generate) } }));
 function workspace(): EscalaWorkspace {
   const employee = { id: "e1", registration: "0001", name: "Ána Silva", sector: "Reposição", role: "Repositor", weeklyHours: 42 as const, shiftIds: ["day"], activeFrom: "2020-01-01", offMode: "VARIABLE" as const, fixedOffDays: [], offPattern: "ANY" as const, maxConsecutiveSundays: 1 as const, preferredOffDays: [], historyKnown: false, history: [] };
   return { id: "w1", revision: 3, status: "DRAFT", canEdit: true, canPublish: true, updatedAt: "2026-10-26",
@@ -22,7 +27,12 @@ function workspace(): EscalaWorkspace {
       assignments: [{ employeeId: "e1", date: "2026-10-26", kind: "WORK", shiftId: "day" }], demands: [] },
     validation: { valid: true, readyToPublish: false, issues: [{ code: "HISTORY_PENDING", severity: "PENDING", employeeId: "e1", date: "2026-10-26", message: "Histórico ainda não informado" }], summaries: [{ employeeId: "e1", workedMinutes: 504, workDays: 1, offDays: 0, maxStreak: 1, sundaysWorked: 0 }], minimumCoverageMargin: null } };
 }
-beforeEach(() => { vi.resetAllMocks(); mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" }; mocks.get.mockResolvedValue(workspace()); });
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
+  mocks.get.mockResolvedValue(workspace()); mocks.limit.mockResolvedValue(null); mocks.capacity.mockResolvedValue(undefined);
+  mocks.cache = createEscalaExportCache();
+});
 
 describe("/api/escalas/export", () => {
   it("exports a real XLSX from the authorized exact revision with grouping and literal formula-like names", async () => {
@@ -115,4 +125,56 @@ it("requires recalculation of legacy six-day reports instead of silently exporti
   const current = workspace(); current.input.policy.maxConsecutiveWorkDays = 6; mocks.get.mockResolvedValue(current);
   const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=xlsx"));
   expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: { code: "ESCALA_SCENARIO_OUTDATED" } });
+});
+
+describe("export availability and authorization on cache reuse", () => {
+  it("reuses real bytes only after authorizing every request", async () => {
+    const url = "http://localhost/api/escalas/export?id=w1&format=xlsx&revision=3";
+    const first = await GET(new Request(url)), second = await GET(new Request(url));
+    expect(first.status).toBe(200); expect(second.status).toBe(200);
+    expect(Buffer.from(await first.arrayBuffer())).toEqual(Buffer.from(await second.arrayBuffer()));
+    expect(mocks.get).toHaveBeenCalledTimes(2); expect(mocks.capacity).toHaveBeenCalledTimes(1);
+    mocks.get.mockRejectedValue(new EscalaError(404, "ESCALA_NOT_FOUND", "Escala não encontrada."));
+    expect((await GET(new Request(url))).status).toBe(404);
+    expect(mocks.get).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not reuse a different tenant or revision", async () => {
+    const url = "http://localhost/api/escalas/export?id=w1&format=xlsx";
+    expect((await GET(new Request(url))).status).toBe(200);
+    if (!mocks.session) throw new Error("Missing test session");
+    mocks.session.user.tenantId = "t2";
+    expect((await GET(new Request(url))).status).toBe(200);
+    const revised = workspace(); revised.revision = 4; mocks.get.mockResolvedValue(revised);
+    const response = await GET(new Request(url));
+    expect(response.status).toBe(200); expect(response.headers.get("content-disposition")).toContain("v4.xlsx");
+    expect(mocks.capacity).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns the persistent limiter response before loading or generating", async () => {
+    mocks.limit.mockResolvedValue(new Response("limited", { status: 429, headers: { "Retry-After": "9" } }));
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"));
+    expect(response.status).toBe(429); expect(response.headers.get("retry-after")).toBe("9");
+    expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.capacity).not.toHaveBeenCalled();
+  });
+
+  it("recovers after capacity pressure instead of caching the failure", async () => {
+    mocks.capacity.mockRejectedValueOnce(new ResourceCapacityError("HOST_RESOURCE_PRESSURE", "Servidor ocupado. Tente novamente em instantes."));
+    const url = "http://localhost/api/escalas/export?id=w1&format=xlsx";
+    const blocked = await GET(new Request(url));
+    expect(blocked.status).toBe(507); expect(await blocked.json()).toMatchObject({ error: { code: "HOST_RESOURCE_PRESSURE" } });
+    const recovered = await GET(new Request(url));
+    expect(recovered.status).toBe(200); expect(Buffer.from(await recovered.arrayBuffer()).subarray(0, 2).toString()).toBe("PK");
+  });
+
+  it("offers a clear retry when another file occupies the bounded generation slot", async () => {
+    mocks.cache = createEscalaExportCache({ concurrency: 1 });
+    let finish!: (value: Uint8Array) => void;
+    const running = mocks.cache.get("other-file", () => new Promise<Uint8Array>(resolve => { finish = resolve; }));
+    await Promise.resolve();
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"));
+    expect(response.status).toBe(429); expect(response.headers.get("retry-after")).toBe("3");
+    expect(await response.json()).toMatchObject({ error: { code: "ESCALA_EXPORT_BUSY", message: expect.stringContaining("Aguarde") } });
+    finish(new Uint8Array([1])); await running;
+  });
 });

@@ -1,5 +1,6 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { canonicalBranchCode } from "./branch-code";
 import { allowedBranches, branchPermission, EscalaError, requireEscalaPermission, type EscalaActor, type EscalaPermission } from "./access";
 import { escalaInputSchema } from "./schema";
 import { EscalaSolverError, solveEscala } from "./solver-client";
@@ -49,7 +50,7 @@ export async function listEscalas(actor: EscalaActor) {
     const visibleMonth = month && visible[0] === monthBounds(month).startDate && visible.at(-1) === monthBounds(month).endDate ? month : undefined;
     return ({
     id: row.id, revision: row.revision, status: row.status,
-    input: { branchCode: row.branchCode, branchName: row.branchName, startDate: row.startDate, endDate: row.endDate, ...(visibleMonth ? { visibleMonth } : {}) },
+    input: { branchCode: canonicalBranchCode(row.branchCode), branchName: row.branchName, startDate: row.startDate, endDate: row.endDate, ...(visibleMonth ? { visibleMonth } : {}) },
     updatedAt: row.updatedAt.toISOString(),
   }); });
 }
@@ -67,6 +68,7 @@ export async function getEscala(actor: EscalaActor, id: string, revision?: numbe
 }
 
 export async function createEscala(actor: EscalaActor, input: EscalaInput): Promise<EscalaWorkspace> {
+  input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
   const permission = await branchPermission(actor, input.branchCode);
   requireEscalaPermission(permission, "edit");
   // Coverage provenance belongs to each row; legacy global review never promotes estimates.
@@ -81,6 +83,15 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput): Prom
     await tx.auditLog.create({ data: { userId: actor.userId, action: "CREATE", entity: "EscalaWorkspace", entityId: created.id,
       metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision: 1, employeeCount: input.employees.length } } });
     return created;
+  }).catch((error: unknown) => {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      const target = "meta" in error && error.meta && typeof error.meta === "object" && "target" in error.meta ? error.meta.target : null;
+      if ((Array.isArray(target) && target.includes("branchCode"))
+        || (typeof target === "string" && target.includes("EscalaWorkspace_tenantId_branchCode_startDate_endDate"))) {
+        throw new EscalaError(409, "ESCALA_ALREADY_EXISTS", "Já existe um planejamento desta filial e período. Abra o planejamento existente para continuar.");
+      }
+    }
+    throw error;
   });
   return view(row, input, permission);
 }
@@ -195,6 +206,7 @@ export function preserveLockedAssignments(previous: EscalaInput, next: EscalaInp
 }
 
 export async function saveEscala(actor: EscalaActor, id: string, expectedRevision: number, input: EscalaInput, publish = false) {
+  input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, publish ? "publish" : "edit");
   assertRevision(current, expectedRevision);

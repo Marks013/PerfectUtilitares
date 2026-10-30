@@ -186,6 +186,19 @@ describe("branch-wide proposal preparation", () => {
     expect(paid(prepared, prepared.employees[0].shiftIds[0])).toBe(504);
     expect(input.employees[0].sourceSchedule.weekday).toBe("07:00-11:00 / 13:00-16:20");
   });
+  it("retains absences of excluded people through bulk setup and later reactivation", () => {
+    const input = fixture();
+    input.employees[0].planningEnabled = false;
+    const absence = { employeeId: "p1", date: input.startDate, kind: "ABSENCE" as const };
+    input.assignments = [absence];
+    const prepared = prepareRoster(input, 42);
+    expect(prepared.assignments).toEqual([absence]);
+    expect(prepared.employees[0].planningEnabled).toBe(false);
+    prepared.employees[0].planningEnabled = true;
+    expect(prepareRoster(prepared, 42).assignments).toEqual([absence]);
+    expect(input.assignments).toEqual([absence]);
+  });
+
   it("does not move blocked assignments or erase absences", () => {
     const input = fixture(); input.assignments[0].locked = true;
     expect(() => prepareRoster(input, 40)).toThrow(/bloqueados/);

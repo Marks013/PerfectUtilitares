@@ -144,8 +144,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
   const retained = [...shifts.values()].filter((shift) => used.has(shift.id));
   if (retained.length > 120) throw new Error("A configuração gerou mais de 120 horários. Reduza as opções de horários da filial antes de aplicar.");
   return { ...input, defaultWeeklyHours: hours, employees, shifts: retained,
-    assignments: input.assignments.filter((assignment) => assignment.kind === "ABSENCE"
-      && employees.some((person) => person.id === assignment.employeeId && person.planningEnabled !== false)),
+    assignments: input.assignments.filter((assignment) => assignment.kind === "ABSENCE"),
     policy: { ...input.policy, ...(input.policy.coverageReview ? { coverageReview: "SUGGESTED" as const } : {}) } };
 }
 

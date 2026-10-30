@@ -108,7 +108,7 @@ describe("Escalas practical accessibility and publication states", () => {
     const { workspace } = sample();
     const onDelete = vi.fn();
     const html = renderToStaticMarkup(<DeletePlan workspace={workspace} dirty busy={false} onDelete={onDelete} />);
-    expect(html).toContain("Filial 2 · Centro");
+    expect(html).toContain("Filial 02 · Centro");
     expect(html).toContain("01/10/2026 a 31/10/2026");
     expect(html).toContain("revisão 4");
     expect(html).toContain("Não pode ser desfeita");

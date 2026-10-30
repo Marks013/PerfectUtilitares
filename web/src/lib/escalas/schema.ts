@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { addDays, dateRange, dayOfWeek, isDate, monthBounds } from "./dates";
+import { canonicalBranchCode } from "./branch-code";
 
 const identifier = z.string().trim().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u, "Identificador inválido");
 const label = z.string().trim().min(1).max(160);
@@ -105,7 +106,7 @@ const policy = z.strictObject({
 export const escalaInputSchema = z.strictObject({
   simulation: z.boolean().optional(),
   needsRegeneration: z.boolean().optional(),
-  schemaVersion: z.literal(1), branchCode: label, branchName: label, startDate: planningDate, endDate: planningDate,
+  schemaVersion: z.literal(1), branchCode: label.transform(canonicalBranchCode), branchName: label, startDate: planningDate, endDate: planningDate,
   visibleMonth: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).optional(),
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,
   employees: z.array(employee).max(250), shifts: z.array(shift).max(120),

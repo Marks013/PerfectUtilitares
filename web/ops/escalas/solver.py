@@ -1,7 +1,5 @@
 """Bounded production scheduling with separate Sunday rotation and preserved hard rules."""
 import hashlib
-import unicodedata
-import re
 import time
 from functools import lru_cache
 from datetime import date, datetime, time as civil_time, timedelta
@@ -159,13 +157,8 @@ def has_no_clock(person):
     return person.get("scheduleMode") in ("UNTIMED", "MISSING")
 
 
-def excluded_apprentice(person):
-    role = unicodedata.normalize('NFKD', person.get('role', '')).encode('ascii', 'ignore').decode().upper()
-    return re.sub('[^A-Z0-9]+', ' ', role).strip() in ('AUX DE SERVICOS EM SUPER', 'JOVEM APRENDIZ', 'APRENDIZ')
-
-
-def retained_learner_records(data):
-    retained = {p['id'] for p in data['employees'] if p.get('planningEnabled') is False and excluded_apprentice(p)}
+def retained_disabled_records(data):
+    retained = {p['id'] for p in data['employees'] if p.get('planningEnabled') is False}
     return [dict(a) for a in data['assignments'] if a['employeeId'] in retained and (a.get('locked') or a['kind'] == 'ABSENCE')]
 
 
@@ -353,7 +346,7 @@ def solve(data, control=None):
         seed_status = seed.solve(model) if control is None else control.solve(seed, model)
         if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return _response(seed.status_name(seed_status), [], started)
-    result = _read_assignments(seed, employees, active, baseline, work, choices) + retained_learner_records(data)
+    result = _read_assignments(seed, employees, active, baseline, work, choices) + retained_disabled_records(data)
     values = {variable.index: seed.value(variable) for variable in seed_variables}
     model.clear_hints()
     for variable in seed_variables:
@@ -402,8 +395,8 @@ def solve(data, control=None):
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
                                                       for sector in sunday_coverage}, sunday_coverage=sunday_coverage,
                                      decision_variables=decisions)
-    # Existing protected learner records are retained, never allocated or counted as workforce.
-    result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_learner_records(data)
+    # Existing protected disabled records are retained, never allocated or counted as workforce.
+    result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_disabled_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
     attempted = {phase['objective'] for phase in phases}
     response['optimization'] = {'budgetSeconds': MAX_SECONDS, 'phases': phases,

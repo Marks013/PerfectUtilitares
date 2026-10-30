@@ -18,15 +18,15 @@ const operator = { ...actor, admin: false };
 
 function input(): EscalaInput {
   return {
-    schemaVersion: 1, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
-    policy: { source: "Instrumento validado no cenário", validFrom: "2026-01-01", validUntil: "2027-01-01", reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: true, nightWorkReviewed: false },
+    schemaVersion: 1, branchCode: "02", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
+    policy: { source: "Instrumento validado no cenário", validFrom: "2026-01-01", validUntil: "2027-01-01", reviewed: true, reviewedBy: "Responsável", weeklyLimit: 44, dailyLimitMinutes: 600, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, limitContinuousWorkBlocks: false, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: true, nightWorkReviewed: false },
     employees: [{ id: "e1", registration: "0001", name: "Ana", sector: "Reposição", role: "Repositor", weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-10-26", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, sundayRestRule: "CLT_386", preferredOffDays: [5, 6], historyKnown: false, history: [] }],
     shifts: [{ id: "day", name: "Diurno", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
     demands: Array.from({ length: 7 }, (_, index) => ({ id: `d${index}`, date: new Date(Date.UTC(2026, 9, 26 + index)).toISOString().slice(0, 10), sector: "Reposição", start: 480, end: 720, minimum: index < 5 ? 1 : 0 })),
     assignments: Array.from({ length: 7 }, (_, index) => ({ employeeId: "e1", date: new Date(Date.UTC(2026, 9, 26 + index)).toISOString().slice(0, 10), kind: index < 5 ? "WORK" as const : "OFF" as const, ...(index < 5 ? { shiftId: "day" } : {}) })),
   };
 }
-function row(overrides = {}) { return { id: "w1", tenantId: actor.tenantId, branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", revision: 1, status: "DRAFT", updatedAt: new Date("2026-10-26T12:00:00Z"), ...overrides }; }
+function row(overrides = {}) { return { id: "w1", tenantId: actor.tenantId, branchCode: "02", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", revision: 1, status: "DRAFT", updatedAt: new Date("2026-10-26T12:00:00Z"), ...overrides }; }
 function version(value = input(), revision = 1, status = "DRAFT") { return { input: value, revision, status, createdAt: row().updatedAt }; }
 
 function period(startDate: string, weeks = 1): EscalaInput {
@@ -61,6 +61,47 @@ beforeEach(() => {
   mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments, wallTimeSeconds: 0.1, message: "Proposta viável" });
 });
 
+describe("canonical scheduling branch service", () => {
+  it("creates one canonical branch and stores the same identity in its first revision", async () => {
+    const value = input(); value.branchCode = "0008";
+    mocks.workspace.create.mockResolvedValue(row({ branchCode: "08" }));
+    const result = await createEscala(actor, value);
+    expect(result.input.branchCode).toBe("08");
+    expect(mocks.workspace.create).toHaveBeenCalledWith({ data: expect.objectContaining({ branchCode: "08", tenantId: actor.tenantId }) });
+    expect(mocks.revision.create.mock.calls[0][0].data.input.branchCode).toBe("08");
+    expect(value.branchCode).toBe("0008");
+  });
+  it("reads historical aliases canonically without rewriting their stored snapshots", async () => {
+    const original = input(); original.branchCode = "0002";
+    mocks.workspace.findFirst.mockResolvedValue(row({ branchCode: "0002" }));
+    mocks.revision.findUnique.mockResolvedValue(version(original));
+    expect((await getEscala(actor, "w1")).input.branchCode).toBe("02");
+    expect(original.branchCode).toBe("0002");
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+  it("saves an equivalent numeric alias but still rejects another branch", async () => {
+    const value = input(); value.branchCode = "0002";
+    expect((await saveEscala(actor, "w1", 1, value)).input.branchCode).toBe("02");
+    expect(mocks.revision.create.mock.calls[0][0].data.input.branchCode).toBe("02");
+  });
+  it("queries the canonical grant without granting more privileges", async () => {
+    mocks.grants.findUnique.mockResolvedValue({ role: "VIEWER" });
+    expect(await branchPermission(operator, "0008")).toEqual({ canEdit: false, canPublish: false });
+    expect(mocks.grants.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId_userId_branchCode: { tenantId: actor.tenantId, userId: actor.userId, branchCode: "08" } } }));
+  });
+  it("reports a concurrent duplicate canonical workspace as a recoverable conflict", async () => {
+    mocks.workspace.create.mockRejectedValue({ code: "P2002", meta: { target: ["tenantId", "branchCode", "startDate", "endDate"] } });
+    const value = input(); value.branchCode = "8";
+    await expect(createEscala(actor, value)).rejects.toMatchObject({ status: 409, code: "ESCALA_ALREADY_EXISTS" });
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+  it("retains published continuity when the imported historical branch has leading zeros", () => {
+    const current = period("2026-11-02"), previous = period("2026-10-26");
+    previous.branchCode = "0002";
+    expect(() => publishedPlanningContext(current, [previous])).not.toThrow();
+  });
+});
+
 describe("Escalas publication continuity", () => {
   it("reconstructs trusted planning history by textual registration and semantic shift, without attendance inference", async () => {
     const current = period("2026-11-02");
@@ -89,7 +130,7 @@ describe("Escalas publication continuity", () => {
     expect(work?.shiftId).toMatch(/^plan-/);
     expect(result.proposalInput.shifts.find((shift) => shift.id === work?.shiftId)?.segments).toEqual(previous.shifts[0].segments);
     expect(mocks.solve.mock.calls[0][0]).toEqual(result.proposalInput);
-    expect(mocks.workspace.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: actor.tenantId, branchCode: "2", id: { not: "w1" } }),
+    expect(mocks.workspace.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: actor.tenantId, branchCode: "02", id: { not: "w1" } }),
       select: { revisions: expect.objectContaining({ where: { tenantId: actor.tenantId, status: "PUBLISHED" }, take: 1, orderBy: { revision: "desc" } }) } }));
     expect(publishedPlanningContext(current, [previous]).shifts).toEqual(result.proposalInput.shifts);
   });
@@ -272,7 +313,7 @@ describe("Escalas publication continuity", () => {
     mocks.peers.mockResolvedValue([{ status: "DRAFT", revision: 8, revisions: [{ input: previous, revision: 5, status: "PUBLISHED" }] }]);
     await expect(saveEscala(actor, "w1", 1, current, true)).rejects.toMatchObject({ code: "ESCALA_PUBLISHED_OVERLAP" });
     expect(mocks.peers).toHaveBeenCalledWith({
-      where: { tenantId: "company-a", branchCode: "2", id: { not: "w1" }, startDate: { lte: "2026-11-29" }, endDate: { gte: "2026-10-05" } },
+      where: { tenantId: "company-a", branchCode: "02", id: { not: "w1" }, startDate: { lte: "2026-11-29" }, endDate: { gte: "2026-10-05" } },
       orderBy: [{ startDate: "asc" }, { id: "asc" }],
       select: { revisions: { where: { tenantId: "company-a", status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
     });
@@ -352,7 +393,7 @@ describe("Escalas publication continuity", () => {
     expect(events).toEqual(["lock", "read", "update"]);
     const [sql, key] = mocks.advisory.mock.calls[0];
     expect(Array.from(sql as TemplateStringsArray).join("?")).toBe("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))");
-    expect(key).toBe('escalas-publication:["company-a","2"]');
+    expect(key).toBe('escalas-publication:["company-a","02"]');
     expect(mocks.transaction.mock.calls[0][1]).toEqual({ isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
     expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", tenantId: "company-a", revision: 1 } }));
   });
@@ -385,7 +426,7 @@ describe("Escalas permissions", () => {
   it("denies operators without explicit branch grants", async () => {
     mocks.grants.findUnique.mockResolvedValue(null);
     await expect(branchPermission(operator, "2")).rejects.toMatchObject({ status: 403 });
-    expect(mocks.grants.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId_userId_branchCode: { tenantId: "company-a", userId: "user-a", branchCode: "2" } } }));
+    expect(mocks.grants.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId_userId_branchCode: { tenantId: "company-a", userId: "user-a", branchCode: "02" } } }));
     mocks.grants.findUnique.mockResolvedValue({ role: "OTHER" });
     await expect(branchPermission(operator, "2")).rejects.toMatchObject({ status: 403 });
   });
@@ -398,10 +439,10 @@ describe("Escalas permissions", () => {
   });
   it("lists only explicitly granted branches for operators", async () => {
     mocks.grants.findMany.mockResolvedValue([{ branchCode: "2" }]);
-    expect(await allowedBranches(operator)).toEqual(["2"]);
+    expect(await allowedBranches(operator)).toEqual(["02"]);
     expect(await allowedBranches(actor)).toBeNull();
     await listEscalas(operator);
-    expect(mocks.workspace.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "company-a", branchCode: { in: ["2"] } } }));
+    expect(mocks.workspace.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "company-a", branchCode: { in: ["02"] } } }));
   });
 });
 

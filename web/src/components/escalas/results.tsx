@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
 import { consolidateCoverageGaps } from "@/lib/escalas/coverage-presence";
 import type { EscalaRecoveryContext } from "./recovery-navigation";
@@ -12,6 +12,7 @@ import type {
   EscalaValidation,
 } from "@/lib/escalas/types";
 import { buttonClass, panelClass, primaryClass } from "./controls";
+import { inactiveViewPropsEqual, useActiveSnapshot } from "./view-activity";
 import { addDate, clock, displayDate } from "./workspace-model";
 import { groupValidationIssues, isReviewInformation, reviewNoticeText, type ReviewTarget } from "./validation-guidance";
 
@@ -127,12 +128,21 @@ function ReviewNotice({ notice, input, onResolve }: { notice: EscalaDiagnosticNo
   </li>;
 }
 
-export function Proposals({ input, generated, disabled, onGenerated, onDismiss }: {
+function useActiveDiagnostics(input: EscalaInput, issues: EscalaValidation["issues"] | undefined, active: boolean) {
+  const cache = useRef<{ input: EscalaInput; issues: EscalaValidation["issues"]; value: ReturnType<typeof buildEscalaDiagnostics> } | null>(null);
+  return useMemo(() => {
+    if (active && issues && (cache.current?.input !== input || cache.current.issues !== issues)) cache.current = { input, issues, value: buildEscalaDiagnostics(input, issues) };
+    return cache.current?.value ?? null;
+  }, [input, issues, active]);
+}
+
+export const Proposals = memo(function Proposals({ input: nextInput, generated: nextGenerated, disabled, onGenerated, onDismiss, active = true }: {
   input: EscalaInput; generated: { result: { status: string; message: string }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
-  disabled: boolean; onGenerated: () => void; onDismiss: () => void;
+  disabled: boolean; onGenerated: () => void; onDismiss: () => void; active?: boolean;
 }) {
-  if (!generated) return null;
-  const diagnostics = buildEscalaDiagnostics(generated.proposalInput, generated.validation.issues);
+  const { input, generated } = useActiveSnapshot({ input: nextInput, generated: nextGenerated }, active);
+  const diagnostics = useActiveDiagnostics(generated?.proposalInput ?? input, generated?.validation.issues, active);
+  if (!generated || !diagnostics) return null;
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
@@ -141,14 +151,16 @@ export function Proposals({ input, generated, disabled, onGenerated, onDismiss }
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
   </section>;
-}
+}, inactiveViewPropsEqual);
 
 export type ReviewSection = "errors" | "reviews" | "coverage" | "information";
 
-export function ValidationResults({ input, validation, onResolve, section, onSectionChange }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: ResolveReview; section?: ReviewSection; onSectionChange?: (section: ReviewSection) => void }) {
+export const ValidationResults = memo(function ValidationResults({ input: nextInput, validation: nextValidation, onResolve, section, onSectionChange, active = true }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: ResolveReview; section?: ReviewSection; onSectionChange?: (section: ReviewSection) => void; active?: boolean }) {
   const [selectedView, setView] = useState<ReviewSection>();
+  const { input, validation } = useActiveSnapshot({ input: nextInput, validation: nextValidation }, active);
+  const diagnostics = useActiveDiagnostics(input, validation?.issues, active);
   if (!validation) return <section className={panelClass}><h2 className={styles.sectionTitle}>Revisão do cenário</h2><p className="text-sm">A edição ainda não foi conferida. Aguarde o salvamento ou gere uma proposta para atualizar os resultados.</p></section>;
-  const diagnostics = buildEscalaDiagnostics(input, validation.issues);
+  if (!diagnostics) return null;
   const errors = diagnostics.notices.filter(notice => notice.severity === "ERROR");
   const reviews = diagnostics.notices.filter(notice => notice.severity === "PENDING" && !isReviewInformation(notice.code, notice.severity));
   const information = diagnostics.notices.filter(notice => notice.severity === "WARNING" || isReviewInformation(notice.code, notice.severity));
@@ -182,6 +194,6 @@ export function ValidationResults({ input, validation, onResolve, section, onSec
       </div>}
     </section>
   </section>;
-}
+}, inactiveViewPropsEqual);
 
 export { Publication } from "./publication";

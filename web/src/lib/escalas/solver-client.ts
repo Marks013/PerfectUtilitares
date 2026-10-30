@@ -4,7 +4,6 @@ import { requestSolver, type SolverOptions } from "./solver-transport";
 export { EscalaSolverError } from "./solver-errors";
 import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
-import { isRestPlanningExcludedRole } from "./eligibility";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 
 const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"]);
@@ -48,7 +47,7 @@ export async function solveEscala(
       // Revalidate references and dates, independently of the processor's contract.
       escalaInputSchema.parse({ ...parsed, assignments: result.assignments });
       const assignments = new Map(result.assignments.map((item) => [`${item.employeeId}\0${item.date}`, item]));
-      const retained = new Set(parsed.employees.filter(person => person.planningEnabled === false && isRestPlanningExcludedRole(person.role)).map(person => person.id));
+      const retained = new Set(parsed.employees.filter(person => person.planningEnabled === false).map(person => person.id));
       let expected = parsed.assignments.filter(item => retained.has(item.employeeId) && (item.locked || item.kind === "ABSENCE")).length;
       for (const person of parsed.employees) {
         if (person.planningEnabled === false) continue;

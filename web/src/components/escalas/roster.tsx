@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import { dayOfWeek, visibleDates } from "@/lib/escalas/dates";
 import { sortEmployees, sortHoursEmployees } from "@/lib/escalas/order";
@@ -12,13 +12,15 @@ import { ShiftSummary } from "./shift-summary";
 import { CellEditor, SwapEditor } from "./roster-editor";
 import { applyRosterChanges, isCurrentRosterChange, rosterCoverageIssues, type RosterDay } from "./roster-model";
 import { clock, displayDate, WEEKDAYS } from "./workspace-model";
+import { inactiveViewPropsEqual, useActiveSnapshot } from "./view-activity";
 
 export { CellEditor } from "./roster-editor";
 
-export function Roster({ input, validation, disabled, canUnlock, onChange, mode, onModeChange, onReviewEmployee, onReviewCoverage, onUndo, review }: {
+export const Roster = memo(function Roster({ input: nextInput, validation, disabled, canUnlock, onChange, mode, onModeChange, onReviewEmployee, onReviewCoverage, onUndo, review, active = true }: {
   input: EscalaInput; validation: EscalaValidation | null; disabled: boolean; canUnlock: boolean; onChange: (input: EscalaInput) => void;
-  review?: EscalaRecoveryRequest; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onReviewEmployee?: (employeeId: string) => void; onReviewCoverage?: () => void; onUndo?: (previous: EscalaInput, applied: EscalaInput) => Promise<boolean>;
+  review?: EscalaRecoveryRequest; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onReviewEmployee?: (employeeId: string) => void; onReviewCoverage?: () => void; onUndo?: (previous: EscalaInput, applied: EscalaInput) => Promise<boolean>; active?: boolean;
 }) {
+  const input = useActiveSnapshot(nextInput, active);
   const [localMode, setLocalMode] = useState<EscalaExportMode>("both");
   const view = mode ?? localMode;
   const [hoursDate, setHoursDate] = useState("");
@@ -34,7 +36,11 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
   const currentDate = dates.includes(hoursDate) ? hoursDate : dates[0];
   const assignments = useMemo(() => new Map(input.assignments.map((day) => [`${day.employeeId}:${day.date}`, day])), [input.assignments]);
   const codes = useMemo(() => escalaShiftCodes(input), [input]);
-  const coverage = useMemo(() => rosterCoverageIssues(input, dates, sector), [input, dates, sector]);
+  const coverageCache = useRef<{ input: EscalaInput; dates: string[]; sector: string; value: ReturnType<typeof rosterCoverageIssues> } | null>(null);
+  const coverage = useMemo(() => {
+    if (active && (coverageCache.current?.input !== input || coverageCache.current.dates !== dates || coverageCache.current.sector !== sector)) coverageCache.current = { input, dates, sector, value: rosterCoverageIssues(input, dates, sector) };
+    return coverageCache.current?.value ?? [];
+  }, [input, dates, sector, active]);
   const matches = (person: EscalaInput["employees"][number]) => (!sector || person.sector === sector)
     && [person.name, person.registration, person.role].join(" ").toLocaleLowerCase("pt-BR").includes(filter.toLocaleLowerCase("pt-BR"));
   const restEmployees = sortEmployees(presentation.restPeople.map(person => person.employee)).filter(matches);
@@ -46,14 +52,14 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
   const displayedHours = hoursEmployees.slice(currentPage * 20, currentPage * 20 + 20);
   const reviewedRequest = useRef(0);
   useEffect(() => {
-    if (!review?.employeeId || !review.date || reviewedRequest.current === review.request || !input.employees.some(person => person.id === review.employeeId && person.planningEnabled !== false)) return;
+    if (!active || !review?.employeeId || !review.date || reviewedRequest.current === review.request || !input.employees.some(person => person.id === review.employeeId && person.planningEnabled !== false)) return;
     if (review.date < input.startDate || review.date > input.endDate) return;
     reviewedRequest.current = review.request;
     setFilter("");
     setSector("");
     setSelected({ employeeId: review.employeeId, date: review.date });
     setHoursDate(review.date);
-  }, [review, input.employees, input.startDate, input.endDate]);
+  }, [review, input.employees, input.startDate, input.endDate, active]);
   const selectedEmployee = selected ? input.employees.find((person) => person.id === selected.employeeId) : undefined;
   const canUndo = useMemo(() => Boolean(undo && isCurrentRosterChange(undo.applied, input)), [undo, input]);
   const missingCoverage = !input.demands.some((demand) => dates.includes(demand.date) && (!sector || demand.sector === sector));
@@ -180,4 +186,4 @@ export function Roster({ input, validation, disabled, canUnlock, onChange, mode,
       <SwapEditor key={`${selected.employeeId}:${selected.date}`} input={input} first={selected} dates={dates} onApply={apply} />
     </fieldset>}
   </section>;
-}
+}, inactiveViewPropsEqual);

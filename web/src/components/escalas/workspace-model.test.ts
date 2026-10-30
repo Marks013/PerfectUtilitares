@@ -359,4 +359,11 @@ describe("Escalas workspace model", () => {
     expect(hasOutdatedResults({ ...reopened, needsRegeneration: false }, null)).toBe(false);
   });
 
+  it("creates the same numeric branch identity as import, authorization and persistence", () => {
+    for (const alias of ["8", "08", "0008", " 8 "]) {
+      expect(newInput(alias, "Filial", "2026-11", 42).branchCode).toBe("08");
+    }
+    expect(newInput("A008", "Filial", "2026-11", 42).branchCode).toBe("A008");
+  });
+
 });

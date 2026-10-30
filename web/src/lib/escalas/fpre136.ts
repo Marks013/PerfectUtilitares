@@ -4,10 +4,10 @@ import type { EscalaImportPreview, ImportOptions } from "./import";
 import { sortEmployees } from "./order";
 import { applyRestEligibility } from "./eligibility";
 import type { EscalaShift } from "./types";
+import { canonicalBranchCode as normalizeBranch } from "./branch-code";
 
 const cell = (value: unknown) => String(value ?? "").trim();
 const sectorPattern = /^(\d{2})\.\d+\s*,\s*([^,]+),\s*(.+)$/;
-const normalizeBranch = (value: string) => value.trim().replace(/^0+(?=\d)/, "").padStart(2, "0");
 
 /** Only this report signature enables heterogeneous records and Windows-1252. */
 export function isFpre136Text(text: string) {

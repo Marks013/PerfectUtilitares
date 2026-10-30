@@ -35,6 +35,21 @@ def _linear_value(terms, values):
     return total
 
 
+def _objective_floor(model, terms):
+    """A proven bound from integer domains, including negative coefficients."""
+    indexes, coefficients, offset = terms
+    lower = offset
+    for index, coefficient in zip(indexes, coefficients):
+        domain = tuple(model.proto.variables[index if index >= 0 else -index - 1].domain)
+        if not domain:
+            return None
+        minimum, maximum = domain[0], domain[-1]
+        if index < 0:
+            minimum, maximum = -maximum, -minimum
+        lower += coefficient * (minimum if coefficient >= 0 else maximum)
+    return lower
+
+
 def _movable_people(variables, values, groups, limit=36):
     """Release comparable groups across the month, including tied extremes.
 
@@ -52,6 +67,10 @@ def _movable_people(variables, values, groups, limit=36):
                 ranked.append((spread, tuple(eligible)))
     selected = set()
     for _, members in sorted(ranked, reverse=True):
+        if not selected and len(members) > limit:
+            # A large tied group needs all its peers movable to lower its spread.
+            # Release it alone; the overall model and wall-clock limits still apply.
+            return set(members)
         if len(selected | set(members)) <= limit:
             selected.update(members)
     return selected
@@ -68,6 +87,8 @@ def _coverage_people(groups, shortages, values, limit=36):
                      for sector, members in groups.items()), reverse=True)
     selected = set()
     for shortage, _sector, members in ranked:
+        if shortage > 0 and not selected and len(members) > limit:
+            return set(members)
         if shortage > 0 and len(selected | set(members)) <= limit:
             selected.update(members)
     return selected
@@ -111,6 +132,13 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         incumbent = _linear_value(terms, values)
         # A new search may not worsen even its own goal relative to the known draft.
         model.add(objective <= incumbent)
+        lower = _objective_floor(model, terms)
+        if lower == incumbent:
+            model.add(objective == incumbent)
+            phases.append({'objective': names[index], 'status': 'OPTIMAL',
+                           'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
+                           'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
+            continue
         later = len(objectives) - index - 1
         reserve = min(0.12 * later, remaining * 0.5)
         budget = remaining if not later else min(remaining - reserve, max(0.1, remaining * (0.55 if index == 0 else 0.5)))

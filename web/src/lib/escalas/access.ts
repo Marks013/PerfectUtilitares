@@ -1,5 +1,6 @@
 import type { AppSession } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { canonicalBranchCode } from "./branch-code";
 
 export class EscalaError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) {
@@ -23,7 +24,7 @@ export async function branchPermission(actor: EscalaActor, branchCode: string): 
   if (actor.admin) return { canEdit: true, canPublish: true };
   if (!actor.userId) throw new EscalaError(403, "ESCALA_BRANCH_FORBIDDEN", "Este acesso não permite consultar a filial.");
   const access = await prisma.escalaBranchAccess.findUnique({
-    where: { tenantId_userId_branchCode: { tenantId: actor.tenantId, userId: actor.userId, branchCode } },
+    where: { tenantId_userId_branchCode: { tenantId: actor.tenantId, userId: actor.userId, branchCode: canonicalBranchCode(branchCode) } },
     select: { role: true },
   });
   if (!access || !["VIEWER", "PLANNER", "APPROVER"].includes(access.role)) {
@@ -39,7 +40,7 @@ export async function allowedBranches(actor: EscalaActor): Promise<string[] | nu
     where: { tenantId: actor.tenantId, userId: actor.userId, role: { in: ["VIEWER", "PLANNER", "APPROVER"] } },
     select: { branchCode: true },
   });
-  return grants.map((grant) => grant.branchCode);
+  return [...new Set(grants.map((grant) => canonicalBranchCode(grant.branchCode)))];
 }
 
 export function requireEscalaPermission(permission: EscalaPermission, action: "edit" | "publish") {

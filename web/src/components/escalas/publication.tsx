@@ -6,6 +6,7 @@ import type { EscalaValidation, EscalaWorkspace } from "@/lib/escalas/types";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { responseMessage } from "./workspace-model";
 import { ProcessingBar } from "./workspace-feedback";
+import { isReviewedRevisionCurrent, type ReviewedRevision } from "./publication-review";
 import styles from "./escalas.module.css";
 
 type Format = "pdf" | "xlsx";
@@ -18,7 +19,11 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
 }) {
   const [localMode, setLocalMode] = useState<EscalaExportMode>(mode);
   const selectedMode = onModeChange ? mode : localMode;
-  const [confirmed, setConfirmed] = useState(false);
+  const [reviewed, setReviewed] = useState<ReviewedRevision | null>(null);
+  const confirmed = isReviewedRevisionCurrent(reviewed, workspace, dirty, outdated);
+  useEffect(() => {
+    setReviewed(previous => isReviewedRevisionCurrent(previous, workspace, dirty, outdated) ? previous : null);
+  }, [workspace, dirty, outdated]);
   const [exporting, setExporting] = useState<Format | null>(null);
   const [files, setFiles] = useState<Partial<Record<Format, FileState>>>({});
   const urls = useRef(new Set<string>());
@@ -72,6 +77,6 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
     {exporting && <ProcessingBar label={"Preparando " + exporting.toUpperCase() + " da revisão correta"} />}
     <p role="status" aria-live="polite" className="sr-only">{exporting ? "Arquivo em processamento" : Object.values(files).some(file => file.revision === workspace.revision && file.mode === selectedMode && !dirty && !outdated) ? "Arquivo pronto para baixar" : ""}</p>
     {error && <p role="alert" className={styles.errorText}>{error}</p>}
-    <details><summary className={styles.disclosureTrigger}>Aprovação interna (opcional)</summary><p className="text-sm">O salvamento automático não publica. A aprovação exige revisão conferida e perfil autorizado.</p><Check label={"Conferi esta revisão da filial " + workspace.input.branchCode} checked={confirmed} disabled={!ready} onChange={setConfirmed} /><button type="button" className={buttonClass} disabled={!ready || !confirmed} onClick={onPublish}>{workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}</button></details>
+    <details><summary className={styles.disclosureTrigger}>Aprovação interna (opcional)</summary><p className="text-sm">O salvamento automático não publica. A aprovação exige revisão conferida e perfil autorizado.</p><Check label={"Conferi esta revisão da filial " + workspace.input.branchCode} checked={confirmed} disabled={!ready} onChange={checked => setReviewed(checked ? { workspaceId: workspace.id, revision: workspace.revision, input: workspace.input } : null)} /><button type="button" className={buttonClass} disabled={!ready || !confirmed} onClick={() => { if (ready && confirmed) onPublish(); }}>{workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}</button></details>
   </section>;
 }

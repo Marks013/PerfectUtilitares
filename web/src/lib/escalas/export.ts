@@ -29,12 +29,39 @@ const XLSX_REPORT_STYLES = XLSX_STYLES.replace('<fonts count="2">', '<fonts coun
     + '<xf numFmtId="0" fontId="2" fillId="6" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
     + '<xf numFmtId="0" fontId="2" fillId="6" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs>');
 
+/** Conservative Calibri-width estimate: wide glyphs must not hide wrapped rows. */
+function spreadsheetLines(text: string, width: number): number {
+  return text.split("\n").reduce((count, line) => count + Math.max(1, Math.ceil([...line].reduce((units, character) =>
+    units + (/\s/u.test(character) ? 0.75 : /[MWmw@%]/u.test(character) ? 2 : /[A-ZÀ-Þ]/u.test(character) ? 1.5 : /[^\u0020-\u00ff]/u.test(character) ? 2 : 1.2), 0) / Math.max(1, width - 1))), 0);
+}
+
+/** Split, never truncate; prefer complete role descriptions at continuation boundaries. */
+function spreadsheetFragments(text: string, width: number, maximumLines = 24): string[] {
+  const fragments: string[] = [];
+  let remaining = [...text];
+  while (remaining.length && spreadsheetLines(remaining.join(""), width) > maximumLines) {
+    let low = 1, high = remaining.length;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (spreadsheetLines(remaining.slice(0, middle).join(""), width) <= maximumLines) low = middle;
+      else high = middle - 1;
+    }
+    const prefix = remaining.slice(0, low).join("");
+    const boundary = prefix.lastIndexOf("\n") + 1;
+    const length = boundary > prefix.length / 2 ? [...prefix.slice(0, boundary)].length : low;
+    fragments.push(remaining.slice(0, length).join(""));
+    remaining = remaining.slice(length);
+  }
+  if (remaining.length || !fragments.length) fragments.push(remaining.join(""));
+  return fragments;
+}
+
 function sheet(rows: (string | number)[][], widths: number[], grid = false, frozenColumns = grid ? 5 : 0, sectors: number[] = []) {
   const header = 4, last = `${column(widths.length - 1)}${rows.length}`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 75 : 90}" zoomScaleNormal="100"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
     const title = index < 3 || sectors.includes(index);
     const available = title ? widths.reduce((sum, width) => sum + width, 0) - 2 : 0;
-    const lines = Math.max(1, ...row.map((value, cell) => String(value).split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(1, title ? available : widths[cell] - 1))), 0)));
+    const lines = Math.max(1, ...row.map((value, cell) => spreadsheetLines(String(value), title ? available : widths[cell])));
     const height = index < 2 ? Math.max(20, lines * 13 + 4) : index === 2 ? Math.max(22, lines * 13 + 4) : index === header - 1 ? Math.max(34, lines * 13 + 6) : sectors.includes(index) ? Math.max(22, lines * 13 + 4) : Math.min(409, Math.max(22, lines * 13 + 6));
     return `<row r="${index + 1}" ht="${height}" customHeight="1">${row.map((value, cell) => {
       const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 0 : index === header - 1 ? grid && cell >= frozenColumns ? 10 : 1 : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC"].includes(String(value)) ? 6 : grid && cell >= frozenColumns ? 7 : index % 2 ? 2 : 3;
@@ -119,7 +146,12 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const orderedGaps = [...diagnostics.coverageGroups].sort((a, b) => a.sector.localeCompare(b.sector, "pt-BR") || a.date.localeCompare(b.date) || a.start - b.start);
   for (const gap of orderedGaps) {
     if (sector !== gap.sector) { sectors.gaps.push(gaps.length); gaps.push(["Setor: " + (gap.sector || "Não informado")]); sector = gap.sector; }
-    gaps.push([gap.date, gap.sector, gapSchedule(gap, windows), gap.present, gap.minimum, gap.estimated ? "Estimada" : "Mínimo informado", coverageRoles(gap), coverageSituation(gap)]);
+    const descriptions = gap.roles.length ? gap.roles.map(coverageRoleDescription).join("\n") : coverageRoles(gap);
+    const fragments = spreadsheetFragments(descriptions, 34);
+    fragments.forEach((roles, index) => {
+      gaps.push([gap.date, gap.sector, gapSchedule(gap, windows), gap.present, gap.minimum, gap.estimated ? "Estimada" : "Mínimo informado", roles,
+        coverageSituation(gap) + (index ? ` (continuação ${index + 1}/${fragments.length})` : "")]);
+    });
   }
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
     ["Situação", "Setor", "Matrícula", "Colaborador", "Cargo", "Motivo da não inclusão"]];
@@ -157,7 +189,11 @@ function coverageSituation(gap: SectorCoverageGap): string {
   return gap.kind === "no-service" ? "Nenhuma presença horária apurada" : gap.estimated ? "Abaixo da estimativa automática" : "Mínimo informado não atendido";
 }
 function coverageRoles(gap: SectorCoverageGap): string {
-  return gap.roles.length ? gap.roles.map((role) => role.role + ": " + role.present + " presente(s), referência " + role.minimum + (role.estimated ? " estimada" : " informada")).join("; ") : "Referência do setor, sem função específica";
+  return gap.roles.length ? gap.roles.map(coverageRoleDescription).join("; ") : "Referência do setor, sem função específica";
+}
+
+function coverageRoleDescription(role: SectorCoverageGap["roles"][number]): string {
+  return role.role + ": " + role.present + " presente(s), referência " + role.minimum + (role.estimated ? " estimada" : " informada");
 }
 
 function safePdfText(text: string, font: PDFFont) {
@@ -248,6 +284,30 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   };
   newPage(mode !== "hours");
   if (mode === "hours") paragraph(model.legend, 8);
+  /** A logical row can span pages; repeat short context cells beside continued content. */
+  const paginatedRow = (lines: string[][], widths: number[], size: number, strong: (column: number, line: string) => boolean, continuePage: () => void) => {
+    const count = Math.max(...lines.map(values => values.length));
+    const totalHeight = count * 11 + 8;
+    if (y - totalHeight < 45 && totalHeight <= 400) continuePage();
+    let offset = 0;
+    while (offset < count) {
+      if (Math.floor((y - 45 - 8) / 11) < 1) continuePage();
+      const capacity = Math.max(1, Math.floor((y - 45 - 8) / 11));
+      const length = Math.min(count - offset, capacity);
+      const fragment = lines.map(values => values.slice(offset, offset + length).length
+        ? values.slice(offset, offset + length) : offset && values.length <= length ? values : []);
+      const rowHeight = Math.max(...fragment.map(values => values.length)) * 11 + 8;
+      let x = margin;
+      fragment.forEach((values, index) => {
+        page.drawRectangle({ x, y: y - rowHeight + 11, width: widths[index], height: rowHeight, color: rgb(0.98, 0.99, 1), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
+        values.forEach((line, position) => { write(line, x + 3, y - position * 11, size, strong(index, line)); });
+        x += widths[index];
+      });
+      y -= rowHeight;
+      offset += length;
+      if (offset < count) continuePage();
+    }
+  };
   let sector = "";
   for (const { employee, cells, proposedSchedule, proposedVariants } of mode === "hours" ? [] : model.restPeople) {
     const names = wrapText(`${employee.registration} - ${employee.name}`, labelWidth - 12, bold, 9);
@@ -295,13 +355,9 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
       if (hoursSector !== employee.sector) {
         section(employee.sector || "Setor não informado"); hoursSector = employee.sector; hoursHeader();
       }
-      let x = margin;
-      lines.forEach((values, index) => {
-        page.drawRectangle({ x, y: y - rowHeight + 11, width: widths[index], height: rowHeight, color: rgb(0.98, 0.99, 1), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
-        values.forEach((value, line) => { write(value, x + 3, y - line * 11, 8.5, index === 0); });
-        x += widths[index];
+      paginatedRow(lines, widths, 8.5, index => index === 0, () => {
+        newPage(false); section((employee.sector || "Setor não informado") + " (continuação)"); hoursHeader();
       });
-      y -= rowHeight;
     }
   }
   if (model.excluded.length) {
@@ -334,13 +390,10 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     tableHeader();
     for (const gap of priorities) {
       const cells = [gap.sector, compactDates(gap.dates), gapSchedule(gap, windows), String(gap.present), String(gap.minimum), coverageRoles(gap), coverageSituation(gap) + (gap.estimated ? " — Estimada" : " — Mínimo informado")];
-      const lines = cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 5 ? bold : font, 8)));
-      const rowHeight = Math.max(...lines.map((values) => values.length)) * 11 + 8;
-      if (y - rowHeight < 45) { newPage(false); paragraph("Desfalques de cobertura (continuação)", 11, true); tableHeader(); }
-      page.drawRectangle({ x: margin, y: y - rowHeight + 11, width: width - 2 * margin, height: rowHeight, color: rgb(0.97, 0.98, 0.99), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
-      let x = margin;
-      lines.forEach((values, index) => { page.drawRectangle({ x, y: y - rowHeight + 11, width: widths[index], height: rowHeight, borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 }); values.forEach((line, position) => { write(line, x + 3, y - position * 11, 8, index === 5 || (index === 2 && line.startsWith("Desfalque:"))); }); x += widths[index]; });
-      y -= rowHeight;
+      const lines = cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 5 || (index === 2 && part.startsWith("Desfalque:")) ? bold : font, 8)));
+      paginatedRow(lines, widths, 8, (index, line) => index === 5 || (index === 2 && line.startsWith("Desfalque:")), () => {
+        newPage(false); paragraph("Desfalques de cobertura (continuação)", 11, true); tableHeader();
+      });
     }
     paragraph("Ajustes e conferências ficam na área de suporte do planejamento.");
   }
