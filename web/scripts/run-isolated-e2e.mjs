@@ -267,19 +267,23 @@ let app;
 let worker;
 let solverId;
 const solverSecretPath = path.join(temp, "solver.secret");
+const solverContainerSecretPath = path.join(temp, "solver-container.secret");
 let created = false;
 
 try {
   // Exercise the real current processor without using or restarting the production solver.
   const solverPort = await freePort();
-  await writeFile(solverSecretPath, randomBytes(32).toString("base64url"), { mode: 0o600 });
-  await chown(solverSecretPath, 1001, 1001);
+  const testSolverSecret = randomBytes(32).toString("base64url");
+  await Promise.all([writeFile(solverSecretPath, testSolverSecret, { mode: 0o600 }), writeFile(solverContainerSecretPath, testSolverSecret, { mode: 0o600 })]);
+  // Host and container may have different UIDs; both test-only files stay private.
+  if (process.getuid?.() === 0) await chown(solverContainerSecretPath, 1001, 1001);
+  else if (process.getuid?.() !== 1001) capture("sudo", ["-n", "chown", "1001:1001", solverContainerSecretPath]);
   solverId = capture("docker", ["run", "--detach", "--rm", "--name", name + "-solver",
     "--label", "perfectutilitares.e2e=" + name, "--publish", "127.0.0.1:" + solverPort + ":8080",
     "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "1536m", "--cpus", "1",
     "--user", "1001:1001", "--env", "PYTHONDONTWRITEBYTECODE=1", "--volume", path.join(cwd, "ops", "escalas") + ":/model:ro",
     "--env", "ESCALAS_SOLVER_SECRET_FILE=/run/secrets/escalas_solver_secret",
-    "--volume", solverSecretPath + ":/run/secrets/escalas_solver_secret:ro",
+    "--volume", solverContainerSecretPath + ":/run/secrets/escalas_solver_secret:ro",
     "--workdir", "/model", process.env.E2E_ESCALAS_SOLVER_IMAGE || "web-escalas-solver", "python", "-B", "server.py"]);
   const solverUrl = "http://127.0.0.1:" + solverPort;
   const solverDeadline = Date.now() + 30000;
