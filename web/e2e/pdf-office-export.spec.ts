@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { PDFDocument } from "pdf-lib";
 import { loginAsAdmin } from "./admin-session";
 

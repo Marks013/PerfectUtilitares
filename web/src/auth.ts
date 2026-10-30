@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
@@ -12,6 +13,7 @@ type AppRole = "ADMIN" | "OPERATOR";
 type AppUserStatus = "ACTIVE" | "BLOCKED" | "BANNED";
 
 export type AppSession = {
+  escalaSessionId?: string;
   user: {
     id: string;
     tenantId?: string | null;
@@ -26,6 +28,7 @@ export type AppSession = {
 
 declare module "next-auth" {
   interface Session {
+    escalaSessionId?: string;
     user: {
       id: string;
       tenantId?: string | null;
@@ -142,6 +145,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async jwt({ token, user }) {
       if (user) {
+        token.escalaSessionId = randomUUID();
         token.securityStamp = user.securityStamp;
         token.id = user.id;
         token.tenantId = user.tenantId;
@@ -163,6 +167,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
       }
 
+      // Existing signed JWTs gain a stable identity without forcing every user to log in again.
+      // Derive it once from the old random jti; subsequent JWT re-encodes preserve the claim.
+      if (!token.escalaSessionId && typeof token.jti === "string") {
+        token.escalaSessionId = createHash("sha256").update("escalas-session\0" + token.jti).digest("hex");
+      }
       return token;
     },
     session({ session, token }) {
@@ -175,6 +184,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         name?: string | null;
       };
 
+      if (typeof token.escalaSessionId === "string") session.escalaSessionId = token.escalaSessionId;
       if (tokenWithUser.id && tokenWithUser.role) {
         session.user.id = tokenWithUser.id;
         session.user.email = tokenWithUser.email ?? session.user.email;

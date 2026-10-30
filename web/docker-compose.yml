@@ -104,6 +104,8 @@ services:
     restart: unless-stopped
     init: true
     logging: *default-logging
+    secrets:
+      - escalas_solver_secret
     depends_on:
       db:
         condition: service_healthy
@@ -119,6 +121,7 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3002}
       EVENTS_ENABLED: ${EVENTS_ENABLED:-false}
       ESCALAS_SOLVER_URL: http://escalas-solver:8080
+      ESCALAS_SOLVER_SECRET_FILE: /run/secrets/escalas_solver_secret
       APP_TIME_ZONE: ${APP_TIME_ZONE:-America/Sao_Paulo}
       CONTACT_EMAIL: ${CONTACT_EMAIL:-admin@perfectutilitares.com}
       GOOGLE_SITE_VERIFICATION: ${GOOGLE_SITE_VERIFICATION:-}
@@ -190,8 +193,12 @@ services:
     init: true
     logging: *default-logging
     user: "1001:1001"
+    stop_grace_period: 10s
+    secrets:
+      - escalas_solver_secret
     environment:
       HOME: /tmp
+      ESCALAS_SOLVER_SECRET_FILE: /run/secrets/escalas_solver_secret
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m,uid=1001,gid=1001,mode=1770
     cpus: "1.0"
@@ -266,5 +273,7 @@ networks:
     internal: true
 
 secrets:
+  escalas_solver_secret:
+    file: ${ESCALAS_SOLVER_SECRET_FILE:-/home/ubuntu/perfectutilitares-config/escalas/solver.secret}
   sentry_auth_token:
     environment: SENTRY_AUTH_TOKEN

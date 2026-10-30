@@ -6,7 +6,7 @@ from unittest.mock import patch
 from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
-from solver import _rest, instant, shift_metrics
+from candidate_solver import _rest, instant, shift_metrics
 from test_solver import fixture
 
 
@@ -73,7 +73,7 @@ class RestEquivalenceTests(unittest.TestCase):
 
 class SearchContinuationTests(unittest.TestCase):
     def test_unknown_phase_preserves_incumbent_and_runs_next_real_objective(self):
-        from optimization import improve
+        from candidate_optimization import improve
         model = cp_model.CpModel()
         x, y = model.new_bool_var('coverage'), model.new_bool_var('preference')
         model.add(x + y >= 1)
@@ -92,7 +92,7 @@ class SearchContinuationTests(unittest.TestCase):
         self.assertEqual([phase['status'] for phase in phases], ['UNKNOWN', 'OPTIMAL'])
 
     def test_incidental_improvement_of_prior_goal_cannot_be_lost_later(self):
-        from optimization import improve
+        from candidate_optimization import improve
         model = cp_model.CpModel()
         coverage = model.new_int_var(0, 2, 'coverage')
         distribution, preference = model.new_bool_var('distribution'), model.new_bool_var('preference')
@@ -115,7 +115,7 @@ class SearchContinuationTests(unittest.TestCase):
         self.assertFalse(proven)
 
     def test_all_nonempty_goals_run_with_a_real_baseline_and_preferences(self):
-        import solver as scheduling
+        import candidate_solver as scheduling
         data = fixture(people=3, weeks=1)
         days = scheduling.days_between(data['startDate'], data['endDate'])
         data['assignments'] = [{'employeeId': p['id'], 'date': day,
@@ -128,13 +128,13 @@ class SearchContinuationTests(unittest.TestCase):
         result = scheduling.solve(data)
         self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
         phases = result['optimization']['phases']
-        self.assertEqual([phase['objective'] for phase in phases], ['COVERAGE', 'WEEKEND_BALANCE',
+        self.assertEqual([phase['objective'] for phase in phases], ['COVERAGE', 'SUNDAY_BALANCE', 'SATURDAY_BALANCE',
             'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED', 'STABILITY', 'PREFERENCES', 'TIE_BREAK'])
         self.assertTrue(all(phase['status'] in ('OPTIMAL', 'FEASIBLE') for phase in phases))
         self.assertEqual(len(result['assignments']), 21)
 
     def test_secondary_goal_never_worsens_incumbent_coverage(self):
-        from optimization import improve
+        from candidate_optimization import improve
         model = cp_model.CpModel()
         shortage, preference = model.new_bool_var('shortage'), model.new_bool_var('preference')
         model.add(shortage + preference >= 1)

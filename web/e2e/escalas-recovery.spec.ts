@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { dateRange } from "../src/lib/escalas/dates";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
@@ -33,7 +33,7 @@ async function removeFixture(page: Page, id: string) {
   expect((await page.request.delete("/api/escalas", { headers: { origin }, data: { workspaceId: id, expectedRevision: workspace.revision } })).status()).toBe(200);
 }
 async function generate(page: Page) {
-  const response = page.waitForResponse(value => value.request().method() === "POST" && value.url().endsWith("/api/escalas") && value.request().postDataJSON()?.action === "GENERATE");
+  const response = page.waitForResponse(value => value.request().method() === "POST" && value.url().endsWith("/api/escalas") && value.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.locator('section[aria-labelledby="escala-scenario-title"]').getByRole("button", { name: /^(Gerar proposta mensal|Gerar nova proposta)$/ }).click();
   const value = await response;
   expect(value.status()).toBe(200);

@@ -1,8 +1,13 @@
 import { z } from "zod";
+import { EscalaSolverError } from "./solver-errors";
+import { requestSolver, type SolverOptions } from "./solver-transport";
+export { EscalaSolverError } from "./solver-errors";
 import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
 import { isRestPlanningExcludedRole } from "./eligibility";
 import type { EscalaInput, EscalaSolveResult } from "./types";
+
+const objectiveName = z.enum(["COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"]);
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -10,15 +15,19 @@ const resultSchema = z.strictObject({
   wallTimeSeconds: z.number().finite().min(0).max(60),
   optimization: z.strictObject({
     budgetSeconds: z.number().finite().min(0).max(60),
+    unattemptedObjectives: z.array(objectiveName).max(9).optional(),
     phases: z.array(z.strictObject({
-      objective: z.enum(["COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"]),
+      objective: objectiveName,
       status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
       wallTimeSeconds: z.number().finite().min(0).max(60),
       budgetSeconds: z.number().finite().min(0).max(60),
       incumbentValue: z.number().finite().int(),
       bestBound: z.number().finite().optional(),
-      searchScope: z.enum(["ROLLING_WEEK"]).optional(),
-    })).max(8),
+      searchScope: z.enum(["GLOBAL", "SELECTED_PEOPLE", "ROLLING_WEEKS", "ROLLING_WEEK"]).optional(),
+      initialValue: z.number().finite().int().optional(),
+      movableWeeks: z.number().int().min(1).max(6).optional(),
+      movablePeople: z.number().int().min(1).max(250).optional(),
+    })).max(9),
   }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
@@ -27,35 +36,14 @@ const resultSchema = z.strictObject({
   })).max(10500),
 });
 
-export class EscalaSolverError extends Error {
-  constructor(public readonly code: "SOLVER_BUSY" | "SOLVER_UNAVAILABLE" | "SOLVER_INVALID_RESPONSE") {
-    super(code === "SOLVER_BUSY"
-      ? "Há uma análise de escalas em andamento. Aguarde alguns segundos e tente novamente."
-      : "O serviço de escalas está indisponível. Sua proposta foi preservada; tente novamente.");
-    this.name = "EscalaSolverError";
-  }
-}
-
 export async function solveEscala(
   input: EscalaInput,
+  options?: SolverOptions,
 ): Promise<EscalaSolveResult> {
   const parsed = escalaInputSchema.parse(input);
-  const base = process.env.ESCALAS_SOLVER_URL;
-  if (!base) throw new EscalaSolverError("SOLVER_UNAVAILABLE");
-  let response: Response;
+  const payload = await requestSolver(parsed, options);
   try {
-    response = await fetch(new URL("/solve", base), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: parsed }),
-      signal: AbortSignal.timeout(20_000), cache: "no-store",
-    });
-  } catch {
-    throw new EscalaSolverError("SOLVER_UNAVAILABLE");
-  }
-  if (response.status === 429) throw new EscalaSolverError("SOLVER_BUSY");
-  if (!response.ok) throw new EscalaSolverError("SOLVER_UNAVAILABLE");
-  try {
-    const result = resultSchema.parse(await response.json());
+    const result = resultSchema.parse(payload);
     if (["OPTIMAL", "FEASIBLE"].includes(result.status)) {
       // Revalidate references and dates, independently of the processor's contract.
       escalaInputSchema.parse({ ...parsed, assignments: result.assignments });
@@ -79,8 +67,10 @@ export async function solveEscala(
     } else if (result.assignments.length) {
       throw new Error("Unexpected assignments on unsuccessful solve");
     }
+    if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
     return result;
-  } catch {
+  } catch (error) {
+    if (error instanceof EscalaSolverError) throw error;
     throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
   }
 }

@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "./fixtures";
 import { PDFDocument } from "pdf-lib";
 import { strFromU8, unzipSync } from "fflate";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
@@ -186,7 +186,7 @@ test("the main workspace prepares real files for the exact saved revision and in
     await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
     await page.locator("#escala-adjust-hours-title").click();
     await page.getByRole("button", { name: "Ajustar horários no rascunho", exact: true }).click();
-    const solving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
+    const solving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
     await page.locator('section[aria-labelledby="escala-scenario-title"]').getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
     const solution = await (await solving).json(); expect(["FEASIBLE", "OPTIMAL"]).toContain(solution.result.status); expect(solution.validation.valid).toBe(true);
     await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
@@ -264,6 +264,8 @@ test("shared operational access is independent, scoped, revocable and restores a
 
 
 test("autosave resumes after a long independent validation without requiring another edit", async ({ page }) => {
+  const clockStart = Date.now();
+  await page.clock.install({ time: clockStart });
   await loginAsAdmin(page);
   const workspace = await fixture(page, "validate");
   const captured = gate(), release = gate(); let writes = 0;
@@ -276,13 +278,17 @@ test("autosave resumes after a long independent validation without requiring ano
     });
     await page.getByRole("button", { name: "Ajustes", exact: true }).click();
     await expect(page.getByRole("button", { name: "Conferir dados atuais", exact: true })).toBeEnabled();
+    // Freeze only browser timers so automation latency cannot consume the debounce before validation starts.
+    await page.clock.pauseAt(clockStart + 60_000);
     await page.getByLabel("Jornada semanal", { exact: true }).selectOption("40");
     await page.getByRole("button", { name: "Conferir dados atuais", exact: true }).click();
     await captured.promise;
     // This deliberately exceeds the product's 850ms debounce while VALIDATE still owns the operation lock.
-    await page.waitForTimeout(1100);
+    await page.clock.runFor(1100);
     expect(writes).toBe(0);
     release.release();
+    await expect(page.getByRole("button", { name: "Conferir dados atuais", exact: true })).toBeEnabled();
+    await page.clock.runFor(1000);
     await expect.poll(async () => (await read(page, workspace.id)).input.defaultWeeklyHours).toBe(40);
     expect(writes).toBe(1);
     await expect(page.locator('[data-state="saved"]')).toBeVisible();

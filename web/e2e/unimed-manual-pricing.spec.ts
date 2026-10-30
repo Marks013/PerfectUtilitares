@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 

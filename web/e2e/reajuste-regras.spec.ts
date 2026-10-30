@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { PDFDocument } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 

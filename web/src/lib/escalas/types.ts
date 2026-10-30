@@ -155,18 +155,21 @@ export type EscalaGenerationConflict = {
   role?: string;
 };
 type EscalaOptimizationPhase = {
-  objective: "COVERAGE" | "REST_DISTRIBUTION" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK";
+  objective: "COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK";
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
   wallTimeSeconds: number;
   budgetSeconds: number;
   incumbentValue: number;
   bestBound?: number;
-  searchScope?: "ROLLING_WEEK";
+  searchScope?: "GLOBAL" | "SELECTED_PEOPLE" | "ROLLING_WEEKS" | "ROLLING_WEEK";
+  initialValue?: number;
+  movableWeeks?: number;
+  movablePeople?: number;
 };
 
 export type EscalaSolveResult = {
   /** Numeric diagnostics only; no employee identifiers or personal payload. */
-  optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[] };
+  optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[]; unattemptedObjectives?: EscalaOptimizationPhase["objective"][] };
   /** Concrete necessary-condition conflicts, never an invented diagnosis. */
   conflicts?: EscalaGenerationConflict[];
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";

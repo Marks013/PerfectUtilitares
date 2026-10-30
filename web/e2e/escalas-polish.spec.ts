@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { loginAsAdmin } from "./admin-session";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
@@ -33,7 +33,7 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
     await expect(pause).toBeVisible();
     await pause.check();
     await pause.uncheck();
-    const generated = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
+    const generated = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
     await page.getByRole("button", { name: /^(Gerar proposta mensal|Gerar nova proposta)$/ }).click();
     const response = await generated;
     expect(response.status()).toBe(200);

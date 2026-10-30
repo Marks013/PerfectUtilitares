@@ -8,14 +8,14 @@ export class EscalaError extends Error {
   }
 }
 
-export type EscalaActor = { userId: string | null; tenantId: string; admin: boolean; moduleSessionId?: string };
+export type EscalaActor = { userId: string | null; tenantId: string; admin: boolean; moduleSessionId?: string; accountSessionId?: string };
 export type EscalaPermission = { canEdit: boolean; canPublish: boolean };
 
 export function escalaActor(session: AppSession): EscalaActor {
   if (session.user.status !== "ACTIVE" || !session.user.tenantId) {
     throw new EscalaError(403, "ESCALA_TENANT_REQUIRED", "É necessário um usuário ativo vinculado a uma empresa para acessar Escalas.");
   }
-  return { userId: session.user.id, tenantId: session.user.tenantId, admin: session.user.role === "ADMIN" };
+  return { userId: session.user.id, tenantId: session.user.tenantId, admin: session.user.role === "ADMIN", ...(session.escalaSessionId ? { accountSessionId: session.escalaSessionId } : {}) };
 }
 
 export async function branchPermission(actor: EscalaActor, branchCode: string): Promise<EscalaPermission> {

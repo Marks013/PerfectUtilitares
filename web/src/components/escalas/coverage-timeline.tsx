@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
+import { compareSectors } from "@/lib/escalas/order";
 import { buildCoveragePresence, coverageTimeline } from "@/lib/escalas/coverage-presence";
 import { buildEscalaSchedule, escalaDateLabel, escalaDuration } from "@/lib/escalas/presentation";
 import type { EscalaInput } from "@/lib/escalas/types";
@@ -11,7 +12,7 @@ import type { EscalaRecoveryRequest } from "./recovery-navigation";
 
 export function CoverageTimeline({ input, review }: { input: EscalaInput; review?: EscalaRecoveryRequest }) {
   const dates = useMemo(() => visibleDates(input), [input]);
-  const sectors = useMemo(() => [...new Set(input.employees.filter(person => person.planningEnabled !== false).map(person => person.sector).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")), [input]);
+  const sectors = useMemo(() => [...new Set(input.employees.filter(person => person.planningEnabled !== false).map(person => person.sector).filter(Boolean))].sort(compareSectors), [input]);
   const [selectedDate, setSelectedDate] = useState(""), [selectedSector, setSelectedSector] = useState(""), [selectedStart, setSelectedStart] = useState<number | null>(null);
   const reviewedRequest = useRef(0);
   useEffect(() => {

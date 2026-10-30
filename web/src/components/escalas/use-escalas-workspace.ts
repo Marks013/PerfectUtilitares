@@ -11,6 +11,7 @@ import type {
 } from "@/lib/escalas/types";
 import { coverageDefinitionChanged, hasOutdatedResults, isCurrentResponse, responseMessage, scenarioDefinitionChanged } from "./workspace-model";
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
+import { GenerationOperation, generationCancellationNotice } from "./generation-operation";
 import { EscalaRequestError, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
 
 export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status" | "updatedAt"> & {
@@ -41,6 +42,7 @@ export function useEscalasWorkspace() {
   const [outdated, setOutdated] = useState(false);
   const [busy, setBusy] = useState("Carregando planejamentos…");
   const [cancellable, setCancellable] = useState(false);
+  const [cancelLabel, setCancelLabel] = useState("Cancelar análise");
   const [error, setError] = useState("");
   const [problem, setProblem] = useState<EscalaProblem | null>(null);
   const [notice, setNotice] = useState("");
@@ -51,6 +53,8 @@ export function useEscalasWorkspace() {
   const mounted = useRef(true);
   const requestVersion = useRef(0);
   const controller = useRef<AbortController | null>(null);
+  const generationOperation = useRef<GenerationOperation | null>(null);
+  const cancellationRunning = useRef(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [recovery, setRecovery] = useState<RecoverableDraft | null>(null);
   const [sessionLocked, setSessionLocked] = useState(false);
@@ -121,10 +125,16 @@ export function useEscalasWorkspace() {
         if (!initial.signal.aborted) { const next = toEscalaProblem(cause); setProblem(next); setError(next.message); }
       })
       .finally(() => { if (!initial.signal.aborted && !working.current) setBusy(""); });
+    const stopGeneration = () => {
+      void generationOperation.current?.cancel().catch(() => undefined);
+      controller.current?.abort();
+    };
+    window.addEventListener("pagehide", stopGeneration);
     return () => {
       mounted.current = false;
       initial.abort();
-      controller.current?.abort();
+      window.removeEventListener("pagehide", stopGeneration);
+      stopGeneration();
     };
   }, []);
 
@@ -161,6 +171,7 @@ export function useEscalasWorkspace() {
       const isCurrent = () => mounted.current && isCurrentResponse(abort.signal, version, requestVersion.current);
       setBusy(label);
       setCancellable(canCancel);
+      setCancelLabel("Cancelar análise");
       setError("");
       setProblem(null);
       setNotice("");
@@ -170,10 +181,17 @@ export function useEscalasWorkspace() {
         if (isCurrent()) { const next = toEscalaProblem(cause); setProblem(next); setError(next.message); }
       } finally {
         if (mounted.current && version === requestVersion.current) {
-          working.current = false;
-          setBusy("");
-          setCancellable(false);
-          controller.current = null;
+          if (generationOperation.current?.cancellationPending) {
+            setBusy("O cancelamento ainda não foi confirmado. Confira sua conexão e use Conferir cancelamento. Sua escala foi preservada.");
+            setCancellable(true);
+            setCancelLabel("Conferir cancelamento");
+          } else {
+            working.current = false;
+            setBusy("");
+            setCancellable(false);
+            generationOperation.current = null;
+            controller.current = null;
+          }
         }
       }
     },
@@ -251,6 +269,7 @@ export function useEscalasWorkspace() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      keepalive: body.action === "CANCEL_GENERATION",
       signal,
     });
   }
@@ -306,14 +325,17 @@ export function useEscalasWorkspace() {
   }
 
   function generate() {
-    if (!workspace?.canEdit || !input) return;
+    if (!workspace?.canEdit || !input || working.current) return;
+    const operation = new GenerationOperation(post);
+    generationOperation.current = operation;
     setGenerated(null);
     void run(
       dirty ? "Salvando a equipe antes da análise…" : "Sugerindo folgas para toda a filial…",
       async (signal, isCurrent) => {
         const saved = await flushDraft();
         if (!saved || !isCurrent()) return;
-        const result = await requestMassGeneration({ workspace: saved, input: saved.input, dirty: false, signal, isCurrent, post,
+        setBusy("Preparando o cálculo da filial…"); setCancellable(true);
+        const result = await requestMassGeneration({ workspace: saved, input: saved.input, dirty: false, signal, isCurrent, post, operation,
           onSaved: (saved) => acceptWorkspace(saved, true),
           onSolving: () => { setBusy("Sugerindo folgas para toda a filial e conferindo a cobertura…"); setCancellable(true); },
         });
@@ -325,7 +347,7 @@ export function useEscalasWorkspace() {
           else { setProblem(solverProblem(result.result.status, result.result.message, result.result.conflicts)); setNotice(result.result.message); }
         }
       },
-      !dirty,
+      false,
     );
   }
 
@@ -415,19 +437,25 @@ export function useEscalasWorkspace() {
   }
 
   function cancelAnalysis() {
-    if (!cancellable) return;
+    if (!cancellable || cancellationRunning.current) return;
+    const operation = generationOperation.current;
     requestVersion.current += 1;
+    // Invalidate previews immediately, but keep the workspace busy until the server confirms termination.
+    const cancelling = operation?.cancel() ?? Promise.resolve(null);
     controller.current?.abort();
-    controller.current = null;
-    working.current = false;
-    setBusy("");
+    cancellationRunning.current = true;
+    setBusy("Cancelando o cálculo. Sua escala salva será mantida…");
     setCancellable(false);
-    setGenerated(null);
-    setProblem(null);
-    setError("");
-    setNotice(
-      "Análise cancelada. A equipe salva antes da análise foi preservada. Respostas atrasadas serão ignoradas e nenhuma sugestão será aplicada.",
-    );
+    setGenerated(null); setProblem(null); setError(""); setNotice("");
+    void cancelling.then(status => {
+      if (!mounted.current) return;
+      generationOperation.current = null; controller.current = null; working.current = false;
+      setBusy(""); setCancellable(false); setNotice(generationCancellationNotice(status));
+    }).catch(() => {
+      if (!mounted.current) return;
+      setBusy("O cancelamento ainda não foi confirmado. Confira sua conexão e use Conferir cancelamento. Nenhuma proposta será aplicada.");
+      setCancelLabel("Conferir cancelamento"); setCancellable(true);
+    }).finally(() => { cancellationRunning.current = false; });
   }
 
   useEffect(() => {
@@ -484,6 +512,7 @@ export function useEscalasWorkspace() {
     deleteWorkspace,
     resetKey,
     cancellable,
+    cancelLabel,
     cancelAnalysis,
     dismissProposals: () => {
       setGenerated(null);

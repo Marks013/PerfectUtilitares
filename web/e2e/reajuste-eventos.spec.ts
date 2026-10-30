@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, test, type Page, type Response } from "@playwright/test";
+import { expect, test, type Page, type Response } from "./fixtures";
 import { strToU8, zipSync } from "fflate";
 import { PDFDocument } from "pdf-lib";
 test.use({ screenshot: "off", trace: "off", video: "off" });

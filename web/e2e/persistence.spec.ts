@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { loginAsAdmin } from "./admin-session";
 
 const enabled = process.env.E2E_MUTATION === "1";

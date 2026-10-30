@@ -371,6 +371,19 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).not.toMatch(/<input[^>]*checked/);
   });
 
+  it("keeps cancellation visibly pending until the server confirms it", () => {
+    const pending = renderToStaticMarkup(<EscalasStatus busy="Cancelando o cálculo…" notice="" cancellable={false} onCancel={vi.fn()} />);
+    expect(pending).toContain("Cancelando.");
+    expect(pending).not.toContain("Concluído");
+    expect(pending).not.toContain("Cancelar análise");
+    const cancelled = renderToStaticMarkup(<EscalasStatus busy="" notice="Cálculo cancelado. Sua escala salva foi mantida." cancellable={false} onCancel={vi.fn()} />);
+    expect(cancelled).toContain("Cancelado.");
+    expect(cancelled).not.toContain("Concluído");
+    const retry = renderToStaticMarkup(<EscalasStatus busy="O cancelamento ainda não foi confirmado." notice="" cancellable cancelLabel="Conferir cancelamento" onCancel={vi.fn()} />);
+    expect(retry).toContain("Conferir cancelamento");
+    expect(retry).not.toContain("Concluído");
+  });
+
   it("offers cancellation for analysis but never for an in-progress write", () => {
     const analysis = renderToStaticMarkup(
       <EscalasStatus busy="Gerando proposta…" notice="" cancellable onCancel={vi.fn()} />,

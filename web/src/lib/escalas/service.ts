@@ -263,14 +263,14 @@ function requireSolverSetup(input: EscalaInput) {
   if (unsupportedHoliday && !input.simulation) throw new EscalaError(422, "ESCALA_HOLIDAY_POLICY_REQUIRED", "Confirme o tratamento do feriado não trabalhado. Esta versão não possui estado próprio de feriado remunerado e não o converterá em DSR, ausência ou horas a repor. Registre a regra aplicável antes de gerar.");
 }
 
-export async function generateEscala(actor: EscalaActor, id: string, expectedRevision: number) {
+export async function generateEscala(actor: EscalaActor, id: string, expectedRevision: number, options?: import("./solver-transport").SolverOptions) {
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, "edit");
   assertRevision(current, expectedRevision);
   const prepared = prepareGeneration(current.input);
   requireSolverSetup(prepared.input);
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
-  const calculation = await solveEscala(contextual);
+  const calculation = options ? await solveEscala(contextual, options) : await solveEscala(contextual);
   const result = calculation.status === "INFEASIBLE" ? { ...calculation, conflicts: findGenerationConflicts(contextual) } : calculation;
   const proposalInput = result.status === "FEASIBLE" || result.status === "OPTIMAL"
     ? parseEscalaInput({ ...contextual, needsRegeneration: false, assignments: result.assignments }) : contextual;

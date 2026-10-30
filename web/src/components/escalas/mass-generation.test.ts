@@ -17,27 +17,35 @@ function fixture() {
 }
 
 describe("branch-wide generation request sequence", () => {
+  const operation = { operationId: "a3dfb1bc-a1d3-4fe8-aab9-3d527490a62c", state: "CREATED", expiresAt: "2026-10-30T10:00:00Z" };
+  it("registers the saved revision before starting the solver", async () => {
+    const value = fixture();
+    const post = vi.fn().mockResolvedValueOnce(operation).mockResolvedValueOnce(value.proposal);
+    const result = await requestMassGeneration({ ...value, dirty: false, post });
+    expect(post.mock.calls.map(([body]) => body.action)).toEqual(["START_GENERATION", "GENERATE"]);
+    expect(post.mock.calls[1][0]).toMatchObject({ operationId: operation.operationId, expectedRevision: 2 });
+    expect(result).toBe(value.proposal);
+  });
   it("saves the selected hours once, solves the returned revision and leaves preview application explicit", async () => {
     const value = fixture();
-    const post = vi.fn().mockResolvedValueOnce(value.saved).mockResolvedValueOnce(value.proposal);
+    const post = vi.fn().mockResolvedValueOnce(value.saved).mockResolvedValueOnce(operation).mockResolvedValueOnce(value.proposal);
     const result = await requestMassGeneration({ ...value, dirty: true, post });
-    expect(post.mock.calls.map(([body]) => body.action)).toEqual(["SAVE", "GENERATE"]);
+    expect(post.mock.calls.map(([body]) => body.action)).toEqual(["SAVE", "START_GENERATION", "GENERATE"]);
     expect(post.mock.calls[0][0]).toMatchObject({ id: "plan", expectedRevision: 2, input: value.input });
-    expect(post.mock.calls[1][0]).toEqual({ action: "GENERATE", id: "plan", expectedRevision: 3 });
+    expect(post.mock.calls[1][0]).toEqual({ action: "START_GENERATION", id: "plan", expectedRevision: 3 });
+    expect(post.mock.calls[2][0]).toEqual({ action: "GENERATE", id: "plan", expectedRevision: 3, operationId: operation.operationId });
     expect(value.onSaved).toHaveBeenCalledExactlyOnceWith(value.saved);
     expect(value.onSolving).toHaveBeenCalledOnce();
     expect(result).toBe(value.proposal);
     expect(post.mock.calls.some(([body]) => body.action === "PUBLISH")).toBe(false);
   });
-
   it("does not create another revision when the selected hours are already saved", async () => {
     const value = fixture();
-    const post = vi.fn().mockResolvedValue(value.proposal);
+    const post = vi.fn().mockResolvedValueOnce(operation).mockResolvedValueOnce(value.proposal);
     await requestMassGeneration({ ...value, dirty: false, post });
-    expect(post).toHaveBeenCalledExactlyOnceWith({ action: "GENERATE", id: "plan", expectedRevision: 2 }, value.signal);
+    expect(post.mock.calls.map(([body]) => body.action)).toEqual(["START_GENERATION", "GENERATE"]);
     expect(value.onSaved).not.toHaveBeenCalled();
   });
-
   it("stops before generation when saving fails, preserving the conflict for the interface", async () => {
     const value = fixture();
     const post = vi.fn().mockRejectedValue(new Error("A versão da proposta mudou."));
@@ -46,7 +54,6 @@ describe("branch-wide generation request sequence", () => {
     expect(value.onSaved).not.toHaveBeenCalled();
     expect(value.onSolving).not.toHaveBeenCalled();
   });
-
   it("ignores a late saved response after switching or unmounting, without launching the optimizer", async () => {
     const value = fixture();
     let current = true;
@@ -56,20 +63,38 @@ describe("branch-wide generation request sequence", () => {
     expect(value.onSaved).not.toHaveBeenCalled();
     expect(value.onSolving).not.toHaveBeenCalled();
   });
-
+  it("cancels a registration that arrives after the caller has been aborted, never sending GENERATE", async () => {
+    const value = fixture();
+    const controller = new AbortController();
+    const post = vi.fn().mockImplementation(async body => {
+      if (body.action === "START_GENERATION") { controller.abort(); return operation; }
+      return { operationId: operation.operationId, state: "CANCELLED" };
+    });
+    expect(await requestMassGeneration({ ...value, dirty: false, post, signal: controller.signal })).toBeNull();
+    expect(post.mock.calls.map(([body]) => body.action)).toEqual(["START_GENERATION", "CANCEL_GENERATION"]);
+    expect(post.mock.calls[1][1].aborted).toBe(false);
+    expect(value.onSolving).not.toHaveBeenCalled();
+  });
   it("ignores a late successful solve after cancellation and never applies assignments", async () => {
     const value = fixture();
     const controller = new AbortController();
-    const post = vi.fn().mockImplementation(async () => { controller.abort(); return value.proposal; });
+    const post = vi.fn().mockImplementation(async body => {
+      if (body.action === "START_GENERATION") return operation;
+      controller.abort(); return value.proposal;
+    });
     expect(await requestMassGeneration({ ...value, dirty: false, post, signal: controller.signal })).toBeNull();
     expect(value.workspace.input.assignments).toEqual([]);
     expect(value.onSaved).not.toHaveBeenCalled();
   });
-
+  it("requests cleanup after the calculation transport fails", async () => {
+    const value = fixture();
+    const post = vi.fn().mockResolvedValueOnce(operation).mockRejectedValueOnce(new Error("Connection lost")).mockResolvedValueOnce({ operationId: operation.operationId, state: "CANCELLED" });
+    await expect(requestMassGeneration({ ...value, dirty: false, post })).rejects.toThrow("Connection lost");
+    expect(post.mock.calls.map(([body]) => body.action)).toEqual(["START_GENERATION", "GENERATE", "CANCEL_GENERATION"]);
+  });
   it("does not issue any request for an already cancelled analysis", async () => {
     const value = fixture();
-    const controller = new AbortController();
-    controller.abort();
+    const controller = new AbortController(); controller.abort();
     const post = vi.fn();
     expect(await requestMassGeneration({ ...value, dirty: true, post, signal: controller.signal })).toBeNull();
     expect(post).not.toHaveBeenCalled();

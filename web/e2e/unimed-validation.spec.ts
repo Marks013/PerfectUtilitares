@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { calculateUnimed } from "../src/lib/unimed/calculation";
 
 for (const width of [1280, 390]) {

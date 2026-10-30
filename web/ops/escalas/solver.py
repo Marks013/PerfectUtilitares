@@ -1,4 +1,4 @@
-"""Integer-minute CP-SAT model; approval additionally requires the independent TS verifier."""
+"""Production policy 2b1ea26 with operation cancellation; experimental objectives are not shipped."""
 import hashlib
 import unicodedata
 import re
@@ -168,8 +168,10 @@ def retained_learner_records(data):
     return [dict(a) for a in data['assignments'] if a['employeeId'] in retained and (a.get('locked') or a['kind'] == 'ABSENCE')]
 
 
-def solve(data):
+def solve(data, control=None):
     started = time.monotonic()
+    if control is not None:
+        control.checkpoint()
     dates = days_between(data["startDate"], data["endDate"])
     employees = sorted((p for p in data["employees"] if p.get("planningEnabled") is not False), key=lambda e: e["id"])
     if not 1 <= len(employees) <= 250 or not 7 <= len(dates) <= 42 or len(dates) % 7:
@@ -183,6 +185,8 @@ def solve(data):
     preference_terms, stability_terms, people_changed, tie_terms = [], [], [], []
     weekend_totals = {5: {}, 6: {}}
     for person in employees:
+        if control is not None:
+            control.checkpoint()
         if time.monotonic() - started > MAX_SECONDS - 1:
             return _response("UNKNOWN", [], started)
         pid = person["id"]
@@ -198,6 +202,8 @@ def solve(data):
         active[pid] = [d for d in dates if person["activeFrom"] <= d
                        and (not person.get("activeUntil") or d <= person["activeUntil"])]
         for day in active[pid]:
+            if control is not None:
+                control.checkpoint()
             key, old = (pid, day), baseline.get((pid, day))
             absent = old is not None and old["kind"] == "ABSENCE"
             off[key] = model.new_bool_var(f"o:{pid}:{day}")
@@ -266,6 +272,8 @@ def solve(data):
         _rest(model, person, dates, choices, off, boundary, shifts, metrics, policy)
         civil_weekends = _civil_rest(model, person, dates, choices, work, off, boundary, shifts)
         for day in active[pid]:
+            if control is not None:
+                control.checkpoint()
             if person["offPattern"] == "CONSECUTIVE":
                 neighbors = []
                 for delta in (-1, 1):
@@ -289,6 +297,8 @@ def solve(data):
                 model.add(off[pid, dates[-1]] == 1)
         if person["offPattern"] == "PREFER_CONSECUTIVE":
             for day in active[pid]:
+                if control is not None:
+                    control.checkpoint()
                 tomorrow = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
                 if (pid, tomorrow) in off:
                     pair = model.new_bool_var(f"pair:{pid}:{day}")
@@ -323,14 +333,14 @@ def solve(data):
     # Fixing is confined to this solver invocation; the model remains unrestricted.
     # A rejected proposal is not evidence that the actual scheduling model is infeasible.
     seed.parameters.fix_variables_to_their_hinted_value = True
-    seed_status = seed.solve(model)
+    seed_status = seed.solve(model) if control is None else control.solve(seed, model)
     if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         remaining = MAX_SECONDS - (time.monotonic() - started)
         if remaining < 0.1:
             return _response("UNKNOWN", [], started)
         seed.parameters.fix_variables_to_their_hinted_value = False
         seed.parameters.max_time_in_seconds = min(6, remaining)
-        seed_status = seed.solve(model)
+        seed_status = seed.solve(model) if control is None else control.solve(seed, model)
         if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return _response(seed.status_name(seed_status), [], started)
     result = _read_assignments(seed, employees, active, baseline, work, choices) + retained_learner_records(data)
@@ -346,6 +356,8 @@ def solve(data):
     fairness = []
     groups = {}
     for person in employees:
+        if control is not None:
+            control.checkpoint()
         # Comparable opportunities only; absence/new-hire histories are not a debt.
         key = (has_no_clock(person), person["sector"], sunday_limit(person),
                () if has_no_clock(person) else
@@ -381,7 +393,7 @@ def solve(data):
     # Establish a legal incumbent before spending the bounded budget on soft goals.
     # This seed does not lock a staffing objective or relax a mandatory condition.
     values, proven, phases = improve(model, [objective for _, objective in goals], values,
-                                     started + MAX_SECONDS, [name for name, _ in goals])
+                                     started + MAX_SECONDS, [name for name, _ in goals], control=control)
     # Existing protected learner records are retained, never allocated or counted as workforce.
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_learner_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)

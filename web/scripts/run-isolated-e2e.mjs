@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chown, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -266,15 +266,20 @@ const databaseAdmin = new Client({ connectionString: adminUrl.toString() });
 let app;
 let worker;
 let solverId;
+const solverSecretPath = path.join(temp, "solver.secret");
 let created = false;
 
 try {
   // Exercise the real current processor without using or restarting the production solver.
   const solverPort = await freePort();
+  await writeFile(solverSecretPath, randomBytes(32).toString("base64url"), { mode: 0o600 });
+  await chown(solverSecretPath, 1001, 1001);
   solverId = capture("docker", ["run", "--detach", "--rm", "--name", name + "-solver",
     "--label", "perfectutilitares.e2e=" + name, "--publish", "127.0.0.1:" + solverPort + ":8080",
     "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "1536m", "--cpus", "1",
     "--user", "1001:1001", "--env", "PYTHONDONTWRITEBYTECODE=1", "--volume", path.join(cwd, "ops", "escalas") + ":/model:ro",
+    "--env", "ESCALAS_SOLVER_SECRET_FILE=/run/secrets/escalas_solver_secret",
+    "--volume", solverSecretPath + ":/run/secrets/escalas_solver_secret:ro",
     "--workdir", "/model", process.env.E2E_ESCALAS_SOLVER_IMAGE || "web-escalas-solver", "python", "-B", "server.py"]);
   const solverUrl = "http://127.0.0.1:" + solverPort;
   const solverDeadline = Date.now() + 30000;
@@ -312,6 +317,7 @@ try {
     // Playwright otherwise stores DOM text on assertion failure, even with trace/screenshot disabled.
     PLAYWRIGHT_NO_COPY_PROMPT: process.env.E2E_REAL_CSV_PATH || process.env.E2E_REAL_ABSENCES_PATH ? "1" : process.env.PLAYWRIGHT_NO_COPY_PROMPT,
     ESCALAS_SOLVER_URL: solverUrl,
+    ESCALAS_SOLVER_SECRET_FILE: solverSecretPath,
     E2E_RESEND_CAPTURE_URL: `${mail.baseUrl}/__messages`,
     E2E_UNIMED_ADMIN_PASSWORD: unimedPassword,
     E2E_UNIMED_STANDARD_PASSWORD: standardPassword,

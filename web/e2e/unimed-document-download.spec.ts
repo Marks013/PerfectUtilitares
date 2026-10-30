@@ -1,5 +1,5 @@
 import path from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { build } from "esbuild";
 import { PDFDocument } from "pdf-lib";
 import type * as Preview from "../src/components/unimed/unimed-document-preview";

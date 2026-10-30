@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
 
@@ -151,7 +151,7 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
   await journey.selectOption("42");
   await expect(page.getByText("08:24", { exact: true })).toBeVisible();
-  const generating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
+  const generating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);

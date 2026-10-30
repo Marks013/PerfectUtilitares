@@ -4,6 +4,7 @@ import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, 
 import { branchPermission, requireEscalaPermission } from "@/lib/escalas/access";
 import { createEscala, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
+import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGenerationOperation, generationOperationStatus } from "@/lib/escalas/solve-operations";
 import { escalaFailure, escalaJson } from "./http";
 
 export const runtime = "nodejs";
@@ -14,7 +15,10 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("CREATE"), input: z.unknown() }).strict(),
   z.object({ action: z.literal("SAVE"), ...version, input: z.unknown() }).strict(),
   z.object({ action: z.literal("VALIDATE"), input: z.unknown() }).strict(),
-  z.object({ action: z.literal("GENERATE"), ...version }).strict(),
+  z.object({ action: z.literal("GENERATE"), ...version, operationId: z.uuid().optional() }).strict(),
+  z.object({ action: z.literal("START_GENERATION"), ...version }).strict(),
+  z.object({ action: z.literal("CANCEL_GENERATION"), operationId: z.uuid() }).strict(),
+  z.object({ action: z.literal("GENERATION_STATUS"), operationId: z.uuid() }).strict(),
   z.object({ action: z.literal("PUBLISH"), ...version }).strict(),
 ]);
 
@@ -47,7 +51,8 @@ export async function POST(request: Request) {
     const actor = guard.actor;
     const data = parsed.data;
     const expensive = data.action === "GENERATE";
-    const limited = await enforcePersistentRateLimit(request, { keyPrefix: expensive ? "escalas-solver" : "escalas-write", limit: expensive ? 6 : 30, windowMs: expensive ? 600_000 : 60_000 });
+    const control = data.action === "CANCEL_GENERATION" || data.action === "GENERATION_STATUS";
+    const limited = await enforcePersistentRateLimit(request, { keyPrefix: control ? "escalas-control" : expensive ? "escalas-solver" : "escalas-write", limit: control ? 90 : expensive ? 6 : 30, windowMs: expensive ? 600_000 : 60_000 });
     if (limited) return limited;
     switch (data.action) {
       case "CREATE": return escalaJson(await createEscala(actor, parseEscalaInput(data.input)), 201);
@@ -57,7 +62,12 @@ export async function POST(request: Request) {
         requireEscalaPermission(await branchPermission(actor, input.branchCode), "edit");
         return escalaJson(validateEscala(input));
       }
-      case "GENERATE": return escalaJson(await generateEscala(actor, data.id, data.expectedRevision));
+      case "START_GENERATION": return escalaJson(await startGenerationOperation(actor, solveOwner(request, actor), data.id, data.expectedRevision), 201);
+      case "CANCEL_GENERATION": return escalaJson(await cancelGenerationOperation(actor, solveOwner(request, actor), data.operationId));
+      case "GENERATION_STATUS": return escalaJson(await generationOperationStatus(actor, solveOwner(request, actor), data.operationId));
+      case "GENERATE": return escalaJson(data.operationId
+        ? await runGenerationOperation(actor, solveOwner(request, actor), data.operationId, data.id, data.expectedRevision, request.signal)
+        : await generateEscala(actor, data.id, data.expectedRevision, { signal: request.signal }));
       case "PUBLISH": {
         const current = await getEscala(actor, data.id);
         return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, current.input, true));

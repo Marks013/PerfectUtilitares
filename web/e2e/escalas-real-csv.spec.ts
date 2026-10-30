@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { strFromU8, unzipSync } from "fflate";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import { effectiveWeeklyMinutes } from "../src/lib/escalas/labor-rules";
@@ -35,7 +35,7 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   expect(preview.issues.length).toBe(0);
   await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
   await journey.selectOption("42");
-  const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
+  const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);

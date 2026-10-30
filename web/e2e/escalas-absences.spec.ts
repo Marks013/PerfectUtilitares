@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { parse } from "csv-parse/sync";
 import { pdfJsServerDocumentOptions } from "../src/lib/pdf/pdfjs-server";
 import { strFromU8, unzipSync } from "fflate";
@@ -74,7 +74,7 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   // No medical field, source name or free-form source description may leak in preview.
   expect(preview.assignments.every((item: EscalaAssignment) => item.kind === "ABSENCE" && Object.keys(item).every(key => ["employeeId", "date", "kind"].includes(key)))).toBe(true);
   await page.getByRole("button", { name: "Aplicar afastamentos à proposta", exact: true }).click();
-  const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
+  const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: /^(Gerar proposta mensal|Gerar nova proposta)$/ }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);
@@ -191,7 +191,7 @@ test("optional absence preview preserves existing absences and locked work befor
   await page.reload();
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
   await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
-  const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE");
+  const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);

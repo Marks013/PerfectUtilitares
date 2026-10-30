@@ -13,6 +13,11 @@ export function compareBranches(
     || portuguese.compare(left.branchName ?? "", right.branchName ?? "");
 }
 
+/** Shared sector order for grids, shortage lists and filters; never an allocation priority. */
+export function compareSectors(left: string, right: string): number {
+  return portuguese.compare(left, right) || exact.compare(left, right);
+}
+
 type DisplayEmployee = Pick<EscalaEmployee, "id" | "name" | "registration" | "sector" | "role">;
 
 function compareEmployeeIdentity(left: DisplayEmployee, right: DisplayEmployee): number {

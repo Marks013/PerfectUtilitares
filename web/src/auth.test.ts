@@ -202,6 +202,22 @@ describe("NextAuth beta regression contract", () => {
     ).resolves.toBe("https://perfectutilitares.example");
   });
 
+  it("keeps operation ownership stable across token renewal but separate between logins", async () => {
+    const callback = authConfig().callbacks.jwt;
+    const first = await callback({ token: {}, user: { ...activeUser, securityStamp: getSecurityStamp(activeUser) } });
+    const second = await callback({ token: {}, user: { ...activeUser, securityStamp: getSecurityStamp(activeUser) } });
+    expect(first?.escalaSessionId).toEqual(expect.any(String));
+    expect(first?.escalaSessionId).not.toBe(second?.escalaSessionId);
+    mocks.findUnique.mockResolvedValue(activeUser);
+    const renewed = await callback({ token: { ...first, jti: "new-encrypted-token-id" } });
+    expect(renewed?.escalaSessionId).toBe(first?.escalaSessionId);
+    const old = { id: activeUser.id, securityStamp: getSecurityStamp(activeUser), jti: "legacy-random-token-id" };
+    const migrated = await callback({ token: { ...old } });
+    const readAgain = await callback({ token: { ...old } });
+    expect(migrated?.escalaSessionId).toBe(readAgain?.escalaSessionId);
+    expect((await callback({ token: { ...migrated, jti: "rotated" } }))?.escalaSessionId).toBe(migrated?.escalaSessionId);
+  });
+
   it("refreshes cosmetic fields while preserving an existing JWT", async () => {
     mocks.findUnique.mockResolvedValueOnce({
       ...activeUser,

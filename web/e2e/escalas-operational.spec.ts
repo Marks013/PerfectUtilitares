@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { unzipSync, strFromU8 } from "fflate";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";

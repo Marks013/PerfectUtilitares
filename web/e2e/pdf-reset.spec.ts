@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import { loginAsAdmin } from "./admin-session";

@@ -5,7 +5,7 @@ import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escal
 import { consolidateCoverageGaps } from "@/lib/escalas/coverage-presence";
 import type { EscalaRecoveryContext } from "./recovery-navigation";
 import styles from "./escalas.module.css";
-import { sortEmployees } from "@/lib/escalas/order";
+import { compareSectors, sortEmployees } from "@/lib/escalas/order";
 import type {
   EscalaAssignment,
   EscalaInput,
@@ -85,7 +85,7 @@ type ResolveReview = (target: ReviewTarget, context?: EscalaRecoveryContext) => 
 
 function CoverageGaps({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
   const [page, setPage] = useState(0);
-  const groups = consolidateCoverageGaps(rows);
+  const groups = consolidateCoverageGaps(rows).sort((a, b) => compareSectors(a.sector, b.sector) || a.dates[0].localeCompare(b.dates[0]) || a.start - b.start || a.end - b.end || Number(a.estimated) - Number(b.estimated));
   const pages = Math.max(1, Math.ceil(groups.length / 8));
   const current = Math.min(page, pages - 1);
   if (!groups.length) return null;

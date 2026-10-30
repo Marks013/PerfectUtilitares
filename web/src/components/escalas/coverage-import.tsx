@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ProcessingBar } from "./workspace-feedback";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/types";
-import { sortEmployees } from "@/lib/escalas/order";
+import { compareSectors, sortEmployees } from "@/lib/escalas/order";
 import { proposeAutomaticCoverage, summarizeAutomaticCoverage } from "@/lib/escalas/automatic-coverage";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import {
@@ -247,7 +247,7 @@ export function Coverage({
   const demands = [...input.demands].sort(
     (a, b) =>
       a.date.localeCompare(b.date) ||
-      a.sector.localeCompare(b.sector, "pt-BR") ||
+      compareSectors(a.sector, b.sector) ||
       (a.role ?? "").localeCompare(b.role ?? "", "pt-BR") ||
       a.start - b.start,
   );
@@ -451,7 +451,7 @@ export function Coverage({
           </div>
           <datalist id="escala-sectors">
             {[...new Set(input.employees.map((employee) => employee.sector))]
-              .sort((a, b) => a.localeCompare(b, "pt-BR"))
+              .sort(compareSectors)
               .map((value) => (
                 <option key={value} value={value} />
               ))}
@@ -499,7 +499,7 @@ export function Coverage({
           <p className="text-sm">As metas automáticas serão criadas ao gerar a proposta. Não é necessário preencher este cadastro para simular.</p>
         )}
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Filtrar setor da cobertura">{(id) => <select id={id} className={controlClass} value={filterSector} onChange={(event) => { setFilterSector(event.target.value); setPage(0); }}><option value="">Todos os setores</option>{[...new Set(demands.map(demand => demand.sector))].sort((a,b) => a.localeCompare(b,"pt-BR")).map(value => <option key={value} value={value}>{value}</option>)}</select>}</Field>
+          <Field label="Filtrar setor da cobertura">{(id) => <select id={id} className={controlClass} value={filterSector} onChange={(event) => { setFilterSector(event.target.value); setPage(0); }}><option value="">Todos os setores</option>{[...new Set(demands.map(demand => demand.sector))].sort(compareSectors).map(value => <option key={value} value={value}>{value}</option>)}</select>}</Field>
           <Field label="Filtrar dia da cobertura">{(id) => <input id={id} className={controlClass} type="date" min={input.startDate} max={input.endDate} value={filterDate} onChange={(event) => { setFilterDate(event.target.value); setPage(0); }} />}</Field>
         </div>
         <p className="text-sm">{filtered.length} faixas na seleção. Confira setor, dia, horário e mínimo; nenhuma faixa é alterada apenas por abrir a lista.</p>

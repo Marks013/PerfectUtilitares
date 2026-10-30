@@ -26,7 +26,7 @@ def _linear_value(terms, values):
     return total
 
 
-def improve(model, objectives, values, deadline, names=None):
+def improve(model, objectives, values, deadline, names=None, control=None):
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
         raise ValueError('incomplete optimization incumbent')
@@ -38,6 +38,8 @@ def improve(model, objectives, values, deadline, names=None):
     for variable in variables:
         model.add_hint(variable, values[variable.index])
     for index, objective in enumerate(objectives):
+        if control is not None:
+            control.checkpoint()
         remaining = deadline - time.monotonic() - 0.10
         if remaining < 0.1:
             proven = False
@@ -81,7 +83,7 @@ def improve(model, objectives, values, deadline, names=None):
             break
         engine.parameters.max_time_in_seconds = budget
         started = time.monotonic()
-        status = engine.solve(search_model)
+        status = engine.solve(search_model) if control is None else control.solve(engine, search_model)
         phase = {'objective': names[index], 'status': engine.status_name(status),
                  'wallTimeSeconds': round(time.monotonic() - started, 3),
                  'budgetSeconds': round(budget, 3), 'incumbentValue': incumbent}

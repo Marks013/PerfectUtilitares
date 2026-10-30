@@ -1,4 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const secretDirectory = mkdtempSync(join(tmpdir(), "escalas-client-"));
+const secretPath = join(secretDirectory, "secret");
+writeFileSync(secretPath, "s".repeat(64), { mode: 0o600 });
+beforeEach(() => vi.stubEnv("ESCALAS_SOLVER_SECRET_FILE", secretPath));
+afterAll(() => rmSync(secretDirectory, { recursive: true }));
 import { solveEscala } from "./solver-client";
 import type { EscalaInput } from "./types";
 
@@ -27,6 +36,59 @@ function completeAssignments(): EscalaInput["assignments"] {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it("accepts the maximum assignment count with Unicode IDs without narrowing the data contract", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const data = fixture(); data.endDate = "2026-12-13";
+    data.shifts[0].id = "字".repeat(100);
+    data.employees = Array.from({ length: 250 }, (_, index) => ({ ...data.employees[0], id: "漢".repeat(97) + String(index).padStart(3, "0"), registration: String(index + 1).padStart(6, "0"), shiftIds: [data.shifts[0].id] }));
+    const assignments = data.employees.flatMap(person => Array.from({ length: 42 }, (_, day) => ({ employeeId: person.id, date: new Date(Date.UTC(2026, 10, 2 + day)).toISOString().slice(0, 10), ...(day % 7 < 5 ? { kind: "WORK", shiftId: data.shifts[0].id } : { kind: "OFF" }) })));
+    const body = JSON.stringify({ status: "FEASIBLE", assignments, message: "Pronto", wallTimeSeconds: 12 });
+    expect(Buffer.byteLength(body)).toBeGreaterThan(4 * 1024 * 1024);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { headers: { "content-type": "application/json" } })));
+    expect((await solveEscala(data)).assignments).toHaveLength(10500);
+  });
+
+  it("rejects an insecure secret file before making an internal request", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubEnv("ESCALAS_SOLVER_SECRET_FILE", join(secretDirectory, "missing"));
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_AUTH_FAILED" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("cancels independently when the signal aborts while consuming the result body", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const controller = new AbortController();
+    const fetch = vi.fn(async (url: URL) => {
+      if (url.pathname === "/cancel") return Response.json({ state: "CANCELLED" });
+      return new Response(new ReadableStream({ start(stream) { controller.abort(); stream.error(new DOMException("Aborted", "AbortError")); } }));
+    });
+    vi.stubGlobal("fetch", fetch);
+    await expect(solveEscala(fixture(), { signal: controller.signal })).rejects.toMatchObject({ code: "SOLVER_CANCELLED" });
+    expect(fetch.mock.calls.some(([url]) => url.pathname === "/cancel")).toBe(true);
+  });
+
+  it("authenticates internal requests and identifies the exact operation", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const fetch = vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 1 }));
+    vi.stubGlobal("fetch", fetch);
+    await solveEscala(fixture());
+    expect(fetch.mock.calls[0]).toBeDefined();
+    const init = (fetch.mock.calls as unknown[][])[0][1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get("Authorization")).toBe("Bearer " + "s".repeat(64));
+    expect(headers.get("X-Request-ID")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(headers.get("X-Cancel-Token")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("never starts an already cancelled calculation", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const fetch = vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 1 }));
+    vi.stubGlobal("fetch", fetch);
+    const controller = new AbortController(); controller.abort();
+    await expect(solveEscala(fixture(), { signal: controller.signal })).rejects.toMatchObject({ code: "SOLVER_CANCELLED" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("accepts a successful response and sends only validated inputs", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const fetch = vi.fn(async (_url: URL, _init?: RequestInit) => Response.json({ status: "OPTIMAL", assignments: completeAssignments(), message: "Concluído", wallTimeSeconds: 0.1 }));

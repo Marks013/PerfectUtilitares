@@ -4,8 +4,9 @@ import { EscalaError } from "@/lib/escalas/access";
 import { EscalaSolverError } from "@/lib/escalas/solver-client";
 import { DELETE, GET, PATCH, POST } from "./route";
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
+vi.mock("@/lib/escalas/solve-operations", () => ({ solveOwner: () => "session-owner", startGenerationOperation: mocks.startOperation, runGenerationOperation: mocks.runOperation, cancelGenerationOperation: mocks.cancelOperation, generationOperationStatus: mocks.operationStatus }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, saveEscala: mocks.save, generateEscala: mocks.generate, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
@@ -22,6 +23,27 @@ beforeEach(() => {
 });
 
 describe("/api/escalas", () => {
+  it("starts, solves, queries and cancels a session-owned operation through functional responses", async () => {
+    const operationId = "4ea6210f-fb9a-449f-b6f4-413b3c79ec05";
+    mocks.startOperation.mockResolvedValue({ operationId, state: "CREATED" });
+    mocks.runOperation.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input });
+    mocks.cancelOperation.mockResolvedValue({ operationId, state: "CANCELLED" });
+    mocks.operationStatus.mockResolvedValue({ operationId, state: "CANCELLED" });
+    const start = await POST(command({ action: "START_GENERATION", id: "w1", expectedRevision: 1 }));
+    expect(start.status).toBe(201); expect(await start.json()).toEqual({ operationId, state: "CREATED" });
+    const generated = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1, operationId }));
+    expect(generated.status).toBe(200); expect(await generated.json()).toMatchObject({ result: { status: "FEASIBLE" } });
+    expect(mocks.runOperation).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "session-owner", operationId, "w1", 1, expect.any(AbortSignal));
+    const cancel = await POST(command({ action: "CANCEL_GENERATION", operationId }));
+    expect(cancel.status).toBe(200); expect(await cancel.json()).toEqual({ operationId, state: "CANCELLED" });
+    expect(mocks.rate).toHaveBeenLastCalledWith(expect.any(Request), expect.objectContaining({ keyPrefix: "escalas-control", limit: 90 }));
+    const status = await POST(command({ action: "GENERATION_STATUS", operationId }));
+    expect(status.status).toBe(200); expect(await status.json()).toMatchObject({ state: "CANCELLED" });
+    expect(mocks.save).not.toHaveBeenCalled();
+    mocks.cancelOperation.mockRejectedValue(new EscalaError(404, "ESCALA_OPERATION_NOT_FOUND", "Cálculo não disponível."));
+    expect((await POST(command({ action: "CANCEL_GENERATION", operationId }))).status).toBe(404);
+  });
+
   it("deletes the selected private revision and reports safe failures", async () => {
     const request = (body: unknown, origin = "http://localhost") => new Request("http://localhost/api/escalas", { method: "DELETE", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
     mocks.remove.mockResolvedValue({ deletedId: "w1" });
@@ -58,7 +80,7 @@ describe("/api/escalas", () => {
     const generated = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
     expect(generated.status).toBe(200);
     expect(await generated.json()).toMatchObject({ result: { status: "FEASIBLE" }, preparation: { includedEmployees: 81, untimedEmployees: 12, generatedCoverageSlots: 7 } });
-    expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 1);
+    expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 1, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(mocks.rate).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ keyPrefix: "escalas-solver", limit: 6 }));
     expect(mocks.save).not.toHaveBeenCalled();
   });
@@ -102,5 +124,5 @@ it("uses a verified module company for successful query/create/save/generate, ig
   expect(listing.status).toBe(200); expect(await listing.json()).toMatchObject({ canCreate: true }); expect(mocks.list).toHaveBeenLastCalledWith(actor);
   expect((await POST(command({ action: "CREATE", input }))).status).toBe(201); expect(mocks.create).toHaveBeenLastCalledWith(actor, input);
   expect((await POST(command({ action: "SAVE", id: "w1", expectedRevision: 1, input }))).status).toBe(200); expect(mocks.save).toHaveBeenLastCalledWith(actor, "w1", 1, input);
-  expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(200); expect(mocks.generate).toHaveBeenLastCalledWith(actor, "w1", 1);
+  expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(200); expect(mocks.generate).toHaveBeenLastCalledWith(actor, "w1", 1, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
