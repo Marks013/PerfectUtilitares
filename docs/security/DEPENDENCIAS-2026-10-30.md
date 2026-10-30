@@ -1,5 +1,7 @@
 # Correção de dependências — 30/10/2026
 
+> Atualização posterior: o aviso transitivo do OpenTelemetry foi eliminado pela migração oficial para Sentry 11.10.0. Veja o acompanhamento em [OPENTELEMETRY-2026-10-30.md](./OPENTELEMETRY-2026-10-30.md). Os resultados abaixo preservam o histórico da liberação anterior.
+
 ## Escopo e plano
 
 Corrigir os 13 alertas npm (2 críticos, 4 altos, 7 moderados), diretamente no servidor. Preservar dados, configurações privadas, API e regras do solver. Não reduzir gates, usar force install ou acompanhar o CI remoto.

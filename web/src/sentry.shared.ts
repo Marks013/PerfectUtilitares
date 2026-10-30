@@ -1,3 +1,18 @@
+// Sentry 11 enables additional data collection by default. Keep telemetry private
+// across browser, server, edge and the PDF worker, including streaming spans.
+export const sentryDataCollection = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: { request: false, response: false },
+  httpBodies: [],
+  urlQueryParams: false,
+  genAI: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  queues: false,
+  graphQL: { document: false, variables: false },
+  stackFrameVariables: false,
+};
+
 export function sentrySampleRate(
   value: string | undefined,
   fallback: number,

@@ -19,13 +19,23 @@ import {
   cleanupExpiredPdfJobs,
 } from "@/lib/pdf/retention";
 import { isEventsEnabled } from "@/lib/presence/feature";
+import {
+  beforeSendScrubber,
+  sentryDataCollection,
+  sentrySampleRate,
+  validatedSentryDsn,
+} from "@/sentry.shared";
 // PERFECT_PDF_FULL32_V2_2
 
+const sentryDsn = validatedSentryDsn(process.env.NEXT_PUBLIC_SENTRY_DSN);
+
 Sentry.init({
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  dsn: sentryDsn,
+  enabled: Boolean(sentryDsn),
   environment: process.env.NODE_ENV ?? "development",
-  sendDefaultPii: false,
-  tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0.1),
+  dataCollection: sentryDataCollection,
+  tracesSampleRate: sentrySampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE, 0.1),
+  beforeSend: beforeSendScrubber,
 });
 
 const boss = await getPdfQueue();
