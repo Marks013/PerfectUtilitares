@@ -102,17 +102,29 @@ def _replace_hints(model, values):
     model.proto.solution_hint.values.extend(values.values())
 
 
+def _polish_people(variables, values, groups, limit=18):
+    """One bounded sector, across every week, prioritizing changed people."""
+    changed = {v.name[len('changed:'):]: values[v.index] for v in variables if v.name.startswith('changed:')}
+    ranked = sorted((sum(changed.get(pid, 0) for pid in members), tuple(sorted(members)))
+                    for members in groups if members)
+    if not ranked:
+        return set()
+    members = ranked[-1][1]
+    return set(sorted(members, key=lambda pid: (-changed.get(pid, 0), pid))[:limit])
+
+
+def _expression_terms(objective):
+    expression = cp_model.FlatIntExpr(objective)
+    return tuple(v.index for v in expression.vars), tuple(expression.coeffs), int(expression.offset)
+
+
 def _phase_budget(remaining, names, index):
     """Keep coverage first, without geometrically starving the last real goals."""
     if index == len(names) - 1:
         return remaining
     if names[index] == 'COVERAGE':
         return remaining * .55
-    weights = {'SUNDAY_COVERAGE': 3, 'SUNDAY_BALANCE': 3, 'SATURDAY_BALANCE': 1,
-               'REST_DISTRIBUTION': 1, 'REST_ROTATION': 1, 'PEOPLE_CHANGED': 1,
-               'STABILITY': 2, 'PREFERENCES': 1, 'TIE_BREAK': .25}
-    pending = [weights.get(name, 1) for name in names[index:]]
-    return remaining * pending[0] / sum(pending)
+    return remaining * .5
 
 
 def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None):
@@ -128,9 +140,16 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                 decision_variables[variable.index] = match.group(1), match.group(2)
     dates = sorted({day for _pid, day in decision_variables.values()})
     names = names or [f'OBJECTIVE_{i + 1}' for i in range(len(objectives))]
+    secondary = {'SATURDAY_BALANCE', 'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED',
+                 'STABILITY', 'PREFERENCES', 'TIE_BREAK'}
+    plans = [(name, objective, []) for name, objective in zip(names, objectives)]
+    first = next((i for i, name in enumerate(names) if name in secondary), len(names))
+    if len(names) - first > 1 and all(name in secondary for name in names[first:]):
+        plans = plans[:first] + [('SECONDARY_POLISH', None, list(zip(names[first:], objectives[first:])))]
+    names = [name for name, _objective, _members in plans]
     protected_groups, active_groups = protected_groups or {}, []
     _replace_hints(model, values)
-    for index, objective in enumerate(objectives):
+    for index, (name, objective, members) in enumerate(plans):
         if control is not None:
             control.checkpoint()
         remaining = deadline - time.monotonic() - 0.10
@@ -138,8 +157,23 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             proven = False
             break
         preparation_started = time.monotonic()
+        member_values = []
+        if members:
+            weighted = []
+            for member_name, member in members:
+                initial = Snapshot(values).value(member)
+                model.add(member <= initial)
+                floor = _objective_floor(model, _expression_terms(member))
+                weight = max(1, min(1000, 100000 // max(1, initial - floor)))
+                weighted.append(weight * member)
+                member_values.append({'objective': member_name, 'initialValue': initial, 'incumbentValue': initial})
+            objective = sum(weighted)
+            # Joint dominance improvement is not a lexicographic optimality proof.
+            proven = False
         model.minimize(objective)
         active_groups.extend(protected_groups.get(names[index], []))
+        for member_name, _member in members:
+            active_groups.extend(protected_groups.get(member_name, []))
         for variable in active_groups:
             model.add(variable <= Snapshot(values).value(variable))
         if len(active_groups) > 1:
@@ -158,6 +192,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             phases.append({'objective': names[index], 'status': 'OPTIMAL',
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
+            if members:
+                phases[-1]['members'] = member_values
             continue
         budget = _phase_budget(remaining, names, index)
         engine = cp_model.CpSolver()
@@ -179,6 +215,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                               if names[index] == 'SUNDAY_BALANCE' else set())
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
+            if name == 'SECONDARY_POLISH':
+                movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [])
             weeks = (len(dates) + 6) // 7
             first = (index - 1) % weeks
             movable_weeks = sorted({first, (first + 1) % weeks})
@@ -192,7 +230,9 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                     person, day = decision_variables[variable.index]
                     fixed = person not in movable_people if movable_people else day not in movable
                     if fixed:
-                        search_model.add(variable == values[variable.index])
+                        domain = search_model.proto.variables[variable.index].domain
+                        domain.clear()
+                        domain.extend([values[variable.index], values[variable.index]])
         # Model setup belongs to this phase's share, not the later objectives.
         # Do not start a presolve with too little time to use the known incumbent.
         budget = min(budget - (time.monotonic() - preparation_started), deadline - time.monotonic() - 0.10)
@@ -206,6 +246,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                  'wallTimeSeconds': round(time.monotonic() - started, 3),
                  'budgetSeconds': round(budget, 3), 'initialValue': incumbent,
                  'incumbentValue': incumbent, 'searchScope': 'GLOBAL'}
+        if members:
+            phase['members'] = member_values
         if restricted:
             phase['searchScope'] = 'SELECTED_PEOPLE' if movable_people else 'ROLLING_WEEKS'
             if movable_people:
@@ -221,6 +263,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             proven = False
             break
         values = {variable.index: engine.value(variable) for variable in variables}
+        for member, (_member_name, member_objective) in zip(member_values, members):
+            member['incumbentValue'] = Snapshot(values).value(member_objective)
         best = engine.value(objective)
         # Later goals may incidentally improve earlier ones. Keep that gain too.
         for previous, previous_terms in visited:

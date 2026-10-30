@@ -6,7 +6,7 @@ import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 
-const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"]);
+const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -26,6 +26,18 @@ const resultSchema = z.strictObject({
       initialValue: z.number().finite().int().optional(),
       movableWeeks: z.number().int().min(1).max(6).optional(),
       movablePeople: z.number().int().min(1).max(250).optional(),
+      members: z.array(z.strictObject({
+        objective: objectiveName.exclude(["SECONDARY_POLISH"]),
+        initialValue: z.number().finite().int(),
+        incumbentValue: z.number().finite().int(),
+      }).refine(member => member.incumbentValue <= member.initialValue, "O polimento não pode piorar um objetivo protegido")).min(1).max(10).optional(),
+    }).superRefine((phase, context) => {
+      if ((phase.objective === "SECONDARY_POLISH") !== Boolean(phase.members)) {
+        context.addIssue({ code: "custom", path: ["members"], message: "Informe os objetivos somente para a fase conjunta" });
+      }
+      if (phase.members && new Set(phase.members.map(member => member.objective)).size !== phase.members.length) {
+        context.addIssue({ code: "custom", path: ["members"], message: "Objetivos conjuntos duplicados" });
+      }
     })).max(10),
   }).optional(),
   assignments: z.array(z.strictObject({

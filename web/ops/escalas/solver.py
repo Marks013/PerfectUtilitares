@@ -25,6 +25,26 @@ def days_between(start, end):
     return [(first + timedelta(days=n)).isoformat()
             for n in range((last - first).days + 1)]
 
+def _coverage_month(data):
+    """Match TS visibleDates for legacy monthly horizons without rewriting data."""
+    if data.get('visibleMonth'):
+        return data['visibleMonth']
+    if not data.get('startDate') or not data.get('endDate'):
+        return None
+    first, last = date.fromisoformat(data['startDate']), date.fromisoformat(data['endDate'])
+    if last < first:
+        return None
+    middle = first + timedelta(days=((last - first).days + 1) // 2)
+    month_start = middle.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    month_end = next_month - timedelta(days=1)
+    technical_start = month_start - timedelta(days=month_start.weekday())
+    technical_end = month_end + timedelta(days=6 - month_end.weekday())
+    if (first, last) == (technical_start, technical_end):
+        return month_start.strftime('%Y-%m')
+    return None
+
+
 
 @lru_cache(maxsize=16384)
 def instant(day, minute):
@@ -404,6 +424,7 @@ def solve(data, control=None):
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_disabled_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
     attempted = {phase['objective'] for phase in phases}
+    attempted.update(member['objective'] for phase in phases for member in phase.get('members', []))
     response['optimization'] = {'budgetSeconds': MAX_SECONDS, 'phases': phases,
                                 'unattemptedObjectives': [name for name, _ in goals if name not in attempted]}
     return response
@@ -658,6 +679,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
     by_id = {p["id"]: p for p in employees}
     index = {}
     shortages, grouped = [], {}
+    visible_month = _coverage_month(data)
 
     def register(pid, day, sid, variable):
         person = by_id[pid]
@@ -715,7 +737,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                     is_sunday = date.fromisoformat(demand['date']).weekday() == 6
                     if is_sunday:
                         grouped[key][2] += int(right - left)
-                    if data.get('visibleMonth') and demand['date'].startswith(data['visibleMonth'] + '-'):
+                    if visible_month and demand['date'].startswith(visible_month + '-'):
                         grouped[key][3] += int(right - left)
                         if is_sunday:
                             grouped[key][4] += int(right - left)

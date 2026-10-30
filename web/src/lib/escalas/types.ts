@@ -157,7 +157,7 @@ export type EscalaGenerationConflict = {
   role?: string;
 };
 type EscalaOptimizationPhase = {
-  objective: "COVERAGE" | "SUNDAY_COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK";
+  objective: "COVERAGE" | "SUNDAY_COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK" | "SECONDARY_POLISH";
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
   wallTimeSeconds: number;
   budgetSeconds: number;
@@ -167,8 +167,14 @@ type EscalaOptimizationPhase = {
   initialValue?: number;
   movableWeeks?: number;
   movablePeople?: number;
-};
+  /** One joint search; timings are not repeated for its protected objectives. */
+  members?: {
+    objective: Exclude<EscalaOptimizationPhase["objective"], "SECONDARY_POLISH">;
+    initialValue: number;
+    incumbentValue: number;
+  }[];
 
+};
 export type EscalaSolveResult = {
   /** Numeric diagnostics only; no employee identifiers or personal payload. */
   optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[]; unattemptedObjectives?: EscalaOptimizationPhase["objective"][] };

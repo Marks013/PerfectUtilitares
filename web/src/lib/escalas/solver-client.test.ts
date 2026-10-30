@@ -36,6 +36,30 @@ function completeAssignments(): EscalaInput["assignments"] {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it("accepts one joint secondary phase with separate protected objective values", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const optimization = { budgetSeconds: 12, phases: [{ objective: "SECONDARY_POLISH", status: "FEASIBLE", wallTimeSeconds: 1.2, budgetSeconds: 1.5, initialValue: 1200, incumbentValue: 900, searchScope: "SELECTED_PEOPLE", members: [
+      { objective: "STABILITY", initialValue: 20, incumbentValue: 18 },
+      { objective: "REST_ROTATION", initialValue: -2, incumbentValue: -3 },
+    ] }] };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 12, optimization })));
+    expect((await solveEscala(fixture())).optimization).toEqual(optimization);
+  });
+
+  it.each([
+    { objective: "SECONDARY_POLISH" },
+    { objective: "SECONDARY_POLISH", members: [{ objective: "STABILITY", initialValue: 5, incumbentValue: 6 }] },
+    { objective: "SECONDARY_POLISH", members: [{ objective: "STABILITY", initialValue: 5, incumbentValue: 4 }, { objective: "STABILITY", initialValue: 5, incumbentValue: 4 }] },
+    { objective: "SECONDARY_POLISH", members: [{ objective: "SECONDARY_POLISH", initialValue: 5, incumbentValue: 4 }] },
+    { objective: "STABILITY", members: [{ objective: "STABILITY", initialValue: 5, incumbentValue: 4 }] },
+  ])("rejects invalid or worsening joint phase diagnostics: %j", async details => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 12,
+      optimization: { budgetSeconds: 12, phases: [{ status: "FEASIBLE", wallTimeSeconds: 1, budgetSeconds: 1.5, initialValue: 10, incumbentValue: 9, ...details }] },
+    })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+
   it("accepts all ten active objectives including Sunday coverage without losing assignments", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const objectives = ["COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"];
