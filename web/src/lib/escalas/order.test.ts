@@ -27,16 +27,27 @@ describe("operational display order", () => {
     expect(sortHoursEmployees(source).map(item => item.id)).toEqual(["b", "a", "c"]);
     expect(source).toEqual(before);
   });
-  it("groups complete schedules within each sector, then role and name, not shift identifiers", () => {
+  it("groups complete schedules within each sector, then names before roles, not shift identifiers", () => {
     const rows = [
       { employee: employee("1", "Ana"), schedule: "12:30-16:20 / 18:20-22:54" },
       { employee: employee("2", "Zélia"), schedule: "07:30-11:20 / 13:20-17:54" },
-      { employee: employee("3", "Bia"), schedule: "07:30-11:20 / 13:20-17:54" },
+      { employee: employee("3", "Bia", "Padaria", "Padeiro"), schedule: "07:30-11:20 / 13:20-17:54" },
       { employee: employee("4", "Caio"), schedule: "07:30-11:30 / 13:30-17:54" },
       { employee: employee("5", "Diogo", "Açougue"), schedule: "15:30-19:20 / 21:20-25:54" },
       { employee: employee("6", "Eva"), schedule: "ENC — Sem horário fixo" },
     ];
     expect(sortScheduleEntries(rows).map(item => item.employee.id)).toEqual(["5", "3", "2", "4", "1", "6"]);
     expect(rows[0].employee.id).toBe("1");
+  });
+  it("keeps role, natural registration and exact identity tie-breaks after equal names", () => {
+    const source = [
+      employee("z", "Zélia", "Padaria", "Auxiliar"),
+      { ...employee("b", "Ana", "Padaria", "Padeiro"), registration: "10" },
+      { ...employee("c", "Ana", "Padaria", "Padeiro"), registration: "2" },
+      { ...employee("a", "Ana", "Padaria", "Padeiro"), registration: "2" },
+      employee("d", "Ana", "Padaria", "Auxiliar"),
+    ];
+    expect(sortEmployees(source).map(person => person.id)).toEqual(["d", "a", "c", "b", "z"]);
+    expect(source.map(person => person.id)).toEqual(["z", "b", "c", "a", "d"]);
   });
 });

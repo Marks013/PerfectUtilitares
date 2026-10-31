@@ -72,7 +72,9 @@ describe("large but valid operational reports", () => {
     const rows = await readSheet(Buffer.from(bytes), "Desfalques");
     const coverage = rows.filter(row => row[0] === "2026-11-01");
     expect(coverage.length).toBeGreaterThan(1);
-    expect(coverage.every(row => row[1] === "Setor" && row[2] && row[3] === 0 && row[4] === 32)).toBe(true);
+    expect(coverage.every(row => row[1] === "Setor" && row[2])).toBe(true);
+    expect(coverage[0].slice(3, 5)).toEqual([0, 32]);
+    expect(coverage.slice(1).every(row => row[3] == null && row[4] == null && row[5] == null)).toBe(true);
     expect(coverage.slice(1).every(row => String(row[7]).includes("continuação"))).toBe(true);
     const text = coverage.map(row => row[6]).join(" ");
     for (const person of workspace.input.employees) expect(text).toContain(person.role);

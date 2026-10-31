@@ -21,8 +21,8 @@ export function compareSectors(left: string, right: string): number {
 type DisplayEmployee = Pick<EscalaEmployee, "id" | "name" | "registration" | "sector" | "role">;
 
 function compareEmployeeIdentity(left: DisplayEmployee, right: DisplayEmployee): number {
-  return portuguese.compare(left.role, right.role)
-    || portuguese.compare(left.name, right.name)
+  return portuguese.compare(left.name, right.name)
+    || portuguese.compare(left.role, right.role)
     || portuguese.compare(left.registration, right.registration)
     || exact.compare(left.registration, right.registration)
     || exact.compare(left.id, right.id);
@@ -37,7 +37,7 @@ export function compareProposedSchedules(left: string, right: string): number {
   return a.length - b.length || portuguese.compare(left, right);
 }
 
-/** Hours are grouped before job/name, so equal schedules stay together in each sector. */
+/** Group equal schedules within each sector, then names A–Z before job and identity ties. */
 export function sortScheduleEntries<T extends { employee: DisplayEmployee; schedule: string }>(entries: readonly T[]): T[] {
   return [...entries].sort((left, right) => portuguese.compare(left.employee.sector, right.employee.sector)
     || exact.compare(left.employee.sector, right.employee.sector)
@@ -68,9 +68,5 @@ export function sortHoursEmployees(input: EscalaInput): EscalaEmployee[] {
 export function sortEmployees<T extends Pick<EscalaEmployee, "id" | "name" | "registration" | "sector" | "role">>(employees: readonly T[]): T[] {
   return [...employees].sort((left, right) => portuguese.compare(left.sector, right.sector)
     || exact.compare(left.sector, right.sector)
-    || portuguese.compare(left.role, right.role)
-    || portuguese.compare(left.name, right.name)
-    || portuguese.compare(left.registration, right.registration)
-    || exact.compare(left.registration, right.registration)
-    || exact.compare(left.id, right.id));
+    || compareEmployeeIdentity(left, right));
 }

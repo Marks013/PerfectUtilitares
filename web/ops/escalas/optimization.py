@@ -108,15 +108,32 @@ def _replace_hints(model, values):
     model.proto.solution_hint.values.extend(values.values())
 
 
-def _polish_people(variables, values, groups, limit=18):
-    """One bounded sector, across every week, prioritizing changed people."""
+def _polish_people(variables, values, groups, limit=18, coverage_groups=None,
+                   shortages=None, sunday_shortages=None):
+    """Prioritize remaining coverage, keeping a complete bounded sector movable."""
     changed = {v.name[len('changed:'):]: values[v.index] for v in variables if v.name.startswith('changed:')}
     ranked = sorted((sum(changed.get(pid, 0) for pid in members), tuple(sorted(members)))
                     for members in groups if members)
-    if not ranked:
-        return set()
-    members = ranked[-1][1]
-    return set(sorted(members, key=lambda pid: (-changed.get(pid, 0), pid))[:limit])
+    stable = (set(sorted(ranked[-1][1], key=lambda pid: (-changed.get(pid, 0), pid))[:limit])
+              if ranked else set())
+    snapshot = Snapshot(values)
+    deficient = []
+    for sector, members in (coverage_groups or {}).items():
+        if not members:
+            continue
+        total = snapshot.value(sum((shortages or {}).get(sector, [])))
+        sunday = snapshot.value(sum((sunday_shortages or {}).get(sector, [])))
+        if total > 0 or sunday > 0:
+            members = tuple(sorted(members))
+            deficient.append((sum(changed.get(pid, 0) for pid in members), sunday, total, members))
+    if deficient:
+        members = max(deficient)[-1]
+        # Keep all exchange partners in normal supermarket sectors. Larger
+        # sectors retain a bounded neighborhood rather than growing the budget.
+        # Keep changed-sector exchanges before trying a different sector. Freeing
+        # both sectors made presolve consume this short phase in production.
+        return set(sorted(members, key=lambda pid: (-changed.get(pid, 0), pid))[:36])
+    return stable
 
 
 def _expression_terms(objective):
@@ -133,7 +150,7 @@ def _phase_budget(remaining, names, index):
     return remaining * .5
 
 
-def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None):
+def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None):
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
         raise ValueError('incomplete optimization incumbent')
@@ -151,7 +168,10 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
     plans = [(name, objective, []) for name, objective in zip(names, objectives)]
     first = next((i for i, name in enumerate(names) if name in secondary), len(names))
     if len(names) - first > 1 and all(name in secondary for name in names[first:]):
-        plans = plans[:first] + [('SECONDARY_POLISH', None, list(zip(names[first:], objectives[first:])))]
+        coverage_members = [(name, objective) for name, objective in zip(names[:first], objectives[:first])
+                            if name in ('COVERAGE', 'SUNDAY_COVERAGE') and Snapshot(values).value(objective) > 0]
+        plans = plans[:first] + [('SECONDARY_POLISH', None,
+                                 coverage_members + list(zip(names[first:], objectives[first:])))]
     names = [name for name, _objective, _members in plans]
     protected_groups, active_groups = protected_groups or {}, []
     # Original variable domains do not change during improve. Neighborhoods fix
@@ -225,7 +245,9 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
             if name == 'SECONDARY_POLISH':
-                movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [])
+                movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [],
+                                                coverage_groups=coverage_groups, shortages=sector_coverage,
+                                                sunday_shortages=sunday_coverage)
             weeks = (len(dates) + 6) // 7
             first = (index - 1) % weeks
             movable_weeks = sorted({first, (first + 1) % weeks})

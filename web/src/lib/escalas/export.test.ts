@@ -57,19 +57,17 @@ async function pdfContent(bytes: Uint8Array) {
 }
 
 describe("Escalas shared monthly presentation and real exports", () => {
-  it("prioritizes a dense estimated staffing report while retaining every mandatory gap and every Excel row", async () => {
+  it("keeps every estimated and mandatory sector in alphabetical PDF order and every Excel row", async () => {
     const workspace = fixture();
     workspace.input.demands = Array.from({ length: 80 }, (_, index) => ({ id: `auto-${index}`, date: "2026-11-02", sector: `Setor estimado ${String(index).padStart(2, "0")}`, role: "Função", start: 480, end: 540, minimum: index + 1, estimated: true }));
     workspace.input.demands.push(...Array.from({ length: 28 }, (_, index) => ({ id: `hard-${index}`, date: "2026-11-03", sector: `Obrigatório ${String(index).padStart(2, "0")}`, role: "Função", start: 600, end: 660, minimum: 1, estimated: false })));
     const before = structuredClone(workspace);
     const pages = await pdfContent(await exportEscalaPdf(workspace));
     const text = pages.flat().map(item => item.str).join(" ");
-    expect(text).toContain("24 de 80 grupos estimados");
-    expect(text).toContain("aba Desfalques do Excel");
-    expect(text).toContain("Setor estimado 79");
-    expect(text).not.toContain("Setor estimado 00");
+    expect(text).not.toContain("24 de");
+    for (let index = 0; index < 80; index++) expect(text).toContain(`Setor estimado ${String(index).padStart(2, "0")}`);
     for (let index = 0; index < 28; index++) expect(text).toContain(`Obrigatório ${String(index).padStart(2, "0")}`);
-    expect(pages.length).toBeLessThanOrEqual(9); // A4 uses more pages than the former A3 report.
+    expect(text.indexOf("Setor estimado 00")).toBeLessThan(text.indexOf("Setor estimado 79"));
     const all = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
     expect(all.filter(row => /^2026-11-/.test(String(row[0])))).toHaveLength(108);
     expect(all.some(row => row[1] === "Setor estimado 00")).toBe(true);
@@ -93,7 +91,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(rows[3].slice(0, 4)).toEqual(["Setor", "Matrícula", "Colaborador", "Cargo"]);
     expect(rows[3][5]).toBe("01/11 Dom");
     expect(rows[3].at(-1)).toBe("30/11 Seg");
-    expect(rows.filter(row => row[1]).slice(1).map((row) => row[2])).toEqual(["Ana Gerente", "Áurea Silva"]);
+    expect(rows.filter(row => row[1]).slice(1).map((row) => row[2])).toEqual(["Áurea Silva", "Ana Gerente"]);
     expect(rows.find(row => row[1] === "0002")).toContain("ENC");
     expect(rows.find(row => row[1] === "0001")).toContain("T02");
     expect(rows[4][0]).toBe("Reposição");
@@ -250,16 +248,16 @@ describe("Escalas shared monthly presentation and real exports", () => {
     const before = structuredClone(workspace), bytes = await exportEscalaPdf(workspace);
     const pages = await pdfContent(bytes), text = pages.flat().map(item => item.str).join(" ");
     expect(text).toContain("Desfalques de cobertura");
-    expect(text).toContain("Funções a revisar"); expect(text).toContain("Presentes");
+    expect(text).toContain("Funções / cargos a revisar"); expect(text).toContain("Presentes");
     expect(text).not.toContain("Mensagem antiga incompleta");
     expect(text).not.toContain("situações distintas neste grupo");
     expect(text).toContain("Repositor: 1 presente(s), referência 3 estimada");
     expect(text).toContain("02/11, 09/11"); expect(text).toContain("08:00-10:00");
     expect(text).toContain("10:00-11:00"); expect(text).toContain("Mínimo informado");
     const table = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
-    expect(table[3]).toEqual(["Data", "Setor", "Horário", "Presentes", "Referência", "Base", "Funções a revisar", "Situação"]);
-    expect(table).toContainEqual(["2026-11-02", "Reposição", "Faixa analisada: 08:00-17:24\nDesfalque: 08:00-10:00", 1, 3, "Estimada", "Repositor: 1 presente(s), referência 3 estimada", "Abaixo da estimativa automática"]);
-    expect(table).toContainEqual(["2026-11-03", "Reposição", "Faixa analisada: 08:00-17:24\nDesfalque: 10:00-11:00", 1, 1, "Mínimo informado", "Balconista: 0 presente(s), referência 1 informada", "Mínimo informado não atendido"]);
+    expect(table[3]).toEqual(["Data", "Setor", "Horário com desfalque", "Presentes no setor", "Referência do setor", "Base", "Funções / cargos a revisar", "Faixa analisada"]);
+    expect(table).toContainEqual(["2026-11-02", "Reposição", "08:00-10:00", 1, 3, "Estimada", "Repositor: 1 presente(s), referência 3 estimada", "08:00-17:24"]);
+    expect(table).toContainEqual(["2026-11-03", "Reposição", "10:00-11:00", 1, 1, "Mínimo informado", "Balconista: 0 presente(s), referência 1 informada", "08:00-17:24"]);
     expect(workspace).toEqual(before);
   }, 20000);
 

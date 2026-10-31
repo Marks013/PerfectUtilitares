@@ -418,7 +418,8 @@ def solve(data, control=None):
                                                        + [sum(terms) for terms in visible_sector_coverage.values()]} if goals else {},
                                      employee_groups=list(groups.values()),
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
-                                                      for sector in sunday_coverage}, sunday_coverage=sunday_coverage,
+                                                      for sector in sector_coverage}, sunday_coverage=sunday_coverage,
+                                     sector_coverage=sector_coverage,
                                      decision_variables=decisions)
     # Existing protected disabled records are retained, never allocated or counted as workforce.
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_disabled_records(data)
