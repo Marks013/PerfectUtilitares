@@ -40,4 +40,20 @@ As proteções comparam faltas agregadas por setor e período com o incumbent v�
 - Dados e relatórios de prova estão em `/home/ubuntu/perfectutilitares-reports/escalas-coverage-refinement-2026-10-30`, com diretório 0700 e arquivos 0600; não contêm cópias de segredos.
 - O gate completo e cenários alheios não foram repetidos, conforme o pedido de limitar testes aos fluxos afetados.
 
-A implantação e a identificação final das imagens são registradas no fechamento desta etapa.
+## Fechamento da implantação
+
+Código implantado: `b2f2518dff36033314b055e23132e57ce9fb1be1`. Um único build de aplicação e Solver foi executado após as alterações; não houve rebuild de banco ou serviço de PDFs. Compose válido com acesso normal aos arquivos protegidos; TypeScript e whitespace aprovados. Quatro serviços saudáveis, banco e PDF-worker com os mesmos contêineres anteriores.
+
+- Aplicação: `sha256:5303bb2bdd6c21974ce7a01d48dc76f4a28653468795364c52a133450f2c2c5e`.
+- Solver: `sha256:602346e7848fe0a417c1f96106358520e9a63c3ae2184d77734f9a3767718cac`.
+- Manifesto das fontes: `46b834a3f0342b21e7500cea9b71b81fa055c0dc158f409c2322885c40dd3a5d`.
+- Os nove arquivos Python do runtime foram comparados por SHA-256 com as fontes implantadas.
+- Recuperação preservada: `web-app:rollback-coverage-2224caa` e `web-escalas-solver:rollback-coverage-2224caa`; não é necessário reverter dados ou segredos.
+
+Os três XLSX reais das propostas refinadas preservaram todas as ocorrências: 1.285/679/782 registros em 07/08/11, sem linha idêntica duplicada, falta de dados ou quebra da ordenação. Grades com 136/76/87 colaboradores permaneceram completas. Filtros contêm apenas registros, mesclagens ficam nas três linhas de metadados e seleção coincide com o painel utilizável.
+
+Os PDFs completos das propostas refinadas têm 71/36/42 páginas A4 paisagem, sem texto fora dos limites conferidos nem caixas de texto sobrepostas. A primeira versão integral da mesma proposta 07 tinha 116 páginas: a compactação final removeu repetições de contexto, sem cortar grupos. A página real de desfalques também foi inspecionada visualmente. O PDF completo pode ser maior que o relatório antigo, que omitia grupos estimados após o corte de 24. XLSX foi lido por biblioteca independente; não houve conferência manual em Microsoft Excel ou LibreOffice.
+
+Após a implantação, um novo cálculo real da filial 08 passou pelo cliente autenticado do Solver e pelo verificador independente, com todos os membros conjuntos protegidos. Pelo navegador, login administrativo normal, seleção de 07, geração e download de PDF/XLSX funcionaram; a grade salva corrente gerou PDF de 81 páginas, distinto do arquivo da proposta refinada acima. A tela de 390 px não apresentou overflow global. Nenhuma proposta foi criada, alterada ou publicada nesse smoke.
+
+A assinatura final dos quatro planejamentos e 44 revisões permaneceu `b2936d9832e2caf3d80ba1a78eb8c9e469c81926f172c3ace94d0614835f5c59`. Evidências de build, implantação, geração, exportações e navegador estão no diretório protegido indicado acima. CI e navegação pública não foram acompanhados.
