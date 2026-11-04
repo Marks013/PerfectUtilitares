@@ -6,6 +6,7 @@ import { analyzePdfCompressionProfile } from "./compression-analyzer";
 import { withRasterCompressionSlot } from "./compression-concurrency";
 import {
   buildPreservingImageCandidates,
+  hasEarlyJpegSavings,
   hasRequiredPdfSavings,
   optimizeMonochromeRasterCandidate,
   type PdfCompressionCandidate,
@@ -210,12 +211,14 @@ async function selectCandidateOrOriginal({
   };
 }
 
-async function hasEligibleAdaptiveMonoCandidate(
+async function hasPreferredImageCandidate(
   inputPath: string,
   candidates: PdfCompressionCandidate[],
 ) {
   const adaptive = candidates.find(
-    (candidate) => candidate.kind === "MONO_XOBJECT_JBIG2",
+    (candidate) =>
+      candidate.kind === "MONO_XOBJECT_JBIG2" ||
+      candidate.kind === "JPEG_XOBJECT_RECOMPRESSION",
   );
   if (!adaptive) return false;
   try {
@@ -223,10 +226,14 @@ async function hasEligibleAdaptiveMonoCandidate(
       stat(inputPath),
       stat(adaptive.path),
     ]);
-    return hasRequiredPdfSavings(
-      input.size,
-      output.size,
-      minimumSavingsRatioForCandidate(adaptive),
+    return (
+      (adaptive.kind !== "JPEG_XOBJECT_RECOMPRESSION" ||
+        hasEarlyJpegSavings(input.size, output.size)) &&
+      hasRequiredPdfSavings(
+        input.size,
+        output.size,
+        minimumSavingsRatioForCandidate(adaptive),
+      )
     );
   } catch {
     return false;
@@ -262,6 +269,7 @@ export async function compressPdfFile({
     `${preservingBase}.gs-images.pdf`,
     `${preservingBase}.mono-jbig2.pdf`,
     `${preservingBase}.mono-xobject-jbig2.pdf`,
+    `${preservingBase}.jpeg-xobjects.pdf`,
     `${preservingBase}.deep-opt.pdf`,
     `${preservingBase}.ocr-opt.pdf`,
   ];
@@ -290,6 +298,7 @@ export async function compressPdfFile({
     let outcome: "COMPRESSED" | "UNCHANGED";
     let selectedCandidate: PdfCompressionCandidate | null = null;
     let semanticValidated = false;
+    let integrityRejected = false;
 
     if (plan.strategy === "SKIP") {
       await copyFile(inputPath, reservation.temporaryPath);
@@ -344,9 +353,12 @@ export async function compressPdfFile({
               visualTransform: true,
               lossy: true,
             }),
+          onIntegrityRejection: () => {
+            integrityRejected = true;
+          },
         }),
       );
-      if (!(await hasEligibleAdaptiveMonoCandidate(inputPath, candidates))) {
+      if (!(await hasPreferredImageCandidate(inputPath, candidates))) {
         try {
           await optimizePdfStructure(inputPath, structuralPath);
           await validateStructuralCandidate(inputPath, structuralPath);
@@ -475,7 +487,9 @@ export async function compressPdfFile({
     ];
     const planReason =
       outcome === "UNCHANGED" && plan.strategy !== "SKIP"
-        ? "Nenhum candidato atingiu o ganho mínimo adequado ao tipo de transformação e passou integralmente pelas validações; o original foi preservado."
+        ? integrityRejected
+          ? "Original mantido (0% de redução). Houve falha na verificação de integridade, e nenhuma versão aprovada reduziu o tamanho o suficiente."
+          : "Original mantido (0% de redução). Não foi gerado um PDF menor que atendesse às verificações."
         : selectedCandidate
           ? selectedCandidate.description
           : plan.reason;
@@ -530,7 +544,7 @@ export async function compressPdfFile({
         forms: plan.strategy !== "RASTER",
         bookmarks: plan.strategy !== "RASTER",
         metadata: plan.strategy !== "RASTER",
-        semanticValidated,
+        semanticValidated: changed && semanticValidated,
       },
       textLayerPreserved:
         plan.strategy !== "RASTER" || !profile?.hasOcrLayer,

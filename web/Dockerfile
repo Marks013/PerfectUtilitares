@@ -131,6 +131,7 @@ COPY src/lib/pdf/office-export.py src/lib/pdf/office-export-word.py src/lib/pdf/
 COPY --from=pdf-worker-deps --chown=1001:1001 /app/node_modules ./node_modules
 COPY --from=pdf-worker-builder --chown=1001:1001 /app/dist ./dist
 COPY --chown=1001:1001 src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py
+COPY --chown=1001:1001 src/lib/pdf/jpeg-xobject-resample.py ./jpeg-xobject-resample.py
 COPY ops/container-health/pdf-worker-healthcheck /usr/local/bin/pdf-worker-healthcheck
 RUN chmod 0555 /usr/local/bin/pdf-worker-healthcheck
 ARG SOURCE_REVISION=untracked

@@ -17,6 +17,7 @@ type PdfCompressionCandidateKind =
   | "GS_OCRMYPDF_DEEP"
   | "MONO_JBIG2"
   | "MONO_XOBJECT_JBIG2"
+  | "JPEG_XOBJECT_RECOMPRESSION"
   | "OCRMYPDF_LOSSLESS"
   | "RASTER";
 
@@ -32,6 +33,10 @@ export type PdfCompressionCandidate = {
   appliedMonochromeThreshold?: number;
   notApplied: string[];
 };
+
+export function hasEarlyJpegSavings(inputBytes: number, outputBytes: number) {
+  return outputBytes > 0 && outputBytes <= Math.floor(inputBytes * 0.85);
+}
 
 export function hasRequiredPdfSavings(
   inputBytes: number,
@@ -397,14 +402,86 @@ export async function buildPreservingImageCandidates({
   options,
   profile,
   minimumAdaptiveMonoSavingsRatio = 0.03,
+  onIntegrityRejection,
 }: {
   inputPath: string;
   baseOutputPath: string;
   options: PdfCompressionEffectiveOptions;
   profile: PdfCompressionProfile;
   minimumAdaptiveMonoSavingsRatio?: number;
+  onIntegrityRejection?: () => void;
 }) {
   const candidates: PdfCompressionCandidate[] = [];
+  const reportIntegrityRejection = (error: unknown) => {
+    if (
+      error instanceof PdfToolError &&
+      error.code === "PDF_SEMANTIC_INTEGRITY_FAILED"
+    ) {
+      onIntegrityRejection?.();
+    }
+  };
+
+  if (
+    (profile.contentKind === "SCANNED" || profile.contentKind === "SCANNED_OCR") &&
+    profile.predominantImageEncoding === "JPEG" &&
+    profile.bitsPerComponent === 8 &&
+    options.colorMode !== "MONOCHROME" &&
+    (options.colorMode !== "COLOR" || profile.colorMode === "COLOR") &&
+    ((profile.sourceDpi !== null && profile.sourceDpi > options.dpi) ||
+      (options.colorMode === "GRAYSCALE" && profile.colorMode === "COLOR") ||
+      options.userOverrides.imageQuality)
+  ) {
+    const jpegPath = `${baseOutputPath}.jpeg-xobjects.pdf`;
+    try {
+      await runTool(
+        "python3",
+        [
+          process.env.PDF_JPEG_XOBJECT_RESAMPLER ??
+            "/app/jpeg-xobject-resample.py",
+          inputPath,
+          jpegPath,
+          "--target-dpi",
+          String(options.dpi),
+          "--quality",
+          String(options.imageQuality),
+          "--mode",
+          options.colorMode === "GRAYSCALE" ? "grayscale" : "preserve",
+        ],
+        Math.min(compressionToolTimeoutMs(), 30_000),
+      );
+      const [input, output] = await Promise.all([
+        stat(inputPath),
+        stat(jpegPath),
+      ]);
+      if (
+        output.size > 0 &&
+        hasRequiredPdfSavings(
+          input.size,
+          output.size,
+          minimumAdaptiveMonoSavingsRatio,
+        )
+      ) {
+        await validateSemanticCandidate(inputPath, jpegPath);
+        candidates.push(
+          candidate({
+            path: jpegPath,
+            kind: "JPEG_XOBJECT_RECOMPRESSION",
+            engine: "pikepdf + Pillow",
+            description:
+              "Imagens JPEG recomprimidas sem reescrever as páginas; texto e OCR preservados.",
+            visualTransform: true,
+            lossy: true,
+          }),
+        );
+        if (hasEarlyJpegSavings(input.size, output.size)) return candidates;
+      }
+    } catch (error) {
+      reportIntegrityRejection(error);
+    }
+    if (!candidates.length) {
+      await rm(jpegPath, { force: true }).catch(() => undefined);
+    }
+  }
 
   const adaptiveMonoTargetDpi = resolveAdaptiveMonoXObjectTargetDpi(
     profile,
@@ -467,7 +544,8 @@ export async function buildPreservingImageCandidates({
         lossy: true,
       }),
     );
-  } catch {
+  } catch (error) {
+    reportIntegrityRejection(error);
     await rm(qpdfPath, { force: true }).catch(() => undefined);
   }
 
@@ -545,7 +623,8 @@ export async function buildPreservingImageCandidates({
           await rm(deepPath, { force: true }).catch(() => undefined);
         }
       }
-    } catch {
+    } catch (error) {
+      reportIntegrityRejection(error);
       await rm(gsPath, { force: true }).catch(() => undefined);
     }
   } else if (

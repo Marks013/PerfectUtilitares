@@ -241,10 +241,35 @@ describe("PDF compression control paths", () => {
       temporaryPath: "/tmp/output.partial",
     });
     expect(mocks.discard).not.toHaveBeenCalled();
-    expect(mocks.rm).toHaveBeenCalledTimes(10);
+    expect(mocks.rm).toHaveBeenCalledTimes(11);
     expect(result).toMatchObject({
       artifactId: "output-1",
       sizeBytes: 100n,
+    });
+  });
+
+  it("publishes a validated JPEG result without running additional engines", async () => {
+    mockQpdfClose(0);
+    const jpegPath = "/tmp/output.partial.preserving.jpeg-xobjects.pdf";
+    mocks.stat.mockImplementation(async (filePath: string) => ({
+      size: filePath === "/tmp/input.pdf" ? 200 : 100,
+    }));
+
+    const result = await compressPdfFile({
+      inputStorageKey: "jobs/job-1/input.pdf",
+      jobId: "job-1",
+      options: compressionOptions("AUTO"),
+      outputName: "compressed.pdf",
+    });
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn.mock.calls[0]?.[0]).toBe("python3");
+    expect(mocks.copyFile).toHaveBeenCalledWith(jpegPath, "/tmp/output.partial");
+    expect(mocks.rm).toHaveBeenCalledWith(jpegPath, { force: true });
+    expect(result).toMatchObject({
+      outcome: "COMPRESSED",
+      selectedCandidate: { kind: "JPEG_XOBJECT_RECOMPRESSION" },
+      preservation: { semanticValidated: true },
     });
   });
 
@@ -267,7 +292,7 @@ describe("PDF compression control paths", () => {
     expect(mocks.discard).toHaveBeenCalledWith({
       temporaryPath: "/tmp/output.partial",
     });
-    expect(mocks.rm).toHaveBeenCalledTimes(10);
+    expect(mocks.rm).toHaveBeenCalledTimes(11);
   });
 
   it("discards the reservation when raster compression exceeds the render limit", async () => {
@@ -292,7 +317,7 @@ describe("PDF compression control paths", () => {
     expect(mocks.discard).toHaveBeenCalledWith({
       temporaryPath: "/tmp/output.partial",
     });
-    expect(mocks.rm).toHaveBeenCalledTimes(10);
+    expect(mocks.rm).toHaveBeenCalledTimes(11);
   });
 
   it("rejects raster compression above the thousand-page safety limit", async () => {
