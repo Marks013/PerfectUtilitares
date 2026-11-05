@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   enforcePersistentRateLimit,
@@ -15,12 +16,37 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 const HISTORY_RETENTION_DAYS = 30;
+const HISTORY_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
+let nextHistoryCleanupAt = 0;
+let historyCleanupPending = false;
 const selectedDeleteSchema = z.object({
   ids: z
     .array(z.string().min(8).max(64))
     .min(1, "Selecione ao menos uma validação para excluir.")
     .max(100, "Selecione no máximo 100 validações por exclusão."),
 });
+
+function scheduleExpiredHistoryCleanup(retentionLimit: Date) {
+  if (historyCleanupPending || Date.now() < nextHistoryCleanupAt) return;
+  historyCleanupPending = true;
+
+  after(async () => {
+    try {
+      await prisma.jornadaValidation.deleteMany({
+        where: { createdAt: { lt: retentionLimit } },
+      });
+    } catch {
+      console.warn("[jornada] history retention cleanup failed");
+      Sentry.captureMessage("Jornada history retention cleanup failed", {
+        level: "warning",
+        tags: { module: "jornada", operation: "history-retention" },
+      });
+    } finally {
+      nextHistoryCleanupAt = Date.now() + HISTORY_CLEANUP_INTERVAL_MS;
+      historyCleanupPending = false;
+    }
+  });
+}
 
 export async function GET(request: Request) {
   const guard = await requireSession();
@@ -52,26 +78,23 @@ export async function GET(request: Request) {
     return jsonError(403, "FORBIDDEN", "Sem permissão");
   }
 
-  const where =
-    scope === "all"
-      ? {}
-      : { userId: guard.session.user.id };
   const retentionLimit = new Date(
     Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
   );
-
-  await prisma.jornadaValidation.deleteMany({
-    where: { createdAt: { lt: retentionLimit } },
-  });
-
   const historico = await prisma.jornadaValidation.findMany({
-    where,
+    where: {
+      createdAt: { gte: retentionLimit },
+      ...(scope === "mine" ? { userId: guard.session.user.id } : {}),
+    },
     include: { user: { select: { name: true, email: true } } },
     orderBy: { createdAt: "desc" },
     take: 100,
   });
 
-  return NextResponse.json(historico);
+  scheduleExpiredHistoryCleanup(retentionLimit);
+  return NextResponse.json(historico, {
+    headers: { "Cache-Control": "private, no-store" },
+  });
 }
 
 export function POST() {

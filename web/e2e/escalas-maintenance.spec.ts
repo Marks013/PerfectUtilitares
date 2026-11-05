@@ -12,7 +12,8 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   const suffix = Date.now().toString(36);
   const branch = `E2E-${suffix}`;
   await page.goto("/escala");
-  await page.getByText("Novo planejamento", { exact: true }).click();
+  await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
+  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill(branch);
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Filial sintética E2E");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
@@ -103,6 +104,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     expect.objectContaining({ employeeId: bruno.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0], locked: true }),
   ]));
   await page.setViewportSize({ width: 375, height: 812 });
+  if (!await page.getByRole("button", { name: "Ajustes", exact: true }).isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
   await page.getByRole("button", { name: "Ajustes", exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
@@ -123,7 +125,8 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
 
 test("one journey controls a full FPRE136 simulation, stale outputs and actual PDF/XLSX downloads across screen sizes", async ({ page }) => {
   await page.goto("/escala");
-  await page.getByText("Novo planejamento", { exact: true }).click();
+  await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
+  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Supermercado sintético E2E");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
@@ -132,6 +135,7 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   const created: EscalaWorkspace = await (await creating).json();
   const journey = page.getByLabel("Jornada semanal", { exact: true });
   await expect(journey).toHaveCount(1);
+  await page.locator('button[aria-controls="escala-area-generate"]').click();
   await journey.selectOption("44");
   const rows: string[][] = [["0001", "-", "Empresa sintética", "Pág.:", "1"], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"], ["02.01 , ICARAIMA, LOJA"], ["Horário:", "0026", "-", "07:00 11:00 13:00 16:20"]];
   for (const [registration, name, role, zero, short] of [
@@ -145,6 +149,7 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
     rows.push(["Sábado:", zero ? "00:00" : "07:00", "-", zero ? "00:00" : "11:00", zero || short ? "00:00" : "13:00", "-", zero || short ? "00:00" : "16:20", zero ? "00:00" : "07:00", "0026"]);
   }
   const csv = rows.map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(",")).join("\r\n");
+  await page.locator('button[aria-controls="escala-area-team"]').click();
   await page.getByLabel("Arquivo CSV ou XLSX", { exact: true }).setInputFiles({ name: "FPRE136-sintetico.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
   await page.getByRole("button", { name: "Conferir arquivo", exact: true }).click();
   await expect(page.getByText("Prévia: 5 colaboradores aceitos de 5 linhas.", { exact: true })).toBeVisible();
@@ -152,7 +157,7 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   await journey.selectOption("42");
   await expect(page.getByText("08:24", { exact: true })).toBeVisible();
   const generating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
-  await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
+  await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);
   const generated = await generatedResponse.json();
@@ -192,15 +197,19 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
     expect(bytes.subarray(0, format === "PDF" ? 4 : 2).toString()).toBe(format === "PDF" ? "%PDF" : "PK");
     await expect(page.getByRole("article", { name: `Arquivo ${format}`, exact: true }).getByText("Pronto para baixar", { exact: true })).toBeVisible();
   }
+  await page.locator('button[aria-controls="escala-area-generate"]').click();
   await journey.selectOption("40");
+  await page.locator('button[aria-controls="escala-area-roster"]').click();
   await expect(page.getByText("Cenário alterado.", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
+  await page.locator('button[aria-controls="escala-area-generate"]').click();
   for (const width of [375, 768, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(journey).toBeVisible();
   }
+  if (!await page.getByRole("button", { name: "Ajustes", exact: true }).isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
   await page.getByRole("button", { name: "Ajustes", exact: true }).click();
   await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
   await page.getByRole("dialog", { name: "Excluir este planejamento?", exact: true }).getByRole("button", { name: "Confirmar exclusão", exact: true }).click();

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readMultipartBody } from "@/lib/api/multipart";
 import { parseCodigoImportBuffer, parseCodigoJson } from "@/lib/codigos/importer";
 import { persistCodigoImport } from "@/lib/codigos/repository";
 import {
@@ -27,8 +28,7 @@ function hasAcceptedExtension(fileName: string) {
   );
 }
 
-async function parseMultipartRequest(request: Request) {
-  const formData = await request.formData();
+async function parseMultipartImport(formData: FormData) {
   const file = formData.get("file");
 
   if (!(file instanceof File)) {
@@ -105,9 +105,14 @@ export async function POST(request: Request) {
     });
     if (capacityError) return capacityError;
 
-    const parsed = contentType.includes("application/json")
-      ? await parseJsonRequest(request)
-      : await parseMultipartRequest(request);
+    const multipart = contentType.includes("application/json")
+      ? null
+      : await readMultipartBody(request, MAX_IMPORT_BYTES);
+    if (multipart && !multipart.ok) return multipart.response;
+
+    const parsed = multipart
+      ? await parseMultipartImport(multipart.data)
+      : await parseJsonRequest(request);
 
     const result = await persistCodigoImport(prisma, parsed);
 

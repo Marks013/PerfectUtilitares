@@ -23,7 +23,7 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
     await page.goto("/escala");
     await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
     const started = page.waitForResponse(result => result.url().endsWith("/api/escalas") && result.request().method() === "POST" && result.request().postDataJSON()?.action === "START_GENERATION");
-    await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
+    await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
     const registration = await started;
     expect(registration.status()).toBe(201);
     operationId = (await registration.json()).operationId;
@@ -42,7 +42,7 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
     expect(unchanged.revision).toBe(created.revision);
     expect(unchanged.input.assignments).toEqual(created.input.assignments);
     const completed = page.waitForResponse(result => result.url().endsWith("/api/escalas") && result.request().method() === "POST" && result.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
-    await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
+    await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
     const calculation = await completed;
     expect(calculation.status()).toBe(200);
     const proposal = await calculation.json();
@@ -56,8 +56,9 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     }
+    await page.getByRole("navigation", { name: "Etapas do planejamento", exact: true }).getByRole("button", { name: /^Escolher jornada e gerar/ }).click();
     const thirdRegistration = page.waitForResponse(result => result.url().endsWith("/api/escalas") && result.request().method() === "POST" && result.request().postDataJSON()?.action === "START_GENERATION");
-    await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
+    await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
     operationId = (await (await thirdRegistration).json()).operationId;
     await expect.poll(async () => (await post({ action: "GENERATION_STATUS", operationId }).then(result => result.json())).state, { timeout: 10_000, intervals: [150, 250] }).toBe("RUNNING");
     // Full-page navigation must issue keepalive cancellation, not only discard the preview.

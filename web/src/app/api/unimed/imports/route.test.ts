@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { oversizedMultipartRequest } from "@/test/oversized-multipart";
 import "@/test/unimed-route-rate-limit.mock";
 
 const mocks = vi.hoisted(() => ({
@@ -198,6 +199,13 @@ beforeEach(() => {
 });
 
 describe("Unimed import API", () => {
+  it("enforces the multipart byte cap without Content-Length", async () => {
+    const request = oversizedMultipartRequest("/api/unimed/imports", 21);
+    const response = await POST(request);
+    expect(response.status).toBe(413);
+    expect(mocks.parseBeneficiaryCsvFiles).not.toHaveBeenCalled();
+  });
+
   it("accepts only POST", () => {
     const response = GET();
 

@@ -78,9 +78,11 @@ jobs:
 
       - name: Audit dependencies
         run: |
-          npm audit --audit-level=high
-          npm --prefix ops/pdf-worker audit --audit-level=high
-          npm --prefix ops/migrator audit --audit-level=high
+          npm audit --audit-level=moderate
+          npm --prefix ops/pdf-worker audit --audit-level=moderate
+          npm --prefix ops/migrator audit --audit-level=moderate
+          node --test scripts/audit-python-locks.test.mjs
+          npm run security:python
 
       - name: Deploy database migrations
         run: npm run prisma:generate && npm run db:deploy

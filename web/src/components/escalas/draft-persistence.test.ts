@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
+import { escalaInputSchema } from "@/lib/escalas/schema";
 import { newInput } from "./workspace-model";
 import { DraftSaveQueue, parseSavedWorkspace, sameDraft } from "./draft-persistence";
 import { EscalaRequestError } from "./workspace-feedback-model";
 
-function base(): EscalaWorkspace { return { id: "draft", revision: 3, input: newInput("02", "Loja", "2026-11", 42), status: "DRAFT", updatedAt: "2026-10-29T00:00:00Z", validation: { valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: null }, canEdit: true, canPublish: false }; }
+function base(): EscalaWorkspace { return { id: "draft", revision: 3, input: escalaInputSchema.parse(newInput("02", "Loja", "2026-11", 42)), status: "DRAFT", updatedAt: "2026-10-29T00:00:00Z", validation: { valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: null }, canEdit: true, canPublish: false }; }
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (cause: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 function setup(send = vi.fn(async (saved: EscalaWorkspace, input: EscalaWorkspace["input"]) => ({ ...saved, input, revision: saved.revision + 1 })), load = vi.fn(async () => base())) {
   const onSaved = vi.fn(), onState = vi.fn(); const queue = new DraftSaveQueue({ send, load, onSaved, onState }); queue.select(base()); return { queue, send, load, onSaved, onState };

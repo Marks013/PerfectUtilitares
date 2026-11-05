@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { readMultipartBody } from "@/lib/api/multipart";
 import {
   enforcePersistentRateLimit,
   jsonError,
@@ -59,7 +60,8 @@ export async function POST(request: Request) {
       "Não foi possível confirmar o tamanho do envio. Selecione o arquivo novamente e tente outra vez.",
     );
   }
-  const lengthError = requireMaxContentLength(request, MAX_FILE_BYTES + 1024 * 1024);
+  const requestLimit = MAX_FILE_BYTES + 1024 * 1024;
+  const lengthError = requireMaxContentLength(request, requestLimit);
   if (lengthError) return lengthError;
   const capacityError = await requireResourceCapacity({
     inputBytes: getRequestContentLength(request),
@@ -70,16 +72,16 @@ export async function POST(request: Request) {
     let stage = "upload";
     let inputBytes = 0;
     try {
-      let formData: FormData;
-      try {
-        formData = await request.formData();
-      } catch {
+      const multipart = await readMultipartBody(request, requestLimit);
+      if (!multipart.ok) {
+        if (multipart.response.status === 413) return multipart.response;
         return jsonError(
           400,
           "REAJUSTE_WORKBOOK_INVALID",
           "Não foi possível ler o arquivo enviado.",
         );
       }
+      const formData = multipart.data;
       const file = validateSalaryRevisionFile(formData.get("file"));
       inputBytes = file.size;
       const uploadedBytes = Buffer.from(await file.arrayBuffer());

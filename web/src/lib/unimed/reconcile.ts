@@ -38,14 +38,21 @@ export function reconcileUnimedSources(
       beneficiary,
     ]);
   }
+  const registrationCountsByBranch = new Map<string, Map<string, number>>();
   const registrations = new Map<string, ParsedBeneficiary[]>();
   for (const beneficiary of beneficiaries) {
-    if (!beneficiary.registration) continue;
+    const branch = key(beneficiary.branchCode);
     const registration = key(beneficiary.registration);
-    registrations.set(registration, [
-      ...(registrations.get(registration) ?? []),
-      beneficiary,
-    ]);
+    let counts = registrationCountsByBranch.get(branch);
+    if (!counts) {
+      counts = new Map<string, number>();
+      registrationCountsByBranch.set(branch, counts);
+    }
+    counts.set(registration, (counts.get(registration) ?? 0) + 1);
+    if (!beneficiary.registration) continue;
+    const matches = registrations.get(registration);
+    if (matches) matches.push(beneficiary);
+    else registrations.set(registration, [beneficiary]);
   }
   const beneficiariesByRegistration = new Map(
     [...registrations.entries()]
@@ -114,21 +121,21 @@ export function reconcileUnimedSources(
       };
     }
     if (registration) {
+      const branch = key(branchCode);
+      const normalizedRegistration = key(registration);
       const byRegistration = beneficiariesByBranchAndRegistration.get(
-        `${key(branchCode)}|${key(registration)}`,
+        `${branch}|${normalizedRegistration}`,
       );
       if (byRegistration) {
         return { beneficiary: byRegistration, reason: null };
       }
-      const registrationMatches = beneficiaries.filter(
-        (beneficiary) =>
-          key(beneficiary.branchCode) === key(branchCode) &&
-          key(beneficiary.registration) === key(registration),
-      );
+      const registrationCount =
+        registrationCountsByBranch.get(branch)?.get(normalizedRegistration) ??
+        0;
       return {
         beneficiary: null,
         reason:
-          registrationMatches.length > 1
+          registrationCount > 1
             ? "REGISTRATION_AMBIGUOUS"
             : "REGISTRATION_NOT_FOUND",
       };
@@ -203,10 +210,17 @@ export function reconcileUnimedSources(
     ),
   );
 
+  const invoiceHasHolderNameBySourceKey = new Map<string, boolean>();
   const holderByDependentSourceKey = new Map<string, string>();
   for (const { item, beneficiary } of invoiceMatches) {
+    if (!beneficiary) continue;
+    invoiceHasHolderNameBySourceKey.set(
+      beneficiary.sourceKey,
+      Boolean(item.holderName) ||
+        (invoiceHasHolderNameBySourceKey.get(beneficiary.sourceKey) ?? false),
+    );
     if (
-      beneficiary?.category !== "DEPENDENT" ||
+      beneficiary.category !== "DEPENDENT" ||
       !item.holderName ||
       holderByDependentSourceKey.has(beneficiary.sourceKey)
     ) {
@@ -305,16 +319,15 @@ export function reconcileUnimedSources(
         !holderByDependentSourceKey.has(beneficiary.sourceKey),
     )
     .map((beneficiary) => {
-      const matchedItems = invoiceMatches.filter(
-        ({ beneficiary: matched }) =>
-          matched?.sourceKey === beneficiary.sourceKey,
+      const hasHolderName = invoiceHasHolderNameBySourceKey.get(
+        beneficiary.sourceKey,
       );
       const reason =
-        matchedItems.length === 0
+        hasHolderName === undefined
           ? ("INVOICE_REFERENCE_MISSING" as const)
-          : matchedItems.every(({ item }) => !item.holderName)
-            ? ("HOLDER_NAME_MISSING" as const)
-            : ("HOLDER_NOT_UNIQUE" as const);
+          : hasHolderName
+            ? ("HOLDER_NOT_UNIQUE" as const)
+            : ("HOLDER_NAME_MISSING" as const);
       return {
         sourceKey: beneficiary.sourceKey,
         branchCode: beneficiary.branchCode,

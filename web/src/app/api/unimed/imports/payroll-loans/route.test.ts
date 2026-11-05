@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { oversizedMultipartRequest } from "@/test/oversized-multipart";
 import "@/test/unimed-route-rate-limit.mock";
 
 const mocks = vi.hoisted(() => ({
@@ -103,6 +104,13 @@ const parsedSource = {
 };
 
 describe("Unimed payroll loan import route", () => {
+  it("enforces the multipart byte cap without Content-Length", async () => {
+    const request = oversizedMultipartRequest("/api/unimed/imports/payroll-loans", 11);
+    const response = await POST(request);
+    expect(response.status).toBe(413);
+    expect(mocks.readXlsxFile).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.requireUnimedAccess.mockResolvedValue({

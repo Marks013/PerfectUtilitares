@@ -50,7 +50,14 @@ describe("/api/escalas/export", () => {
     const rows = await readSheet(bytes);
     expect(rows[3].slice(0, 4)).toEqual(["Setor", "Matrícula", "Colaborador", "Cargo"]);
     expect(rows[3]).toHaveLength(12);
-    expect(rows.some(row => row[0] === "Setor: Açougue")).toBe(true);
+    expect(rows).toHaveLength(6);
+    expect(rows.slice(4).map(row => row.slice(0, 4))).toEqual([
+      ["Açougue", "0002", "=FORMULA", "Açougueiro"],
+      ["Reposição", "0001", "Ána Silva", "Repositor"],
+    ]);
+    expect(rows.some(row => row[0] === "Setor: Açougue")).toBe(false);
+    expect(content).toContain('<autoFilter ref="A4:L6"/>');
+    expect(content).toContain('<mergeCells count="3">');
     expect(rows.find(row => row[2] === "=FORMULA")?.slice(0, 4)).toEqual(["Açougue", "0002", "=FORMULA", "Açougueiro"]);
     const ana = rows.find((row) => row[2] === "Ána Silva");
     expect(ana?.slice(5)).toEqual(["T01", "NP", "NP", "NP", "NP", "NP", "NP"]);

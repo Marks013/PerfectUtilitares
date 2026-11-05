@@ -118,6 +118,12 @@ beforeEach(() => {
 });
 
 describe("salary revision PDF API", () => {
+  it("keeps rejecting uploads without Content-Length", async () => {
+    const withoutLength = request();
+    withoutLength.headers.delete("content-length");
+    expect((await POST(withoutLength)).status).toBe(411);
+  });
+
   it("calculates selected general and own percentage rules on the server", async () => {
     const rules = JSON.stringify([
       { id: "general", name: "Geral", minimumSalaryCents: "203194", maximumSalaryCents: "203194", selectedRegistrations: ["4"], calculation: "general_percentage", roleFilter: "cáixa" },

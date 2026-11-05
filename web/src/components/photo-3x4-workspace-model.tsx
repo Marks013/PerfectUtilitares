@@ -100,6 +100,37 @@ export async function getErrorMessage(response: Response) {
   }
 }
 
+export function describePhotoZipResult(headers: Headers, requestedCount: number) {
+  const readCount = (name: string) => {
+    const value = headers.get(name);
+    return value && /^\d+$/.test(value) ? Number(value) : NaN;
+  };
+  const processed = readCount("X-Processed-Count");
+  const failed = readCount("X-Error-Count");
+  const total = readCount("X-Total-Count");
+
+  if (
+    total !== requestedCount ||
+    !Number.isSafeInteger(processed) ||
+    !Number.isSafeInteger(failed) ||
+    processed <= 0 ||
+    processed + failed !== total
+  ) {
+    return { label: "Confira quantas fotos entraram no ZIP.", hasWarning: true };
+  }
+
+  if (failed > 0) {
+    return {
+      label: `${processed} de ${total} fotos processadas. ${failed} ${failed === 1 ? "não entrou" : "não entraram"} no ZIP.`,
+      hasWarning: true,
+    };
+  }
+  return {
+    label: total === 1 ? "1 foto processada" : `${total} fotos processadas`,
+    hasWarning: false,
+  };
+}
+
 export function getDownloadFileName(response: Response, fallback: string) {
   const disposition = response.headers.get("content-disposition") ?? "";
   const match = disposition.match(/filename="([^"]+)"/);

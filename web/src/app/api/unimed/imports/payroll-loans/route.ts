@@ -1,6 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { NextResponse } from "next/server";
 import readXlsxFile from "read-excel-file/node";
+import { readMultipartBody } from "@/lib/api/multipart";
 import {
   enforcePersistentRateLimit,
   jsonError,
@@ -70,16 +71,16 @@ export async function POST(request: Request) {
   );
   if (contentLengthError) return contentLengthError;
 
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
+  const multipart = await readMultipartBody(request, MAX_REQUEST_BYTES);
+  if (!multipart.ok) {
+    if (multipart.response.status === 413) return multipart.response;
     return jsonError(
       400,
       "UNIMED_MULTIPART_INVALID",
       "Não foi possível ler o arquivo enviado.",
     );
   }
+  const formData = multipart.data;
   const competency = unimedCompetencySchema.safeParse({
     year: Number(formData.get("year")),
     month: Number(formData.get("month")),

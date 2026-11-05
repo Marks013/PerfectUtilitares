@@ -62,9 +62,13 @@ function referenceTotal(demands: EscalaInput["demands"]) {
   return Math.max(general, [...roles.values()].reduce((sum, count) => sum + count, 0));
 }
 
-export function coverageTimeline(input: EscalaInput, date: string, sector: string, index = buildCoveragePresence(input)) {
+function timelineForDemands(
+  date: string,
+  sector: string,
+  index: CoveragePresence,
+  demands: EscalaInput["demands"],
+) {
   const intervals = index.get(key(date, sector)) ?? [];
-  const demands = input.demands.filter(demand => demand.date === date && demand.sector === sector);
   const points = [...new Set([...intervals.flatMap(interval => [interval.start, interval.end]), ...demands.flatMap(demand => [demand.start, demand.end])])].sort((a, b) => a - b);
   return points.slice(0, -1).map((start, position) => {
     const end = points[position + 1], people = coverageAt(index, date, sector, start);
@@ -72,6 +76,15 @@ export function coverageTimeline(input: EscalaInput, date: string, sector: strin
     return { start, end, people, present: people.length, minimum: referenceTotal(references.filter(demand => demand.estimated !== true)),
       estimate: referenceTotal(references.filter(demand => demand.estimated === true)), hasReference: references.length > 0 };
   });
+}
+
+export function coverageTimeline(input: EscalaInput, date: string, sector: string, index = buildCoveragePresence(input)) {
+  return timelineForDemands(
+    date,
+    sector,
+    index,
+    input.demands.filter(demand => demand.date === date && demand.sector === sector),
+  );
 }
 
 function suggestion(estimated: boolean, roles: CoverageRoleGap[]) {
@@ -82,13 +95,24 @@ function suggestion(estimated: boolean, roles: CoverageRoleGap[]) {
 
 /** One operational occurrence per sector/date/exact slice, with deficient functions as context. */
 export function sectorCoverageGaps(input: EscalaInput, index = buildCoveragePresence(input)): SectorCoverageGap[] {
-  const dates = new Set(visibleDates(input)), groups = new Map<string, { date: string; sector: string }>();
-  for (const demand of input.demands) if (dates.has(demand.date) && demand.minimum > 0) groups.set(key(demand.date, demand.sector), demand);
+  const dates = new Set(visibleDates(input));
+  const groups = new Map<string, EscalaInput["demands"]>();
+  const groupsWithMinimum = new Set<EscalaInput["demands"]>();
+  for (const demand of input.demands) {
+    if (!dates.has(demand.date)) continue;
+    const groupKey = key(demand.date, demand.sector);
+    const group = groups.get(groupKey) ?? [];
+    group.push(demand);
+    groups.set(groupKey, group);
+    if (demand.minimum > 0) groupsWithMinimum.add(group);
+  }
+
   const result: SectorCoverageGap[] = [];
-  for (const { date, sector } of groups.values()) {
+  for (const group of groupsWithMinimum) {
+    const { date, sector } = group[0];
     let previous: SectorCoverageGap | undefined;
-    const demands = input.demands.filter(demand => demand.date === date && demand.sector === sector && demand.minimum > 0);
-    for (const slice of coverageTimeline(input, date, sector, index)) {
+    const demands = group.filter(demand => demand.minimum > 0);
+    for (const slice of timelineForDemands(date, sector, index, group)) {
       const references = demands.filter(demand => demand.start <= slice.start && demand.end >= slice.end);
       const roleGroups = new Map<string, CoverageRoleGap>();
       for (const demand of references) if (demand.role) {

@@ -13,7 +13,8 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   const csv = await readFile(process.env.E2E_REAL_CSV_PATH!);
   await loginAsAdmin(page);
   await page.goto("/escala");
-  await page.getByText("Novo planejamento", { exact: true }).click();
+  await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
+  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Validação privada isolada");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
@@ -23,7 +24,9 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   expect(createdResponse.status()).toBe(201);
   const created: EscalaWorkspace = await createdResponse.json();
   const journey = page.getByLabel("Jornada semanal", { exact: true });
+  await page.locator('button[aria-controls="escala-area-generate"]').click();
   await journey.selectOption("44");
+  await page.locator('button[aria-controls="escala-area-team"]').click();
   await page.getByLabel("Arquivo CSV ou XLSX", { exact: true }).setInputFiles({ name: "FPRE136.CSV", mimeType: "text/csv", buffer: csv });
   const importing = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas/import"));
   await page.getByRole("button", { name: "Conferir arquivo", exact: true }).click();
@@ -36,7 +39,7 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
   await journey.selectOption("42");
   const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
-  await page.getByRole("button", { name: "Gerar proposta mensal", exact: true }).click();
+  await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);
   const generated = await generatedResponse.json();

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { oversizedMultipartRequest } from "@/test/oversized-multipart";
 import { beforeSendScrubber } from "@/sentry.shared";
 import { strToU8, zipSync } from "fflate";
 
@@ -136,6 +137,16 @@ beforeEach(() => {
 });
 
 describe("salary adjustment PDF API", () => {
+  it("requires Content-Length and caps the actual stream", async () => {
+    const withoutLength = request([]);
+    withoutLength.headers.delete("content-length");
+    expect((await POST(withoutLength)).status).toBe(411);
+
+    const oversized = oversizedMultipartRequest("/api/reajuste-salarial/gerar", 21);
+    oversized.headers.set("content-length", "1");
+    expect((await POST(oversized)).status).toBe(413);
+  });
+
   it.each(["summary", "detailed"])("applies latest presence to real %s PDFs and both events, preserving a zero base", async (reportType) => {
     await useRealPipeline();
     const files = [monthlyWorkbook("01-2027.xlsx", "170,00", "EMPRESA TESTE", "Trabalhando", "OPERADOR", "2", "0,00"), monthlyWorkbook("12-2026.xlsx")];

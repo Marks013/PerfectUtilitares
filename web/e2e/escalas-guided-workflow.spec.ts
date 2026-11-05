@@ -28,9 +28,22 @@ async function fixture(page: Page, suffix: string) {
   expect(response.status()).toBe(201);
   return response.json() as Promise<EscalaWorkspace>;
 }
-async function open(page: Page, workspace: EscalaWorkspace) {
+async function selectStep(page: Page, step: "generate" | "roster") {
+  await page.getByRole("navigation", { name: "Etapas do planejamento", exact: true })
+    .getByRole("button", { name: step === "generate" ? /^Escolher jornada e gerar/ : /^Revisar e exportar/ })
+    .click();
+}
+async function selectAdjustments(page: Page) {
+  const navigation = page.getByRole("navigation", { name: "Áreas do planejamento", exact: true });
+  if (!await navigation.isVisible()) {
+    await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
+  }
+  await navigation.getByRole("button", { name: "Ajustes", exact: true }).click();
+}
+async function open(page: Page, workspace: EscalaWorkspace, step: "generate" | "roster" = "generate") {
   await page.goto("/escala");
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+  await selectStep(page, step);
   await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue(String(workspace.input.defaultWeeklyHours));
 }
 async function read(page: Page, id: string) {
@@ -72,6 +85,7 @@ test("autosave serializes real writes and a delayed acknowledgement never replac
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
     await page.reload();
     await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectStep(page, "generate");
     await expect(journey).toHaveValue("44");
   } finally { release.release(); await page.unrouteAll({ behavior: "wait" }); await cleanup(page, workspace.id); }
 });
@@ -97,6 +111,7 @@ test("a lost acknowledgement is reconciled by GET without duplicating a committe
     expect(writes).toBe(1); expect(reads).toBeGreaterThan(0);
     await page.reload();
     await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectStep(page, "generate");
     await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue("40");
   } finally { await page.unrouteAll({ behavior: "wait" }); await cleanup(page, workspace.id); }
 });
@@ -152,6 +167,7 @@ test("an external revision conflict preserves both the newer server content and 
     page.once("dialog", dialog => void dialog.accept());
     await page.reload();
     await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectStep(page, "generate");
     await expect(page.getByRole("alert", { name: "Rascunho recuperável", exact: true })).toBeVisible();
     await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue("42");
     await expect(page.getByLabel("Jornada semanal", { exact: true })).toBeDisabled();
@@ -168,7 +184,7 @@ test("the main workspace prepares real files for the exact saved revision and in
   await loginAsAdmin(page);
   const workspace = await fixture(page, "files");
   try {
-    await open(page, workspace);
+    await open(page, workspace, "roster");
     await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
     for (const format of ["PDF", "XLSX"] as const) {
       await page.getByRole("button", { name: "Gerar " + format, exact: true }).click();
@@ -181,17 +197,21 @@ test("the main workspace prepares real files for the exact saved revision and in
       else { const files = unzipSync(bytes), book = strFromU8(files["xl/workbook.xml"]); expect(book).toContain('name="Escala"'); expect(book).toContain('name="Horarios"'); expect(book).not.toMatch(/name="(?:Conferencia|Turnos|Jornadas)"/); }
       await download.delete();
     }
+    await selectStep(page, "generate");
     await page.getByLabel("Jornada semanal", { exact: true }).selectOption("40");
     await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
+    await selectStep(page, "roster");
     await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
+    await selectStep(page, "generate");
     await page.locator("#escala-adjust-hours-title").click();
     await page.getByRole("button", { name: "Ajustar horários no rascunho", exact: true }).click();
     const solving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
-    await page.locator('section[aria-labelledby="escala-scenario-title"]').getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
+    await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
     const solution = await (await solving).json(); expect(["FEASIBLE", "OPTIMAL"]).toContain(solution.result.status); expect(solution.validation.valid).toBe(true);
     await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
     const saved = await read(page, workspace.id); expect(saved.input.defaultWeeklyHours).toBe(40); expect(saved.status).toBe("DRAFT");
+    await selectStep(page, "roster");
     await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
     const downloading = page.waitForEvent("download"); await page.getByRole("link", { name: "Baixar PDF", exact: true }).click();
     const download = await downloading; expect(download.suggestedFilename()).toContain("-r" + saved.revision + "-both.pdf"); await download.delete();
@@ -229,6 +249,7 @@ test("shared operational access is independent, scoped, revocable and restores a
     expect((await page.request.get("/api/unimed/access/session")).status()).toBe(401);
     expect((await page.request.post("/api/unimed/access/session", { headers: { origin }, data: { password } })).status()).toBe(200);
     await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectStep(page, "generate");
     await page.getByLabel("Jornada semanal", { exact: true }).selectOption("40");
     await page.getByRole("button", { name: "Bloquear Escalas", exact: true }).click();
     await expect(page.getByLabel("Senha operacional", { exact: true })).toBeVisible();
@@ -239,6 +260,7 @@ test("shared operational access is independent, scoped, revocable and restores a
     for (const action of ["SAVE", "GENERATE", "VALIDATE"] as const) expect((await page.request.post("/api/escalas", { headers: { origin }, data: { action, id: workspace.id, expectedRevision: workspace.revision, input: workspace.input } })).status()).toBe(401);
     expect((await page.request.delete("/api/escalas", { headers: { origin }, data: { workspaceId: workspace.id, expectedRevision: workspace.revision } })).status()).toBe(401);
     await unlock();
+    await selectStep(page, "generate");
     await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue("40");
     await expect.poll(async () => (await read(admin, workspace.id)).input.defaultWeeklyHours).toBe(40);
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
@@ -249,6 +271,7 @@ test("shared operational access is independent, scoped, revocable and restores a
     await expect(page.getByLabel("Senha operacional", { exact: true })).toBeVisible();
     await expect(page.getByText(/seu rascunho foi mantido nesta tela/)).toBeVisible();
     await unlock();
+    await selectStep(page, "generate");
     await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue("44");
     await expect.poll(async () => (await read(admin, workspace.id)).input.defaultWeeklyHours).toBe(44);
     const saved = await read(admin, workspace.id); expect(saved.status).toBe("DRAFT");
@@ -276,11 +299,13 @@ test("autosave resumes after a long independent validation without requiring ano
       if (route.request().method() === "POST" && route.request().postDataJSON()?.action === "VALIDATE") { captured.release(); await release.promise; }
       await route.continue();
     });
-    await page.getByRole("button", { name: "Ajustes", exact: true }).click();
+    await selectAdjustments(page);
     await expect(page.getByRole("button", { name: "Conferir dados atuais", exact: true })).toBeEnabled();
+    await selectStep(page, "generate");
     // Freeze only browser timers so automation latency cannot consume the debounce before validation starts.
     await page.clock.pauseAt(clockStart + 60_000);
     await page.getByLabel("Jornada semanal", { exact: true }).selectOption("40");
+    await selectAdjustments(page);
     await page.getByRole("button", { name: "Conferir dados atuais", exact: true }).click();
     await captured.promise;
     // This deliberately exceeds the product's 850ms debounce while VALIDATE still owns the operation lock.

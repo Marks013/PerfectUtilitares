@@ -60,4 +60,32 @@ describe("exact civil-minute coverage", () => {
     expect(sectorCoverageGaps(input)[0]).toMatchObject({ present: 0, estimated: true, kind: "no-service" });
     expect(sectorCoverageGaps(input)[0].suggestion).toContain("estimativa");
   });
+  it("preserves zero-demand boundaries without adding or moving gaps across dates and sectors", () => {
+    const input = fixture();
+    input.assignments = input.assignments.filter((assignment) => assignment.employeeId === "manager");
+    input.demands = [
+      { id: "zero-inside", date: "2026-11-02", sector: "Reposição", start: 610, end: 620, minimum: 0 },
+      { id: "estimate", date: "2026-11-03", sector: "Caixa", role: "Operador", start: 580, end: 600, minimum: 2, estimated: true },
+      { id: "role", date: "2026-11-02", sector: "Reposição", role: "Repositor", start: 580, end: 650, minimum: 1 },
+      { id: "zero-only", date: "2026-11-02", sector: "Zero", start: 580, end: 600, minimum: 0 },
+      { id: "hard", date: "2026-11-03", sector: "Caixa", start: 560, end: 580, minimum: 1 },
+      { id: "outside", date: "2026-10-31", sector: "Reposição", start: 580, end: 650, minimum: 5 },
+    ];
+
+    expect(coverageTimeline(input, "2026-11-02", "Reposição")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ start: 580, end: 610, minimum: 1, hasReference: true }),
+      expect.objectContaining({ start: 610, end: 620, minimum: 1, hasReference: true }),
+      expect.objectContaining({ start: 620, end: 650, minimum: 1, hasReference: true }),
+    ]));
+    expect(coverageTimeline(input, "2026-11-02", "Zero")).toMatchObject([
+      { start: 580, end: 600, minimum: 0, hasReference: true },
+    ]);
+    expect(sectorCoverageGaps(input)).toMatchObject([
+      { date: "2026-11-03", sector: "Caixa", start: 560, end: 580, present: 0, minimum: 1, estimated: false, roles: [] },
+      { date: "2026-11-02", sector: "Reposição", start: 580, end: 650, present: 1, minimum: 1, estimated: false,
+        roles: [{ role: "Repositor", present: 0, minimum: 1, estimated: false }] },
+      { date: "2026-11-03", sector: "Caixa", start: 580, end: 600, present: 0, minimum: 2, estimated: true,
+        roles: [{ role: "Operador", present: 0, minimum: 2, estimated: true }] },
+    ]);
+  });
 });

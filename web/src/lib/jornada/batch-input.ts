@@ -18,6 +18,12 @@ const TEXT_HOUR_PATTERN = /\b(\d{1,2}):?(\d{2})\b/g;
 const COMPACT_HOUR_PATTERN = /\b(\d{3,4})\b/g;
 const INDIVIDUAL_HOUR_COLUMNS = [8, 10, 11, 13];
 const XLSX_TIME_ROUNDING_TOLERANCE_SECONDS = 1;
+const MAX_XML_BYTES = 16 * 1024 * 1024;
+const MAX_XLSX_ROW_INDEX = 1_048_576;
+const MAX_XLSX_COLUMN_INDEX = 16_384;
+const MAX_PARSED_ROWS = 25_000;
+const MAX_PARSED_CELLS = 250_000;
+
 function decodeXml(value: string) {
   return value
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
@@ -33,11 +39,42 @@ function getAttribute(value: string, name: string) {
 }
 
 function columnIndexFromReference(reference: string) {
-  const letters = /^[A-Z]+/i.exec(reference)?.[0] ?? "";
-  return letters
+  const match = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/i.exec(reference);
+  if (!match || Number(match[2]) > MAX_XLSX_ROW_INDEX) {
+    throw new Error("A planilha contém uma referência de célula inválida.");
+  }
+  return match[1]
     .toUpperCase()
     .split("")
     .reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0) - 1;
+}
+
+async function readBoundedXml(entry: JSZip.JSZipObject | null) {
+  if (!entry) return null;
+
+  return new Promise<string>((resolve, reject) => {
+    const stream = entry.nodeStream();
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let exceeded = false;
+    stream.once("error", reject);
+    stream.once("end", () => {
+      if (!exceeded) resolve(Buffer.concat(chunks, bytes).toString("utf8"));
+    });
+    stream.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_XML_BYTES) {
+        exceeded = true;
+        stream.pause();
+        chunks.length = 0;
+        reject(
+          new Error("Um XML da planilha excede o limite seguro de 16 MB descompactados."),
+        );
+        return;
+      }
+      chunks.push(chunk);
+    });
+  });
 }
 
 function findZipEntry(zip: JSZip, candidates: string[]) {
@@ -95,28 +132,38 @@ function parseCellValue(
 function parseSheetXml(xml: string, sharedStrings: string[]): unknown[][] {
   const rows: unknown[][] = [];
   const rowPattern = /<row\b([^>]*)>([\s\S]*?)<\/row>/g;
+  let rowCount = 0;
+  let cellCount = 0;
 
   for (const rowMatch of xml.matchAll(rowPattern)) {
-    const rowNumber = Number(getAttribute(rowMatch[1] ?? "", "r"));
-    const rowIndex = Number.isFinite(rowNumber) && rowNumber > 0
-      ? rowNumber - 1
-      : rows.length;
+    if (++rowCount > MAX_PARSED_ROWS) {
+      throw new Error("A planilha ultrapassa o limite de 25 mil linhas.");
+    }
+    const reference = getAttribute(rowMatch[1] ?? "", "r");
+    const rowNumber = reference === null ? rows.length + 1 : Number(reference);
+    if (!Number.isSafeInteger(rowNumber) || rowNumber < 1 || rowNumber > MAX_XLSX_ROW_INDEX) {
+      throw new Error("A planilha contém um índice de linha fora do limite do Excel.");
+    }
     const row: unknown[] = [];
     const cellPattern = /<c\b([^>]*)>([\s\S]*?)<\/c>/g;
 
     for (const cellMatch of (rowMatch[2] ?? "").matchAll(cellPattern)) {
+      if (++cellCount > MAX_PARSED_CELLS) {
+        throw new Error("A planilha ultrapassa o limite de 250 mil células.");
+      }
       const reference = getAttribute(cellMatch[1] ?? "", "r");
       const columnIndex = reference ? columnIndexFromReference(reference) : row.length;
-      if (columnIndex >= 0) {
-        row[columnIndex] = parseCellValue(
-          cellMatch[1] ?? "",
-          cellMatch[2] ?? "",
-          sharedStrings,
-        );
+      if (columnIndex >= MAX_XLSX_COLUMN_INDEX) {
+        throw new Error("A planilha contém um índice de coluna fora do limite do Excel.");
       }
+      row[columnIndex] = parseCellValue(
+        cellMatch[1] ?? "",
+        cellMatch[2] ?? "",
+        sharedStrings,
+      );
     }
 
-    rows[rowIndex] = row;
+    rows[rowNumber - 1] = row;
   }
 
   return rows;
@@ -139,11 +186,11 @@ export async function parseJornadaBatchXlsx(buffer: Buffer): Promise<ParsedSheet
     "xl/sharedStrings.xml",
     "xl\\sharedStrings.xml",
   ]);
-  const sharedStringsXml = sharedStringsEntry
-    ? await zip.file(sharedStringsEntry)?.async("string")
-    : null;
-  const sharedStrings = parseSharedStrings(sharedStringsXml ?? null);
-  const sheetXml = await zip.file(sheetEntry)?.async("string");
+  const sharedStringsXml = await readBoundedXml(
+    sharedStringsEntry ? zip.file(sharedStringsEntry) : null,
+  );
+  const sharedStrings = parseSharedStrings(sharedStringsXml);
+  const sheetXml = await readBoundedXml(zip.file(sheetEntry));
 
   if (!sheetXml) {
     throw new Error("Não foi possível ler a primeira planilha do arquivo .xlsx.");

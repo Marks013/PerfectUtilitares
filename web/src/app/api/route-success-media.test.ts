@@ -156,7 +156,11 @@ vi.mock("@/lib/pdf/storage", async () => {
 });
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...original, access: vi.fn(async () => undefined) };
+  return {
+    ...original,
+    access: vi.fn(async () => undefined),
+    stat: vi.fn(async () => ({ isFile: () => true })),
+  };
 });
 vi.mock("sharp", () => ({
   default: () => ({
@@ -167,7 +171,7 @@ vi.mock("archiver", async () => {
   const { EventEmitter } = await import("node:events");
   class ZipArchive extends EventEmitter {
     destination?: { end: (value: Buffer) => void };
-    append() {}
+    file() {}
     pipe(destination: { end: (value: Buffer) => void }) {
       this.destination = destination;
       return destination;

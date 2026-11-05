@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { readMultipartBody } from "@/lib/api/multipart";
 import {
   enforceSharedRateLimit,
   getOptionalSession,
@@ -162,7 +163,9 @@ export async function POST(request: Request) {
     });
     if (capacityError) return capacityError;
 
-    const formData = await request.formData();
+    const multipart = await readMultipartBody(request, MAX_IMPORT_BYTES);
+    if (!multipart.ok) return multipart.response;
+    const formData = multipart.data;
     const file = getUploadedFile(formData);
     const config = getConfig(formData);
     const [rules, codigos] = await Promise.all([

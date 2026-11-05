@@ -260,6 +260,67 @@ describe("Unimed source reconciliation", () => {
     expect(result.warnings.unmatchedInvoiceItems).toBe(2);
   });
 
+  it("classifies registration warnings in invoice order and within each branch", () => {
+    const first = {
+      ...beneficiary("H1", "Pessoa 1", "HOLDER", "52998224725"),
+      registration: "  Rég  200 ",
+    };
+    const second = {
+      ...beneficiary("H2", "Pessoa 2", "HOLDER", "11144477735"),
+      branchCode: "mátriz",
+      registration: "REG 200",
+    };
+    const third = {
+      ...beneficiary("H3", "Pessoa 3", "HOLDER", "12345678901"),
+      branchCode: "FILIAL",
+      registration: "REG 200",
+    };
+
+    const result = reconcileUnimedSources(
+      [first, second, third],
+      [
+        invoice({ sourceKey: "missing", registration: "REG 201" }),
+        invoice({
+          sourceKey: "other-branch",
+          branchCode: "filial",
+          registration: "reg 200",
+        }),
+        invoice({ sourceKey: "ambiguous", registration: "reg 200" }),
+      ],
+      [],
+    );
+
+    expect(result.invoiceItems.map((item) => item.beneficiarySourceKey)).toEqual(
+      [null, "H3", null],
+    );
+    expect(result.warningDetails.unmatchedInvoiceItems).toMatchObject([
+      { sourceKey: "missing", reason: "REGISTRATION_NOT_FOUND" },
+      { sourceKey: "ambiguous", reason: "REGISTRATION_AMBIGUOUS" },
+    ]);
+  });
+
+  it("classifies unlinked dependents in beneficiary order using all invoice items", () => {
+    const unnamed = beneficiary("D1", "Pessoa 1", "DEPENDENT", "52998224725");
+    const unresolved = beneficiary("D2", "Pessoa 2", "DEPENDENT", "11144477735");
+    const missing = beneficiary("D3", "Pessoa 3", "DEPENDENT", "12345678901");
+
+    const result = reconcileUnimedSources(
+      [unnamed, unresolved, missing],
+      [
+        invoice({ cpf: unresolved.cpf, holderName: "Titular não cadastrado" }),
+        invoice({ cpf: unresolved.cpf }),
+        invoice({ cpf: unnamed.cpf }),
+      ],
+      [],
+    );
+
+    expect(result.warningDetails.unmatchedDependents).toMatchObject([
+      { sourceKey: "D1", reason: "HOLDER_NAME_MISSING" },
+      { sourceKey: "D2", reason: "HOLDER_NOT_UNIQUE" },
+      { sourceKey: "D3", reason: "INVOICE_REFERENCE_MISSING" },
+    ]);
+  });
+
   it("uses the monthly charge as the authoritative plan code", () => {
     const person = beneficiary("H1", "Pessoa Exemplo", "HOLDER", "52998224725");
     const result = reconcileUnimedSources(

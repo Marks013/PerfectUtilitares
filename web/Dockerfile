@@ -106,26 +106,37 @@ RUN apk add --no-cache \
     'giflib>=5.2.2-r2' \
     ghostscript \
     jbig2enc \
-    ocrmypdf \
+    python3 \
+    pngquant \
     poppler-utils \
     qpdf \
+    unpaper \
+    tesseract-ocr \
     tesseract-ocr-data-eng \
     tesseract-ocr-data-por
 
 FROM pdf-runtime AS pdf-office-deps
 USER root
 RUN apk add --no-cache py3-pip
-COPY ops/pdf-worker/office-requirements.txt /tmp/office-requirements.txt
+COPY ops/pdf-worker/office-requirements.txt ops/pdf-worker/runtime-requirements.txt /tmp/
 RUN --mount=type=cache,id=perfectutilitares-office-pip-py314-arm64,target=/root/.cache/pip,sharing=locked \
-    python3 -m venv /opt/pdf-office \
+    python3 -m venv /opt/pdf-runtime \
+    && /opt/pdf-runtime/bin/pip install --require-hashes --only-binary=:all: -r /tmp/runtime-requirements.txt \
+    && /opt/pdf-runtime/bin/pip check \
+    && /opt/pdf-runtime/bin/python3 -c 'from importlib.metadata import version; import ocrmypdf, pikepdf; assert [version(name) for name in ("pillow", "cryptography", "setuptools")] == ["13.0.0", "50.0.2", "84.2.1"]' \
+    && /opt/pdf-runtime/bin/ocrmypdf --version \
+    && python3 -m venv /opt/pdf-office \
     && /opt/pdf-office/bin/pip install --require-hashes --only-binary=:all: -r /tmp/office-requirements.txt \
-    && /opt/pdf-office/bin/pip check
+    && /opt/pdf-office/bin/pip check \
+    && /opt/pdf-office/bin/python3 -c 'from importlib.metadata import version; import pdfplumber, openpyxl, docx; assert [version(name) for name in ("pillow", "cryptography")] == ["13.0.0", "50.0.2"]'
 
 FROM pdf-runtime AS pdf-worker
 ENV PDF_OFFICE_PYTHON=/opt/pdf-office/bin/python3 \
     PDF_OFFICE_SCRIPT=/app/pdf-office/office-export.py \
+    PATH=/opt/pdf-runtime/bin:$PATH \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1
+COPY --from=pdf-office-deps /opt/pdf-runtime /opt/pdf-runtime
 COPY --from=pdf-office-deps /opt/pdf-office /opt/pdf-office
 COPY src/lib/pdf/office-export.py src/lib/pdf/office-export-word.py src/lib/pdf/office-export-excel.py /app/pdf-office/
 COPY --from=pdf-worker-deps --chown=1001:1001 /app/node_modules ./node_modules
@@ -133,7 +144,17 @@ COPY --from=pdf-worker-builder --chown=1001:1001 /app/dist ./dist
 COPY --chown=1001:1001 src/lib/pdf/mono-xobject-resample.py ./mono-xobject-resample.py
 COPY --chown=1001:1001 src/lib/pdf/jpeg-xobject-resample.py ./jpeg-xobject-resample.py
 COPY ops/container-health/pdf-worker-healthcheck /usr/local/bin/pdf-worker-healthcheck
-RUN chmod 0555 /usr/local/bin/pdf-worker-healthcheck
+RUN chmod 0555 /usr/local/bin/pdf-worker-healthcheck \
+    && command -v pngquant \
+    && command -v unpaper \
+    && test "$(command -v python3)" = "/opt/pdf-runtime/bin/python3" \
+    && test "$(command -v ocrmypdf)" = "/opt/pdf-runtime/bin/ocrmypdf" \
+    && test "$(head -n 1 /opt/pdf-runtime/bin/ocrmypdf)" = "#!/opt/pdf-runtime/bin/python3" \
+    && for package in py3-pillow py3-cryptography py3-setuptools; do \
+      if apk info --exists "$package"; then \
+        echo "Unexpected system Python package: $package" >&2; exit 1; \
+      fi; \
+    done
 ARG SOURCE_REVISION=untracked
 ARG BUILD_DATE=1970-01-01T00:00:00Z
 ENV SOURCE_REVISION=${SOURCE_REVISION}

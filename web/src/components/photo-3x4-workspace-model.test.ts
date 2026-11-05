@@ -3,6 +3,7 @@ import type { PhotoSettings } from "@/lib/photos/schema";
 import {
   appendBatchCrops,
   appendSettings,
+  describePhotoZipResult,
   detectFaceInFrame,
   downloadResult,
   getDownloadFileName,
@@ -21,6 +22,36 @@ describe("photo 3x4 workspace model helpers", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("reports partial ZIP results without claiming every photo was processed", () => {
+    expect(
+      describePhotoZipResult(
+        new Headers({
+          "X-Processed-Count": "2",
+          "X-Error-Count": "1",
+          "X-Total-Count": "3",
+        }),
+        3,
+      ),
+    ).toEqual({
+      label: "2 de 3 fotos processadas. 1 não entrou no ZIP.",
+      hasWarning: true,
+    });
+    expect(
+      describePhotoZipResult(
+        new Headers({
+          "X-Processed-Count": "1",
+          "X-Error-Count": "0",
+          "X-Total-Count": "1",
+        }),
+        1,
+      ),
+    ).toEqual({ label: "1 foto processada", hasWarning: false });
+    expect(describePhotoZipResult(new Headers(), 3)).toEqual({
+      label: "Confira quantas fotos entraram no ZIP.",
+      hasWarning: true,
+    });
   });
 
   it("builds stable storage/file keys and compares names case-insensitively", () => {

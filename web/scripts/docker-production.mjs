@@ -21,6 +21,33 @@ function run(command, args, options = {}) {
   return options.capture ? result.stdout.trim() : "";
 }
 
+function assertRunningRevision(service, revision, env) {
+  const ids = run(
+    "docker",
+    ["compose", "ps", "--quiet", "--status", "running", service],
+    { env, capture: true },
+  ).split(/\r?\n/).filter(Boolean);
+  if (!ids.length) {
+    throw new Error(`Nenhum contêiner de ${service} está em execução após o deploy.`);
+  }
+
+  const states = run(
+    "docker",
+    [
+      "inspect",
+      "--type", "container",
+      "--format", '{{.State.Running}} {{index .Config.Labels "org.opencontainers.image.revision"}}',
+      ...ids,
+    ],
+    { env, capture: true },
+  ).split(/\r?\n/);
+  if (states.length !== ids.length || states.some((state) => state !== `true ${revision}`)) {
+    throw new Error(
+      `Nem todos os contêineres de ${service} estão ativos na revisão ${revision}.`,
+    );
+  }
+}
+
 try {
   const revision = run("git", ["rev-parse", "HEAD"], { capture: true });
   const status = run("git", ["status", "--porcelain"], { capture: true });
@@ -39,11 +66,24 @@ try {
   run("docker", ["compose", "build", "migrate", "app", "pdf-worker", "escalas-solver"], { env });
 
   if (mode === "deploy") {
-    run("docker", ["compose", "up", "-d", "app", "pdf-worker", "escalas-solver"], { env });
+    run(
+      "docker",
+      [
+        "compose", "up", "-d", "--no-build", "--wait", "--wait-timeout", "180",
+        "app", "pdf-worker", "escalas-solver",
+      ],
+      { env },
+    );
+    assertRunningRevision("app", revision, env);
+    assertRunningRevision("pdf-worker", revision, env);
     run("docker", ["compose", "ps"], { env });
   }
 
-  if (process.env.SKIP_BUILDKIT_GC !== "1") {
+  // O cache do builder pode ser compartilhado por outros projetos do servidor.
+  if (
+    process.env.ENABLE_BUILDKIT_GC === "1" &&
+    process.env.SKIP_BUILDKIT_GC !== "1"
+  ) {
     run("docker", [
       "builder",
       "prune",

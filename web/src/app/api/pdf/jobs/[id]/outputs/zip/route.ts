@@ -1,5 +1,5 @@
 import { ZipArchive } from "archiver";
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { PassThrough, Readable } from "node:stream";
 import {
   enforceSharedRateLimit,
@@ -11,10 +11,7 @@ import {
   createAttachmentHeader,
   uniqueDownloadName,
 } from "@/lib/pdf/downloads";
-import {
-  createPdfStorageReadStream,
-  resolvePdfStorageKey,
-} from "@/lib/pdf/storage";
+import { resolvePdfStorageKey } from "@/lib/pdf/storage";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -42,6 +39,7 @@ export async function GET(request: Request, context: RouteContext) {
       artifacts: {
         where: { kind: "OUTPUT" },
         orderBy: { createdAt: "asc" },
+        select: { originalName: true, storageKey: true },
       },
     },
   });
@@ -58,13 +56,15 @@ export async function GET(request: Request, context: RouteContext) {
     );
   }
 
-  try {
-    await Promise.all(
-      job.artifacts.map((artifact) =>
-        access(resolvePdfStorageKey(artifact.storageKey)),
-      ),
-    );
-  } catch {
+  const files = await Promise.all(
+    job.artifacts.map(async (artifact) => {
+      const path = resolvePdfStorageKey(artifact.storageKey);
+      const stats = await stat(path);
+      if (!stats.isFile()) throw new Error("Artefato não é um arquivo.");
+      return { path, stats, originalName: artifact.originalName };
+    }),
+  ).catch(() => null);
+  if (!files) {
     return jsonError(
       410,
       "PDF_OUTPUT_EXPIRED",
@@ -74,20 +74,27 @@ export async function GET(request: Request, context: RouteContext) {
 
   const output = new PassThrough();
   const archive = new ZipArchive({
-    zlib: { level: 6 },
+    // Os PDFs normalmente já contêm streams compactados.
+    zlib: { level: 1 },
   });
   const usedNames = new Set<string>();
 
-  archive.on("error", (error: Error) => output.destroy(error));
+  const fail = (error: Error) => output.destroy(error);
+  archive.on("error", fail);
+  archive.on("warning", fail);
+  output.once("close", () => {
+    if (!output.readableEnded) archive.abort();
+  });
   archive.pipe(output);
 
-  for (const artifact of job.artifacts) {
-    archive.append(createPdfStorageReadStream(artifact.storageKey), {
-      name: uniqueDownloadName(artifact.originalName, usedNames),
+  for (const file of files) {
+    archive.file(file.path, {
+      name: uniqueDownloadName(file.originalName, usedNames),
+      stats: file.stats,
     });
   }
 
-  void archive.finalize();
+  void archive.finalize().catch(fail);
 
   return new Response(Readable.toWeb(output) as ReadableStream<Uint8Array>, {
     headers: {

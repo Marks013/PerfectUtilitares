@@ -33,8 +33,9 @@ async function removeFixture(page: Page, id: string) {
   expect((await page.request.delete("/api/escalas", { headers: { origin }, data: { workspaceId: id, expectedRevision: workspace.revision } })).status()).toBe(200);
 }
 async function generate(page: Page) {
+  await page.getByRole("navigation", { name: "Etapas do planejamento", exact: true }).getByRole("button", { name: /^Escolher jornada e gerar/ }).click();
   const response = page.waitForResponse(value => value.request().method() === "POST" && value.url().endsWith("/api/escalas") && value.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
-  await page.locator('section[aria-labelledby="escala-scenario-title"]').getByRole("button", { name: /^(Gerar proposta mensal|Gerar nova proposta)$/ }).click();
+  await page.getByRole("button", { name: /^(Gerar escala e horários|Gerar nova proposta)$/ }).click();
   const value = await response;
   expect(value.status()).toBe(200);
   return value.json();
@@ -56,7 +57,7 @@ test("real infeasible coverage explains the budget, opens the correct filters an
     await expect(page.getByLabel("Filtrar dia da cobertura", { exact: true })).toHaveValue("2026-11-02");
     expect(await list.locator("summary").evaluate(element => element === document.activeElement)).toBe(true);
     await list.locator("summary").click();
-    await page.getByRole("button", { name: "Equipe", exact: true }).click();
+    await page.locator('button[aria-controls="escala-area-team"]').click();
     await action.click();
     await expect(list).toHaveAttribute("open", "");
     const unchanged: EscalaWorkspace = await page.request.get("/api/escalas?id=" + workspace.id).then(response => response.json());

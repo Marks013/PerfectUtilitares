@@ -7,6 +7,7 @@ import type { PhotoSettings } from "@/lib/photos/schema";
 import {
   appendSettings,
   appendBatchCrops,
+  describePhotoZipResult,
   getErrorMessage,
   getDownloadFileName,
   getEditorState,
@@ -112,7 +113,7 @@ export function usePhotoProcessing({
     return {
       blob,
       fileName: getDownloadFileName(response, "fotos-3x4.zip"),
-      label: `${files.length} foto${files.length > 1 ? "s" : ""} processada${files.length > 1 ? "s" : ""}`,
+      ...describePhotoZipResult(response.headers, files.length),
     };
   }
 
@@ -199,13 +200,7 @@ export function usePhotoProcessing({
         label: "Preparando ZIP",
         detail: `${files.length} foto${files.length > 1 ? "s" : ""}`,
       });
-      const zip = await processBatchZip(values, signal);
-
-      return {
-        blob: zip.blob,
-        fileName: zip.fileName,
-        label: zip.label,
-      };
+      return processBatchZip(values, signal);
     },
     onSuccess(result, { operationId }) {
       if (operationId !== operation.current) return;
@@ -215,7 +210,7 @@ export function usePhotoProcessing({
         kind: "zip",
         current: files.length,
         total: files.length,
-        label: "ZIP concluído",
+        label: result.hasWarning ? "ZIP concluído com avisos" : "ZIP concluído",
         detail: result.label,
       });
       downloadResult(result);

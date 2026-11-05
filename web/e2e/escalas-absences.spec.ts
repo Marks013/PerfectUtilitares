@@ -28,7 +28,8 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   const absenceFile = await readFile(process.env.E2E_REAL_ABSENCES_PATH!);
   await loginAsAdmin(page);
   await page.goto("/escala");
-  await page.getByText("Novo planejamento", { exact: true }).click();
+  await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
+  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Validação privada de férias");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
@@ -62,6 +63,7 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
     for (let day = first; day <= last; day += 86_400_000) expected.add(id + ":" + new Date(day).toISOString().slice(0, 10));
   }
   expect(expected.size > 0).toBe(true);
+  await page.locator('button[aria-controls="escala-area-team"]').click();
   await page.getByText("Importar afastamentos e férias (opcional)", { exact: true }).click();
   await page.getByLabel("Arquivo de afastamentos CSV", { exact: true }).setInputFiles({ name: "FPHI105.CSV", mimeType: "text/csv", buffer: absenceFile });
   const previewing = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas/import"));
@@ -74,8 +76,9 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   // No medical field, source name or free-form source description may leak in preview.
   expect(preview.assignments.every((item: EscalaAssignment) => item.kind === "ABSENCE" && Object.keys(item).every(key => ["employeeId", "date", "kind"].includes(key)))).toBe(true);
   await page.getByRole("button", { name: "Aplicar afastamentos à proposta", exact: true }).click();
+  await page.locator('button[aria-controls="escala-area-generate"]').click();
   const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
-  await page.getByRole("button", { name: /^(Gerar proposta mensal|Gerar nova proposta)$/ }).click();
+  await page.getByRole("button", { name: /^(Gerar escala e horários|Gerar nova proposta)$/ }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);
   const generated = await generatedResponse.json();
@@ -161,7 +164,8 @@ test("optional absence preview preserves existing absences and locked work befor
   disposableId = created.id;
   await page.goto("/escala");
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
-  await page.getByRole("button", { name: "Equipe", exact: true }).click();
+  await page.locator('button[aria-controls="escala-area-team"]').click();
+  await page.locator('button[aria-controls="escala-area-team"]').click();
   await page.getByText("Importar afastamentos e férias (opcional)", { exact: true }).click();
   const csvRows = [
     ["Período", "01/11/2026", "a", "30/11/2026"],
@@ -190,7 +194,9 @@ test("optional absence preview preserves existing absences and locked work befor
   expect((await page.request.get("/api/escalas/export?id=" + stale.id + "&revision=" + stale.revision + "&format=xlsx")).status()).toBe(409);
   await page.reload();
   await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
+  await page.locator('button[aria-controls="escala-area-roster"]').click();
   await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
+  await page.locator('button[aria-controls="escala-area-generate"]').click();
   const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
   const generatedResponse = await generating;

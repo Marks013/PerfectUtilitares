@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+
 const mocks = vi.hoisted(() => ({
   calls: [] as string[],
   overrides: new Map<string, unknown>(),

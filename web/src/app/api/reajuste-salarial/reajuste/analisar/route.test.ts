@@ -88,6 +88,12 @@ beforeEach(() => {
 });
 
 describe("FPRE131 analysis API", () => {
+  it("keeps rejecting uploads without Content-Length", async () => {
+    const withoutLength = request();
+    withoutLength.headers.delete("content-length");
+    expect((await POST(withoutLength)).status).toBe(411);
+  });
+
   it("accepts only POST", () => {
     expect(GET().status).toBe(405);
   });

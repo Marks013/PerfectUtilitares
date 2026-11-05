@@ -15,6 +15,8 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     baseURL,
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
     // The isolated production runner uses an ephemeral localhost certificate.
     ignoreHTTPSErrors: process.env.E2E_PRODUCTION === "1",
     screenshot: "only-on-failure",
