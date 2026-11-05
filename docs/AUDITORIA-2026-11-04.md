@@ -13,8 +13,8 @@ gate do projeto verifica 73 rotas da API, todas com teste dedicado e cenário
 Na coleta, app, worker de PDF, PostgreSQL e solver estavam saudáveis. O
 disco estava em 50%, o banco tinha 28 MB e a amostra de CPU dos contêineres
 ficou abaixo de 1%. A amostra não representa o pico. Não foram feitos testes
-de carga em produção, varredura completa das imagens ou coleta de arquivos
-pessoais. A retenção de jobs PDF não forneceu dados suficientes para estimar
+de carga em produção ou coleta de arquivos pessoais. A varredura final das
+imagens cobre vulnerabilidades altas e críticas. A retenção de jobs PDF não forneceu dados suficientes para estimar
 a latência de produção, e o banco não possui `pg_stat_statements` habilitado.
 
 ## Achados e correções
@@ -30,6 +30,7 @@ a latência de produção, e o banco não possui `pg_stat_statements` habilitado
 | Fotos | Resultado parcial era exibido como se todas as fotos tivessem sido processadas. | Contagem real do servidor e aviso de fotos que ficaram fora do ZIP. |
 | Deploy | O script não aguardava a saúde nem verificava a revisão dos serviços; podia podar cache compartilhado sem opt-in. | Aguarda serviços, confere revisão ativa de app e worker e só poda cache com `ENABLE_BUILDKIT_GC=1`. `SKIP_BUILDKIT_GC=1` continua vetando. |
 | Dependências | Next.js estava em 16.4.3. | Atualizado para [16.4.5, correção de segurança do fornecedor](https://github.com/vercel/next.js/releases/tag/v16.4.5). O lock mudou apenas Next.js, `@next/env` e binários SWC associados. |
+| Imagens: bibliotecas e instaladores | O scan final identificou três avisos altos no Expat 2.9.0 e cinco em componentes vendorizados pelo pip, ausentes no inventário de distribuições Python. | Exigir Expat >= 2.10.0-r0 no ramo estável Alpine 3.24. Remover o pip dos dois venvs após a instalação por meio de seu próprio desinstalador; ele não é necessário em execução. Nenhum alerta foi silenciado. |
 
 No microteste de Deflate do ZIP, sobre um PDF sintético de 1,05 MB, a mediana
 caiu de 25,10 para 19,97 ms, com cerca de 1% a mais de bytes no arquivo
@@ -95,3 +96,8 @@ auditoria. Não foram gerados convites ou alteradas contas, grades e dados reais
   construção conjunta de app e worker. A confirmação do OCR, das conversões
   Office e da compactação real ocorre na imagem final; a saúde isolada dos
   serviços não é tratada como comprovação dessas funções.
+- Na imagem publicada da primeira etapa, OCR real em português/inglês nas
+  otimizações 2 e 3, reamostragem JBIG2 com geometria preservada e 30 testes
+  reais de conversão Office foram aprovados. A consulta OSV de 39 versões
+  efetivamente instaladas não acusou avisos, mas não identificava os vendors
+  do pip; o scanner da imagem detectou essa lacuna, corrigida na etapa final.

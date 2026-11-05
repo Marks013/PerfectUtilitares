@@ -15,7 +15,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
 FROM node-runtime-base AS runtime-base
-RUN apk add --no-cache vips
+RUN apk add --no-cache vips 'libexpat>=2.10.0-r0'
 
 FROM base AS deps
 COPY package*.json ./
@@ -128,7 +128,11 @@ RUN --mount=type=cache,id=perfectutilitares-office-pip-py314-arm64,target=/root/
     && python3 -m venv /opt/pdf-office \
     && /opt/pdf-office/bin/pip install --require-hashes --only-binary=:all: -r /tmp/office-requirements.txt \
     && /opt/pdf-office/bin/pip check \
-    && /opt/pdf-office/bin/python3 -c 'from importlib.metadata import version; import pdfplumber, openpyxl, docx; assert [version(name) for name in ("pillow", "cryptography")] == ["13.0.0", "50.0.2"]'
+    && /opt/pdf-office/bin/python3 -c 'from importlib.metadata import version; import pdfplumber, openpyxl, docx; assert [version(name) for name in ("pillow", "cryptography")] == ["13.0.0", "50.0.2"]' \
+    && /opt/pdf-runtime/bin/python3 -m pip uninstall --yes pip \
+    && /opt/pdf-office/bin/python3 -m pip uninstall --yes pip \
+    && /opt/pdf-runtime/bin/python3 -c 'from importlib.util import find_spec; import ocrmypdf, pikepdf; assert find_spec("pip") is None' \
+    && /opt/pdf-office/bin/python3 -c 'from importlib.util import find_spec; import pdfplumber, openpyxl, docx; assert find_spec("pip") is None'
 
 FROM pdf-runtime AS pdf-worker
 ENV PDF_OFFICE_PYTHON=/opt/pdf-office/bin/python3 \
