@@ -19,6 +19,7 @@ import {
   cleanupExpiredPdfJobs,
 } from "@/lib/pdf/retention";
 import { isEventsEnabled } from "@/lib/presence/feature";
+import { logPdfWorkerFailure } from "@/workers/pdf-worker-observability";
 import {
   beforeSendScrubber,
   sentryDataCollection,
@@ -162,6 +163,7 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
       });
       await cleanupCompletedPdfJobInputs(job.data.jobId);
     } catch (error) {
+      logPdfWorkerFailure("pdf_worker_input_cleanup_failed");
       Sentry.captureException(error, {
         tags: {
           pdfInputCleanup: true,
@@ -177,6 +179,7 @@ let presenceMaintenancePromise: Promise<unknown> | null = null;
 let lastPresenceCleanupAt = 0;
 const heartbeatPath = pdfWorkerHeartbeatPath();
 let heartbeatPromise: Promise<void> | null = null;
+let heartbeatConfirmed = false;
 
 function refreshWorkerHeartbeat() {
   if (heartbeatPromise) return heartbeatPromise;
@@ -198,8 +201,11 @@ function refreshWorkerHeartbeat() {
       "utf8",
     );
     await rename(temporaryPath, heartbeatPath);
+    heartbeatConfirmed = true;
   })()
     .catch((error) => {
+      heartbeatConfirmed = false;
+      logPdfWorkerFailure("pdf_worker_heartbeat_failed");
       Sentry.captureException(error, { tags: { pdfWorkerHeartbeat: true } });
     })
     .finally(() => {
@@ -212,6 +218,7 @@ function runRetentionCleanup() {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = cleanupExpiredPdfJobs()
     .catch((error) => {
+      logPdfWorkerFailure("pdf_worker_retention_failed");
       Sentry.captureException(error, {
         tags: { pdfRetentionCleanup: true },
       });
@@ -240,6 +247,7 @@ function runPresenceMaintenance() {
     }
   })()
     .catch((error) => {
+      logPdfWorkerFailure("pdf_worker_presence_maintenance_failed");
       Sentry.captureException(error, {
         tags: { presenceMaintenance: true },
       });
@@ -283,4 +291,6 @@ async function shutdown(signal: string) {
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
-console.info("[pdf-worker] pronto para processar documentos");
+if (heartbeatConfirmed) {
+  console.info("[pdf-worker] pronto para processar documentos");
+}

@@ -1,16 +1,23 @@
-FROM python:3.13-slim@sha256:d98cc29d3266e535dd9da1099688d9cb3ca4753813571e071763d17725460962
+# Wolfi supplies maintained glibc libraries and CPython security backports.
+# Both stages share one interpreter; only the wheel environment crosses stages.
+FROM cgr.dev/chainguard/wolfi-base@sha256:771146c2dfc880902a185f060c3db5571473c46b267edd98c3119c83068dfb61 AS python-base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+RUN apk upgrade --no-cache \
+    && apk add --no-cache python-3.13=3.13.18_git20261030-r0 ca-certificates-bundle
+
+FROM python-base AS dependencies
+RUN apk add --no-cache py3.13-pip \
+    && python3.13 -m venv --without-pip /opt/solver
 WORKDIR /app
-RUN apt-get update \
-    && apt-get upgrade --yes --no-install-recommends \
-    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' apt)" ge 3.0.4 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt ./
-RUN pip install --only-binary=:all: -r requirements.txt \
-    && pip check \
-    && python -m pip uninstall --yes pip \
-    && python -c 'from importlib.util import find_spec; from ortools.sat.python import cp_model; assert find_spec("pip") is None'
+RUN python3.13 -m pip --python /opt/solver install --require-hashes --only-binary=:all: -r requirements.txt \
+    && python3.13 -m pip --python /opt/solver check
+
+FROM python-base AS runtime
+ENV PATH=/opt/solver/bin:$PATH
+COPY --from=dependencies /opt/solver /opt/solver
+WORKDIR /app
+RUN python -c 'from importlib.util import find_spec; from ortools.sat.python import cp_model; import numpy, pandas, ssl, sqlite3, zlib; from zoneinfo import ZoneInfo; assert ZoneInfo("America/Sao_Paulo"); assert ssl.create_default_context().get_ca_certs(); assert find_spec("pip") is None'
 ARG SOURCE_REVISION=untracked
 ARG BUILD_DATE=1970-01-01T00:00:00Z
 LABEL org.opencontainers.image.title="PerfectUtilitares Escalas Solver" \

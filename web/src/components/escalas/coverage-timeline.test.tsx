@@ -1,9 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { newEmployee, newInput } from "./workspace-model";
 import { CoverageTimeline } from "./coverage-timeline";
 
+afterEach(() => vi.restoreAllMocks());
+
 it("keeps exact time and count labels outside the scaled SVG on narrow screens", () => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const input = newInput("01", "Filial", "2026-11", 42);
   input.employees = [{ ...newEmployee(42, "clock"), id: "person", registration: "1", name: "Pessoa", role: "Repositor", sector: "Loja" }];
   input.shifts = [{ id: "clock", name: "Exato", segments: [{ start: 576, end: 840, kind: "WORK" }, { start: 840, end: 960, kind: "BREAK" }, { start: 960, end: 1200, kind: "WORK" }] }];
@@ -16,4 +19,7 @@ it("keeps exact time and count labels outside the scaled SVG on narrow screens",
   expect(svg).not.toContain("<text");
   expect(html).toContain("Faixa de horário e colaboradores");
   expect(html).toContain("Entradas ou retornos");
+  expect(html).toMatch(/<title id="escala-coverage-chart-title">Presença por horário em Loja,/);
+  expect(html).toContain("pessoa(s), mínimo");
+  expect(errors).not.toHaveBeenCalled();
 });

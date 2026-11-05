@@ -45,10 +45,10 @@ export function CoverageTimeline({ input, review }: { input: EscalaInput; review
       <figure className={styles.timelineFrame}>
         <div className={styles.timelineAxis}><span>Pessoas: 0–{maximum}</span></div>
         <svg viewBox="0 0 780 160" preserveAspectRatio="none" role="img" aria-labelledby="escala-coverage-chart-title escala-coverage-chart-desc" className={styles.timelinePlot}>
-          <title id="escala-coverage-chart-title">Presença por horário em {sector}, {escalaDateLabel(date)}</title>
+          <title id="escala-coverage-chart-title">{`Presença por horário em ${sector}, ${escalaDateLabel(date)}`}</title>
           <desc id="escala-coverage-chart-desc">Contagem de pessoas trabalhando em cada faixa exata. Consulte a faixa abaixo para ler valores e nomes. As barras não incluem intervalos.</desc>
           <line x1="36" x2="744" y1="148" y2="148" stroke="currentColor" />
-          {timeline.map(slice => <rect key={slice.start} x={x(slice.start)} y={y(slice.present)} width={Math.max(0, x(slice.end) - x(slice.start))} height={148 - y(slice.present)} className={styles.timelineBar}><title>{escalaDuration(slice.start)}–{escalaDuration(slice.end)}: {slice.present} pessoa(s), mínimo {slice.minimum}, estimativa {slice.estimate}</title></rect>)}
+          {timeline.map(slice => <rect key={slice.start} x={x(slice.start)} y={y(slice.present)} width={Math.max(0, x(slice.end) - x(slice.start))} height={148 - y(slice.present)} className={styles.timelineBar}><title>{`${escalaDuration(slice.start)}–${escalaDuration(slice.end)}: ${slice.present} pessoa(s), mínimo ${slice.minimum}, estimativa ${slice.estimate}`}</title></rect>)}
           {timeline.some(slice => slice.minimum > 0) && <path d={line("minimum")} className={styles.timelineMinimum} />}
           {timeline.some(slice => slice.estimate > 0) && <path d={line("estimate")} className={styles.timelineEstimate} />}
         </svg>

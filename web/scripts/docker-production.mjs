@@ -1,10 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
-const mode = process.argv[2];
-if (!new Set(["build", "deploy"]).has(mode)) {
-  console.error("Uso: node scripts/docker-production.mjs <build|deploy>");
-  process.exit(2);
-}
+export const productionServices = ["app", "pdf-worker", "escalas-solver"];
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -21,8 +18,8 @@ function run(command, args, options = {}) {
   return options.capture ? result.stdout.trim() : "";
 }
 
-function assertRunningRevision(service, revision, env) {
-  const ids = run(
+export function assertRunningRevision(service, revision, env, execute = run) {
+  const ids = execute(
     "docker",
     ["compose", "ps", "--quiet", "--status", "running", service],
     { env, capture: true },
@@ -31,7 +28,7 @@ function assertRunningRevision(service, revision, env) {
     throw new Error(`Nenhum contêiner de ${service} está em execução após o deploy.`);
   }
 
-  const states = run(
+  const states = execute(
     "docker",
     [
       "inspect",
@@ -48,52 +45,63 @@ function assertRunningRevision(service, revision, env) {
   }
 }
 
-try {
-  const revision = run("git", ["rev-parse", "HEAD"], { capture: true });
-  const status = run("git", ["status", "--porcelain"], { capture: true });
-  if (status) {
-    throw new Error("O build de produção exige o repositório limpo para registrar a revisão correta.");
+function main() {
+  const mode = process.argv[2];
+  if (!new Set(["build", "deploy"]).has(mode)) {
+    console.error("Uso: node scripts/docker-production.mjs <build|deploy>");
+    process.exit(2);
   }
 
-  const env = {
-    ...process.env,
-    BUILDKIT_PROGRESS: process.env.BUILDKIT_PROGRESS ?? "plain",
-    BUILD_DATE: new Date().toISOString(),
-    SOURCE_REVISION: revision,
-  };
+  try {
+    const revision = run("git", ["rev-parse", "HEAD"], { capture: true });
+    const status = run("git", ["status", "--porcelain"], { capture: true });
+    if (status) {
+      throw new Error("O build de produção exige o repositório limpo para registrar a revisão correta.");
+    }
 
-  run("docker", ["compose", "config", "--quiet"], { env });
-  run("docker", ["compose", "build", "migrate", "app", "pdf-worker", "escalas-solver"], { env });
+    const env = {
+      ...process.env,
+      BUILDKIT_PROGRESS: process.env.BUILDKIT_PROGRESS ?? "plain",
+      BUILD_DATE: new Date().toISOString(),
+      SOURCE_REVISION: revision,
+    };
 
-  if (mode === "deploy") {
-    run(
-      "docker",
-      [
-        "compose", "up", "-d", "--no-build", "--wait", "--wait-timeout", "180",
-        "app", "pdf-worker", "escalas-solver",
-      ],
-      { env },
-    );
-    assertRunningRevision("app", revision, env);
-    assertRunningRevision("pdf-worker", revision, env);
-    run("docker", ["compose", "ps"], { env });
+    run("docker", ["compose", "config", "--quiet"], { env });
+    run("docker", ["compose", "build", "migrate", ...productionServices], { env });
+
+    if (mode === "deploy") {
+      run(
+        "docker",
+        [
+          "compose", "up", "-d", "--no-build", "--wait", "--wait-timeout", "180",
+          ...productionServices,
+        ],
+        { env },
+      );
+      for (const service of productionServices) {
+        assertRunningRevision(service, revision, env);
+      }
+      run("docker", ["compose", "ps"], { env });
+    }
+
+    // O cache do builder pode ser compartilhado por outros projetos do servidor.
+    if (
+      process.env.ENABLE_BUILDKIT_GC === "1" &&
+      process.env.SKIP_BUILDKIT_GC !== "1"
+    ) {
+      run("docker", [
+        "builder",
+        "prune",
+        "--force",
+        "--filter",
+        "until=168h",
+      ]);
+      run("docker", ["builder", "prune", "--force", "--max-used-space=15gb"]);
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
   }
-
-  // O cache do builder pode ser compartilhado por outros projetos do servidor.
-  if (
-    process.env.ENABLE_BUILDKIT_GC === "1" &&
-    process.env.SKIP_BUILDKIT_GC !== "1"
-  ) {
-    run("docker", [
-      "builder",
-      "prune",
-      "--force",
-      "--filter",
-      "until=168h",
-    ]);
-    run("docker", ["builder", "prune", "--force", "--max-used-space=15gb"]);
-  }
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
 }
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
