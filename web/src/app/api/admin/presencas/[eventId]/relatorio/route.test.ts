@@ -47,6 +47,27 @@ describe(routePath, () => {
     });
   });
 
+  it("does not return a silently truncated report beyond the supported limit", async () => {
+    mocks.findFirst.mockResolvedValue({ eventSlug: "large-event", guests: Array.from({ length: 10_001 }, () => ({
+      name: "Guest", email: "guest@example.test", rsvpStatus: "PENDING", adultCount: 1, childCount: 0,
+      respondedAt: null, reservedGifts: [], deliveries: [],
+    })) });
+    const response = await GET(new Request(`http://localhost${routePath}`), context);
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: "EXPORT_LIMIT_EXCEEDED" } });
+    expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ guests: expect.objectContaining({ take: 10_001 }) }) }));
+  });
+
+  it("neutralizes spreadsheet formulas hidden behind whitespace", async () => {
+    mocks.findFirst.mockResolvedValue({ eventSlug: "event", guests: [{
+      name: "\t=1+1", email: "guest@example.test", rsvpStatus: "CONFIRMED", adultCount: 1, childCount: 0,
+      respondedAt: null, reservedGifts: [], deliveries: [],
+    }] });
+    const response = await GET(new Request(`http://localhost${routePath}`), context);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("\"'\t=1+1\"");
+  });
+
   it("exports tenant-scoped guests as injection-safe CSV", async () => {
     const response = await GET(
       new Request(`http://localhost${routePath}?status=CONFIRMED`),

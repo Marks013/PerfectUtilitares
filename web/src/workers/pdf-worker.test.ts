@@ -77,6 +77,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.findUnique.mockReset();
   mocks.processJob.mockResolvedValue(undefined);
 });
 
@@ -87,6 +88,14 @@ const queueJob = (retryCount = 0): QueueJob => ({
 });
 
 describe("PDF worker idempotency", () => {
+  it("does not acknowledge a redelivery while the persisted job is still running", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.findUnique.mockResolvedValueOnce({ status: "RUNNING" });
+    await expect(handleJobs([queueJob(1)])).rejects.toThrow("PDF_PROCESSING_ALREADY_RUNNING");
+    expect(mocks.processJob).not.toHaveBeenCalled();
+    expect(mocks.cleanupInputs).not.toHaveBeenCalled();
+  });
+
   it.each(["PDF_OFFICE_PAGE_LIMIT", "PDF_IMAGE_TOO_LARGE", "PDF_OFFICE_OCR_NO_TEXT"])(
     "keeps %s terminal without repeating an unchanged conversion",
     async (code) => {

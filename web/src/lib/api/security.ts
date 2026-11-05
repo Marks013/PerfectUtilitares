@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { auth, type AppSession } from "@/auth";
+import { boundedRequestBody, RequestBodyReadError } from "@/lib/api/bounded-body";
 import {
   checkRateLimit,
   checkSharedRateLimit,
@@ -42,43 +43,25 @@ export async function readJsonBody(
   request: Request,
 ): Promise<JsonBodyOk | JsonBodyFail> {
   const maxBytes = requestBodyLimits.get(request) ?? 1024 * 1024;
+  let bounded: ReturnType<typeof boundedRequestBody> | undefined;
 
   try {
     if (!request.body) {
       throw new SyntaxError("Empty body");
     }
 
-    const reader = request.body.getReader();
-    const decoder = new TextDecoder();
-    let totalBytes = 0;
-    let text = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel();
-        return {
-          ok: false,
-          response: jsonError(
-            413,
-            "PAYLOAD_TOO_LARGE",
-            `Os dados enviados ultrapassam o limite de ${Math.max(
-              1,
-              Math.ceil(maxBytes / 1024),
-            )}KB.`,
-          ),
-        };
-      }
-
-      text += decoder.decode(value, { stream: true });
-    }
-
-    text += decoder.decode();
+    bounded = boundedRequestBody(request.body, maxBytes);
+    const text = await new Response(bounded.stream).text();
     return { ok: true, data: JSON.parse(text) };
-  } catch {
+  } catch (error) {
+    if (error instanceof RequestBodyReadError) {
+      return {
+        ok: false,
+        response: error.code === "PAYLOAD_TOO_LARGE"
+          ? jsonError(413, error.code, `Os dados enviados ultrapassam o limite de ${Math.max(1, Math.ceil(maxBytes / 1024))}KB.`)
+          : jsonError(408, error.code, "O envio demorou mais que o permitido. Confira sua conexão e tente novamente."),
+      };
+    }
     return {
       ok: false,
       response: jsonError(
@@ -87,6 +70,8 @@ export async function readJsonBody(
         "Não foi possível ler os dados enviados. Envie um JSON válido.",
       ),
     };
+  } finally {
+    bounded?.cancel();
   }
 }
 

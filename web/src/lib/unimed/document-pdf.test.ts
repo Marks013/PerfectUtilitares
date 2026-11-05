@@ -233,6 +233,20 @@ describe("Unimed document PDF orchestration", () => {
     expect(mocks.deleteMany).toHaveBeenCalledOnce();
   });
 
+  it.each(["DRAFT", "QUEUED", "SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"])(
+    "does not read or expose an expired %s document",
+    async (status) => {
+      mocks.findFirst.mockResolvedValue({
+        artifacts: [{ mimeType: "application/pdf", originalName: "document.pdf", sha256: "digest", sizeBytes: 10n, storageKey: `${jobId}/output/file.pdf` }],
+        expiresAt: new Date("2020-01-01T00:00:00Z"),
+        id: jobId, progress: 100, status,
+      });
+      await expect(getUnimedDocumentPdf(tenantId, moduleSessionId, jobId)).resolves.toEqual({ state: "GONE" });
+      expect(mocks.readFile).not.toHaveBeenCalled();
+      expect(mocks.removeJobFiles).toHaveBeenCalledWith(jobId);
+    },
+  );
+
   it("validates, returns and immediately removes a successful PDF", async () => {
     const bytes = new TextEncoder().encode("%PDF-valid-output");
     const sha256 = await crypto.subtle.digest("SHA-256", bytes);

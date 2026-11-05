@@ -73,7 +73,7 @@ export async function sendInvitationEmail({
   const safeTenantName = escapeHtml(tenantName);
   const safeInviteUrl = escapeHtml(inviteUrl);
 
-  await client.emails.send({
+  const result = await client.emails.send({
     from,
     to,
     subject: "Convite para o Sistema Web",
@@ -87,6 +87,7 @@ export async function sendInvitationEmail({
       </div>
     `,
   });
+  acceptedEmailId(result);
 }
 
 function resendErrorCode(error: unknown) {
@@ -94,6 +95,12 @@ function resendErrorCode(error: unknown) {
   const candidate = "name" in error ? error.name : null;
   if (typeof candidate !== "string") return "UNKNOWN";
   return candidate.replace(/[^A-Za-z0-9_]+/g, "_").toUpperCase().slice(0, 80);
+}
+
+function acceptedEmailId(result: { data?: { id?: string } | null; error?: unknown }) {
+  if (result.error) throw new Error(`RESEND_${resendErrorCode(result.error)}`);
+  if (!result.data?.id) throw new Error("RESEND_EMPTY_RESPONSE");
+  return result.data.id;
 }
 
 export async function sendPresenceInvitationEmail({
@@ -143,9 +150,7 @@ export async function sendPresenceInvitationEmail({
     { idempotencyKey },
   );
 
-  if (result.error) throw new Error(`RESEND_${resendErrorCode(result.error)}`);
-  if (!result.data?.id) throw new Error("RESEND_EMPTY_RESPONSE");
-  return result.data.id;
+  return acceptedEmailId(result);
 }
 
 export async function sendPresenceReminderEmail({
@@ -195,9 +200,7 @@ export async function sendPresenceReminderEmail({
     { idempotencyKey },
   );
 
-  if (result.error) throw new Error(`RESEND_${resendErrorCode(result.error)}`);
-  if (!result.data?.id) throw new Error("RESEND_EMPTY_RESPONSE");
-  return result.data.id;
+  return acceptedEmailId(result);
 }
 
 export async function sendPasswordResetEmail({
@@ -220,7 +223,7 @@ export async function sendPasswordResetEmail({
   const safeName = escapeHtml(name);
   const safeResetUrl = escapeHtml(resetUrl);
 
-  await client.emails.send({
+  const result = await client.emails.send({
     from,
     to,
     subject: "Redefinição de senha",
@@ -234,4 +237,5 @@ export async function sendPasswordResetEmail({
       </div>
     `,
   });
+  acceptedEmailId(result);
 }

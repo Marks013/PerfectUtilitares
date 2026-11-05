@@ -122,6 +122,22 @@ describe("Resend email adapter", () => {
     expect(reset.html).toContain("a=1&amp;b=2");
   });
 
+  it.each(["invitation", "password reset"] as const)(
+    "does not report %s success when the provider refuses or omits the receipt",
+    async (kind) => {
+      process.env.RESEND_API_KEY = "re_test_key";
+      process.env.RESEND_FROM_EMAIL = "no-reply@example.test";
+      const email = await loadModule();
+      const deliver = () => kind === "invitation"
+        ? email.sendInvitationEmail({ to: "user@example.test", name: "User", tenantName: "Tenant", inviteUrl: "https://example.test/invite" })
+        : email.sendPasswordResetEmail({ to: "user@example.test", name: "User", resetUrl: "https://example.test/reset" });
+      mocks.send.mockResolvedValueOnce({ data: null, error: { name: "validation_error", message: "private recipient details" } });
+      await expect(deliver()).rejects.toThrow(/^RESEND_VALIDATION_ERROR$/);
+      mocks.send.mockResolvedValueOnce({ data: null, error: null });
+      await expect(deliver()).rejects.toThrow(/^RESEND_EMPTY_RESPONSE$/);
+    },
+  );
+
   it("sends a presence invitation with provider idempotency", async () => {
     process.env.RESEND_API_KEY = "re_test_key";
     process.env.RESEND_FROM_EMAIL = "Perfect <no-reply@example.test>";

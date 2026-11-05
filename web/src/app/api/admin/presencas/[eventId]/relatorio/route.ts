@@ -44,7 +44,7 @@ const providerStatusLabel: Record<string, string> = {
 
 function csvCell(value: string | number | null) {
   let text = value === null ? "" : String(value);
-  if (/^[=+@-]/.test(text)) text = `'${text}`;
+  if (/^[\t\r\n]|^\s*[=+@-]/.test(text)) text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 }
 
@@ -78,7 +78,7 @@ export async function GET(request: Request, context: RouteContext) {
             ? undefined
             : { rsvpStatus: query.data.status },
         orderBy: [{ name: "asc" }, { createdAt: "asc" }],
-        take: 10_000,
+        take: 10_001,
         select: {
           name: true,
           email: true,
@@ -107,6 +107,13 @@ export async function GET(request: Request, context: RouteContext) {
   });
   if (!event) {
     return jsonError(404, "EVENT_NOT_FOUND", "Evento não encontrado.");
+  }
+  if (event.guests.length > 10_000) {
+    return jsonError(
+      413,
+      "EXPORT_LIMIT_EXCEEDED",
+      "Este relatório tem mais de 10.000 convidados. Selecione um filtro de resposta para reduzir a lista; nenhum arquivo parcial foi gerado.",
+    );
   }
 
   const rows = [

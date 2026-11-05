@@ -208,13 +208,15 @@ describe("issuing invitation and password recovery links", () => {
     expect(mocks.sendReset).not.toHaveBeenCalled();
   });
 
-  it.each(["invitation", "recovery"])("keeps delivery failure primary when cleanup also fails: %s", async (kind) => {
+  it.each(["invitation", "recovery"])("handles delivery and cleanup failures without exposing public recovery status: %s", async (kind) => {
     const error = new Error("Delivery unavailable");
     mocks.invitationDelete.mockRejectedValueOnce(new Error("Cleanup unavailable"));
     if (kind === "recovery") {
       mocks.userFind.mockResolvedValueOnce(user);
       mocks.sendReset.mockRejectedValueOnce(error);
-      await expect(recover(request({ email: user.email }))).rejects.toBe(error);
+      const response = await recover(request({ email: user.email }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
     } else {
       mocks.sendInvite.mockRejectedValueOnce(error);
       await expect(invite(request({ tenantId: user.tenantId, email: user.email, name: user.name }))).rejects.toBe(error);

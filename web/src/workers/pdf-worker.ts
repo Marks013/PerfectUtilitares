@@ -93,7 +93,18 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
         status: "RUNNING",
       },
     });
-    if (claimed.count !== 1) return;
+    if (claimed.count !== 1) {
+      const current = await prisma.pdfJob.findUnique({
+        where: { id: job.data.jobId },
+        select: { status: true },
+      });
+      // Do not acknowledge an unresolved execution, or start a second converter.
+      // Crash recovery needs attempt fencing before RUNNING can be reclaimed.
+      if (current?.status === "RUNNING") {
+        throw new Error("PDF_PROCESSING_ALREADY_RUNNING");
+      }
+      return;
+    }
 
     let invalidCompletedOutput = false;
     try {

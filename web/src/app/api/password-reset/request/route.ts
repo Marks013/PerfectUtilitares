@@ -104,11 +104,13 @@ export async function POST(request: Request) {
         name: user.name,
         resetUrl,
       });
-    } catch (error) {
+    } catch {
       await prisma.userInvitation
         .delete({ where: { id: invitation.id } })
         .catch(() => {});
-      throw error;
+      // Keep the public response identical for existing and unknown accounts.
+      // Provider messages can contain recipients or tokens; log only the event.
+      console.error(JSON.stringify({ event: "password_reset_delivery_failed" }));
     }
   }
 

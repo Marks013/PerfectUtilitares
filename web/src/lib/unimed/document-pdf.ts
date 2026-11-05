@@ -262,10 +262,7 @@ export async function getUnimedDocumentPdf(
   });
 
   if (!job) return { state: "NOT_FOUND" };
-  if (
-    job.expiresAt <= new Date() &&
-    (job.status === "DRAFT" || job.status === "QUEUED")
-  ) {
+  if (job.expiresAt <= new Date() && job.status !== "RUNNING") {
     await removeJob(tenantId, moduleSessionId, job.id);
     return { state: "GONE" };
   }
