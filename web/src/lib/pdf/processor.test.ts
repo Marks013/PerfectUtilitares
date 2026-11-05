@@ -130,7 +130,8 @@ function inputArtifact(overrides: Record<string, unknown> = {}) {
 }
 
 const startedAt = new Date("2026-11-05T18:00:00Z");
-const execution = { id: "job-1", status: "RUNNING", startedAt };
+const attempt = { id: "job-1", startedAt, recoveryAttempt: 0 };
+const execution = { ...attempt, status: "RUNNING" };
 
 function makeJob(overrides: Record<string, unknown> = {}) {
   return {
@@ -186,7 +187,7 @@ describe("PDF processor lifecycle", () => {
   it("ignores a job that no longer exists", async () => {
     mocks.findUnique.mockResolvedValueOnce(null);
 
-    await expect(processPdfJob("job-1", startedAt)).resolves.toBeUndefined();
+    await expect(processPdfJob(attempt)).resolves.toBeUndefined();
 
     expect(mocks.assertCapacity).not.toHaveBeenCalled();
     expect(mocks.jobUpdate).not.toHaveBeenCalled();
@@ -197,7 +198,7 @@ describe("PDF processor lifecycle", () => {
     async (status) => {
       mocks.findUnique.mockResolvedValueOnce(makeJob({ status }));
 
-      await expect(processPdfJob("job-1", startedAt)).resolves.toBeUndefined();
+      await expect(processPdfJob(attempt)).resolves.toBeUndefined();
 
       expect(mocks.assertCapacity).not.toHaveBeenCalled();
       expect(mocks.jobUpdate).not.toHaveBeenCalled();
@@ -206,7 +207,7 @@ describe("PDF processor lifecycle", () => {
 
   it("checks the active execution before reading any inputs", async () => {
     mocks.findUnique.mockResolvedValueOnce(null);
-    await processPdfJob("job-1", startedAt);
+    await processPdfJob(attempt);
     expect(mocks.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: execution }));
     expect(mocks.compress).not.toHaveBeenCalled();
   });
@@ -220,7 +221,7 @@ describe("PDF processor lifecycle", () => {
       return compressedOutput;
     });
 
-    await expect(processPdfJob("job-1", startedAt, controller.signal)).rejects.toBe(error);
+    await expect(processPdfJob(attempt, controller.signal)).rejects.toBe(error);
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.removeStorage).toHaveBeenCalledExactlyOnceWith(compressedOutput.storageKey);
     expect(mocks.jobUpdateMany).not.toHaveBeenCalled();
@@ -231,7 +232,7 @@ describe("PDF processor lifecycle", () => {
       makeJob({ operation: "NOT_IMPLEMENTED" }),
     );
 
-    await expect(processPdfJob("job-1", startedAt)).rejects.toMatchObject({
+    await expect(processPdfJob(attempt)).rejects.toMatchObject({
       code: "OPERATION_NOT_READY",
     });
 
@@ -241,7 +242,7 @@ describe("PDF processor lifecycle", () => {
   it("rejects a job without input artifacts", async () => {
     mocks.findUnique.mockResolvedValueOnce(makeJob({ artifacts: [] }));
 
-    await expect(processPdfJob("job-1", startedAt)).rejects.toMatchObject({
+    await expect(processPdfJob(attempt)).rejects.toMatchObject({
       code: "INPUT_REQUIRED",
     });
 
@@ -266,7 +267,7 @@ describe("PDF processor lifecycle", () => {
     );
     mocks.compress.mockResolvedValueOnce(compressedOutput);
 
-    await processPdfJob("job-1", startedAt);
+    await processPdfJob(attempt);
 
     expect(mocks.assertCapacity).toHaveBeenCalledWith({
       inputBytes: 200,
@@ -353,7 +354,7 @@ describe("PDF processor lifecycle", () => {
       .mockResolvedValueOnce(compressedOutput)
       .mockRejectedValueOnce(new PdfToolError("QPDF_FAILED", "qpdf falhou"));
 
-    await expect(processPdfJob("job-1", startedAt)).resolves.toBeUndefined();
+    await expect(processPdfJob(attempt)).resolves.toBeUndefined();
 
     expect(mocks.artifactCreateMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ id: "output-1", kind: "OUTPUT" })],
@@ -372,7 +373,7 @@ describe("PDF processor lifecycle", () => {
     mocks.findUnique.mockResolvedValueOnce(makeJob());
     mocks.compress.mockRejectedValueOnce(error);
 
-    await expect(processPdfJob("job-1", startedAt)).rejects.toBe(error);
+    await expect(processPdfJob(attempt)).rejects.toBe(error);
 
     expect(mocks.jobUpdateMany).not.toHaveBeenCalled();
   });
@@ -384,7 +385,7 @@ describe("PDF processor lifecycle", () => {
     mocks.compress.mockResolvedValueOnce(compressedOutput);
     mocks.transaction.mockRejectedValueOnce(error);
 
-    await expect(processPdfJob("job-1", startedAt)).rejects.toBe(error);
+    await expect(processPdfJob(attempt)).rejects.toBe(error);
 
     expect(mocks.removeStorage).toHaveBeenCalledWith(
       "jobs/job-1/output.pdf",
@@ -434,7 +435,7 @@ describe("PDF processor operation paths", () => {
       }),
     );
 
-    await expect(processPdfJob("job-1", startedAt)).rejects.toMatchObject({
+    await expect(processPdfJob(attempt)).rejects.toMatchObject({
       code: "INVALID_PAGE_SOURCE",
     });
 
@@ -477,7 +478,7 @@ describe("PDF processor operation paths", () => {
     );
     mocks.writePdf.mockResolvedValueOnce(output);
 
-    await processPdfJob("job-1", startedAt);
+    await processPdfJob(attempt);
 
     expect(mocks.buildImages).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -559,7 +560,7 @@ describe("PDF processor operation paths", () => {
       },
     );
 
-    await processPdfJob("job-1", startedAt);
+    await processPdfJob(attempt);
 
     expect(mocks.writeBinary).toHaveBeenNthCalledWith(
       1,
@@ -646,7 +647,7 @@ describe("PDF processor operation paths", () => {
       },
     );
 
-    await processPdfJob("job-1", startedAt);
+    await processPdfJob(attempt);
 
     expect(mocks.writePdf).toHaveBeenNthCalledWith(
       1,
@@ -698,7 +699,7 @@ describe("PDF processor operation paths", () => {
     mocks.applyAnnotations.mockResolvedValueOnce(annotatedBytes);
     mocks.writePdf.mockResolvedValueOnce(output);
 
-    await processPdfJob("job-1", startedAt);
+    await processPdfJob(attempt);
 
     expect(mocks.buildStructural).toHaveBeenCalledWith(
       expect.objectContaining({

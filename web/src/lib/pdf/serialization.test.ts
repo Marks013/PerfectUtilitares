@@ -13,6 +13,7 @@ describe("PDF job serialization", () => {
       principalKey: `user:${"a".repeat(64)}`,
       operation: "COMPRESS",
       status: "SUCCEEDED",
+      recoveryAttempt: 1,
       progress: 100,
       options: { quality: "SOURCE" },
       errorCode: null,
@@ -74,6 +75,7 @@ describe("PDF job serialization", () => {
     expect(serialized).not.toHaveProperty("tenantId");
     expect(serialized).not.toHaveProperty("userId");
     expect(serialized).not.toHaveProperty("ownerSessionHash");
+    expect(serialized).not.toHaveProperty("recoveryAttempt");
     expect(serialized.artifacts?.[0]).not.toHaveProperty("jobId");
     expect(serialized.artifacts?.[0]).not.toHaveProperty("storageKey");
     expect(serialized.artifacts?.[0]).not.toHaveProperty("sha256");

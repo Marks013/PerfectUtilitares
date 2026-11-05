@@ -539,6 +539,7 @@ model PdfJob {
   principalKey     String        @default(dbgenerated("('legacy:rollback:'::text || (gen_random_uuid())::text)"))
   operation        PdfOperation
   status           PdfJobStatus  @default(DRAFT)
+  recoveryAttempt  Int           @default(0)
   progress         Int           @default(0)
   options          Json?
   errorCode        String?

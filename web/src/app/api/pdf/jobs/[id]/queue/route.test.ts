@@ -96,6 +96,7 @@ const draftJob = {
   operation: "WORD_TO_PDF",
   options: null,
   principalKey: "principal-1",
+  recoveryAttempt: 0,
   status: "DRAFT",
 };
 
@@ -137,6 +138,19 @@ describe("POST /api/pdf/jobs/:id/queue", () => {
     expect(response.status).toBe(202);
     expect(mocks.enqueue).toHaveBeenCalledOnce();
     expect(mocks.reserve).not.toHaveBeenCalled();
+  });
+
+  it("returns the queued recovery without publishing a second original delivery", async () => {
+    const recovering = { ...draftJob, status: "QUEUED", recoveryAttempt: 1 };
+    mocks.findFirst.mockResolvedValueOnce(recovering);
+    mocks.findUnique.mockResolvedValueOnce(recovering);
+
+    const response = await POST(request(), context);
+
+    expect(response.status).toBe(202);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(mocks.recordUsage).not.toHaveBeenCalled();
   });
 
   it("uses idempotent publication attempts when two queue requests race", async () => {

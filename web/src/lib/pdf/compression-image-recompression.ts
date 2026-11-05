@@ -12,6 +12,7 @@ import type {
 } from "./compression-types";
 import { PdfToolError } from "./compression-types";
 import { validateSemanticCandidate } from "./compression-semantic";
+import { throwIfPdfExecutionAborted } from "./execution-abort";
 
 type PdfCompressionCandidateKind =
   | "STRUCTURAL"
@@ -429,6 +430,7 @@ export async function buildPreservingImageCandidates({
         if (hasEarlyJpegSavings(input.size, output.size)) return candidates;
       }
     } catch (error) {
+      throwIfPdfExecutionAborted();
       reportIntegrityRejection(error);
     }
     if (!candidates.length) {
@@ -478,6 +480,7 @@ export async function buildPreservingImageCandidates({
         return candidates;
       }
     } catch (error) {
+      throwIfPdfExecutionAborted();
       reportIntegrityRejection(error);
       await rm(monoXObjectPath, { force: true }).catch(() => undefined);
     }
@@ -499,6 +502,7 @@ export async function buildPreservingImageCandidates({
       }),
     );
   } catch (error) {
+    throwIfPdfExecutionAborted();
     reportIntegrityRejection(error);
     await rm(qpdfPath, { force: true }).catch(() => undefined);
   }
@@ -580,11 +584,13 @@ export async function buildPreservingImageCandidates({
             }),
           );
         } catch (error) {
+          throwIfPdfExecutionAborted();
           reportIntegrityRejection(error);
           await rm(deepPath, { force: true }).catch(() => undefined);
         }
       }
     } catch (error) {
+      throwIfPdfExecutionAborted();
       reportIntegrityRejection(error);
       await rm(gsPath, { force: true }).catch(() => undefined);
     }
@@ -616,6 +622,7 @@ export async function buildPreservingImageCandidates({
         }),
       );
     } catch (error) {
+      throwIfPdfExecutionAborted();
       reportIntegrityRejection(error);
       await rm(optimizedPath, { force: true }).catch(() => undefined);
     }
@@ -649,6 +656,7 @@ export async function optimizeMonochromeRasterCandidate({
     ]);
     return (await stat(outputPath)).size > 0;
   } catch {
+    throwIfPdfExecutionAborted();
     return false;
   }
 }

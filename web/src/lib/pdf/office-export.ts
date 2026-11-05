@@ -4,6 +4,7 @@ import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { PdfOfficeError } from "./office";
 import { resolvePdfStorageKey } from "./storage";
+import { bindPdfProcessAbort, throwIfPdfExecutionAborted } from "./execution-abort";
 
 const EXPORT_MESSAGES: Record<string, string> = {
   PDF_OFFICE_PAGE_LIMIT: "Converta PDFs com até 100 páginas. Divida o documento e tente novamente.",
@@ -31,6 +32,7 @@ export async function convertPdfToOffice({
   let progressTask = Promise.resolve();
   try {
     await new Promise<void>((resolve, reject) => {
+      throwIfPdfExecutionAborted();
       const child = spawn(process.env.PDF_OFFICE_PYTHON || "/opt/pdf-office/bin/python3", [
         process.env.PDF_OFFICE_SCRIPT || path.resolve("src/lib/pdf/office-export.py"),
         resolvePdfStorageKey(storageKey), outputPath, extension,
@@ -40,6 +42,7 @@ export async function convertPdfToOffice({
         env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", OMP_THREAD_LIMIT: "1", TMPDIR: workDirectory,
           XDG_CACHE_HOME: path.join(workDirectory, "cache") },
       });
+      const abortSignal = bindPdfProcessAbort(child, true);
       let errorCode = "PDF_OFFICE_CONVERSION_FAILED";
       let pending = "";
       let settled = false;
@@ -47,7 +50,9 @@ export async function convertPdfToOffice({
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (error) reject(error); else resolve();
+        if (abortSignal?.aborted) reject(abortSignal.reason);
+        else if (error) reject(error);
+        else resolve();
       };
       const terminateGroup = () => {
         try {
@@ -59,6 +64,7 @@ export async function convertPdfToOffice({
       // Keep them in the same group and terminate them before close/cleanup.
       child.once("exit", terminateGroup);
       const timer = setTimeout(() => {
+        if (abortSignal?.aborted) return;
         terminateGroup();
         // Wait for close before deleting its work directory.
         errorCode = "OFFICE_CONVERSION_TIMEOUT";

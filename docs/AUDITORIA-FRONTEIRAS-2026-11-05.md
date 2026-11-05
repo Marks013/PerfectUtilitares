@@ -131,6 +131,19 @@ Referências internas:
   reenfileira nem publica depois de perder a execução.
 - A reconciliação não remove arquivos nem estende a retenção. Se o prazo
   original já venceu, o trabalho pode aparecer como expirado em vez de falho.
-- A retomada automática de uma execução interrompida ainda requer isolamento
-  das tentativas e cancelamento efetivo de subprocessos. Este ajuste evita
-  deixar a interface esperando indefinidamente por uma entrega já encerrada.
+
+### Reexecução automática
+
+Se a entrega original falhar sem encerrar o trabalho e ainda houver entrada
+dentro do prazo, o worker publica uma única nova execução. A geração e a
+entrega são gravadas na mesma transação, com ID próprio e o mesmo grupo de
+concorrência. Trabalhos cancelados, vencidos ou já recuperados não voltam à
+fila. Não há extensão da retenção nem nova contabilização de uso.
+
+Gravações da tentativa antiga não valem na nova geração. Aborto da fila ou
+perda da posse interrompe subprocessos do próprio trabalho; código síncrono
+em execução para no próximo ponto de verificação. O controle da geração não
+depende de os subprocessos terem encerrado para proteger a publicação.
+
+A migração é aditiva. Em reversão de imagem, aguarde trabalhos recuperados
+saírem de `QUEUED` e `RUNNING` antes de restaurar o worker antigo; não remova a coluna.

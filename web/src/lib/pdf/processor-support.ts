@@ -123,8 +123,10 @@ export function createSplitOutputName(inputName: string, pageNumber: number) {
   return `${baseName}-pagina-${String(pageNumber).padStart(3, "0")}.pdf`;
 }
 
+export type PdfExecution = { id: string; startedAt: Date; recoveryAttempt: number };
+
 export async function updateProgress(
-  execution: { id: string; status: "RUNNING"; startedAt: Date },
+  execution: PdfExecution & { status: "RUNNING" },
   progress: number,
 ) {
   await prisma.pdfJob.updateMany({

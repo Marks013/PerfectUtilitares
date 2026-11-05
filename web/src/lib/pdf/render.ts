@@ -9,6 +9,7 @@ import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import type { PdfManifest } from "@/lib/pdf/schema";
 import { ensureServerLocalStorage } from "@/lib/pdf/server-runtime";
 import { buildStructuralPdf } from "@/lib/pdf/structural";
+import { bindPdfProcessAbort, throwIfPdfExecutionAborted } from "./execution-abort";
 
 const MAX_JPEG_PIXELS = 40_000_000;
 const MAX_JPEG_DIMENSION = 8_192;
@@ -49,20 +50,24 @@ class PdfRenderError extends Error {
 function runPoppler(args: string[], timeoutMs = 10 * 60 * 1_000) {
   return new Promise<void>((resolve, reject) => {
     const executable = process.env.PDF_POPPLER_PATH?.trim() || "pdftoppm";
+    throwIfPdfExecutionAborted();
     const childProcess = spawn(executable, args, {
       shell: false,
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     });
+    const abortSignal = bindPdfProcessAbort(childProcess);
     let errorOutput = "";
     let settled = false;
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      callback();
+      if (abortSignal?.aborted) reject(abortSignal.reason);
+      else callback();
     };
     const timeout = setTimeout(() => {
+      if (abortSignal?.aborted) return;
       childProcess.kill("SIGKILL");
       finish(() =>
         reject(

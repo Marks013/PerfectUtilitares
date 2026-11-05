@@ -49,7 +49,9 @@ vi.mock("@/lib/pdf/processor", () => ({
 
 vi.mock("@/lib/pdf/queue", () => ({
   getPdfQueue: vi.fn().mockResolvedValue({ work: mocks.work }),
+  getPdfQueueJobId: (id: string, attempt: number) => `${id}-${attempt}`,
   PDF_PROCESSING_QUEUE: "perfect-pdf-processing",
+  PDF_RECOVERY_ATTEMPT: 1,
   stopPdfQueue: mocks.stopQueue,
 }));
 
@@ -63,7 +65,8 @@ vi.mock("@/lib/pdf/retention", () => ({
 }));
 
 type QueueJob = {
-  data: { jobId: string };
+  id: string;
+  data: { jobId: string; recoveryAttempt?: number };
   retryCount: number;
   retryLimit: number;
   signal?: AbortSignal;
@@ -84,8 +87,9 @@ beforeEach(() => {
   mocks.processJob.mockResolvedValue(undefined);
 });
 
-const queueJob = (retryCount = 0): QueueJob => ({
-  data: { jobId: "job-12345678" },
+const queueJob = (retryCount = 0, recoveryAttempt = 0): QueueJob => ({
+  id: `job-12345678-${recoveryAttempt}`,
+  data: { jobId: "job-12345678", recoveryAttempt },
   retryCount,
   retryLimit: 2,
 });
@@ -135,7 +139,7 @@ describe("PDF worker idempotency", () => {
 
     expect(mocks.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "job-12345678", status: "QUEUED" },
+        where: { id: "job-12345678", status: "QUEUED", recoveryAttempt: 0 },
       }),
     );
     expect(mocks.processJob).not.toHaveBeenCalled();
@@ -153,8 +157,41 @@ describe("PDF worker idempotency", () => {
 
     await handleJobs([queueJob()]);
 
-    expect(mocks.processJob).toHaveBeenCalledExactlyOnceWith("job-12345678", expect.any(Date), undefined);
+    expect(mocks.processJob).toHaveBeenCalledExactlyOnceWith(
+      { id: "job-12345678", startedAt: expect.any(Date), recoveryAttempt: 0 },
+      expect.any(AbortSignal),
+    );
     expect(mocks.cleanupInputs).toHaveBeenCalledWith("job-12345678");
+  });
+
+  it("does not let the original delivery claim a recovered job", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.findUnique.mockResolvedValueOnce(null);
+    await handleJobs([queueJob()]);
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "job-12345678", status: "QUEUED", recoveryAttempt: 0 },
+    }));
+    expect(mocks.processJob).not.toHaveBeenCalled();
+    expect(mocks.cleanupInputs).not.toHaveBeenCalled();
+  });
+
+  it("processes the distinct recovery delivery once under its own generation", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 });
+    mocks.findUnique.mockResolvedValueOnce({
+      status: "SUCCEEDED", artifacts: [{ sha256: "valid", sizeBytes: 10n }],
+    });
+    await handleJobs([{ ...queueJob(0, 1), retryLimit: 0 }]);
+    expect(mocks.processJob).toHaveBeenCalledExactlyOnceWith(
+      { id: "job-12345678", startedAt: expect.any(Date), recoveryAttempt: 1 },
+      expect.any(AbortSignal),
+    );
+    expect(mocks.cleanupInputs).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a mismatched generation before claiming the job", async () => {
+    await handleJobs([{ ...queueJob(0, 1), id: "job-12345678-0" }]);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.processJob).not.toHaveBeenCalled();
   });
 
   it("never overwrites a valid terminal success after a processing error", async () => {
@@ -171,6 +208,7 @@ describe("PDF worker idempotency", () => {
           id: "job-12345678",
           status: "RUNNING",
           startedAt: expect.any(Date),
+          recoveryAttempt: 0,
         },
       }),
     );
@@ -205,6 +243,7 @@ describe("PDF worker idempotency", () => {
           id: "job-12345678",
           status: "SUCCEEDED",
           startedAt: expect.any(Date),
+          recoveryAttempt: 0,
         },
       }),
     );

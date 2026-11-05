@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { PDFDocument } from "pdf-lib";
 import { resolvePdfStorageKey } from "@/lib/pdf/storage";
+import { bindPdfProcessAbort, terminatePdfProcess, throwIfPdfExecutionAborted } from "./execution-abort";
 
 export class PdfOfficeError extends Error {
   constructor(
@@ -22,6 +23,7 @@ export class PdfOfficeError extends Error {
 function runLibreOffice(args: string[], profileDirectory: string) {
   return new Promise<void>((resolve, reject) => {
     const binary = process.env.LIBREOFFICE_BIN || "soffice";
+    throwIfPdfExecutionAborted();
     const child = spawn(binary, args, {
       env: {
         ...process.env,
@@ -29,26 +31,26 @@ function runLibreOffice(args: string[], profileDirectory: string) {
         TMPDIR: profileDirectory,
       },
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "pipe"],
     });
+    const abortSignal = bindPdfProcessAbort(child, true);
     let errorOutput = "";
     let settled = false;
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      callback();
+      if (abortSignal?.aborted) reject(abortSignal.reason);
+      else callback();
     };
+    let timedOut = false;
+    const terminateGroup = () => terminatePdfProcess(child, true);
+    child.once("exit", terminateGroup);
     const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(() =>
-        reject(
-          new PdfOfficeError(
-            "OFFICE_CONVERSION_TIMEOUT",
-            "A conversão excedeu o tempo permitido.",
-          ),
-        ),
-      );
+      if (abortSignal?.aborted) return;
+      timedOut = true;
+      terminateGroup();
     }, 180_000);
 
     child.stderr.on("data", (chunk: Buffer) => {
@@ -66,8 +68,12 @@ function runLibreOffice(args: string[], profileDirectory: string) {
         ),
       );
     });
-    child.once("exit", (code) => {
+    child.once("close", (code) => {
       finish(() => {
+        if (timedOut) {
+          reject(new PdfOfficeError("OFFICE_CONVERSION_TIMEOUT", "A conversão excedeu o tempo permitido."));
+          return;
+        }
         if (code === 0) {
           resolve();
           return;
@@ -97,11 +103,11 @@ export async function convertOfficeToPdf({
   const workDirectory = resolvePdfStorageKey(workKey);
   const profileDirectory = path.join(workDirectory, "profile");
   const outputDirectory = path.join(workDirectory, "output");
-  await mkdir(profileDirectory, { recursive: true });
-  await mkdir(outputDirectory, { recursive: true });
-  await onProgress?.(10);
-
   try {
+    throwIfPdfExecutionAborted();
+    await mkdir(profileDirectory, { recursive: true });
+    await mkdir(outputDirectory, { recursive: true });
+    await onProgress?.(10);
     await onProgress?.(20);
     await runLibreOffice(
       [

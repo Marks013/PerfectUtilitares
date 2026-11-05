@@ -37,7 +37,9 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/pdf/processor", () => ({ processPdfJob: mocks.processJob }));
 vi.mock("@/lib/pdf/queue", () => ({
   getPdfQueue: async () => ({ work: mocks.work }),
+  getPdfQueueJobId: (id: string) => id,
   PDF_PROCESSING_QUEUE: "perfect-pdf-processing",
+  PDF_RECOVERY_ATTEMPT: 1,
   stopPdfQueue: vi.fn(),
 }));
 vi.mock("@/lib/pdf/interrupted-jobs", () => ({
@@ -163,15 +165,18 @@ describe("PDF worker local failure reporting", () => {
     });
     mocks.cleanupInputs.mockRejectedValueOnce(privateError);
     const handleJobs = mocks.work.mock.calls[0]?.[2] as (
-      jobs: { data: { jobId: string }; retryCount: number; retryLimit: number }[],
+      jobs: { id: string; data: { jobId: string }; retryCount: number; retryLimit: number }[],
     ) => Promise<void>;
 
     await expect(handleJobs([{
-      data: { jobId: "job-12345678" }, retryCount: 0, retryLimit: 2,
+      id: "job-12345678", data: { jobId: "job-12345678" }, retryCount: 0, retryLimit: 2,
     }])).resolves.toBeUndefined();
 
     expectLocalFailure("pdf_worker_input_cleanup_failed");
-    expect(mocks.processJob).toHaveBeenCalledWith("job-12345678", expect.any(Date), undefined);
+    expect(mocks.processJob).toHaveBeenCalledWith(
+      { id: "job-12345678", startedAt: expect.any(Date), recoveryAttempt: 0 },
+      expect.any(AbortSignal),
+    );
     expect(mocks.cleanupInputs).toHaveBeenCalledWith("job-12345678");
     expect(mocks.updateMany).toHaveBeenCalledOnce();
   });

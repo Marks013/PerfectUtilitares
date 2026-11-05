@@ -28,6 +28,7 @@ import {
   reservePdfOutput,
   resolvePdfStorageKey,
 } from "./storage";
+import { bindPdfProcessAbort, throwIfPdfExecutionAborted } from "./execution-abort";
 
 export { PdfToolError } from "./compression-types";
 export type {
@@ -52,20 +53,24 @@ function toolTimeoutMs() {
 
 function runQpdf(args: string[]) {
   return new Promise<void>((resolve, reject) => {
+    throwIfPdfExecutionAborted();
     const child = spawn("qpdf", args, {
       shell: false,
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     });
+    const abortSignal = bindPdfProcessAbort(child);
     let stderr = "";
     let settled = false;
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      callback();
+      if (abortSignal?.aborted) reject(abortSignal.reason);
+      else callback();
     };
     const timeout = setTimeout(() => {
+      if (abortSignal?.aborted) return;
       child.kill("SIGKILL");
       finish(() =>
         reject(
@@ -262,6 +267,7 @@ export async function compressPdfFile({
   options: PdfCompressionOptions;
   outputName: string;
 }) {
+  throwIfPdfExecutionAborted();
   const reservation = await reservePdfOutput(jobId, outputName);
   const inputPath = resolvePdfStorageKey(inputStorageKey);
   const structuralPath = `${reservation.temporaryPath}.structural.pdf`;
@@ -334,6 +340,7 @@ export async function compressPdfFile({
         outcome = selection.outcome;
         selectedCandidate = selection.selectedCandidate;
       } catch (error) {
+        throwIfPdfExecutionAborted();
         if (options.method === "LOSSLESS") {
           throw new PdfToolError(
             "PDF_COMPRESSION_NO_VALID_CANDIDATE",
@@ -382,6 +389,7 @@ export async function compressPdfFile({
             ),
           );
         } catch {
+          throwIfPdfExecutionAborted();
           // O candidato estrutural é opcional.
         }
       }
@@ -397,6 +405,7 @@ export async function compressPdfFile({
       selectedCandidate = selection.selectedCandidate;
     } else {
       outcome = await withRasterCompressionSlot(async () => {
+        throwIfPdfExecutionAborted();
         await rasterizePdfForCompression({
           inputPath,
           options: plan.effectiveOptions,
@@ -423,6 +432,7 @@ export async function compressPdfFile({
             ),
           );
         } catch {
+          throwIfPdfExecutionAborted();
           // raster bruto continua candidato
         }
         if (
@@ -443,6 +453,7 @@ export async function compressPdfFile({
               ),
             );
           } catch {
+            throwIfPdfExecutionAborted();
             // CCITT inválido é descartado
           }
         }
@@ -467,6 +478,7 @@ export async function compressPdfFile({
         reservation.temporaryPath,
       ).catch(() => null);
     }
+    throwIfPdfExecutionAborted();
     const committed = await commitPdfOutput(reservation);
     const changed = outcome === "COMPRESSED";
     const visualFields =

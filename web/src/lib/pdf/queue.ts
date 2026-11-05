@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { PdfPrincipal } from "@/lib/pdf/access";
 
 export const PDF_PROCESSING_QUEUE = "perfect-pdf-processing";
+export const PDF_RECOVERY_ATTEMPT = 1;
 
 const globalForPdfQueue = globalThis as unknown as {
   pdfQueuePromise?: Promise<PgBoss>;
@@ -55,8 +56,11 @@ export function getPdfQueue() {
   return globalForPdfQueue.pdfQueuePromise;
 }
 
-export function getPdfQueueJobId(jobId: string) {
-  const hash = createHash("sha256").update(`pdf-job:${jobId}`).digest("hex");
+export function getPdfQueueJobId(jobId: string, recoveryAttempt = 0) {
+  const key = recoveryAttempt === 0
+    ? `pdf-job:${jobId}`
+    : `pdf-job:${jobId}:recovery:${recoveryAttempt}`;
+  const hash = createHash("sha256").update(key).digest("hex");
   return [
     hash.slice(0, 8),
     hash.slice(8, 12),

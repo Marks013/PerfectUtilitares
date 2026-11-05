@@ -49,6 +49,9 @@ describe("PDF queue publication", () => {
     expect(expectedId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/,
     );
+    const recoveryId = getPdfQueueJobId("job-12345678", 1);
+    expect(recoveryId).not.toBe(expectedId);
+    expect(getPdfQueueJobId("job-12345678", 1)).toBe(recoveryId);
     expect(mocks.send).toHaveBeenCalledTimes(2);
     expect(mocks.send.mock.calls[0]?.[2]).toEqual(
       expect.objectContaining({ id: expectedId, singletonKey: "job-12345678" }),

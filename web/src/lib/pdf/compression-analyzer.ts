@@ -7,6 +7,7 @@ import {
   summarizeSelectableTextPages,
 } from "./compression-detection";
 import { PdfToolError, type PdfCompressionColorMode } from "./compression-types";
+import { bindPdfProcessAbort, throwIfPdfExecutionAborted } from "./execution-abort";
 // PERFECT_PDF_FULL32_V2_2
 
 type PdfCompressionContentKind =
@@ -65,11 +66,13 @@ type PdfImageRow = {
 
 function runCommand(executable: string, args: string[], timeoutMs = 30_000) {
   return new Promise<string>((resolve, reject) => {
+    throwIfPdfExecutionAborted();
     const child = spawn(executable, args, {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    const abortSignal = bindPdfProcessAbort(child);
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -77,9 +80,11 @@ function runCommand(executable: string, args: string[], timeoutMs = 30_000) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      callback();
+      if (abortSignal?.aborted) reject(abortSignal.reason);
+      else callback();
     };
     const timeout = setTimeout(() => {
+      if (abortSignal?.aborted) return;
       child.kill("SIGKILL");
       finish(() =>
         reject(

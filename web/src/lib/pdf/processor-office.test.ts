@@ -27,7 +27,8 @@ import { processPdfJob } from "./processor";
 import type { PdfManifest } from "./schema";
 
 const startedAt = new Date("2026-11-05T18:00:00Z");
-const execution = { id: "job-1", status: "RUNNING", startedAt };
+const attempt = { id: "job-1", startedAt, recoveryAttempt: 0 };
+const execution = { ...attempt, status: "RUNNING" };
 
 function job(operation: string, count = 1) {
   return { id: "job-1", operation, options: {}, status: "RUNNING", inputBytes: BigInt(count * 200),
@@ -78,7 +79,7 @@ describe("PDF Office export processor integration", () => {
         }
       });
 
-      await processPdfJob("job-1", startedAt);
+      await processPdfJob(attempt);
 
       const names = mocks.writeImage.mock.calls.map((call) => call[1] as string);
       expect(names).toHaveLength(2);
@@ -98,7 +99,7 @@ describe("PDF Office export processor integration", () => {
     ["PDF_TO_EXCEL", "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
   ])("persists %s with correct filename, bytes and MIME", async (operation, extension, mimeType) => {
     mocks.find.mockResolvedValue(job(operation, 2));
-    await processPdfJob("job-1", startedAt);
+    await processPdfJob(attempt);
     expect(mocks.capacity).toHaveBeenCalledWith({ inputBytes: 400, multiplier: 2 });
     expect(mocks.export).toHaveBeenCalledTimes(2);
     expect(mocks.export).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -121,7 +122,7 @@ describe("PDF Office export processor integration", () => {
     mocks.find.mockResolvedValue(job("PDF_TO_WORD", 2));
     const error = new PdfOfficeError("PDF_OFFICE_OCR_NO_TEXT", "Confira a nitidez do PDF.");
     mocks.export.mockResolvedValueOnce(new Uint8Array([80, 75])).mockRejectedValueOnce(error);
-    await expect(processPdfJob("job-1", startedAt)).rejects.toBe(error);
+    await expect(processPdfJob(attempt)).rejects.toBe(error);
     expect(mocks.remove).toHaveBeenCalledExactlyOnceWith("job-1/Relatório 0.docx.docx");
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.updateMany).not.toHaveBeenCalled();
@@ -131,7 +132,7 @@ describe("PDF Office export processor integration", () => {
     mocks.find.mockResolvedValue(job("PDF_TO_EXCEL", 2));
     const error = new Error("Database unavailable");
     mocks.transaction.mockRejectedValueOnce(error);
-    await expect(processPdfJob("job-1", startedAt)).rejects.toBe(error);
+    await expect(processPdfJob(attempt)).rejects.toBe(error);
     expect(mocks.remove.mock.calls).toEqual([["job-1/Relatório 0.xlsx.xlsx"], ["job-1/Relatório 1.xlsx.xlsx"]]);
     expect(mocks.updateMany).toHaveBeenCalledTimes(2);
     for (const [update] of mocks.updateMany.mock.calls) {

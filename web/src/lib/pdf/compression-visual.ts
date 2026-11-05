@@ -7,6 +7,7 @@ import {
   PdfToolError,
   type PdfCompressionEffectiveOptions,
 } from "./compression-types";
+import { throwIfPdfExecutionAborted } from "./execution-abort";
 // PERFECT_PDF_FULL32_V2_2
 
 type PdfPageBox = ReturnType<PDFPage["getMediaBox"]>;
@@ -415,6 +416,7 @@ export async function rasterizePdfForCompression({
       }),
     );
   } catch (error) {
+    throwIfPdfExecutionAborted();
     throw error instanceof PdfToolError
       ? error
       : new PdfToolError(

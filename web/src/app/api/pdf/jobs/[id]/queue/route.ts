@@ -65,19 +65,22 @@ async function currentJobResponse(jobId: string, status = 202) {
 }
 
 async function ensurePdfJobPublished(
-  job: { id: string; principalKey: string },
+  job: { id: string; principalKey: string; recoveryAttempt: number },
   tier: "authenticated" | "public",
 ) {
+  // A recovery delivery is already published atomically with its QUEUED state.
+  if (job.recoveryAttempt > 0) return null;
+
   try {
     await enqueuePdfJob(job.id, { key: job.principalKey, tier });
     await prisma.pdfJob.updateMany({
-      where: { id: job.id, status: "QUEUED" },
+      where: { id: job.id, status: "QUEUED", recoveryAttempt: 0 },
       data: { errorCode: null, errorMessage: null },
     });
     return null;
   } catch (error) {
     await prisma.pdfJob.updateMany({
-      where: { id: job.id, status: "QUEUED" },
+      where: { id: job.id, status: "QUEUED", recoveryAttempt: 0 },
       data: {
         errorCode: "QUEUE_UNAVAILABLE",
         errorMessage:
@@ -229,7 +232,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!claimed) {
     const current = await prisma.pdfJob.findUnique({
       where: { id: job.id },
-      select: { status: true },
+      select: { status: true, recoveryAttempt: true },
     });
     if (
       current &&
@@ -237,7 +240,7 @@ export async function POST(request: Request, context: RouteContext) {
     ) {
       if (current.status === "QUEUED") {
         const publishError = await ensurePdfJobPublished(
-          job,
+          { ...job, recoveryAttempt: current.recoveryAttempt },
           owner.session ? "authenticated" : "public",
         );
         if (publishError) return publishError;

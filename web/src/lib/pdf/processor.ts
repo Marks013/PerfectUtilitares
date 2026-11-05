@@ -14,6 +14,7 @@ import {
 import {
   NON_STRUCTURAL_OPERATIONS,
   PdfProcessingError,
+  type PdfExecution,
   STRUCTURAL_OPERATIONS,
   createOutputName,
   createSplitOutputName,
@@ -40,12 +41,11 @@ import { assertResourceCapacity } from "@/lib/system/resource-capacity";
 // PERFECT_PDF_ADAPTIVE_V4_2
 
 export async function processPdfJob(
-  jobId: string,
-  startedAt: Date,
+  attempt: PdfExecution,
   signal?: AbortSignal,
 ) {
   signal?.throwIfAborted();
-  const execution = { id: jobId, status: "RUNNING", startedAt } as const;
+  const execution = { ...attempt, status: "RUNNING" } as const;
   const job = await prisma.pdfJob.findUnique({
     where: execution,
     include: {

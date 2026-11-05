@@ -24,9 +24,10 @@ vi.mock("@/lib/pdf/storage", () => ({
   resolvePdfStorageKey: (key: string) => `/storage/${key}`,
 }));
 
+import { runWithPdfAbortSignal } from "./execution-abort";
 import { convertOfficeToPdf, PdfOfficeError } from "./office";
 
-function childProcess(event: "exit" | "error", value: unknown) {
+function childProcess(event: "close" | "error", value: unknown) {
   const child = new EventEmitter() as EventEmitter & {
     kill: ReturnType<typeof vi.fn>;
     stderr: EventEmitter;
@@ -45,7 +46,7 @@ describe("office-to-PDF conversion boundary", () => {
     mocks.readFile.mockResolvedValue(Buffer.from("%PDF-test"));
     mocks.readdir.mockResolvedValue(["converted.pdf"]);
     mocks.load.mockResolvedValue({ getPageCount: () => 1 });
-    mocks.spawn.mockImplementation(() => childProcess("exit", 0));
+    mocks.spawn.mockImplementation(() => childProcess("close", 0));
   });
 
   it("runs LibreOffice with an isolated profile and validates the PDF", async () => {
@@ -77,6 +78,39 @@ describe("office-to-PDF conversion boundary", () => {
     expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
       10, 20, 70, 85, 95,
     ]);
+  });
+
+  it("waits for LibreOffice to close before removing an aborted attempt's work directory", async () => {
+    const controller = new AbortController();
+    const reason = new Error("attempt expired");
+    const child = new EventEmitter() as EventEmitter & {
+      kill: ReturnType<typeof vi.fn>;
+      stderr: EventEmitter;
+    };
+    child.kill = vi.fn();
+    child.stderr = new EventEmitter();
+    let notifySpawned!: () => void;
+    const spawned = new Promise<void>((resolve) => { notifySpawned = resolve; });
+    mocks.spawn.mockImplementationOnce(() => {
+      notifySpawned();
+      return child;
+    });
+
+    const result = runWithPdfAbortSignal(controller.signal, () =>
+      convertOfficeToPdf({
+        jobId: "job-1",
+        storageKey: "job-1/input/document.docx",
+      }),
+    );
+    const assertion = expect(result).rejects.toBe(reason);
+    await spawned;
+    controller.abort(reason);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    child.emit("exit", null, "SIGKILL");
+    expect(mocks.rm).not.toHaveBeenCalled();
+    child.emit("close", null, "SIGKILL");
+    await assertion;
+    expect(mocks.rm).toHaveBeenCalledOnce();
   });
 
   it("rejects a successful command that produced no PDF", async () => {
@@ -117,7 +151,7 @@ describe("office-to-PDF conversion boundary", () => {
     ).rejects.toMatchObject({ code: "OFFICE_TOOL_UNAVAILABLE" });
 
     mocks.spawn.mockImplementationOnce(() => {
-      const child = childProcess("exit", 1);
+      const child = childProcess("close", 1);
       child.stderr.emit("data", Buffer.from("conversion failed"));
       return child;
     });

@@ -3,9 +3,13 @@ import { constants as fsConstants } from "node:fs";
 import { access, rename, writeFile } from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { processPdfJob } from "@/lib/pdf/processor";
+import { runWithPdfAbortSignal } from "@/lib/pdf/execution-abort";
+import { guardPdfExecution } from "@/lib/pdf/execution-guard";
 import {
   getPdfQueue,
+  getPdfQueueJobId,
   PDF_PROCESSING_QUEUE,
+  PDF_RECOVERY_ATTEMPT,
   stopPdfQueue,
 } from "@/lib/pdf/queue";
 import { reconcileInterruptedPdfJobs } from "@/lib/pdf/interrupted-jobs";
@@ -74,17 +78,25 @@ const workOptions = {
   pollingIntervalSeconds: 2,
 } as const;
 
-await boss.work<{ jobId: string }, void, typeof workOptions>(
+await boss.work<{ jobId: string; recoveryAttempt?: number }, void, typeof workOptions>(
   PDF_PROCESSING_QUEUE,
   workOptions,
   async ([job]) => {
     if (!job) return;
+    const recoveryAttempt = job.data.recoveryAttempt ?? 0;
+    if (recoveryAttempt !== 0 && recoveryAttempt !== PDF_RECOVERY_ATTEMPT) return;
+    if (job.id !== getPdfQueueJobId(job.data.jobId, recoveryAttempt)) return;
+    const delivery = { id: job.data.jobId, recoveryAttempt };
 
     // Queue delivery is at-least-once. Claim the database row before touching
     // inputs so a delayed or duplicated message cannot reprocess a finished job.
     const startedAt = new Date();
     const claimed = await prisma.pdfJob.updateMany({
-      where: { id: job.data.jobId, status: "QUEUED" },
+      where: {
+        ...delivery,
+        status: "QUEUED",
+        ...(recoveryAttempt > 0 ? { expiresAt: { gt: startedAt } } : {}),
+      },
       data: {
         completedAt: null,
         errorCode: null,
@@ -96,22 +108,28 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
     });
     if (claimed.count !== 1) {
       const current = await prisma.pdfJob.findUnique({
-        where: { id: job.data.jobId },
+        where: delivery,
         select: { status: true },
       });
-      // Do not acknowledge an unresolved execution, or start a second converter.
-      // Crash recovery needs attempt fencing before RUNNING can be reclaimed.
+      // Let the original delivery settle before the reconciler can recover it.
+      // A message from a previous delivery must not claim the recovered job.
       if (current?.status === "RUNNING") {
         throw new Error("PDF_PROCESSING_ALREADY_RUNNING");
       }
       return;
     }
 
+    const attempt = { ...delivery, startedAt };
+    const guard = guardPdfExecution(async () => Boolean(await prisma.pdfJob.findUnique({
+      where: { ...attempt, status: { in: ["RUNNING", "SUCCEEDED"] } },
+      select: { id: true },
+    })), job.signal);
     let invalidCompletedOutput = false;
+    let completedSuccessfully = false;
     try {
-      await processPdfJob(job.data.jobId, startedAt, job.signal);
+      await runWithPdfAbortSignal(guard.signal, () => processPdfJob(attempt, guard.signal));
       const completed = await prisma.pdfJob.findUnique({
-        where: { id: job.data.jobId, startedAt },
+        where: attempt,
         select: {
           status: true,
           artifacts: {
@@ -132,10 +150,11 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
           "O processamento terminou sem gerar um arquivo válido. Tente novamente; se o problema persistir, use o PDF original e informe o suporte.",
         );
       }
+      completedSuccessfully = completed?.status === "SUCCEEDED";
     } catch (error) {
       // The queue already owns settlement when this delivery is aborted.
       // A late converter must not put the application job back in QUEUED.
-      if (job.signal?.aborted) throw error;
+      if (guard.signal.aborted) throw error;
 
       const errorCode = error instanceof Error && "code" in error && typeof error.code === "string"
         ? error.code : "PDF_PROCESSING_FAILED";
@@ -143,8 +162,7 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
       const willRetry = !nonRetryable && job.retryCount < job.retryLimit;
       await prisma.pdfJob.updateMany({
         where: {
-          id: job.data.jobId,
-          startedAt,
+          ...attempt,
           status: invalidCompletedOutput ? "SUCCEEDED" : "RUNNING",
         },
         data: {
@@ -167,8 +185,11 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
       // Acknowledge the queue delivery; the user-facing job remains FAILED.
       if (nonRetryable) return;
       throw error;
+    } finally {
+      guard.stop();
     }
 
+    if (!completedSuccessfully) return;
     try {
       await cleanupCompletedPdfJobInputs(job.data.jobId);
     } catch (error) {

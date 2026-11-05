@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { PdfToolError } from "./compression-types";
+import { bindPdfProcessAbort, throwIfPdfExecutionAborted } from "./execution-abort";
 
 export function compressionToolTimeoutMs() {
   const configured = Number(
@@ -18,19 +19,22 @@ export function runCompressionTool(
   timeoutMs = compressionToolTimeoutMs(),
 ) {
   return new Promise<void>((resolve, reject) => {
+    throwIfPdfExecutionAborted();
     const child = spawn(executable, args, {
       shell: false,
       detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     });
+    const abortSignal = bindPdfProcessAbort(child, true);
     let stderr = "";
     let done = false;
     const finish = (callback: () => void) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      callback();
+      if (abortSignal?.aborted) reject(abortSignal.reason);
+      else callback();
     };
     const terminateGroup = () => {
       try {
@@ -42,6 +46,7 @@ export function runCompressionTool(
     // launcher, including descendants holding stderr after the launcher exits.
     child.once("exit", terminateGroup);
     const timer = setTimeout(() => {
+      if (abortSignal?.aborted) return;
       terminateGroup();
       finish(() =>
         reject(
