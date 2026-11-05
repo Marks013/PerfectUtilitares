@@ -1,5 +1,9 @@
 # Auditoria técnica — 4 de novembro de 2026
 
+> Atualização de 05/11/2026: as CVEs pendentes do Solver foram resolvidas em
+> uma entrega posterior. Consulte a [continuação validada](AUDITORIA-PENDENCIAS-2026-11-05.md).
+> Os números e ressalvas abaixo registram a coleta anterior.
+
 Coleta iniciada em 4 de novembro; validação final e preparação de publicação
 continuadas em 5 de novembro de 2026.
 
