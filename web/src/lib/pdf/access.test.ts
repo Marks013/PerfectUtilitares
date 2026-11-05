@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { auth, type AppSession } from "@/auth";
 import {
   getPdfOwnerContext,
@@ -57,14 +57,50 @@ function session(role: "ADMIN" | "OPERATOR" = "OPERATOR"): AppSession {
 }
 
 describe("pdfJobAccessWhere", () => {
+  const now = new Date("2026-11-05T16:00:00.000Z");
+  const validity = {
+    status: { not: "EXPIRED" },
+    OR: [
+      { expiresAt: { gt: now } },
+      { status: { in: ["QUEUED", "RUNNING"] } },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it.each([
+    { session: null, ownerSessionHash: "a".repeat(64) },
+    { session: session(), ownerSessionHash: null },
+    { session: session(), ownerSessionHash: "b".repeat(64) },
+    { session: session("ADMIN"), ownerSessionHash: null },
+    { session: null, ownerSessionHash: null },
+  ])("enforces expiration for every principal without blocking ongoing work: %o", (owner) => {
+    expect(pdfJobAccessWhere(owner).AND).toContainEqual(validity);
+  });
+
   it("isolates anonymous jobs by the hashed owner token", () => {
+    const owner: PdfOwnerContext = { session: null, ownerSessionHash: "a".repeat(64) };
+    expect(pdfJobAccessWhere(owner, { allowExpiredCleanup: true })).toEqual({
+      AND: [{ OR: [{ ownerSessionHash: "a".repeat(64) }] }],
+    });
+    expect(pdfJobAccessWhere({ session: null, ownerSessionHash: null }, { allowExpiredCleanup: true })).toEqual({
+      AND: [{ ownerSessionHash: "__missing_owner__" }],
+    });
+  });
+
+  it("continues isolating live anonymous jobs", () => {
     const owner: PdfOwnerContext = {
       ownerSessionHash: "a".repeat(64),
       session: null,
     };
 
     expect(pdfJobAccessWhere(owner)).toEqual({
-      OR: [{ ownerSessionHash: "a".repeat(64) }],
+      AND: [{ OR: [{ ownerSessionHash: "a".repeat(64) }] }, validity],
     });
   });
 
@@ -75,9 +111,12 @@ describe("pdfJobAccessWhere", () => {
     };
 
     expect(pdfJobAccessWhere(owner)).toEqual({
-      OR: [
-        { userId: "user-12345678" },
-        { ownerSessionHash: "b".repeat(64) },
+      AND: [
+        { OR: [
+          { userId: "user-12345678" },
+          { ownerSessionHash: "b".repeat(64) },
+        ] },
+        validity,
       ],
     });
   });
@@ -85,16 +124,16 @@ describe("pdfJobAccessWhere", () => {
   it("does not match any owner without a session or cookie", () => {
     expect(
       pdfJobAccessWhere({ ownerSessionHash: null, session: null }),
-    ).toEqual({ ownerSessionHash: "__missing_owner__" });
+    ).toEqual({ AND: [{ ownerSessionHash: "__missing_owner__" }, validity] });
   });
 
-  it("preserves unrestricted operational access for administrators", () => {
+  it("preserves administrator ownership access but enforces document expiration", () => {
     expect(
       pdfJobAccessWhere({
         ownerSessionHash: null,
         session: session("ADMIN"),
       }),
-    ).toEqual({});
+    ).toEqual({ AND: [validity] });
   });
 });
 

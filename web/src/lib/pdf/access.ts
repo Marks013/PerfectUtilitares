@@ -62,9 +62,20 @@ export async function getPdfOwnerContext(options?: {
 
 export function pdfJobAccessWhere(
   owner: PdfOwnerContext,
+  options: { allowExpiredCleanup?: true } = {},
 ): Prisma.PdfJobWhereInput {
+  // Expiration is enforced on access, independently of periodic file cleanup.
+  // In-flight work remains observable until the worker/retention policy ends it.
+  const validity: Prisma.PdfJobWhereInput = {
+    status: { not: "EXPIRED" },
+    OR: [
+      { expiresAt: { gt: new Date() } },
+      { status: { in: ["QUEUED", "RUNNING"] } },
+    ],
+  };
+
   if (owner.session?.user.role === "ADMIN") {
-    return {};
+    return options.allowExpiredCleanup ? {} : { AND: [validity] };
   }
 
   const ownership: Prisma.PdfJobWhereInput[] = [];
@@ -75,9 +86,13 @@ export function pdfJobAccessWhere(
     ownership.push({ ownerSessionHash: owner.ownerSessionHash });
   }
 
-  return ownership.length > 0
-    ? { OR: ownership }
-    : { ownerSessionHash: "__missing_owner__" };
+  return {
+    AND: [
+      ownership.length > 0 ? { OR: ownership } : { ownerSessionHash: "__missing_owner__" },
+      // Cleanup must remain retryable after a failed removal marks EXPIRED.
+      ...(options.allowExpiredCleanup ? [] : [validity]),
+    ],
+  };
 }
 
 export function getPdfPrincipal(

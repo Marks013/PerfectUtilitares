@@ -72,11 +72,14 @@ export async function DELETE(request: Request, context: RouteContext) {
     return jsonError(400, "INVALID_JOB_ID", "Trabalho PDF inválido.");
   }
 
+  // Expiration blocks use/download, not the owner's retry of physical cleanup.
+  const cleanupAccess = pdfJobAccessWhere(owner, { allowExpiredCleanup: true });
+
   const claim = await prisma.$transaction(
     async (tx) => {
       await acquirePdfJobLock(tx, id);
       const job = await tx.pdfJob.findFirst({
-        where: { id, ...pdfJobAccessWhere(owner) },
+        where: { id, ...cleanupAccess },
         select: { id: true, status: true },
       });
 
@@ -105,7 +108,7 @@ export async function DELETE(request: Request, context: RouteContext) {
         where: {
           id: job.id,
           status: { not: "RUNNING" },
-          ...pdfJobAccessWhere(owner),
+          ...cleanupAccess,
         },
         data: { completedAt: new Date(), status: "EXPIRED" },
       });

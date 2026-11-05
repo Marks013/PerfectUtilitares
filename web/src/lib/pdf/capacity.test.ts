@@ -110,6 +110,11 @@ describe("reservePdfJobForQueue", () => {
       "pdf:job:job-1",
     ]);
     expect(mocks.tx.pdfJob.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.pdfJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: "job-1", status: "DRAFT", expiresAt: { gt: expect.any(Date) },
+      },
+    }));
   });
 
   it("does not claim a job when the global queue is full", async () => {

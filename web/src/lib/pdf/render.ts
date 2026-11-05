@@ -112,7 +112,6 @@ async function renderPdfPageWithPdfJs({
   dpi,
   inputPath,
   pageNumber,
-  enforceJpegLimits,
 }: RenderPdfPageOptions) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const loadingTask = pdfjs.getDocument(
@@ -126,9 +125,7 @@ async function renderPdfPageWithPdfJs({
     const page = await document.getPage(pageNumber);
     try {
       const viewport = page.getViewport({ scale: dpi / 72 });
-      if (enforceJpegLimits) {
-        assertJpegDimensions(Math.ceil(viewport.width), Math.ceil(viewport.height));
-      }
+      assertJpegDimensions(Math.ceil(viewport.width), Math.ceil(viewport.height));
       const canvas = createCanvas(
         Math.max(1, Math.ceil(viewport.width)),
         Math.max(1, Math.ceil(viewport.height)),
@@ -158,10 +155,12 @@ type RenderPdfPageOptions = {
 };
 
 export async function renderPdfPageToPng(options: RenderPdfPageOptions) {
+  assertRenderOptions(options.dpi, [options.pageNumber]);
   if (process.env.PDF_RENDERER === "pdfjs") {
     return renderPdfPageWithPdfJs(options);
   }
 
+  await assertPopplerPageLimits(options.inputPath, [options.pageNumber], options.dpi, options.cropBox);
   const temporaryDirectory = await mkdtemp(
     path.join(tmpdir(), "perfect-pdf-render-"),
   );
@@ -197,6 +196,39 @@ export async function renderPdfPageToPng(options: RenderPdfPageOptions) {
 
 
 
+function assertRenderOptions(dpi: number, pages: number[]) {
+  if (!Number.isFinite(dpi) || dpi < 1 || dpi > 600 ||
+      pages.some((page) => !Number.isSafeInteger(page) || page < 1)) {
+    throw new PdfRenderError("INVALID_IMAGE_OPTIONS", "Informe páginas válidas e uma resolução entre 1 e 600 DPI.");
+  }
+}
+
+async function assertPopplerPageLimits(
+  inputPath: string, pageNumbers: number[], dpi: number, cropBox = false,
+) {
+  const source = await PDFDocument.load(await readFile(inputPath), { updateMetadata: false });
+  let totalPixels = 0;
+  for (const number of pageNumbers) {
+    if (number > source.getPageCount()) {
+      throw new PdfRenderError("PDF_PAGE_NOT_FOUND", "Uma das páginas solicitadas não existe no PDF.");
+    }
+    const page = source.getPage(number - 1);
+    const box = cropBox ? page.getCropBox() : page.getMediaBox();
+    const userUnit = page.node.lookupMaybe(PDFName.of("UserUnit"), PDFNumber)?.asNumber() ?? 1;
+    const width = Math.ceil(box.width * dpi / 72 * userUnit);
+    const height = Math.ceil(box.height * dpi / 72 * userUnit);
+    assertJpegDimensions(width, height);
+    totalPixels += width * height;
+  }
+  assertBatchPixels(totalPixels);
+}
+
+function assertBatchPixels(pixels: number) {
+  if (pixels > 80_000_000) {
+    throw new PdfRenderError("PDF_RENDER_BATCH_TOO_LARGE", "Há páginas demais neste lote. Reduza a resolução ou processe menos páginas por vez.");
+  }
+}
+
 export async function renderPdfPagesToPng({
   dpi,
   inputPath,
@@ -209,12 +241,25 @@ export async function renderPdfPagesToPng({
   const uniquePages = [...new Set(pageNumbers)].sort((a, b) => a - b);
   const result = new Map<number, Buffer>();
   if (!uniquePages.length) return result;
+  assertRenderOptions(dpi, uniquePages);
   if (process.env.PDF_RENDERER === "pdfjs") {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const document = await pdfjs.getDocument(
+    const loadingTask = pdfjs.getDocument(
       pdfJsServerDocumentOptions(new Uint8Array(await readFile(inputPath))),
-    ).promise;
+    );
+    const document = await loadingTask.promise;
     try {
+      let totalPixels = 0;
+      for (const pageNumber of uniquePages) {
+        const page = await document.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: dpi / 72 });
+        const width = Math.ceil(viewport.width);
+        const height = Math.ceil(viewport.height);
+        assertJpegDimensions(width, height);
+        totalPixels += width * height;
+        page.cleanup();
+      }
+      assertBatchPixels(totalPixels);
       for (const pageNumber of uniquePages) {
         const page = await document.getPage(pageNumber);
         try {
@@ -236,13 +281,14 @@ export async function renderPdfPagesToPng({
         }
       }
     } finally {
-      await document.cleanup();
+      await loadingTask.destroy();
     }
     return result;
   }
   const first = uniquePages[0];
   const last = uniquePages[uniquePages.length - 1];
   if (first === undefined || last === undefined) return result;
+  await assertPopplerPageLimits(inputPath, uniquePages, dpi);
   const contiguous = last - first + 1 === uniquePages.length;
   if (!contiguous) {
     for (const pageNumber of uniquePages) {

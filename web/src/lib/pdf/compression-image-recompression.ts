@@ -1,6 +1,9 @@
 // PERFECT_PDF_FULL32_V2_2
 // PERFECT_PDF_ADAPTIVE_V4_2
-import { spawn } from "node:child_process";
+import {
+  compressionToolTimeoutMs,
+  runCompressionTool as runTool,
+} from "./compression-process";
 import { rm, stat } from "node:fs/promises";
 import type { PdfCompressionProfile } from "./compression-analyzer";
 import type {
@@ -48,7 +51,7 @@ export function hasRequiredPdfSavings(
     !Number.isFinite(candidateBytes) ||
     !Number.isFinite(minimumSavingsRatio) ||
     inputBytes <= 0 ||
-    candidateBytes < 0 ||
+    candidateBytes <= 0 ||
     minimumSavingsRatio < 0 ||
     minimumSavingsRatio >= 1
   ) {
@@ -59,78 +62,19 @@ export function hasRequiredPdfSavings(
   );
 }
 
-function compressionToolTimeoutMs() {
-  const configured = Number(
-    process.env.PDF_COMPRESSION_TOOL_TIMEOUT_MS ?? 10 * 60 * 1000,
-  );
-  return Number.isFinite(configured) &&
-    configured >= 30_000 &&
-    configured <= 30 * 60 * 1000
-    ? configured
-    : 10 * 60 * 1000;
+async function validateSmallerCandidate(inputPath: string, outputPath: string) {
+  const [input, output] = await Promise.all([stat(inputPath), stat(outputPath)]);
+  // A candidate that is not smaller can never win. Avoid expensive rendering
+  // and semantic extraction, but never bypass them for a possible winner.
+  if (!hasRequiredPdfSavings(input.size, output.size, 0)) {
+    throw new PdfToolError(
+      "PDF_COMPRESSION_NO_GAIN",
+      "Este candidato não reduziu o arquivo; outras alternativas serão avaliadas.",
+    );
+  }
+  await validateSemanticCandidate(inputPath, outputPath);
 }
 
-function runTool(
-  executable: string,
-  args: string[],
-  timeoutMs = compressionToolTimeoutMs(),
-) {
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, args, {
-      shell: false,
-      stdio: ["ignore", "ignore", "pipe"],
-      windowsHide: true,
-    });
-    let stderr = "";
-    let done = false;
-    const finish = (callback: () => void) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      callback();
-    };
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(() =>
-        reject(
-          new PdfToolError(
-            "PDF_COMPRESSION_TIMEOUT",
-            `${executable} excedeu o tempo permitido.`,
-          ),
-        ),
-      );
-    }, timeoutMs);
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      if (stderr.length < 32_000) stderr += chunk;
-    });
-    child.once("error", (error) =>
-      finish(() =>
-        reject(
-          error && "code" in error && error.code === "ENOENT"
-            ? new PdfToolError(
-                "PDF_TOOL_UNAVAILABLE",
-                `${executable} não está instalado no worker.`,
-              )
-            : error,
-        ),
-      ),
-    );
-    child.once("close", (code) =>
-      finish(() =>
-        code === 0
-          ? resolve()
-          : reject(
-              new PdfToolError(
-                "PDF_COMPRESSION_FAILED",
-                `${executable} não conseguiu gerar um candidato válido.`,
-                stderr,
-              ),
-            ),
-      ),
-    );
-  });
-}
 
 function candidate(
   value: Omit<PdfCompressionCandidate, "notApplied"> & {
@@ -164,7 +108,7 @@ async function qpdfImageCandidate(
   } catch {
     await runTool("qpdf", [...baseArgs, "--", inputPath, outputPath]);
   }
-  await validateSemanticCandidate(inputPath, outputPath);
+  await validateSmallerCandidate(inputPath, outputPath);
 }
 
 export function resolveSafeGhostscriptColorMode(
@@ -262,6 +206,8 @@ async function ghostscriptCandidate(
     "gs",
     buildGhostscriptImageArgs({ inputPath, outputPath, options, profile }),
   );
+  // This can also feed the OCRmyPDF optimizer. A larger intermediate may still
+  // produce a smaller final candidate; do not prune the pipeline at this stage.
   await validateSemanticCandidate(inputPath, outputPath);
 }
 
@@ -336,9 +282,12 @@ async function ocrMyPdfOptimizeCandidate({
       options,
       colorMode,
     }),
+    // This is an optional refinement. Never spend the full tool budget
+    // repeating image optimization after a preserving candidate is available.
+    Math.min(compressionToolTimeoutMs(), 30_000),
   );
   // Validação sempre contra o original, não contra o intermediário.
-  await validateSemanticCandidate(originalPath, outputPath);
+  await validateSmallerCandidate(originalPath, outputPath);
 }
 
 export function resolveAdaptiveMonoXObjectTargetDpi(
@@ -393,7 +342,7 @@ async function monoXObjectJbig2Candidate({
     "--threshold",
     String(threshold),
   ]);
-  await validateSemanticCandidate(inputPath, outputPath);
+  await validateSmallerCandidate(inputPath, outputPath);
 }
 
 export async function buildPreservingImageCandidates({
@@ -415,7 +364,11 @@ export async function buildPreservingImageCandidates({
   const reportIntegrityRejection = (error: unknown) => {
     if (
       error instanceof PdfToolError &&
-      error.code === "PDF_SEMANTIC_INTEGRITY_FAILED"
+      [
+        "PDF_SEMANTIC_INTEGRITY_FAILED",
+        "PDF_VISUAL_INTEGRITY_FAILED",
+        "PDF_STRUCTURAL_INTEGRITY_FAILED",
+      ].includes(error.code)
     ) {
       onIntegrityRejection?.();
     }
@@ -524,7 +477,8 @@ export async function buildPreservingImageCandidates({
       ) {
         return candidates;
       }
-    } catch {
+    } catch (error) {
+      reportIntegrityRejection(error);
       await rm(monoXObjectPath, { force: true }).catch(() => undefined);
     }
   }
@@ -586,7 +540,13 @@ export async function buildPreservingImageCandidates({
         }),
       );
 
-      if (deepOptimizationEnabled() && profile.hasSelectableText) {
+      const [input, gsOutput] = await Promise.all([stat(inputPath), stat(gsPath)]);
+      // Color/grayscale already uses the requested JPEG quality. Further lossy
+      // optimization adds latency with little value after a meaningful reduction.
+      // Keep bilevel refinement: lossless JBIG2 can still provide a large gain.
+      const needsDeepRefinement = safeColorMode === "MONOCHROME" ||
+        !hasEarlyJpegSavings(input.size, gsOutput.size);
+      if (deepOptimizationEnabled() && profile.hasSelectableText && needsDeepRefinement) {
         const deepPath =
           safeColorMode === "MONOCHROME"
             ? `${baseOutputPath}.mono-jbig2.pdf`
@@ -619,7 +579,8 @@ export async function buildPreservingImageCandidates({
               notApplied,
             }),
           );
-        } catch {
+        } catch (error) {
+          reportIntegrityRejection(error);
           await rm(deepPath, { force: true }).catch(() => undefined);
         }
       }
@@ -654,7 +615,8 @@ export async function buildPreservingImageCandidates({
           lossy: false,
         }),
       );
-    } catch {
+    } catch (error) {
+      reportIntegrityRejection(error);
       await rm(optimizedPath, { force: true }).catch(() => undefined);
     }
   }

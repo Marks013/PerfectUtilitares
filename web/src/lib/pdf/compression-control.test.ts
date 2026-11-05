@@ -87,6 +87,7 @@ import {
   type PdfCompressionEffectiveOptions,
   rasterizePdfForCompression,
 } from "@/lib/pdf/compression";
+import { analyzePdfCompressionProfile } from "@/lib/pdf/compression-analyzer";
 
 function compressionOptions(
   method: PdfCompressionEffectiveOptions["method"],
@@ -206,6 +207,29 @@ beforeEach(() => {
 });
 
 describe("PDF compression control paths", () => {
+  it("honors explicit visual settings over a smaller non-visual candidate", async () => {
+    const { pdfCompressionOptionsSchema } = await import("./schema");
+    const base = await analyzePdfCompressionProfile("unused");
+    vi.mocked(analyzePdfCompressionProfile).mockResolvedValueOnce({
+      ...base, contentKind: "MIXED", predominantImageEncoding: "FLATE",
+    });
+    mockQpdfClose(0);
+    mockQpdfClose(0);
+    mocks.stat.mockImplementation(async (filePath: string) => ({
+      size: filePath === "/tmp/input.pdf" ? 1_000 :
+        filePath.endsWith(".gs-images.pdf") ? 800 : 500,
+    }));
+    const options = pdfCompressionOptionsSchema.parse({
+      method: "AUTO", colorMode: "GRAYSCALE", userOverrides: { colorMode: true },
+    });
+    const result = await compressPdfFile({
+      inputStorageKey: "jobs/job-1/input.pdf", jobId: "job-1", options, outputName: "compressed.pdf",
+    });
+    expect(result.selectedCandidate).toMatchObject({ kind: "GS_IMAGE_RECOMPRESSION", visualTransform: true });
+    expect(mocks.copyFile).toHaveBeenCalledWith("/tmp/output.partial.preserving.gs-images.pdf", "/tmp/output.partial");
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+  });
+
   it("commits the smallest valid lossless candidate", async () => {
     mockQpdfClose(0);
 

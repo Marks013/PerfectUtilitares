@@ -13,7 +13,11 @@ import type { PdfCompressionEffectiveOptions } from "./compression-types";
 
 const processMock = vi.hoisted(() => ({
   jpegBytes: 0,
-  mode: "success" as "success" | "error" | "failure",
+  gsBytes: 0,
+  optimizerBytes: 0,
+  optimizerStarted: null as (() => void) | null,
+  optimizerKills: 0,
+  mode: "success" as "success" | "error" | "failure" | "hangOptimizer",
 }));
 
 vi.mock("./compression-semantic", () => ({
@@ -26,7 +30,7 @@ vi.mock("node:child_process", async () => {
     spawn: vi.fn((executable: string, args: string[]) => {
       const listeners = new Map<string, (...values: never[]) => void>();
       const child = {
-        kill: vi.fn(),
+        kill: vi.fn(() => { if (executable === "ocrmypdf") processMock.optimizerKills += 1; }),
         stderr: {
           setEncoding: vi.fn(),
           on: vi.fn(),
@@ -35,13 +39,17 @@ vi.mock("node:child_process", async () => {
           listeners.set(event, listener);
           if (event === "close") {
             queueMicrotask(() => {
+              if (executable === "ocrmypdf" && processMock.mode === "hangOptimizer") {
+                processMock.optimizerStarted?.();
+                return;
+              }
               if (processMock.mode === "error") {
                 listeners.get("error")?.(
                   Object.assign(new Error("missing"), { code: "ENOENT" }) as never,
                 );
                 return;
               }
-              if (processMock.mode === "success") {
+              if (processMock.mode === "success" || processMock.mode === "hangOptimizer") {
                 if (
                   executable === "python3" &&
                   args[0]?.endsWith("jpeg-xobject-resample.py") &&
@@ -52,10 +60,13 @@ vi.mock("node:child_process", async () => {
                   const output = args
                     .find((argument) => argument.startsWith("-sOutputFile="))
                     ?.slice("-sOutputFile=".length);
-                  if (output) writeFileSync(output, Buffer.from("%PDF-1.7\n"));
+                  const candidatePath = output ?? (executable === "qpdf" || executable === "ocrmypdf" ? args.at(-1) : undefined);
+                  const size = executable === "gs" ? processMock.gsBytes :
+                    executable === "ocrmypdf" ? processMock.optimizerBytes : 0;
+                  if (candidatePath) writeFileSync(candidatePath, size > 0 ? Buffer.alloc(size) : Buffer.from("%PDF-1.7\n"));
                 }
               }
-              listener((processMock.mode === "success" ? 0 : 1) as never);
+              listener((processMock.mode === "success" || processMock.mode === "hangOptimizer" ? 0 : 1) as never);
             });
           }
           return child;
@@ -118,6 +129,10 @@ let directory = "";
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "pdf-image-control-"));
   processMock.jpegBytes = 0;
+  processMock.gsBytes = 0;
+  processMock.optimizerBytes = 0;
+  processMock.optimizerStarted = null;
+  processMock.optimizerKills = 0;
   processMock.mode = "success";
   vi.mocked(spawn).mockClear();
   vi.mocked(validateSemanticCandidate).mockReset().mockResolvedValue(undefined);
@@ -126,6 +141,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   await rm(directory, { recursive: true, force: true });
 });
 
@@ -209,6 +225,84 @@ describe("PDF image recompression process control", () => {
       );
     },
   );
+
+  it("bounds optional optimizer time and keeps the validated fallback", async () => {
+    const inputPath = join(directory, "input.pdf");
+    await writeFile(inputPath, Buffer.alloc(1_000));
+    processMock.gsBytes = 950;
+    processMock.mode = "hangOptimizer";
+    const started = new Promise<void>((resolve) => { processMock.optimizerStarted = resolve; });
+    vi.useFakeTimers();
+    const pending = buildPreservingImageCandidates({
+      inputPath, baseOutputPath: join(directory, "candidate"), options: options(),
+      profile: profile({ sourceDpi: 300, predominantImageEncoding: "FLATE", hasSelectableText: true }),
+    });
+    await started;
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(processMock.optimizerKills).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    const candidates = await pending;
+    expect(processMock.optimizerKills).toBe(1);
+    expect(candidates.some(({ kind }) => kind === "GS_IMAGE_RECOMPRESSION")).toBe(true);
+    expect(candidates.some(({ kind }) => kind === "GS_OCRMYPDF_DEEP")).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retains a growing GS intermediate when the final optimizer makes it smaller", async () => {
+    const inputPath = join(directory, "input.pdf");
+    await writeFile(inputPath, Buffer.alloc(1_000));
+    processMock.gsBytes = 1_200;
+    processMock.optimizerBytes = 500;
+    const candidates = await buildPreservingImageCandidates({
+      inputPath, baseOutputPath: join(directory, "candidate"), options: options(),
+      profile: profile({ sourceDpi: 300, predominantImageEncoding: "FLATE", hasSelectableText: true }),
+    });
+    const optimized = candidates.find(({ kind }) => kind === "GS_OCRMYPDF_DEEP");
+    expect(optimized).toBeDefined();
+    expect(spawn).toHaveBeenCalledWith("ocrmypdf", expect.arrayContaining([
+      join(directory, "candidate.gs-images.pdf"), join(directory, "candidate.deep-opt.pdf"),
+    ]), expect.any(Object));
+    expect(validateSemanticCandidate).toHaveBeenCalledWith(inputPath, optimized?.path);
+  });
+
+  it("does not repeat lossy optimization after a validated strong GS result", async () => {
+    const inputPath = join(directory, "input.pdf");
+    await writeFile(inputPath, Buffer.alloc(1_000));
+    processMock.gsBytes = 500;
+    const candidates = await buildPreservingImageCandidates({
+      inputPath, baseOutputPath: join(directory, "candidate"), options: options(),
+      profile: profile({ sourceDpi: 300, predominantImageEncoding: "FLATE", hasSelectableText: true }),
+    });
+    expect(candidates.some(({ kind }) => kind === "GS_IMAGE_RECOMPRESSION")).toBe(true);
+    expect(vi.mocked(spawn).mock.calls.map(([tool]) => tool)).not.toContain("ocrmypdf");
+  });
+
+  it("does not render or extract semantics for a non-reducing candidate", async () => {
+    const inputPath = join(directory, "input.pdf");
+    await writeFile(inputPath, Buffer.from("%PDF-1.7\n"));
+    const candidates = await buildPreservingImageCandidates({
+      inputPath, baseOutputPath: join(directory, "candidate"),
+      options: options(), profile: profile(),
+    });
+    expect(candidates).toEqual([]);
+    expect(validateSemanticCandidate).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it("reports visual integrity rejection instead of treating it as optimized input", async () => {
+    const inputPath = join(directory, "input.pdf");
+    await writeFile(inputPath, Buffer.alloc(1_000));
+    const { PdfToolError } = await import("./compression-types");
+    vi.mocked(validateSemanticCandidate).mockRejectedValueOnce(
+      new PdfToolError("PDF_VISUAL_INTEGRITY_FAILED", "Visual content missing"),
+    );
+    const onIntegrityRejection = vi.fn();
+    await buildPreservingImageCandidates({
+      inputPath, baseOutputPath: join(directory, "candidate"),
+      options: options(), profile: profile(), onIntegrityRejection,
+    });
+    expect(onIntegrityRejection).toHaveBeenCalledOnce();
+  });
 
   it("creates a structural image candidate when qpdf succeeds", async () => {
     const inputPath = join(directory, "input.pdf");

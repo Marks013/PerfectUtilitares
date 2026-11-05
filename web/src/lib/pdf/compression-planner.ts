@@ -117,7 +117,9 @@ export function planPdfCompression(
   }
 
   if (options.method === "RASTER") {
-    if (options.preserveTextLayer && !options.allowSemanticLoss) {
+    // Flattening requires both explicit consent and disabled preservation.
+    // Contradictory flags must retain the safer, preserving path.
+    if (options.preserveTextLayer || !options.allowSemanticLoss) {
       return {
         strategy: "IMAGE_RECOMPRESSION",
         reason: profile?.hasOcrLayer

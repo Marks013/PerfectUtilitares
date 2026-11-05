@@ -92,6 +92,7 @@ export function usePdfCompressWorkspaceController() {
   const analysisRunRef = useRef(0);
   const analysisCacheRef = useRef(new WeakMap<File, PdfCompressionAnalysis>());
   const pollAbortRef = useRef<AbortController | null>(null);
+  const processingRef = useRef(false);
   useEffect(() => () => {
     analysisRunRef.current += 1;
     pollAbortRef.current?.abort();
@@ -330,7 +331,10 @@ export function usePdfCompressWorkspaceController() {
   }, [analyses]);
 
   async function processFiles() {
-    if (!files.length || busy || analyzing || !settings) return;
+    if (!files.length || busy || processingRef.current || analyzing || !settings) return;
+    // React state alone cannot stop two clicks before the next render.
+    processingRef.current = true;
+    setWork({ phase: "UPLOADING", progress: 0, detail: "Preparando o envio dos arquivos" });
 
     setError(null);
     setWarning(null);
@@ -494,6 +498,7 @@ export function usePdfCompressWorkspaceController() {
           : "Não foi possível comprimir os PDFs.",
       );
     } finally {
+      processingRef.current = false;
       if (pollAbortRef.current === pollController) {
         pollAbortRef.current = null;
       }

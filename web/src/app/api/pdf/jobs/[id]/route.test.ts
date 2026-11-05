@@ -70,6 +70,7 @@ vi.mock("@/lib/users/schema", () => ({
 }));
 
 import { DELETE, PATCH } from "@/app/api/pdf/jobs/[id]/route";
+import { pdfJobAccessWhere } from "@/lib/pdf/access";
 
 const context = { params: Promise.resolve({ id: "job-12345678" }) };
 
@@ -142,6 +143,27 @@ describe("DELETE /api/pdf/jobs/:id", () => {
     expect(response.status).toBe(503);
     expect(mocks.deleteMany).not.toHaveBeenCalled();
     expect(mocks.captureException).toHaveBeenCalledOnce();
+  });
+
+  it("allows the owner to retry cleanup after a temporary failure", async () => {
+    mocks.findFirst
+      .mockResolvedValueOnce({ id: "job-12345678", status: "DRAFT" })
+      .mockResolvedValueOnce({ id: "job-12345678", status: "EXPIRED" });
+    mocks.removeJobFiles.mockRejectedValueOnce(new Error("temporary storage failure"));
+    const request = () => new Request("https://example.com/api/pdf/jobs/job-12345678", { method: "DELETE" });
+    expect((await DELETE(request(), context)).status).toBe(503);
+    expect((await DELETE(request(), context)).status).toBe(204);
+    expect(pdfJobAccessWhere).toHaveBeenCalledWith({ session: null }, { allowExpiredCleanup: true });
+    expect(mocks.removeJobFiles).toHaveBeenCalledTimes(2);
+    expect(mocks.deleteMany).toHaveBeenCalledOnce();
+  });
+
+  it("does not allow cleanup of an unowned job", async () => {
+    mocks.findFirst.mockResolvedValueOnce(null);
+    const response = await DELETE(new Request("https://example.com/api/pdf/jobs/job-12345678", { method: "DELETE" }), context);
+    expect(response.status).toBe(404);
+    expect(mocks.removeJobFiles).not.toHaveBeenCalled();
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
   });
 
   it("does not remove files if the job starts running during deletion", async () => {

@@ -171,8 +171,10 @@ async function selectCandidateOrOriginal({
   candidates,
   destinationPath,
   inputPath,
+  preferVisualTransform = false,
 }: {
   candidates: PdfCompressionCandidate[];
+  preferVisualTransform?: boolean;
   destinationPath: string;
   inputPath: string;
 }) {
@@ -195,7 +197,12 @@ async function selectCandidateOrOriginal({
       minimumSavingsRatioForCandidate(candidate),
     );
   });
-  eligible.sort((left, right) => left.size - right.size);
+  eligible.sort((left, right) => {
+    if (preferVisualTransform && left.candidate.visualTransform !== right.candidate.visualTransform) {
+      return left.candidate.visualTransform ? -1 : 1;
+    }
+    return left.size - right.size;
+  });
   const best = eligible[0];
   if (!best) {
     await copyFile(inputPath, destinationPath);
@@ -218,7 +225,8 @@ async function hasPreferredImageCandidate(
   const adaptive = candidates.find(
     (candidate) =>
       candidate.kind === "MONO_XOBJECT_JBIG2" ||
-      candidate.kind === "JPEG_XOBJECT_RECOMPRESSION",
+      candidate.kind === "JPEG_XOBJECT_RECOMPRESSION" ||
+      candidate.kind === "GS_IMAGE_RECOMPRESSION",
   );
   if (!adaptive) return false;
   try {
@@ -227,7 +235,8 @@ async function hasPreferredImageCandidate(
       stat(adaptive.path),
     ]);
     return (
-      (adaptive.kind !== "JPEG_XOBJECT_RECOMPRESSION" ||
+      ((adaptive.kind !== "JPEG_XOBJECT_RECOMPRESSION" &&
+        adaptive.kind !== "GS_IMAGE_RECOMPRESSION") ||
         hasEarlyJpegSavings(input.size, output.size)) &&
       hasRequiredPdfSavings(
         input.size,
@@ -378,6 +387,8 @@ export async function compressPdfFile({
       }
       semanticValidated = candidates.length > 0;
       const selection = await selectCandidateOrOriginal({
+        preferVisualTransform: options.userOverrides.dpi || options.userOverrides.colorMode ||
+          options.userOverrides.imageQuality || options.userOverrides.monochromeThreshold,
         candidates,
         destinationPath: reservation.temporaryPath,
         inputPath,

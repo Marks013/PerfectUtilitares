@@ -19,6 +19,39 @@ import {
   validateOfficeArchive,
 } from "./storage-core";
 
+const UPLOAD_TOTAL_TIMEOUT_MS = 5 * 60_000;
+const UPLOAD_CHUNK_TIMEOUT_MS = 30_000;
+
+function uploadTimeoutError() {
+  return new PdfStorageError(
+    "UPLOAD_FAILED",
+    "O envio ficou parado ou demorou demais. Confira a conexão e envie o arquivo novamente.",
+  );
+}
+
+async function readUploadChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  deadline: number,
+) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw uploadTimeoutError();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+        timer = setTimeout(
+          () => reject(uploadTimeoutError()),
+          Math.min(UPLOAD_CHUNK_TIMEOUT_MS, remaining),
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function assertCompleteUpload(size: number, expectedBytes?: number) {
   if (expectedBytes && size !== expectedBytes) {
     throw new PdfStorageError(
@@ -26,6 +59,19 @@ function assertCompleteUpload(size: number, expectedBytes?: number) {
       "O arquivo recebido esta incompleto. Envie novamente.",
     );
   }
+}
+
+function isOfficeSignature(signature: Buffer) {
+  return (
+    signature.length >= 4 &&
+    signature[0] === 0x50 &&
+    signature[1] === 0x4b &&
+    (
+      (signature[2] === 0x03 && signature[3] === 0x04) ||
+      (signature[2] === 0x05 && signature[3] === 0x06) ||
+      (signature[2] === 0x07 && signature[3] === 0x08)
+    )
+  );
 }
 
 export async function writePdfUpload(
@@ -45,13 +91,14 @@ export async function writePdfUpload(
 
   const handle = await open(temporaryPath, "wx", 0o600);
   const reader = body.getReader();
+  const deadline = Date.now() + UPLOAD_TOTAL_TIMEOUT_MS;
   const hash = createHash("sha256");
   let size = 0;
   let signature = Buffer.alloc(0);
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readUploadChunk(reader, deadline);
       if (done) break;
       if (!value?.byteLength) continue;
 
@@ -69,6 +116,15 @@ export async function writePdfUpload(
           0,
           PDF_SIGNATURE.length,
         );
+        if (
+          signature.length === PDF_SIGNATURE.length &&
+          !signature.equals(PDF_SIGNATURE)
+        ) {
+          throw new PdfStorageError(
+            "INVALID_PDF",
+            "O arquivo não possui uma estrutura PDF reconhecida.",
+          );
+        }
       }
 
       hash.update(chunk);
@@ -102,6 +158,8 @@ export async function writePdfUpload(
       sha256: hash.digest("hex"),
     };
   } catch (error) {
+    // A source may never settle cancellation; cleanup must not wait for it.
+    void reader.cancel().catch(() => undefined);
     await handle.close().catch(() => undefined);
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw error;
@@ -128,13 +186,14 @@ export async function writeImageUpload(
   await mkdir(path.dirname(finalPath), { recursive: true });
   const handle = await open(temporaryPath, "wx", 0o600);
   const reader = body.getReader();
+  const deadline = Date.now() + UPLOAD_TOTAL_TIMEOUT_MS;
   const hash = createHash("sha256");
   let size = 0;
   let signature = Buffer.alloc(0);
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readUploadChunk(reader, deadline);
       if (done) break;
       if (!value?.byteLength) continue;
       size += value.byteLength;
@@ -148,6 +207,12 @@ export async function writeImageUpload(
       const chunk = Buffer.from(value);
       if (signature.length < 12) {
         signature = Buffer.concat([signature, chunk]).subarray(0, 12);
+        if (signature.length === 12 && !IMAGE_FORMATS[mimeType].valid(signature)) {
+          throw new PdfStorageError(
+            "INVALID_IMAGE",
+            "O conteúdo não corresponde ao formato da imagem.",
+          );
+        }
       }
       hash.update(chunk);
       await handle.write(chunk);
@@ -174,6 +239,7 @@ export async function writeImageUpload(
       storageKey,
     };
   } catch (error) {
+    void reader.cancel().catch(() => undefined);
     await handle.close().catch(() => undefined);
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw error;
@@ -200,13 +266,14 @@ export async function writeOfficeUpload(
   await mkdir(path.dirname(finalPath), { recursive: true });
   const handle = await open(temporaryPath, "wx", 0o600);
   const reader = body.getReader();
+  const deadline = Date.now() + UPLOAD_TOTAL_TIMEOUT_MS;
   const hash = createHash("sha256");
   let size = 0;
   let signature = Buffer.alloc(0);
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readUploadChunk(reader, deadline);
       if (done) break;
       if (!value?.byteLength) continue;
 
@@ -221,6 +288,12 @@ export async function writeOfficeUpload(
       const chunk = Buffer.from(value);
       if (signature.length < 4) {
         signature = Buffer.concat([signature, chunk]).subarray(0, 4);
+        if (signature.length === 4 && !isOfficeSignature(signature)) {
+          throw new PdfStorageError(
+            "INVALID_DOCUMENT",
+            "O conteúdo não corresponde a um documento Office válido.",
+          );
+        }
       }
       hash.update(chunk);
       await handle.write(chunk);
@@ -230,16 +303,7 @@ export async function writeOfficeUpload(
       throw new PdfStorageError("EMPTY_FILE", "O documento enviado está vazio.");
     }
     assertCompleteUpload(size, expectedBytes);
-    if (
-      signature.length < 4 ||
-      signature[0] !== 0x50 ||
-      signature[1] !== 0x4b ||
-      !(
-        (signature[2] === 0x03 && signature[3] === 0x04) ||
-        (signature[2] === 0x05 && signature[3] === 0x06) ||
-        (signature[2] === 0x07 && signature[3] === 0x08)
-      )
-    ) {
+    if (!isOfficeSignature(signature)) {
       throw new PdfStorageError(
         "INVALID_DOCUMENT",
         "O conteúdo não corresponde a um documento Office válido.",
@@ -257,6 +321,7 @@ export async function writeOfficeUpload(
       storageKey,
     };
   } catch (error) {
+    void reader.cancel().catch(() => undefined);
     await handle.close().catch(() => undefined);
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw error;

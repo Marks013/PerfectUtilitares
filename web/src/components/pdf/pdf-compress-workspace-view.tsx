@@ -473,7 +473,14 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
               <small>Mantenha esta página aberta até concluir.</small>
             </span>
           </div>
-          <div className="pdf-progress-track">
+          <div
+            className="pdf-progress-track"
+            role="progressbar"
+            aria-label={work.detail}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={work.progress}
+          >
             <span style={{ width: `${work.progress}%` }} />
           </div>
           <b>{work.progress}%</b>
@@ -491,7 +498,7 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                 {work.phase === "PARTIAL"
                   ? "Alguns arquivos foram compactados"
                   : work.phase === "UNCHANGED"
-                    ? "Os arquivos já estavam bem otimizados"
+                    ? "Nenhuma redução segura foi obtida"
                     : "Compactação concluída com sucesso"}
               </strong>
               <small>
@@ -503,6 +510,13 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
               </small>
             </div>
           </div>
+          {work.phase === "UNCHANGED" ? (
+            <p className="text-sm app-text-muted" role="status">
+              O original está disponível abaixo. Tente o perfil Compacto ou uma
+              resolução menor, se a leitura continuar adequada. Confira o motivo
+              nos detalhes de cada arquivo.
+            </p>
+          ) : null}
           <div className="pdf-output-list">
             {outputs.map((output) => {
               const originalSize = Number(

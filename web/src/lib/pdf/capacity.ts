@@ -180,7 +180,8 @@ export async function reservePdfJobForQueue(request: {
       }
 
       const claimed = await tx.pdfJob.updateMany({
-        where: { id: request.jobId, status: "DRAFT" },
+        // Recheck expiration atomically: the job can expire while waiting for locks.
+        where: { id: request.jobId, status: "DRAFT", expiresAt: { gt: new Date() } },
         data: {
           completedAt: null,
           errorCode: null,

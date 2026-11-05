@@ -188,6 +188,21 @@ function makeModel(options?: {
 }
 
 describe("PDF compression workspace interaction regressions", () => {
+  it("does not call an unchanged rejected candidate already optimized", () => {
+    const output = makeOutput("UNCHANGED");
+    if (!output.metadata?.compression) throw new Error("Missing compression metadata");
+    output.metadata.compression.strategy = "IMAGE_RECOMPRESSION";
+    output.metadata.compression.planReason = "Original mantido: falha na verificação de integridade.";
+    const completion = resolveCompressionCompletion([output]);
+    expect(completion.detail).not.toContain("já estavam bem otimizados");
+    const root = PdfCompressWorkspaceView({ model: makeModel({ outputs: [output] }).model });
+    expect(textContent(root)).not.toContain("já estavam bem otimizados");
+    expect(textContent(root)).toContain("Nenhuma redução segura foi obtida");
+    const warning = findElement(root, (element) => element.props.role === "status" &&
+      textContent(element).includes("Tente o perfil Compacto"));
+    expect(textContent(warning)).toContain("original");
+  });
+
   it("keeps technical details closed and outside the download link", () => {
     const root = PdfCompressWorkspaceView({
       model: makeModel({ phase: "SUCCEEDED", outputs: [makeOutput("COMPRESSED")] }).model,
@@ -255,7 +270,7 @@ describe("PDF compression workspace interaction regressions", () => {
       }).model,
     });
     expect(textContent(unchangedRoot)).toContain(
-      "Os arquivos já estavam bem otimizados",
+      "Nenhuma redução segura foi obtida",
     );
     expect(textContent(unchangedRoot)).toContain(
       "Mantivemos o original para evitar perda de qualidade",

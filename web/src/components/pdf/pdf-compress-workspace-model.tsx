@@ -161,7 +161,7 @@ export function resolveCompressionCompletion(
   if (allUnchanged) {
     return {
       phase: "UNCHANGED",
-      detail: "Os arquivos já estavam bem otimizados",
+      detail: "Nenhuma redução segura foi obtida",
       autoDownload: false,
     };
   }
