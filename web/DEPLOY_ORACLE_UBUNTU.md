@@ -1,55 +1,37 @@
 # Deploy em Ubuntu com Docker
 
-## Preparar ambiente
+## Preparar a revisão
+
+A fonte de produção é o checkout Git em `/home/ubuntu/PerfectUtilitares`.
+Trabalhe sobre um commit revisado e uma árvore limpa. Não copie uma árvore de
+staging sobre esse checkout: a sincronização por `rsync --delete-delay` foi
+desativada porque contorna o histórico Git e pode remover arquivos locais.
+
+Execute os comandos em `/home/ubuntu/PerfectUtilitares/web`, com acesso ao
+`.env` e aos arquivos protegidos referenciados pelo Compose. Não imprima o
+resultado completo de `docker compose config`: ele pode incluir segredos.
 
 ```bash
-cd web
-npm run setup:env
+git status --short --branch
+docker compose config --quiet
+npm run quality
 ```
 
-Revise o `.env` gerado antes de subir:
+## Publicar
 
-- `AUTH_URL` e `APP_URL`: URL publica do sistema.
-- `ADMIN_EMAIL` e `ADMIN_PASSWORD`: credenciais sincronizadas pelo seed.
-- `RESEND_API_KEY` e `RESEND_FROM_EMAIL`: envio dos convites.
-- `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`: Sentry.
+`npm run docker:deploy` valida o checkout, constrói as imagens com o commit
+identificado e aguarda a saúde dos serviços. Não habilite a limpeza de cache
+Docker no deploy rotineiro: o builder pode atender outros projetos.
 
-## Sincronizar fonte
+Antes de substituir o app ou o worker, aguarde a conclusão dos PDFs ativos.
+Atualize os dois juntos na mesma revisão. Preserve imagens anteriores para
+rollback e valide as migrações aplicáveis antes de recriar serviços.
 
-Extraia a versão completa em staging. Depois sincronize. Arquivos antigos são
-removidos; `.env`, `node_modules`, `.git` e `storage` são preservados:
+O serviço `migrate` executa as migrações e o seed inicial. O seed não redefine
+administradores existentes. Para rotacionar senha, use a operação explícita
+`npm run admin:rotate-password`. O contêiner do app apenas inicia o servidor web.
 
-```bash
-bash /home/ubuntu/perfectutilitares-deploy/REVISAO/web/scripts/deploy-source-sync.sh \
-  /home/ubuntu/perfectutilitares-deploy/REVISAO/web
-```
-
-O deploy exige `/home/ubuntu/perfectutilitares-config/unimed/access.env`
-com permissão `0600`.
-
-## Subir containers
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d --build
-docker compose logs -f app
-```
-
-O container da aplicacao executa automaticamente:
-
-1. `prisma migrate deploy`
-2. `npm run prisma:seed`
-3. `next start`
-
-O seed cria/atualiza o admin do `.env`, cria o tenant padrao e mantem as regras iniciais de jornada.
-
-## Checks rapidos
-
-```bash
-docker compose ps
-docker compose exec app npm run prisma:validate
-docker compose exec app npm run typecheck
-```
-
-No Nginx Proxy Manager em Docker, aponte o proxy HTTPS para
-`perfectutilitares:3000`. A porta `APP_PORT` fica restrita ao proprio host por
-padrao.
+Após a publicação, confira `docker compose ps`, as revisões do app e do worker
+e os fluxos afetados no navegador. No Nginx Proxy Manager, use
+`perfectutilitares:3000` como destino HTTPS. Por padrão, a porta `APP_PORT`
+fica vinculada ao host local.

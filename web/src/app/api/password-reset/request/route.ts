@@ -17,7 +17,7 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
-  email: z.string().email().max(254),
+  email: z.email().max(254),
 });
 
 function hashToken(token: string) {

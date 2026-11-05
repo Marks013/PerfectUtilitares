@@ -27,9 +27,9 @@ const routePath = "/api/password-reset/request";
 describe("/api/password-reset/request route", () => {
   describe("delivery privacy and success", () => {
     const user = { id: "user-1", tenantId: "tenant-1", email: "user@example.test", name: "User", role: "USER", status: "ACTIVE", passwordHash: "hash", securityVersion: 1 };
-    const request = () => new Request(`https://app.example.test${routePath}`, {
+    const request = (email = "user@example.test") => new Request(`https://app.example.test${routePath}`, {
       method: "POST", headers: { origin: "https://app.example.test", "content-type": "application/json" },
-      body: JSON.stringify({ email: "user@example.test" }),
+      body: JSON.stringify({ email }),
     });
     beforeEach(() => {
       vi.stubEnv("RESEND_API_KEY", "test-key");
@@ -42,14 +42,25 @@ describe("/api/password-reset/request route", () => {
     afterEach(() => vi.unstubAllEnvs());
 
     it("creates a tenant-scoped reset token and submits the real route delivery", async () => {
-      const response = await POST(request());
+      const response = await POST(request("USER@EXAMPLE.TEST"));
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
+      expect(mocks.findUser).toHaveBeenCalledWith(expect.objectContaining({ where: { email: user.email } }));
       expect(mocks.createInvitation).toHaveBeenCalledWith({ data: expect.objectContaining({ purpose: "PASSWORD_RESET", resetUserId: "user-1", tenantId: "tenant-1", tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), expiresAt: expect.any(Date) }) });
       expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ to: user.email, resetUrl: expect.stringMatching(/^https:\/\/app\.example\.test\/convite\//) }));
       expect(mocks.deleteInvitation).not.toHaveBeenCalled();
     });
 
+    it.each(["not-an-email", `${"a".repeat(254)}@example.test`])(
+      "keeps invalid reset addresses private and does not create a token",
+      async (email) => {
+        const response = await POST(request(email));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        expect(mocks.findUser).not.toHaveBeenCalled();
+        expect(mocks.createInvitation).not.toHaveBeenCalled();
+      },
+    );
     it("keeps delivery failure indistinguishable from an unknown account", async () => {
       const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {

@@ -15,9 +15,7 @@ fi
 before=$(df -P -h / | awk 'NR == 2 {print $3 " usados, " $4 " livres"}')
 logger -t perfectutilitares-maintenance "inicio: $before"
 
-cd "$REPOSITORY"
-runuser -u ubuntu -- /usr/bin/node scripts/cleanup-artifacts.mjs
-/usr/bin/node scripts/cleanup-deploy.mjs
+/usr/sbin/runuser -u ubuntu -- /usr/bin/node "$REPOSITORY/scripts/cleanup-artifacts.mjs"
 /usr/local/sbin/server-resource-guard
 
 after=$(df -P -h / | awk 'NR == 2 {print $3 " usados, " $4 " livres"}')

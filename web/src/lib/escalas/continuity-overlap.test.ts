@@ -76,6 +76,36 @@ describe("published overlap preservation", () => {
     expect(input.assignments).toEqual([]);
     expect(previous.assignments[0].locked).toBeUndefined();
   });
+  it("matches only the active employment record for each published registration and date", () => {
+    const input = fixture(); const peer = fixture();
+    const person = peer.employees[0];
+    peer.employees = [
+      { ...person, id: "old", activeUntil: "2026-11-15" },
+      { ...person, id: "new", activeFrom: "2026-11-16" },
+      { ...person, id: "unrelated", registration: "002" },
+    ];
+    peer.assignments = [
+      { employeeId: "old", date: "2026-11-15", kind: "OFF" },
+      { employeeId: "old", date: "2026-11-16", kind: "ABSENCE" },
+      { employeeId: "new", date: "2026-11-16", kind: "WORK", shiftId: peer.shifts[0].id },
+      { employeeId: "unrelated", date: "2026-11-16", kind: "OFF" },
+    ];
+    expect(preservePublishedDays(input, [peer]).assignments).toEqual([
+      { employeeId: "e", date: "2026-11-15", kind: "OFF", locked: true },
+      { employeeId: "e", date: "2026-11-16", kind: "WORK", shiftId: input.shifts[0].id, locked: true },
+    ]);
+  });
+  it("indexes a published Sunday reservation as context or a shared Monday commitment", () => {
+    const input = fixture(); const peer = fixture();
+    peer.employees[0].offPattern = "CONSECUTIVE";
+    peer.employees[0].offMode = "MIXED";
+    peer.employees[0].fixedOffDays = [0];
+    peer.assignments = [{ employeeId: "e", date: peer.endDate, kind: "OFF" }];
+    const monday = { employeeId: "e", date: "2026-12-07", kind: "OFF" };
+    expect(publishedPlanningContext(input, [peer]).employees[0].planningFuture).toEqual([monday]);
+    input.startDate = "2026-12-07"; input.endDate = "2026-12-13";
+    expect(preservePublishedDays(input, [peer]).assignments).toEqual([{ ...monday, locked: true }]);
+  });
   it("refuses conflicting manual choices and conflicting published references instead of overwriting", () => {
     const input = fixture(); const peer = fixture();
     input.assignments = [{ employeeId: "e", date: "2026-11-01", kind: "WORK", shiftId: input.shifts[0].id }];

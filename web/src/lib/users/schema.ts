@@ -24,7 +24,7 @@ const emailSchema = z
   .string()
   .trim()
   .min(1, "Informe o e-mail.")
-  .email("Informe um e-mail válido, como nome@empresa.com.")
+  .check(z.email("Informe um e-mail válido, como nome@empresa.com."))
   .max(254, "O e-mail deve ter no máximo 254 caracteres.")
   .transform((value) => value.toLowerCase());
 const nameSchema = z

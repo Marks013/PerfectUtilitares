@@ -19,7 +19,7 @@ const requestSchema = z.object({
   entries: z
     .array(
       z.object({
-        ids: z.array(z.string().cuid()).min(1).max(4),
+        ids: z.array(z.cuid()).min(1).max(4),
         nome: z.string().trim().min(1).max(120),
         matricula: z.string().trim().max(60).optional().default(""),
         dataAlteracao: z

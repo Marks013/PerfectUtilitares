@@ -168,4 +168,19 @@ describe("Sunday reference provenance", () => {
     const withDraft = proposeAutomaticCoverage({ ...input, assignments: input.employees.map(person => ({ employeeId: person.id, date: "2026-11-08", kind: "WORK", shiftId: "day", locked: false })) });
     expect(withDraft.demands).toEqual(baseline.demands);
   });
+  it("lets actual history override planning context and reuses locked work across weeks", () => {
+    const input = fixture(2); input.endDate = "2026-11-15";
+    for (const person of input.employees) {
+      person.historyKnown = true;
+      person.planningHistory = [{ employeeId: person.id, date: "2026-11-01", kind: "WORK", shiftId: "day" }];
+      person.history = [{ employeeId: person.id, date: "2026-11-01", kind: "OFF" }];
+    }
+    expect(proposeAutomaticCoverage(input).demands.find(row => row.date === "2026-11-08" && row.start === 480)?.minimum).toBe(1);
+    input.assignments = input.employees.map(person => ({
+      employeeId: person.id, date: "2026-11-08", kind: "WORK", shiftId: "day", locked: true,
+    }));
+    const secondSunday = proposeAutomaticCoverage(input).demands.filter(row => row.date === "2026-11-15");
+    expect(secondSunday.length).toBeGreaterThan(0);
+    expect(secondSunday.every(row => row.minimum === 0)).toBe(true);
+  });
 });

@@ -46,7 +46,7 @@ declare module "next-auth" {
 }
 
 const credentialsSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(1).max(BCRYPT_PASSWORD_MAX_LENGTH),
 });
 

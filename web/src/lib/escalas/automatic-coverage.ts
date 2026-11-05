@@ -1,6 +1,6 @@
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import { effectiveSundayLimit, effectiveWeeklyMinutes } from "./labor-rules";
-import type { EscalaEmployee, EscalaInput, EscalaShift } from "./types";
+import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 
 type Demand = EscalaInput["demands"][number];
 type Contribution = { date: string; shift: EscalaShift; weight: number };
@@ -75,7 +75,17 @@ function roundedTargets(expected: number[], group: Group, monday: string, days: 
 export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
   const explicit = input.demands.filter((demand) => demand.estimated !== true).map((demand) => ({ ...demand }));
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
-  const assignments = new Map(input.assignments.map((item) => [JSON.stringify([item.employeeId, item.date]), item]));
+  const assignments = new Map<string, EscalaAssignment>();
+  const lockedByEmployee = new Map<string, EscalaAssignment[]>();
+  for (const item of input.assignments) {
+    assignments.set(JSON.stringify([item.employeeId, item.date]), item);
+    if (item.locked) {
+      const locked = lockedByEmployee.get(item.employeeId);
+      if (locked) locked.push(item);
+      else lockedByEmployee.set(item.employeeId, [item]);
+    }
+  }
+  const historyByEmployee = new Map<string, Map<string, EscalaAssignment>>();
   const closed = new Set(input.policy.closedDates);
   const weeks = new Map<string, string[]>();
   for (const day of dateRange(input.startDate, input.endDate)) {
@@ -107,9 +117,14 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
       const freeWeekdays = free.filter(day => dayOfWeek(day) !== 6);
       const sunday = free.find(day => dayOfWeek(day) === 6);
       const remaining = Math.max(0, 5 - forced.length);
-      const history = new Map([...(person.planningHistory ?? []), ...person.history, ...input.assignments.filter(day => day.employeeId === person.id && day.locked), ...(person.planningFuture ?? [])].map(day => [day.date, day]));
+      let history = historyByEmployee.get(person.id);
+      if (!history) {
+        history = new Map([...(person.planningHistory ?? []), ...person.history,
+          ...(lockedByEmployee.get(person.id) ?? []), ...(person.planningFuture ?? [])].map(day => [day.date, day]));
+        historyByEmployee.set(person.id, history);
+      }
       const limit = effectiveSundayLimit(person);
-      const worked = (date: string) => ["WORK", "DUTY"].includes(history.get(date)?.kind ?? "");
+      const worked = (date: string) => ["WORK", "DUTY"].includes(history?.get(date)?.kind ?? "");
       const unavailableSunday = sunday && [1, -1].some(direction => Array.from({ length: limit }, (_, index) => addDays(sunday, direction * 7 * (index + 1))).every(worked));
       // A 5/7 reference ignores alternating Sunday rest. Keep the weekly budget,
       // but reserve at most the explicit Sunday rotation's share for a free Sunday.

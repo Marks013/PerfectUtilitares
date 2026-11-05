@@ -40,7 +40,7 @@ export const unimedCompetencySchema = z.object({
 export const unimedEmailRequestSchema = z
   .object({
     beneficiaryId: z.string().trim().min(8).max(64),
-    idempotencyKey: z.string().uuid(),
+    idempotencyKey: z.uuid(),
     confirmed: z.literal(true),
   })
   .strict();
@@ -199,7 +199,7 @@ export const unimedConfigurationSchema = z
     email: z.object({
       enabled: z.boolean(),
       recipients: z
-        .array(z.string().trim().toLowerCase().email())
+        .array(z.string().trim().toLowerCase().check(z.email()))
         .min(1)
         .max(10),
       subjectTemplate: z.literal(DEFAULT_UNIMED_EMAIL_SUBJECT),

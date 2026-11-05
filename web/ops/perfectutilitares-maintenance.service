@@ -1,5 +1,5 @@
 [Unit]
-Description=Run conservative PerfectUtilitares and Docker cleanup
+Description=Rotate PerfectUtilitares artifacts and refresh the resource guard
 After=docker.service
 Wants=docker.service
 

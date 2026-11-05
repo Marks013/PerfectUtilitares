@@ -13,10 +13,28 @@ function shiftSignature(shift: EscalaShift) {
   return JSON.stringify(shift.segments.map((segment) => [segment.start, segment.end, segment.kind]));
 }
 
+/** Index each published reference once, preserving assignment and reservation order. */
+function indexPublishedPeer(peer: EscalaInput, firstDate: string, lastDate: string) {
+  const employees = new Map(peer.employees.map(person => [person.id, person]));
+  const shifts = new Map(peer.shifts.map(shift => [shift.id, shift]));
+  const byRegistration = new Map<string, EscalaAssignment[]>();
+  for (const assignment of [...peer.assignments, ...fixedBoundaryReservations(peer)]) {
+    if (assignment.date < firstDate || assignment.date > lastDate) continue;
+    const person = employees.get(assignment.employeeId);
+    if (!person || !active(person, assignment.date)) continue;
+    const records = byRegistration.get(person.registration);
+    if (records) records.push(assignment);
+    else byRegistration.set(person.registration, [assignment]);
+  }
+  return { branchCode: canonicalBranchCode(peer.branchCode), shifts, byRegistration };
+}
+
 /** Published plans provide planning context only; actual attendance always remains separate. */
 export function publishedPlanningContext(input: EscalaInput, published: EscalaInput[]): EscalaInput {
   const firstDate = addDays(input.startDate, -21);
   const lastDate = addDays(input.endDate, 21);
+  const peers = published.map(peer => indexPublishedPeer(peer, firstDate, lastDate));
+  const branchCode = canonicalBranchCode(input.branchCode);
   const referenced = new Set([...input.assignments, ...input.employees.flatMap((person) => person.history)].flatMap((item) => item.shiftId ? [item.shiftId] : []));
   input.employees.forEach((person) => { person.shiftIds.forEach((id) => { referenced.add(id); }); });
   const retained = input.shifts.filter((shift) => !shift.id.startsWith("plan-") || referenced.has(shift.id));
@@ -28,14 +46,12 @@ export function publishedPlanningContext(input: EscalaInput, published: EscalaIn
     const records = new Map<string, EscalaAssignment>();
     const signatures = new Map<string, string>();
     if (person.planningEnabled === false) return clean;
-    for (const peer of published) {
-      if (canonicalBranchCode(peer.branchCode) !== canonicalBranchCode(input.branchCode)) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A versão publicada não corresponde à filial desta proposta.");
-      const sources = peer.employees.filter((source) => source.registration === person.registration);
-      for (const assignment of [...peer.assignments, ...fixedBoundaryReservations(peer)]) {
-        const source = sources.find((candidate) => candidate.id === assignment.employeeId && active(candidate, assignment.date));
-        if (!source || !active(person, assignment.date) || assignment.date < firstDate || assignment.date > lastDate
+    for (const peer of peers) {
+      if (peer.branchCode !== branchCode) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A versão publicada não corresponde à filial desta proposta.");
+      for (const assignment of peer.byRegistration.get(person.registration) ?? []) {
+        if (!active(person, assignment.date)
           || (assignment.date >= input.startDate && assignment.date <= input.endDate)) continue;
-        const sourceShift = assignment.kind === "WORK" ? peer.shifts.find((shift) => shift.id === assignment.shiftId) : undefined;
+        const sourceShift = assignment.kind === "WORK" && assignment.shiftId ? peer.shifts.get(assignment.shiftId) : undefined;
         if (assignment.kind === "WORK" && !sourceShift) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Um horário publicado não pôde ser conferido.");
         const segments = sourceShift ? shiftSignature(sourceShift) : "";
         const signature = JSON.stringify([assignment.kind, segments]);
@@ -63,21 +79,19 @@ export function publishedPlanningContext(input: EscalaInput, published: EscalaIn
 
 /** Shared technical days already published are commitments, not new opportunities to reschedule. */
 export function preservePublishedDays(input: EscalaInput, published: EscalaInput[]): EscalaInput {
+  const peers = published.map(peer => indexPublishedPeer(peer, input.startDate, input.endDate));
+  const branchCode = canonicalBranchCode(input.branchCode);
   const shifts = [...input.shifts];
   const signatures = new Map(shifts.map(shift => [shiftSignature(shift), shift.id]));
   const assignments = new Map(input.assignments.map(item => [JSON.stringify([item.employeeId, item.date]), item]));
   const commitments = new Map<string, string>();
   const employees = input.employees.map(person => {
     const allowed = new Set(person.shiftIds);
-    for (const peer of published) {
-      if (canonicalBranchCode(peer.branchCode) !== canonicalBranchCode(input.branchCode)) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A referência publicada pertence a outra filial.");
-      const sources = peer.employees.filter(source => source.registration === person.registration);
-      for (const item of [...peer.assignments, ...fixedBoundaryReservations(peer)]) {
-        if (item.date < input.startDate || item.date > input.endDate) continue;
-        const source = sources.find(candidate => candidate.id === item.employeeId && active(candidate, item.date));
-        if (!source) continue;
+    for (const peer of peers) {
+      if (peer.branchCode !== branchCode) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A referência publicada pertence a outra filial.");
+      for (const item of peer.byRegistration.get(person.registration) ?? []) {
         if (!active(person, item.date)) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Há um dia já publicado para uma pessoa não incluída ou fora do vínculo nesta proposta. Confira a equipe e o período antes de gerar.");
-        const sourceShift = item.shiftId ? peer.shifts.find(shift => shift.id === item.shiftId) : undefined;
+        const sourceShift = item.shiftId ? peer.shifts.get(item.shiftId) : undefined;
         if (item.kind === "WORK" && !sourceShift) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Um horário publicado não foi encontrado; a escala anterior foi preservada.");
         const signature = JSON.stringify([item.kind, sourceShift ? shiftSignature(sourceShift) : ""]);
         const key = JSON.stringify([person.id, item.date]);

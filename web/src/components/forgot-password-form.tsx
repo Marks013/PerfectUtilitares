@@ -12,7 +12,7 @@ const schema = z.object({
     .string()
     .trim()
     .min(1, "Informe o e-mail cadastrado.")
-    .email("Informe um e-mail válido, como nome@empresa.com."),
+    .check(z.email("Informe um e-mail válido, como nome@empresa.com.")),
 });
 
 type FormInput = z.input<typeof schema>;
@@ -25,11 +25,18 @@ export function ForgotPasswordForm() {
   });
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
-      await fetch("/api/password-reset/request", {
+      const response = await fetch("/api/password-reset/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
-      });
+      }).catch(() => null);
+      if (!response?.ok) {
+        throw new Error(
+          response?.status === 429
+            ? "Muitas tentativas. Aguarde um minuto e tente novamente."
+            : "Não foi possível enviar o pedido. Tente novamente em instantes.",
+        );
+      }
     },
   });
 
@@ -65,8 +72,20 @@ export function ForgotPasswordForm() {
         </p>
       ) : null}
 
+      {mutation.isError ? (
+        <p
+          role="alert"
+          className="mt-4 app-radius-md border app-border app-bg-danger-soft p-3 text-sm app-text-danger"
+        >
+          {mutation.error.message}
+        </p>
+      ) : null}
+
       {mutation.isSuccess ? (
-        <p className="mt-4 flex items-center gap-2 app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
+        <p
+          role="status"
+          className="mt-4 flex items-center gap-2 app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success"
+        >
           <CheckCircle2 className="size-4" aria-hidden="true" />
           Se o e-mail estiver cadastrado e ativo, enviaremos um link para redefinir a senha.
         </p>
