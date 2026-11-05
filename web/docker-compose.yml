@@ -189,6 +189,9 @@ services:
     <<: *runtime-hardening
     build:
       context: ./ops/escalas
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     restart: unless-stopped
     init: true
     logging: *default-logging

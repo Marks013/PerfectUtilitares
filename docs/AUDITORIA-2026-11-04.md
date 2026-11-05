@@ -101,3 +101,30 @@ auditoria. Não foram gerados convites ou alteradas contas, grades e dados reais
   reais de conversão Office foram aprovados. A consulta OSV de 39 versões
   efetivamente instaladas não acusou avisos, mas não identificava os vendors
   do pip; o scanner da imagem detectou essa lacuna, corrigida na etapa final.
+
+## Evidências da atualização de runtime
+
+- App e worker publicados em `2ef432e`, na mesma revisão. Ambos passaram
+  no Trivy com zero vulnerabilidades altas ou críticas, incluindo os pacotes
+  nativos; Expat 2.10.0-r0 e ausência do pip foram confirmados pelo build.
+- Na imagem final, OCR nas otimizações 2/3 e quatro testes CLI reais de
+  Office passaram novamente, sem repetir a suíte completa da aplicação.
+- No navegador, dois PDFs sintéticos somavam 7.251.216 bytes. A compactação
+  equilibrada, 150 DPI e tons de cinza gerou 544.642 bytes de PDFs em
+  11,8 segundos; o ZIP tinha 479.890 bytes. Texto/OCR e páginas preservados,
+  parâmetros aplicados conferidos nos metadados e exclusão do próprio job
+  confirmada com HTTP 204. Isso não prevê o ganho em todo arquivo possível.
+- O Solver também continha o pip com os mesmos vendors vulneráveis. Sua
+  imagem passa a remover o instalador após os checks, atualizar os pacotes
+  do Debian estável e exigir apt >= 3.0.4. As regras e o algoritmo não mudam.
+- O scan inicial do Solver identificou 53 registros altos: cinco dos vendors
+  pip, dois de apt/libapt com correção e 46 registros nativos correspondentes
+  a dez CVEs únicos ainda abertos no Debian 13/trixie. O
+  [tracker oficial do Debian](https://security-tracker.debian.org/tracker/data/json),
+  atualizado em 05/11/2026, confirma ausência de versão corrigida para esses
+  dez IDs no ramo estável. `no-dsa` não significa corrigido ou não afetado.
+  Não foram criadas exceções no scanner, nem trocado o sistema operacional
+  ou removidas bibliotecas essenciais para forçar um resultado zero.
+- IDs pendentes do fornecedor: CVE-2026-76642, CVE-2026-78408,
+  CVE-2026-78409, CVE-2026-78410, CVE-2026-54369, CVE-2025-69720,
+  CVE-2026-119373, CVE-2026-16742, CVE-2026-9538 e CVE-2026-76844.
