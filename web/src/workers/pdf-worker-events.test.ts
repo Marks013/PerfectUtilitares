@@ -23,7 +23,9 @@ vi.mock("@/lib/pdf/queue", () => ({
   PDF_PROCESSING_QUEUE: "perfect-pdf-processing",
   stopPdfQueue: vi.fn(),
 }));
-vi.mock("@/lib/pdf/constants", () => ({ getPdfJobExpiry: vi.fn() }));
+vi.mock("@/lib/pdf/interrupted-jobs", () => ({
+  reconcileInterruptedPdfJobs: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/pdf/retention", () => ({
   cleanupCompletedPdfJobInputs: vi.fn(),
   cleanupExpiredPdfJobs: mocks.cleanupPdf,

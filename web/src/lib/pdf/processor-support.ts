@@ -123,9 +123,12 @@ export function createSplitOutputName(inputName: string, pageNumber: number) {
   return `${baseName}-pagina-${String(pageNumber).padStart(3, "0")}.pdf`;
 }
 
-export async function updateProgress(jobId: string, progress: number) {
+export async function updateProgress(
+  execution: { id: string; status: "RUNNING"; startedAt: Date },
+  progress: number,
+) {
   await prisma.pdfJob.updateMany({
-    where: { id: jobId, status: "RUNNING" },
+    where: execution,
     data: { progress: Math.max(1, Math.min(99, Math.round(progress))) },
   });
 }

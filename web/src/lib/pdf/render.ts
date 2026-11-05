@@ -33,7 +33,7 @@ type RenderInput = {
   storageKey: string;
 };
 
-export class PdfRenderError extends Error {
+class PdfRenderError extends Error {
   constructor(
     public readonly code: string,
     message: string,

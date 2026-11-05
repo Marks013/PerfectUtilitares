@@ -8,7 +8,7 @@ import {
   PDF_PROCESSING_QUEUE,
   stopPdfQueue,
 } from "@/lib/pdf/queue";
-import { getPdfJobExpiry } from "@/lib/pdf/constants";
+import { reconcileInterruptedPdfJobs } from "@/lib/pdf/interrupted-jobs";
 import {
   currentPdfCompressionProtocolRevision,
   currentPdfCompressionRevision,
@@ -82,6 +82,7 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
 
     // Queue delivery is at-least-once. Claim the database row before touching
     // inputs so a delayed or duplicated message cannot reprocess a finished job.
+    const startedAt = new Date();
     const claimed = await prisma.pdfJob.updateMany({
       where: { id: job.data.jobId, status: "QUEUED" },
       data: {
@@ -89,7 +90,7 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
         errorCode: null,
         errorMessage: null,
         progress: 1,
-        startedAt: new Date(),
+        startedAt,
         status: "RUNNING",
       },
     });
@@ -108,9 +109,9 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
 
     let invalidCompletedOutput = false;
     try {
-      await processPdfJob(job.data.jobId);
+      await processPdfJob(job.data.jobId, startedAt, job.signal);
       const completed = await prisma.pdfJob.findUnique({
-        where: { id: job.data.jobId },
+        where: { id: job.data.jobId, startedAt },
         select: {
           status: true,
           artifacts: {
@@ -132,6 +133,10 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
         );
       }
     } catch (error) {
+      // The queue already owns settlement when this delivery is aborted.
+      // A late converter must not put the application job back in QUEUED.
+      if (job.signal?.aborted) throw error;
+
       const errorCode = error instanceof Error && "code" in error && typeof error.code === "string"
         ? error.code : "PDF_PROCESSING_FAILED";
       const nonRetryable = nonRetryableConversionErrors.has(errorCode);
@@ -139,11 +144,8 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
       await prisma.pdfJob.updateMany({
         where: {
           id: job.data.jobId,
-          status: {
-            in: invalidCompletedOutput
-              ? ["RUNNING", "FAILED", "SUCCEEDED"]
-              : ["RUNNING", "FAILED"],
-          },
+          startedAt,
+          status: invalidCompletedOutput ? "SUCCEEDED" : "RUNNING",
         },
         data: {
           completedAt: willRetry ? null : new Date(),
@@ -168,10 +170,6 @@ await boss.work<{ jobId: string }, void, typeof workOptions>(
     }
 
     try {
-      await prisma.pdfJob.updateMany({
-        where: { id: job.data.jobId, status: "SUCCEEDED" },
-        data: { expiresAt: getPdfJobExpiry() },
-      });
       await cleanupCompletedPdfJobInputs(job.data.jobId);
     } catch (error) {
       logPdfWorkerFailure("pdf_worker_input_cleanup_failed");
@@ -225,9 +223,14 @@ function refreshWorkerHeartbeat() {
   return heartbeatPromise;
 }
 
+let reconciliationCursor: string | undefined;
+
 function runRetentionCleanup() {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = cleanupExpiredPdfJobs()
+    .then(async () => {
+      reconciliationCursor = await reconcileInterruptedPdfJobs(boss, reconciliationCursor);
+    })
     .catch((error) => {
       logPdfWorkerFailure("pdf_worker_retention_failed");
       Sentry.captureException(error, {

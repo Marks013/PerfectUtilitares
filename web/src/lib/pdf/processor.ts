@@ -1,14 +1,11 @@
-import * as Sentry from "@sentry/node";
 import { applyPdfAnnotations } from "@/lib/pdf/annotations";
 import { getPdfWorkingSetMultiplier } from "@/lib/pdf/capacity";
-import { compressPdfFile, PdfToolError } from "@/lib/pdf/compression";
+import { compressPdfFile } from "@/lib/pdf/compression";
 import { mapWithConcurrency } from "@/lib/pdf/compression-concurrency";
 import { buildPdfFromImages } from "@/lib/pdf/images-to-pdf";
 import { convertPdfToOffice } from "@/lib/pdf/office-export";
-import {
-  convertOfficeToPdf,
-  PdfOfficeError,
-} from "@/lib/pdf/office";
+import { getPdfJobExpiry } from "@/lib/pdf/constants";
+import { convertOfficeToPdf } from "@/lib/pdf/office";
 import {
   jpgToPdfOptionsSchema,
   pdfCompressionOptionsSchema,
@@ -32,10 +29,9 @@ import {
   writeOfficeOutput,
   writePdfOutput,
 } from "@/lib/pdf/storage";
-import { PdfRenderError, renderPdfPagesToJpeg } from "@/lib/pdf/render";
+import { renderPdfPagesToJpeg } from "@/lib/pdf/render";
 import {
   buildStructuralPdf,
-  PdfStructureError,
   splitStructuralPdf,
 } from "@/lib/pdf/structural";
 import { prisma } from "@/lib/prisma";
@@ -43,9 +39,15 @@ import { assertResourceCapacity } from "@/lib/system/resource-capacity";
 // PERFECT_PDF_FULL32_V2_2
 // PERFECT_PDF_ADAPTIVE_V4_2
 
-export async function processPdfJob(jobId: string) {
+export async function processPdfJob(
+  jobId: string,
+  startedAt: Date,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
+  const execution = { id: jobId, status: "RUNNING", startedAt } as const;
   const job = await prisma.pdfJob.findUnique({
-    where: { id: jobId },
+    where: execution,
     include: {
       artifacts: {
         orderBy: { createdAt: "asc" },
@@ -53,7 +55,7 @@ export async function processPdfJob(jobId: string) {
     },
   });
 
-  if (!job || job.status === "CANCELLED" || job.status === "EXPIRED") {
+  if (job?.status !== "RUNNING") {
     return;
   }
 
@@ -95,17 +97,11 @@ export async function processPdfJob(jobId: string) {
     multiplier: getPdfWorkingSetMultiplier(job.operation),
   });
 
-  await prisma.pdfJob.update({
-    where: { id: job.id },
-    data: {
-      completedAt: null,
-      errorCode: null,
-      errorMessage: null,
-      progress: 1,
-      startedAt: new Date(),
-      status: "RUNNING",
-    },
-  });
+  signal?.throwIfAborted();
+  const reportProgress = (progress: number) => {
+    signal?.throwIfAborted();
+    return updateProgress(execution, progress);
+  };
 
   const priorOutputs = job.artifacts.filter(
     (artifact) => artifact.kind === "OUTPUT",
@@ -150,7 +146,7 @@ export async function processPdfJob(jobId: string) {
                   (total, artifact) => total + (itemProgress.get(artifact.id) ?? 0),
                   0,
                 ) / inputArtifacts.length;
-                await updateProgress(job.id, 5 + aggregate * 0.85);
+                await reportProgress(5 + aggregate * 0.85);
               },
               options,
               outputName: `${baseName || "documento"}-comprimido.pdf`,
@@ -186,6 +182,7 @@ export async function processPdfJob(jobId: string) {
       const partialMessage = failures.length
         ? `${failures.length} de ${inputArtifacts.length} arquivo(s) falharam; os demais foram concluídos e estão disponíveis para download.`
         : null;
+      signal?.throwIfAborted();
       await prisma.$transaction([
         prisma.pdfArtifact.createMany({
           data: succeeded.map(({ input, output }) => ({
@@ -217,8 +214,9 @@ export async function processPdfJob(jobId: string) {
           })),
         }),
         prisma.pdfJob.update({
-          where: { id: job.id },
+          where: execution,
           data: {
+            expiresAt: getPdfJobExpiry(),
             completedAt: new Date(),
             errorCode: failures.length ? "PDF_COMPRESSION_PARTIAL" : null,
             errorMessage: partialMessage,
@@ -236,7 +234,7 @@ export async function processPdfJob(jobId: string) {
         inputs: inputArtifacts,
         margin: options.margin,
         pageSize: options.pageSize,
-        onProgress: (progress) => updateProgress(job.id, progress),
+        onProgress: reportProgress,
       });
       const firstInput = requireFirstInput(inputArtifacts);
       const output = await writePdfOutput(
@@ -246,6 +244,7 @@ export async function processPdfJob(jobId: string) {
       );
       writtenStorageKeys.push(output.storageKey);
 
+      signal?.throwIfAborted();
       await prisma.$transaction([
         prisma.pdfArtifact.create({
           data: {
@@ -261,8 +260,9 @@ export async function processPdfJob(jobId: string) {
           },
         }),
         prisma.pdfJob.update({
-          where: { id: job.id },
+          where: execution,
           data: {
+            expiresAt: getPdfJobExpiry(),
             completedAt: new Date(),
             errorCode: null,
             errorMessage: null,
@@ -292,20 +292,22 @@ export async function processPdfJob(jobId: string) {
         const bytes = await convertPdfToOffice({
           jobId: job.id, storageKey: input.storageKey, extension,
           timeoutMs: deadline - Date.now(),
-          onProgress: (progress) => updateProgress(job.id, 5 + ((index + progress / 100) / inputArtifacts.length) * 90),
+          onProgress: (progress) => reportProgress(5 + ((index + progress / 100) / inputArtifacts.length) * 90),
         });
         const baseName = input.originalName.replace(/\.pdf$/i, "") || "documento";
         const output = await writeOfficeOutput(job.id, `${baseName}.${extension}`, extension, bytes);
         outputs.push(output);
         writtenStorageKeys.push(output.storageKey);
       }
+      signal?.throwIfAborted();
       await prisma.$transaction([
         prisma.pdfArtifact.createMany({ data: outputs.map((output) => ({
           id: output.artifactId, jobId: job.id, kind: "OUTPUT", mimeType,
           originalName: output.originalName, sha256: output.sha256,
           sizeBytes: output.sizeBytes, storageKey: output.storageKey,
         })) }),
-        prisma.pdfJob.update({ where: { id: job.id }, data: {
+        prisma.pdfJob.update({ where: execution, data: {
+          expiresAt: getPdfJobExpiry(),
           completedAt: new Date(), errorCode: null, errorMessage: null,
           outputBytes: outputs.reduce((sum, output) => sum + output.sizeBytes, BigInt(0)),
           progress: 100, status: "SUCCEEDED",
@@ -326,7 +328,7 @@ export async function processPdfJob(jobId: string) {
         sizeBytes: bigint;
         storageKey: string;
       }> = [];
-      await updateProgress(job.id, 5);
+      await reportProgress(5);
 
       for (const [index, input] of inputArtifacts.entries()) {
         const inputProgressStart =
@@ -338,10 +340,7 @@ export async function processPdfJob(jobId: string) {
         const bytes = await convertOfficeToPdf({
           jobId: job.id,
           onProgress: (progress) =>
-            updateProgress(
-              job.id,
-              inputProgressStart + (progress / 100) * inputProgressSpan,
-            ),
+            reportProgress(inputProgressStart + (progress / 100) * inputProgressSpan),
           storageKey: input.storageKey,
         });
         const output = await writePdfOutput(
@@ -351,13 +350,14 @@ export async function processPdfJob(jobId: string) {
         );
         outputs.push({ ...output, mimeType: "application/pdf" });
         writtenStorageKeys.push(output.storageKey);
-        await updateProgress(job.id, inputProgressStart + inputProgressSpan);
+        await reportProgress(inputProgressStart + inputProgressSpan);
       }
 
       const totalBytes = outputs.reduce(
         (total, output) => total + output.sizeBytes,
         BigInt(0),
       );
+      signal?.throwIfAborted();
       await prisma.$transaction([
         prisma.pdfArtifact.createMany({
           data: outputs.map((output) => ({
@@ -372,8 +372,9 @@ export async function processPdfJob(jobId: string) {
           })),
         }),
         prisma.pdfJob.update({
-          where: { id: job.id },
+          where: execution,
           data: {
+            expiresAt: getPdfJobExpiry(),
             completedAt: new Date(),
             errorCode: null,
             errorMessage: null,
@@ -400,7 +401,7 @@ export async function processPdfJob(jobId: string) {
         inputs: artifactsById,
         manifest: requireStructuralManifest(manifest),
         quality: options.quality,
-        onProgress: (progress) => updateProgress(job.id, progress),
+        onProgress: reportProgress,
         async onOutput(_instruction, bytes, outputIndex) {
           const suffix = `-pagina-${String(outputIndex + 1).padStart(3, "0")}`;
           // Storage caps the base at 170 UTF-16 units; reserve the page number.
@@ -420,6 +421,7 @@ export async function processPdfJob(jobId: string) {
         (total, output) => total + output.sizeBytes,
         BigInt(0),
       );
+      signal?.throwIfAborted();
       await prisma.$transaction([
         prisma.pdfArtifact.createMany({
           data: outputs.map((output) => ({
@@ -435,8 +437,9 @@ export async function processPdfJob(jobId: string) {
           })),
         }),
         prisma.pdfJob.update({
-          where: { id: job.id },
+          where: execution,
           data: {
+            expiresAt: getPdfJobExpiry(),
             completedAt: new Date(),
             errorCode: null,
             errorMessage: null,
@@ -456,7 +459,7 @@ export async function processPdfJob(jobId: string) {
       await splitStructuralPdf({
         inputs: artifactsById,
         manifest: requireStructuralManifest(manifest),
-        onProgress: (progress) => updateProgress(job.id, progress),
+        onProgress: reportProgress,
         async onOutput(_instruction, bytes, outputIndex) {
           const output = await writePdfOutput(
             job.id,
@@ -472,6 +475,7 @@ export async function processPdfJob(jobId: string) {
         (total, output) => total + output.sizeBytes,
         BigInt(0),
       );
+      signal?.throwIfAborted();
       await prisma.$transaction([
         prisma.pdfArtifact.createMany({
           data: outputs.map((output) => ({
@@ -487,8 +491,9 @@ export async function processPdfJob(jobId: string) {
           })),
         }),
         prisma.pdfJob.update({
-          where: { id: job.id },
+          where: execution,
           data: {
+            expiresAt: getPdfJobExpiry(),
             completedAt: new Date(),
             errorCode: null,
             errorMessage: null,
@@ -504,7 +509,7 @@ export async function processPdfJob(jobId: string) {
     const structuralBytes = await buildStructuralPdf({
       inputs: artifactsById,
       manifest: requireStructuralManifest(manifest),
-      onProgress: (progress) => updateProgress(job.id, progress),
+      onProgress: reportProgress,
     });
     const outputBytes =
       job.operation === "EDIT" || job.operation === "ANNOTATE"
@@ -522,6 +527,7 @@ export async function processPdfJob(jobId: string) {
     );
     writtenStorageKeys.push(output.storageKey);
 
+    signal?.throwIfAborted();
     await prisma.$transaction([
       prisma.pdfArtifact.create({
         data: {
@@ -537,8 +543,9 @@ export async function processPdfJob(jobId: string) {
         },
       }),
       prisma.pdfJob.update({
-        where: { id: job.id },
+        where: execution,
         data: {
+          expiresAt: getPdfJobExpiry(),
           completedAt: new Date(),
           errorCode: null,
           errorMessage: null,
@@ -554,31 +561,6 @@ export async function processPdfJob(jobId: string) {
         removePdfStorageKey(storageKey).catch(() => undefined),
       ),
     );
-    const code =
-      error instanceof PdfProcessingError ||
-      error instanceof PdfStructureError ||
-      error instanceof PdfOfficeError ||
-      error instanceof PdfToolError ||
-      error instanceof PdfRenderError
-        ? error.code
-        : "PDF_PROCESSING_FAILED";
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Não foi possível concluir o processamento do PDF.";
-
-    await prisma.pdfJob.updateMany({
-      where: { id: job.id, status: { notIn: ["CANCELLED", "EXPIRED"] } },
-      data: {
-        completedAt: new Date(),
-        errorCode: code,
-        errorMessage: message,
-        status: "FAILED",
-      },
-    });
-    Sentry.captureException(error, {
-      tags: { pdfJobId: job.id, pdfOperation: job.operation },
-    });
     throw error;
   }
 }

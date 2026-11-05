@@ -118,3 +118,19 @@ Não se declara segurança absoluta ou funcionamento de documentos arbitrários.
 Referências internas:
 [auditoria PDF anterior](AUDITORIA-PDF-CONFIABILIDADE-2026-11-05.md) e
 [auditoria de runtime](AUDITORIA-PENDENCIAS-2026-11-05.md).
+
+## Continuação: trabalhos PDF interrompidos
+
+- A manutenção do worker consulta a entrega correspondente em lotes de até
+  50 trabalhos. Entregas em espera, ativas ou com nova tentativa não são
+  alteradas. Depois da janela de dois minutos, uma entrega terminal sem
+  resultado encerra o trabalho como falha. Entrega ausente exige 24 horas
+  sem atualização; erros de consulta não equivalem a ausência.
+- Progresso e publicação verificam `RUNNING` e o início da tentativa. A saída
+  e sua validade são gravadas na mesma transação. Um callback abortado não
+  reenfileira nem publica depois de perder a execução.
+- A reconciliação não remove arquivos nem estende a retenção. Se o prazo
+  original já venceu, o trabalho pode aparecer como expirado em vez de falho.
+- A retomada automática de uma execução interrompida ainda requer isolamento
+  das tentativas e cancelamento efetivo de subprocessos. Este ajuste evita
+  deixar a interface esperando indefinidamente por uma entrega já encerrada.

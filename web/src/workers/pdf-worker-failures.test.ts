@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   init: vi.fn(),
   processJob: vi.fn(),
   queryRaw: vi.fn(),
+  reconcile: vi.fn(),
   reminders: vi.fn(),
   rename: vi.fn(),
   retries: vi.fn(),
@@ -39,8 +40,8 @@ vi.mock("@/lib/pdf/queue", () => ({
   PDF_PROCESSING_QUEUE: "perfect-pdf-processing",
   stopPdfQueue: vi.fn(),
 }));
-vi.mock("@/lib/pdf/constants", () => ({
-  getPdfJobExpiry: () => new Date("2026-11-06T12:00:00Z"),
+vi.mock("@/lib/pdf/interrupted-jobs", () => ({
+  reconcileInterruptedPdfJobs: mocks.reconcile,
 }));
 vi.mock("@/lib/pdf/retention", () => ({
   cleanupCompletedPdfJobInputs: mocks.cleanupInputs,
@@ -67,6 +68,7 @@ beforeEach(() => {
   for (const mock of [
     mocks.access, mocks.cleanupExpired, mocks.cleanupInputs,
     mocks.cleanupPresence, mocks.processJob, mocks.queryRaw,
+    mocks.reconcile,
     mocks.reminders, mocks.rename, mocks.retries, mocks.work, mocks.writeFile,
   ]) mock.mockResolvedValue(undefined);
   vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -134,6 +136,7 @@ describe("PDF worker local failure reporting", () => {
     expectLocalFailure("pdf_worker_retention_failed");
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(mocks.cleanupExpired).toHaveBeenCalledTimes(2);
+    expect(mocks.reconcile).toHaveBeenCalledOnce();
     expect(console.error).toHaveBeenCalledOnce();
   });
 
@@ -168,12 +171,8 @@ describe("PDF worker local failure reporting", () => {
     }])).resolves.toBeUndefined();
 
     expectLocalFailure("pdf_worker_input_cleanup_failed");
-    expect(mocks.processJob).toHaveBeenCalledWith("job-12345678");
+    expect(mocks.processJob).toHaveBeenCalledWith("job-12345678", expect.any(Date), undefined);
     expect(mocks.cleanupInputs).toHaveBeenCalledWith("job-12345678");
-    expect(mocks.updateMany).toHaveBeenCalledTimes(2);
-    expect(mocks.updateMany).toHaveBeenLastCalledWith({
-      where: { id: "job-12345678", status: "SUCCEEDED" },
-      data: { expiresAt: expect.any(Date) },
-    });
+    expect(mocks.updateMany).toHaveBeenCalledOnce();
   });
 });

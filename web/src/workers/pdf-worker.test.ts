@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   flush: vi.fn().mockResolvedValue(undefined),
   processJob: vi.fn(),
   queryRaw: vi.fn().mockResolvedValue([]),
+  reconcile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   stopQueue: vi.fn().mockResolvedValue(undefined),
   updateMany: vi.fn(),
@@ -52,8 +53,8 @@ vi.mock("@/lib/pdf/queue", () => ({
   stopPdfQueue: mocks.stopQueue,
 }));
 
-vi.mock("@/lib/pdf/constants", () => ({
-  getPdfJobExpiry: vi.fn().mockReturnValue(new Date("2026-08-04T00:00:00Z")),
+vi.mock("@/lib/pdf/interrupted-jobs", () => ({
+  reconcileInterruptedPdfJobs: mocks.reconcile,
 }));
 
 vi.mock("@/lib/pdf/retention", () => ({
@@ -65,6 +66,7 @@ type QueueJob = {
   data: { jobId: string };
   retryCount: number;
   retryLimit: number;
+  signal?: AbortSignal;
 };
 
 let handleJobs: (jobs: QueueJob[]) => Promise<void>;
@@ -78,6 +80,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findUnique.mockReset();
+  mocks.updateMany.mockReset();
   mocks.processJob.mockResolvedValue(undefined);
 });
 
@@ -150,7 +153,7 @@ describe("PDF worker idempotency", () => {
 
     await handleJobs([queueJob()]);
 
-    expect(mocks.processJob).toHaveBeenCalledOnce();
+    expect(mocks.processJob).toHaveBeenCalledExactlyOnceWith("job-12345678", expect.any(Date), undefined);
     expect(mocks.cleanupInputs).toHaveBeenCalledWith("job-12345678");
   });
 
@@ -166,10 +169,24 @@ describe("PDF worker idempotency", () => {
       expect.objectContaining({
         where: {
           id: "job-12345678",
-          status: { in: ["RUNNING", "FAILED"] },
+          status: "RUNNING",
+          startedAt: expect.any(Date),
         },
       }),
     );
+  });
+
+  it("does not let an expired callback requeue the application job", async () => {
+    const controller = new AbortController();
+    const error = new Error("queue delivery expired");
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 });
+    mocks.processJob.mockImplementationOnce(async () => {
+      controller.abort(error);
+      throw error;
+    });
+    await expect(handleJobs([{ ...queueJob(), signal: controller.signal }])).rejects.toBe(error);
+    expect(mocks.updateMany).toHaveBeenCalledOnce();
+    expect(mocks.cleanupInputs).not.toHaveBeenCalled();
   });
 
   it("marks a success with missing output as failed", async () => {
@@ -186,7 +203,8 @@ describe("PDF worker idempotency", () => {
       expect.objectContaining({
         where: {
           id: "job-12345678",
-          status: { in: ["RUNNING", "FAILED", "SUCCEEDED"] },
+          status: "SUCCEEDED",
+          startedAt: expect.any(Date),
         },
       }),
     );

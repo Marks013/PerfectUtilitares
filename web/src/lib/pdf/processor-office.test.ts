@@ -2,10 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   export: vi.fn(), find: vi.fn(), update: vi.fn(), updateMany: vi.fn(), createMany: vi.fn(),
-  deleteMany: vi.fn(), transaction: vi.fn(), write: vi.fn(), remove: vi.fn(), capacity: vi.fn(), capture: vi.fn(),
+  deleteMany: vi.fn(), transaction: vi.fn(), write: vi.fn(), remove: vi.fn(), capacity: vi.fn(),
   render: vi.fn(), writeImage: vi.fn(),
 }));
-vi.mock("@sentry/node", () => ({ captureException: mocks.capture }));
 vi.mock("@/lib/pdf/annotations", () => ({ applyPdfAnnotations: vi.fn() }));
 vi.mock("@/lib/pdf/capacity", () => ({ getPdfWorkingSetMultiplier: () => 2 }));
 vi.mock("@/lib/pdf/compression", () => ({ compressPdfFile: vi.fn(), PdfToolError: class extends Error {} }));
@@ -27,8 +26,11 @@ import { PdfOfficeError } from "./office";
 import { processPdfJob } from "./processor";
 import type { PdfManifest } from "./schema";
 
+const startedAt = new Date("2026-11-05T18:00:00Z");
+const execution = { id: "job-1", status: "RUNNING", startedAt };
+
 function job(operation: string, count = 1) {
-  return { id: "job-1", operation, options: {}, status: "QUEUED", inputBytes: BigInt(count * 200),
+  return { id: "job-1", operation, options: {}, status: "RUNNING", inputBytes: BigInt(count * 200),
     artifacts: Array.from({ length: count }, (_, i) => ({
       id: `input-${i}`, kind: "INPUT", originalName: `Relatório ${i}.PDF`, sizeBytes: 200n,
       storageKey: `job-1/input-${i}.pdf`, createdAt: new Date(),
@@ -76,7 +78,7 @@ describe("PDF Office export processor integration", () => {
         }
       });
 
-      await processPdfJob("job-1");
+      await processPdfJob("job-1", startedAt);
 
       const names = mocks.writeImage.mock.calls.map((call) => call[1] as string);
       expect(names).toHaveLength(2);
@@ -96,7 +98,7 @@ describe("PDF Office export processor integration", () => {
     ["PDF_TO_EXCEL", "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
   ])("persists %s with correct filename, bytes and MIME", async (operation, extension, mimeType) => {
     mocks.find.mockResolvedValue(job(operation, 2));
-    await processPdfJob("job-1");
+    await processPdfJob("job-1", startedAt);
     expect(mocks.capacity).toHaveBeenCalledWith({ inputBytes: 400, multiplier: 2 });
     expect(mocks.export).toHaveBeenCalledTimes(2);
     expect(mocks.export).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -108,7 +110,7 @@ describe("PDF Office export processor integration", () => {
       jobId: "job-1", kind: "OUTPUT", originalName: `Relatório ${i}.${extension}`,
       mimeType, sha256: "sha-test", sizeBytes: 3n,
     })) });
-    expect(mocks.update).toHaveBeenLastCalledWith({ where: { id: "job-1" }, data: expect.objectContaining({
+    expect(mocks.update).toHaveBeenLastCalledWith({ where: execution, data: expect.objectContaining({
       status: "SUCCEEDED", progress: 100, outputBytes: 6n, errorCode: null, errorMessage: null,
     }) });
     expect(mocks.transaction).toHaveBeenCalledOnce();
@@ -119,21 +121,21 @@ describe("PDF Office export processor integration", () => {
     mocks.find.mockResolvedValue(job("PDF_TO_WORD", 2));
     const error = new PdfOfficeError("PDF_OFFICE_OCR_NO_TEXT", "Confira a nitidez do PDF.");
     mocks.export.mockResolvedValueOnce(new Uint8Array([80, 75])).mockRejectedValueOnce(error);
-    await expect(processPdfJob("job-1")).rejects.toBe(error);
+    await expect(processPdfJob("job-1", startedAt)).rejects.toBe(error);
     expect(mocks.remove).toHaveBeenCalledExactlyOnceWith("job-1/Relatório 0.docx.docx");
     expect(mocks.transaction).not.toHaveBeenCalled();
-    expect(mocks.updateMany).toHaveBeenCalledWith({
-      where: { id: "job-1", status: { notIn: ["CANCELLED", "EXPIRED"] } },
-      data: expect.objectContaining({ status: "FAILED", errorCode: "PDF_OFFICE_OCR_NO_TEXT", errorMessage: "Confira a nitidez do PDF." }),
-    });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 
   it("removes every generated workbook when artifact persistence fails", async () => {
     mocks.find.mockResolvedValue(job("PDF_TO_EXCEL", 2));
     const error = new Error("Database unavailable");
     mocks.transaction.mockRejectedValueOnce(error);
-    await expect(processPdfJob("job-1")).rejects.toBe(error);
+    await expect(processPdfJob("job-1", startedAt)).rejects.toBe(error);
     expect(mocks.remove.mock.calls).toEqual([["job-1/Relatório 0.xlsx.xlsx"], ["job-1/Relatório 1.xlsx.xlsx"]]);
-    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    expect(mocks.updateMany).toHaveBeenCalledTimes(2);
+    for (const [update] of mocks.updateMany.mock.calls) {
+      expect(update).toEqual({ where: execution, data: { progress: expect.any(Number) } });
+    }
   });
 });
