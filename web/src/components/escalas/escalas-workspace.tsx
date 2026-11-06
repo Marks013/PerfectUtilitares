@@ -18,13 +18,14 @@ import { SAVE_LABEL } from "./draft-persistence";
 import { Employees } from "./employees";
 import { recoveryArea, revealRecoveryTarget, type EscalaRecoveryContext, type EscalaRecoveryRequest } from "./recovery-navigation";
 import { ContinuousWorkOption, HoursProposal } from "./hours-proposal";
+import { Mixed42Option } from "./mixed-42-option";
 import { Proposals, Publication, ValidationResults, type ReviewSection } from "./results";
 import { Roster } from "./roster";
 import { useEscalasWorkspace, type WorkspaceSummary } from "./use-escalas-workspace";
 import type { ReviewTarget } from "./validation-guidance";
 import { WorkspaceFeedback } from "./workspace-feedback";
 import type { EscalaProblem, EscalaRecoveryAction } from "./workspace-feedback-model";
-import { changeBranchWeeklyHours, clock, displayDate, errorMessage, HOURS, newInput } from "./workspace-model";
+import { changeBranchWeeklyHours, clock, displayDate, errorMessage, HOURS, newInput, pruneMixed42Sectors } from "./workspace-model";
 
 type Area = "team" | "generate" | "roster" | "coverage" | "review" | "adjustments";
 const AREAS: { id: Area; label: string }[] = [
@@ -183,13 +184,14 @@ export function EscalasWorkspace() {
           <fieldset disabled={!model.canEdit} className={styles.journeyField}>
             <Field label="Jornada semanal">{(id) => <select id={id} value={input.defaultWeeklyHours} className={controlClass} onChange={(event) => model.update(changeBranchWeeklyHours(input, Number(event.target.value) as WeeklyHours))}>{HOURS.map((hours) => <option key={hours} value={hours}>{hours} horas</option>)}</select>}</Field>
           </fieldset>
-          <p className={styles.muted}><strong className="text-[color:var(--app-fg)]">{clock(input.defaultWeeklyHours * 12)}</strong> de trabalho por dia, em 5 dias.<br />O intervalo fica à parte. Férias, bloqueios e exceções individuais são preservados.</p>
+          <p className={styles.muted}><strong className="text-[color:var(--app-fg)]">{clock(input.defaultWeeklyHours * 12)}</strong> de trabalho por dia no modelo uniforme, em 5 dias.<br />O intervalo fica à parte. Férias, bloqueios e exceções individuais são preservados.</p>
           <div className={styles.mainActions}>
             {model.dirty && <button type="button" className={buttonClass} disabled={!model.canEdit || model.saveState === "saving"} onClick={model.save}>{["error", "conflict", "invalid"].includes(model.saveState) ? "Tentar salvar" : "Salvar agora"}</button>}
             <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hasRoster ? "Gerar nova proposta" : "Gerar escala e horários"}</button>
           </div>
         </div>
         {!included && <div className={styles.nextStep}><p>Primeiro importe a equipe da filial. Nenhuma configuração adicional é necessária para começar.</p><button type="button" className={buttonClass} onClick={() => setArea("team")}>Voltar para importar equipe</button></div>}
+        <Mixed42Option input={input} disabled={!model.canEdit} onChange={model.update} />
         <ContinuousWorkOption input={input} disabled={!model.canEdit} onChange={model.update} />
         <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />
         {input.employees.length > 0 && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
@@ -204,13 +206,13 @@ export function EscalasWorkspace() {
 
       {visited.has("team") && <section hidden={area !== "team"} inert={area !== "team"} id="escala-area-team" aria-labelledby="escala-team-title" className={styles.stackSmall}>
         <div id="escala-team" tabIndex={-1}><p className={styles.eyebrow}>PASSO 1 · IMPORTE O ARQUIVO</p><h2 id="escala-team-title" className={styles.sectionTitle}>Equipe da filial</h2><p className={styles.muted}>{included ? `${included} colaboradores incluídos. Você pode seguir para gerar ou atualizar o arquivo abaixo.` : "Selecione o relatório FPRE136. O sistema separa a filial e organiza a equipe para você."}</p></div>
-        <ImportEmployees input={input} disabled={!model.canEdit} onChange={(next) => { model.update(next); setArea("generate"); }} />
+        <ImportEmployees input={input} disabled={!model.canEdit} onChange={(next) => { model.update(pruneMixed42Sectors(next)); setArea("generate"); }} />
         <AbsenceImport input={input} disabled={!model.canEdit} onChange={model.update} />
         {input.employees.length > 0 && <details id="escala-team-restrictions" className={panelClass}><summary className={styles.disclosureTrigger}>Consultar equipe e restrições individuais</summary>
           <div id="escala-team-review" tabIndex={-1} className="scroll-mt-24 rounded-md p-2 focus:outline-2 focus:outline-[color:var(--app-action-blue)]">
             {reviewContext?.target === "team" && <p className={styles.muted}>Localize o colaborador indicado e use Editar para conferir folgas fixas e horários permitidos. Dias bloqueados e ausências aparecem na área Escala. Nada será alterado apenas por abrir esta conferência.</p>}
           </div>
-          <Employees input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "team" ? reviewContext : undefined} />
+          <Employees input={input} disabled={!model.canEdit} onChange={(next) => model.update(pruneMixed42Sectors(next))} review={reviewContext?.target === "team" ? reviewContext : undefined} />
         </details>}
         {included > 0 && <div className={styles.nextStep}><div><strong>Equipe pronta para o próximo passo</strong><p className={styles.muted}>Férias e afastamentos são opcionais. Você pode importá-los acima antes de gerar.</p></div><button type="button" className={primaryClass} onClick={() => setArea("generate")}>Continuar para jornada e geração</button></div>}
       </section>}
@@ -234,8 +236,12 @@ export function EscalasWorkspace() {
       </section>}
 
       {visited.has("adjustments") && <section hidden={area !== "adjustments"} inert={area !== "adjustments"} id="escala-area-adjustments" className={styles.stack} aria-label="Exceções do planejamento">
-        <div id="escala-rules" tabIndex={-1}><Rules input={input} disabled={!model.canEdit} onChange={model.update} /></div>
-        <details id="escala-advanced" tabIndex={-1} className={panelClass}><summary className={styles.disclosureTrigger}>Alternativas de horário e turnos específicos</summary><div className={styles.stack}><Shifts input={input} disabled={!model.canEdit} onChange={model.update} /></div></details>
+        <details className={panelClass}>
+          <summary className={styles.disclosureTrigger}>Revisão técnica</summary>
+          <p className={styles.muted}>Abra apenas para conferir exceções, limites, intervalos ou turnos específicos. Não é necessário preencher estes ajustes para gerar a proposta.</p>
+          <div id="escala-rules" tabIndex={-1}><Rules input={input} disabled={!model.canEdit} onChange={model.update} /></div>
+          <details id="escala-advanced" tabIndex={-1} className={styles.disclosure}><summary className={styles.disclosureTrigger}>Turnos específicos</summary><Shifts input={input} disabled={!model.canEdit} onChange={model.update} /></details>
+        </details>
         <div className={styles.actions}><button type="button" className={buttonClass} disabled={!model.canEdit} onClick={model.validate}>Conferir dados atuais</button><button type="button" className={buttonClass} disabled={!model.dirty || Boolean(model.busy) || model.saveState === "saving"} onClick={model.discard}>Descartar alterações locais</button></div>
         <DeletePlan workspace={workspace} dirty={model.dirty} busy={Boolean(model.busy)} onDelete={model.deleteWorkspace} />
       </section>}

@@ -1,6 +1,6 @@
 import { addDays } from "./dates";
 import { proposeAutomaticCoverage } from "./automatic-coverage";
-import { effectiveWeeklyHours } from "./labor-rules";
+import { effectiveWeeklyHours, usesMixed42 } from "./labor-rules";
 import type { EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "./types";
 
 /** Legacy references below the saved branch default may be individual contracts and are never raised. */
@@ -107,6 +107,29 @@ function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | 
   return results;
 }
 
+/** Distinguish the temporary 9h option from a manually registered shift. */
+export function isGeneratedMixed42Shift(id: string): boolean {
+  return id.startsWith("mixed42-");
+}
+
+/** Fit the fixed 3h interval without inventing a night schedule. */
+function longMixedShifts(source: EscalaShift, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END"): EscalaShift[] {
+  const paid = source.segments.filter(segment => segment.kind !== "BREAK");
+  if (!paid.length) return [];
+  const starts = new Set([
+    ...(strategy !== "PRESERVE_END" ? [paid[0].start] : []),
+    ...(strategy !== "PRESERVE_START" ? [paid[paid.length - 1].end - 720] : []),
+  ]);
+  return [...starts].filter(start => start >= 300 && start + 720 <= 1320).map(start => {
+    const shift: EscalaShift = { id: "", name: "Proposta 9h · intervalo de 3h", segments: [
+      { start, end: start + 270, kind: "WORK" },
+      { start: start + 270, end: start + 450, kind: "BREAK" },
+      { start: start + 450, end: start + 720, kind: "WORK" },
+    ] };
+    return { ...shift, id: shiftId(shift).replace("prep-", "mixed42-") };
+  });
+}
+
 /** One explicit branch action, without claiming imported schedules or contracts were confirmed. */
 export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSchedule: "EXCLUDE" | "BRANCH_DEFAULT" = "EXCLUDE", strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END" = "BOTH"): EscalaInput {
   if (input.assignments.some((assignment) => assignment.locked)) throw new Error("A proposta tem dias bloqueados. Preserve a revisão ou peça a um aprovador para desbloquear antes de reaplicar a configuração em lote.");
@@ -120,7 +143,9 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     if (person.planningEnabled === false) return person;
     if ((person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return { ...person, planningEnabled: true, planningExclusionReason: undefined, shiftIds: [] };
     const source = originalShift(person);
-    const base = person.sourceSchedule ? (source ? [source] : []) : person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
+    const base = person.sourceSchedule ? (source ? [source] : []) : person.shiftIds
+      .filter(id => !isGeneratedMixed42Shift(id)).map(id => shifts.get(id))
+      .filter((shift): shift is EscalaShift => Boolean(shift));
     // Never silently turn a short/undefined imported contract into a full-time journey.
     const shortReference = Boolean(input.simulation && person.sourceSchedule?.report === "FPRE136" && base.length && base.every((shift) => minutes(shift) < 360));
     const simulationDailyMinutes = shortReference ? Math.min(...base.map(minutes)) : undefined;
@@ -131,11 +156,22 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, hours);
     const { weeklyHours } = reference;
     const targets = new Set<number>();
-    for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) targets.add(Math.min(effectiveWeeklyHours({ weeklyHours }, start) * 12, simulationDailyMinutes ?? Infinity));
-    let candidates = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true)));
-    if (!candidates.length && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true));
+    const mixed = usesMixed42({ ...input, defaultWeeklyHours: hours }, { ...person, ...reference, simulationDailyMinutes });
+    let needsLong = false;
+    for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) {
+      const effective = effectiveWeeklyHours({ weeklyHours }, start);
+      if (mixed && effective === 42) { needsLong = true; targets.add(480); }
+      else targets.add(Math.min(effective * 12, simulationDailyMinutes ?? Infinity));
+    }
+    const ordinary = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true)));
+    const long = needsLong ? sources.flatMap(source => longMixedShifts(source, strategy)) : [];
+    let candidates = needsLong ? (long.length && ordinary.length ? [...long, ...ordinary] : []) : ordinary;
+    if (!candidates.length && !needsLong && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true));
     candidates.forEach(register);
-    const shiftIds = [...new Set(candidates.map((shift) => shift.id))].slice(0, 12);
+    const longIds = [...new Set(long.map(shift => shift.id))];
+    const ordinaryIds = [...new Set(candidates.filter(shift => !isGeneratedMixed42Shift(shift.id)).map(shift => shift.id))];
+    // Reserve room for both durations even with many manual references.
+    const shiftIds = candidates.length && needsLong ? [...longIds.slice(0, 6), ...ordinaryIds.slice(0, 6)] : ordinaryIds.slice(0, 12);
     return { ...person, ...reference, simulationDailyMinutes, shiftIds, planningEnabled: shiftIds.length > 0,
       planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });

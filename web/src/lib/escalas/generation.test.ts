@@ -3,6 +3,8 @@ import { dateRange } from "./dates";
 import { prepareGeneration } from "./generation";
 import { prepareRoster } from "./preparation";
 import { escalaInputSchema } from "./schema";
+import { isMixed42LongShift } from "./labor-rules";
+import { validateEscala } from "./validation";
 import type { EscalaInput } from "./types";
 
 function input(): EscalaInput {
@@ -20,6 +22,82 @@ function input(): EscalaInput {
 }
 
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
+
+describe("42h mixed distribution for selected sectors", () => {
+  it("prepares two durations, preserves references, and estimates both durations without changing explicit minima", () => {
+    const raw = input();
+    raw.mixed42Sectors = ["Setor"];
+    raw.policy.dailyLimitMinutes = 528;
+    raw.employees.push({ ...raw.employees[0], id: "p2", registration: "0002", sector: "Outro setor" });
+    const explicit = { id: "required", sector: "Setor", date: raw.startDate, start: 420, end: 480, minimum: 1 };
+    raw.demands.push(explicit);
+    raw.assignments.push({ employeeId: "p1", date: raw.startDate, kind: "ABSENCE", locked: true });
+    const original = structuredClone(raw);
+    const { input: prepared } = prepareGeneration(raw);
+    const [mixed, ordinary] = prepared.employees;
+    expect(new Set(mixed.shiftIds.map(id => minutes(prepared, id)))).toEqual(new Set([480, 540]));
+    expect(new Set(ordinary.shiftIds.map(id => minutes(prepared, id)))).toEqual(new Set([504]));
+    expect(prepared.shifts.filter(shift => minutes(prepared, shift.id) === 540).every(isMixed42LongShift)).toBe(true);
+    expect(prepared.assignments).toEqual(raw.assignments);
+    expect(prepared.demands).toContainEqual(explicit);
+    expect(prepared.demands.some(demand => demand.estimated && demand.sector === "Setor")).toBe(true);
+    expect(prepared.policy.dailyLimitMinutes).toBe(528);
+    expect(prepared.policy.collectiveAgreement).toBeUndefined();
+    expect(prepared.policy.mealIntervalAgreement).toBeUndefined();
+    expect(mixed.sourceSchedule).toEqual(raw.employees[0].sourceSchedule);
+    expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
+    expect(raw).toEqual(original);
+  });
+
+  it("validates 42h in transition, blocks publication, and rejects malformed long shifts", () => {
+    const raw = input();
+    raw.startDate = "2027-01-04"; raw.endDate = "2027-01-10";
+    raw.mixed42Sectors = ["Setor"]; raw.policy.dailyLimitMinutes = 528;
+    const { input: prepared } = prepareGeneration(raw);
+    const short = prepared.shifts.find(shift => minutes(prepared, shift.id) === 480);
+    const long = prepared.shifts.find(isMixed42LongShift);
+    if (!short || !long) throw new Error("Os dois horários devem estar disponíveis.");
+    prepared.demands = [];
+    prepared.assignments = dateRange(prepared.startDate, prepared.endDate).map((date, index) => index === 2 || index === 6
+      ? { employeeId: "p1", date, kind: "OFF" }
+      : { employeeId: "p1", date, kind: "WORK", shiftId: index === 0 || index === 1 ? long.id : short.id });
+    const result = validateEscala(prepared);
+    expect(result.valid).toBe(true);
+    expect(result.readyToPublish).toBe(false);
+    expect(result.summaries[0].workedMinutes).toBe(2520);
+    expect(result.issues.filter(issue => issue.code === "MIXED_42_SIMULATION")).toHaveLength(1);
+    expect(validateEscala({ ...prepared, simulation: false }).issues.some(issue => issue.code === "DISTRIBUTION_DAILY_LIMIT")).toBe(true);
+    const corrupted = structuredClone(prepared);
+    const bad = corrupted.shifts.find(shift => shift.id === long.id);
+    if (!bad) throw new Error("Horário de 9h ausente.");
+    bad.segments[1].end -= 1; bad.segments[2].start -= 1; bad.segments[2].end -= 1;
+    expect(validateEscala(corrupted).issues.some(issue => issue.code === "MIXED_42_SHIFT")).toBe(true);
+    const excessive = structuredClone(prepared);
+    excessive.assignments[3] = { employeeId: "p1", date: "2027-01-07", kind: "ABSENCE" };
+    excessive.assignments[4].shiftId = long.id;
+    expect(validateEscala(excessive).issues.some(issue => issue.code === "MIXED_42_WEEK")).toBe(true);
+  });
+
+  it("returns to 8h24 when deselected and never creates 9h options in the 40h phase", () => {
+    const raw = input(); raw.mixed42Sectors = ["Setor"];
+    const mixed = prepareGeneration(raw).input;
+    const uniform = prepareGeneration({ ...mixed, mixed42Sectors: [] }).input;
+    expect(new Set(uniform.employees[0].shiftIds.map(id => minutes(uniform, id)))).toEqual(new Set([504]));
+    raw.startDate = "2027-12-20"; raw.endDate = "2027-12-26";
+    const forty = prepareGeneration(raw).input;
+    expect(new Set(forty.employees[0].shiftIds.map(id => minutes(forty, id)))).toEqual(new Set([480]));
+  });
+
+  it("does not extend short imported references to 8h or 9h", () => {
+    const raw = input(); raw.mixed42Sectors = ["Setor"];
+    const source = raw.employees[0].sourceSchedule;
+    if (!source) throw new Error("Referência importada ausente.");
+    source.weekday = "07:00-12:00";
+    const { input: prepared } = prepareGeneration(raw);
+    expect(prepared.employees[0].simulationDailyMinutes).toBe(300);
+    expect(prepared.employees[0].shiftIds.map(id => minutes(prepared, id))).toEqual([300]);
+  });
+});
 
 describe("whole-branch generation preparation", () => {
   it("retains a saved short-reference roster when preparation changes no scheduling semantics", () => {

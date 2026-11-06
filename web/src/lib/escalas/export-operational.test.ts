@@ -70,6 +70,35 @@ describe("lean operational files", () => {
     expect(workbook).not.toMatch(/Conferencia|Jornadas|Turnos/);
     expect(source).toEqual(before);
   });
+  it("marks the mixed 42h draft as a negotiation in PDF and every Excel sheet", async () => {
+    const source = scenario();
+    source.input.simulation = true;
+    source.input.mixed42Sectors = ["Padaria"];
+    source.input.shifts[1].segments = [
+      { start: 540, end: 810, kind: "WORK" },
+      { start: 810, end: 990, kind: "BREAK" },
+      { start: 990, end: 1260, kind: "WORK" },
+    ];
+    const before = structuredClone(source);
+    const expected = "SIMULAÇÃO / NEGOCIAÇÃO: 3 × 8h + 2 × 9h nos setores selecionados; intervalo de 3h nos dias de 9h. Não é autorização operacional.";
+    const workbook = Buffer.from(exportEscalaXlsx(source));
+    for (const sheet of ["Escala", "Horarios", "Desfalques"]) {
+      expect((await readSheet(workbook, sheet))[2][0]).toContain(expected);
+    }
+    const pdf = await pdfText(await exportEscalaPdf(source));
+    expect(pdf).toContain(expected);
+    expect(pdf).toContain("09:00-13:30 / 16:30-21:00");
+    expect(source).toEqual(before);
+  }, 20000);
+
+  it("does not mark an ordinary 42h simulation as a mixed negotiation", async () => {
+    const source = scenario();
+    source.input.simulation = true;
+    const workbook = Buffer.from(exportEscalaXlsx(source));
+    expect((await readSheet(workbook, "Horarios"))[2][0]).not.toContain("NEGOCIAÇÃO");
+    expect(await pdfText(await exportEscalaPdf(source))).not.toContain("NEGOCIAÇÃO");
+  }, 20000);
+
   it("separates sectors and groups exact schedules before names and roles without day lists", async () => {
     const bytes = exportEscalaXlsx(scenario(), "hours"), rows = await readSheet(Buffer.from(bytes), "Horarios");
     expect(rows.slice(4).map(row => row[0])).toEqual(["Açougue", "Padaria", "Padaria", "Padaria"]);

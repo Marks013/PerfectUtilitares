@@ -11,7 +11,7 @@ import { addDays, dateRange, monthBounds, visibleDates } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { prepareGeneration } from "./generation";
-import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, SUPERMARKET_CCT } from "./labor-rules";
+import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
 
 type WorkspaceRow = {
@@ -259,8 +259,10 @@ function requireSolverSetup(input: EscalaInput) {
     && ((new Date(`${demand.date}T12:00:00Z`).getUTCDay() === 0 && !certificateAuthorizes(input.policy, demand.date, "sundays"))
       || (input.policy.holidayDates.includes(demand.date) && !certificateAuthorizes(input.policy, demand.date, "holidays"))))) throw new EscalaError(422, "ESCALA_CERTIFICATE_REQUIRED", "A cobertura exige domingo ou feriado sem certidão sindical conferida para esta filial. Confira a autorização antes de gerar.");
   const minutes = new Map(input.shifts.map((shift) => [shift.id, shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)]));
+  const longMixed = new Set(input.shifts.filter(isMixed42LongShift).map(shift => shift.id));
   if (dateRange(input.startDate, input.endDate).some((date) => timed.some((person) => person.activeFrom <= date && (!person.activeUntil || person.activeUntil >= date)
-    && person.shiftIds.every((shiftId) => (minutes.get(shiftId) ?? Infinity) > Math.min(input.policy.dailyLimitMinutes, dailyMinuteCeiling(date)))))) {
+    && person.shiftIds.every((shiftId) => !(longMixed.has(shiftId) && usesMixed42Week(input, person, date))
+      && (minutes.get(shiftId) ?? Infinity) > Math.min(input.policy.dailyLimitMinutes, dailyMinuteCeiling(date)))))) {
     throw new EscalaError(422, "ESCALA_DAILY_LIMIT", "Os horários excedem o limite diário na vigência selecionada. Reaplique a configuração em lote da equipe para propor horários compatíveis; um acordo não amplia o teto deste regime.");
   }
   if (!input.simulation && dateRange(input.startDate, input.endDate).some((date) => !collectiveExtensionAuthorized(input.policy, date)

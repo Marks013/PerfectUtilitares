@@ -74,7 +74,10 @@ describe("Escalas readable operational review", () => {
     input.policy.maxConsecutiveWorkDays = 6;
     const rules = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);
     expect(rules).toContain("limite antigo de 6 dias");
-    expect(rules).toMatch(/max="5"/);
+    expect(rules).toMatch(/Sequência máxima<\/dt><dd[^>]*>5 dias<\/dd>/);
+    expect(rules).not.toContain('type="number"');
+    expect(rules).toContain("Feriados do período");
+    expect(input.policy.maxConsecutiveWorkDays).toBe(6);
     const shifts = renderToStaticMarkup(<Shifts input={input} disabled={false} onChange={vi.fn()} />);
     expect(shifts).toContain("Turnos disponíveis para a proposta");
     expect(shifts).not.toContain("não continua após");

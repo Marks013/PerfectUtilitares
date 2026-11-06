@@ -114,6 +114,8 @@ export type EscalaInput = {
   /** Civil month shown to users. Technical dates retain full weeks for continuity. */
   visibleMonth?: string;
   defaultWeeklyHours: WeeklyHours;
+  /** Opt-in draft distribution: 3 × 8h and 2 × 9h with a 3h meal in selected sectors. */
+  mixed42Sectors?: string[];
   timeZone: "America/Sao_Paulo";
   policy: EscalaPolicy;
   employees: EscalaEmployee[];

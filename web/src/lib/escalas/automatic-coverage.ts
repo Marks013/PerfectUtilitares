@@ -1,5 +1,5 @@
 import { addDays, dateRange, dayOfWeek } from "./dates";
-import { effectiveSundayLimit, effectiveWeeklyMinutes } from "./labor-rules";
+import { effectiveSundayLimit, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 
 type Demand = EscalaInput["demands"][number];
@@ -10,14 +10,14 @@ function paidMinutes(shift: EscalaShift) {
   return shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 }
 
-function referenceShift(person: EscalaEmployee, shifts: Map<string, EscalaShift>, target: number) {
+function referenceShift(person: EscalaEmployee, shifts: Map<string, EscalaShift>, target: number, allowed = (_shift: EscalaShift) => true) {
   const source = [...(person.sourceSchedule?.weekday ?? "").matchAll(/(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})/g)];
   const arrival = source.length ? Number(source[0][1]) * 60 + Number(source[0][2]) : null;
   const lastSource = source.at(-1);
   const departure = lastSource ? Number(lastSource[3]) * 60 + Number(lastSource[4]) : null;
   const candidates = person.shiftIds.flatMap((id) => {
     const shift = shifts.get(id);
-    return shift && paidMinutes(shift) === target ? [shift] : [];
+    return shift && paidMinutes(shift) === target && allowed(shift) ? [shift] : [];
   });
   // Alternatives belong to the same person. Selecting one reference avoids claiming that
   // both opening and closing are staffed simultaneously by that person's alternative shifts.
@@ -101,7 +101,9 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
     const groups = allGroups;
     for (const person of input.employees) {
       if (person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || !person.sector) continue;
-      const shift = referenceShift(person, shifts, effectiveWeeklyMinutes(person, addDays(monday, 6)) / 5);
+      const mixed = usesMixed42Week(input, person, monday);
+      const shift = referenceShift(person, shifts, mixed ? 480 : effectiveWeeklyMinutes(person, monday) / 5);
+      const longShift = mixed ? referenceShift(person, shifts, 540, isMixed42LongShift) : undefined;
       if (!shift) continue;
       const available = days.filter((day) => {
         if (person.activeFrom > day || (person.activeUntil && person.activeUntil < day)
@@ -117,6 +119,11 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
       const freeWeekdays = free.filter(day => dayOfWeek(day) !== 6);
       const sunday = free.find(day => dayOfWeek(day) === 6);
       const remaining = Math.max(0, 5 - forced.length);
+      const forcedLong = longShift ? forced.filter(day => {
+        const lockedShift = shifts.get(assignments.get(JSON.stringify([person.id, day]))?.shiftId ?? "");
+        return lockedShift && isMixed42LongShift(lockedShift);
+      }).length : 0;
+      const longShare = longShift && remaining ? Math.min(1, Math.max(0, 2 - forcedLong) / remaining) : 0;
       let history = historyByEmployee.get(person.id);
       if (!history) {
         history = new Map([...(person.planningHistory ?? []), ...person.history,
@@ -135,7 +142,11 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
       for (const day of available) {
         const item = assignments.get(JSON.stringify([person.id, day]));
         const locked = item?.locked && item.kind === "WORK";
-        group.contributions.push({ date: day, shift: locked && item.shiftId ? shifts.get(item.shiftId) ?? shift : shift, weight: locked ? 1 : dayOfWeek(day) === 6 ? sundayWeight : weekdayWeight });
+        const weight = locked ? 1 : dayOfWeek(day) === 6 ? sundayWeight : weekdayWeight;
+        const shortShare = locked ? 1 : 1 - longShare;
+        group.contributions.push({ date: day, shift: locked && item.shiftId ? shifts.get(item.shiftId) ?? shift : shift, weight: weight * shortShare });
+        // Mix alternatives within one person's presence share, never count two people.
+        if (!locked && longShift && longShare > 0) group.contributions.push({ date: day, shift: longShift, weight: weight * longShare });
       }
       groups.set(groupKey, group);
     }

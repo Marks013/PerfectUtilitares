@@ -140,10 +140,27 @@ def maximum_meal_minutes(policy, day):
     return maximum if type(maximum) is int and 121 <= maximum <= 360 else 120
 
 
-def admissible(shift, policy, day):
+def _is_mixed_42_long_shift(shift):
+    segments = shift["segments"]
+    if len(segments) != 3:
+        return False
+    first, meal, second = segments
+    return (first["kind"] == second["kind"] == "WORK" and meal["kind"] == "BREAK"
+            and first["end"] - first["start"] == second["end"] - second["start"] == 270
+            and meal["end"] - meal["start"] == 180
+            and first["end"] == meal["start"] and meal["end"] == second["start"])
+
+
+def admissible(shift, policy, day, mixed_42=False):
     paid, _start, _end = shift_metrics(shift)
     ceiling = 480 if day >= TRANSITION_40_DATE else 504 if day >= TRANSITION_42_DATE else 600
-    if paid > min(policy["dailyLimitMinutes"], ceiling):
+    # Only the exact long turn gets the simulated exception, not the saved policy.
+    long_turn = False
+    if mixed_42 and policy.get("_simulation") and day < TRANSITION_40_DATE:
+        long_turn = paid == 540 and _is_mixed_42_long_shift(shift)
+        if paid != 480 and not long_turn:
+            return False
+    if not long_turn and paid > min(policy["dailyLimitMinutes"], ceiling):
         return False
     if paid > 480 and not policy["compensationAuthorized"] and not policy.get("_simulation"):
         return False
@@ -191,6 +208,8 @@ def solve(data, control=None):
     if not 1 <= len(employees) <= 250 or not 7 <= len(dates) <= 42 or len(dates) % 7:
         raise ValueError("model bounds")
     policy = {**data["policy"], "_simulation": data.get("simulation") is True}
+    mixed_sectors = set(data.get("mixed42Sectors", [])) if policy["_simulation"] and data["defaultWeeklyHours"] == 42 else set()
+    mixed_people = set()
     shifts = {s["id"]: s for s in data["shifts"]}
     metrics = {key: shift_metrics(value) for key, value in shifts.items()}
     baseline = {(a["employeeId"], a["date"]): a for a in data["assignments"]}
@@ -199,11 +218,11 @@ def solve(data, control=None):
         closed_dates.update(set(policy["holidayDates"]) - set(policy["authorizedHolidayDates"]))
 
     @lru_cache(maxsize=None)
-    def shift_calendar(sid, day):
-        # Shift legality and calendar closures are common to the whole branch.
+    def shift_calendar(sid, day, mixed_42=False):
+        # Shift legality and calendar closures are shared within a profile.
         # Keep the cache per solve; absence and locked choices stay person-specific.
         shift = shifts[sid]
-        if not admissible(shift, policy, day):
+        if not admissible(shift, policy, day, mixed_42):
             return None
         occupied = occupied_dates(day, shift)
         return occupied, not closed_dates.isdisjoint(occupied)
@@ -219,6 +238,14 @@ def solve(data, control=None):
             return _response("UNKNOWN", [], started)
         pid = person["id"]
         untimed = has_no_clock(person)
+        mixed_days = set()
+        if (not untimed and person["sector"] in mixed_sectors and person["weeklyHours"] == 42
+                and person.get("simulationDailyMinutes") is None):
+            mixed_days = {day for week in range(0, len(dates), 7)
+                          if effective_weekly_hours(person, dates[week + 6]) == 42
+                          for day in dates[week:week + 7]}
+        if mixed_days:
+            mixed_people.add(pid)
         prior = {a["date"]: a for a in person.get("planningHistory", []) + person["history"]}
         history[pid] = prior
         future_limit = (date.fromisoformat(dates[-1]) + timedelta(days=21)).isoformat()
@@ -239,7 +266,7 @@ def solve(data, control=None):
             current = {}
             closed = day in closed_dates
             for sid in ([] if untimed else person["shiftIds"]):
-                calendar = shift_calendar(sid, day)
+                calendar = shift_calendar(sid, day, day in mixed_days)
                 if calendar is None:
                     continue
                 occupied, overlaps_closure = calendar
@@ -292,12 +319,16 @@ def solve(data, control=None):
                               == effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]))
             else:
                 model.add(sum(work[pid, d] for d in group) <= 5)
+                if dates[week] in mixed_days:
+                    model.add(sum(v for d in group for s, v in choices[pid, d].items()
+                                  if metrics[s][0] == 540) <= 2)
             if not untimed:
                 model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
                           <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60))
         _streaks(model, person, dates, work, off, boundary, active[pid], policy)
         _rest(model, person, dates, active[pid], choices, off, boundary, metrics, policy)
-        civil_weekends = _civil_rest(model, person, dates, active[pid], choices, work, off, boundary, shifts, shift_calendar)
+        civil_weekends = _civil_rest(model, person, dates, active[pid], choices, work, off, boundary, shifts,
+                                     lambda sid, day: shift_calendar(sid, day, day in mixed_days))
         for day in active[pid]:
             if control is not None:
                 control.checkpoint()
@@ -348,7 +379,8 @@ def solve(data, control=None):
     if MAX_SECONDS - (time.monotonic() - started) < 0.1:
         return _response("UNKNOWN", [], started)
     baseline_hints = _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
-                       deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control)
+                       deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
+                       mixed_people=mixed_people)
     remaining = MAX_SECONDS - (time.monotonic() - started)
     if remaining < 0.1:
         return _response("UNKNOWN", [], started)
@@ -371,7 +403,8 @@ def solve(data, control=None):
         if baseline_hints:
             model.clear_hints()
             _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
-                               deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control, prefer_baseline=False)
+                               deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
+                               prefer_baseline=False, mixed_people=mixed_people)
         remaining = MAX_SECONDS - (time.monotonic() - started)
         if remaining < 0.1:
             return _response("UNKNOWN", [], started)
@@ -466,7 +499,8 @@ def _read_assignments(solver, employees, active, baseline, work, choices):
     return result
 
 
-def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy, deadline=None, control=None, prefer_baseline=True):
+def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
+                       deadline=None, control=None, prefer_baseline=True, mixed_people=frozenset()):
     """Reuse exact complete sectors; CP-SAT verifies the combined draft."""
     sectors = {}
     for person in employees:
@@ -483,7 +517,7 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     # If it fails, the unrestricted fallback remains free to repair the schedule.
     remaining = [person for person in employees if person['sector'] not in comparable]
     proposals = (balanced_rest_hints(remaining, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
-                                        deadline=deadline, control=control)
+                                        deadline=deadline, control=control, mixed_people=mixed_people)
                  if remaining else {})
     for person in employees:
         if person['sector'] in comparable:

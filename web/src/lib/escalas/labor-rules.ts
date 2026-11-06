@@ -1,5 +1,5 @@
 import { addDays, isDate, weekStart } from "./dates";
-import type { EscalaEmployee, EscalaInput, EscalaPolicy, WeeklyHours } from "./types";
+import type { EscalaEmployee, EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "./types";
 
 /** Operational invariant of this project's 5x2 planning model, not a general legal conclusion. */
 const MAX_CONSECUTIVE_WORK_DAYS = 5;
@@ -39,6 +39,28 @@ export function legalWeeklyHours(day: string): WeeklyHours {
 /** Conservative whole-week proposal; transition weeks require explicit acceptance. */
 export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">, start: string): WeeklyHours {
   return Math.min(person.weeklyHours, legalWeeklyHours(addDays(weekStart(start), 6))) as WeeklyHours;
+}
+
+/** The optional distribution is scoped to timed 42h references; no saved authorization is inferred. */
+export function usesMixed42(input: EscalaInput, person: EscalaEmployee): boolean {
+  return input.simulation === true && input.defaultWeeklyHours === 42
+    && person.weeklyHours === 42 && person.simulationDailyMinutes === undefined
+    && person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"
+    && input.mixed42Sectors?.includes(person.sector) === true;
+}
+
+export function usesMixed42Week(input: EscalaInput, person: EscalaEmployee, day: string): boolean {
+  return usesMixed42(input, person) && effectiveWeeklyHours(person, day) === 42;
+}
+
+/** Exactly 9h of work, with one uninterrupted, unpaid 3h interval. */
+export function isMixed42LongShift(shift: EscalaShift): boolean {
+  if (shift.segments.length !== 3) return false;
+  const [first, interval, last] = shift.segments;
+  return first.kind === "WORK" && first.end - first.start === 270
+    && interval.kind === "BREAK" && interval.end - interval.start === 180
+    && last.kind === "WORK" && last.end - last.start === 270
+    && first.end === interval.start && interval.end === last.start;
 }
 
 /** Civil-minute target for a support scenario; a short reference is not a verified contract. */

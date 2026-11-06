@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { isDate } from "@/lib/escalas/dates";
-import { NumberField } from "./number-field";
+import { effectiveWorkDayLimit } from "@/lib/escalas/labor-rules";
 import styles from "./escalas.module.css";
 import type { EscalaInput, EscalaPolicy, EscalaShift } from "@/lib/escalas/types";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
@@ -40,25 +40,18 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
     <div><h2 id="escala-rules-title" className={styles.sectionTitle}>Premissas da simulação</h2><p className={styles.subtitle}>O algoritmo aplica os descansos e preserva as restrições informadas. Nada aqui precisa ser preenchido para gerar um rascunho.</p></div>
     <dl className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
       <div><dt className="text-[color:var(--app-muted)]">Regime</dt><dd className="font-semibold">5 dias + 2 folgas</dd></div>
-      <div><dt className="text-[color:var(--app-muted)]">Jornada escolhida</dt><dd className="font-semibold">{input.defaultWeeklyHours}h · {clock(input.defaultWeeklyHours * 12)} por dia</dd></div>
+      <div><dt className="text-[color:var(--app-muted)]">Jornada escolhida</dt><dd className="font-semibold">{input.defaultWeeklyHours}h · {input.defaultWeeklyHours === 42 && input.mixed42Sectors?.length ? "distribuição mista por setor" : clock(input.defaultWeeklyHours * 12) + " por dia no modelo uniforme"}</dd></div>
       <div><dt className="text-[color:var(--app-muted)]">Entre jornadas</dt><dd className="font-semibold">{clock(input.policy.minInterShiftMinutes)} mínimas</dd></div>
-      <div><dt className="text-[color:var(--app-muted)]">Sequência máxima</dt><dd className="font-semibold">{input.policy.maxConsecutiveWorkDays} dias</dd></div>
+      <div><dt className="text-[color:var(--app-muted)]">Sequência máxima</dt><dd className="font-semibold">{effectiveWorkDayLimit(input.policy)} dias</dd></div>
     </dl>
     {input.policy.maxConsecutiveWorkDays > 5 && <p className={styles.errorText}>Esta revisão usa um limite antigo de {input.policy.maxConsecutiveWorkDays} dias. O modelo 5×2 permite no máximo cinco dias consecutivos. Gere novamente para conferir a grade com esse limite.</p>}
     <fieldset disabled={disabled} className={styles.stackSmall}>
       <ShortMealSimulation input={input} onChange={onChange} />
       <details className="space-y-4 border-t border-[color:var(--app-border)] pt-2">
-        <summary className={styles.disclosureTrigger}>Datas e limites específicos da operação</summary>
+        <summary className={styles.disclosureTrigger}>Datas especiais da filial</summary>
         <DateList label="Datas de fechamento obrigatório" value={input.policy.closedDates} onChange={(value) => change("closedDates", value)} />
         <DateList label="Feriados do período" value={input.policy.holidayDates} onChange={(value) => change("holidayDates", value)} />
-        <div className={styles.formGrid}>
-          {([
-            ["minInterShiftMinutes", "Interjornada mínima (minutos)", 660, 1440],
-            ["minWeeklyRestMinutes", "Descanso semanal com interjornada (minutos)", 2100, 4320],
-            ["minMealMinutes", "Intervalo de refeição mínimo (minutos)", 30, 180],
-            ["maxConsecutiveWorkDays", "Máximo de dias de trabalho consecutivos", 1, 5],
-          ] as const).map(([field, label, minimum, maximum]) => <NumberField key={field} label={label} min={minimum} max={maximum} value={input.policy[field]} onChange={value => change(field, value)} />)}
-        </div>
+        <p className={styles.muted}>O sistema aplica os limites de descanso e refeição da filial ao gerar. As regras já registradas foram preservadas.</p>
       </details>
       <LaborPolicyFields input={input} onChange={onChange} />
     </fieldset>

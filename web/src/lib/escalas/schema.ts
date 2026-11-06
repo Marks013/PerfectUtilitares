@@ -109,6 +109,8 @@ export const escalaInputSchema = z.strictObject({
   schemaVersion: z.literal(1), branchCode: label.transform(canonicalBranchCode), branchName: label, startDate: planningDate, endDate: planningDate,
   visibleMonth: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).optional(),
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,
+  mixed42Sectors: z.array(label).max(250)
+    .refine(sectors => new Set(sectors).size === sectors.length, "Setores duplicados na jornada mista").optional(),
   employees: z.array(employee).max(250), shifts: z.array(shift).max(120),
   demands: z.array(z.strictObject({
     id: identifier, date, sector: label, role: label.optional(),

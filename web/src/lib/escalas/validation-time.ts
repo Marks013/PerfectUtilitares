@@ -1,7 +1,7 @@
 import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates } from "./dates";
 import { buildCoveragePresence, coverageAt, coverageTimeline } from "./coverage-presence";
 import type { EscalaAssignment, EscalaInput, EscalaIssue, EscalaShift } from "./types";
-import { certificateAuthorizes, collectiveExtensionAuthorized, dailyMinuteCeiling, maximumMealMinutes, minimumMealMinutes, SUPERMARKET_CCT, TRANSITION_42_DATE, TRANSITION_40_DATE } from "./labor-rules";
+import { certificateAuthorizes, collectiveExtensionAuthorized, dailyMinuteCeiling, isMixed42LongShift, maximumMealMinutes, minimumMealMinutes, SUPERMARKET_CCT, TRANSITION_42_DATE, TRANSITION_40_DATE } from "./labor-rules";
 
 export type WorkJourney = {
   assignment: EscalaAssignment;
@@ -41,14 +41,17 @@ function isNightShift(shift: EscalaShift): boolean {
   ));
 }
 
-export function validateJourney(input: EscalaInput, journey: WorkJourney, toAbsoluteMinute = absoluteMinute): EscalaIssue[] {
+export function validateJourney(input: EscalaInput, journey: WorkJourney, toAbsoluteMinute = absoluteMinute, mixed42 = false): EscalaIssue[] {
   const { assignment, shift, minutes } = journey;
   const issues: EscalaIssue[] = [];
   const issue = (code: string, message: string, severity: EscalaIssue["severity"] = "ERROR", date = assignment.date) => issues.push({ code, message, severity, employeeId: assignment.employeeId, date });
-  if (minutes > input.policy.dailyLimitMinutes) issue("DAILY_LIMIT", "A jornada ultrapassa o limite diário autorizado.");
-  if (minutes > 480 && !input.policy.compensationAuthorized) issue("COMPENSATION_REQUIRED", "Jornada superior a 8h exige distribuição/compensação autorizada.");
-  if (minutes > dailyMinuteCeiling(assignment.date)) issue("DISTRIBUTION_DAILY_LIMIT", "A jornada supera a distribuição deste regime na data: até 8h24 na fase de 42 horas e até 8h na fase de 40 horas.");
-  if (minutes > 480 && assignment.date >= TRANSITION_42_DATE && assignment.date < TRANSITION_40_DATE
+  const longMixed = mixed42 && input.simulation === true && isMixed42LongShift(shift);
+  if (mixed42 && minutes !== 480 && !longMixed) issue("MIXED_42_SHIFT", "No cenário misto, use 8h ou 9h de trabalho; o dia de 9h tem dois blocos de 4h30 e intervalo de 3h.");
+  // The mixed scenario has its own publication pending; avoid one duplicate per long day.
+  if (!longMixed && minutes > input.policy.dailyLimitMinutes) issue("DAILY_LIMIT", "A jornada ultrapassa o limite diário autorizado.");
+  if (!longMixed && minutes > 480 && !input.policy.compensationAuthorized) issue("COMPENSATION_REQUIRED", "Jornada superior a 8h exige distribuição/compensação autorizada.");
+  if (!longMixed && minutes > dailyMinuteCeiling(assignment.date)) issue("DISTRIBUTION_DAILY_LIMIT", "A jornada supera a distribuição deste regime na data: até 8h24 na fase de 42 horas e até 8h na fase de 40 horas.");
+  if (!longMixed && minutes > 480 && assignment.date >= TRANSITION_42_DATE && assignment.date < TRANSITION_40_DATE
     && !collectiveExtensionAuthorized(input.policy, assignment.date)) issue("COLLECTIVE_AGREEMENT_REQUIRED", "Distribuição acima de oito horas na transição exige acordo ou convenção coletiva conferido e vigente na data. A autorização genérica não basta.");
   const first = shift.segments[0].start;
   const last = shift.segments.at(-1)?.end ?? first;
@@ -58,7 +61,7 @@ export function validateJourney(input: EscalaInput, journey: WorkJourney, toAbso
   const minimum = minimumMealMinutes(input.policy, minutes, input.simulation);
   if (meal < minimum) issue("MEAL_INTERVAL", `Intervalo para refeição insuficiente: mínimo de ${minimum} minutos para esta jornada.`);
   const maximum = maximumMealMinutes(input.policy, assignment.date);
-  if (minutes > 360 && meal > maximum) {
+  if (!longMixed && minutes > 360 && meal > maximum) {
     issue("MEAL_INTERVAL_EXCESSIVE", `Turno ${shift.name}: intervalo de ${meal} minutos acima do limite de ${maximum} minutos conferido para esta data. Ajuste o horário ou confira um acordo específico, vigente e revisado que permita esse intervalo. A simulação não comprova autorização.`, input.simulation ? "PENDING" : "ERROR");
   }
   if (input.simulation && input.policy.allowShortMealSimulation && minutes > 240 && minutes <= 360 && meal < 15) {

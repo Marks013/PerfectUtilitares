@@ -1,8 +1,8 @@
 import { EscalaError } from "./access";
 import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility";
 import { addDays, dateRange } from "./dates";
-import { effectiveWeeklyHours, effectiveWorkDayLimit } from "./labor-rules";
-import { planningWeeklyHours, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
+import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42 } from "./labor-rules";
+import { isGeneratedMixed42Shift, planningWeeklyHours, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
 import type { EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
 
 function paidMinutes(shift: EscalaShift): number {
@@ -22,14 +22,20 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       || (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return person;
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
     const hours = reference.weeklyHours;
-    const targets = new Set(dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0
+    const mixed = usesMixed42(input, { ...person, ...reference });
+    const weekHours = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0
       && person.activeFrom <= addDays(input.startDate, index + 6) && (!person.activeUntil || person.activeUntil >= addDays(input.startDate, index)))
-      .map((date) => effectiveWeeklyHours({ weeklyHours: hours }, date) * 12));
+      .map(date => effectiveWeeklyHours({ weeklyHours: hours }, date));
+    const mixedWeeks = mixed && weekHours.includes(42);
+    const targets = new Set(weekHours.map(hours => mixedWeeks ? 480 : hours * 12));
     const allowed = person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
     // Preserve custom distributions. Imported references require adaptation from 6x1 to the requested 5x2 target.
     const refreshed = allowed.map(shift => refreshProposedWorkBlocks(person, shift, input.policy.limitContinuousWorkBlocks === true));
     const needsBlockBalance = refreshed.some((shift, index) => shift.id !== allowed[index].id);
-    const needsHoursAdjustment = hours !== person.weeklyHours || ((person.sourceSchedule || person.weeklyHoursMode === "BRANCH") && [...targets].some((target) => !allowed.some((shift) => paidMinutes(shift) === target)));
+    const needsMixedAdjustment = mixedWeeks && (!allowed.some(isMixed42LongShift) || !allowed.some(shift => paidMinutes(shift) === 480));
+    const removingMixed = !mixedWeeks && allowed.some(shift => isGeneratedMixed42Shift(shift.id));
+    const needsHoursAdjustment = needsMixedAdjustment || removingMixed || hours !== person.weeklyHours
+      || ((person.sourceSchedule || person.weeklyHoursMode === "BRANCH") && [...targets].some(target => !allowed.some(shift => paidMinutes(shift) === target)));
     const needsAdjustment = needsBlockBalance || needsHoursAdjustment;
     if (!needsAdjustment) return person;
     // Start from the existing arrival; a narrower search also produces more stable previews.
@@ -37,14 +43,16 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const rosterReference = { ...input, employees: [person], assignments: [] };
     let prepared = needsBlockBalance && !needsHoursAdjustment
       ? { ...rosterReference, shifts: refreshed, employees: [{ ...person, shiftIds: refreshed.map(shift => shift.id) }] }
-      : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_START");
-    if (prepared.employees[0].planningEnabled === false) prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_END");
+      : mixedWeeks ? prepareRoster(rosterReference, hours, "EXCLUDE", "BOTH")
+        : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_START");
+    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_END");
     // Prefer a daytime adaptation. Retain short/night references as a bounded civil-minute simulation when needed.
-    if (prepared.employees[0].planningEnabled === false) prepared = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_START");
-    if (prepared.employees[0].planningEnabled === false) prepared = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_END");
+    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_START");
+    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_END");
     const candidate = prepared.employees[0];
     const commitments = input.assignments.filter((item) => item.employeeId === person.id && (item.locked || item.kind === "ABSENCE"));
     if (candidate.planningEnabled === false) {
+      if (mixedWeeks) throw new EscalaError(422, "ESCALA_MIXED_42_SHIFT_REQUIRED", `Não há horário diurno compatível com 9h de trabalho e 3h de intervalo para ${person.registration} · ${person.name} (${person.sector}). Confira a entrada ou a saída de referência, ou retire o setor da jornada mista. Nenhum registro foi alterado.`);
       if (commitments.length) throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", "Há um horário importado incompatível com a jornada 5×2 e dias bloqueados ou ausências já registrados. Confira as exceções da equipe antes de gerar; os registros foram preservados.");
       throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", `Não foi possível adaptar o horário de ${person.registration} · ${person.name} (${person.sector}) para a jornada escolhida. Ninguém foi excluído. Use Ajustar horários para manter a saída ou confira o horário individual; bloqueios e afastamentos permanecem preservados.`);
     }

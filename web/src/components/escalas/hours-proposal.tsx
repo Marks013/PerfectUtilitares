@@ -81,6 +81,7 @@ export function HoursProposal({ input, disabled, onChange }: { input: EscalaInpu
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const groups = hoursProposalGroups(input, input);
+  const mixed = input.defaultWeeklyHours === 42 && Boolean(input.mixed42Sectors?.length);
   const timed = input.employees.some(person => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING");
   function apply(strategy: Anchor) {
     setError(""); setNotice("");
@@ -93,15 +94,15 @@ export function HoursProposal({ input, disabled, onChange }: { input: EscalaInpu
   return <details className={panelClass} aria-labelledby="escala-adjust-hours-title">
     <summary id="escala-adjust-hours-title" className={styles.disclosureTrigger}>Horários para {input.defaultWeeklyHours}h · conferir ou ajustar manualmente</summary>
     <p className={styles.muted}>Ao gerar, o sistema sugere os horários usando a jornada escolhida. Use esta área se quiser manter a saída ou comparar os originais. Intervalos e dias bloqueados são preservados.</p>
-    {timed ? <fieldset disabled={disabled} className="flex flex-wrap items-end gap-3">
+    {mixed ? <p className={styles.muted}>Com setores em jornada mista, use Gerar escala e horários para preparar as duas durações. Para voltar ao ajuste uniforme manual, desmarque os setores.</p> : timed ? <fieldset disabled={disabled} className="flex flex-wrap items-end gap-3">
       <Field label="Como ajustar os horários?">{id => <select id={id} className={controlClass} value={anchor} onChange={event => setAnchor(event.target.value as Anchor)}>
         <option value="arrival">Manter entrada e intervalo, ajustar a saída</option><option value="departure">Manter saída e intervalo, ajustar a entrada</option><option value="both">Comparar alternativas de entrada ou saída preservada</option>
       </select>}</Field>
       <button type="button" className={primaryClass} onClick={() => apply(anchor)}>Ajustar horários no rascunho</button>
     </fieldset> : <p className="text-sm">Pessoas sem horário fixo participam normalmente das folgas. A contagem por hora considera somente horários informados.</p>}
-    {notice && <p role="status" className="text-sm">{notice}</p>}
-    {error && <p role="alert" className="text-sm text-[color:var(--app-coral)]">{error}</p>}
-    {exceptions.length > 0 && <div className="space-y-2 text-sm"><h4 className="font-semibold">Horários que precisam de escolha individual</h4><ul>{exceptions.map(person => <li key={person.employeeId}>{person.registration} · {person.name}: {person.reason}</li>)}</ul><button type="button" className={buttonClass} disabled={disabled || anchor === "departure"} onClick={() => { setAnchor("departure"); apply("departure"); }}>Experimentar manter a saída</button></div>}
-    {groups.length > 0 && <details><summary className="min-h-11 cursor-pointer py-2 font-semibold">Comparar horário original e proposto ({groups.length} grupos)</summary><div className="max-h-80 overflow-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Horário original e proposto por setor e cargo</caption><thead><tr><th scope="col" className="p-2">Setor / cargo / equipe</th><th scope="col" className="p-2">Original importado</th><th scope="col" className="p-2">Proposto no cenário</th></tr></thead><tbody>{groups.map(group => <tr key={group.key} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal">{group.sector} / {group.role}<details><summary className="cursor-pointer py-2">{group.people.length} colaborador(es)</summary><ul>{group.people.map(name => <li key={name}>{name}</li>)}</ul></details></th><td className="p-2">{group.original}</td><td className="p-2">{group.proposal.map(value => <p key={value}>{value}</p>)}</td></tr>)}</tbody></table></div></details>}
+    {!mixed && notice && <p role="status" className="text-sm">{notice}</p>}
+    {!mixed && error && <p role="alert" className="text-sm text-[color:var(--app-coral)]">{error}</p>}
+    {!mixed && exceptions.length > 0 && <div className="space-y-2 text-sm"><h4 className="font-semibold">Horários que precisam de escolha individual</h4><ul>{exceptions.map(person => <li key={person.employeeId}>{person.registration} · {person.name}: {person.reason}</li>)}</ul><button type="button" className={buttonClass} disabled={disabled || anchor === "departure"} onClick={() => { setAnchor("departure"); apply("departure"); }}>Experimentar manter a saída</button></div>}
+    {groups.length > 0 && <details><summary className="min-h-11 cursor-pointer py-2 font-semibold">Comparar horário original e proposto ({groups.length} grupos)</summary><div className="max-h-80 overflow-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Horário original e proposto por setor e cargo</caption><thead><tr><th scope="col" className="p-2">Setor / cargo / equipe</th><th scope="col" className="p-2">Original importado</th><th scope="col" className="p-2">{mixed ? "Horários atuais do rascunho" : "Proposto no cenário"}</th></tr></thead><tbody>{groups.map(group => <tr key={group.key} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal">{group.sector} / {group.role}<details><summary className="cursor-pointer py-2">{group.people.length} colaborador(es)</summary><ul>{group.people.map(name => <li key={name}>{name}</li>)}</ul></details></th><td className="p-2">{group.original}</td><td className="p-2">{group.proposal.map(value => <p key={value}>{value}</p>)}</td></tr>)}</tbody></table></div></details>}
   </details>;
 }

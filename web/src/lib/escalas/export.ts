@@ -135,6 +135,13 @@ function orderedCoverageGaps(gaps: SectorCoverageGap[]): SectorCoverageGap[] {
     || Number(a.estimated) - Number(b.estimated));
 }
 
+function mixed42ExportNotice(input: EscalaInput): string {
+  if (input.simulation !== true || input.defaultWeeklyHours !== 42 || !input.mixed42Sectors?.length) {
+    return "";
+  }
+  return "SIMULAÇÃO / NEGOCIAÇÃO: 3 × 8h + 2 × 9h nos setores selecionados; intervalo de 3h nos dias de 9h. Não é autorização operacional.";
+}
+
 export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Uint8Array {
   const model = buildEscalaPresentation(workspace);
   const presence = buildCoveragePresence(workspace.input);
@@ -142,8 +149,10 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const windows = coverageWindows(workspace.input, diagnostics.coverageGroups, presence);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
+  const mixedNotice = mixed42ExportNotice(workspace.input);
   const metadata = (title: string, description = ""): (string | number)[][] => [[model.branch],
-    [title + " | " + reportPeriod(model.period) + " | Revisão " + workspace.revision + " | " + model.state + simulation], [description]];
+    [title + " | " + reportPeriod(model.period) + " | Revisão " + workspace.revision + " | " + model.state + simulation],
+    [[mixedNotice, description].filter(Boolean).join(" | ")]];
   const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[], gaps: [] as number[] };
   const main = [...metadata("Escala de folgas", model.legend),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(escalaDateLabel)]];
@@ -262,6 +271,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   const model = buildEscalaPresentation(workspace), document = await PDFDocument.create();
   const presence = buildCoveragePresence(workspace.input);
   const diagnostics = { coverageGroups: orderedCoverageGaps(sectorCoverageGaps(workspace.input, presence)) };
+  const mixedNotice = mixed42ExportNotice(workspace.input);
   let reportTitle = mode === "hours" ? "Escala de horários" : "Escala de folgas";
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
   const width = 842, height = 595; // A4 landscape, including full monthly grids.
@@ -273,6 +283,11 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     page = document.addPage([width, height]); y = height - margin;
     for (const line of wrapText(model.branch, width - 2 * margin, bold, 12)) { write(line, margin, y, 12, true); y -= 16; }
     write(`${reportTitle} | 5x2 | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
+    if (mixedNotice) {
+      for (const line of wrapText(mixedNotice, width - 2 * margin, bold, 8)) {
+        write(line, margin, y, 8, true); y -= 12;
+      }
+    }
     if (grid) for (const line of wrapText(model.legend, width - 2 * margin, font, 8)) { write(line, margin, y, 8); y -= 12; }
     if (workspace.input.simulation && workspace.input.policy.allowShortMealSimulation) { write("Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h.", margin, y, 8); y -= 13; }
     y -= 5;

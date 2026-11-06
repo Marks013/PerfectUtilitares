@@ -1,7 +1,7 @@
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
-import { effectiveSundayLimit, effectiveWeeklyMinutes, effectiveWorkDayLimit } from "./labor-rules";
+import { effectiveSundayLimit, effectiveWeeklyMinutes, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 
 function isActive(person: EscalaEmployee, day: string): boolean {
   return day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil);
@@ -24,12 +24,14 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
   const reservedOffDates = new Set(reservations.map((assignment) => assignment.date));
   const untimed = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
   const minutesByWeek = new Map<string, number>();
+  const longByWeek = new Map<string, number>();
   let workedMinutes = 0;
   for (const journey of journeys) {
     const date = journey.assignment.date;
     const week = weekByDate.get(date);
     if (!week) continue;
     minutesByWeek.set(week, (minutesByWeek.get(week) ?? 0) + journey.minutes);
+    if (usesMixed42Week(input, person, week) && isMixed42LongShift(journey.shift)) longByWeek.set(week, (longByWeek.get(week) ?? 0) + 1);
     if (!untimed && visible.has(date)) workedMinutes += journey.minutes;
   }
   const monthly = current.filter((assignment) => visible.has(assignment.date));
@@ -142,6 +144,10 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     const work = entries.filter((entry) => entry?.kind === "WORK" || entry?.kind === "DUTY").length;
     const offs = entries.filter((entry) => entry?.kind === "OFF").map((entry) => entry?.date ?? "");
     const limitedAvailability = active.length < 7 || entries.some((entry) => entry?.kind === "ABSENCE");
+    if (usesMixed42Week(input, person, start)) {
+      const long = longByWeek.get(start) ?? 0;
+      if (long > 2 || (!limitedAvailability && long !== 2)) issue("MIXED_42_WEEK", "Na jornada mista, a semana completa deve ter dois dias de 9h e três de 8h; nas semanas parciais, não ultrapasse dois dias de 9h.", start);
+    }
     if (work > 5 || !limitedAvailability && (work !== 5 || offs.length !== 2)) issue("FIVE_BY_TWO", `Semana 5×2: no máximo 5 dias de trabalho; em semana completa, 5 dias de trabalho e 2 folgas. Encontrados ${work} dia(s) de trabalho e ${offs.length} folga(s), de ${formatDate(start)} a ${formatDate(addDays(start, 6))}.`, start);
     if (!limitedAvailability && !untimed && minutes !== target * 60) issue("WEEKLY_MINUTES", `Carga semanal de ${minutes} minutos difere dos ${target * 60} minutos vigentes nesta semana.`, start);
     if (person.offPattern === "CONSECUTIVE" && offs.length === 2) {

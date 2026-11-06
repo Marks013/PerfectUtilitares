@@ -9,7 +9,9 @@ async function workbook(sheet: string) {
 }
 
 describe("Jornada XLSX resource limits", () => {
-  it("aborts an XML stream that inflates past the allowed size", async () => {
+  // Creating and inflating a 16 MiB DEFLATE fixture can exceed Vitest's
+  // default timeout under parallel coverage; keep the security assertion unchanged.
+  it("aborts an XML stream that inflates past the allowed size", { timeout: 15_000 }, async () => {
     const zip = await workbook("<worksheet>" + " ".repeat(16 * 1024 * 1024) + "</worksheet>");
     expect(zip.length).toBeLessThan(32 * 1024);
     await expect(parseJornadaBatchXlsx(zip)).rejects.toThrow("16 MB descompactados");

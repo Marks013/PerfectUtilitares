@@ -5,7 +5,7 @@ import { sortEmployees } from "./order";
 import { fixedBoundaryReservations } from "./boundary";
 import { validateEmployee } from "./validation-employee";
 import { validateCoverage, validateJourney, validateUntimedDuty, workJourney, type WorkJourney } from "./validation-time";
-import { CCT_FROM, CCT_UNTIL, SUPERMARKET_CCT, transitionWeeks } from "./labor-rules";
+import { CCT_FROM, CCT_UNTIL, SUPERMARKET_CCT, transitionWeeks, usesMixed42, usesMixed42Week } from "./labor-rules";
 
 function addEmployeeEntry<T>(index: Map<string, T[]>, employeeId: string, value: T) {
   const entries = index.get(employeeId);
@@ -22,6 +22,11 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   };
   const input = parsed.data;
   const issues: EscalaIssue[] = [];
+  const mixedPeople = new Map(input.employees.filter(person => usesMixed42(input, person)).map(person => [person.id, person]));
+  if (input.defaultWeeklyHours === 42 && input.mixed42Sectors?.length) issues.push({
+    code: "MIXED_42_SIMULATION", severity: "PENDING",
+    message: "Jornada mista para negociação: 3 dias de 8h e 2 de 9h com intervalo de 3h nos dias longos. Use como rascunho; esta opção não confirma o acordo nem libera a publicação.",
+  });
   if (input.policy.maxConsecutiveWorkDays > 5) issues.push({ code: "FIVE_BY_TWO_POLICY_OUTDATED", severity: "PENDING", message: "Este planejamento usa o limite antigo de 6 dias consecutivos. O modelo 5×2 agora permite no máximo 5, inclusive entre semanas e meses. Gere e aplique uma nova proposta para atualizar a grade; os dias salvos não foram alterados." });
   if (input.needsRegeneration) issues.push({ code: "SCENARIO_OUTDATED", severity: "PENDING", message: "O cenário foi alterado após a geração da grade. Gere e aplique uma nova proposta antes de exportar ou aprovar." });
   if (!input.employees.length) issues.push({ code: "EMPLOYEES_PENDING", severity: "PENDING", message: "Cadastre os colaboradores da filial." });
@@ -63,7 +68,10 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
     try {
       const journey = workJourney(assignment, shift, toAbsoluteMinute);
       addEmployeeEntry(journeysByEmployee, assignment.employeeId, journey);
-      if (assignment.date >= input.startDate && assignment.date <= input.endDate) issues.push(...validateJourney(input, journey, toAbsoluteMinute));
+      if (assignment.date >= input.startDate && assignment.date <= input.endDate) {
+        const mixed = mixedPeople.get(assignment.employeeId);
+        issues.push(...validateJourney(input, journey, toAbsoluteMinute, Boolean(mixed && usesMixed42Week(input, mixed, assignment.date))));
+      }
       else if (assignment.date < input.startDate && journey.occupiedDates.some((day) => day >= input.startDate && day <= input.endDate)) {
         issues.push(...validateJourney(input, journey, toAbsoluteMinute).filter((issue) => (issue.code === "CLOSED_DATE" || issue.code === "HOLIDAY_WORK") && issue.date && issue.date >= input.startDate && issue.date <= input.endDate));
       }

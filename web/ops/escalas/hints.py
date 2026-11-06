@@ -5,7 +5,8 @@ from datetime import date, timedelta
 from itertools import combinations
 
 
-def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit, deadline=None, control=None):
+def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
+                        deadline=None, control=None, mixed_people=frozenset()):
     """Balance opportunities before the bounded optimizer adds optional staffing goals.
 
     These are variable hints only. No target is converted into a staffing constraint,
@@ -33,6 +34,10 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
         if deadline is not None and time.monotonic() >= deadline:
             return result
         pid = person["id"]
+        # The single-duration heuristic cannot hint the mixed weekly total.
+        # Leave those variables free instead of pinning a known-invalid draft.
+        if pid in mixed_people:
+            continue
         available = set(active[pid])
         prior = {entry["date"]: entry for entry in person.get("planningHistory", []) + person["history"] + person.get("planningFuture", [])}
         fixed = set(person["fixedOffDays"])

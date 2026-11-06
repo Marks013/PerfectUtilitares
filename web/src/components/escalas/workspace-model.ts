@@ -1,5 +1,5 @@
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaValidation, WeeklyHours } from "@/lib/escalas/types";
-import { CCT_FROM, CCT_UNTIL, effectiveWeeklyMinutes, legalWeeklyHours, SUPERMARKET_CCT } from "@/lib/escalas/labor-rules";
+import { CCT_FROM, CCT_UNTIL, effectiveWeeklyMinutes, isMixed42LongShift, legalWeeklyHours, SUPERMARKET_CCT, usesMixed42Week } from "@/lib/escalas/labor-rules";
 import { planningWeeklyHours } from "@/lib/escalas/preparation";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 
@@ -134,7 +134,7 @@ export function newEmployee(hours: WeeklyHours, shiftId?: string | string[]): Es
 /** Resolve legacy branch references before changing the selected branch target. */
 export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours): EscalaInput {
   if (input.defaultWeeklyHours === hours) return input;
-  return { ...input, defaultWeeklyHours: hours,
+  return { ...input, defaultWeeklyHours: hours, mixed42Sectors: undefined,
     employees: input.employees.map((person) => ({ ...person, ...planningWeeklyHours(person, input.defaultWeeklyHours, hours) })),
     demands: input.demands.filter((demand) => !demand.estimated),
   };
@@ -146,13 +146,43 @@ export function changeContinuousWorkLimit(input: EscalaInput, enabled: boolean):
   return { ...input, policy: { ...input.policy, limitContinuousWorkBlocks: enabled } };
 }
 
+export function mixed42EligibleSectors(input: EscalaInput): string[] {
+  if (input.defaultWeeklyHours !== 42) return [];
+  const weeks = datesBetween(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
+  const scope = { ...input, simulation: true, mixed42Sectors: [...new Set(input.employees.map((person) => person.sector).filter(Boolean))] };
+  const eligible = input.employees.filter((person) => {
+    const reference = { ...person, ...planningWeeklyHours(person, 42, 42) };
+    return weeks.some((day) => (!person.activeUntil || person.activeUntil >= day)
+      && (!person.activeFrom || person.activeFrom <= addDate(day, 6)) && usesMixed42Week(scope, reference, day));
+  });
+  return [...new Set(eligible.map((person) => person.sector))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+function mixed42Key(input: EscalaInput) {
+  return JSON.stringify([...new Set(input.mixed42Sectors ?? [])].sort());
+}
+
+export function changeMixed42Sectors(input: EscalaInput, selected: string[]): EscalaInput {
+  const mixed42Sectors = mixed42EligibleSectors(input).filter((sector) => selected.includes(sector));
+  if (mixed42Key(input) === mixed42Key({ ...input, mixed42Sectors })) return input;
+  return { ...input, mixed42Sectors: mixed42Sectors.length ? mixed42Sectors : undefined,
+    ...(mixed42Sectors.length ? { simulation: true } : {}),
+    needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
+    demands: input.demands.filter((demand) => !demand.estimated),
+  };
+}
+
+export function pruneMixed42Sectors(input: EscalaInput): EscalaInput {
+  return input.mixed42Sectors?.length ? changeMixed42Sectors(input, input.mixed42Sectors) : input;
+}
+
 /** Changes that make a previously generated scenario obsolete. Manual day edits remain intentional. */
 function absenceDays(input: EscalaInput): string {
   return JSON.stringify(input.assignments.filter((item) => item.kind === "ABSENCE").map((item) => JSON.stringify([item.employeeId, item.date])).sort());
 }
 
 export function scenarioDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
-  if (absenceDays(previous) !== absenceDays(next)) return true;
+  if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
   return (['employees', 'shifts', 'demands', 'policy'] as const).some((key) => previous[key] !== next[key] && JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
 }
@@ -167,12 +197,13 @@ export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidat
       const shift = shifts.get(assignment.shiftId ?? "");
       if (!shift) return false;
       const minutes = shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
+      if (usesMixed42Week(input, person, assignment.date)) return minutes !== 480 && !isMixed42LongShift(shift);
       return minutes !== effectiveWeeklyMinutes(person, assignment.date) / 5;
     }));
 }
 
 export function coverageDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
-  if (absenceDays(previous) !== absenceDays(next)) return true;
+  if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
   if ((previous.policy.limitContinuousWorkBlocks === true) !== (next.policy.limitContinuousWorkBlocks === true)) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
   if (previous.employees !== next.employees || previous.shifts !== next.shifts) return true;
