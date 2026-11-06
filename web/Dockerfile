@@ -2,14 +2,23 @@
 # PERFECT_PDF_FULL32_V2_2
 # PERFECT_PDF_ADAPTIVE_V4_2
 
+# Keep pinned Alpine releases and signature checks; permit an official HTTPS
+# mirror when the default CDN is unreachable from the build network.
+ARG ALPINE_APK_MIRROR=dl-cdn.alpinelinux.org
 FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS base
-RUN apk add --no-cache libc6-compat openssl vips
+ARG ALPINE_APK_MIRROR
+RUN case "$ALPINE_APK_MIRROR" in dl-cdn.alpinelinux.org|dl-3.alpinelinux.org) ;; *) exit 64 ;; esac \
+    && sed -i "s|https://dl-cdn.alpinelinux.org/alpine/|https://${ALPINE_APK_MIRROR}/alpine/|g" /etc/apk/repositories \
+    && apk add --no-cache libc6-compat openssl vips
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
 FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS node-runtime-base
-RUN apk add --no-cache ca-certificates libc6-compat libstdc++ openssl
+ARG ALPINE_APK_MIRROR
+RUN case "$ALPINE_APK_MIRROR" in dl-cdn.alpinelinux.org|dl-3.alpinelinux.org) ;; *) exit 64 ;; esac \
+    && sed -i "s|https://dl-cdn.alpinelinux.org/alpine/|https://${ALPINE_APK_MIRROR}/alpine/|g" /etc/apk/repositories \
+    && apk add --no-cache ca-certificates libc6-compat libstdc++ openssl
 COPY --from=base /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
