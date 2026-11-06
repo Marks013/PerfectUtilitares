@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   pdfCreate: vi.fn(),
   pdfLoad: vi.fn(),
   readFile: vi.fn(),
+  rename: vi.fn(),
   render: vi.fn(),
   reserve: vi.fn(),
   resolve: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("node:child_process", () => ({
 vi.mock("node:fs/promises", () => ({
   copyFile: mocks.copyFile,
   readFile: mocks.readFile,
+  rename: mocks.rename,
   rm: mocks.rm,
   stat: mocks.stat,
   writeFile: mocks.writeFile,
@@ -202,6 +204,7 @@ beforeEach(() => {
 
   mocks.copyFile.mockResolvedValue(undefined);
   mocks.readFile.mockResolvedValue(Buffer.from("%PDF-1.7"));
+  mocks.rename.mockResolvedValue(undefined);
   mocks.rm.mockResolvedValue(undefined);
   mocks.writeFile.mockResolvedValue(undefined);
   mocks.pdfCreate.mockResolvedValue({});
@@ -231,7 +234,8 @@ describe("PDF compression control paths", () => {
       inputStorageKey: "jobs/job-1/input.pdf", jobId: "job-1", options, outputName: "compressed.pdf",
     });
     expect(result.selectedCandidate).toMatchObject({ kind: "GS_IMAGE_RECOMPRESSION", visualTransform: true });
-    expect(mocks.copyFile).toHaveBeenCalledWith("/tmp/output.partial.preserving.gs-images.pdf", "/tmp/output.partial");
+    expect(mocks.rename).toHaveBeenCalledWith("/tmp/output.partial.preserving.gs-images.pdf", "/tmp/output.partial");
+    expect(mocks.copyFile).not.toHaveBeenCalled();
     expect(mocks.spawn).toHaveBeenCalledTimes(2);
   });
 
@@ -260,10 +264,11 @@ describe("PDF compression control paths", () => {
         shell: false,
       }),
     );
-    expect(mocks.copyFile).toHaveBeenCalledWith(
+    expect(mocks.rename).toHaveBeenCalledWith(
       "/tmp/output.partial.structural.pdf",
       "/tmp/output.partial",
     );
+    expect(mocks.copyFile).not.toHaveBeenCalled();
     expect(onProgress).toHaveBeenCalledWith(95);
     expect(onProgress).toHaveBeenCalledWith(100);
     expect(mocks.commit).toHaveBeenCalledWith({
@@ -293,13 +298,40 @@ describe("PDF compression control paths", () => {
 
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
     expect(mocks.spawn.mock.calls[0]?.[0]).toBe("python3");
-    expect(mocks.copyFile).toHaveBeenCalledWith(jpegPath, "/tmp/output.partial");
+    expect(mocks.rename).toHaveBeenCalledWith(jpegPath, "/tmp/output.partial");
+    expect(mocks.copyFile).not.toHaveBeenCalled();
     expect(mocks.rm).toHaveBeenCalledWith(jpegPath, { force: true });
     expect(result).toMatchObject({
       outcome: "COMPRESSED",
       selectedCandidate: { kind: "JPEG_XOBJECT_RECOMPRESSION" },
       preservation: { semanticValidated: true },
     });
+  });
+
+  it("cleans up the candidate and reservation if moving the winner fails", async () => {
+    mockQpdfClose(0);
+    const jpegPath = "/tmp/output.partial.preserving.jpeg-xobjects.pdf";
+    mocks.stat.mockImplementation(async (filePath: string) => ({
+      size: filePath === "/tmp/input.pdf" ? 200 : 100,
+    }));
+    const error = new Error("Cannot move candidate");
+    mocks.rename.mockRejectedValueOnce(error);
+
+    await expect(
+      compressPdfFile({
+        inputStorageKey: "jobs/job-1/input.pdf",
+        jobId: "job-1",
+        options: compressionOptions("AUTO"),
+        outputName: "compressed.pdf",
+      }),
+    ).rejects.toBe(error);
+
+    expect(mocks.commit).not.toHaveBeenCalled();
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(mocks.discard).toHaveBeenCalledWith({
+      temporaryPath: "/tmp/output.partial",
+    });
+    expect(mocks.rm).toHaveBeenCalledWith(jpegPath, { force: true });
   });
 
   it.each([
@@ -349,10 +381,13 @@ describe("PDF compression control paths", () => {
     ]);
     expect(mocks.render).toHaveBeenCalledTimes(eligible ? 2 : 0);
     expect(validateSemanticCandidate).toHaveBeenCalledTimes(eligible ? 1 : 0);
-    expect(mocks.copyFile).toHaveBeenCalledWith(
-      eligible ? structuralPath : inputPath,
-      "/tmp/output.partial",
-    );
+    if (eligible) {
+      expect(mocks.rename).toHaveBeenCalledWith(structuralPath, "/tmp/output.partial");
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+    } else {
+      expect(mocks.copyFile).toHaveBeenCalledWith(inputPath, "/tmp/output.partial");
+      expect(mocks.rename).not.toHaveBeenCalled();
+    }
     expect(result).toMatchObject({
       outcome: eligible ? "COMPRESSED" : "UNCHANGED",
       selectedCandidate: eligible ? { kind: "STRUCTURAL" } : null,

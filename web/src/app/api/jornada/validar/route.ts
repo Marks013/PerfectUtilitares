@@ -176,7 +176,7 @@ export async function POST(request: Request) {
   const result = validarJornadaManual(
     {
       horarios: parsed.data.horarios,
-      tipoDia: "util",
+      tipoDia: parsed.data.tipoDia,
       exigirSabadoComplementar: true,
     },
     rules as JornadaRuleInput[],

@@ -1,5 +1,5 @@
 import { absoluteMinute, addDays, visibleDates } from "./dates";
-import type { EscalaAssignment, EscalaEmployee, EscalaInput } from "./types";
+import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 
 type PresenceInterval = { start: number; end: number; employee: EscalaEmployee };
 export type CoveragePresence = Map<string, PresenceInterval[]>;
@@ -11,6 +11,18 @@ export type SectorCoverageGap = {
 function key(date: string, sector: string) { return date + "\0" + sector; }
 function active(person: EscalaEmployee, date: string) { return date >= person.activeFrom && (!person.activeUntil || date <= person.activeUntil); }
 
+function shiftCoverage(date: string, shift: EscalaShift) {
+  const work = shift.segments.filter(segment => segment.kind === "WORK");
+  const intervals = work.map(segment => ({
+    start: absoluteMinute(date, segment.start), end: absoluteMinute(date, segment.end),
+  }));
+  const occupiedDates = new Set<string>();
+  for (const segment of work) {
+    for (let offset = Math.floor(segment.start / 1440); offset <= Math.floor((segment.end - 1) / 1440); offset++) occupiedDates.add(addDays(date, offset));
+  }
+  return { intervals, occupiedDates };
+}
+
 /** Civil-minute attendance only. Neither paid pauses nor administrative presence guarantee service. */
 export function buildCoveragePresence(input: EscalaInput): CoveragePresence {
   const people = new Map(input.employees.map(person => [person.id, person]));
@@ -19,26 +31,31 @@ export function buildCoveragePresence(input: EscalaInput): CoveragePresence {
   for (const person of input.employees) for (const record of [...(person.planningHistory ?? []), ...person.history, ...(person.planningFuture ?? [])]) records.set(key(record.date, record.employeeId), record);
   for (const record of input.assignments) records.set(key(record.date, record.employeeId), record);
   const index: CoveragePresence = new Map();
+  const coverageByShiftDate = new Map<string, ReturnType<typeof shiftCoverage>>();
+  const midnights = new Map<string, number>();
   for (const record of records.values()) {
     const person = people.get(record.employeeId), shift = shifts.get(record.shiftId ?? "");
     if (!person || !shift || record.kind !== "WORK" || person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || !active(person, record.date)) continue;
     try {
-      const coverage = shift.segments.filter(segment => segment.kind === "WORK").map(segment => ({ start: absoluteMinute(record.date, segment.start), end: absoluteMinute(record.date, segment.end) }));
-      const occupiedDates = new Set(shift.segments.filter(segment => segment.kind === "WORK").flatMap(segment => {
-        const days: string[] = [];
-        for (let offset = Math.floor(segment.start / 1440); offset <= Math.floor((segment.end - 1) / 1440); offset++) days.push(addDays(record.date, offset));
-        return days;
-      }));
-      for (const day of occupiedDates) {
+      const shiftDate = key(record.date, shift.id);
+      let coverage = coverageByShiftDate.get(shiftDate);
+      if (!coverage) {
+        coverage = shiftCoverage(record.date, shift);
+        coverageByShiftDate.set(shiftDate, coverage);
+      }
+      for (const day of coverage.occupiedDates) {
         if (!active(person, day)) continue;
         const civilRecord = records.get(key(day, person.id));
         if (civilRecord?.kind === "ABSENCE" || civilRecord?.kind === "OFF") continue;
-        const midnight = absoluteMinute(day, 0), intervals = index.get(key(day, person.sector)) ?? [];
-        for (const interval of coverage) {
+        const midnight = midnights.get(day) ?? absoluteMinute(day, 0);
+        midnights.set(day, midnight);
+        const sectorDay = key(day, person.sector);
+        const intervals = index.get(sectorDay) ?? [];
+        for (const interval of coverage.intervals) {
           const start = Math.max(0, interval.start - midnight), end = Math.min(1440, interval.end - midnight);
           if (start < end) intervals.push({ start, end, employee: person });
         }
-        if (intervals.length) index.set(key(day, person.sector), intervals);
+        if (intervals.length) index.set(sectorDay, intervals);
       }
     } catch {
       // The independent verifier explains invalid clocks; this view never invents their attendance.

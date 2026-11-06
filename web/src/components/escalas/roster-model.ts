@@ -1,4 +1,5 @@
 import { sameDraft } from "./draft-persistence";
+import { buildCoveragePresence } from "@/lib/escalas/coverage-presence";
 import { addDays, isDate } from "@/lib/escalas/dates";
 import type { EscalaAssignment, EscalaInput, EscalaIssue } from "@/lib/escalas/types";
 import { validateEscala } from "@/lib/escalas/validation";
@@ -60,8 +61,9 @@ export function rosterCoverageIssues(input: EscalaInput, dates: string[], sector
   const days = new Set(dates);
   const demands = input.demands.filter((demand) => days.has(demand.date) && (!sector || demand.sector === sector));
   if (!demands.length) return [];
+  const presence = buildCoveragePresence(input);
   return [...new Set(demands.map((demand) => demand.sector))].flatMap((value) =>
-    validateCoverage({ ...input, demands: demands.filter((demand) => demand.sector === value) }).issues
+    validateCoverage({ ...input, demands: demands.filter((demand) => demand.sector === value) }, presence).issues
       .filter((issue) => issue.code === "COVERAGE_DEFICIT" || issue.code === "ESTIMATED_COVERAGE_GAP")
       .map((issue) => ({ ...issue, sector: value })),
   );

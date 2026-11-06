@@ -93,11 +93,10 @@ export function validateUntimedDuty(input: EscalaInput, assignment: EscalaAssign
   return issues;
 }
 
-export function validateCoverage(input: EscalaInput): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
+export function validateCoverage(input: EscalaInput, presence = buildCoveragePresence(input)): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
   const issues: EscalaIssue[] = [];
   let minimumCoverageMargin: number | null = null;
   const visible = new Set(visibleDates(input));
-  const presence = buildCoveragePresence(input);
   const timelines = new Map<string, ReturnType<typeof coverageTimeline>>();
   for (const demand of input.demands) {
     const key = demand.date + "\0" + demand.sector;

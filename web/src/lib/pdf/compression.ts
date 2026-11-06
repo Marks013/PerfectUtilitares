@@ -1,6 +1,6 @@
 // PERFECT_PDF_FULL32_V2_2
 // PERFECT_PDF_ADAPTIVE_V4_2
-import { copyFile, rm, stat } from "node:fs/promises";
+import { copyFile, rename, rm, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { analyzePdfCompressionProfile } from "./compression-analyzer";
 import { withRasterCompressionSlot } from "./compression-concurrency";
@@ -216,7 +216,8 @@ async function selectCandidateOrOriginal({
       selectedCandidate: null,
     };
   }
-  await copyFile(best.candidate.path, destinationPath);
+  // Generated candidates are disposable siblings of the reserved output.
+  await rename(best.candidate.path, destinationPath);
   return {
     outcome: "COMPRESSED" as const,
     selectedCandidate: best.candidate,
