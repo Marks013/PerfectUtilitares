@@ -93,7 +93,7 @@ export function validateUntimedDuty(input: EscalaInput, assignment: EscalaAssign
   return issues;
 }
 
-export function validateCoverage(input: EscalaInput, _journeys: WorkJourney[]): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
+export function validateCoverage(input: EscalaInput): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
   const issues: EscalaIssue[] = [];
   let minimumCoverageMargin: number | null = null;
   const visible = new Set(visibleDates(input));

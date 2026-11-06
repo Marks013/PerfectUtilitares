@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import sharp from "sharp";
+import sharp, { type Sharp } from "sharp";
 import {
   PHOTO_CONTENT_TYPES,
   type CropArea,
@@ -12,6 +12,11 @@ export const MAX_BATCH_BYTES = 40 * 1024 * 1024;
 export const MAX_BATCH_FILES = 30;
 
 const MAX_INPUT_PIXELS = 48_000_000;
+const PHOTO_INPUT_OPTIONS = {
+  animated: false,
+  failOn: "error",
+  limitInputPixels: MAX_INPUT_PIXELS,
+} as const;
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -177,20 +182,20 @@ function clampCrop(crop: CropArea, width: number, height: number) {
   return { left, top, width: cropWidth, height: cropHeight };
 }
 
+function unreadableImageError() {
+  return new PhotoProcessingError(
+    "INVALID_IMAGE",
+    "Não foi possível ler a imagem. Verifique se o arquivo não está corrompido e está em JPG, PNG ou WEBP.",
+  );
+}
+
 async function normalizeInput(input: PhotoInput) {
   try {
-    return await sharp(input.buffer, {
-      animated: false,
-      failOn: "error",
-      limitInputPixels: MAX_INPUT_PIXELS,
-    })
+    return await sharp(input.buffer, PHOTO_INPUT_OPTIONS)
       .rotate()
       .toBuffer({ resolveWithObject: true });
   } catch {
-    throw new PhotoProcessingError(
-      "INVALID_IMAGE",
-      "Não foi possível ler a imagem. Verifique se o arquivo não está corrompido e está em JPG, PNG ou WEBP.",
-    );
+    throw unreadableImageError();
   }
 }
 
@@ -202,17 +207,15 @@ export async function processPhoto(
   validateInput(input);
   const output = resolvePhotoOutput(input, settings);
 
-  const normalized = await normalizeInput(input);
-  let pipeline = sharp(normalized.data, {
-    animated: false,
-    failOn: "error",
-    limitInputPixels: MAX_INPUT_PIXELS,
-  });
-
+  let pipeline: Sharp;
   if (crop) {
-    pipeline = pipeline.extract(
+    // Manual crop coordinates refer to the fully oriented image.
+    const normalized = await normalizeInput(input);
+    pipeline = sharp(normalized.data, PHOTO_INPUT_OPTIONS).extract(
       clampCrop(crop, normalized.info.width, normalized.info.height),
     );
+  } else {
+    pipeline = sharp(input.buffer, PHOTO_INPUT_OPTIONS).autoOrient();
   }
 
   pipeline = pipeline.resize(settings.width, settings.height, {
@@ -249,6 +252,12 @@ export async function processPhoto(
     });
   }
 
+  const buffer = await pipeline.toBuffer().catch((error: unknown) => {
+    // Without a manual crop, input decoding occurs in the final pipeline.
+    if (!crop) throw unreadableImageError();
+    throw error;
+  });
+
   return {
     fileName: sanitizePhotoFileName(
       input.name,
@@ -256,7 +265,7 @@ export async function processPhoto(
       settings.replaceOriginal,
     ),
     contentType: PHOTO_CONTENT_TYPES[output.format],
-    buffer: await pipeline.toBuffer(),
+    buffer,
     width: settings.addBorder
       ? settings.width + settings.borderWidth * 2
       : settings.width,

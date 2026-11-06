@@ -10,6 +10,7 @@ import sharp from "sharp";
 import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import { renderPdfPageToPng } from "@/lib/pdf/render";
 import { PdfToolError } from "./compression-types";
+import { throwIfPdfExecutionAborted } from "./execution-abort";
 
 type SemanticFingerprint = {
   text: string;
@@ -165,22 +166,26 @@ async function normalizeAnnotations(
 }
 
 async function pdfJsFingerprint(path: string) {
+  throwIfPdfExecutionAborted();
   const bytes = new Uint8Array(await readFile(path));
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  throwIfPdfExecutionAborted();
   const loadingTask = pdfjs.getDocument(pdfJsServerDocumentOptions(bytes));
-  const document = await loadingTask.promise;
-  const resolver =
-    document as unknown as PdfJsDestinationResolver;
-  const text: string[] = [];
-  const annotations: unknown[][] = [];
   try {
+    const document = await loadingTask.promise;
+    const resolver = document as unknown as PdfJsDestinationResolver;
+    const text: string[] = [];
+    const annotations: unknown[][] = [];
     for (let index = 1; index <= document.numPages; index += 1) {
+      throwIfPdfExecutionAborted();
       const page = await document.getPage(index);
       try {
+        throwIfPdfExecutionAborted();
         const [content, pageAnnotations] = await Promise.all([
           page.getTextContent(),
           page.getAnnotations({ intent: "display" }),
         ]);
+        throwIfPdfExecutionAborted();
         text.push(
           normalized(
             content.items
@@ -197,13 +202,21 @@ async function pdfJsFingerprint(path: string) {
         page.cleanup();
       }
     }
+    throwIfPdfExecutionAborted();
+    const outline = await document.getOutline();
+    throwIfPdfExecutionAborted();
     return {
       text: text.join("\n"),
-      outline: await normalizeOutline(resolver, await document.getOutline()),
+      outline: await normalizeOutline(resolver, outline),
       annotations,
     };
   } finally {
-    await loadingTask.destroy();
+    try {
+      await loadingTask.destroy();
+    } finally {
+      // A falha de encerramento não deve substituir a causa do cancelamento.
+      throwIfPdfExecutionAborted();
+    }
   }
 }
 
@@ -388,7 +401,9 @@ async function validateLossyVisual(inputPath: string, candidatePath: string) {
 }
 
 async function fingerprint(path: string): Promise<SemanticFingerprint> {
-  const pdf = await PDFDocument.load(await readFile(path), {
+  const bytes = await readFile(path);
+  throwIfPdfExecutionAborted();
+  const pdf = await PDFDocument.load(bytes, {
     updateMetadata: false,
   });
   const pdfjs = await pdfJsFingerprint(path);
@@ -416,15 +431,20 @@ export async function validateSemanticCandidate(
   candidatePath: string,
   options: { visual?: boolean } = {},
 ) {
+  throwIfPdfExecutionAborted();
   await validateGeometry(inputPath, candidatePath);
+  throwIfPdfExecutionAborted();
   if (options.visual !== false) {
     await validateLossyVisual(inputPath, candidatePath);
+    throwIfPdfExecutionAborted();
   }
 
   // Sequencial de propósito: PDFs podem ter até 100 MB e dois fingerprints
   // simultâneos elevam desnecessariamente o pico de memória do worker.
   const source = await fingerprint(inputPath);
+  throwIfPdfExecutionAborted();
   const candidate = await fingerprint(candidatePath);
+  throwIfPdfExecutionAborted();
 
   if (source.text && source.text !== candidate.text) {
     throw new PdfToolError(

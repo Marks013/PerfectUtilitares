@@ -1,11 +1,17 @@
 import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
-import { absoluteMinute } from "./dates";
+import { absoluteMinute, dateRange, visibleDates } from "./dates";
 import { escalaInputSchema } from "./schema";
 import { sortEmployees } from "./order";
 import { fixedBoundaryReservations } from "./boundary";
 import { validateEmployee } from "./validation-employee";
 import { validateCoverage, validateJourney, validateUntimedDuty, workJourney, type WorkJourney } from "./validation-time";
 import { CCT_FROM, CCT_UNTIL, SUPERMARKET_CCT, transitionWeeks } from "./labor-rules";
+
+function addEmployeeEntry<T>(index: Map<string, T[]>, employeeId: string, value: T) {
+  const entries = index.get(employeeId);
+  if (entries) entries.push(value);
+  else index.set(employeeId, [value]);
+}
 
 /** Recalculates from assignments, without trusting optimizer totals or feasibility. */
 export function validateEscala(rawInput: EscalaInput): EscalaValidation {
@@ -43,7 +49,7 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
     civilMinutes.set(key, instant);
     return instant;
   };
-  const journeys: WorkJourney[] = [];
+  const journeysByEmployee = new Map<string, WorkJourney[]>();
   const prior = input.employees.flatMap((person) => {
     const records = new Map([...(person.planningHistory ?? []), ...person.history, ...(person.planningFuture ?? [])].map((item) => [item.date, item]));
     return [...records.values()];
@@ -56,7 +62,7 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
     if (!shift) continue; // Schema reports every unresolved reference.
     try {
       const journey = workJourney(assignment, shift, toAbsoluteMinute);
-      journeys.push(journey);
+      addEmployeeEntry(journeysByEmployee, assignment.employeeId, journey);
       if (assignment.date >= input.startDate && assignment.date <= input.endDate) issues.push(...validateJourney(input, journey, toAbsoluteMinute));
       else if (assignment.date < input.startDate && journey.occupiedDates.some((day) => day >= input.startDate && day <= input.endDate)) {
         issues.push(...validateJourney(input, journey, toAbsoluteMinute).filter((issue) => (issue.code === "CLOSED_DATE" || issue.code === "HOLIDAY_WORK") && issue.date && issue.date >= input.startDate && issue.date <= input.endDate));
@@ -66,7 +72,19 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
     }
   }
   const boundaryReservations = fixedBoundaryReservations(input);
-  const results = sortEmployees(input.employees).map((person) => validateEmployee(input, person, journeys, boundaryReservations));
+  const assignmentsByEmployee = new Map<string, EscalaInput["assignments"]>();
+  const reservationsByEmployee = new Map<string, EscalaInput["assignments"]>();
+  for (const assignment of input.assignments) addEmployeeEntry(assignmentsByEmployee, assignment.employeeId, assignment);
+  for (const reservation of boundaryReservations) addEmployeeEntry(reservationsByEmployee, reservation.employeeId, reservation);
+  const days = dateRange(input.startDate, input.endDate);
+  const visible = new Set(visibleDates(input));
+  const weekByDate = new Map(days.map((day, index) => [day, days[index - index % 7]]));
+  const results = sortEmployees(input.employees).map((person) => validateEmployee(input, person, {
+    current: assignmentsByEmployee.get(person.id) ?? [],
+    journeys: journeysByEmployee.get(person.id) ?? [],
+    reservations: reservationsByEmployee.get(person.id) ?? [],
+    days, visible, weekByDate,
+  }));
   issues.push(...results.flatMap((result) => result.issues));
   if (input.simulation) {
     const evidencePending = new Set(["COMPENSATION_REQUIRED", "COLLECTIVE_AGREEMENT_REQUIRED", "HOLIDAY_WORK", "CCT_SUNDAY_CERTIFICATE", "CCT_HOLIDAY_CERTIFICATE", "CCT_NIGHT_CERTIFICATE"]);
@@ -76,7 +94,7 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
     code: "SHORT_REFERENCE_PRESERVED", severity: "PENDING", employeeId: person.id,
     message: "Referência curta preservada na simulação, sem ampliação automática. A carga contratual individual não consta no arquivo e precisa de conferência antes da aplicação.",
   });
-  const coverage = validateCoverage(input, journeys);
+  const coverage = validateCoverage(input);
   issues.push(...coverage.issues);
   return {
     valid: !issues.some((issue) => issue.severity === "ERROR"), readyToPublish: !issues.some((issue) => issue.severity !== "WARNING"),

@@ -1,5 +1,4 @@
-import { addDays, dateRange, dayOfWeek, weekStart, visibleDates } from "./dates";
-import { fixedBoundaryReservations } from "./boundary";
+import { addDays, dateRange, dayOfWeek } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, effectiveWorkDayLimit } from "./labor-rules";
@@ -8,20 +7,35 @@ function isActive(person: EscalaEmployee, day: string): boolean {
   return day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil);
 }
 
-export function validateEmployee(input: EscalaInput, person: EscalaEmployee, journeys: WorkJourney[], reservations: EscalaAssignment[] = fixedBoundaryReservations(input)): { issues: EscalaIssue[]; summary: EscalaEmployeeSummary } {
+type EmployeeValidationContext = {
+  current: readonly EscalaAssignment[];
+  journeys: readonly WorkJourney[];
+  reservations: readonly EscalaAssignment[];
+  days: readonly string[];
+  visible: ReadonlySet<string>;
+  weekByDate: ReadonlyMap<string, string>;
+};
+
+export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { current, journeys, reservations, days, visible, weekByDate }: EmployeeValidationContext): { issues: EscalaIssue[]; summary: EscalaEmployeeSummary } {
   const issues: EscalaIssue[] = [];
   const issue = (code: string, message: string, date?: string, severity: EscalaIssue["severity"] = "ERROR") => issues.push({ code, message, severity, employeeId: person.id, ...(date ? { date } : {}) });
-  const current = input.assignments.filter((assignment) => assignment.employeeId === person.id);
   const all = [...new Map([...(person.planningHistory ?? []), ...person.history, ...current, ...(person.planningFuture ?? [])].map((item) => [item.date, item])).values()].sort((left, right) => left.date.localeCompare(right.date));
   const byDate = new Map(all.map((assignment) => [assignment.date, assignment]));
-  const reservedOffDates = new Set(reservations.filter((assignment) => assignment.employeeId === person.id).map((assignment) => assignment.date));
-  const currentWork = journeys.filter((journey) => journey.assignment.employeeId === person.id && journey.assignment.date >= input.startDate && journey.assignment.date <= input.endDate);
+  const reservedOffDates = new Set(reservations.map((assignment) => assignment.date));
   const untimed = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
-  const visible = new Set(visibleDates(input));
+  const minutesByWeek = new Map<string, number>();
+  let workedMinutes = 0;
+  for (const journey of journeys) {
+    const date = journey.assignment.date;
+    const week = weekByDate.get(date);
+    if (!week) continue;
+    minutesByWeek.set(week, (minutesByWeek.get(week) ?? 0) + journey.minutes);
+    if (!untimed && visible.has(date)) workedMinutes += journey.minutes;
+  }
   const monthly = current.filter((assignment) => visible.has(assignment.date));
-  const allWork = journeys.filter((journey) => journey.assignment.employeeId === person.id).sort((left, right) => left.start - right.start);
+  const allWork = [...journeys].sort((left, right) => left.start - right.start);
   const summary: EscalaEmployeeSummary = {
-    employeeId: person.id, workedMinutes: untimed ? 0 : currentWork.filter((journey) => visible.has(journey.assignment.date)).reduce((sum, journey) => sum + journey.minutes, 0),
+    employeeId: person.id, workedMinutes,
     workDays: monthly.filter((assignment) => assignment.kind === "WORK" || assignment.kind === "DUTY").length,
     offDays: monthly.filter((assignment) => assignment.kind === "OFF").length,
     maxStreak: 0, sundaysWorked: 0,
@@ -47,7 +61,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
   for (const assignment of all) {
     if (!isActive(person, assignment.date)) issue("OUTSIDE_EMPLOYMENT", "Atribuição fora do período de vínculo.", assignment.date);
   }
-  for (const day of dateRange(input.startDate, input.endDate)) {
+  for (const day of days) {
     if (!isActive(person, day)) continue;
     const assignment = byDate.get(day);
     if (!assignment) {
@@ -115,13 +129,12 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, jou
     issues.push({ code: "EMPLOYMENT_AVAILABILITY", severity: "WARNING", employeeId: person.id, date: first, periodEnd: last,
       message: `Disponível neste planejamento de ${formatDate(first)} a ${formatDate(last)} por ${cause}. Fora dessas datas não há vínculo ativo; isso não significa contrato com jornada reduzida. Nas semanas de admissão ou desligamento não se exige a jornada semanal integral. Nenhuma ação é necessária se as datas estiverem corretas.` });
   }
-  for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) {
-    const days = dateRange(start, addDays(start, 6));
-    const active = days.filter((day) => isActive(person, day));
+  for (let index = 0; index < days.length; index += 7) {
+    const start = days[index];
+    const active = days.slice(index, index + 7).filter((day) => isActive(person, day));
     if (!active.length) continue;
     const entries = active.map((day) => byDate.get(day));
-    const weeklyWork = currentWork.filter((journey) => weekStart(journey.assignment.date) === start);
-    const minutes = weeklyWork.reduce((sum, journey) => sum + journey.minutes, 0);
+    const minutes = minutesByWeek.get(start) ?? 0;
     const target = effectiveWeeklyMinutes(person, start) / 60;
     if (!untimed && target > input.policy.weeklyLimit) issue("CONTRACT_LIMIT", "Carga contratual efetiva superior ao limite normativo cadastrado.", start);
     if (!untimed && (minutes > target * 60 || minutes > input.policy.weeklyLimit * 60)) issue("WEEKLY_LIMIT", `Semana com ${minutes} minutos excede a carga efetiva ou normativa; alvo de ${target * 60} minutos.`, start);

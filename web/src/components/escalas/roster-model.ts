@@ -2,7 +2,7 @@ import { sameDraft } from "./draft-persistence";
 import { addDays, isDate } from "@/lib/escalas/dates";
 import type { EscalaAssignment, EscalaInput, EscalaIssue } from "@/lib/escalas/types";
 import { validateEscala } from "@/lib/escalas/validation";
-import { validateCoverage, workJourney } from "@/lib/escalas/validation-time";
+import { validateCoverage } from "@/lib/escalas/validation-time";
 
 export type RosterDay = { employeeId: string; date: string };
 export type RosterCoverageIssue = EscalaIssue & { sector: string };
@@ -60,21 +60,8 @@ export function rosterCoverageIssues(input: EscalaInput, dates: string[], sector
   const days = new Set(dates);
   const demands = input.demands.filter((demand) => days.has(demand.date) && (!sector || demand.sector === sector));
   if (!demands.length) return [];
-  const starts = new Set(dates.flatMap((day) => [addDays(day, -1), day]));
-  const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
-  const people = new Map(input.employees.map((person) => [person.id, person]));
-  const records = new Map(input.employees.flatMap((person) => [
-    ...(person.planningHistory ?? []), ...person.history,
-  ]).concat(input.assignments).map((day) => [key(day), day]));
-  const journeys = [...records.values()].flatMap((day) => {
-    const person = people.get(day.employeeId);
-    if (day.kind !== "WORK" || !starts.has(day.date) || person?.planningEnabled === false
-      || person?.scheduleMode === "UNTIMED" || person?.scheduleMode === "MISSING") return [];
-    const shift = shifts.get(day.shiftId ?? "");
-    return shift ? [workJourney(day, shift)] : [];
-  });
   return [...new Set(demands.map((demand) => demand.sector))].flatMap((value) =>
-    validateCoverage({ ...input, demands: demands.filter((demand) => demand.sector === value) }, journeys).issues
+    validateCoverage({ ...input, demands: demands.filter((demand) => demand.sector === value) }).issues
       .filter((issue) => issue.code === "COVERAGE_DEFICIT" || issue.code === "ESTIMATED_COVERAGE_GAP")
       .map((issue) => ({ ...issue, sector: value })),
   );

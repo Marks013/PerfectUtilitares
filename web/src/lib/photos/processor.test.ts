@@ -89,6 +89,70 @@ describe("photo processor", () => {
     },
   );
 
+  it.each([
+    { orientation: 2, cornerColors: ["green", "red", "yellow", "blue"] },
+    { orientation: 6, cornerColors: ["blue", "red", "yellow", "green"] },
+  ])("applies EXIF orientation $orientation to the pixels", async ({ orientation, cornerColors }) => {
+    const colors: Record<string, [number, number, number]> = {
+      red: [255, 0, 0],
+      green: [0, 255, 0],
+      blue: [0, 0, 255],
+      yellow: [255, 255, 0],
+    };
+    const width = orientation === 6 ? 160 : 120;
+    const height = orientation === 6 ? 120 : 160;
+    const source = Buffer.alloc(width * height * 3);
+    const top = [colors.red, colors.green];
+    const bottom = [colors.blue, colors.yellow];
+    for (let y = 0; y < height; y += 1) {
+      const row = y < height / 2 ? top : bottom;
+      for (let x = 0; x < width; x += 1) {
+        const color = x < width / 2 ? row[0] : row[1];
+        source.set(color, (y * width + x) * 3);
+      }
+    }
+    const input = await sharp(source, { raw: { width, height, channels: 3 } })
+      .withMetadata({ orientation })
+      .jpeg({ quality: 95 })
+      .toBuffer();
+    const photo = await processPhoto(
+      { name: "foto.jpg", type: "image/jpeg", buffer: input },
+      { ...settings, width: 60, height: 80, format: "png" },
+    );
+
+    const decoded = sharp(photo.buffer);
+    expect((await decoded.metadata()).orientation).toBeUndefined();
+    const { data, info } = await decoded.raw().toBuffer({ resolveWithObject: true });
+    expect(info).toMatchObject({ width: 60, height: 80, channels: 3 });
+    const corners = [[8, 8], [51, 8], [8, 71], [51, 71]];
+    corners.forEach(([x, y], index) => {
+      const start = (y * info.width + x) * info.channels;
+      const expected = colors[cornerColors[index]];
+      expected.forEach((channel, position) => {
+        expect(Math.abs(data[start + position] - channel)).toBeLessThan(8);
+      });
+    });
+  });
+
+  it("preserves PNG transparency when resizing without a manual crop", async () => {
+    const input = await sharp({
+      create: {
+        width: 120,
+        height: 160,
+        channels: 4,
+        background: { r: 80, g: 160, b: 220, alpha: 0.5 },
+      },
+    }).png().toBuffer();
+    const photo = await processPhoto(
+      { name: "foto.png", type: "image/png", buffer: input },
+      { ...settings, width: 60, height: 80 },
+    );
+
+    const { data, info } = await sharp(photo.buffer).raw().toBuffer({ resolveWithObject: true });
+    expect(info).toMatchObject({ width: 60, height: 80, channels: 4 });
+    expect(data[3]).toBe(128);
+  });
+
   it("rejects valid JPEG bytes declared as PNG", async () => {
     await expect(
       processPhoto(
