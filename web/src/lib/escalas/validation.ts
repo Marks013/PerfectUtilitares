@@ -1,4 +1,5 @@
 import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
+import { absoluteMinute } from "./dates";
 import { escalaInputSchema } from "./schema";
 import { sortEmployees } from "./order";
 import { fixedBoundaryReservations } from "./boundary";
@@ -32,6 +33,16 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
     if (input.policy.holidayRestAllowed) issues.push({ code: "CCT_HOLIDAY_REST", severity: "ERROR", message: "A cláusula 29 da CCT de supermercados veda compensar o DSR em feriado." });
   }
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
+  // Employees sharing a shift on the same date use the same timezone conversions.
+  const civilMinutes = new Map<string, number>();
+  const toAbsoluteMinute: typeof absoluteMinute = (date, minute) => {
+    const key = `${date}:${minute}`;
+    const cached = civilMinutes.get(key);
+    if (cached !== undefined) return cached;
+    const instant = absoluteMinute(date, minute);
+    civilMinutes.set(key, instant);
+    return instant;
+  };
   const journeys: WorkJourney[] = [];
   const prior = input.employees.flatMap((person) => {
     const records = new Map([...(person.planningHistory ?? []), ...person.history, ...(person.planningFuture ?? [])].map((item) => [item.date, item]));
@@ -44,11 +55,11 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
     const shift = shifts.get(assignment.shiftId ?? "");
     if (!shift) continue; // Schema reports every unresolved reference.
     try {
-      const journey = workJourney(assignment, shift);
+      const journey = workJourney(assignment, shift, toAbsoluteMinute);
       journeys.push(journey);
-      if (assignment.date >= input.startDate && assignment.date <= input.endDate) issues.push(...validateJourney(input, journey));
+      if (assignment.date >= input.startDate && assignment.date <= input.endDate) issues.push(...validateJourney(input, journey, toAbsoluteMinute));
       else if (assignment.date < input.startDate && journey.occupiedDates.some((day) => day >= input.startDate && day <= input.endDate)) {
-        issues.push(...validateJourney(input, journey).filter((issue) => (issue.code === "CLOSED_DATE" || issue.code === "HOLIDAY_WORK") && issue.date && issue.date >= input.startDate && issue.date <= input.endDate));
+        issues.push(...validateJourney(input, journey, toAbsoluteMinute).filter((issue) => (issue.code === "CLOSED_DATE" || issue.code === "HOLIDAY_WORK") && issue.date && issue.date >= input.startDate && issue.date <= input.endDate));
       }
     } catch {
       issues.push({ code: "CIVIL_TIME_INVALID", severity: "ERROR", employeeId: assignment.employeeId, date: assignment.date, message: "Horário inválido na transição do fuso; confira as datas e os horários reais." });

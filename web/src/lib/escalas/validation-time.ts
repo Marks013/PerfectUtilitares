@@ -17,7 +17,7 @@ function paidMinutes(shift: EscalaShift): number {
   return shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 }
 
-export function workJourney(assignment: EscalaAssignment, shift: EscalaShift): WorkJourney {
+export function workJourney(assignment: EscalaAssignment, shift: EscalaShift, toAbsoluteMinute = absoluteMinute): WorkJourney {
   const paid = shift.segments.filter((segment) => segment.kind !== "BREAK");
   const occupied = new Set<string>();
   for (const segment of paid) {
@@ -25,11 +25,11 @@ export function workJourney(assignment: EscalaAssignment, shift: EscalaShift): W
   }
   return {
     assignment, shift,
-    start: absoluteMinute(assignment.date, paid[0].start),
-    end: absoluteMinute(assignment.date, paid.at(-1)?.end ?? paid[0].end),
+    start: toAbsoluteMinute(assignment.date, paid[0].start),
+    end: toAbsoluteMinute(assignment.date, paid.at(-1)?.end ?? paid[0].end),
     minutes: paidMinutes(shift),
     coverage: shift.segments.filter((segment) => segment.kind === "WORK").map((segment) => ({
-      start: absoluteMinute(assignment.date, segment.start), end: absoluteMinute(assignment.date, segment.end),
+      start: toAbsoluteMinute(assignment.date, segment.start), end: toAbsoluteMinute(assignment.date, segment.end),
     })),
     occupiedDates: [...occupied].sort(),
   };
@@ -41,7 +41,7 @@ function isNightShift(shift: EscalaShift): boolean {
   ));
 }
 
-export function validateJourney(input: EscalaInput, journey: WorkJourney): EscalaIssue[] {
+export function validateJourney(input: EscalaInput, journey: WorkJourney, toAbsoluteMinute = absoluteMinute): EscalaIssue[] {
   const { assignment, shift, minutes } = journey;
   const issues: EscalaIssue[] = [];
   const issue = (code: string, message: string, severity: EscalaIssue["severity"] = "ERROR", date = assignment.date) => issues.push({ code, message, severity, employeeId: assignment.employeeId, date });
@@ -73,7 +73,7 @@ export function validateJourney(input: EscalaInput, journey: WorkJourney): Escal
     if (input.policy.holidayDates.includes(day) && !input.policy.authorizedHolidayDates.includes(day)) issue("HOLIDAY_WORK", `Trabalho em feriado sem autorização registrada: ${day}.`, "ERROR", day);
     if (!certificateAuthorizes(input.policy, day, "sundays") && dayOfWeek(day) === 6) issue("CCT_SUNDAY_CERTIFICATE", "Domingo sem certidão sindical prévia conferida e válida para a filial (cláusula 46).", "ERROR", day);
     if (!certificateAuthorizes(input.policy, day, "holidays") && input.policy.holidayDates.includes(day)) issue("CCT_HOLIDAY_CERTIFICATE", "Feriado sem certidão sindical prévia conferida e válida para a filial (cláusula 46).", "ERROR", day);
-    const offset = Math.round((absoluteMinute(day, 0) - absoluteMinute(assignment.date, 0)) / 1440) * 1440;
+    const offset = Math.round((toAbsoluteMinute(day, 0) - toAbsoluteMinute(assignment.date, 0)) / 1440) * 1440;
     const after20 = shift.segments.some((segment) => segment.kind !== "BREAK" && segment.start < offset + 1440 && segment.end > offset + 1200);
     if (after20 && (minutes > 480 || isNightShift(shift)) && !certificateAuthorizes(input.policy, day, "after20")) issue("CCT_NIGHT_CERTIFICATE", "Prorrogação ou trabalho noturno após 20h exige a certidão sindical prévia e revisão do regime (cláusula 46).", "ERROR", day);
     if (input.policy.normativeProfile === SUPERMARKET_CCT && ["12-25", "01-01", "05-01"].includes(day.slice(5))) issue("CCT_PUBLIC_SERVICE_PENDING", "A CCT veda atendimento ao público nesta data. Trabalho interno exige classificação e conferência específica, ainda não representada; não foi presumido fechamento de todo trabalho.", "PENDING", day);

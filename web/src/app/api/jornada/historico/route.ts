@@ -12,10 +12,10 @@ import {
   requireSameOrigin,
   requireSession,
 } from "@/lib/api/security";
+import { getJornadaHistoryRetentionCutoff } from "@/lib/jornada/history-retention";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
-const HISTORY_RETENTION_DAYS = 30;
 const HISTORY_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
 let nextHistoryCleanupAt = 0;
 let historyCleanupPending = false;
@@ -78,9 +78,7 @@ export async function GET(request: Request) {
     return jsonError(403, "FORBIDDEN", "Sem permissão");
   }
 
-  const retentionLimit = new Date(
-    Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-  );
+  const retentionLimit = getJornadaHistoryRetentionCutoff();
   const historico = await prisma.jornadaValidation.findMany({
     where: {
       createdAt: { gte: retentionLimit },

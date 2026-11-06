@@ -13,6 +13,10 @@ export const MAX_BATCH_FILES = 30;
 
 const MAX_INPUT_PIXELS = 48_000_000;
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const RIFF_SIGNATURE = Buffer.from("RIFF");
+const WEBP_SIGNATURE = Buffer.from("WEBP");
 const MIME_OUTPUT_FORMATS: Record<string, PhotoOutputFormat> = {
   "image/jpeg": "jpeg",
   "image/png": "png",
@@ -110,6 +114,22 @@ function sanitizePhotoFileName(
     : `${safeBase}_editado.${safeExtension}`;
 }
 
+function matchesImageSignature({ type, buffer }: PhotoInput) {
+  switch (type) {
+    case "image/jpeg":
+      return buffer.subarray(0, JPEG_SIGNATURE.length).equals(JPEG_SIGNATURE);
+    case "image/png":
+      return buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+    case "image/webp":
+      return (
+        buffer.subarray(0, 4).equals(RIFF_SIGNATURE) &&
+        buffer.subarray(8, 12).equals(WEBP_SIGNATURE)
+      );
+    default:
+      return false;
+  }
+}
+
 function validateInput(input: PhotoInput) {
   if (!isAcceptedImageType(input.type)) {
     throw new PhotoProcessingError(
@@ -131,6 +151,13 @@ function validateInput(input: PhotoInput) {
       `A imagem ultrapassa o limite de ${Math.floor(
         MAX_IMAGE_BYTES / 1024 / 1024,
       )}MB. Reduza o arquivo ou selecione outra foto.`,
+    );
+  }
+
+  if (!matchesImageSignature(input)) {
+    throw new PhotoProcessingError(
+      "INVALID_IMAGE_TYPE",
+      "O conteúdo não corresponde ao formato informado. Salve a foto como JPG, PNG ou WEBP e envie novamente.",
     );
   }
 }

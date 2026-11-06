@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // PERFECT_PDF_FULL32_V2_2
 
 const mocks = vi.hoisted(() => ({
@@ -88,6 +88,7 @@ import {
   rasterizePdfForCompression,
 } from "@/lib/pdf/compression";
 import { analyzePdfCompressionProfile } from "@/lib/pdf/compression-analyzer";
+import { validateSemanticCandidate } from "@/lib/pdf/compression-semantic";
 
 function compressionOptions(
   method: PdfCompressionEffectiveOptions["method"],
@@ -206,6 +207,10 @@ beforeEach(() => {
   mocks.pdfCreate.mockResolvedValue({});
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("PDF compression control paths", () => {
   it("honors explicit visual settings over a smaller non-visual candidate", async () => {
     const { pdfCompressionOptionsSchema } = await import("./schema");
@@ -294,6 +299,64 @@ describe("PDF compression control paths", () => {
       outcome: "COMPRESSED",
       selectedCandidate: { kind: "JPEG_XOBJECT_RECOMPRESSION" },
       preservation: { semanticValidated: true },
+    });
+  });
+
+  it.each([
+    { structuralSize: 1_000, eligible: false },
+    { structuralSize: 995, eligible: false },
+    { structuralSize: 900, eligible: true },
+  ])("checks structural fallback only when eligible ($structuralSize bytes)", async ({
+    structuralSize,
+    eligible,
+  }) => {
+    vi.stubEnv("PDF_COMPRESSION_MIN_SAVINGS_RATIO", "0.005");
+    mockQpdfClose(0); // JPEG recompression: no savings.
+    mockQpdfClose(0); // qpdf image optimization: no savings.
+    mockQpdfClose(1); // Ghostscript: no candidate.
+    mockQpdfClose(0); // qpdf structural fallback.
+    const inputPath = "/tmp/input.pdf";
+    const structuralPath = "/tmp/output.partial.structural.pdf";
+    mocks.stat.mockImplementation(async (filePath: string) => ({
+      size: filePath === structuralPath ? structuralSize : 1_000,
+    }));
+    mocks.pdfLoad.mockResolvedValue(pdfDocument([pdfPage()]));
+    if (eligible) {
+      const image = {
+        flatten: vi.fn().mockReturnThis(),
+        resize: vi.fn().mockReturnThis(),
+        removeAlpha: vi.fn().mockReturnThis(),
+        raw: vi.fn().mockReturnThis(),
+        toBuffer: vi.fn().mockResolvedValue(Buffer.from([255, 255, 255])),
+      };
+      mocks.render.mockResolvedValueOnce(Buffer.from("PNG"));
+      mocks.render.mockResolvedValueOnce(Buffer.from("PNG"));
+      mocks.sharp.mockReturnValueOnce(image).mockReturnValueOnce(image);
+    }
+
+    const result = await compressPdfFile({
+      inputStorageKey: "jobs/job-1/input.pdf",
+      jobId: "job-1",
+      options: compressionOptions("AUTO"),
+      outputName: "compressed.pdf",
+    });
+
+    expect(mocks.spawn.mock.calls.map(([tool]) => tool)).toEqual([
+      "python3",
+      "qpdf",
+      "gs",
+      "qpdf",
+    ]);
+    expect(mocks.render).toHaveBeenCalledTimes(eligible ? 2 : 0);
+    expect(validateSemanticCandidate).toHaveBeenCalledTimes(eligible ? 1 : 0);
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      eligible ? structuralPath : inputPath,
+      "/tmp/output.partial",
+    );
+    expect(result).toMatchObject({
+      outcome: eligible ? "COMPRESSED" : "UNCHANGED",
+      selectedCandidate: eligible ? { kind: "STRUCTURAL" } : null,
+      preservation: { semanticValidated: eligible },
     });
   });
 

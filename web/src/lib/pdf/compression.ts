@@ -377,17 +377,29 @@ export async function compressPdfFile({
       if (!(await hasPreferredImageCandidate(inputPath, candidates))) {
         try {
           await optimizePdfStructure(inputPath, structuralPath);
-          await validateStructuralCandidate(inputPath, structuralPath);
-          await validateSemanticCandidate(inputPath, structuralPath, {
-            visual: false,
-          });
-          candidates.push(
-            genericCandidate(
-              structuralPath,
-              "STRUCTURAL",
-              "Compactação estrutural lossless com qpdf.",
-            ),
+          const structuralCandidate = genericCandidate(
+            structuralPath,
+            "STRUCTURAL",
+            "Compactação estrutural lossless com qpdf.",
           );
+          const [input, output] = await Promise.all([
+            stat(inputPath),
+            stat(structuralPath),
+          ]);
+          // A fallback below the selection threshold cannot win.
+          if (
+            hasRequiredPdfSavings(
+              input.size,
+              output.size,
+              minimumSavingsRatioForCandidate(structuralCandidate),
+            )
+          ) {
+            await validateStructuralCandidate(inputPath, structuralPath);
+            await validateSemanticCandidate(inputPath, structuralPath, {
+              visual: false,
+            });
+            candidates.push(structuralCandidate);
+          }
         } catch {
           throwIfPdfExecutionAborted();
           // O candidato estrutural é opcional.

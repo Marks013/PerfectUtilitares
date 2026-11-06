@@ -10,6 +10,7 @@ import {
   requireSameOrigin,
   requireSession,
 } from "@/lib/api/security";
+import { getJornadaHistoryRetentionCutoff } from "@/lib/jornada/history-retention";
 import { generateJornadaHistoryPdf } from "@/lib/jornada/pdf";
 import { prisma } from "@/lib/prisma";
 
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
     where: {
       id: { in: ids },
       valido: true,
+      createdAt: { gte: getJornadaHistoryRetentionCutoff() },
       ...(guard.session.user.role === "ADMIN"
         ? {}
         : { userId: guard.session.user.id }),

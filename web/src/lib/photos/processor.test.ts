@@ -22,7 +22,7 @@ const settings: PhotoSettings = {
   convertToJpg: false,
 };
 
-async function makeImageBuffer() {
+async function makeImageBuffer(format: "jpeg" | "png" | "webp" = "jpeg") {
   return sharp({
     create: {
       width: 800,
@@ -31,7 +31,7 @@ async function makeImageBuffer() {
       background: "#80a8d8",
     },
   })
-    .jpeg()
+    .toFormat(format)
     .toBuffer();
 }
 
@@ -41,7 +41,7 @@ describe("photo processor", () => {
       {
         name: "José teste.png",
         type: "image/png",
-        buffer: await makeImageBuffer(),
+        buffer: await makeImageBuffer("png"),
       },
       settings,
       { x: 120, y: 40, width: 360, height: 480 },
@@ -68,6 +68,63 @@ describe("photo processor", () => {
     ).rejects.toBeInstanceOf(PhotoProcessingError);
   });
 
+  it.each(["jpeg", "png", "webp"] as const)(
+    "processes a real %s image with a matching MIME type",
+    async (format) => {
+      const photo = await processPhoto(
+        {
+          name: `foto.${format}`,
+          type: `image/${format}`,
+          buffer: await makeImageBuffer(format),
+        },
+        settings,
+      );
+
+      expect(photo.contentType).toBe(`image/${format}`);
+      await expect(sharp(photo.buffer).metadata()).resolves.toMatchObject({
+        format,
+        width: settings.width,
+        height: settings.height,
+      });
+    },
+  );
+
+  it("rejects valid JPEG bytes declared as PNG", async () => {
+    await expect(
+      processPhoto(
+        {
+          name: "foto.png",
+          type: "image/png",
+          buffer: await makeImageBuffer(),
+        },
+        settings,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_IMAGE_TYPE" });
+  });
+
+  it("rejects SVG bytes disguised as a JPEG", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><rect width="50" height="50" fill="blue"/></svg>';
+    await expect(
+      processPhoto(
+        { name: "foto.jpg", type: "image/jpeg", buffer: Buffer.from(svg) },
+        settings,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_IMAGE_TYPE" });
+  });
+
+  it("rejects a corrupt image even when the signature matches", async () => {
+    await expect(
+      processPhoto(
+        {
+          name: "foto.jpg",
+          type: "image/jpeg",
+          buffer: Buffer.from([0xff, 0xd8, 0xff]),
+        },
+        settings,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_IMAGE" });
+  });
+
   it("generates a zip with processed photos", async () => {
     const photo = await processPhoto(
       {
@@ -89,7 +146,7 @@ describe("photo processor", () => {
       {
         name: "foto.png",
         type: "image/png",
-        buffer: await makeImageBuffer(),
+        buffer: await makeImageBuffer("png"),
       },
       {
         ...settings,

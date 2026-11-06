@@ -37,6 +37,30 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
 function codes(input: EscalaInput) { return validateEscala(input).issues.map((issue) => issue.code); }
 
 describe("independent Escalas validation", () => {
+  it("checks shared shifts for each person and reflects an edited shift on the next validation", () => {
+    const input = fixture();
+    const second = { ...structuredClone(input.employees[0]), id: "person-2", registration: "0002" };
+    second.history = second.history.map((entry) => ({ ...entry, employeeId: second.id }));
+    input.employees.push(second);
+    const nextDay = addDays(input.startDate, 1);
+    input.shifts.push({
+      ...input.shifts[0], id: "early",
+      segments: input.shifts[0].segments.map((segment) => ({ ...segment, start: segment.start - 120, end: segment.end - 120 })),
+    });
+    for (const person of input.employees) person.shiftIds.push("early");
+    input.assignments = input.assignments.flatMap((entry) => {
+      const assignment = entry.date === nextDay ? { ...entry, shiftId: "early" } : entry;
+      return [assignment, { ...assignment, employeeId: second.id }];
+    });
+    const baseline = codes(input);
+    expect(baseline).not.toContain("INPUT_INVALID");
+    expect(baseline).not.toContain("INTER_SHIFT_REST");
+    input.shifts[0].segments = input.shifts[0].segments.map((segment) => ({ ...segment, start: segment.start + 156, end: segment.end + 156 }));
+    expect(validateEscala(input).issues.filter((issue) => issue.code === "INTER_SHIFT_REST")).toEqual([
+      expect.objectContaining({ employeeId: input.employees[0].id, date: nextDay }),
+      expect.objectContaining({ employeeId: second.id, date: nextDay }),
+    ]);
+  });
   it.each(["Repositor", "AUX. DE SERVIÇOS EM SUPER"])("preserves protected records outside generation without counting coverage: %s", (role) => {
     const input = fixture(40);
     const disabled = { ...structuredClone(input.employees[0]), id: "disabled", registration: "0002", planningEnabled: false, role };
