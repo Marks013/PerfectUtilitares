@@ -144,6 +144,8 @@ RUN --mount=type=cache,id=perfectutilitares-office-pip-py314-arm64,target=/root/
     && /opt/pdf-office/bin/python3 -c 'from importlib.util import find_spec; import pdfplumber, openpyxl, docx; assert find_spec("pip") is None'
 
 FROM pdf-runtime AS pdf-worker
+# Keep the runtime zlib fix even when an older base layer is reused.
+RUN apk add --no-cache 'zlib>=1.3.2-r1'
 ENV PDF_OFFICE_PYTHON=/opt/pdf-office/bin/python3 \
     PDF_OFFICE_SCRIPT=/app/pdf-office/office-export.py \
     PATH=/opt/pdf-runtime/bin:$PATH \
@@ -182,6 +184,7 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=45s --retries=3 CMD ["/u
 CMD ["node", "dist/pdf-worker.mjs"]
 
 FROM runtime-base AS runner
+RUN apk add --no-cache 'zlib>=1.3.2-r1'
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
