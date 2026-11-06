@@ -9,15 +9,22 @@ import path from "node:path";
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import pg from "pg";
+import {
+  assertPdfWorkerImageRevision, linkPdfWorkerHeartbeat, pdfWorkerContainerArguments,
+  pdfWorkerPreflightArguments, unlinkPdfWorkerHeartbeat,
+} from "./e2e-pdf-runtime.mjs";
 
 const { Client } = pg;
 const cwd = process.cwd();
 const productionBuild = process.env.E2E_PRODUCTION === "1";
 dotenv.config({ path: path.join(cwd, ".env"), quiet: true });
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
+const pdfWorkerImage = process.env.E2E_PDF_WORKER_IMAGE?.trim();
+const sourceRevision = pdfWorkerImage
+  ? process.env.SOURCE_REVISION || capture("git", ["rev-parse", "HEAD"]) : undefined;
 
-function capture(command, args) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8", env: process.env });
+function capture(command, args, env = process.env) {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", env });
   if (result.status !== 0) {
     const detail = result.error?.message || result.stderr?.trim() || result.stdout?.trim() || "unknown error";
     throw new Error(`${command} failed: ${detail}`);
@@ -248,7 +255,7 @@ const pdfWorkerHeartbeatPath = path.join(
   runtimeCwd,
   "data",
   "pdf-jobs",
-  `pdf-worker-heartbeat-${process.pid}`,
+  `pdf-worker-heartbeat-${process.pid}-${randomBytes(6).toString("hex")}`,
 );
 await mkdir(path.dirname(pdfWorkerHeartbeatPath), { recursive: true });
 const nextDistDir = `.next-e2e-${process.pid}-${Date.now()}`;
@@ -267,11 +274,20 @@ const databaseAdmin = new Client({ connectionString: adminUrl.toString() });
 let app;
 let worker;
 let solverId;
+let pdfWorkerId;
+let pdfHeartbeatLink;
 const solverSecretPath = path.join(temp, "solver.secret");
 const solverContainerSecretPath = path.join(temp, "solver-container.secret");
 let created = false;
 
 try {
+  if (pdfWorkerImage) {
+    if (process.platform !== "linux") throw new Error("The container PDF E2E worker requires Linux host networking.");
+    const imageRevision = capture("docker", ["image", "inspect", "--format",
+      '{{index .Config.Labels "org.opencontainers.image.revision"}}', pdfWorkerImage]);
+    assertPdfWorkerImageRevision(imageRevision, sourceRevision);
+    capture("docker", pdfWorkerPreflightArguments(pdfWorkerImage));
+  }
   // Exercise the real current processor without using or restarting the production solver.
   const solverPort = await freePort();
   const testSolverSecret = randomBytes(32).toString("base64url");
@@ -306,6 +322,7 @@ try {
   ]);
   const env = {
     ...process.env,
+    ...(pdfWorkerImage ? { SOURCE_REVISION: sourceRevision } : {}),
     NEXT_DIST_DIR: productionBuild ? ".next" : nextDistDir,
     NODE_ENV: productionBuild ? "production" : "development",
     DATABASE_URL: testUrl.toString(),
@@ -372,13 +389,23 @@ try {
       ...env, PORT: String(port), HOSTNAME: "127.0.0.1",
     });
     // Both runtimes resolve the heartbeat relative to their cwd, as in Docker.
-    worker = start("node", [path.join(cwd, "dist", "pdf-worker.mjs")], env, runtimeCwd);
+    if (!pdfWorkerImage) worker = start("node", [path.join(cwd, "dist", "pdf-worker.mjs")], env, runtimeCwd);
   } else {
     // Direct next dev does not invoke npm's lifecycle hooks. Fresh checkouts need
     // the same generated browser assets and workers as the documented dev command.
     await run("npm", ["run", "predev"], env);
     app = start("npx", ["next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], env);
-    worker = start("npx", ["tsx", "src/workers/pdf-worker.ts"], env);
+    if (!pdfWorkerImage) worker = start("npx", ["tsx", "src/workers/pdf-worker.ts"], env);
+  }
+  if (pdfWorkerImage) {
+    pdfHeartbeatLink = await linkPdfWorkerHeartbeat(pdfWorkerHeartbeatPath, path.join(temp, "worker"));
+    const workerEnv = { ...env, NEXT_PUBLIC_SENTRY_DSN: "", SENTRY_DSN: "", SENTRY_AUTH_TOKEN: "" };
+    pdfWorkerId = capture("docker", pdfWorkerContainerArguments({
+      image: pdfWorkerImage, name: name + "-pdf-worker",
+      storageDirectory: env.PDF_STORAGE_DIR, heartbeatDirectory: pdfHeartbeatLink.directory,
+      uid: process.getuid(), gid: process.getgid(),
+    }), workerEnv);
+    worker = start("docker", ["start", "--attach", pdfWorkerId], workerEnv);
   }
   await waitForApp(`${internalUrl}/login`, app);
   await waitForWorker(pdfWorkerHeartbeatPath, worker);
@@ -388,6 +415,20 @@ try {
   if (worker?.output?.length) console.error(worker.output.join("").split(/\r?\n/).slice(-30).join("\n"));
   throw error;
 } finally {
+  if (pdfWorkerId) {
+    try {
+      try {
+        capture("docker", ["stop", "--time", "5", pdfWorkerId]);
+      } finally {
+        capture("docker", ["rm", "--force", pdfWorkerId]);
+      }
+    } catch {
+      // Cleanup targets only the exact ID created by this run. Keep cleaning
+      // other owned resources, but fail instead of silently leaking a worker.
+      console.error("The E2E PDF worker container could not be removed.");
+      process.exitCode = 1;
+    }
+  }
   await Promise.all([stop(app), stop(worker)]);
   if (solverId) capture("docker", ["stop", "--time", "3", solverId]);
   await secureProxy?.close().catch(() => undefined);
@@ -401,7 +442,8 @@ try {
   }
   await databaseAdmin.end().catch(() => undefined);
   await rm(temp, { recursive: true, force: true });
-  await rm(pdfWorkerHeartbeatPath, { force: true });
+  if (pdfHeartbeatLink) await unlinkPdfWorkerHeartbeat(pdfWorkerHeartbeatPath, pdfHeartbeatLink.target);
+  else if (!pdfWorkerImage) await rm(pdfWorkerHeartbeatPath, { force: true });
   await rm(path.join(cwd, nextDistDir), { recursive: true, force: true });
   if ((await readFile(nextEnvPath, "utf8")) !== originalNextEnv) {
     await writeFile(nextEnvPath, originalNextEnv);

@@ -3,7 +3,17 @@ import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGen
 import type { EscalaActor } from "./access";
 
 const mocks = vi.hoisted(() => ({ findFirst: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn(), count: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn(), get: vi.fn(), generate: vi.fn(), cancel: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: { escalaSolveOperation: mocks } }));
+const authorization = vi.hoisted(() => ({
+  workspace: vi.fn(), branch: vi.fn(), revision: vi.fn(),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    escalaSolveOperation: mocks,
+    escalaWorkspace: { findFirst: authorization.workspace },
+    escalaBranchAccess: { findUnique: authorization.branch },
+    escalaRevision: { findUnique: authorization.revision },
+  },
+}));
 vi.mock("./service", () => ({ getEscala: mocks.get, generateEscala: mocks.generate }));
 vi.mock("./solver-transport", () => ({ solverCapability: () => "private-capability", cancelSolverOperation: mocks.cancel }));
 const actor: EscalaActor = { userId: null, tenantId: "t1", admin: false, moduleSessionId: "s1" };
@@ -27,6 +37,11 @@ beforeEach(() => {
   vi.resetAllMocks();
   row = { id: operationId, tenantId: "t1", workspaceId: "w1", expectedRevision: 1, ownerKey: "owner", state: "CREATED", expiresAt: new Date(Date.now() + 120_000) };
   mocks.get.mockResolvedValue({ id: "w1", revision: 1, canEdit: true });
+  authorization.workspace.mockImplementation(async ({ where }) =>
+    where.id === "w1" && where.tenantId === "t1" ? { branchCode: "02" } : null,
+  );
+  authorization.branch.mockResolvedValue({ role: "PLANNER" });
+  authorization.revision.mockRejectedValue(new Error("Revision must not be loaded by control requests"));
   mocks.findFirst.mockImplementation(async ({ where }) => matches(where) ? { ...row } : null);
   mocks.findUniqueOrThrow.mockImplementation(async () => ({ ...row }));
   mocks.create.mockImplementation(async ({ data }) => ({ ...row, ...data }));
@@ -45,6 +60,56 @@ describe("generation operation ownership and atomic lifecycle", () => {
     expect(solveOwner(request("authjs.session-token=a"), account)).toBe(solveOwner(request("authjs.session-token=b"), account));
     expect(solveOwner(request(""), account)).not.toBe(solveOwner(request(""), { ...account, accountSessionId: "another-login" }));
     expect(() => solveOwner(request(""), { ...account, accountSessionId: undefined })).toThrow();
+  });
+  it.each([
+    ["status", generationOperationStatus],
+    ["cancel", cancelGenerationOperation],
+  ] as const)("authorizes %s using workspace metadata without loading a revision", async (_name, control) => {
+    const account = { userId: "u1", tenantId: "t1", admin: false, accountSessionId: "login" };
+    mocks.get.mockRejectedValue(new Error("Full workspace validation must not run"));
+    await expect(control(account, "owner", operationId)).resolves.toMatchObject({
+      state: control === generationOperationStatus ? "CREATED" : "CANCELLED",
+    });
+    expect(authorization.workspace).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "w1", tenantId: "t1" },
+      select: { branchCode: true },
+    });
+    expect(authorization.branch).toHaveBeenCalledExactlyOnceWith({
+      where: { tenantId_userId_branchCode: { tenantId: "t1", userId: "u1", branchCode: "02" } },
+      select: { role: true },
+    });
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(authorization.revision).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["status", generationOperationStatus],
+    ["cancel", cancelGenerationOperation],
+  ] as const)("denies %s for a missing workspace or revoked branch access", async (_name, control) => {
+    await expect(control(actor, "another-owner", operationId)).rejects.toMatchObject({
+      status: 404, code: "ESCALA_OPERATION_NOT_FOUND",
+    });
+    await expect(control({ ...actor, tenantId: "t2" }, "owner", operationId)).rejects.toMatchObject({
+      status: 404, code: "ESCALA_OPERATION_NOT_FOUND",
+    });
+    expect(authorization.workspace).not.toHaveBeenCalled();
+    expect(authorization.branch).not.toHaveBeenCalled();
+
+    authorization.workspace.mockResolvedValueOnce(null);
+    await expect(control(actor, "owner", operationId)).rejects.toMatchObject({
+      status: 404, code: "ESCALA_NOT_FOUND",
+    });
+    const account = { userId: "u1", tenantId: "t1", admin: false, accountSessionId: "login" };
+    authorization.branch.mockResolvedValueOnce(null);
+    await expect(control(account, "owner", operationId)).rejects.toMatchObject({
+      status: 403, code: "ESCALA_BRANCH_FORBIDDEN",
+    });
+    authorization.branch.mockResolvedValueOnce({ role: "VIEWER" });
+    await expect(control(account, "owner", operationId)).rejects.toMatchObject({
+      status: 403, code: "ESCALA_ACTION_FORBIDDEN",
+    });
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
   });
   it("creates only metadata for the selected revision", async () => {
     expect(await startGenerationOperation(actor, "owner", "w1", 1)).toMatchObject({ operationId, state: "CREATED" });

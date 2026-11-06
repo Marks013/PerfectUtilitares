@@ -107,6 +107,10 @@ describe("/api/escalas", () => {
     expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(429);
     mocks.generate.mockRejectedValue(new EscalaSolverError("SOLVER_UNAVAILABLE"));
     expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(503);
+    mocks.generate.mockRejectedValue(new EscalaSolverError("SOLVER_INPUT_TOO_LARGE"));
+    const oversized = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toMatchObject({ error: { code: "SOLVER_INPUT_TOO_LARGE" } });
     mocks.create.mockRejectedValue({ code: "P2002" });
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(409);
   });

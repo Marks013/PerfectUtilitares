@@ -39,7 +39,7 @@
     "start": "node server.js",
     "worker:pdf": "node dist/pdf-worker.mjs",
     "test": "vitest run",
-    "test:ops": "node --test ops/server-resource-guard.test.mjs scripts/audit-container-images.test.mjs scripts/audit-python-locks.test.mjs scripts/cleanup-artifacts.test.mjs scripts/docker-production.test.mjs",
+    "test:ops": "node --test ops/server-resource-guard.test.mjs scripts/audit-container-images.test.mjs scripts/audit-python-locks.test.mjs scripts/cleanup-artifacts.test.mjs scripts/docker-production.test.mjs scripts/e2e-pdf-runtime.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:isolated": "node scripts/run-isolated-e2e.mjs",
     "test:e2e:smoke": "playwright test e2e/auth.spec.ts",

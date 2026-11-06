@@ -142,5 +142,78 @@ class CoveragePolishTests(unittest.TestCase):
         self.assertTrue(set(members[40:]).issubset(selected))
 
 
+class ProtectedBoundDeduplicationTests(unittest.TestCase):
+    @staticmethod
+    def upper_bounds(model, variable):
+        return [list(constraint.linear.domain)[-1]
+                for constraint in model.proto.constraints
+                if list(constraint.linear.vars) == [variable.index]
+                and list(constraint.linear.coeffs) == [1]
+                and list(constraint.linear.domain)[0] == -(2 ** 63)]
+
+    def test_repeated_group_and_visited_bounds_are_registered_only_once(self):
+        model = cp_model.CpModel()
+        names = ['COVERAGE', 'SUNDAY_COVERAGE', 'SUNDAY_BALANCE',
+                 'STABILITY', 'PREFERENCES']
+        goals = [model.new_int_var(0, 4, name) for name in names]
+        guard = model.new_int_var(0, 4, 'sector-guard')
+        values = {variable.index: 1 for variable in goals + [guard]}
+        for variable in goals + [guard]:
+            model.add(variable == 1)
+        result, proven, phases = improve(
+            model, goals, values, time.monotonic() + 1, names,
+            protected_groups={'COVERAGE': [guard, guard + 2]})
+        self.assertEqual(result, values)
+        self.assertFalse(proven)
+        self.assertEqual(len(phases), 4)
+        self.assertTrue(all(phase['status'] == 'OPTIMAL' for phase in phases))
+        self.assertEqual(self.upper_bounds(model, guard), [1])
+        self.assertEqual(self.upper_bounds(model, goals[0]), [1])
+
+    def test_tightened_guard_is_added_and_cannot_be_lost_later(self):
+        model = cp_model.CpModel()
+        first = model.new_int_var(0, 2, 'coverage')
+        later = model.new_bool_var('later')
+        guard = model.new_int_var(0, 2, 'sector-guard')
+        model.add_allowed_assignments([first, later, guard],
+                                      [(2, 1, 2), (1, 1, 0), (1, 0, 1)])
+        values = {first.index: 2, later.index: 1, guard.index: 2}
+        seen = []
+
+        class ObserveSearch:
+            def checkpoint(self):
+                pass
+
+            def solve(self, engine, current):
+                if not seen:
+                    current.add(guard == 0)
+                status = engine.solve(current)
+                seen.append((engine.value(first), engine.value(later),
+                             engine.value(guard)))
+                return status
+
+        result, _, _ = improve(
+            model, [first, later], values, time.monotonic() + 1,
+            ['COVERAGE', 'SUNDAY_COVERAGE'], control=ObserveSearch(),
+            protected_groups={'COVERAGE': [guard]})
+        self.assertEqual(seen, [(1, 1, 0), (1, 1, 0)])
+        self.assertEqual(result[guard.index], 0)
+        self.assertEqual(self.upper_bounds(model, guard), [2, 0])
+
+    def test_duplicate_group_provenance_stays_conservative(self):
+        model = cp_model.CpModel()
+        goals = [model.new_int_var(0, 2, name) for name in ('a', 'b')]
+        guard = model.new_int_var(0, 2, 'guard')
+        values = {variable.index: 1 for variable in goals + [guard]}
+        for variable in goals + [guard]:
+            model.add(variable == 1)
+        _, proven, _ = improve(
+            model, goals, values, time.monotonic() + 1,
+            ['COVERAGE', 'SUNDAY_COVERAGE'],
+            protected_groups={'COVERAGE': [guard, guard]})
+        self.assertFalse(proven)
+        self.assertEqual(self.upper_bounds(model, guard), [1])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -12,6 +12,13 @@ describe("plain language planning recovery", () => {
     expect(problem.action).toBe("generate");
     expect(problem.explanation).toContain("não foi aplicada");
   });
+  it("explains a processor size limit without blaming the connection or suggesting data removal", () => {
+    const problem = toEscalaProblem(new EscalaRequestError("SOLVER_INPUT_TOO_LARGE", 413, "raw"));
+    expect(problem.message).toContain("grande demais");
+    expect(problem.explanation).toContain("suporte");
+    expect(problem.explanation).toContain("não apague");
+    expect(problem.action).toBeUndefined();
+  });
   it("keeps API error codes separate from personal or technical response payloads", () => {
     expect(responseCode({ code: "ESCALA_STALE_REVISION", error: "private payload" })).toBe("ESCALA_STALE_REVISION");
     expect(responseCode({ error: { code: "AUTH_REQUIRED" } })).toBe("AUTH_REQUIRED");

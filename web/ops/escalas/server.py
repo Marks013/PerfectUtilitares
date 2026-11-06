@@ -9,7 +9,9 @@ from service_operations import OperationError, Operations, PROCESS_TIMEOUT_SECON
 from service_security import authorized, load_secret, operation_identity
 from worker import run_worker
 
-MAX_BODY = 5 * 1024 * 1024
+# Match the app's UTF-8 limit. Published continuity is added after the smaller
+# public SAVE request; scoped history omits its redundant employee identifiers.
+MAX_BODY = 8 * 1024 * 1024
 MAX_THREADS = 16
 
 

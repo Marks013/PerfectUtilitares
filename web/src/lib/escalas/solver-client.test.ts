@@ -11,6 +11,7 @@ afterAll(() => rmSync(secretDirectory, { recursive: true }));
 import { solveEscala } from "./solver-client";
 import type { EscalaInput } from "./types";
 
+import { escalaInputSchema } from "./schema";
 function fixture(): EscalaInput {
   return {
     schemaVersion: 1, branchCode: "01", branchName: "Matriz",
@@ -36,6 +37,47 @@ function completeAssignments(): EscalaInput["assignments"] {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it("sends scoped history without repeating IDs and preserves every scheduling field", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.employees[0].history = [{ employeeId: "p1", date: "2026-11-01", kind: "WORK", shiftId: "day", locked: false }];
+    input.employees[0].planningHistory = [{ employeeId: "p1", date: "2026-10-31", kind: "OFF", locked: true }];
+    input.employees[0].planningFuture = [{ employeeId: "p1", date: "2026-11-09", kind: "ABSENCE" }];
+    const original = structuredClone(input);
+    const fetch = vi.fn(async (_url: unknown, options?: RequestInit) => {
+      const sent = JSON.parse(String(options?.body)).input;
+      expect(sent.employees[0].history).toEqual([{ date: "2026-11-01", kind: "WORK", shiftId: "day", locked: false }]);
+      expect(sent.employees[0].planningHistory).toEqual([{ date: "2026-10-31", kind: "OFF", locked: true }]);
+      expect(sent.employees[0].planningFuture).toEqual([{ date: "2026-11-09", kind: "ABSENCE" }]);
+      const restored = { ...sent, employees: sent.employees.map((person: EscalaInput["employees"][number]) => ({
+        ...person, ...Object.fromEntries(["history", "planningHistory", "planningFuture"].map(key => [
+          key, person[key as "history"].map(entry => ({ ...entry, employeeId: person.id })),
+        ])),
+      })) };
+      expect(restored).toEqual(escalaInputSchema.parse(original));
+      return Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 1 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    expect((await solveEscala(input)).status).toBe("FEASIBLE");
+    expect(input).toEqual(original);
+  });
+
+  it("rejects an oversized valid schema before sending or waiting for the processor", async () => {
+    const input = fixture();
+    input.demands = Array.from({ length: 12000 }, (_, index) => ({ id: String(index), date: input.startDate,
+      sector: "漢".repeat(160), role: "字".repeat(160), start: 480, end: 600, minimum: 1 }));
+    expect(escalaInputSchema.safeParse(input).success).toBe(true);
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_INPUT_TOO_LARGE" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("classifies HTTP 413 as an input limit instead of a service outage", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 413 })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INPUT_TOO_LARGE" });
+  });
+
   it("accepts one joint secondary phase with separate protected objective values", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const optimization = { budgetSeconds: 12, phases: [{ objective: "SECONDARY_POLISH", status: "FEASIBLE", wallTimeSeconds: 1.2, budgetSeconds: 1.5, initialValue: 1200, incumbentValue: 900, searchScope: "SELECTED_PEOPLE", members: [

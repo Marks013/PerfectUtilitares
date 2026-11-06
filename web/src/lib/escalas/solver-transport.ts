@@ -2,10 +2,13 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import { EscalaSolverError } from "./solver-errors";
+import type { EscalaAssignment, EscalaInput } from "./types";
 
 type SolverOperation = { operationId: string; cancelToken: string };
 export type SolverOptions = Partial<SolverOperation> & { signal?: AbortSignal };
 const terminal = z.enum(["CANCELLED", "CANCEL_REQUESTED", "COMPLETED", "FAILED", "TIMED_OUT"]);
+// Match the bounded private service, including server-added published continuity.
+const maxSolverRequestBytes = 8 * 1024 * 1024;
 
 function secret(): string {
   const path = process.env.ESCALAS_SOLVER_SECRET_FILE || "/run/secrets/escalas_solver_secret";
@@ -82,8 +85,23 @@ export async function cancelSolverOperation(operation: SolverOperation) {
   }
 }
 
-export async function requestSolver(input: unknown, options: SolverOptions = {}) {
+function scopedHistory(entries: EscalaAssignment[]) {
+  // The containing employee already provides identity. Keep dates, shifts,
+  // absences and locks unchanged; never compact the flat assignment list.
+  return entries.map(({ employeeId: _employeeId, ...entry }) => entry);
+}
+
+export async function requestSolver(input: EscalaInput, options: SolverOptions = {}) {
   if (options.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+  const body = JSON.stringify({ input: {
+    ...input, employees: input.employees.map(person => ({
+      ...person,
+      history: scopedHistory(person.history),
+      ...(person.planningHistory ? { planningHistory: scopedHistory(person.planningHistory) } : {}),
+      ...(person.planningFuture ? { planningFuture: scopedHistory(person.planningFuture) } : {}),
+    })),
+  } });
+  if (Buffer.byteLength(body, "utf8") > maxSolverRequestBytes) throw new EscalaSolverError("SOLVER_INPUT_TOO_LARGE");
   const operation = { operationId: options.operationId || randomUUID(), cancelToken: options.cancelToken || randomBytes(32).toString("hex") };
   const timeout = AbortSignal.timeout(20_000);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
@@ -92,7 +110,7 @@ export async function requestSolver(input: unknown, options: SolverOptions = {})
     response = await fetch(endpoint("/solve"), {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + secret(),
         "X-Request-ID": operation.operationId, "X-Cancel-Token": operation.cancelToken },
-      body: JSON.stringify({ input }), signal, cache: "no-store",
+      body, signal, cache: "no-store",
     });
     if (response.ok) {
       const result = await boundedJson(response, 8 * 1024 * 1024);
@@ -110,6 +128,7 @@ export async function requestSolver(input: unknown, options: SolverOptions = {})
   }
   if ([401, 403].includes(response.status)) throw new EscalaSolverError("SOLVER_AUTH_FAILED");
   if (response.status === 429) throw new EscalaSolverError("SOLVER_BUSY");
+  if (response.status === 413) throw new EscalaSolverError("SOLVER_INPUT_TOO_LARGE");
   if (response.status === 504) throw new EscalaSolverError("SOLVER_TIMED_OUT");
   if (response.status === 409) {
     const body = await response.json().catch(() => null);

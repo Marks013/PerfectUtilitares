@@ -17,7 +17,8 @@ concurrency:
 jobs:
   verify:
     name: Quality, PostgreSQL and build
-    runs-on: ubuntu-latest
+    # Use the same ARM64 architecture as the hashed PDF runtime wheels.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
 
     services:
@@ -50,6 +51,8 @@ jobs:
       AUTH_URL: http://localhost:3002
       NEXTAUTH_URL: http://localhost:3002
       APP_URL: http://localhost:3002
+      SOURCE_REVISION: ${{ github.sha }}
+      E2E_PDF_WORKER_IMAGE: web-pdf-worker-e2e
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
 
@@ -92,6 +95,10 @@ jobs:
 
       - name: Run scheduling solver regressions
         run: docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,uid=1001,gid=1001,mode=1770 --cpus 1 --memory 1536m --pids-limit 96 --network none --env PYTHONDONTWRITEBYTECODE=1 --volume "$PWD/ops/escalas:/model:ro" --workdir /model --entrypoint python web-escalas-solver -B -m unittest discover -s . -p 'test_*.py'
+
+      - name: Prepare production PDF runtime for browser regressions
+        run: |
+          docker build --target pdf-worker --build-arg SOURCE_REVISION="$SOURCE_REVISION" --tag "$E2E_PDF_WORKER_IMAGE" .
 
       - name: Run quality checks
         run: npm run quality

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/prisma";
-import { EscalaError, requireEscalaPermission, type EscalaActor } from "./access";
+import { branchPermission, EscalaError, requireEscalaPermission, type EscalaActor } from "./access";
 import { getEscala, generateEscala } from "./service";
 import { EscalaSolverError } from "./solver-errors";
 import { cancelSolverOperation, solverCapability } from "./solver-transport";
@@ -28,8 +28,14 @@ function publicState(operation: Operation) {
 async function owned(actor: EscalaActor, ownerKey: string, operationId: string) {
   const operation = await prisma.escalaSolveOperation.findFirst({ where: { id: operationId, tenantId: actor.tenantId, ownerKey } });
   if (!operation) throw new EscalaError(404, "ESCALA_OPERATION_NOT_FOUND", "Este cálculo não está disponível neste acesso.");
-  const workspace = await getEscala(actor, operation.workspaceId);
-  requireEscalaPermission(workspace, "edit");
+  // Control requests authorize metadata only; they must not parse or validate
+  // a potentially large or legacy revision before stopping its calculation.
+  const workspace = await prisma.escalaWorkspace.findFirst({
+    where: { id: operation.workspaceId, tenantId: actor.tenantId },
+    select: { branchCode: true },
+  });
+  if (!workspace) throw new EscalaError(404, "ESCALA_NOT_FOUND", "Escala não encontrada.");
+  requireEscalaPermission(await branchPermission(actor, workspace.branchCode), "edit");
   return operation;
 }
 

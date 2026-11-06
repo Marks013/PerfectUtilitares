@@ -141,6 +141,17 @@ def _expression_terms(objective):
     return tuple(v.index for v in expression.vars), tuple(expression.coeffs), int(expression.offset)
 
 
+def _upper_bound_key(terms):
+    indexes, coefficients, _offset = terms
+    combined = {}
+    for index, coefficient in zip(indexes, coefficients):
+        canonical = index if index >= 0 else -index - 1
+        coefficient = coefficient if index >= 0 else -coefficient
+        combined[canonical] = combined.get(canonical, 0) + coefficient
+    return tuple(sorted((index, coefficient) for index, coefficient in combined.items()
+                        if coefficient))
+
+
 def _phase_budget(remaining, names, index):
     """Keep coverage first, without geometrically starving the last real goals."""
     if index == len(names) - 1:
@@ -173,7 +184,16 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         plans = plans[:first] + [('SECONDARY_POLISH', None,
                                  coverage_members + list(zip(names[first:], objectives[first:])))]
     names = [name for name, _objective, _members in plans]
-    protected_groups, active_groups = protected_groups or {}, []
+    protected_groups, active_groups = protected_groups or {}, {}
+    active_group_count, upper_bounds = 0, {}
+
+    def add_upper_bound(expression, terms, value):
+        key, limit = _upper_bound_key(terms), value - terms[2]
+        previous = upper_bounds.get(key)
+        if previous is None or limit < previous:
+            model.add(expression <= value)
+            upper_bounds[key] = limit
+
     # Original variable domains do not change during improve. Neighborhoods fix
     # only cloned domains and must never populate or read this cache.
     domain_bounds = {}
@@ -190,9 +210,10 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         if members:
             weighted = []
             for member_name, member in members:
-                initial = Snapshot(values).value(member)
-                model.add(member <= initial)
-                floor = _objective_floor(model, _expression_terms(member), domain_bounds)
+                member_terms = _expression_terms(member)
+                initial = _linear_value(member_terms, values)
+                add_upper_bound(member, member_terms, initial)
+                floor = _objective_floor(model, member_terms, domain_bounds)
                 weight = max(1, min(1000, 100000 // max(1, initial - floor)))
                 weighted.append(weight * member)
                 member_values.append({'objective': member_name, 'initialValue': initial, 'incumbentValue': initial})
@@ -200,12 +221,18 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             # Joint dominance improvement is not a lexicographic optimality proof.
             proven = False
         model.minimize(objective)
-        active_groups.extend(protected_groups.get(names[index], []))
+        new_groups = list(protected_groups.get(names[index], []))
         for member_name, _member in members:
-            active_groups.extend(protected_groups.get(member_name, []))
-        for variable in active_groups:
-            model.add(variable <= Snapshot(values).value(variable))
-        if len(active_groups) > 1:
+            new_groups.extend(protected_groups.get(member_name, []))
+        # Count original group provenance for the conservative proof metadata,
+        # but only register each equivalent expression once for propagation.
+        active_group_count += len(new_groups)
+        for variable in new_groups:
+            terms = _expression_terms(variable)
+            active_groups.setdefault(_upper_bound_key(terms), (variable, terms))
+        for variable, variable_terms in active_groups.values():
+            add_upper_bound(variable, variable_terms, _linear_value(variable_terms, values))
+        if active_group_count > 1:
             # Per-group no-regression narrows the global lexicographic search.
             proven = False
         # CpObjectiveProto stores the integer linear objective before presolve.
@@ -214,7 +241,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         visited.append((objective, terms))
         incumbent = _linear_value(terms, values)
         # A new search may not worsen even its own goal relative to the known draft.
-        model.add(objective <= incumbent)
+        add_upper_bound(objective, terms, incumbent)
         lower = _objective_floor(model, terms, domain_bounds)
         if lower == incumbent:
             model.add(objective == incumbent)
@@ -297,9 +324,9 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         best = engine.value(objective)
         # Later goals may incidentally improve earlier ones. Keep that gain too.
         for previous, previous_terms in visited:
-            model.add(previous <= _linear_value(previous_terms, values))
-        for variable in active_groups:
-            model.add(variable <= Snapshot(values).value(variable))
+            add_upper_bound(previous, previous_terms, _linear_value(previous_terms, values))
+        for variable, variable_terms in active_groups.values():
+            add_upper_bound(variable, variable_terms, _linear_value(variable_terms, values))
         phase.update(incumbentValue=best, bestBound=engine.best_objective_bound)
         _replace_hints(model, values)
         if status == cp_model.OPTIMAL and not restricted:
@@ -308,5 +335,5 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             proven = False
             # Preserve the best higher-priority incumbent, while reserving time for operational balance.
             # This is bounded lexicographic improvement, not proof that any unfinished objective is optimal.
-            model.add(objective <= best)
+            add_upper_bound(objective, terms, best)
     return values, proven, phases
