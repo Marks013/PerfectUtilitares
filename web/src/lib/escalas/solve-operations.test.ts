@@ -15,8 +15,10 @@ function matches(where: Record<string, unknown>) {
     const current = row[key as keyof Row];
     if (key === "state" && typeof value === "object") { if (!(value as { in: string[] }).in.includes(row.state)) return false; }
     else if (key === "expiresAt" && typeof value === "object") {
-      const comparison = value as { gt?: Date; lt?: Date };
-      if (comparison.gt && row.expiresAt <= comparison.gt || comparison.lt && row.expiresAt >= comparison.lt) return false;
+      const comparison = value as { gt?: Date; lt?: Date; lte?: Date };
+      if (comparison.gt && row.expiresAt <= comparison.gt
+        || comparison.lt && row.expiresAt >= comparison.lt
+        || comparison.lte && row.expiresAt > comparison.lte) return false;
     } else if (current !== value) return false;
   }
   return true;
@@ -73,6 +75,41 @@ describe("generation operation ownership and atomic lifecycle", () => {
     await expect(cancelGenerationOperation(actor, "owner", operationId)).rejects.toThrow("offline");
     expect(row.state).toBe("CANCEL_REQUESTED");
     expect(await generationOperationStatus(actor, "owner", operationId)).toMatchObject({ state: "CANCELLED" });
+  });
+  it("finalizes expired cancellation despite an offline solver and stops retrying on polls", async () => {
+    row.state = "CANCEL_REQUESTED";
+    row.expiresAt = new Date(Date.now() - 1_000);
+    mocks.cancel.mockRejectedValue(new Error("offline"));
+    await expect(generationOperationStatus(actor, "owner", operationId)).resolves.toMatchObject({ state: "TIMED_OUT" });
+    await expect(generationOperationStatus(actor, "owner", operationId)).resolves.toMatchObject({ state: "TIMED_OUT" });
+    expect(row.finishedAt).toBeInstanceOf(Date);
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith({ operationId, cancelToken: "private-capability" });
+  });
+  it("expires an unclaimed operation without creating a solver cancellation record", async () => {
+    row.expiresAt = new Date(Date.now() - 1_000);
+    await expect(generationOperationStatus(actor, "owner", operationId)).resolves.toMatchObject({ state: "TIMED_OUT" });
+    expect(row.state).toBe("TIMED_OUT");
+    expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it("keeps a confirmed cancellation that wins the expiry race", async () => {
+    row.state = "CANCEL_REQUESTED";
+    row.expiresAt = new Date(Date.now() - 1_000);
+    mocks.updateMany.mockImplementationOnce(async () => {
+      row.state = "CANCELLED";
+      return { count: 0 };
+    });
+    await expect(generationOperationStatus(actor, "owner", operationId)).resolves.toMatchObject({ state: "CANCELLED" });
+    expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it("rejects a late proposal after expiry even when the solver did not confirm cancellation", async () => {
+    mocks.generate.mockImplementationOnce(async () => {
+      row.expiresAt = new Date(Date.now() - 1_000);
+      mocks.cancel.mockRejectedValueOnce(new Error("offline"));
+      await expect(generationOperationStatus(actor, "owner", operationId)).resolves.toMatchObject({ state: "TIMED_OUT" });
+      return { result: { status: "FEASIBLE" } };
+    });
+    await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code: "SOLVER_CANCELLED" });
+    expect(row.state).toBe("TIMED_OUT");
   });
   it("returns a valid completed proposal and makes later cancellation a no-op", async () => {
     expect(await runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).toEqual({ result: { status: "FEASIBLE" } });

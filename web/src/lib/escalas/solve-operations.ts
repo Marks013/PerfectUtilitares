@@ -5,7 +5,8 @@ import { getEscala, generateEscala } from "./service";
 import { EscalaSolverError } from "./solver-errors";
 import { cancelSolverOperation, solverCapability } from "./solver-transport";
 
-const active = ["CREATED", "RUNNING", "CANCEL_REQUESTED"] as const;
+const running = ["RUNNING", "CANCEL_REQUESTED"] as const;
+const active = ["CREATED", ...running] as const;
 const final = ["CANCELLED", "COMPLETED", "FAILED", "TIMED_OUT"] as const;
 type Operation = Awaited<ReturnType<typeof prisma.escalaSolveOperation.findUniqueOrThrow>>;
 
@@ -78,12 +79,29 @@ export async function cancelGenerationOperation(actor: EscalaActor, ownerKey: st
 
 export async function generationOperationStatus(actor: EscalaActor, ownerKey: string, operationId: string) {
   const operation = await owned(actor, ownerKey, operationId);
-  if (operation.state === "CANCEL_REQUESTED") return cancelGenerationOperation(actor, ownerKey, operationId);
-  if (active.includes(operation.state as typeof active[number]) && operation.expiresAt.getTime() < Date.now()) {
-    await cancelGenerationOperation(actor, ownerKey, operationId);
-    await prisma.escalaSolveOperation.updateMany({ where: { id: operationId, state: "CANCELLED" }, data: { state: "TIMED_OUT" } });
+  const now = new Date();
+  if (active.includes(operation.state as typeof active[number]) && operation.expiresAt <= now) {
+    const where = { id: operationId, expiresAt: { lte: now } };
+    const data = { state: "TIMED_OUT" as const, finishedAt: now };
+    if (operation.state === "CREATED") {
+      const unclaimed = await prisma.escalaSolveOperation.updateMany({
+        where: { ...where, state: "CREATED" }, data,
+      });
+      if (unclaimed.count) return publicState({ ...operation, ...data });
+    }
+
+    // A claim racing expiry can win before the CREATED CAS. Expire only a
+    // still-active row; never replace a completion or confirmed cancellation.
+    const expired = await prisma.escalaSolveOperation.updateMany({
+      where: { ...where, state: { in: [...running] } }, data,
+    });
+    if (expired.count) {
+      try { await cancelSolverOperation(capability(operation)); }
+      catch { /* The solver's independent process deadline remains in force. */ }
+    }
     return publicState(await prisma.escalaSolveOperation.findUniqueOrThrow({ where: { id: operationId } }));
   }
+  if (operation.state === "CANCEL_REQUESTED") return cancelGenerationOperation(actor, ownerKey, operationId);
   return publicState(operation);
 }
 

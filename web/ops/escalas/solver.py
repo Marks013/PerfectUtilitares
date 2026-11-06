@@ -194,6 +194,20 @@ def solve(data, control=None):
     shifts = {s["id"]: s for s in data["shifts"]}
     metrics = {key: shift_metrics(value) for key, value in shifts.items()}
     baseline = {(a["employeeId"], a["date"]): a for a in data["assignments"]}
+    closed_dates = set(policy["closedDates"])
+    if not policy["_simulation"]:
+        closed_dates.update(set(policy["holidayDates"]) - set(policy["authorizedHolidayDates"]))
+
+    @lru_cache(maxsize=None)
+    def shift_calendar(sid, day):
+        # Shift legality and calendar closures are common to the whole branch.
+        # Keep the cache per solve; absence and locked choices stay person-specific.
+        shift = shifts[sid]
+        if not admissible(shift, policy, day):
+            return None
+        occupied = occupied_dates(day, shift)
+        return occupied, not closed_dates.isdisjoint(occupied)
+
     model = cp_model.CpModel()
     work, off, choices, history, active = {}, {}, {}, {}, {}
     preference_terms, stability_terms, people_changed, tie_terms = [], [], [], []
@@ -223,15 +237,14 @@ def solve(data, control=None):
             off[key] = model.new_bool_var(f"o:{pid}:{day}")
             work[key] = model.new_bool_var(f"w:{pid}:{day}")
             current = {}
-            closed = day in policy["closedDates"] or (
-                day in policy["holidayDates"] and day not in policy["authorizedHolidayDates"] and not policy.get("_simulation"))
+            closed = day in closed_dates
             for sid in ([] if untimed else person["shiftIds"]):
-                if not admissible(shifts[sid], policy, day):
+                calendar = shift_calendar(sid, day)
+                if calendar is None:
                     continue
+                occupied, overlaps_closure = calendar
                 current[sid] = model.new_bool_var(f"s:{pid}:{day}:{sid}")
-                occupied = occupied_dates(day, shifts[sid])
-                forbidden = any(baseline.get((pid, d), {}).get("kind") == "ABSENCE" or d in policy["closedDates"] or (d in policy["holidayDates"] and d not in policy["authorizedHolidayDates"] and not policy.get("_simulation")) for d in occupied)
-                if closed or forbidden:
+                if closed or overlaps_closure or any(baseline.get((pid, d), {}).get("kind") == "ABSENCE" for d in occupied):
                     model.add(current[sid] == 0)
             choices[key] = current
             if untimed:
@@ -283,8 +296,8 @@ def solve(data, control=None):
                 model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
                           <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60))
         _streaks(model, person, dates, work, off, boundary, active[pid], policy)
-        _rest(model, person, dates, choices, off, boundary, shifts, metrics, policy)
-        civil_weekends = _civil_rest(model, person, dates, choices, work, off, boundary, shifts)
+        _rest(model, person, dates, active[pid], choices, off, boundary, metrics, policy)
+        civil_weekends = _civil_rest(model, person, dates, active[pid], choices, work, off, boundary, shifts, shift_calendar)
         for day in active[pid]:
             if control is not None:
                 control.checkpoint()
@@ -575,7 +588,7 @@ def _rest_distribution(model, employees, dates, off, active, baseline, history, 
     return concentration, rotation
 
 
-def _rest(model, person, dates, choices, off, prior, shifts, metrics, policy):
+def _rest(model, person, dates, active_days, choices, off, prior, metrics, policy):
     if has_no_clock(person):
         return  # No timestamps exist to establish an hourly rest interval.
     pid = person["id"]
@@ -584,8 +597,9 @@ def _rest(model, person, dates, choices, off, prior, shifts, metrics, policy):
     for day, entry in prior.items():
         if entry["kind"] == "WORK" and day >= first_relevant:
             events.setdefault(day, []).append((entry["shiftId"], 1))
-    for (employee, day), options in choices.items():
-        if employee == pid and options:
+    for day in active_days:
+        options = choices[pid, day]
+        if options:
             events.setdefault(day, []).extend(options.items())
     origin, daily = instant(dates[0], 0), []
     for day, options in sorted(events.items()):
@@ -624,16 +638,15 @@ def _rest(model, person, dates, choices, off, prior, shifts, metrics, policy):
                     model.add(begin - finish >= policy['minWeeklyRestMinutes']).only_enforce_if(enforcement)
 
 
-def _civil_rest(model, person, dates, choices, work, off, prior, shifts):
+def _civil_rest(model, person, dates, active_days, choices, work, off, prior, shifts, shift_calendar):
     pid = person["id"]
     weekend_terms = {}
-    for (employee, day), options in choices.items():
-        if employee != pid:
-            continue
-        if has_no_clock(person) and date.fromisoformat(day).weekday() in (5, 6):
+    untimed = has_no_clock(person)
+    for day in active_days:
+        if untimed and date.fromisoformat(day).weekday() in (5, 6):
             weekend_terms.setdefault(day, []).append(work[pid, day])
-        for sid, variable in options.items():
-            for occupied in occupied_dates(day, shifts[sid]):
+        for sid, variable in choices[pid, day].items():
+            for occupied in shift_calendar(sid, day)[0]:
                 if occupied != day and (pid, occupied) in off:
                     model.add(variable + off[pid, occupied] <= 1)
                 if occupied != day and prior.get(occupied, {}).get("kind") in ("OFF", "ABSENCE"):

@@ -77,6 +77,23 @@ class SolverTests(unittest.TestCase):
     def assert_feasible(self, result):
         self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"), result)
 
+    def test_shared_shift_calendar_keeps_person_absence_and_current_policy(self):
+        data = fixture(42, people=2)
+        tuesday = "2026-11-03"
+        data["assignments"] = [
+            {"employeeId": "p0", "date": tuesday, "kind": "ABSENCE"},
+            {"employeeId": "p1", "date": tuesday, "kind": "WORK", "shiftId": "day", "locked": True},
+        ]
+        with patch("solver.admissible", wraps=admissible) as check:
+            result = solve(data)
+        self.assert_feasible(result)
+        self.assertEqual(check.call_count, 7)
+        assignments = {(a["employeeId"], a["date"]): a for a in result["assignments"]}
+        self.assertEqual(assignments["p0", tuesday]["kind"], "ABSENCE")
+        self.assertTrue(assignments["p1", tuesday]["locked"])
+        data["policy"]["dailyLimitMinutes"] = 480
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
     def test_future_six_published_duties_require_last_current_day_off(self):
         data = fixture(40)
         person = data["employees"][0]
@@ -334,10 +351,14 @@ class SolverTests(unittest.TestCase):
 
         with patch.object(cp_model.CpSolver, "solve", solve_seed_then_timeout):
             result = solve(data)
-        self.assertGreaterEqual(len(calls), 3)
+        self.assertGreaterEqual(len(calls), 2)
         self.assertTrue(calls[0])
         self.assertTrue(all(not flag for flag in calls[1:]))
-        self.assertTrue(all(phase['status'] == 'UNKNOWN' for phase in result['optimization']['phases']))
+        # A goal at its proven domain floor can finish without invoking CP-SAT.
+        # Only phases that actually searched were forced to hit the timeout.
+        searched = [phase for phase in result['optimization']['phases'] if phase['budgetSeconds'] > 0]
+        self.assertEqual(len(searched), len(calls) - 1)
+        self.assertTrue(all(phase['status'] == 'UNKNOWN' for phase in searched))
         self.assertEqual(result["status"], "FEASIBLE")
         days = len(days_between(data["startDate"], data["endDate"]))
         self.assertEqual(len(result["assignments"]), len(data["employees"]) * days)
