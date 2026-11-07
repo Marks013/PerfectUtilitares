@@ -47,6 +47,10 @@ O refinamento observado nas execuções aprovadas levou aproximadamente 0,312–
 
 ## Dados e recuperação
 
+A primeira construção foi retida pela auditoria de imagens e não foi implantada: havia correções nativas disponíveis para `musl`/`musl-utils` e `zlib`. O Dockerfile passou a exigir, nos dois estágios Alpine, pelo menos `musl`/`musl-utils` 1.2.6-r3 e `zlib` 1.3.2-r1. Não foi desativado o scanner nem criada exceção por CVE. Uma nova construção é necessária por essa correção de segurança, não por alteração adicional de regra de escala.
+
+Referências do fornecedor: [CVE-2026-107891 — musl](https://security.alpinelinux.org/vuln/CVE-2026-107891) e [CVE-2026-85091 — zlib](https://security.alpinelinux.org/vuln/CVE-2026-85091). Não houve alteração de versão de Node, OR-Tools, pacotes npm ou pacotes Python. A verificação posterior confirma os pacotes e a ausência de achados HIGH/CRITICAL nas imagens liberadas.
+
 `coverageBasis` é metadado opcional dentro do JSON da revisão, não autorização, mínimo operacional ou evidência jurídica. Para retroceder a uma versão anterior que rejeite esse campo, ainda usando a aplicação nova, salve os mesmos inputs sem `coverageBasis` pela API normal e com a revisão esperada, antes de trocar as imagens. Não remova horários, demandas, ausências ou histórico. As imagens anteriores são preservadas como recuperação; não se executa migração SQL para esta etapa.
 
 As grades continuam rascunhos. Dados e autorizações não fornecidos não foram inventados. Permanecem desfalques estimados e limitações de setores com uma pessoa, horários não apurados e crédito noturno. Não foi demonstrado atendimento real de sete dias nem ótimo global.

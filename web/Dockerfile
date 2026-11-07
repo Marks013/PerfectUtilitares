@@ -9,7 +9,7 @@ FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de6
 ARG ALPINE_APK_MIRROR
 RUN case "$ALPINE_APK_MIRROR" in dl-cdn.alpinelinux.org|dl-3.alpinelinux.org) ;; *) exit 64 ;; esac \
     && sed -i "s|https://dl-cdn.alpinelinux.org/alpine/|https://${ALPINE_APK_MIRROR}/alpine/|g" /etc/apk/repositories \
-    && apk add --no-cache libc6-compat openssl vips
+    && apk add --no-cache 'musl>=1.2.6-r3' 'musl-utils>=1.2.6-r3' 'zlib>=1.3.2-r1' libc6-compat openssl vips
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
@@ -18,7 +18,7 @@ FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6ee
 ARG ALPINE_APK_MIRROR
 RUN case "$ALPINE_APK_MIRROR" in dl-cdn.alpinelinux.org|dl-3.alpinelinux.org) ;; *) exit 64 ;; esac \
     && sed -i "s|https://dl-cdn.alpinelinux.org/alpine/|https://${ALPINE_APK_MIRROR}/alpine/|g" /etc/apk/repositories \
-    && apk add --no-cache ca-certificates libc6-compat libstdc++ openssl
+    && apk add --no-cache 'musl>=1.2.6-r3' 'musl-utils>=1.2.6-r3' 'zlib>=1.3.2-r1' ca-certificates libc6-compat libstdc++ openssl
 COPY --from=base /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
