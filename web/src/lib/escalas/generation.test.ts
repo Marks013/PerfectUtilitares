@@ -324,6 +324,71 @@ describe("whole-branch generation preparation", () => {
     expect(prepared.policy.transitionWeekAccepted).toBeUndefined();
   });
 
+  it("keeps only the original ten night minutes when neither imported adaptation is daytime", () => {
+    const value = input();
+    const source = value.employees[0].sourceSchedule;
+    if (!source) throw new Error("Referência de teste ausente");
+    source.weekday = "12:50-16:30 / 18:30-22:10";
+    value.shifts[0].segments = [{ start: 770, end: 990, kind: "WORK" }, { start: 990, end: 1110, kind: "BREAK" }, { start: 1110, end: 1330, kind: "WORK" }];
+    value.assignments = [{ employeeId: "p1", date: value.startDate, kind: "WORK", shiftId: "source", locked: true },
+      { employeeId: "p1", date: "2026-10-27", kind: "ABSENCE" }];
+    const original = structuredClone(value);
+    const prepared = prepareGeneration(value).input;
+    const selected = prepared.shifts.find(shift => shift.id === prepared.employees[0].shiftIds[0]);
+    expect(selected?.segments).toEqual([{ start: 706, end: 990, kind: "WORK" }, { start: 990, end: 1110, kind: "BREAK" }, { start: 1110, end: 1330, kind: "WORK" }]);
+    expect(minutes(prepared, selected?.id ?? "")).toBe(504);
+    expect(prepared.assignments).toEqual(original.assignments);
+    expect(prepared.shifts.find(shift => shift.id === "source")).toEqual(original.shifts[0]);
+    expect(prepared.employees[0].sourceSchedule).toEqual(source);
+    expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
+    const night = { ...prepared, assignments: [{ employeeId: "p1", date: value.startDate, kind: "WORK" as const, shiftId: selected?.id }] };
+    expect(validateEscala(night).issues.some(issue => issue.code === "NIGHT_CREDIT_PENDING")).toBe(true);
+    expect(value).toEqual(original);
+  });
+
+  it("preserves arrival when keeping an early departure would add more work before 05h", () => {
+    const value = input();
+    const source = value.employees[0].sourceSchedule;
+    if (!source) throw new Error("Referência de teste ausente");
+    source.weekday = "03:50-07:30 / 09:30-13:10";
+    value.shifts[0].segments = [{ start: 230, end: 450, kind: "WORK" }, { start: 450, end: 570, kind: "BREAK" }, { start: 570, end: 790, kind: "WORK" }];
+    const prepared = prepareGeneration(value).input;
+    const selected = prepared.shifts.find(shift => shift.id === prepared.employees[0].shiftIds[0]);
+    expect(selected?.segments[0].start).toBe(230);
+    expect(selected?.segments.at(-1)?.end).toBe(854);
+    expect(minutes(prepared, selected?.id ?? "")).toBe(504);
+  });
+
+  it("keeps arrival on equal night work across midnight instead of using the unpaid meal as work", () => {
+    const value = input();
+    const source = value.employees[0].sourceSchedule;
+    if (!source) throw new Error("Referência de teste ausente");
+    source.weekday = "20:50-00:30 / 02:30-06:10";
+    value.shifts[0].segments = [{ start: 1250, end: 1470, kind: "WORK" }, { start: 1470, end: 1590, kind: "BREAK" }, { start: 1590, end: 1810, kind: "WORK" }];
+    const prepared = prepareGeneration(value).input;
+    const selected = prepared.shifts.find(shift => shift.id === prepared.employees[0].shiftIds[0]);
+    expect(selected?.segments[0].start).toBe(1250);
+    expect(selected?.segments.at(-1)?.end).toBe(1874);
+    expect(minutes(prepared, selected?.id ?? "")).toBe(504);
+    expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
+  });
+
+  it("does not reconsider valid manually selected night alternatives", () => {
+    const value = input();
+    const source = value.employees[0].sourceSchedule;
+    if (!source) throw new Error("Referência de teste ausente");
+    source.weekday = "12:50-16:30 / 18:30-22:10";
+    value.shifts = [
+      { id: "manual-late", name: "Horário manual", segments: [{ start: 770, end: 990, kind: "WORK" }, { start: 990, end: 1110, kind: "BREAK" }, { start: 1110, end: 1394, kind: "WORK" }] },
+      { id: "manual-early", name: "Alternativa manual", segments: [{ start: 706, end: 990, kind: "WORK" }, { start: 990, end: 1110, kind: "BREAK" }, { start: 1110, end: 1330, kind: "WORK" }] },
+    ];
+    value.employees[0].shiftIds = value.shifts.map(shift => shift.id);
+    const prepared = prepareGeneration(value);
+    expect(prepared.preparation.adjustedEmployeeIds).toEqual([]);
+    expect(prepared.input.shifts).toEqual(value.shifts);
+    expect(prepared.input.employees[0].shiftIds).toEqual(value.employees[0].shiftIds);
+  });
+
   it("does not reinclude excluded people, invent manager hours or alter custom distributions", () => {
     const value = input();
     value.employees[0].planningEnabled = false;

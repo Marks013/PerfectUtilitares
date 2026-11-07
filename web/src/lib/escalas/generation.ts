@@ -9,6 +9,25 @@ function paidMinutes(shift: EscalaShift): number {
   return shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 }
 
+/** Compare civil work minutes only; this neither calculates night credits nor approves night work. */
+function nightWorkMinutes(input: EscalaInput, targets: Set<number>): number {
+  const person = input.employees[0];
+  if (!person || person.planningEnabled === false || !person.shiftIds.length) return Infinity;
+  const allowed = new Set(person.shiftIds);
+  const shifts = input.shifts.filter(shift => allowed.has(shift.id));
+  if ([...targets].some(target => !shifts.some(shift => paidMinutes(shift) === Math.min(target, person.simulationDailyMinutes ?? Infinity)))) return Infinity;
+  return shifts.reduce((total, shift) => total + shift.segments.reduce((sum, segment) => {
+    if (segment.kind !== "WORK") return sum;
+    let minutes = 0;
+    for (let day = Math.floor(segment.start / 1440); day <= Math.floor((segment.end - 1) / 1440); day++) {
+      const midnight = day * 1440;
+      minutes += Math.max(0, Math.min(segment.end, midnight + 300) - Math.max(segment.start, midnight));
+      minutes += Math.max(0, Math.min(segment.end, midnight + 1440) - Math.max(segment.start, midnight + 1320));
+    }
+    return sum + minutes;
+  }, 0), 0);
+}
+
 /** Order references without deleting manual alternatives needed when the mode changes. */
 function restOnlyReferences(person: EscalaEmployee, shifts: Map<string, EscalaShift>): EscalaEmployee {
   if (person.planningEnabled === false || person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING") return person;
@@ -96,8 +115,11 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
         : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_START");
     if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_END");
     // Prefer a daytime adaptation. Retain short/night references as a bounded civil-minute simulation when needed.
-    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_START");
-    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_END");
+    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) {
+      const arrival = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_START");
+      const departure = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_END");
+      prepared = nightWorkMinutes(departure, targets) < nightWorkMinutes(arrival, targets) ? departure : arrival;
+    }
     const candidate = prepared.employees[0];
     const commitments = input.assignments.filter((item) => item.employeeId === person.id && (item.locked || item.kind === "ABSENCE"));
     if (candidate.planningEnabled === false) {

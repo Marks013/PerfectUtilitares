@@ -68,6 +68,21 @@ describe("optional FPHI105 absence import", () => {
     expect(result.counts).toMatchObject({ outsidePeriodRows: 1, invalidRows: 0, days: 0 });
     expect(result.issues).toEqual([]);
   });
+  it.each([
+    ["Lic.Médica 15 d. Ac.Trab", "02/11/2026", "04/11/2026", ["2026-11-02", "2026-11-03", "2026-11-04"]],
+    ["Lic.Medica - 15 Dias", "01/11/2026", "01/11/2026", ["2026-11-01"]],
+  ])("accepts the medical leave abbreviation %s and uses only the inclusive reported dates", (status, start, end, dates) => {
+    const result = preview([row("1", start, end, status)]);
+    expect(result.assignments.map((item) => item.date)).toEqual(dates);
+    expect(result.assignments.every((item) => item.kind === "ABSENCE")).toBe(true);
+    expect(result.counts).toMatchObject({ matchedRows: 1, invalidRows: 0, days: dates.length });
+    expect(result.issues).toEqual([]);
+    expect(JSON.stringify(result)).not.toMatch(/MEDICAL|Pessoa|Operador|Lic\.|999/);
+  });
+  it.each(["Lic. prêmio", "Lic. remunerada", "Lic.Medicação", "Lic.Medical"])("does not treat the unrelated abbreviation %s as medical leave", (status) => {
+    expect(preview([row("1", "02/11/2026", "04/11/2026", status)]).counts).toMatchObject({ invalidRows: 1, days: 0 });
+  });
+
   it("warns about a report/month mismatch rather than silently changing the planning month", () => {
     const result = preview([row()], { ...options, visibleMonth: "2026-10" });
     expect(result.issues[0].code).toBe("REPORT_PERIOD_MISMATCH");

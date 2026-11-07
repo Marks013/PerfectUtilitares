@@ -91,7 +91,7 @@ export function previewFphi105Import(buffer: Buffer, options: AbsenceImportOptio
     const openEnded = !endText || /^0{2}\/0{2}\/0{4}$/.test(endText);
     const end = openEnded ? options.endDate : reportDate(endText);
     const situation = normalized(row[10]);
-    if (!start || !end || (!openEnded && start > end) || !/^(?:ferias\b|afastad|afastamento\b|licenca\b|atestado\b|auxilio\b|maternidade\b|paternidade\b|doenca\b|acidente\b|suspensao\b)/.test(situation)) {
+    if (!start || !end || (!openEnded && start > end) || !/^(?:ferias\b|afastad|afastamento\b|licenca\b|lic\.\s*medica\b|atestado\b|auxilio\b|maternidade\b|paternidade\b|doenca\b|acidente\b|suspensao\b)/.test(situation)) {
       result.counts.invalidRows++; issue(line, "INVALID_ABSENCE", "Confira o início, o término e se a situação representa um afastamento. A linha não será aplicada."); continue;
     }
     if (end < options.startDate || start > options.endDate) { result.counts.outsidePeriodRows++; continue; }
