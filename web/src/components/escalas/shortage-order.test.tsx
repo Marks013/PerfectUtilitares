@@ -19,7 +19,8 @@ describe("canonical Portuguese sector order in shortage views", () => {
     const html = renderToStaticMarkup(<ValidationResults input={fixture()} validation={{ valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: null }} section="coverage" />);
     const names = [...html.matchAll(/<h4[^>]*>([^<]+)<\/h4>/g)].map(match => match[1]);
     expect(names).toEqual(expected);
-    expect(html).toContain("mínimo informado para a operação");
+    expect(html.match(/Rever mínimo informado/g)).toHaveLength(1);
+    expect(html.match(/Referência estimada/g)).toHaveLength(4);
   });
   it("uses numeric and accented order in the coverage sector filters", () => {
     const html = renderToStaticMarkup(<Coverage input={fixture()} disabled={false} onChange={vi.fn()} />);

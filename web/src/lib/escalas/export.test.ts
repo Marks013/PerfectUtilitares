@@ -69,8 +69,8 @@ describe("Escalas shared monthly presentation and real exports", () => {
     for (let index = 0; index < 28; index++) expect(text).toContain(`Obrigatório ${String(index).padStart(2, "0")}`);
     expect(text.indexOf("Setor estimado 00")).toBeLessThan(text.indexOf("Setor estimado 79"));
     const all = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
-    expect(all.filter(row => /^2026-11-/.test(String(row[0])))).toHaveLength(108);
-    expect(all.some(row => row[1] === "Setor estimado 00")).toBe(true);
+    expect(all.slice(4)).toHaveLength(108);
+    expect(all.some(row => row[0] === "Setor estimado 00")).toBe(true);
     expect(workspace).toEqual(before);
   }, 20000);
 
@@ -237,7 +237,7 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(text).not.toContain("Horas previstas");
   }, 20000);
 
-  it("exports actionable deficit tables with exact dates, role, full interval and quantities", async () => {
+  it("summarizes all affected dates and real minima once per sector without duplicating role detail", async () => {
     const workspace = fixture(); workspace.input.policy.coverageReview = "SUGGESTED";
     workspace.input.demands = ["2026-11-02", "2026-11-09"].flatMap((date, index) => [
       { id: `first-${index}`, date, sector: "Reposição", role: "Repositor", start: 480, end: 540, minimum: 3, estimated: true },
@@ -248,16 +248,22 @@ describe("Escalas shared monthly presentation and real exports", () => {
     const before = structuredClone(workspace), bytes = await exportEscalaPdf(workspace);
     const pages = await pdfContent(bytes), text = pages.flat().map(item => item.str).join(" ");
     expect(text).toContain("Desfalques de cobertura");
-    expect(text).toContain("Funções / cargos a revisar"); expect(text).toContain("Presentes");
+    expect(text).toContain("Faixas prioritárias");
+    expect(text).not.toContain("Funções / cargos a revisar");
     expect(text).not.toContain("Mensagem antiga incompleta");
     expect(text).not.toContain("situações distintas neste grupo");
-    expect(text).toContain("Repositor: 1 presente(s), referência 3 estimada");
-    expect(text).toContain("02/11, 09/11"); expect(text).toContain("08:00-10:00");
+    expect(text).not.toContain("Repositor: 1 presente(s)");
+    expect(text).toContain("Até 2 pessoa(s) abaixo da referência do setor");
+    expect(text).toContain("02/11–03/11, 09/11"); expect(text).toContain("08:00-10:00");
     expect(text).toContain("10:00-11:00"); expect(text).toContain("Mínimo informado");
     const table = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
-    expect(table[3]).toEqual(["Data", "Setor", "Horário com desfalque", "Presentes no setor", "Referência do setor", "Base", "Funções / cargos a revisar", "Faixa analisada"]);
-    expect(table).toContainEqual(["2026-11-02", "Reposição", "08:00-10:00", 1, 3, "Estimada", "Repositor: 1 presente(s), referência 3 estimada", "08:00-17:24"]);
-    expect(table).toContainEqual(["2026-11-03", "Reposição", "10:00-11:00", 1, 1, "Mínimo informado", "Balconista: 0 presente(s), referência 1 informada", "08:00-17:24"]);
+    expect(table[3]).toEqual(["Setor", "Dias com alerta", "Dias sem presença em alguma faixa", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"]);
+    expect(table.slice(4)).toHaveLength(1);
+    expect(table[4][0]).toBe("Reposição");
+    expect(table[4][1]).toBe("02/11–03/11, 09/11");
+    expect(table[4][3]).toBe("08:00-10:00 · 2 dia(s)\n10:00-11:00 · 1 dia(s)");
+    expect(table[4][4]).toContain("Até 2 pessoa(s)");
+    expect(table[4][5]).toContain("Mínimo informado não atendido em 1 dia(s); também há estimativas");
     expect(workspace).toEqual(before);
   }, 20000);
 

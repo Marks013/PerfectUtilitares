@@ -105,7 +105,7 @@ describe("Escalas readable operational review", () => {
     expect(html).not.toContain("exige regra específica");
   });
 
-  it("shows exact sector deficits separately from an estimated reference, without role substitution", () => {
+  it("summarizes each sector once with exact priority clocks and keeps daily details closed initially", () => {
     const {input,date} = sample();
     input.demands = [{id:"estimate",date,sector:"Reposição",role:"Repositor",start:836,end:845,minimum:1,estimated:true}, {id:"minimum",date,sector:"Caixas",role:"Operador",start:810,end:815,minimum:1,estimated:false}];
     const validation: EscalaValidation={valid:false,readyToPublish:false,issues:[],summaries:[],minimumCoverageMargin:-1};
@@ -113,11 +113,15 @@ describe("Escalas readable operational review", () => {
     expect(diagnostics.coverageGroups.some((row) => row.start === 840)).toBe(true);
     const html=renderToStaticMarkup(<ValidationResults input={input} validation={validation} onResolve={vi.fn()} />);
     expect(html).toContain("14:00–14:05");
-    expect(html).toContain("estimativa automática, não mínimo obrigatório");
-    expect(html).toContain("mínimo informado para a operação");
-    expect(html).toContain("Efetivamente trabalhando");
-    expect(html).toContain("Funções nesta faixa");
-    expect(html).toContain("Conferir este setor e horário");
+    expect(html).toContain("Referência estimada");
+    expect(html).toContain("Rever mínimo informado");
+    expect(html).toContain("Desfalques (2)");
+    expect(html.match(/Consultar dias e horários/g)).toHaveLength(2);
+    expect(html.match(/<h4 class=\"font-semibold\">Caixas<\/h4>/g)).toHaveLength(1);
+    expect(html).toContain("Ajustar este setor");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("Conferir funções nesta faixa");
+    expect(html).not.toContain("Dia para conferir em");
   });
 
   it("maps recovery to concrete model, availability and short-meal causes", () => {

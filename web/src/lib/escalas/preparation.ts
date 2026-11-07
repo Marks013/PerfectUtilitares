@@ -17,13 +17,14 @@ function minutes(shift: EscalaShift): number {
   return shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 }
 
-function signature(shift: EscalaShift): string {
-  return JSON.stringify(shift.segments);
+export function preparedShiftSignature(shift: EscalaShift): string {
+  // PostgreSQL JSONB may reorder object keys without changing the shift.
+  return JSON.stringify(shift.segments.map(({ start, end, kind }) => ({ start, end, kind })));
 }
 
 function shiftId(shift: EscalaShift): string {
   let hash = 2166136261;
-  for (const character of signature(shift)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  for (const character of preparedShiftSignature(shift)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
   return `prep-${(hash >>> 0).toString(16)}`;
 }
 
@@ -102,7 +103,7 @@ function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | 
       || (index > 0 && segment.start < copy.segments[index - 1].end))) continue;
     copy.id = shiftId(copy);
     copy.name = `Proposta ${Math.floor(target / 60)}h${String(target % 60).padStart(2, "0")} · ${anchor === "arrival" ? "entrada mantida" : "saída mantida"}`;
-    if (!results.some((item) => signature(item) === signature(copy))) results.push(copy);
+    if (!results.some((item) => preparedShiftSignature(item) === preparedShiftSignature(copy))) results.push(copy);
   }
   return results;
 }
@@ -136,14 +137,15 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const register = (shift: EscalaShift) => {
     const existing = shifts.get(shift.id);
-    if (existing && signature(existing) !== signature(shift)) throw new Error("Conflito entre identificadores de horários; nenhuma proposta foi alterada.");
+    if (existing && preparedShiftSignature(existing) !== preparedShiftSignature(shift)) throw new Error("Conflito entre identificadores de horários; nenhuma proposta foi alterada.");
     shifts.set(shift.id, shift);
   };
   const employees = input.employees.map((person): EscalaEmployee => {
     if (person.planningEnabled === false) return person;
     if ((person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return { ...person, planningEnabled: true, planningExclusionReason: undefined, shiftIds: [] };
     const source = originalShift(person);
-    const base = person.sourceSchedule ? (source ? [source] : []) : person.shiftIds
+    const originalShiftIds = !person.sourceSchedule ? person.originalShiftIds : undefined;
+    const base = person.sourceSchedule ? (source ? [source] : []) : (originalShiftIds ?? person.shiftIds)
       .filter(id => !isGeneratedMixed42Shift(id)).map(id => shifts.get(id))
       .filter((shift): shift is EscalaShift => Boolean(shift));
     // Never silently turn a short/undefined imported contract into a full-time journey.
@@ -163,7 +165,15 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
       if (mixed && effective === 42) { needsLong = true; targets.add(480); }
       else targets.add(Math.min(effective * 12, simulationDailyMinutes ?? Infinity));
     }
-    const ordinary = sources.flatMap((source) => [...targets].flatMap((target) => adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true)));
+    // An exact saved manual option needs no reconstruction or new identifier.
+    const ordinary = sources.flatMap((source) => [...targets].flatMap((target) =>
+      !needsLong && originalShiftIds?.includes(source.id) && minutes(source) === target
+        && !(input.policy.limitContinuousWorkBlocks === true && requiresWorkBlockBalance(source))
+        ? [source] : adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true)));
+    // Old drafts lacking provenance cannot recover discarded manual references.
+    const retainedOriginalIds = needsLong && !person.sourceSchedule
+      ? originalShiftIds ?? (!person.shiftIds.some(isGeneratedMixed42Shift) ? [...person.shiftIds] : undefined)
+      : undefined;
     const long = needsLong ? sources.flatMap(source => longMixedShifts(source, strategy)) : [];
     let candidates = needsLong ? (long.length && ordinary.length ? [...long, ...ordinary] : []) : ordinary;
     if (!candidates.length && !needsLong && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true));
@@ -172,11 +182,11 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     const ordinaryIds = [...new Set(candidates.filter(shift => !isGeneratedMixed42Shift(shift.id)).map(shift => shift.id))];
     // Reserve room for both durations even with many manual references.
     const shiftIds = candidates.length && needsLong ? [...longIds.slice(0, 6), ...ordinaryIds.slice(0, 6)] : ordinaryIds.slice(0, 12);
-    return { ...person, ...reference, simulationDailyMinutes, shiftIds, planningEnabled: shiftIds.length > 0,
+    return { ...person, ...reference, simulationDailyMinutes, shiftIds, originalShiftIds: retainedOriginalIds, planningEnabled: shiftIds.length > 0,
       planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });
   // Reference text remains on each imported employee; only keep referenced shift definitions.
-  const used = new Set([...employees.flatMap((person) => person.shiftIds), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
+  const used = new Set([...employees.flatMap((person) => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
   const retained = [...shifts.values()].filter((shift) => used.has(shift.id));
   if (retained.length > 120) throw new Error("A configuração gerou mais de 120 horários. Reduza as opções de horários da filial antes de aplicar.");
   return { ...input, defaultWeeklyHours: hours, employees, shifts: retained,

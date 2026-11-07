@@ -1,8 +1,9 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import type { EscalaInput, EscalaWorkspace } from "./types";
-import { compareSectors, sortScheduleEntries } from "./order";
-import { buildCoveragePresence, consolidateCoverageGaps, coverageTimeline, sectorCoverageGaps, type CoveragePresence, type SectorCoverageGap } from "./coverage-presence";
+import { sortScheduleEntries } from "./order";
+import { sectorCoverageGaps } from "./coverage-presence";
+import { summarizeCoverageGaps, type SectorCoverageSummary } from "./coverage-summary";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
 
 function reportPeriod(value: string): string {
@@ -37,27 +38,6 @@ const XLSX_REPORT_STYLES = XLSX_STYLES.replace('<fonts count="2">', '<fonts coun
 function spreadsheetLines(text: string, width: number): number {
   return text.split("\n").reduce((count, line) => count + Math.max(1, Math.ceil([...line].reduce((units, character) =>
     units + (/\s/u.test(character) ? 0.75 : /[MWmw@%]/u.test(character) ? 2 : /[A-ZÀ-Þ]/u.test(character) ? 1.5 : /[^\u0020-\u00ff]/u.test(character) ? 2 : 1.2), 0) / Math.max(1, width - 1))), 0);
-}
-
-/** Split, never truncate; prefer complete role descriptions at continuation boundaries. */
-function spreadsheetFragments(text: string, width: number, maximumLines = 24): string[] {
-  const fragments: string[] = [];
-  let remaining = [...text];
-  while (remaining.length && spreadsheetLines(remaining.join(""), width) > maximumLines) {
-    let low = 1, high = remaining.length;
-    while (low < high) {
-      const middle = Math.ceil((low + high) / 2);
-      if (spreadsheetLines(remaining.slice(0, middle).join(""), width) <= maximumLines) low = middle;
-      else high = middle - 1;
-    }
-    const prefix = remaining.slice(0, low).join("");
-    const boundary = prefix.lastIndexOf("\n") + 1;
-    const length = boundary > prefix.length / 2 ? [...prefix.slice(0, boundary)].length : low;
-    fragments.push(remaining.slice(0, length).join(""));
-    remaining = remaining.slice(length);
-  }
-  if (remaining.length || !fragments.length) fragments.push(remaining.join(""));
-  return fragments;
 }
 
 function sheet(rows: (string | number)[][], widths: number[], grid = false, frozenColumns = grid ? 5 : 0, sectors: number[] = []) {
@@ -103,38 +83,6 @@ function restEntries(model: ReturnType<typeof buildEscalaPresentation>) {
   return sortScheduleEntries(model.restPeople.map(person => ({ ...person, schedule: person.proposedSchedule })));
 }
 
-/** The envelope is observed/reference data, never an invented store opening time. */
-function coverageWindows(input: EscalaInput, gaps: SectorCoverageGap[], presence: CoveragePresence) {
-  const windows = new Map<string, string>();
-  for (const gap of gaps) {
-    const key = gap.date + "\0" + gap.sector;
-    if (windows.has(key)) continue;
-    const timeline = coverageTimeline(input, gap.date, gap.sector, presence);
-    windows.set(key, escalaDuration(timeline[0]?.start ?? gap.start) + "-" + escalaDuration(timeline.at(-1)?.end ?? gap.end));
-  }
-  return windows;
-}
-
-function gapSchedule(gap: SectorCoverageGap) {
-  return escalaDuration(gap.start) + "-" + escalaDuration(gap.end);
-}
-
-/** Presentation only: preserve different counts/bases/dates, deduplicate identical occurrences. */
-function orderedCoverageGaps(gaps: SectorCoverageGap[]): SectorCoverageGap[] {
-  const rolesOrder = new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" });
-  const unique = new Map<string, SectorCoverageGap>();
-  for (const gap of gaps) {
-    const roles = [...new Map(gap.roles.map(role => [JSON.stringify([role.role, role.present, role.minimum, role.estimated]), role])).values()]
-      .sort((a, b) => rolesOrder.compare(a.role, b.role) || Number(a.estimated) - Number(b.estimated) || a.minimum - b.minimum || a.present - b.present);
-    const entry = { ...gap, roles };
-    const key = JSON.stringify([gap.sector, gap.date, gap.start, gap.end, gap.present, gap.minimum, gap.estimated, gap.kind, roles]);
-    if (!unique.has(key)) unique.set(key, entry);
-  }
-  return [...unique.values()].sort((a, b) => compareSectors(a.sector, b.sector)
-    || a.start - b.start || a.end - b.end || a.date.localeCompare(b.date)
-    || Number(a.estimated) - Number(b.estimated));
-}
-
 function mixed42ExportNotice(input: EscalaInput): string {
   if (input.simulation !== true || input.defaultWeeklyHours !== 42 || !input.mixed42Sectors?.length) {
     return "";
@@ -144,9 +92,7 @@ function mixed42ExportNotice(input: EscalaInput): string {
 
 export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Uint8Array {
   const model = buildEscalaPresentation(workspace);
-  const presence = buildCoveragePresence(workspace.input);
-  const diagnostics = { coverageGroups: orderedCoverageGaps(sectorCoverageGaps(workspace.input, presence)) };
-  const windows = coverageWindows(workspace.input, diagnostics.coverageGroups, presence);
+  const coverage = summarizeCoverageGaps(sectorCoverageGaps(workspace.input));
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const mixedNotice = mixed42ExportNotice(workspace.input);
@@ -175,18 +121,10 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     }
     hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily]);
   }
-  const gaps = [...metadata("Desfalques de cobertura", "Por setor e horário. Presentes/referência são do setor; funções detalham a mesma ocorrência, sem somar faltas novamente. Estimada = referência automática."),
-    ["Data", "Setor", "Horário com desfalque", "Presentes no setor", "Referência do setor", "Base", "Funções / cargos a revisar", "Faixa analisada"]];
-  sector = undefined;
-  for (const gap of diagnostics.coverageGroups) {
-    if (sector !== gap.sector) { sectors.gaps.push(gaps.length); gaps.push(["Setor: " + (gap.sector || "Não informado")]); sector = gap.sector; }
-    const descriptions = gap.roles.length ? gap.roles.map(coverageRoleDescription).join("\n") : coverageRoles(gap);
-    const fragments = spreadsheetFragments(descriptions, 34);
-    fragments.forEach((roles, index) => {
-      gaps.push([gap.date, gap.sector, gapSchedule(gap), index ? "" : gap.present, index ? "" : gap.minimum, index ? "" : gap.estimated ? "Estimada" : "Mínimo informado", roles,
-        (windows.get(gap.date + "\0" + gap.sector) ?? gapSchedule(gap)) + (index ? ` (continuação ${index + 1}/${fragments.length})` : "")]);
-    });
-  }
+  const gaps = [...metadata("Desfalques de cobertura", "Resumo por setor. Até 3 faixas prioritárias, não todas as ocorrências. Não some picos de horários diferentes. Consulte o setor e o dia no planejamento para ver os detalhes."),
+    ["Setor", "Dias com alerta", "Dias sem presença em alguma faixa", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"],
+    ...coverage.map(row => [row.sector || "Não informado", compactDates(row.dates), row.noServiceDates.length ? compactDates(row.noServiceDates) : "—",
+      priorityWindows(row), coveragePeak(row), coverageAction(row)])];
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
     ["Situação", "Setor", "Matrícula", "Colaborador", "Cargo", "Motivo da não inclusão"]];
   sector = undefined;
@@ -197,7 +135,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const sheets = [
     ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [12, 9, 25, 18, 28, ...model.dates.map(() => 4.25)], grid: true, sectors: sectors.main }] : []),
     ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [14, 9, 26, 19, 8, 32, 20, 12], grid: false, sectors: sectors.hours }] : []),
-    ...(diagnostics.coverageGroups.length ? [{ name: "Desfalques", frozenColumns: 2, rows: gaps, widths: [12, 19, 19, 11, 12, 16, 34, 21], grid: false, sectors: sectors.gaps }] : []),
+    ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 1, rows: gaps, widths: [23, 28, 28, 33, 27, 42], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
   // Excel filters and sorting need contiguous records, not merged sector separator rows.
@@ -221,15 +159,19 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   return zipSync(files, { level: 6 });
 }
 
-function coverageSituation(gap: SectorCoverageGap): string {
-  return gap.kind === "no-service" ? "Sem presença no horário" : gap.estimated ? "Abaixo da estimativa" : "Mínimo não atendido";
-}
-function coverageRoles(gap: SectorCoverageGap): string {
-  return gap.roles.length ? gap.roles.map(coverageRoleDescription).join("; ") : "Referência do setor, sem função específica";
+function priorityWindows(row: SectorCoverageSummary): string {
+  return row.windows.map(window => escalaDuration(window.start) + "-" + escalaDuration(window.end) + " · " + window.dates.length + " dia(s)").join("\n");
 }
 
-function coverageRoleDescription(role: SectorCoverageGap["roles"][number]): string {
-  return role.role + ": " + role.present + " presente(s), referência " + role.minimum + (role.estimated ? " estimada" : " informada");
+function coveragePeak(row: SectorCoverageSummary): string {
+  const sector = row.peakSectorMissing ? "Até " + row.peakSectorMissing + " pessoa(s) abaixo da referência do setor" : "Quantidade total do setor atendida";
+  return sector + (row.hasRoleMismatch ? "; conferir também a distribuição das funções" : "");
+}
+
+function coverageAction(row: SectorCoverageSummary): string {
+  const base = row.minimumDates.length ? "Mínimo informado não atendido em " + row.minimumDates.length + " dia(s)" + (row.hasEstimates ? "; também há estimativas" : "")
+    : "Estimativa automática; confirme a necessidade real";
+  return base + ". Reveja entradas, intervalos e folgas. Detalhes por dia no planejamento.";
 }
 
 function safePdfText(text: string, font: PDFFont) {
@@ -269,8 +211,7 @@ function compactDates(dates: string[]): string {
 
 export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Promise<Uint8Array> {
   const model = buildEscalaPresentation(workspace), document = await PDFDocument.create();
-  const presence = buildCoveragePresence(workspace.input);
-  const diagnostics = { coverageGroups: orderedCoverageGaps(sectorCoverageGaps(workspace.input, presence)) };
+  const coverage = summarizeCoverageGaps(sectorCoverageGaps(workspace.input));
   const mixedNotice = mixed42ExportNotice(workspace.input);
   let reportTitle = mode === "hours" ? "Escala de horários" : "Escala de folgas";
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
@@ -414,43 +355,23 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
       paragraph("Motivo: " + reason);
     }
   }
-  if (diagnostics.coverageGroups.length) {
+  if (coverage.length) {
     reportTitle = "Desfalques de cobertura";
     newPage(false);
     section("Desfalques de cobertura");
-    paragraph("Por setor e horário. Presentes/referência são do setor; os cargos detalham a mesma ocorrência, sem somar faltas novamente. Estimada: referência automática.");
-    // A shortage is defined by its facts, not a day's wider observed envelope.
-    // Keep every date and real count/base difference; Excel retains daily envelopes.
-    const grouped = consolidateCoverageGaps(diagnostics.coverageGroups);
-    const ordered = [...grouped].sort((left, right) => compareSectors(left.sector, right.sector)
-      || left.start - right.start || left.end - right.end || left.dates[0].localeCompare(right.dates[0])
-      || Number(left.estimated) - Number(right.estimated));
-    const widths = [0.14, 0.15, 0.07, 0.08, 0.40, 0.16].map((ratio) => (width - 2 * margin) * ratio);
-    const headings = ["Dia(s)", "Horário com desfalque", "Presentes", "Referência", "Funções / cargos a revisar", "Situação / base"];
-    const tableHeader = () => {
-      if (y < 85) newPage(false);
-      tableHeadings(headings, widths);
-    };
-    const continuation = (sector: string) => {
-      newPage(false); paragraph("Desfalques de cobertura (continuação)", 11, true); tableHeader();
-      section((sector || "Setor não informado") + " (continuação)");
-    };
+    paragraph("Um resumo por setor, sem repetir cargos ou pequenas variações de horário. Até 3 faixas prioritárias; outras ocorrências ficam na consulta por dia do planejamento.");
+    paragraph("Os picos não se somam. Estimativa automática não é demanda confirmada nem indicação de contratação.");
+    const widths = [0.16, 0.20, 0.23, 0.16, 0.25].map(ratio => (width - 2 * margin) * ratio);
+    const headings = ["Setor", "Dias com alerta / sem presença", "Faixas prioritárias", "Maior diferença", "Base / próximo passo"];
+    const tableHeader = () => tableHeadings(headings, widths);
+    const continuation = () => { newPage(false); tableHeader(); };
     tableHeader();
-    let coverageSector: string | undefined;
-    for (const gap of ordered) {
-      const context = coverageSituation(gap) + (gap.estimated ? " — Estimada" : " — Mínimo informado");
-      const cells = [compactDates(gap.dates), gapSchedule(gap), String(gap.present), String(gap.minimum), coverageRoles(gap), context];
-      const lines = cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 4 || index === 1 ? bold : font, 8)));
-      const rowHeight = Math.max(...lines.map(value => value.length)) * 11 + 8;
-      const sectorHeight = 8 + wrapText(gap.sector || "Setor não informado", width - 2 * margin, bold, 11).length * 15;
-      const firstFragment = rowHeight <= 400 ? rowHeight : 19;
-      if (y - firstFragment - (coverageSector !== gap.sector ? sectorHeight : 0) < 45) {
-        continuation(gap.sector); coverageSector = gap.sector;
-      }
-      if (coverageSector !== gap.sector) { section(gap.sector || "Setor não informado"); coverageSector = gap.sector; }
-      paginatedRow(lines, widths, 8, index => index === 4 || index === 1, () => continuation(gap.sector));
+    for (const row of coverage) {
+      const dates = compactDates(row.dates) + "\nSem presença em alguma faixa: " + (row.noServiceDates.length ? compactDates(row.noServiceDates) : "nenhum dia");
+      const cells = [row.sector || "Não informado", dates, priorityWindows(row), coveragePeak(row), coverageAction(row)];
+      const lines = cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8)));
+      paginatedRow(lines, widths, 8, index => index === 0, continuation);
     }
-    paragraph("Ajustes e conferências ficam na área de suporte do planejamento.");
   }
   const pages = document.getPages();
   pages.forEach((item, index) => { item.drawText(`PerfectUtilitares | Filial ${safePdfText(workspace.input.branchCode, font)} | ${index + 1}/${pages.length}`, { x: margin, y: 16, size: 8, font }); });

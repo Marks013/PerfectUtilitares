@@ -2,7 +2,7 @@ import { EscalaError } from "./access";
 import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility";
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42 } from "./labor-rules";
-import { isGeneratedMixed42Shift, planningWeeklyHours, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
+import { isGeneratedMixed42Shift, planningWeeklyHours, preparedShiftSignature, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
 import type { EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
 
 function paidMinutes(shift: EscalaShift): number {
@@ -56,8 +56,9 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       if (commitments.length) throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", "Há um horário importado incompatível com a jornada 5×2 e dias bloqueados ou ausências já registrados. Confira as exceções da equipe antes de gerar; os registros foram preservados.");
       throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", `Não foi possível adaptar o horário de ${person.registration} · ${person.name} (${person.sector}) para a jornada escolhida. Ninguém foi excluído. Use Ajustar horários para manter a saída ou confira o horário individual; bloqueios e afastamentos permanecem preservados.`);
     }
-    const proposedSchedules = candidate.shiftIds.map((id) => JSON.stringify(prepared.shifts.find((shift) => shift.id === id)?.segments)).sort();
-    const currentSchedules = allowed.map((shift) => JSON.stringify(shift.segments)).sort();
+    const proposedIds = new Set(candidate.shiftIds);
+    const proposedSchedules = prepared.shifts.filter(shift => proposedIds.has(shift.id)).map(preparedShiftSignature).sort();
+    const currentSchedules = allowed.map(preparedShiftSignature).sort();
     const unchangedSchedules = JSON.stringify(proposedSchedules) === JSON.stringify(currentSchedules);
     // Rechecking a preserved short reference must not discard an unchanged saved roster.
     // A real journey, clock-reference or permitted-shift change still invalidates its workdays.
@@ -66,7 +67,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     }
     for (const shift of prepared.shifts) {
       const existing = shifts.get(shift.id);
-      if (existing && JSON.stringify(existing.segments) !== JSON.stringify(shift.segments)) {
+      if (existing && preparedShiftSignature(existing) !== preparedShiftSignature(shift)) {
         throw new EscalaError(422, "ESCALA_SHIFT_CONFLICT", "Dois horários têm o mesmo identificador e períodos diferentes. Confira os horários da filial antes de gerar.");
       }
       if (!existing) shifts.set(shift.id, shift);
@@ -75,14 +76,14 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const lockedShiftIds = commitments.flatMap((item) => item.shiftId ? [item.shiftId] : []);
     const shiftIds = [...new Set([...candidate.shiftIds, ...lockedShiftIds])];
     if (shiftIds.length > 12) throw new EscalaError(422, "ESCALA_SHIFT_OPTIONS_LIMIT", "Os horários propostos e os dias bloqueados excedem 12 alternativas por pessoa. Confira os bloqueios antes de gerar.");
-    return { ...person, ...reference, planningEnabled: true, simulationDailyMinutes: candidate.simulationDailyMinutes, shiftIds };
+    return { ...person, ...reference, planningEnabled: true, simulationDailyMinutes: candidate.simulationDailyMinutes, originalShiftIds: candidate.originalShiftIds, shiftIds };
   });
   const adjusted = new Set(adjustedEmployeeIds);
   const excluded = new Set(excludedEmployeeIds);
   // An incompatible unlocked workday is replaced by the solve. Absences, OFF choices and locks remain available.
   const assignments = input.assignments.filter((item) => (!excluded.has(item.employeeId) || item.locked || item.kind === "ABSENCE")
     && !(adjusted.has(item.employeeId) && item.kind === "WORK" && !item.locked));
-  const used = new Set([...employees.flatMap((person) => person.shiftIds), ...assignments.flatMap((item) => item.shiftId ? [item.shiftId] : []),
+  const used = new Set([...employees.flatMap((person) => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...assignments.flatMap((item) => item.shiftId ? [item.shiftId] : []),
     ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
   const retained = [...shifts.values()].filter((shift) => used.has(shift.id));
   if (retained.length > 120) throw new EscalaError(422, "ESCALA_SHIFT_LIMIT", "A adaptação exige mais de 120 horários. Reduza o período ou as alternativas da filial antes de gerar.");

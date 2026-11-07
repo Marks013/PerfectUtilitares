@@ -2,16 +2,16 @@
 
 import { memo, useMemo, useRef, useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
-import { consolidateCoverageGaps } from "@/lib/escalas/coverage-presence";
+import { summarizeCoverageGaps } from "@/lib/escalas/coverage-summary";
 import type { EscalaRecoveryContext } from "./recovery-navigation";
 import styles from "./escalas.module.css";
-import { compareSectors, sortEmployees } from "@/lib/escalas/order";
+import { sortEmployees } from "@/lib/escalas/order";
 import type {
   EscalaAssignment,
   EscalaInput,
   EscalaValidation,
 } from "@/lib/escalas/types";
-import { buttonClass, panelClass, primaryClass } from "./controls";
+import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { inactiveViewPropsEqual, useActiveSnapshot } from "./view-activity";
 import { addDate, clock, displayDate } from "./workspace-model";
 import { groupValidationIssues, isReviewInformation, reviewNoticeText, type ReviewTarget } from "./validation-guidance";
@@ -84,26 +84,42 @@ function Changes({ input, assignments }: { input: EscalaInput; assignments: Esca
 
 type ResolveReview = (target: ReviewTarget, context?: EscalaRecoveryContext) => void;
 
-function CoverageGaps({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
+function CoverageDayDetails({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
   const [page, setPage] = useState(0);
-  const groups = consolidateCoverageGaps(rows).sort((a, b) => compareSectors(a.sector, b.sector) || a.dates[0].localeCompare(b.dates[0]) || a.start - b.start || a.end - b.end || Number(a.estimated) - Number(b.estimated));
-  const pages = Math.max(1, Math.ceil(groups.length / 8));
-  const current = Math.min(page, pages - 1);
-  if (!groups.length) return null;
-  return <div className={styles.reviewGroup}>
-    <div><h3 className="font-semibold">Cobertura por setor e horário</h3><p className={styles.muted}>Ocorrências equivalentes estão reunidas. A estimativa automática é uma referência de distribuição, não uma necessidade comprovada.</p></div>
-    <ul className={styles.coverageGapList}>
-      {groups.slice(current * 8, current * 8 + 8).map((row) => <li key={JSON.stringify([row.sector, row.dates, row.start, row.end, row.roles])} className={styles.reviewNotice} data-severity={row.estimated ? "WARNING" : "ERROR"}>
-        <div className={styles.header}><h4 className="font-semibold">{row.sector}</h4><span className={styles.statusTag}>{row.kind === "no-service" ? "Sem atendimento nesta faixa" : row.estimated ? "Abaixo da estimativa" : "Mínimo informado não atendido"}</span></div>
-        <p className="tabular-nums"><strong>{clock(row.start)}–{clock(row.end)}</strong> · {row.dates.length === 1 ? displayDate(row.dates[0]) : `${row.dates.length} dias entre ${displayDate(row.dates[0])} e ${displayDate(row.dates.at(-1) ?? row.dates[0])}`}</p>
-        <dl className={styles.reviewContext}><div><dt>Efetivamente trabalhando</dt><dd>{row.present} pessoa(s), sem contar intervalos, afastamentos ou horários indefinidos.</dd></div><div><dt>Referência utilizada</dt><dd>{row.minimum} pessoa(s) · {row.estimated ? "estimativa automática, não mínimo obrigatório" : "mínimo informado para a operação"}.</dd></div></dl>
-        {row.roles.length > 0 && <details><summary className={styles.disclosureTrigger}>Funções nesta faixa</summary><ul className={styles.referenceList}>{row.roles.map((role) => <li key={JSON.stringify([role.role, role.estimated])}>{role.role || "Equipe do setor"}: {role.present} trabalhando / {role.minimum} {role.estimated ? "na referência estimada" : "no mínimo informado"}.</li>)}</ul></details>}
-        <p><strong>Ajuste a avaliar:</strong> {row.suggestion}</p>
-        {row.dates.length > 1 && <details><summary className={styles.disclosureTrigger}>Consultar os {row.dates.length} dias</summary><p>{row.dates.map(displayDate).join(", ")}</p></details>}
-        {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.dates[0], start: row.start })}>Conferir este setor e horário</button>}
+  const ordered = [...rows].sort((a, b) => a.start - b.start || a.end - b.end || Number(a.estimated) - Number(b.estimated));
+  const pages = Math.max(1, Math.ceil(ordered.length / 12)), current = Math.min(page, pages - 1);
+  return <div className="space-y-3">
+    <ul className="divide-y divide-[color:var(--app-border)] text-sm">
+      {ordered.slice(current * 12, current * 12 + 12).map((row, index) => <li key={JSON.stringify([row.start, row.end, row.roles, index])} className="space-y-1 py-3">
+        <p className="tabular-nums"><strong>{clock(row.start)}–{clock(row.end)}</strong> · {row.present} trabalhando / {row.minimum} {row.estimated ? "na estimativa" : "no mínimo informado"}{row.present === 0 ? " · Sem presença nesta faixa" : ""}</p>
+        {row.roles.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir funções nesta faixa</summary><ul>{row.roles.map(role => <li key={JSON.stringify([role.role, role.estimated])}>{role.role}: {role.present} trabalhando / {role.minimum} {role.estimated ? "na estimativa" : "no mínimo informado"}.</li>)}</ul></details>}
+        {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.date, start: row.start })}>Conferir este setor e horário</button>}
       </li>)}
     </ul>
-    {pages > 1 && <div className={styles.actions}><button type="button" className={buttonClass} disabled={!current} onClick={() => setPage(current - 1)}>Anterior</button><span className="text-sm">Página {current + 1} de {pages}</span><button type="button" className={buttonClass} disabled={current + 1 === pages} onClick={() => setPage(current + 1)}>Próxima</button></div>}
+    {pages > 1 && <div className={styles.actions}><button type="button" className={buttonClass} disabled={!current} onClick={() => setPage(current - 1)}>Anterior</button><span className="text-sm">Faixas {current * 12 + 1}–{Math.min(ordered.length, (current + 1) * 12)} de {ordered.length}</span><button type="button" className={buttonClass} disabled={current + 1 === pages} onClick={() => setPage(current + 1)}>Próxima</button></div>}
+  </div>;
+}
+
+function CoverageGaps({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
+  const summaries = useMemo(() => summarizeCoverageGaps(rows), [rows]);
+  const [selected, setSelected] = useState<{ sector: string; date: string } | null>(null);
+  if (!summaries.length) return null;
+  return <div className={styles.reviewGroup}>
+    <div><h3 className="font-semibold">Desfalques por setor</h3><p className={styles.muted}>Um resumo por setor. As faixas abaixo são prioridades, não a lista completa. A estimativa automática não é uma necessidade comprovada.</p></div>
+    <ul className={styles.coverageGapList}>
+      {summaries.map(row => {
+        const open = selected?.sector === row.sector;
+        const date = open && row.dates.includes(selected.date) ? selected.date : row.dates[0];
+        return <li key={row.sector} className={styles.reviewNotice} data-severity={row.minimumDates.length ? "ERROR" : "WARNING"}>
+          <div className={styles.header}><h4 className="font-semibold">{row.sector || "Setor não informado"}</h4><span className={styles.statusTag}>{row.minimumDates.length ? "Rever mínimo informado" : "Referência estimada"}</span></div>
+          <p>{row.dates.length} dia(s) com ponto de atenção{row.noServiceDates.length ? ` · ${row.noServiceDates.length} dia(s) sem presença em alguma faixa` : ""}.</p>
+          <ul className="space-y-1 text-sm tabular-nums">{row.windows.map(window => <li key={window.start + ":" + window.end}><strong>{clock(window.start)}–{clock(window.end)}</strong> · {window.dates.length} dia(s) · {window.peakSectorMissing ? `até ${window.peakSectorMissing} pessoa(s) abaixo da referência` : "rever a distribuição das funções"}</li>)}</ul>
+          <p className={styles.muted}>Compare com a necessidade real e reveja entradas, intervalos e folgas. Não significa contratar a quantidade indicada.</p>
+          <div className={styles.actions}><button type="button" className={buttonClass} aria-expanded={open} onClick={() => setSelected(open ? null : { sector: row.sector, date })}>{open ? "Fechar detalhes" : "Consultar dias e horários"}<span className="sr-only"> de {row.sector}</span></button>{onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.windows[0]?.dates[0] ?? row.dates[0], start: row.windows[0]?.start })}>Ajustar este setor<span className="sr-only"> {row.sector}</span></button>}</div>
+          {open && <div className="space-y-3 border-t border-[color:var(--app-border)] pt-3"><Field label={`Dia para conferir em ${row.sector}`}>{id => <select id={id} className={controlClass} value={date} onChange={event => setSelected({ sector: row.sector, date: event.target.value })}>{row.dates.map(day => <option key={day} value={day}>{displayDate(day)}</option>)}</select>}</Field><CoverageDayDetails key={row.sector + date} rows={rows.filter(gap => gap.sector === row.sector && gap.date === date)} onResolve={onResolve} /></div>}
+        </li>;
+      })}
+    </ul>
   </div>;
 }
 
@@ -146,7 +162,7 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
-    {diagnostics.coverageGroups.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir desfalques desta proposta ({diagnostics.coverageGroups.length})</summary><div className={styles.reviewScroller}><CoverageGaps rows={diagnostics.coverageGroups} /></div></details>}
+    {diagnostics.coverageGroups.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir setores com desfalque ({new Set(diagnostics.coverageGroups.map(row => row.sector)).size})</summary><div className={styles.reviewScroller}><CoverageGaps rows={diagnostics.coverageGroups} /></div></details>}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
@@ -168,7 +184,7 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
   const employees = sortEmployees(input.employees.filter(person => person.planningEnabled !== false));
   const view = section ?? selectedView ?? (errors.length ? "errors" : diagnostics.coverageGroups.length ? "coverage" : reviews.length ? "reviews" : information.length ? "information" : "errors");
   const notices = view === "errors" ? errors : view === "reviews" ? reviews : information;
-  const menus = [{ id: "errors", label: "Erros", count: errors.length }, { id: "reviews", label: "Avisos", count: reviews.length }, { id: "coverage", label: "Desfalques", count: diagnostics.coverageGroups.length }, { id: "information", label: "Informações", count: information.length }] as const;
+  const menus = [{ id: "errors", label: "Erros", count: errors.length }, { id: "reviews", label: "Avisos", count: reviews.length }, { id: "coverage", label: "Desfalques", count: new Set(diagnostics.coverageGroups.map(row => row.sector)).size }, { id: "information", label: "Informações", count: information.length }] as const;
   return <section className={panelClass} aria-labelledby="escala-validation-title">
     <div className={styles.header}><h2 id="escala-validation-title" className={styles.sectionTitle}>Central de revisão</h2><span className={styles.muted}>{errors.length} erro(s) · {reviews.length} aviso(s)</span></div>
     <p className="text-sm">{errors.length ? "Há impedimentos técnicos. Escolha uma ocorrência para conferir a correção sugerida." : "Nenhum impedimento técnico detectado. Avisos e estimativas ficam separados para consulta opcional."}</p>

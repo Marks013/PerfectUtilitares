@@ -1,8 +1,10 @@
 """Coverage-focused polish regressions using the production optimizer."""
 import time
 import unittest
+from unittest.mock import patch
 
 from ortools.sat.python import cp_model
+import optimization
 from optimization import Snapshot, _polish_people, improve
 
 
@@ -160,9 +162,14 @@ class ProtectedBoundDeduplicationTests(unittest.TestCase):
         values = {variable.index: 1 for variable in goals + [guard]}
         for variable in goals + [guard]:
             model.add(variable == 1)
-        result, proven, phases = improve(
-            model, goals, values, time.monotonic() + 1, names,
-            protected_groups={'COVERAGE': [guard, guard + 2]})
+        with patch.object(optimization, '_upper_bound_key',
+                          wraps=optimization._upper_bound_key) as normalized:
+            result, proven, phases = improve(
+                model, goals, values, time.monotonic() + 1, names,
+                protected_groups={'COVERAGE': [guard, guard + 2]})
+        guard_offsets = [call.args[0][2] for call in normalized.call_args_list
+                         if call.args[0][0] == (guard.index,)]
+        self.assertEqual(guard_offsets, [0, 2])
         self.assertEqual(result, values)
         self.assertFalse(proven)
         self.assertEqual(len(phases), 4)

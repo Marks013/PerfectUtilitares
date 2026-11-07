@@ -82,6 +82,9 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
     await page.getByRole("button", { name: "Revisão e suporte", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Central de revisão", exact: true })).toBeVisible();
     await page.getByRole("button", { name: /^Desfalques \(/ }).click();
+    await expect(page.getByRole("heading", { name: "Desfalques por setor", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /^Consultar dias e horários/ }).first().click();
+    await expect(page.getByRole("combobox", { name: /^Dia para conferir em/ })).toBeVisible();
     const correction = page.getByRole("button", { name: "Conferir este setor e horário", exact: true }).first();
     await expect(correction).toBeVisible();
     await correction.click();

@@ -10,6 +10,22 @@ function fixture(): EscalaInput {
   input.demands = dateRange(input.startDate, addDays(input.startDate, 6)).flatMap(date => input.shifts[0].segments.filter(segment => segment.kind === "WORK").map((segment, index) => ({ id: date + "-" + index, date, sector: "Loja", role: "Repositor", start: segment.start, end: segment.end, minimum: 1, estimated: false })));
   return input;
 }
+
+function lockedLongTurn(month = "2027-01"): EscalaInput {
+  const input = newInput("01", "Loja", month, 42);
+  const person = { ...fixture().employees[0], weeklyHours: 42 as const, shiftIds: ["long"] };
+  input.simulation = true;
+  input.policy.dailyLimitMinutes = 528;
+  input.employees = [person];
+  input.shifts = [{ id: "long", name: "9h", segments: [
+    { start: 480, end: 750, kind: "WORK" },
+    { start: 750, end: 930, kind: "BREAK" },
+    { start: 930, end: 1200, kind: "WORK" },
+  ] }];
+  input.assignments = [{ employeeId: person.id, date: `${month}-04`, kind: "WORK", shiftId: "long", locked: true }];
+  return input;
+}
+
 describe("necessary generation conflicts", () => {
   it("proves required coverage above the available weekly hours without blaming locks", () => {
     const input = fixture(), before = JSON.stringify(input);
@@ -68,6 +84,32 @@ describe("necessary generation conflicts", () => {
     expect(findGenerationConflicts(input)).toEqual([expect.objectContaining({ code: "LOCKED_WORK_ON_FIXED_REST", target: "team", employeeId: "p1", date: "2026-10-31" })]);
     input.assignments[0].locked = false;
     expect(findGenerationConflicts(input)).toEqual([]);
+  });
+
+  it("points out a locked 9h shift when the mixed regime is removed, without changing the draft", () => {
+    const input = lockedLongTurn();
+    const before = structuredClone(input);
+    const conflicts = findGenerationConflicts(input);
+    expect(conflicts).toEqual([expect.objectContaining({
+      code: "LOCKED_9H_SHIFT_OVER_DAILY_LIMIT", target: "team", employeeId: "p1", date: "2027-01-04",
+      message: expect.stringContaining("Pessoa sintética tem um horário de 9h bloqueado em 04/01/2027"),
+    })]);
+    expect(conflicts[0].message).toContain("reative a jornada mista no setor Loja");
+    expect(conflicts[0].message).toContain("aprovador");
+    expect(input).toEqual(before);
+    expect(findGenerationConflicts({ ...input, mixed42Sectors: ["Loja"] })).toEqual([]);
+  });
+
+  it("does not blame a custom 9h shift within the ordinary daily cap", () => {
+    const input = lockedLongTurn("2026-11");
+    input.policy.dailyLimitMinutes = 600;
+    expect(findGenerationConflicts(input)).toEqual([]);
+  });
+
+  it("does not suggest reactivating a mixed regime that is not eligible", () => {
+    const input = lockedLongTurn();
+    input.defaultWeeklyHours = 40;
+    expect(findGenerationConflicts(input)[0].message).not.toContain("reative");
   });
 
 });

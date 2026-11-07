@@ -138,15 +138,18 @@ describe("lean operational files", () => {
     expect(schedule).not.toMatch(/02\/11|03\/11|Dia\(s\)|Folga/);
     expect(text).not.toMatch(/Conferência da proposta|Informação administrativa|certifica conformidade|Histórico anterior/);
   }, 20000);
-  it("keeps daily analyzed windows in Excel and only the exact staffing gap in PDF", async () => {
+  it("keeps a compact sector summary with exact priority windows in both files", async () => {
     const source = scenario(), rows = await readSheet(Buffer.from(exportEscalaXlsx(source)), "Desfalques");
-    const deficit = rows.find(row => row[2] === "12:00-13:00");
-    expect(deficit?.[7]).toBe("08:00-18:00");
+    expect(rows.slice(4)).toHaveLength(1);
+    expect(rows[4][0]).toBe("Padaria");
+    expect(rows[4][1]).toBe("02/11");
+    expect(rows[4][3]).toBe("12:00-13:00 · 1 dia(s)\n17:24-18:00 · 1 dia(s)");
+    expect(rows[4][4]).toContain("Até 1 pessoa(s)");
     const text = await pdfText(await exportEscalaPdf(source));
     expect(text).not.toContain("Faixa analisada:");
-    expect(text).toContain("Horário com desfalque");
+    expect(text).toContain("Faixas prioritárias");
     expect(text).toContain("12:00-13:00");
-    expect(text).toContain("Estimada");
+    expect(text).toContain("Estimativa automática");
   }, 20000);
 
   it("groups accented sectors, increasing hours and related roles without duplicating a daily occurrence", async () => {
@@ -163,25 +166,20 @@ describe("lean operational files", () => {
     ];
     const before = structuredClone(source);
     const rows = (await readSheet(Buffer.from(exportEscalaXlsx(source)), "Desfalques")).slice(4);
-    expect(rows.map(row => [row[1], row[2], row[0]])).toEqual([
-      ["Açougue", "08:00-09:00", "2026-11-02"],
-      ["Açougue", "08:00-09:00", "2026-11-03"],
-      ["Açougue", "08:00-09:00", "2026-11-09"],
-      ["Açougue", "14:00-15:00", "2026-11-02"],
-      ["Hortifrúti", "08:00-09:00", "2026-11-02"],
-    ]);
-    expect(String(rows[0][6]).match(/Auxiliar:/g)).toHaveLength(1);
-    expect(String(rows[0][6]).indexOf("Auxiliar:")).toBeLessThan(String(rows[0][6]).indexOf("Zelador:"));
-    expect(rows[0][4]).toBe(2); expect(rows[2][4]).toBe(3);
+    expect(rows.map(row => row[0])).toEqual(["Açougue", "Hortifrúti"]);
+    expect(rows[0][1]).toBe("02/11–03/11, 09/11");
+    expect(rows[0][2]).toBe("02/11–03/11, 09/11");
+    expect(rows[0][3]).toBe("08:00-09:00 · 3 dia(s)\n14:00-15:00 · 1 dia(s)");
+    expect(rows[0][4]).toContain("Até 3 pessoa(s)");
+    expect(rows[1][4]).toContain("Até 1 pessoa(s)");
+    expect(rows.flat().join(" ")).not.toMatch(/Auxiliar:|Zelador:/);
     const text = await pdfText(await exportEscalaPdf(source, "hours"));
     expect(text.indexOf("Açougue")).toBeLessThan(text.indexOf("Hortifrúti"));
     expect(text.indexOf("08:00-09:00")).toBeLessThan(text.indexOf("14:00-15:00"));
-    expect(text.indexOf("Auxiliar:")).toBeLessThan(text.indexOf("Zelador:"));
-    expect(text).toContain("02/11–03/11"); // The same shortage remains one group despite different daily envelopes.
-    expect(text).toContain("09/11"); // A genuinely different reference stays separate.
-    expect(text.match(/Auxiliar: 0 presente\(s\), referência 1 estimada/g)).toHaveLength(1);
+    expect(text).not.toMatch(/Auxiliar:|Zelador:/);
+    expect(text).toContain("02/11–03/11, 09/11");
     expect(text).not.toContain("Faixa analisada:");
-    expect(text).toContain("referência 2 estimada");
+    expect(text).toContain("Até 3 pessoa(s)");
     expect(text).not.toContain("24 de");
     expect(source).toEqual(before);
   }, 20000);

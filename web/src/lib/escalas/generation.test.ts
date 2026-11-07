@@ -6,6 +6,7 @@ import { escalaInputSchema } from "./schema";
 import { isMixed42LongShift } from "./labor-rules";
 import { validateEscala } from "./validation";
 import type { EscalaInput } from "./types";
+import { adaptCompatibleSchedules } from "./schedule-adaptation";
 
 function input(): EscalaInput {
   return {
@@ -24,6 +25,23 @@ function input(): EscalaInput {
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 
 describe("42h mixed distribution for selected sectors", () => {
+  it("regenerates and adapts a saved mixed roster with JSONB segment key ordering", () => {
+    const raw = input();
+    raw.mixed42Sectors = ["Setor"];
+    const saved = prepareGeneration(raw).input;
+    saved.shifts = saved.shifts.map(shift => ({ ...shift, segments: shift.segments.map(({ start, end, kind }) => ({ end, kind, start })) }));
+    const shiftId = saved.employees[0].shiftIds[0];
+    saved.assignments = [{ employeeId: "p1", date: saved.startDate, kind: "WORK", shiftId, locked: true }];
+    const regenerated = prepareGeneration(saved);
+    expect(regenerated.input.assignments).toEqual(saved.assignments);
+    expect(regenerated.input.employees[0].shiftIds).toEqual(saved.employees[0].shiftIds);
+    expect(adaptCompatibleSchedules(saved, "PRESERVE_START").exceptions).toEqual([]);
+    saved.policy.limitContinuousWorkBlocks = true;
+    const adjusted = prepareGeneration(saved).input;
+    expect(adjusted.assignments).toEqual(saved.assignments);
+    expect(escalaInputSchema.safeParse(adjusted).success).toBe(true);
+  });
+
   it("prepares two durations, preserves references, and estimates both durations without changing explicit minima", () => {
     const raw = input();
     raw.mixed42Sectors = ["Setor"];
@@ -96,6 +114,56 @@ describe("42h mixed distribution for selected sectors", () => {
     const { input: prepared } = prepareGeneration(raw);
     expect(prepared.employees[0].simulationDailyMinutes).toBe(300);
     expect(prepared.employees[0].shiftIds.map(id => minutes(prepared, id))).toEqual([300]);
+  });
+
+  it("restores exact manual options after a persisted mixed draft without exposing originals to the solver", () => {
+    const raw = input();
+    raw.employees[0].sourceSchedule = undefined;
+    raw.shifts[0].segments[2].end = 1044;
+    raw.shifts[0].name = "Horário manual escolhido";
+    raw.mixed42Sectors = ["Setor"];
+    const original = structuredClone(raw.shifts[0]);
+    const mixed = prepareGeneration(raw).input;
+    expect(mixed.employees[0].originalShiftIds).toEqual(["source"]);
+    expect(mixed.employees[0].shiftIds).not.toContain("source");
+    expect(mixed.shifts).toContainEqual(original);
+    const saved = escalaInputSchema.parse(JSON.parse(JSON.stringify(mixed)));
+    const adapted = adaptCompatibleSchedules(saved, "BOTH").input;
+    expect(adapted.employees[0].originalShiftIds).toEqual(["source"]);
+    expect(escalaInputSchema.safeParse(adapted).success).toBe(true);
+    const restored = prepareGeneration({ ...adapted, mixed42Sectors: [] }).input;
+    expect(restored.employees[0].shiftIds).toEqual(["source"]);
+    expect(restored.employees[0].originalShiftIds).toBeUndefined();
+    expect(restored.shifts).toEqual([original]);
+    expect(escalaInputSchema.safeParse(restored).success).toBe(true);
+  });
+
+  it("retains historical and locked turns while restoring the manual reference", () => {
+    const raw = input();
+    raw.employees[0].sourceSchedule = undefined;
+    raw.shifts[0].segments[2].end = 1044;
+    raw.mixed42Sectors = ["Setor"];
+    const mixed = prepareGeneration(raw).input;
+    const long = mixed.shifts.find(isMixed42LongShift);
+    if (!long) throw new Error("Horário de 9h ausente.");
+    const lock = { employeeId: "p1", date: raw.startDate, kind: "WORK" as const, shiftId: long.id, locked: true };
+    mixed.assignments = [lock];
+    mixed.employees[0].history = [{ employeeId: "p1", date: "2026-10-25", kind: "WORK", shiftId: long.id }];
+    const restored = prepareGeneration({ ...mixed, mixed42Sectors: [] }).input;
+    expect(restored.assignments).toContainEqual(lock);
+    expect(restored.employees[0].shiftIds).toEqual(["source", long.id]);
+    expect(restored.shifts.some(shift => shift.id === long.id)).toBe(true);
+    expect(escalaInputSchema.safeParse(restored).success).toBe(true);
+  });
+
+  it("does not fabricate references for older mixed drafts and rejects unresolved original IDs", () => {
+    const raw = input(); raw.employees[0].sourceSchedule = undefined; raw.mixed42Sectors = ["Setor"];
+    const mixed = prepareGeneration(raw).input;
+    delete mixed.employees[0].originalShiftIds;
+    const older = prepareRoster(mixed, 42);
+    expect(older.employees[0].originalShiftIds).toBeUndefined();
+    older.employees[0].originalShiftIds = ["missing"];
+    expect(escalaInputSchema.safeParse(older).success).toBe(false);
   });
 });
 

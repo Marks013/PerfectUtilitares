@@ -161,7 +161,7 @@ def _phase_budget(remaining, names, index):
     return remaining * .5
 
 
-def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None):
+def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None, initial_decision_hints=None, initial_repair_people=None):
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
         raise ValueError('incomplete optimization incumbent')
@@ -183,12 +183,17 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                             if name in ('COVERAGE', 'SUNDAY_COVERAGE') and Snapshot(values).value(objective) > 0]
         plans = plans[:first] + [('SECONDARY_POLISH', None,
                                  coverage_members + list(zip(names[first:], objectives[first:])))]
+    repair_first = bool(initial_repair_people and plans and plans[0][0] == 'COVERAGE'
+                        and deadline - time.monotonic() >= 2)
+    if repair_first:
+        plans = [plans[0]] + plans
     names = [name for name, _objective, _members in plans]
     protected_groups, active_groups = protected_groups or {}, {}
+    registered_groups = {}
     active_group_count, upper_bounds = 0, {}
 
-    def add_upper_bound(expression, terms, value):
-        key, limit = _upper_bound_key(terms), value - terms[2]
+    def add_upper_bound(expression, terms, key, value):
+        limit = value - terms[2]
         previous = upper_bounds.get(key)
         if previous is None or limit < previous:
             model.add(expression <= value)
@@ -198,7 +203,19 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
     # only cloned domains and must never populate or read this cache.
     domain_bounds = {}
     _replace_hints(model, values)
+    if initial_decision_hints:
+        # Hints never replace the feasible incumbent used by all no-regression
+        # bounds. Auxiliary values are omitted because the decision hint changed.
+        model.clear_hints()
+        model.proto.solution_hint.vars.extend(decision_variables.keys())
+        model.proto.solution_hint.values.extend(
+            initial_decision_hints.get(variable_index, values[variable_index])
+            for variable_index in decision_variables)
     for index, (name, objective, members) in enumerate(plans):
+        repair_phase = repair_first and index == 0
+        phase_index = index - int(repair_first)
+        if index == 1 and initial_decision_hints:
+            _replace_hints(model, values)
         if control is not None:
             control.checkpoint()
         remaining = deadline - time.monotonic() - 0.10
@@ -212,7 +229,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             for member_name, member in members:
                 member_terms = _expression_terms(member)
                 initial = _linear_value(member_terms, values)
-                add_upper_bound(member, member_terms, initial)
+                add_upper_bound(member, member_terms, _upper_bound_key(member_terms), initial)
                 floor = _objective_floor(model, member_terms, domain_bounds)
                 weight = max(1, min(1000, 100000 // max(1, initial - floor)))
                 weighted.append(weight * member)
@@ -228,22 +245,30 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         # but only register each equivalent expression once for propagation.
         active_group_count += len(new_groups)
         for variable in new_groups:
+            identity = id(variable)
+            if identity in registered_groups:
+                continue
+            # Keep a reference for the lifetime of the identity cache.
+            registered_groups[identity] = variable
             terms = _expression_terms(variable)
             active_groups.setdefault(_upper_bound_key(terms), (variable, terms))
-        for variable, variable_terms in active_groups.values():
-            add_upper_bound(variable, variable_terms, _linear_value(variable_terms, values))
+        for key, (variable, variable_terms) in active_groups.items():
+            add_upper_bound(variable, variable_terms, key, _linear_value(variable_terms, values))
         if active_group_count > 1:
             # Per-group no-regression narrows the global lexicographic search.
             proven = False
         # CpObjectiveProto stores the integer linear objective before presolve.
         proto = model.proto.objective
         terms = (tuple(proto.vars), tuple(proto.coeffs), int(proto.offset))
-        visited.append((objective, terms))
+        objective_key = _upper_bound_key(terms)
+        visited.append((objective, terms, objective_key))
         incumbent = _linear_value(terms, values)
         # A new search may not worsen even its own goal relative to the known draft.
-        add_upper_bound(objective, terms, incumbent)
+        add_upper_bound(objective, terms, objective_key, incumbent)
         lower = _objective_floor(model, terms, domain_bounds)
         if lower == incumbent:
+            if repair_phase:
+                continue
             model.add(objective == incumbent)
             phases.append({'objective': names[index], 'status': 'OPTIMAL',
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
@@ -252,6 +277,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                 phases[-1]['members'] = member_values
             continue
         budget = _phase_budget(remaining, names, index)
+        if repair_phase:
+            budget = min(2.1, remaining * .30)
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
         engine.parameters.num_workers = 1
@@ -263,7 +290,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         engine.parameters.keep_all_feasible_solutions_in_presolve = True
         engine.parameters.symmetry_level = 0
         search_model = model
-        restricted = index > 0 and len(variables) > 3000 and len(dates) > 7
+        restricted = repair_phase or (phase_index > 0 and len(variables) > 3000 and len(dates) > 7)
         if restricted:
             # Keep the joint model, including leadership and all cross-week constraints.
             search_model = model.clone()
@@ -275,8 +302,10 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                 movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [],
                                                 coverage_groups=coverage_groups, shortages=sector_coverage,
                                                 sunday_shortages=sunday_coverage)
+            if repair_phase:
+                movable_people = initial_repair_people
             weeks = (len(dates) + 6) // 7
-            first = (index - 1) % weeks
+            first = (phase_index - 1) % weeks
             movable_weeks = sorted({first, (first + 1) % weeks})
             movable = {day for week in movable_weeks for day in dates[week * 7:week * 7 + 7]}
             # Sunday exchanges need both dates and their surrounding weekly rests.
@@ -317,16 +346,18 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             continue
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             proven = False
+            if repair_phase:
+                continue
             break
         values = {variable.index: engine.value(variable) for variable in variables}
         for member, (_member_name, member_objective) in zip(member_values, members):
             member['incumbentValue'] = Snapshot(values).value(member_objective)
         best = engine.value(objective)
         # Later goals may incidentally improve earlier ones. Keep that gain too.
-        for previous, previous_terms in visited:
-            add_upper_bound(previous, previous_terms, _linear_value(previous_terms, values))
-        for variable, variable_terms in active_groups.values():
-            add_upper_bound(variable, variable_terms, _linear_value(variable_terms, values))
+        for previous, previous_terms, key in visited:
+            add_upper_bound(previous, previous_terms, key, _linear_value(previous_terms, values))
+        for key, (variable, variable_terms) in active_groups.items():
+            add_upper_bound(variable, variable_terms, key, _linear_value(variable_terms, values))
         phase.update(incumbentValue=best, bestBound=engine.best_objective_bound)
         _replace_hints(model, values)
         if status == cp_model.OPTIMAL and not restricted:
@@ -335,5 +366,5 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             proven = False
             # Preserve the best higher-priority incumbent, while reserving time for operational balance.
             # This is bounded lexicographic improvement, not proof that any unfinished objective is optimal.
-            add_upper_bound(objective, terms, best)
+            add_upper_bound(objective, terms, objective_key, best)
     return values, proven, phases

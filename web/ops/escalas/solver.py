@@ -453,6 +453,27 @@ def solve(data, control=None):
     # This seed does not lock a staffing objective or relax a mandatory condition.
     # Explicit metadata avoids parsing employee/shift IDs, which may contain colons.
     decisions = {variable.index: key for key, variable in off.items()}
+    warm_decisions = {}
+    repair_people = (_mixed_repair_people(employees, dates, work, baseline, values, policy, mixed_sectors)
+                     if mixed_people else set())
+    # A synchronized mixed baseline stays the comparison incumbent. Supply a
+    # staggered alternative only as a nonbinding CP-SAT hint, within this budget.
+    if mixed_people and started + MAX_SECONDS - time.monotonic() > 0.8:
+        proposals = balanced_rest_hints(
+            [person for person in employees
+             if (person["id"] in repair_people if repair_people
+                 else person["sector"] in mixed_sectors)],
+            dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
+            deadline=min(started + MAX_SECONDS - 0.2, time.monotonic() + 0.6),
+            control=control, mixed_people=mixed_people)
+        for pid, entries in proposals.items():
+            for day, entry in entries.items():
+                key = pid, day
+                warm_decisions[off[key].index] = int(entry["kind"] == "OFF")
+                warm_decisions[work[key].index] = int(entry["kind"] in ("WORK", "DUTY"))
+                for sid, variable in choices[key].items():
+                    warm_decisions[variable.index] = int(
+                        entry["kind"] == "WORK" and sid == entry.get("shiftId"))
     decisions.update({variable.index: key for key, variable in work.items()})
     decisions.update({variable.index: key for key, options in choices.items()
                       for variable in options.values()})
@@ -466,7 +487,9 @@ def solve(data, control=None):
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
                                                       for sector in sector_coverage}, sunday_coverage=sunday_coverage,
                                      sector_coverage=sector_coverage,
-                                     decision_variables=decisions)
+                                     decision_variables=decisions,
+                                     initial_decision_hints=warm_decisions,
+                                     initial_repair_people=repair_people)
     # Existing protected disabled records are retained, never allocated or counted as workforce.
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_disabled_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
@@ -476,6 +499,30 @@ def solve(data, control=None):
                                 'unattemptedObjectives': [name for name, _ in goals if name not in attempted]}
     return response
 
+
+def _mixed_repair_people(employees, dates, work, baseline, values, policy, mixed_sectors):
+    """Give small sectors with empty Sundays an early, bounded chance to exchange rests."""
+    sectors = {}
+    for person in employees:
+        if person["sector"] in mixed_sectors:
+            sectors.setdefault(person["sector"], []).append(person)
+    sundays = [day for day in dates if date.fromisoformat(day).weekday() == 6]
+    ranked = []
+    for sector, members in sectors.items():
+        if not 2 <= len(members) <= 8:
+            continue
+        eligible = [[work[p["id"], day] for p in members
+                     if (p["id"], day) in work and available_weekends(p, [day], baseline, policy)]
+                    for day in sundays]
+        empty = sum(len(group) >= 2 and not any(values[var.index] for var in group)
+                    for group in eligible)
+        if empty:
+            ranked.append((-empty, len(members), sector, members))
+    selected = set()
+    for _, size, _, members in sorted(ranked):
+        if len(selected) + size <= 16:
+            selected.update(person["id"] for person in members)
+    return selected
 
 def _read_assignments(solver, employees, active, baseline, work, choices):
     result = []

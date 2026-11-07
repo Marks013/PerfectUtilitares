@@ -1,4 +1,4 @@
-import { prepareRoster } from "./preparation";
+import { preparedShiftSignature, prepareRoster } from "./preparation";
 import type { EscalaInput } from "./types";
 
 export type ScheduleStrategy = "PRESERVE_START" | "PRESERVE_END" | "BOTH";
@@ -21,12 +21,12 @@ export function adaptCompatibleSchedules(input: EscalaInput, strategy: ScheduleS
     }
     for (const shift of prepared.shifts) {
       const existing = shifts.get(shift.id);
-      if (existing && JSON.stringify(existing.segments) !== JSON.stringify(shift.segments)) throw new Error("Há horários diferentes com o mesmo identificador. Nenhum ajuste foi aplicado.");
+      if (existing && preparedShiftSignature(existing) !== preparedShiftSignature(shift)) throw new Error("Há horários diferentes com o mesmo identificador. Nenhum ajuste foi aplicado.");
       shifts.set(shift.id, shift);
     }
     return { ...person, ...candidate, shiftIds: allowed };
   });
-  const referenced = new Set([...employees.flatMap(person => person.shiftIds), ...input.assignments.flatMap(day => day.shiftId ? [day.shiftId] : []),
+  const referenced = new Set([...employees.flatMap(person => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...input.assignments.flatMap(day => day.shiftId ? [day.shiftId] : []),
     ...employees.flatMap(person => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap(day => day.shiftId ? [day.shiftId] : []))]);
   const retained = [...shifts.values()].filter(shift => referenced.has(shift.id));
   if (retained.length > 120) throw new Error("As alternativas ultrapassam 120 horários. Reduza opções individuais antes de aplicar.");

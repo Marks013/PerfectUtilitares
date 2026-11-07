@@ -1,5 +1,5 @@
 import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
-import { effectiveWeeklyMinutes } from "./labor-rules";
+import { dailyMinuteCeiling, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import type { EscalaGenerationConflict, EscalaInput } from "./types";
 type EscalaDemand = EscalaInput["demands"][number];
 
@@ -24,12 +24,25 @@ function requiredMinutes(demands: EscalaDemand[]): number {
 export function findGenerationConflicts(input: EscalaInput): EscalaGenerationConflict[] {
   const individual: EscalaGenerationConflict[] = [];
   const employees = new Map(input.employees.map((person) => [person.id, person]));
+  const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   for (const assignment of input.assignments) {
     const person = employees.get(assignment.employeeId);
     if (!assignment.locked || (assignment.kind !== "WORK" && assignment.kind !== "DUTY") || !person || person.planningEnabled === false) continue;
     if (person.offMode !== "VARIABLE" && person.fixedOffDays.includes(dayOfWeek(assignment.date))) individual.push({
       code: "LOCKED_WORK_ON_FIXED_REST", target: "team", employeeId: person.id, date: assignment.date,
       message: "Há trabalho bloqueado em " + displayDate(assignment.date) + ", mas esse dia também é uma folga fixa do colaborador. Confira qual condição deve ser mantida; nenhuma será retirada automaticamente.",
+    });
+    if (assignment.kind !== "WORK" || !assignment.shiftId || assignment.date < person.activeFrom
+      || (person.activeUntil && assignment.date > person.activeUntil)) continue;
+    const shift = shifts.get(assignment.shiftId);
+    if (!shift || !isMixed42LongShift(shift) || usesMixed42Week(input, person, assignment.date)
+      || Math.min(input.policy.dailyLimitMinutes, dailyMinuteCeiling(assignment.date)) >= 540) continue;
+    const canRestoreMixed = usesMixed42Week({ ...input, mixed42Sectors: [person.sector] }, person, assignment.date);
+    individual.push({
+      code: "LOCKED_9H_SHIFT_OVER_DAILY_LIMIT", target: "team", employeeId: person.id, date: assignment.date,
+      message: `${person.name} tem um horário de 9h bloqueado em ${displayDate(assignment.date)}, acima do limite deste cenário. `
+        + (canRestoreMixed ? `Se quiser manter esse horário, reative a jornada mista no setor ${person.sector}. Caso contrário, ` : "")
+        + "peça a um aprovador para revisar o bloqueio antes de gerar novamente. O horário não foi alterado.",
     });
   }
   const groups = new Map<string, Budget>();
@@ -40,7 +53,6 @@ export function findGenerationConflicts(input: EscalaInput): EscalaGenerationCon
     group.demands.push(demand);
     groups.set(key, group);
   }
-  const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const closed = new Set(input.policy.closedDates);
   const assignments = new Map(input.assignments.map((item) => [JSON.stringify([item.employeeId, item.date]), item]));
   const repeated = new Map<string, { group: Budget; required: number; capacity: number; weeks: string[] }>();

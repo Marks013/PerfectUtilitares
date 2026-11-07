@@ -5,6 +5,28 @@ from datetime import date, timedelta
 from itertools import combinations
 
 
+def _mixed_week_variants(entries, choices, metrics, baseline, pid):
+    """Choose two long days without changing the proposed rests or locked clocks."""
+    working = [day for day, entry in entries.items() if entry["kind"] == "WORK"]
+    candidates = [day for day in working if any(metrics[sid][0] == 540 for sid in choices[pid, day])]
+    if not candidates:
+        yield entries
+        return
+    for long_days in combinations(candidates, min(2, len(working))):
+        long_days, proposal = set(long_days), {day: dict(entry) for day, entry in entries.items()}
+        for day in working:
+            duration = 540 if day in long_days else 480
+            old = baseline.get((pid, day), {})
+            matching = [sid for sid in choices[pid, day] if metrics[sid][0] == duration]
+            if old.get("locked"):
+                matching = [sid for sid in matching if sid == old.get("shiftId")]
+            if not matching:
+                break
+            proposal[day]["shiftId"] = min(matching, key=lambda sid: (sid != old.get("shiftId"), sid))
+        else:
+            yield proposal
+
+
 def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
                         deadline=None, control=None, mixed_people=frozenset()):
     """Balance opportunities before the bounded optimizer adds optional staffing goals.
@@ -28,29 +50,27 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                    for person in employees}
     counts, result = {}, {}
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
+    history_cutoff = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
     for person in sorted(employees, key=lambda item: hashlib.sha256(item["id"].encode()).digest()):
         if control is not None:
             control.checkpoint()
         if deadline is not None and time.monotonic() >= deadline:
             return result
         pid = person["id"]
-        # The single-duration heuristic cannot hint the mixed weekly total.
-        # Leave those variables free instead of pinning a known-invalid draft.
-        if pid in mixed_people:
-            continue
         available = set(active[pid])
         prior = {entry["date"]: entry for entry in person.get("planningHistory", []) + person["history"] + person.get("planningFuture", [])}
         fixed = set(person["fixedOffDays"])
         # Select one coherent reference; the model can choose another admissible shift.
+        target = min(person["weeklyHours"] * 60, person.get("simulationDailyMinutes", 600) * 5) / 5
+        tie_scores = {}
         selected = {}
         for day in available:
             old = baseline.get((pid, day), {})
             allowed = choices[pid, day]
-            target = min(person["weeklyHours"] * 60, person.get("simulationDailyMinutes", 600) * 5) / 5
             selected[day] = old.get("shiftId") if old.get("locked") else min(allowed, key=lambda sid: (abs(metrics[sid][0] - target), sid), default=None)
         history_rests = [0] * 7
         for day, entry in prior.items():
-            if dates[0] > day >= (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat() and entry["kind"] == "OFF":
+            if history_cutoff <= day < dates[0] and entry["kind"] == "OFF":
                 history_rests[date.fromisoformat(day).weekday()] += 1
         # Check each selected week against preceding work and Sunday rotation.
         beam = [(0.0, {}, history_rests)]
@@ -76,7 +96,11 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                     for day, entry in entries.items():
                         if entry["kind"] == "WORK":
                             entry["shiftId"] = selected[day]
-                    candidates.append((rests, entries))
+                    if pid in mixed_people:
+                        candidates.extend((rests, variant) for variant in
+                                          _mixed_week_variants(entries, choices, metrics, baseline, pid))
+                    else:
+                        candidates.append((rests, entries))
             next_beam = []
             final_week = week + 7 >= len(dates)
             for score, previous, weekday_rests in beam:
@@ -94,7 +118,9 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                         new_weekdays[weekday] += 1
                         if weekday in person["preferredOffDays"]:
                             total -= 0.1
-                        total += (int(hashlib.sha256(f"{pid}:{day}".encode()).hexdigest()[:6], 16) % 97) / 9700
+                        if day not in tie_scores:
+                            tie_scores[day] = (int(hashlib.sha256(f"{pid}:{day}".encode()).hexdigest()[:6], 16) % 97) / 9700
+                        total += tie_scores[day]
                     if person["offPattern"] == "PREFER_CONSECUTIVE" and any((date.fromisoformat(day) + timedelta(days=1)).isoformat() in rests for day in rests):
                         total -= 0.1
                     next_beam.append((total, combined, new_weekdays))

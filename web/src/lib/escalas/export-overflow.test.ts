@@ -50,34 +50,45 @@ describe("large but valid operational reports", () => {
     } finally { spy.mockRestore(); }
   });
 
-  it("paginates oversized coverage rows without drawing below the page or losing any role", async () => {
-    const workspace = crowded(), drawn: { text: string; y: number }[] = [];
+  it("keeps 6,000 monthly demands compact without dropping sectors or mandatory minima", async () => {
+    const workspace = crowded();
+    const days = dateRange("2026-11-01", "2026-11-30");
+    const requiredSectors = Array.from({ length: 8 }, (_, index) => "Obrigatório " + index);
+    workspace.input.demands = days.flatMap(date => [
+      ...workspace.input.employees.flatMap(person => Array.from({ length: 6 }, (_, index) => ({
+        id: `estimate-${date}-${person.id}-${index}`, date, sector: person.sector, role: person.role,
+        start: 720 + index * 10, end: 725 + index * 10, minimum: 1, estimated: true,
+      }))),
+      ...requiredSectors.map((sector, index) => ({ id: `minimum-${date}-${index}`, date, sector,
+        start: 1050, end: 1080, minimum: index + 1, estimated: false })),
+    ]);
+    expect(workspace.input.demands).toHaveLength(6000);
+    expect(escalaInputSchema.safeParse(workspace.input).success).toBe(true);
+    const drawn: { text: string; y: number; page: PDFPage }[] = [];
     const original = PDFPage.prototype.drawText;
     const spy = vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: PDFPage, text, options) {
-      drawn.push({ text, y: options?.y ?? 0 });
+      drawn.push({ text, y: options?.y ?? 0, page: this });
       return original.call(this, text, options);
     });
     try {
       const bytes = await exportEscalaPdf(workspace, "hours");
       expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(1);
       expect(drawn.filter(item => item.y < 16)).toEqual([]);
-      expect(drawn.some(item => item.text.includes("Desfalques de cobertura (continuação)"))).toBe(true);
-      const text = drawn.map(item => item.text).join(" ");
-      for (let index = 0; index < 32; index++) expect(text).toContain(`Cargo ${String(index).padStart(2, "0")}`);
+      const report = new Set(drawn.filter(item => item.text.includes("Desfalques de cobertura")).map(item => item.page));
+      expect(report.size).toBeGreaterThanOrEqual(1);
+      expect(report.size).toBeLessThanOrEqual(2);
+      const reportText = drawn.filter(item => report.has(item.page));
+      for (const sector of requiredSectors) expect(reportText.filter(item => item.text === sector)).toHaveLength(1);
+      expect(reportText.map(item => item.text).join(" ")).not.toMatch(/Cargo \d\d/);
     } finally { spy.mockRestore(); }
-  });
-
-  it("splits long Excel lists into visible continuation rows with their date and sector", async () => {
-    const workspace = crowded(), bytes = exportEscalaXlsx(workspace, "hours");
+    const bytes = exportEscalaXlsx(workspace, "hours");
     const rows = await readSheet(Buffer.from(bytes), "Desfalques");
-    const coverage = rows.filter(row => row[0] === "2026-11-01");
-    expect(coverage.length).toBeGreaterThan(1);
-    expect(coverage.every(row => row[1] === "Setor" && row[2])).toBe(true);
-    expect(coverage[0].slice(3, 5)).toEqual([0, 32]);
-    expect(coverage.slice(1).every(row => row[3] == null && row[4] == null && row[5] == null)).toBe(true);
-    expect(coverage.slice(1).every(row => String(row[7]).includes("continuação"))).toBe(true);
-    const text = coverage.map(row => row[6]).join(" ");
-    for (const person of workspace.input.employees) expect(text).toContain(person.role);
+    expect(rows.slice(4).map(row => row[0])).toEqual([...requiredSectors, "Setor"]);
+    expect(rows.slice(4).every(row => row[1] === "01/11–30/11")).toBe(true);
+    expect(rows[11][4]).toContain("Até 8 pessoa(s)");
+    expect(rows[11][5]).toContain("Mínimo informado não atendido em 30 dia(s)");
+    expect(rows[12][3]?.toString().split("\n")).toHaveLength(3);
+    expect(rows[12][4]).toContain("Até 32 pessoa(s)");
     const files = unzipSync(bytes);
     for (const [path, value] of Object.entries(files)) if (/worksheets\/sheet\d+\.xml$/.test(path)) {
       for (const match of strFromU8(value).matchAll(/<row[^>]* ht="([\d.]+)"/g)) expect(Number(match[1])).toBeLessThanOrEqual(409);

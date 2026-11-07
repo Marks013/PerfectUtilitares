@@ -26,6 +26,8 @@ export type EscalaEmployee = {
   /** Short imported clock retained for a draft; never evidence of a contractual weekly workload. */
   simulationDailyMinutes?: number;
   shiftIds: string[];
+  /** Manual references retained across the optional mixed-hours simulation, not solver alternatives. */
+  originalShiftIds?: string[];
   /** Empty means employment dates are unknown; it never represents a new admission. */
   activeFrom: string;
   activeUntil?: string;

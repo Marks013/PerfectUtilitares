@@ -153,15 +153,3 @@ export function sectorCoverageGaps(input: EscalaInput, index = buildCoveragePres
   }
   return result.sort((a, b) => Number(a.estimated) - Number(b.estimated) || Number(b.present === 0) - Number(a.present === 0) || a.sector.localeCompare(b.sector, "pt-BR") || a.date.localeCompare(b.date) || a.start - b.start);
 }
-
-/** Same cause on several dates is one row; every original date stays available. */
-export function consolidateCoverageGaps(gaps: SectorCoverageGap[]) {
-  const groups = new Map<string, SectorCoverageGap & { dates: string[] }>();
-  for (const gap of gaps) {
-    const id = JSON.stringify([gap.sector, gap.start, gap.end, gap.present, gap.minimum, gap.estimated, gap.kind, gap.roles]);
-    const group = groups.get(id) ?? { ...gap, dates: [] };
-    if (!group.dates.includes(gap.date)) group.dates.push(gap.date);
-    groups.set(id, group);
-  }
-  return [...groups.values()].map(group => ({ ...group, dates: group.dates.sort() }));
-}

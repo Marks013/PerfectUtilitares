@@ -49,6 +49,7 @@ const employee = z.strictObject({
   weeklyHoursMode: z.enum(["BRANCH", "INDIVIDUAL"]).optional(),
   simulationDailyMinutes: z.number().int().min(1).max(600).optional(),
   shiftIds: z.array(identifier).max(12), activeFrom: z.union([date, z.literal("")]), activeUntil: date.optional(),
+  originalShiftIds: z.array(identifier).min(1).max(12).refine(ids => new Set(ids).size === ids.length, "Referências de horários duplicadas").optional(),
   planningEnabled: z.boolean().optional(),
   scheduleMode: z.enum(["TIMED", "MISSING", "UNTIMED"]).optional(),
   planningExclusionReason: z.string().trim().max(240).optional(),
@@ -153,6 +154,7 @@ export const escalaInputSchema = z.strictObject({
   checkAssignments(value.assignments, ["assignments"]);
   value.employees.forEach((person, index) => {
     if (person.shiftIds.some((id) => !shiftIds.has(id))) context.addIssue({ code: "custom", path: ["employees", index, "shiftIds"], message: "Turno permitido inexistente" });
+    if (person.originalShiftIds?.some((id) => !shiftIds.has(id))) context.addIssue({ code: "custom", path: ["employees", index, "originalShiftIds"], message: "Referência original de horário inexistente" });
     checkAssignments(person.history, ["employees", index, "history"], person.id);
     checkAssignments(person.planningHistory ?? [], ["employees", index, "planningHistory"], person.id);
     checkAssignments(person.planningFuture ?? [], ["employees", index, "planningFuture"], person.id, true);
