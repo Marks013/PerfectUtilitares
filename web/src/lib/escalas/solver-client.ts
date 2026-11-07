@@ -5,6 +5,7 @@ export { EscalaSolverError } from "./solver-errors";
 import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
+import { refineRoster } from "./roster-refinement";
 
 const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
 
@@ -38,7 +39,8 @@ const resultSchema = z.strictObject({
       if (phase.members && new Set(phase.members.map(member => member.objective)).size !== phase.members.length) {
         context.addIssue({ code: "custom", path: ["members"], message: "Objetivos conjuntos duplicados" });
       }
-    })).max(10),
+    // Ten ordered objectives plus at most four bounded sector repairs.
+    })).max(14),
   }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
@@ -52,7 +54,19 @@ export async function solveEscala(
   options?: SolverOptions,
 ): Promise<EscalaSolveResult> {
   const parsed = escalaInputSchema.parse(input);
-  const payload = await requestSolver(parsed, options);
+  // Cheap verified day exchanges seed the bounded optimizer without changing its staffing target.
+  if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+  let refined: EscalaInput;
+  try {
+    refined = refineRoster(parsed);
+  } catch (error) {
+    console.error({ event: "escala_refinement_failed", errorType: error instanceof Error ? error.name : "Unknown" });
+    throw new EscalaSolverError("SOLVER_REFINEMENT_FAILED");
+  }
+  const payload = await requestSolver(parsed, {
+    ...options,
+    initialAssignments: refined === parsed ? undefined : refined.assignments,
+  });
   try {
     const result = resultSchema.parse(payload);
     if (["OPTIMAL", "FEASIBLE"].includes(result.status)) {

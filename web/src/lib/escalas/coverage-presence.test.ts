@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { newInput } from "@/components/escalas/workspace-model";
 import type { EscalaEmployee, EscalaInput } from "./types";
-import { buildCoveragePresence, coverageAt, coverageTimeline, sectorCoverageGaps } from "./coverage-presence";
+import { buildCoveragePresence, coverageAt, coverageTimeline, sectorCoverageGaps, sectorPresenceGaps } from "./coverage-presence";
 
 function fixture(): EscalaInput {
   const input = newInput("01", "Filial", "2026-11", 42);
@@ -16,6 +16,52 @@ function fixture(): EscalaInput {
 }
 
 describe("exact civil-minute coverage", () => {
+  it("shows whole dates without timed presence even when the estimate is zero, without inventing staffing requirements", () => {
+    const input = fixture(); input.visibleMonth = undefined; input.startDate = "2026-11-02"; input.endDate = "2026-11-05";
+    input.policy.closedDates = ["2026-11-05"];
+    input.assignments.push({ employeeId: "missing", date: "2026-11-03", kind: "DUTY" },
+      { employeeId: "untimed", date: "2026-11-03", kind: "DUTY" },
+      { employeeId: "a", date: "2026-11-04", kind: "ABSENCE" });
+    input.demands = [
+      { id: "zero", date: "2026-11-03", sector: "Reposição", minimum: 0, start: 480, end: 1020, estimated: true },
+      { id: "positive", date: "2026-11-04", sector: "Reposição", minimum: 1, start: 480, end: 1020, estimated: true },
+    ];
+    for (const person of input.employees.filter(employee => employee.planningEnabled !== false && employee.scheduleMode === "TIMED")) {
+      for (const date of ["2026-11-03", "2026-11-04"]) if (!input.assignments.some(record => record.employeeId === person.id && record.date === date))
+        input.assignments.push({ employeeId: person.id, date, kind: "OFF" });
+    }
+    const before = structuredClone(input);
+    expect(sectorPresenceGaps(input)).toEqual([{ sector: "Reposição", dates: ["2026-11-03", "2026-11-04"], withoutPositiveReferenceDates: ["2026-11-03"] }]);
+    expect(input).toEqual(before);
+  });
+  it("does not mark sectors outside employment, disabled people or only administrative presence as empty timed teams", () => {
+    const input = fixture(); input.visibleMonth = undefined; input.startDate = "2026-11-02"; input.endDate = "2026-11-03";
+    input.employees = [
+      { ...input.employees[0], activeFrom: "2026-11-03" },
+      { ...input.employees[3], sector: "Excluídos" },
+      { ...input.employees[4], sector: "Sem horário" },
+      { ...input.employees[5], sector: "Sem horário" },
+    ];
+    input.assignments = [{ employeeId: input.employees[0].id, date: "2026-11-03", kind: "OFF" }];
+    expect(sectorPresenceGaps(input)).toEqual([{ sector: "Reposição", dates: ["2026-11-03"], withoutPositiveReferenceDates: ["2026-11-03"] }]);
+  });
+  it("counts actual overnight presence on the civil date, without treating a meal break as service", () => {
+    const input = fixture(); input.visibleMonth = undefined; input.startDate = "2026-11-02"; input.endDate = "2026-11-02";
+    input.employees = [input.employees[0]];
+    input.shifts = [{ id: "night", name: "Noite", segments: [{ start: 1320, end: 1500, kind: "WORK" }] }];
+    input.employees[0].history = [{ employeeId: "a", date: "2026-11-01", kind: "WORK", shiftId: "night" }];
+    input.assignments = [];
+    expect(sectorPresenceGaps(input)).toEqual([]);
+    input.shifts[0].segments = [{ start: 1320, end: 1440, kind: "WORK" }, { start: 1440, end: 1500, kind: "BREAK" }];
+    input.assignments = [{ employeeId: "a", date: "2026-11-02", kind: "OFF" }];
+    expect(sectorPresenceGaps(input)).toEqual([{ sector: "Reposição", dates: ["2026-11-02"], withoutPositiveReferenceDates: ["2026-11-02"] }]);
+  });
+  it("does not call an unassigned draft date a whole planned day without timed coverage", () => {
+    const input = fixture();
+    input.assignments = [];
+    expect(sectorPresenceGaps(input)).toEqual([]);
+  });
+
   it("uses real endpoints, not rounded buckets; never counts pauses, excluded, missing, untimed or outside employment", () => {
     const input = fixture(), before = structuredClone(input), index = buildCoveragePresence(input);
     expect(coverageAt(index, "2026-11-02", "Reposição", 575)).toEqual([]);

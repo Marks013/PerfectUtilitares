@@ -58,8 +58,8 @@ class DailyTimedPresenceTests(unittest.TestCase):
             model.add(work[pid, day] == 0)
         self.assertEqual(cp_model.CpSolver().solve(model), cp_model.OPTIMAL)
 
-    def test_zero_or_unmatched_demand_does_not_create_a_hard_floor(self):
-        for change in ({"minimum": 0}, {"date": "2026-11-05"}, {"sector": "Other"}):
+    def test_unmatched_demand_does_not_create_a_hard_floor(self):
+        for change in ({"date": "2026-11-05"}, {"sector": "Other"}):
             with self.subTest(change=change):
                 args = self.reference()
                 data, model, day, work, choices, values, demands = args
@@ -68,6 +68,15 @@ class DailyTimedPresenceTests(unittest.TestCase):
                 for variable in work.values():
                     model.add(variable == 0)
                 self.assertEqual(cp_model.CpSolver().solve(model), cp_model.OPTIMAL)
+
+    def test_zero_target_cannot_erase_existing_timed_presence(self):
+        args = self.reference()
+        data, model, day, work, choices, values, demands = args
+        demands[0]['minimum'] = 0
+        self.guard(*args)
+        for variable in work.values():
+            model.add(variable == 0)
+        self.assertEqual(cp_model.CpSolver().solve(model), cp_model.INFEASIBLE)
 
     def test_active_timed_choices_only_and_no_new_variables(self):
         args = self.reference()

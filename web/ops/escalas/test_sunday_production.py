@@ -78,11 +78,11 @@ class ProductionSundayTests(unittest.TestCase):
         self.assertEqual((actual[first.index], actual[second.index], actual[preference.index]), (0, 0, 1))
         self.assertEqual(actual[coverage.index], 0)
         self.assertFalse(proven)
-        self.assertEqual(phases[-1]['objective'], 'SECONDARY_POLISH')
-        self.assertEqual(phases[-1]['searchScope'], 'SELECTED_PEOPLE')
-        self.assertEqual(phases[-1]['movablePeople'], 2)
+        self.assertEqual(phases[-1]['objective'], 'PREFERENCES')
+        self.assertEqual(phases[1]['searchScope'], 'SELECTED_PEOPLE')
+        self.assertEqual(phases[1]['movablePeople'], 2)
 
-    def test_joint_polish_never_trades_one_member_for_another(self):
+    def test_lower_priority_never_spends_the_higher_priority_incumbent(self):
         model = cp_model.CpModel()
         stability, preference = model.new_bool_var('stability'), model.new_bool_var('preference')
         model.add(stability == preference)
@@ -90,11 +90,11 @@ class ProductionSundayTests(unittest.TestCase):
         actual, proven, phases = improve(model, [stability, -preference], values,
             time.monotonic() + 1, ['STABILITY', 'PREFERENCES'])
         self.assertEqual(actual, values)
-        self.assertFalse(proven)
-        self.assertEqual(phases[0]['objective'], 'SECONDARY_POLISH')
-        self.assertTrue(all(member['incumbentValue'] <= member['initialValue'] for member in phases[0]['members']))
+        self.assertTrue(proven)
+        self.assertEqual([phase['objective'] for phase in phases], ['STABILITY', 'PREFERENCES'])
+        self.assertTrue(all(phase['incumbentValue'] <= phase['initialValue'] for phase in phases))
 
-    def test_unknown_joint_polish_returns_the_exact_incumbent_and_member_metrics(self):
+    def test_unknown_phases_return_the_exact_incumbent_and_separate_metrics(self):
         model = cp_model.CpModel()
         stability, preference = model.new_bool_var('stability'), model.new_bool_var('preference')
         values = {stability.index: 1, preference.index: 0}
@@ -108,9 +108,8 @@ class ProductionSundayTests(unittest.TestCase):
         self.assertEqual(actual, values)
         self.assertFalse(proven)
         self.assertEqual(phases[0]['status'], 'UNKNOWN')
-        self.assertEqual(phases[0]['members'], [
-            {'objective': 'STABILITY', 'initialValue': 1, 'incumbentValue': 1},
-            {'objective': 'PREFERENCES', 'initialValue': 0, 'incumbentValue': 0}])
+        self.assertEqual([(phase['objective'], phase['initialValue'], phase['incumbentValue'])
+                          for phase in phases], [('STABILITY', 1, 1), ('PREFERENCES', 0, 0)])
 
     def test_joint_integer_scaling_accepts_large_metrics_and_negative_preferences(self):
         model = cp_model.CpModel()
@@ -120,8 +119,8 @@ class ProductionSundayTests(unittest.TestCase):
             time.monotonic() + 1, ['REST_DISTRIBUTION', 'PREFERENCES'])
         self.assertEqual(model.validate(), '')
         self.assertEqual((actual[metric.index], actual[preference.index]), (0, 1))
-        self.assertFalse(proven)
-        self.assertEqual(phases[0]['members'][-1]['incumbentValue'], -1)
+        self.assertTrue(proven)
+        self.assertEqual(phases[-1]['incumbentValue'], -1)
 
     def test_joint_neighborhood_is_bounded_to_one_changed_sector(self):
         from optimization import _polish_people
@@ -156,7 +155,8 @@ class ProductionSundayTests(unittest.TestCase):
 
     def test_secondary_budget_reserves_real_time_for_stability_and_preferences(self):
         from optimization import _phase_budget
-        names = ['COVERAGE', 'SUNDAY_COVERAGE', 'SUNDAY_BALANCE', 'SECONDARY_POLISH']
+        names = ['COVERAGE', 'SUNDAY_COVERAGE', 'SUNDAY_BALANCE', 'REST_DISTRIBUTION',
+                 'REST_ROTATION', 'STABILITY', 'PREFERENCES', 'TIE_BREAK']
         remaining, allocations = 10.0, {}
         for index, name in enumerate(names):
             budget = _phase_budget(remaining, names, index)
@@ -164,8 +164,8 @@ class ProductionSundayTests(unittest.TestCase):
             self.assertGreater(budget, 0)
             remaining -= budget
         self.assertAlmostEqual(allocations['COVERAGE'], 5.5)
-        self.assertAlmostEqual(allocations['SUNDAY_COVERAGE'], 2.25)
-        self.assertGreater(allocations['SECONDARY_POLISH'], 1)
+        self.assertAlmostEqual(allocations['SUNDAY_COVERAGE'], 4.5 / 7)
+        self.assertGreater(allocations['PREFERENCES'], .5)
         self.assertAlmostEqual(sum(allocations.values()), 10.0)
 
     def test_secondary_goals_improve_without_spending_coverage_or_sunday_guards(self):
@@ -181,10 +181,10 @@ class ProductionSundayTests(unittest.TestCase):
             protected_groups={'COVERAGE': [coverage, sunday]})
         self.assertEqual([actual[v.index] for v in (coverage, sunday, fairness, stability, preference)], [0, 0, 0, 0, 1])
         self.assertFalse(proven)
-        self.assertEqual([phase['objective'] for phase in phases], ['COVERAGE', 'SUNDAY_BALANCE', 'SECONDARY_POLISH'])
-        self.assertEqual(phases[-1]['members'], [
-            {'objective': 'STABILITY', 'initialValue': 1, 'incumbentValue': 0},
-            {'objective': 'PREFERENCES', 'initialValue': 0, 'incumbentValue': -1}])
+        self.assertEqual([phase['objective'] for phase in phases],
+                         ['COVERAGE', 'SUNDAY_BALANCE', 'STABILITY', 'PREFERENCES'])
+        self.assertEqual(phases[2]['incumbentValue'], 0)
+        self.assertEqual(phases[3]['incumbentValue'], -1)
         self.assertEqual(phases[0]['budgetSeconds'], 0)
         self.assertTrue(all(phase['status'] == 'OPTIMAL' for phase in phases))
 
@@ -488,9 +488,8 @@ class ProductionSundayTests(unittest.TestCase):
         self.assertEqual(len(result['assignments']), 21)
         names = [phase['objective'] for phase in result['optimization']['phases']]
         self.assertIn('SUNDAY_BALANCE', names)
-        self.assertIn('SECONDARY_POLISH', names)
-        self.assertLess(names.index('SUNDAY_BALANCE'), names.index('SECONDARY_POLISH'))
-        self.assertIn('SATURDAY_BALANCE', [member['objective'] for member in result['optimization']['phases'][-1]['members']])
+        self.assertIn('SATURDAY_BALANCE', names)
+        self.assertLess(names.index('SUNDAY_BALANCE'), names.index('SATURDAY_BALANCE'))
 
     def test_later_preferences_cannot_transfer_sunday_debt_between_groups(self):
         model = cp_model.CpModel()

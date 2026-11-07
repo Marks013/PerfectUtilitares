@@ -1,42 +1,35 @@
-import { addDays, dateRange, dayOfWeek } from "./dates";
+import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
+import { validateEscala } from "./validation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 
 type Demand = EscalaInput["demands"][number];
 type Contribution = { date: string; shift: EscalaShift; weight: number };
-type Group = { sector: string; role: string; contributions: Contribution[] };
+type Group = { sector: string; role: string; employeeIds: Set<string>; contributions: Contribution[] };
 
 function paidMinutes(shift: EscalaShift) {
   return shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 }
 
 function referenceShift(person: EscalaEmployee, shifts: Map<string, EscalaShift>, target: number, allowed = (_shift: EscalaShift) => true) {
-  const source = [...(person.sourceSchedule?.weekday ?? "").matchAll(/(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})/g)];
-  const arrival = source.length ? Number(source[0][1]) * 60 + Number(source[0][2]) : null;
-  const lastSource = source.at(-1);
-  const departure = lastSource ? Number(lastSource[3]) * 60 + Number(lastSource[4]) : null;
-  const candidates = person.shiftIds.flatMap((id) => {
-    const shift = shifts.get(id);
-    return shift && paidMinutes(shift) === target && allowed(shift) ? [shift] : [];
-  });
   // Alternatives belong to the same person. Selecting one reference avoids claiming that
   // both opening and closing are staffed simultaneously by that person's alternative shifts.
-  return candidates.sort((a, b) => {
-    const arrivalA = a.segments.find((segment) => segment.kind !== "BREAK")?.start ?? 0;
-    const arrivalB = b.segments.find((segment) => segment.kind !== "BREAK")?.start ?? 0;
-    const departureA = a.segments.filter((segment) => segment.kind !== "BREAK").at(-1)?.end ?? 0;
-    const departureB = b.segments.filter((segment) => segment.kind !== "BREAK").at(-1)?.end ?? 0;
-    return (arrival === null ? 0 : Math.abs(arrivalA - arrival) - Math.abs(arrivalB - arrival))
-      || (departure === null ? 0 : Math.abs(departureA - departure) - Math.abs(departureB - departure))
-      || person.shiftIds.indexOf(a.id) - person.shiftIds.indexOf(b.id);
-  })[0];
+  // Preparation keeps the canonical clock first. Adding solver alternatives must not
+  // silently move the staffing target, including when the imported clock was adapted.
+  for (const id of person.shiftIds) {
+    const shift = shifts.get(id);
+    if (shift && paidMinutes(shift) === target && allowed(shift)) return shift;
+  }
+  return undefined;
 }
 
 function key(sector: string, role: string) { return JSON.stringify([sector, role]); }
 
 function groupHash(group: Group) {
   let hash = 0;
-  for (const character of key(group.sector, group.role)) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
+  // Stable membership, not a display label, determines fractional rounding ties.
+  // Names, registration numbers and identifiers are never emitted as diagnostics.
+  for (const character of JSON.stringify([...group.employeeIds].sort())) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
   return hash;
 }
 
@@ -71,8 +64,81 @@ function roundedTargets(expected: number[], group: Group, monday: string, days: 
   return targets;
 }
 
+/** Browser-safe invalidation only: this fingerprint does not certify or authenticate demand. */
+function coverageBasis(input: EscalaInput): string {
+  const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
+  const clock = (shift?: EscalaShift) => shift?.segments.map(segment => [segment.kind, segment.start, segment.end]) ?? null;
+  const sorted = <T>(items: T[]) => items.sort((a, b) => {
+    const left = JSON.stringify(a), right = JSON.stringify(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+  const weeks = [...new Set(dateRange(input.startDate, input.endDate).map(weekStart))];
+  const context = (records: EscalaAssignment[]) => sorted(records.map(record => [record.date, record.kind,
+    record.kind === "WORK" ? clock(shifts.get(record.shiftId ?? "")) : null]));
+  const people = input.employees.map(person => {
+    const references = new Map<string, unknown>();
+    for (const week of weeks) {
+      const mixed = usesMixed42Week(input, person, week);
+      const target = mixed ? 480 : effectiveWeeklyMinutes(person, week) / 5;
+      references.set(`${target}:${mixed}`, [target, mixed,
+        clock(referenceShift(person, shifts, target)), mixed ? clock(referenceShift(person, shifts, 540, isMixed42LongShift)) : null]);
+    }
+    return [person.id, person.sector, person.role, person.weeklyHours, person.weeklyHoursMode ?? "INDIVIDUAL", person.simulationDailyMinutes ?? null,
+      person.planningEnabled !== false, person.scheduleMode ?? "TIMED", person.activeFrom, person.activeUntil ?? "", person.offMode,
+      [...person.fixedOffDays].sort(), person.offPattern, effectiveSundayLimit(person), [...person.preferredOffDays].sort(),
+      sorted([...references.values()]), context(person.history), context(person.planningHistory ?? []), context(person.planningFuture ?? [])];
+  });
+  const policy = input.policy;
+  const data = [input.startDate, input.endDate, input.defaultWeeklyHours, input.timeZone, [...(input.mixed42Sectors ?? [])].sort(),
+    [policy.weeklyLimit, policy.dailyLimitMinutes, policy.minInterShiftMinutes, policy.minWeeklyRestMinutes, policy.minMealMinutes,
+      policy.maxConsecutiveWorkDays, policy.allowShortMealSimulation === true, policy.limitContinuousWorkBlocks === true,
+      [...policy.closedDates].sort(), [...policy.holidayDates].sort(), [...policy.authorizedHolidayDates].sort(), policy.holidayRestAllowed,
+      policy.normativeProfile ?? "CUSTOM"], sorted(people),
+    sorted(input.assignments.filter(record => record.kind === "ABSENCE" || record.locked).map(record => [record.employeeId, record.date, record.kind,
+      record.kind === "WORK" ? clock(shifts.get(record.shiftId ?? "")) : null])),
+    sorted(input.demands.filter(demand => demand.estimated !== true).map(demand => [demand.date, demand.sector, demand.role ?? "", demand.start, demand.end, demand.minimum]))];
+  let first = 2166136261, second = 2246822519;
+  for (const character of JSON.stringify(data)) {
+    const point = character.codePointAt(0) ?? 0;
+    first = Math.imul(first ^ point, 16777619) >>> 0;
+    second = Math.imul(second ^ point, 3266489917) >>> 0;
+  }
+  return `coverage-v1:${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
+}
+
+function completeRoster(input: EscalaInput): boolean {
+  if (!input.assignments.length) return false;
+  const days = dateRange(input.startDate, input.endDate);
+  const records = new Set(input.assignments.map(record => JSON.stringify([record.employeeId, record.date])));
+  let activeDays = 0;
+  for (const person of input.employees) if (person.planningEnabled !== false) for (const day of days) {
+    if (person.activeFrom > day || person.activeUntil && person.activeUntil < day) continue;
+    activeDays++;
+    if (!records.has(JSON.stringify([person.id, day]))) return false;
+  }
+  return activeDays > 0;
+}
+
+/**
+ * Keep the ruler fixed while optimizing an unchanged, complete, independently valid roster.
+ * Legacy bootstrap is explicit and generation-only: it stamps the existing saved estimates
+ * when their inputs remain compatible, rather than migrating targets during a solver upgrade.
+ * A real input change or needsRegeneration recalculates estimates; all manual minima survive.
+ */
+export function retainCoverageReference(previous: EscalaInput, prepared: EscalaInput, allowLegacy = false): EscalaInput | undefined {
+  if (previous.needsRegeneration || prepared.needsRegeneration || !previous.demands.some(demand => demand.estimated === true)
+    || !completeRoster(previous) || !completeRoster(prepared)) return undefined;
+  const basis = coverageBasis(prepared);
+  if (previous.coverageBasis ? previous.coverageBasis !== basis : !allowLegacy || coverageBasis(previous) !== basis) return undefined;
+  if (!validateEscala(previous).valid) return undefined;
+  return { ...prepared, demands: previous.demands, coverageBasis: basis };
+}
+
 /** Recalculate soft staffing objectives. Explicit operational minima remain unchanged. */
 export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
+  const retained = retainCoverageReference(input, input);
+  if (retained) return retained;
+  const basis = coverageBasis(input);
   const explicit = input.demands.filter((demand) => demand.estimated !== true).map((demand) => ({ ...demand }));
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const assignments = new Map<string, EscalaAssignment>();
@@ -138,7 +204,8 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
       const sundayWeight = sunday && !unavailableSunday ? Math.min(remaining, limit / (limit + 1)) : 0;
       const weekdayWeight = freeWeekdays.length ? Math.min(1, Math.max(0, remaining - sundayWeight) / freeWeekdays.length) : 0;
       const groupKey = key(person.sector, person.role);
-      const group = groups.get(groupKey) ?? { sector: person.sector, role: person.role, contributions: [] };
+      const group = groups.get(groupKey) ?? { sector: person.sector, role: person.role, employeeIds: new Set<string>(), contributions: [] };
+      group.employeeIds.add(person.id);
       for (const day of available) {
         const item = assignments.get(JSON.stringify([person.id, day]));
         const locked = item?.locked && item.kind === "WORK";
@@ -197,7 +264,9 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
   }
   const demands = [...explicit, ...estimates];
   if (demands.length > 12000) throw new Error("A equipe gerou mais de 12.000 faixas de cobertura. Reduza as alternativas de horários para recalcular a proposta.");
-  return { ...input, demands, policy: { ...input.policy, ...(estimates.length ? { coverageReview: "SUGGESTED" as const } : {}) } };
+  const { coverageBasis: _previousBasis, ...base } = input;
+  return { ...base, demands, ...(estimates.length ? { coverageBasis: basis } : {}),
+    policy: { ...input.policy, ...(estimates.length ? { coverageReview: "SUGGESTED" as const } : {}) } };
 }
 
 /** Small view model; it never creates or confirms staffing requirements. */

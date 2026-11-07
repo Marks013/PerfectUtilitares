@@ -394,7 +394,8 @@ def solve(data, control=None):
         return _response("UNKNOWN", [], started)
     baseline_hints = _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                        deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
-                       mixed_people=mixed_people)
+                       mixed_people=mixed_people,
+                       initial_assignments=data.get('_initialAssignments'))
     remaining = MAX_SECONDS - (time.monotonic() - started)
     if remaining < 0.1:
         return _response("UNKNOWN", [], started)
@@ -409,6 +410,22 @@ def solve(data, control=None):
     # A rejected proposal is not evidence that the actual scheduling model is infeasible.
     seed.parameters.fix_variables_to_their_hinted_value = True
     seed_status = seed.solve(model) if control is None else control.solve(seed, model)
+    if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and data.get('_initialAssignments') is not None:
+        # A preferred seed is not a saved baseline or evidence of infeasibility.
+        # Retry the original comparison roster before an unrestricted repair.
+        remaining = MAX_SECONDS - (time.monotonic() - started)
+        if remaining < 0.1:
+            return _response('UNKNOWN', [], started)
+        model.clear_hints()
+        baseline_hints = _feasibility_hints(
+            model, employees, dates, off, work, choices, active, baseline, metrics, policy,
+            deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2),
+            control=control, mixed_people=mixed_people)
+        remaining = MAX_SECONDS - (time.monotonic() - started)
+        if remaining < 0.1:
+            return _response('UNKNOWN', [], started)
+        seed.parameters.max_time_in_seconds = min(2, remaining)
+        seed_status = seed.solve(model) if control is None else control.solve(seed, model)
     if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         remaining = MAX_SECONDS - (time.monotonic() - started)
         if remaining < 0.1:
@@ -471,7 +488,8 @@ def solve(data, control=None):
     decisions = {variable.index: key for key, variable in off.items()}
     warm_decisions = {}
     repair_groups = _rest_repair_groups(employees, dates, work, baseline, values, policy,
-                                       data["demands"], data.get("visibleMonth"))
+                                       data["demands"], data.get("visibleMonth"),
+                                       sector_coverage, sunday_coverage)
     repair_people = set().union(*repair_groups) if repair_groups else set()
     # A synchronized baseline stays the comparison incumbent. Supply a
     # staggered alternative only as a nonbinding CP-SAT hint, within this budget.
@@ -521,7 +539,8 @@ def solve(data, control=None):
 def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, demands, values, control=None):
     """Preserve staffed sector-days in the feasible seed, not hourly coverage.
 
-    Only positive-demand days already containing timed WORK gain a guard.
+    Referenced days already containing timed WORK gain a guard, even when an
+    automatic rounding produced a zero target. This preserves the seed, not a minimum.
     Empty days remain repair goals; DUTY cannot replace timed presence. Existing
     absence, closure, fixed-rest and locked-assignment constraints stay intact.
     WORK segments count on each occupied civil date, including overnight shifts.
@@ -529,7 +548,7 @@ def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, dem
     sectors = {person["id"]: person["sector"] for person in employees if not has_no_clock(person)}
     active_dates = set(dates)
     demanded = {(item["sector"], item["date"]) for item in demands
-                if item["minimum"] > 0 and item["date"] in active_dates}
+                if item["date"] in active_dates}
     if not demanded:
         return
     present, occupied = {}, {}
@@ -570,7 +589,8 @@ def _repair_clock_fixes(choices, metrics, values):
     return fixes
 
 
-def _rest_repair_groups(employees, dates, work, baseline, values, policy, demands, visible_month=None):
+def _rest_repair_groups(employees, dates, work, baseline, values, policy, demands, visible_month=None,
+                        sector_shortages=None, sunday_shortages=None):
     """Release whole deficient sectors, without assuming sales peaks or staffing minima."""
     sectors = {}
     for person in employees:
@@ -580,9 +600,8 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
                 if item["minimum"] > 0 and item["date"] in active_dates
                 and (not visible_month or item["date"].startswith(visible_month + "-"))}
     ranked = []
+    snapshot = Snapshot(values)
     for sector, members in sectors.items():
-        if len(members) < 2:
-            continue
         empty = []
         for day in dates:
             if (sector, day) not in demanded:
@@ -593,21 +612,23 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
             present = [work[p["id"], day] for p in timed if (p["id"], day) in work]
             eligible = [p for p in timed if (p["id"], day) in work
                         and available_weekends(p, [day], baseline, policy)]
-            if len(eligible) >= 2 and not any(values[var.index] for var in present):
+            if eligible and not any(values[var.index] for var in present):
                 empty.append(day)
-        if empty:
+        shortage = snapshot.value(sum((sector_shortages or {}).get(sector, [])))
+        sunday_shortage = snapshot.value(sum((sunday_shortages or {}).get(sector, [])))
+        if empty or shortage > 0 or sunday_shortage > 0:
             sunday_count = sum(date.fromisoformat(day).weekday() == 6 for day in empty)
-            ranked.append((-sunday_count, -len(empty), len(members), sector,
+            ranked.append((-sunday_count, -len(empty), -sunday_shortage, -shortage, len(members), sector,
                            {person["id"] for person in members}))
     # Small sectors share one neighborhood. A large team gets its own complete
     # exchange group instead of being silently excluded by the old size limit.
     small, large = set(), []
-    for _, _, size, _, members in sorted(ranked):
+    for _, _, _, _, size, _, members in sorted(ranked):
         if size <= 8 and len(small | members) <= 16:
             small.update(members)
         else:
             large.append(members)
-    return ([small] if small else []) + large[:2 - bool(small)]
+    return ([small] if small else []) + large[:4 - bool(small)]
 
 def _read_assignments(solver, employees, active, baseline, work, choices):
     result = []
@@ -631,14 +652,56 @@ def _read_assignments(solver, employees, active, baseline, work, choices):
     return result
 
 
+def _initial_hint_baseline(entries, employees, active, baseline, choices):
+    """Bound an optional complete seed; it cannot redefine absences or locks."""
+    if not isinstance(entries, list) or not entries or len(entries) > 10500:
+        return None
+    people = {person['id']: person for person in employees}
+    required = {(pid, day) for pid in people for day in active[pid]}
+    candidate, seen = {}, set()
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get('employeeId'), str) or not isinstance(entry.get('date'), str):
+            return None
+        key = entry['employeeId'], entry['date']
+        if key in seen:
+            return None
+        seen.add(key)
+        if key not in required:
+            # Unchanged protected disabled records are retained by the real
+            # baseline; foreign people/dates never become solver decisions.
+            if baseline.get(key) != entry:
+                return None
+            continue
+        old, kind = baseline.get(key, {}), entry.get('kind')
+        if kind not in ('WORK', 'DUTY', 'OFF', 'ABSENCE'):
+            return None
+        if (kind == 'ABSENCE') != (old.get('kind') == 'ABSENCE'):
+            return None
+        if old.get('locked') and (kind != old['kind'] or
+                kind == 'WORK' and entry.get('shiftId') != old.get('shiftId')):
+            return None
+        person = people[key[0]]
+        if kind == 'WORK' and (has_no_clock(person) or not isinstance(entry.get('shiftId'), str)
+                               or entry['shiftId'] not in choices[key]):
+            return None
+        if kind == 'DUTY' and not has_no_clock(person):
+            return None
+        candidate[key] = entry
+    return candidate if set(candidate) == required else None
+
+
 def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
-                       deadline=None, control=None, prefer_baseline=True, mixed_people=frozenset()):
-    """Reuse exact complete sectors; CP-SAT verifies the combined draft."""
+                       deadline=None, control=None, prefer_baseline=True, mixed_people=frozenset(),
+                       initial_assignments=None):
+    """Hint a preferred seed or saved sectors; CP-SAT verifies the combined draft."""
+    source = (_initial_hint_baseline(initial_assignments, employees, active, baseline, choices)
+              if prefer_baseline else None)
+    source = source if source is not None else baseline
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
     comparable = {sector for sector, members in sectors.items() if prefer_baseline and all(
-        (old := baseline.get((person['id'], day))) is not None
+        (old := source.get((person['id'], day))) is not None
         and (old['kind'] in ('OFF', 'ABSENCE')
              or (old['kind'] == 'DUTY' and has_no_clock(person))
              or (old['kind'] == 'WORK' and not has_no_clock(person)
@@ -654,7 +717,7 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     for person in employees:
         if person['sector'] in comparable:
             pid = person['id']
-            proposals[pid] = {day: baseline[pid, day] for day in active[pid]}
+            proposals[pid] = {day: source[pid, day] for day in active[pid]}
     for person in employees:
         pid = person["id"]
         for day, entry in proposals.get(pid, {}).items():

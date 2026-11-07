@@ -109,8 +109,8 @@ def _replace_hints(model, values):
 
 
 def _polish_people(variables, values, groups, limit=18, coverage_groups=None,
-                   shortages=None, sunday_shortages=None):
-    """Prioritize remaining coverage, keeping a complete bounded sector movable."""
+                   shortages=None, sunday_shortages=None, attempt=0):
+    """Rotate bounded sectors by Sunday/total deficit before cosmetic stability."""
     changed = {v.name[len('changed:'):]: values[v.index] for v in variables if v.name.startswith('changed:')}
     ranked = sorted((sum(changed.get(pid, 0) for pid in members), tuple(sorted(members)))
                     for members in groups if members)
@@ -125,13 +125,12 @@ def _polish_people(variables, values, groups, limit=18, coverage_groups=None,
         sunday = snapshot.value(sum((sunday_shortages or {}).get(sector, [])))
         if total > 0 or sunday > 0:
             members = tuple(sorted(members))
-            deficient.append((sum(changed.get(pid, 0) for pid in members), sunday, total, members))
+            deficient.append((sunday, total, sum(changed.get(pid, 0) for pid in members), sector, members))
     if deficient:
-        members = max(deficient)[-1]
+        members = sorted(deficient, reverse=True)[attempt % len(deficient)][-1]
         # Keep all exchange partners in normal supermarket sectors. Larger
         # sectors retain a bounded neighborhood rather than growing the budget.
-        # Keep changed-sector exchanges before trying a different sector. Freeing
-        # both sectors made presolve consume this short phase in production.
+        # Separate attempts release different sectors, not one expensive union.
         return set(sorted(members, key=lambda pid: (-changed.get(pid, 0), pid))[:36])
     return stable
 
@@ -158,7 +157,7 @@ def _phase_budget(remaining, names, index):
         return remaining
     if names[index] == 'COVERAGE':
         return remaining * .55
-    return remaining * .5
+    return remaining / (len(names) - index)
 
 
 def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None, initial_decision_hints=None, initial_repair_people=None, initial_repair_groups=None, repair_clock_fixes=None):
@@ -176,21 +175,19 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
     names = names or [f'OBJECTIVE_{i + 1}' for i in range(len(objectives))]
     secondary = {'SATURDAY_BALANCE', 'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED',
                  'STABILITY', 'PREFERENCES', 'TIE_BREAK'}
-    plans = [(name, objective, []) for name, objective in zip(names, objectives)]
-    first = next((i for i, name in enumerate(names) if name in secondary), len(names))
-    if len(names) - first > 1 and all(name in secondary for name in names[first:]):
-        coverage_members = [(name, objective) for name, objective in zip(names[:first], objectives[:first])
-                            if name in ('COVERAGE', 'SUNDAY_COVERAGE') and Snapshot(values).value(objective) > 0]
-        plans = plans[:first] + [('SECONDARY_POLISH', None,
-                                 coverage_members + list(zip(names[first:], objectives[first:])))]
+    # Lower-priority stability and tie-breaking must be allowed to yield to better
+    # operational balance. Freezing every member at its initial value turns a
+    # stable incumbent into an immovable roster, even when rests can improve.
+    plans = list(zip(names, objectives))
     repair_groups = initial_repair_groups or ([initial_repair_people] if initial_repair_people else [])
-    repair_groups = ([set(group) for group in repair_groups[:2] if group]
+    repair_groups = ([set(group) for group in repair_groups[:4] if group]
                      if plans and plans[0][0] == 'COVERAGE'
                      and dates and deadline - time.monotonic() >= 2 else [])
     repair_count = len(repair_groups)
     if repair_count:
         plans = [plans[0]] * repair_count + plans
-    names = [name for name, _objective, _members in plans]
+    names = [name for name, _objective in plans]
+    polish_attempt = 0
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
     active_group_count, upper_bounds = 0, {}
@@ -214,7 +211,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         model.proto.solution_hint.values.extend(
             initial_decision_hints.get(variable_index, values[variable_index])
             for variable_index in decision_variables)
-    for index, (name, objective, members) in enumerate(plans):
+    for index, (name, objective) in enumerate(plans):
         repair_phase = index < repair_count
         phase_index = index - repair_count
         if index == repair_count and initial_decision_hints:
@@ -226,24 +223,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             proven = False
             break
         preparation_started = time.monotonic()
-        member_values = []
-        if members:
-            weighted = []
-            for member_name, member in members:
-                member_terms = _expression_terms(member)
-                initial = _linear_value(member_terms, values)
-                add_upper_bound(member, member_terms, _upper_bound_key(member_terms), initial)
-                floor = _objective_floor(model, member_terms, domain_bounds)
-                weight = max(1, min(1000, 100000 // max(1, initial - floor)))
-                weighted.append(weight * member)
-                member_values.append({'objective': member_name, 'initialValue': initial, 'incumbentValue': initial})
-            objective = sum(weighted)
-            # Joint dominance improvement is not a lexicographic optimality proof.
-            proven = False
         model.minimize(objective)
         new_groups = list(protected_groups.get(names[index], []))
-        for member_name, _member in members:
-            new_groups.extend(protected_groups.get(member_name, []))
         # Count original group provenance for the conservative proof metadata,
         # but only register each equivalent expression once for propagation.
         active_group_count += len(new_groups)
@@ -276,13 +257,12 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             phases.append({'objective': names[index], 'status': 'OPTIMAL',
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
-            if members:
-                phases[-1]['members'] = member_values
             continue
         budget = _phase_budget(remaining, names, index)
         if repair_phase:
-            large_team = len(repair_groups[index]) > 16
-            budget = min(2.8 if large_team else 2.1, remaining * (.40 if large_team else .30))
+            # Cheap, independent neighborhoods must not consume the main search
+            # or all secondary goals, even when several sectors need attention.
+            budget = min(0.85, remaining * .12)
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
         engine.parameters.num_workers = 1
@@ -302,10 +282,11 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                               if names[index] == 'SUNDAY_BALANCE' else set())
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
-            if name == 'SECONDARY_POLISH':
+            if name in secondary:
                 movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [],
                                                 coverage_groups=coverage_groups, shortages=sector_coverage,
-                                                sunday_shortages=sunday_coverage)
+                                                sunday_shortages=sunday_coverage, attempt=polish_attempt)
+                polish_attempt += 1
             if repair_phase:
                 movable_people = repair_groups[index]
             weeks = (len(dates) + 6) // 7
@@ -340,8 +321,6 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                  'wallTimeSeconds': round(time.monotonic() - started, 3),
                  'budgetSeconds': round(budget, 3), 'initialValue': incumbent,
                  'incumbentValue': incumbent, 'searchScope': 'GLOBAL'}
-        if members:
-            phase['members'] = member_values
         if restricted:
             phase['searchScope'] = 'SELECTED_PEOPLE' if movable_people else 'ROLLING_WEEKS'
             if movable_people:
@@ -359,8 +338,6 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                 continue
             break
         values = {variable.index: engine.value(variable) for variable in variables}
-        for member, (_member_name, member_objective) in zip(member_values, members):
-            member['incumbentValue'] = Snapshot(values).value(member_objective)
         best = engine.value(objective)
         # Later goals may incidentally improve earlier ones. Keep that gain too.
         for previous, previous_terms, key in visited:

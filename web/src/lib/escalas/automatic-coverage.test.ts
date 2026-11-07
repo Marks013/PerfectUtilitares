@@ -19,6 +19,28 @@ function fixture(people = 1): EscalaInput {
 }
 
 describe("automatic provisional coverage", () => {
+  it("keeps rounding dates stable when only the sector or role label changes", () => {
+    const input = fixture(2); input.endDate = "2026-11-29";
+    const baseline = proposeAutomaticCoverage(input).demands.map(({ sector: _sector, role: _role, ...demand }) => demand);
+    for (const role of ["Repositor A", "Repositor B"]) {
+      const renamed = structuredClone(input);
+      renamed.employees.forEach(person => { person.sector = "Novo nome do setor"; person.role = role; });
+      expect(proposeAutomaticCoverage(renamed).demands.map(({ sector: _sector, role: _role, ...demand }) => demand)).toEqual(baseline);
+    }
+    expect(proposeAutomaticCoverage({ ...input, employees: [...input.employees].reverse() }).demands).toEqual(proposeAutomaticCoverage(input).demands);
+  });
+  it("does not move the demand reference when another allowed shift is added after the canonical one", () => {
+    const input = fixture();
+    input.employees[0].sourceSchedule = { report: "FPRE136", code: "001", description: "Referência", weekday: "09:00-13:00 / 14:00-18:00", saturday: "" };
+    const baseline = proposeAutomaticCoverage(input).demands;
+    input.shifts.push({ id: "closer-to-source", name: "Alternativa", segments: [
+      { start: 540, end: 780, kind: "WORK" }, { start: 780, end: 840, kind: "BREAK" }, { start: 840, end: 1080, kind: "WORK" },
+    ] });
+    input.employees[0].shiftIds.push("closer-to-source");
+    expect(proposeAutomaticCoverage(input).demands).toEqual(baseline);
+    input.employees[0].shiftIds.push("closer-to-source");
+    expect(proposeAutomaticCoverage(input).demands).toEqual(baseline);
+  });
   it("splits overnight staffing onto the actual civil dates without inventing a previous journey", () => {
     const input = fixture(); input.endDate = "2026-11-15";
     input.shifts[0].segments = [{ start: 1320, end: 1560, kind: "WORK" }, { start: 1560, end: 1620, kind: "BREAK" }, { start: 1620, end: 1860, kind: "WORK" }];

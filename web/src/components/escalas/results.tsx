@@ -3,9 +3,11 @@
 import { memo, useMemo, useRef, useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
 import { summarizeCoverageGaps } from "@/lib/escalas/coverage-summary";
+import { sectorPresenceGaps } from "@/lib/escalas/coverage-presence";
+import { monthlySundays } from "@/lib/escalas/monthly-sundays";
 import type { EscalaRecoveryContext } from "./recovery-navigation";
 import styles from "./escalas.module.css";
-import { sortEmployees } from "@/lib/escalas/order";
+import { compareSectors, sortEmployees } from "@/lib/escalas/order";
 import type {
   EscalaAssignment,
   EscalaInput,
@@ -100,8 +102,25 @@ function CoverageDayDetails({ rows, onResolve }: { rows: ReturnType<typeof build
   </div>;
 }
 
-function CoverageGaps({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
-  const summaries = useMemo(() => summarizeCoverageGaps(rows), [rows]);
+function PresenceGaps({ rows, onResolve }: { rows: ReturnType<typeof sectorPresenceGaps>; onResolve?: ResolveReview }) {
+  if (!rows.length) return null;
+  return <div className={styles.reviewGroup} role="status">
+    <p className="font-semibold">Dias sem ninguém com horário no setor</p>
+    <p className={styles.muted}>Confira se o setor precisa funcionar nesses dias. Uma estimativa zero não confirma fechamento nem atendimento.</p>
+    <ul className="space-y-2">{rows.map(row => <li key={row.sector}>
+      <p>{row.dates.length} dia(s) sem presença com horário{row.withoutPositiveReferenceDates.length ? `; ${row.withoutPositiveReferenceDates.length} sem necessidade positiva informada ou estimada` : ""}.</p>
+      <details><summary className={styles.disclosureTrigger}>Consultar datas de {row.sector}</summary><p className="text-sm tabular-nums">{row.dates.map(displayDate).join(", ")}</p></details>
+      {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.dates[0] })}>Conferir cobertura de {row.sector}</button>}
+    </li>)}</ul>
+  </div>;
+}
+
+function CoverageGaps({ rows, emptySectors = [], onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; emptySectors?: ReturnType<typeof sectorPresenceGaps>; onResolve?: ResolveReview }) {
+  const summaries = useMemo(() => {
+    const groups = new Map(summarizeCoverageGaps(rows).map(row => [row.sector, row]));
+    for (const row of emptySectors) if (!groups.has(row.sector)) groups.set(row.sector, { sector: row.sector, dates: row.dates, noServiceDates: row.dates, minimumDates: [], hasEstimates: true, peakMissing: 0, peakSectorMissing: 0, hasRoleMismatch: false, windows: [] });
+    return [...groups.values()].sort((a, b) => compareSectors(a.sector, b.sector));
+  }, [rows, emptySectors]);
   const [selected, setSelected] = useState<{ sector: string; date: string } | null>(null);
   if (!summaries.length) return null;
   return <div className={styles.reviewGroup}>
@@ -112,6 +131,7 @@ function CoverageGaps({ rows, onResolve }: { rows: ReturnType<typeof buildEscala
         const date = open && row.dates.includes(selected.date) ? selected.date : row.dates[0];
         return <li key={row.sector} className={styles.reviewNotice} data-severity={row.minimumDates.length ? "ERROR" : "WARNING"}>
           <div className={styles.header}><h4 className="font-semibold">{row.sector || "Setor não informado"}</h4><span className={styles.statusTag}>{row.minimumDates.length ? "Rever mínimo informado" : "Referência estimada"}</span></div>
+          <PresenceGaps rows={emptySectors.filter(item => item.sector === row.sector)} onResolve={onResolve} />
           <p>{row.dates.length} dia(s) com ponto de atenção{row.noServiceDates.length ? ` · ${row.noServiceDates.length} dia(s) sem presença em alguma faixa` : ""}.</p>
           <ul className="space-y-1 text-sm tabular-nums">{row.windows.map(window => <li key={window.start + ":" + window.end}><strong>{clock(window.start)}–{clock(window.end)}</strong> · {window.dates.length} dia(s) · {window.peakSectorMissing ? `até ${window.peakSectorMissing} pessoa(s) abaixo da referência` : "rever a distribuição das funções"}</li>)}</ul>
           <p className={styles.muted}>Compare com a necessidade real e reveja entradas, intervalos e folgas. Não significa contratar a quantidade indicada.</p>
@@ -158,11 +178,12 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
 }) {
   const { input, generated } = useActiveSnapshot({ input: nextInput, generated: nextGenerated }, active);
   const diagnostics = useActiveDiagnostics(generated?.proposalInput ?? input, generated?.validation.issues, active);
+  const emptySectors = useMemo(() => generated && active ? sectorPresenceGaps(generated.proposalInput) : [], [generated, active]);
   if (!generated || !diagnostics) return null;
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
-    {diagnostics.coverageGroups.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir setores com desfalque ({new Set(diagnostics.coverageGroups.map(row => row.sector)).size})</summary><div className={styles.reviewScroller}><CoverageGaps rows={diagnostics.coverageGroups} /></div></details>}
+    {(diagnostics.coverageGroups.length > 0 || emptySectors.length > 0) && <details><summary className={styles.disclosureTrigger}>Conferir setores com desfalque ({new Set([...diagnostics.coverageGroups.map(row => row.sector), ...emptySectors.map(row => row.sector)]).size})</summary><div className={styles.reviewScroller}><CoverageGaps rows={diagnostics.coverageGroups} emptySectors={emptySectors} /></div></details>}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
@@ -175,6 +196,8 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
   const [selectedView, setView] = useState<ReviewSection>();
   const { input, validation } = useActiveSnapshot({ input: nextInput, validation: nextValidation }, active);
   const diagnostics = useActiveDiagnostics(input, validation?.issues, active);
+  const emptySectors = useMemo(() => active && input.assignments.some(record => record.kind === "WORK" || record.kind === "DUTY") ? sectorPresenceGaps(input) : [], [input, active]);
+  const sundayCounts = useMemo(() => monthlySundays(input), [input]);
   if (!validation) return <section className={panelClass}><h2 className={styles.sectionTitle}>Revisão do cenário</h2><p className="text-sm">A edição ainda não foi conferida. Aguarde o salvamento ou gere uma proposta para atualizar os resultados.</p></section>;
   if (!diagnostics) return null;
   const errors = diagnostics.notices.filter(notice => notice.severity === "ERROR");
@@ -182,9 +205,10 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
   const information = diagnostics.notices.filter(notice => notice.severity === "WARNING" || isReviewInformation(notice.code, notice.severity));
   const reservations = validation.boundaryReservations ?? [];
   const employees = sortEmployees(input.employees.filter(person => person.planningEnabled !== false));
+  const coverageCount = new Set([...diagnostics.coverageGroups.map(row => row.sector), ...emptySectors.map(row => row.sector)]).size;
   const view = section ?? selectedView ?? (errors.length ? "errors" : diagnostics.coverageGroups.length ? "coverage" : reviews.length ? "reviews" : information.length ? "information" : "errors");
   const notices = view === "errors" ? errors : view === "reviews" ? reviews : information;
-  const menus = [{ id: "errors", label: "Erros", count: errors.length }, { id: "reviews", label: "Avisos", count: reviews.length }, { id: "coverage", label: "Desfalques", count: new Set(diagnostics.coverageGroups.map(row => row.sector)).size }, { id: "information", label: "Informações", count: information.length }] as const;
+  const menus = [{ id: "errors", label: "Erros", count: errors.length }, { id: "reviews", label: "Avisos", count: reviews.length }, { id: "coverage", label: "Desfalques", count: coverageCount }, { id: "information", label: "Informações", count: information.length }] as const;
   return <section className={panelClass} aria-labelledby="escala-validation-title">
     <div className={styles.header}><h2 id="escala-validation-title" className={styles.sectionTitle}>Central de revisão</h2><span className={styles.muted}>{errors.length} erro(s) · {reviews.length} aviso(s)</span></div>
     <p className="text-sm">{errors.length ? "Há impedimentos técnicos. Escolha uma ocorrência para conferir a correção sugerida." : "Nenhum impedimento técnico detectado. Avisos e estimativas ficam separados para consulta opcional."}</p>
@@ -192,7 +216,7 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
     <section id="escala-review-content" className={styles.reviewScroller} aria-label={(menus.find(menu => menu.id === view)?.label ?? "Revisão") + " da escala"}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the review region.
       tabIndex={0}>
-      {view === "coverage" ? diagnostics.coverageGroups.length ? <CoverageGaps rows={diagnostics.coverageGroups} onResolve={onResolve} /> : <p>Nenhum desfalque detectado nas faixas com referência disponível.</p> : <>
+      {view === "coverage" ? coverageCount ? <CoverageGaps rows={diagnostics.coverageGroups} emptySectors={emptySectors} onResolve={onResolve} /> : <p>Nenhum desfalque detectado nas faixas com referência disponível.</p> : <>
         <h3 className="font-semibold">{view === "errors" ? "Exige correção (" + errors.length + ")" : view === "reviews" ? "Pode continuar com revisão (" + reviews.length + ")" : "Informações e limites de conferência (" + information.length + ")"}</h3>
         {!notices.length && <p className={styles.muted}>Nenhuma ocorrência nesta categoria.</p>}
         <ul className={styles.coverageGapList}>{notices.map(notice => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul>
@@ -203,9 +227,11 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
           const dates = reservations.filter(day => day.employeeId === person.id).map(day => day.date).sort();
           return dates.length ? <li key={person.id}>{person.registration} · {person.name}: {dates.map(displayDate).join(", ")}</li> : null;
         })}</ul></section>}
-        <table className="w-full text-left text-sm"><caption className="py-2 text-left font-semibold">Apuração por colaborador</caption><thead><tr><th scope="col" className="p-2">Setor / cargo / colaborador</th><th scope="col" className="p-2">Horas</th><th scope="col" className="p-2">Trabalho / folgas</th><th scope="col" className="p-2">Sequência máxima</th><th scope="col" className="p-2">Domingos trabalhados</th></tr></thead><tbody>{employees.map(person => {
+        <p className={styles.muted}>Domingos abaixo: apenas o mês exibido. Afastamentos e dias sem definição ficam separados; a continuidade entre meses continua sendo conferida pelo algoritmo.</p>
+        <table className="w-full text-left text-sm"><caption className="py-2 text-left font-semibold">Apuração por colaborador</caption><thead><tr><th scope="col" className="p-2">Setor / cargo / colaborador</th><th scope="col" className="p-2">Horas</th><th scope="col" className="p-2">Trabalho / folgas</th><th scope="col" className="p-2">Sequência máxima</th><th scope="col" className="p-2">Domingos no mês</th></tr></thead><tbody>{employees.map(person => {
           const summary = validation.summaries.find(item => item.employeeId === person.id);
-          return summary ? <tr key={person.id}><th scope="row" className="p-2 font-normal">{person.sector} / {person.role}<span className="block font-semibold">{person.name} · {person.registration}</span></th><td className="p-2">{person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING" ? "Sem horário fixo" : clock(summary.workedMinutes)}</td><td className="p-2">{summary.workDays} / {summary.offDays}</td><td className="p-2">{summary.maxStreak} dias</td><td className="p-2">{summary.sundaysWorked}</td></tr> : null;
+          const sunday = sundayCounts.get(person.id);
+          return summary ? <tr key={person.id}><th scope="row" className="p-2 font-normal">{person.sector} / {person.role}<span className="block font-semibold">{person.name} · {person.registration}</span></th><td className="p-2">{person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING" ? "Sem horário fixo" : clock(summary.workedMinutes)}</td><td className="p-2">{summary.workDays} / {summary.offDays}</td><td className="p-2">{summary.maxStreak} dias</td><td className="p-2">{sunday?.off ?? 0} folga(s) / {sunday?.available ?? 0} disponíveis<span className="block text-xs text-[color:var(--app-muted)]">{sunday?.worked ?? 0} trabalhado(s) · {sunday?.absent ?? 0} afastado(s){sunday?.unknown ? ` · ${sunday.unknown} sem definição` : ""}</span></td></tr> : null;
         })}</tbody></table>
       </div>}
     </section>

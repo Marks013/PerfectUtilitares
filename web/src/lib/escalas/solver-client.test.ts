@@ -9,6 +9,8 @@ writeFileSync(secretPath, "s".repeat(64), { mode: 0o600 });
 beforeEach(() => vi.stubEnv("ESCALAS_SOLVER_SECRET_FILE", secretPath));
 afterAll(() => rmSync(secretDirectory, { recursive: true }));
 import { solveEscala } from "./solver-client";
+import { validateEscala } from "./validation";
+import * as rosterRefinement from "./roster-refinement";
 import type { EscalaInput } from "./types";
 
 import { escalaInputSchema } from "./schema";
@@ -100,6 +102,63 @@ describe("isolated schedule processor client", () => {
       optimization: { budgetSeconds: 12, phases: [{ status: "FEASIBLE", wallTimeSeconds: 1, budgetSeconds: 1.5, initialValue: 10, incumbentValue: 9, ...details }] },
     })));
     await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+
+  it("reports an unexpected refinement failure without sending, changing or logging personal data", async () => {
+    const input = fixture(), original = structuredClone(input);
+    const failure = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(() => { throw new Error("private payload"); });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    try {
+      await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_REFINEMENT_FAILED" });
+      expect(input).toEqual(original);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith({ event: "escala_refinement_failed", errorType: "Error" });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private payload");
+    } finally { failure.mockRestore(); log.mockRestore(); }
+  });
+
+  it("sends a verified better seed with the same demand and preserves the caller's saved roster", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.shifts[0].segments = [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 840, kind: "BREAK" }, { start: 840, end: 1104, kind: "WORK" }];
+    input.employees.push({ ...structuredClone(input.employees[0]), id: "p2", registration: "02", name: "Outra pessoa" });
+    input.assignments = input.employees.flatMap(person => Array.from({ length: 7 }, (_, index) => ({ employeeId: person.id,
+      date: `2026-11-0${index + 2}`, kind: (index === 6 || index === (person.id === "p1" ? 3 : 5) ? "OFF" : "WORK") as "WORK" | "OFF",
+      ...(index === 6 || index === (person.id === "p1" ? 3 : 5) ? {} : { shiftId: "day" }),
+    })));
+    input.demands = [{ id: "morning", date: "2026-11-05", sector: "Loja", start: 480, end: 720, minimum: 2, estimated: true },
+      { id: "afternoon", date: "2026-11-05", sector: "Loja", start: 840, end: 1104, minimum: 2, estimated: true }];
+    expect(validateEscala(input).valid).toBe(true);
+    const original = structuredClone(input);
+    let sent: EscalaInput | undefined;
+    let seed: EscalaInput["assignments"] | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, options?: RequestInit) => {
+      sent = JSON.parse(String(options?.body)).input;
+      seed = (sent as EscalaInput & { _initialAssignments?: EscalaInput["assignments"] })._initialAssignments;
+      return Response.json({ status: "FEASIBLE", assignments: seed, message: "Pronto", wallTimeSeconds: 1 });
+    }));
+    const result = await solveEscala(input);
+    expect(input).toEqual(original);
+    expect(sent?.demands).toEqual(input.demands);
+    expect(sent?.assignments).toEqual(input.assignments);
+    expect(seed).not.toEqual(input.assignments);
+    expect(seed?.filter((entry, index) => entry.kind !== input.assignments[index]?.kind)).toHaveLength(2);
+    expect(seed?.find(a => a.employeeId === "p1" && a.date === "2026-11-05")?.kind).toBe("WORK");
+    expect(result.assignments).toEqual(seed);
+    expect(validateEscala({ ...input, assignments: result.assignments }).valid).toBe(true);
+  });
+
+  it.each([14, 15])("validates the bounded diagnostic contract with %i phases", async count => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const names = ["COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "TIE_BREAK"];
+    const optimization = { budgetSeconds: 12, phases: names.slice(0, count).map(objective => ({ objective, status: "FEASIBLE", wallTimeSeconds: 0.1, budgetSeconds: 0.2, initialValue: 500, incumbentValue: 400 })) };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 2, optimization })));
+    if (count === 14) {
+      const result = await solveEscala(fixture());
+      expect(result.optimization).toEqual(optimization);
+      expect(result.assignments).toEqual(completeAssignments());
+    } else await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
   });
 
   it("accepts all ten active objectives including Sunday coverage without losing assignments", async () => {

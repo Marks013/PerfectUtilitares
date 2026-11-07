@@ -111,6 +111,8 @@ export type EscalaInput = {
   simulation?: boolean;
   /** UI scenario changed after a roster existed; persists across saved revisions and reloads. */
   needsRegeneration?: boolean;
+  /** Versioned cache-invalidation fingerprint, not evidence of operational demand or authorization. */
+  coverageBasis?: string;
   branchCode: string;
   branchName: string;
   startDate: string;

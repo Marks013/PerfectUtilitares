@@ -50,10 +50,9 @@ class CoveragePolishTests(unittest.TestCase):
         for pid in ('p', 'q'):
             self.assertEqual(sum(snapshot.value(work[pid, day]) for day in days), 2)
         self.assertEqual([phase['status'] for phase in phases[:2]], ['UNKNOWN', 'UNKNOWN'])
-        self.assertEqual(phases[-1]['objective'], 'SECONDARY_POLISH')
-        members = {member['objective']: member for member in phases[-1]['members']}
-        self.assertEqual(set(members), {'COVERAGE', 'SUNDAY_COVERAGE', 'STABILITY', 'PREFERENCES'})
-        self.assertTrue(all(member['incumbentValue'] <= member['initialValue'] for member in members.values()))
+        self.assertEqual([phase['objective'] for phase in phases],
+                         ['COVERAGE', 'SUNDAY_COVERAGE', 'STABILITY', 'PREFERENCES'])
+        self.assertTrue(all(phase['incumbentValue'] <= phase['initialValue'] for phase in phases))
         self.assertFalse(proven)
 
     def test_joint_gain_cannot_be_funded_by_another_sector_or_its_sunday_loss(self):
@@ -82,8 +81,8 @@ class CoveragePolishTests(unittest.TestCase):
                 if protected:
                     self.assertEqual(snapshot.value(sector_b), 0)
                     self.assertEqual(snapshot.value(sunday_b), 0)
-                self.assertTrue(all(member['incumbentValue'] <= member['initialValue']
-                                    for member in phases[-1]['members']))
+                self.assertTrue(all(phase['incumbentValue'] <= phase['initialValue']
+                                    for phase in phases))
                 self.assertFalse(proven)
 
     def test_shortage_releases_whole_sector_even_when_other_changed_people_have_no_gap(self):
@@ -172,7 +171,7 @@ class ProtectedBoundDeduplicationTests(unittest.TestCase):
         self.assertEqual(guard_offsets, [0, 2])
         self.assertEqual(result, values)
         self.assertFalse(proven)
-        self.assertEqual(len(phases), 4)
+        self.assertEqual(len(phases), 5)
         self.assertTrue(all(phase['status'] == 'OPTIMAL' for phase in phases))
         self.assertEqual(self.upper_bounds(model, guard), [1])
         self.assertEqual(self.upper_bounds(model, goals[0]), [1])

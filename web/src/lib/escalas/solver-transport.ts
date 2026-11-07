@@ -5,7 +5,8 @@ import { EscalaSolverError } from "./solver-errors";
 import type { EscalaAssignment, EscalaInput } from "./types";
 
 type SolverOperation = { operationId: string; cancelToken: string };
-export type SolverOptions = Partial<SolverOperation> & { signal?: AbortSignal };
+/** Initial proposals are private hints, never a replacement for the saved assignments. */
+export type SolverOptions = Partial<SolverOperation> & { signal?: AbortSignal; initialAssignments?: EscalaAssignment[] };
 const terminal = z.enum(["CANCELLED", "CANCEL_REQUESTED", "COMPLETED", "FAILED", "TIMED_OUT"]);
 // Match the bounded private service, including server-added published continuity.
 const maxSolverRequestBytes = 8 * 1024 * 1024;
@@ -100,6 +101,7 @@ export async function requestSolver(input: EscalaInput, options: SolverOptions =
       ...(person.planningHistory ? { planningHistory: scopedHistory(person.planningHistory) } : {}),
       ...(person.planningFuture ? { planningFuture: scopedHistory(person.planningFuture) } : {}),
     })),
+    ...(options.initialAssignments ? { _initialAssignments: options.initialAssignments } : {}),
   } });
   if (Buffer.byteLength(body, "utf8") > maxSolverRequestBytes) throw new EscalaSolverError("SOLVER_INPUT_TOO_LARGE");
   const operation = { operationId: options.operationId || randomUUID(), cancelToken: options.cancelToken || randomBytes(32).toString("hex") };

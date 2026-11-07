@@ -168,7 +168,7 @@ describe("lean operational files", () => {
     const rows = (await readSheet(Buffer.from(exportEscalaXlsx(source)), "Desfalques")).slice(4);
     expect(rows.map(row => row[0])).toEqual(["Açougue", "Hortifrúti"]);
     expect(rows[0][1]).toBe("02/11–03/11, 09/11");
-    expect(rows[0][2]).toBe("02/11–03/11, 09/11");
+    expect(rows[0][2]).toBe("Em alguma faixa: 02/11–03/11, 09/11");
     expect(rows[0][3]).toBe("08:00-09:00 · 3 dia(s)\n14:00-15:00 · 1 dia(s)");
     expect(rows[0][4]).toContain("Até 3 pessoa(s)");
     expect(rows[1][4]).toContain("Até 1 pessoa(s)");

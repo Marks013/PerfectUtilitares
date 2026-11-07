@@ -1,8 +1,8 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import type { EscalaInput, EscalaWorkspace } from "./types";
-import { sortScheduleEntries } from "./order";
-import { sectorCoverageGaps } from "./coverage-presence";
+import { compareSectors, sortScheduleEntries } from "./order";
+import { buildCoveragePresence, sectorCoverageGaps, sectorPresenceGaps } from "./coverage-presence";
 import { summarizeCoverageGaps, type SectorCoverageSummary } from "./coverage-summary";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
 
@@ -92,7 +92,7 @@ function mixed42ExportNotice(input: EscalaInput): string {
 
 export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Uint8Array {
   const model = buildEscalaPresentation(workspace);
-  const coverage = summarizeCoverageGaps(sectorCoverageGaps(workspace.input));
+  const coverage = coverageReport(workspace.input);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const mixedNotice = mixed42ExportNotice(workspace.input);
@@ -121,10 +121,9 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     }
     hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily]);
   }
-  const gaps = [...metadata("Desfalques de cobertura", "Resumo por setor. Até 3 faixas prioritárias, não todas as ocorrências. Não some picos de horários diferentes. Consulte o setor e o dia no planejamento para ver os detalhes."),
-    ["Setor", "Dias com alerta", "Dias sem presença em alguma faixa", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"],
-    ...coverage.map(row => [row.sector || "Não informado", compactDates(row.dates), row.noServiceDates.length ? compactDates(row.noServiceDates) : "—",
-      priorityWindows(row), coveragePeak(row), coverageAction(row)])];
+  const gaps = [...metadata("Desfalques de cobertura", "Resumo por setor. Até 3 faixas prioritárias. Sem cobertura com horário não significa ninguém escalado: pessoas ENC podem estar presentes. Sem meta positiva, confirme a necessidade. Não some picos de horários diferentes."),
+    ["Setor", "Dias com alerta", "Dias sem cobertura com horário (parcial / inteiro)", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"],
+    ...coverage.map(coverageReportCells)];
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
     ["Situação", "Setor", "Matrícula", "Colaborador", "Cargo", "Motivo da não inclusão"]];
   sector = undefined;
@@ -174,6 +173,34 @@ function coverageAction(row: SectorCoverageSummary): string {
   return base + ". Reveja entradas, intervalos e folgas. Detalhes por dia no planejamento.";
 }
 
+type CoverageReportRow = { sector: string; summary?: SectorCoverageSummary; presence?: ReturnType<typeof sectorPresenceGaps>[number] };
+
+/** One shared row per sector, including presence facts that a zero estimate cannot report. */
+function coverageReport(input: EscalaInput): CoverageReportRow[] {
+  const presence = buildCoveragePresence(input);
+  const groups = new Map<string, CoverageReportRow>(summarizeCoverageGaps(sectorCoverageGaps(input, presence))
+    .map(summary => [summary.sector, { sector: summary.sector, summary }]));
+  if (input.assignments.length) for (const gap of sectorPresenceGaps(input, presence)) {
+    const row = groups.get(gap.sector) ?? { sector: gap.sector };
+    row.presence = gap;
+    groups.set(gap.sector, row);
+  }
+  return [...groups.values()].sort((a, b) => compareSectors(a.sector, b.sector));
+}
+
+function coverageReportCells(row: CoverageReportRow): string[] {
+  const fullDates = row.presence?.dates ?? [];
+  const full = new Set(fullDates);
+  const partialDates = row.summary?.noServiceDates.filter(date => !full.has(date)) ?? [];
+  const noPresence = [fullDates.length ? "Dia inteiro: " + compactDates(fullDates) : "",
+    partialDates.length ? "Em alguma faixa: " + compactDates(partialDates) : ""].filter(Boolean).join("\n") || "—";
+  const unknownDates = row.presence?.withoutPositiveReferenceDates ?? [];
+  const action = [row.summary ? coverageAction(row.summary) : "Não há presença com horário nesses dias.",
+    unknownDates.length ? "Sem referência positiva: " + compactDates(unknownDates) + ". Confirme se o setor deve funcionar nesses dias antes de ajustar folgas." : ""].filter(Boolean).join(" ");
+  return [row.sector || "Não informado", row.summary ? compactDates(row.summary.dates) : "—", noPresence,
+    row.summary ? priorityWindows(row.summary) : "—", row.summary ? coveragePeak(row.summary) : "Necessidade não definida", action];
+}
+
 function safePdfText(text: string, font: PDFFont) {
   return [...text.replace(/[\r\n\t]+/g, " ")].map((character) => {
     try { font.encodeText(character); return character; } catch { return "?"; }
@@ -211,7 +238,7 @@ function compactDates(dates: string[]): string {
 
 export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Promise<Uint8Array> {
   const model = buildEscalaPresentation(workspace), document = await PDFDocument.create();
-  const coverage = summarizeCoverageGaps(sectorCoverageGaps(workspace.input));
+  const coverage = coverageReport(workspace.input);
   const mixedNotice = mixed42ExportNotice(workspace.input);
   let reportTitle = mode === "hours" ? "Escala de horários" : "Escala de folgas";
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
@@ -361,14 +388,15 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     section("Desfalques de cobertura");
     paragraph("Um resumo por setor, sem repetir cargos ou pequenas variações de horário. Até 3 faixas prioritárias; outras ocorrências ficam na consulta por dia do planejamento.");
     paragraph("Os picos não se somam. Estimativa automática não é demanda confirmada nem indicação de contratação.");
+    paragraph("Dia inteiro sem cobertura com horário definido não significa ninguém escalado: pessoas ENC podem estar presentes. Sem referência positiva, confirme a necessidade do setor.");
     const widths = [0.16, 0.20, 0.23, 0.16, 0.25].map(ratio => (width - 2 * margin) * ratio);
-    const headings = ["Setor", "Dias com alerta / sem presença", "Faixas prioritárias", "Maior diferença", "Base / próximo passo"];
+    const headings = ["Setor", "Dias com alerta / sem cobertura com horário", "Faixas prioritárias", "Maior diferença", "Base / próximo passo"];
     const tableHeader = () => tableHeadings(headings, widths);
     const continuation = () => { newPage(false); tableHeader(); };
     tableHeader();
     for (const row of coverage) {
-      const dates = compactDates(row.dates) + "\nSem presença em alguma faixa: " + (row.noServiceDates.length ? compactDates(row.noServiceDates) : "nenhum dia");
-      const cells = [row.sector || "Não informado", dates, priorityWindows(row), coveragePeak(row), coverageAction(row)];
+      const [sector, alerts, presence, windows, peak, action] = coverageReportCells(row);
+      const cells = [sector, "Com desfalque: " + alerts + "\n" + presence, windows, peak, action];
       const lines = cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8)));
       paginatedRow(lines, widths, 8, index => index === 0, continuation);
     }

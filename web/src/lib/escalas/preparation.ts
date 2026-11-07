@@ -58,8 +58,59 @@ function originalShift(person: EscalaEmployee): EscalaShift | null {
   return { id: "original", name: "Referência FPRE136", segments };
 }
 
+/** Civil work only: unpaid meals and paid pauses do not create night attendance. */
+export function civilNightWorkMinutes(shift: EscalaShift): number {
+  return shift.segments.reduce((sum, segment) => {
+    if (segment.kind !== "WORK") return sum;
+    let night = 0;
+    for (let day = Math.floor(segment.start / 1440); day <= Math.floor((segment.end - 1) / 1440); day++) {
+      const midnight = day * 1440;
+      night += Math.max(0, Math.min(segment.end, midnight + 300) - Math.max(segment.start, midnight));
+      night += Math.max(0, Math.min(segment.end, midnight + 1440) - Math.max(segment.start, midnight + 1320));
+    }
+    return sum + night;
+  }, 0);
+}
+
+/** A small automatic search, with the saved reference first and no added night work. */
+export function automaticShiftAlternatives(person: EscalaEmployee, reference: EscalaShift, limitWorkBlocks: boolean): EscalaShift[] {
+  if (!reference.id.startsWith("prep-") || reference.id !== shiftId(reference)) return [reference];
+  const source = originalShift(person);
+  if (!source) return [reference];
+  const target = minutes(reference), night = civilNightWorkMinutes(reference);
+  const candidates = [reference, ...adjustedShifts(source, target, "BOTH", true, limitWorkBlocks)];
+  const [first, meal, last] = reference.segments;
+  if (reference.segments.length === 3 && first.kind === "WORK" && meal.kind === "BREAK" && last.kind === "WORK"
+    && first.end === meal.start && meal.end === last.start) {
+    for (const offset of [-30, 30]) {
+      const copy = structuredClone(reference);
+      copy.segments[0].end += offset;
+      copy.segments[1].start += offset;
+      copy.segments[1].end += offset;
+      copy.segments[2].start += offset;
+      if (copy.segments.some(segment => segment.end <= segment.start) || limitWorkBlocks && requiresWorkBlockBalance(copy)) continue;
+      copy.id = shiftId(copy).replace("prep-", "flex-");
+      copy.name = `Proposta ${Math.floor(target / 60)}h${String(target % 60).padStart(2, "0")} · intervalo ${offset < 0 ? "antecipado" : "posterior"}`;
+      candidates.push(copy);
+    }
+  }
+  const unique = new Map<string, EscalaShift>();
+  for (const candidate of candidates) {
+    if (civilNightWorkMinutes(candidate) > night || candidate.segments.some(segment => segment.start < 0 || segment.end > 2880)) continue;
+    const signature = preparedShiftSignature(candidate);
+    if (!unique.has(signature)) unique.set(signature, candidate);
+    if (unique.size === 4) break;
+  }
+  return [...unique.values()];
+}
+
 /** Rebuild only an identified automatic FPRE proposal, retaining its selected endpoints. */
 export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: EscalaShift, enabled: boolean): EscalaShift {
+  if (proposal.id.startsWith("flex-") && proposal.id === shiftId(proposal).replace("prep-", "flex-")) {
+    // Optional meal alternatives remain stable; only enforce a newly enabled block limit.
+    return enabled && requiresWorkBlockBalance(proposal)
+      ? adjustedShifts(proposal, minutes(proposal), "PRESERVE_START", true, true)[0] ?? proposal : proposal;
+  }
   if (!proposal.id.startsWith("prep-") || proposal.id !== shiftId(proposal)) return proposal;
   const source = originalShift(person);
   if (!source) return proposal;

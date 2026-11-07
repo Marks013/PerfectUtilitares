@@ -1,5 +1,6 @@
 import { absoluteMinute, addDays, visibleDates } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
+import { compareSectors } from "./order";
 
 type PresenceInterval = { start: number; end: number; employee: EscalaEmployee };
 export type CoveragePresence = Map<string, PresenceInterval[]>;
@@ -67,6 +68,31 @@ export function buildCoveragePresence(input: EscalaInput): CoveragePresence {
 export function coverageAt(index: CoveragePresence, date: string, sector: string, minute: number, role?: string): EscalaEmployee[] {
   return [...new Map((index.get(key(date, sector)) ?? []).filter(interval => interval.start <= minute && interval.end > minute && (!role || interval.employee.role === role))
     .map(interval => [interval.employee.id, interval.employee])).values()];
+}
+
+/** Whole-day presence facts, separate from staffing estimates and operational requirements. */
+export function sectorPresenceGaps(input: EscalaInput, index = buildCoveragePresence(input)) {
+  const closed = new Set(input.policy.closedDates);
+  const assigned = new Set(input.assignments.map(record => key(record.date, record.employeeId)));
+  const positiveReferences = new Set(input.demands.filter(demand => demand.minimum > 0 && demand.end > demand.start)
+    .map(demand => key(demand.date, demand.sector)));
+  const groups = new Map<string, EscalaEmployee[]>();
+  for (const person of input.employees) {
+    if (person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || !person.sector) continue;
+    const members = groups.get(person.sector) ?? [];
+    members.push(person);
+    groups.set(person.sector, members);
+  }
+  const dates = visibleDates(input).filter(date => !closed.has(date));
+  return [...groups].sort(([a], [b]) => compareSectors(a, b)).flatMap(([sector, members]) => {
+    const emptyDates = dates.filter(date => {
+      const current = members.filter(person => active(person, date));
+      return current.length > 0 && current.every(person => assigned.has(key(date, person.id)))
+        && !(index.get(key(date, sector)) ?? []).some(interval => interval.end > interval.start);
+    });
+    return emptyDates.length ? [{ sector, dates: emptyDates,
+      withoutPositiveReferenceDates: emptyDates.filter(date => !positiveReferences.has(key(date, sector))) }] : [];
+  });
 }
 
 /** Max of overlapping references for one function; functions are disjoint, never substitutes. */

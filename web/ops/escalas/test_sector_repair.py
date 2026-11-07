@@ -30,7 +30,7 @@ class SectorRepairTests(unittest.TestCase):
         self.assertEqual(groups, [{"p0", "p1", "p2"}])
         data["employees"][0]["scheduleMode"] = "MISSING"
         self.assertEqual(_rest_repair_groups(data["employees"], [day], work, {}, values,
-                                            data["policy"], [{"sector": "Reposição", "date": day, "minimum": 2}]), [])
+                                            data["policy"], [{"sector": "Reposição", "date": day, "minimum": 2}]), [{"p0", "p1", "p2"}])
 
     def test_zero_demand_absences_and_explicit_rests_do_not_create_a_repair(self):
         data = fixture(42, people=3)
