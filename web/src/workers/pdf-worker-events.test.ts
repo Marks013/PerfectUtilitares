@@ -18,6 +18,9 @@ vi.mock("node:fs/promises", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { $queryRaw: vi.fn().mockResolvedValue([]) } }));
 vi.mock("@/lib/pdf/processor", () => ({ processPdfJob: vi.fn() }));
+vi.mock("@/lib/auth/password-recovery-worker", () => ({
+  registerPasswordRecoveryWorker: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/pdf/queue", () => ({
   getPdfQueue: vi.fn().mockResolvedValue({ work: mocks.work }),
   PDF_PROCESSING_QUEUE: "perfect-pdf-processing",

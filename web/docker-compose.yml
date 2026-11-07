@@ -235,6 +235,7 @@ services:
       DATABASE_POOL_MAX: ${PDF_WORKER_DATABASE_POOL_MAX:-5}
       DATABASE_CONNECTION_TIMEOUT_MS: ${DATABASE_CONNECTION_TIMEOUT_MS:-5000}
       DATABASE_IDLE_TIMEOUT_MS: ${DATABASE_IDLE_TIMEOUT_MS:-300000}
+      PASSWORD_RECOVERY_SECRET_FILE: /run/secrets/password_recovery_secret
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
       APP_URL: ${APP_URL:-http://localhost:3002}
       EVENTS_ENABLED: ${EVENTS_ENABLED:-false}
@@ -254,6 +255,8 @@ services:
       STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-32212254720}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
     user: "${APP_UID:-1001}:${APP_GID:-1001}"
+    secrets:
+      - password_recovery_secret
     volumes:
       - ${PDF_DATA_DIR:-../storage/pdf-jobs}:/app/data/pdf-jobs
       - /var/lib/server-resource-guard:/run/server-resource-guard:ro
@@ -276,6 +279,8 @@ networks:
     internal: true
 
 secrets:
+  password_recovery_secret:
+    file: ${PASSWORD_RECOVERY_SECRET_FILE:-/home/ubuntu/perfectutilitares-config/recovery/delivery.secret}
   escalas_solver_secret:
     file: ${ESCALAS_SOLVER_SECRET_FILE:-/home/ubuntu/perfectutilitares-config/escalas/solver.secret}
   sentry_auth_token:

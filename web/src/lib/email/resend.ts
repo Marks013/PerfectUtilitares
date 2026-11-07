@@ -207,23 +207,26 @@ export async function sendPasswordResetEmail({
   to,
   name,
   resetUrl,
+  from: requestedFrom,
+  idempotencyKey,
 }: {
   to: string;
   name: string;
   resetUrl: string;
+  from?: string;
+  idempotencyKey?: string;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
+  const from = requestedFrom ?? process.env.RESEND_FROM_EMAIL;
 
   if (!apiKey || !from) {
     throw new Error("RESEND_NOT_CONFIGURED");
   }
 
-  const client = getResendClient(apiKey);
   const safeName = escapeHtml(name);
   const safeResetUrl = escapeHtml(resetUrl);
 
-  const result = await client.emails.send({
+  const payload = {
     from,
     to,
     subject: "Redefinição de senha",
@@ -236,6 +239,37 @@ export async function sendPasswordResetEmail({
         <p>Este link expira em 1 hora.</p>
       </div>
     `,
-  });
-  acceptedEmailId(result);
+  };
+  // The SDK's send options do not expose AbortSignal. Use the same REST API for
+  // this bounded background delivery without modifying other email adapters.
+  const endpoint = new URL("/emails", process.env.RESEND_API_BASE_URL?.trim() || "https://api.resend.com");
+  const headers = new Headers({ "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` });
+  if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(20_000), redirect: "error",
+    });
+  } catch { throw new Error("RESEND_DELIVERY_TRANSIENT"); }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    const retryable = response.status >= 500 || [408, 409, 425, 429].includes(response.status);
+    throw new Error(retryable ? "RESEND_DELIVERY_TRANSIENT" : "RESEND_DELIVERY_REJECTED");
+  }
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > 64 * 1024) { await reader.cancel(); throw new Error(); }
+      chunks.push(part.value);
+    }
+    const result: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!result || typeof result !== "object" || !("id" in result) ||
+        typeof result.id !== "string" || !result.id || result.id.length > 256) throw new Error();
+  } catch { throw new Error("RESEND_DELIVERY_TRANSIENT"); }
 }

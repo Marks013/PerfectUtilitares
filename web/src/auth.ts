@@ -56,6 +56,10 @@ if (process.env.NODE_ENV === "production" && !authSecret) {
   throw new Error("AUTH_SECRET obrigatório em produção");
 }
 
+// Valid cost-12 hash for equivalent bcrypt work when no active account exists.
+// This value is not an account credential and is never accepted for login.
+const DUMMY_PASSWORD_HASH = "$2b$12$9.Gr/l7nnkQ8zLyDDU7.8OdefMiA02tk3ugaiDv29H0aZalB/HVgm";
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: authSecret ?? "dev-only-change-this-secret-before-production-deploy",
   session: {
@@ -86,6 +90,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           checkSharedRateLimit(getHashedRateLimitKey("login-ip", clientIp), {
             limit: 80, windowMs: 15 * 60_000,
           }),
+          checkSharedRateLimit(getHashedRateLimitKey("login-account", email), {
+            limit: 12, windowMs: 15 * 60_000,
+          }),
         ]);
         if (limits.some((limit) => limit.limited)) return null;
 
@@ -93,16 +100,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           where: { email },
         });
 
-        if (user?.status !== "ACTIVE") {
-          return null;
-        }
-
         const validPassword = await compare(
           parsed.data.password,
-          user.passwordHash,
+          user?.status === "ACTIVE" ? user.passwordHash : DUMMY_PASSWORD_HASH,
         );
 
-        if (!validPassword) {
+        if (!validPassword || user?.status !== "ACTIVE") {
           return null;
         }
 

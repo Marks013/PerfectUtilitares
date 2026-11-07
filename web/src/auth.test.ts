@@ -117,7 +117,7 @@ describe("NextAuth beta regression contract", () => {
     await expect(
       authorize?.({ email: activeUser.email, password: "password" }, loginRequest()),
     ).resolves.toBeNull();
-    expect(mocks.compare).not.toHaveBeenCalled();
+    expect(mocks.compare).toHaveBeenCalledOnce();
 
     mocks.findUnique.mockResolvedValueOnce(activeUser);
     mocks.compare.mockResolvedValueOnce(false);
@@ -157,7 +157,28 @@ describe("NextAuth beta regression contract", () => {
     );
   });
 
-  it.each(["login", "login-ip"])("rejects credentials before lookup or bcrypt when %s is limited", async (prefix) => {
+  it("runs one bcrypt comparison for an unknown account", async () => {
+    mocks.findUnique.mockResolvedValueOnce(null);
+    mocks.compare.mockResolvedValueOnce(false);
+    await expect(authConfig().providers[0]?.authorize({
+      email: "unknown@example.test", password: "password",
+    }, loginRequest())).resolves.toBeNull();
+    expect(mocks.compare).toHaveBeenCalledOnce();
+    expect(mocks.compare.mock.calls[0]?.[1]).toMatch(/^\$2[aby]\$12\$/);
+  });
+
+  it("uses the same account limit across source IPs", async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    for (const ip of ["203.0.113.10", "203.0.113.11"]) {
+      await authConfig().providers[0]?.authorize({ email: activeUser.email, password: "password" },
+        new Request("https://perfectutilitares.example/api/auth/callback/credentials", { headers: { "x-real-ip": ip } }));
+    }
+    const accountCalls = mocks.checkSharedRateLimit.mock.calls.filter(([key]) => key.startsWith("login-account:"));
+    expect(accountCalls).toHaveLength(2);
+    expect(accountCalls[0]?.[0]).toBe(accountCalls[1]?.[0]);
+  });
+
+  it.each(["login", "login-ip", "login-account"])("rejects credentials before lookup or bcrypt when %s is limited", async (prefix) => {
     mocks.checkSharedRateLimit.mockImplementation(async (key: string) => ({
       limited: key.startsWith(`${prefix}:`), remaining: 0,
     }));

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
+  fetch: vi.fn(),
   constructor: vi.fn(),
 }));
 
@@ -25,6 +26,8 @@ describe("Resend email adapter", () => {
   beforeEach(() => {
     vi.resetModules();
     mocks.send.mockReset().mockResolvedValue({ data: { id: "email-id" } });
+    mocks.fetch.mockReset().mockImplementation(async () => Response.json({ id: "email-id" }));
+    vi.stubGlobal("fetch", mocks.fetch);
     mocks.constructor.mockReset();
     process.env = { ...originalEnv };
     delete process.env.APP_URL;
@@ -34,6 +37,7 @@ describe("Resend email adapter", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     process.env = { ...originalEnv };
   });
 
@@ -103,7 +107,7 @@ describe("Resend email adapter", () => {
 
     expect(mocks.constructor).toHaveBeenCalledTimes(1);
     expect(mocks.constructor).toHaveBeenCalledWith("re_test_key", undefined);
-    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
 
     const invitation = mocks.send.mock.calls[0]?.[0];
     expect(invitation).toMatchObject({
@@ -116,7 +120,7 @@ describe("Resend email adapter", () => {
     expect(invitation.html).toContain("a=1&amp;b=&quot;x&quot;");
     expect(invitation.html).not.toContain("<script>");
 
-    const reset = mocks.send.mock.calls[1]?.[0];
+    const reset = JSON.parse(mocks.fetch.mock.calls[0]?.[1].body);
     expect(reset.subject).toMatch(/^Redefini.+ de senha$/);
     expect(reset.html).toContain("O&#039;Reilly");
     expect(reset.html).toContain("a=1&amp;b=2");
@@ -132,9 +136,11 @@ describe("Resend email adapter", () => {
         ? email.sendInvitationEmail({ to: "user@example.test", name: "User", tenantName: "Tenant", inviteUrl: "https://example.test/invite" })
         : email.sendPasswordResetEmail({ to: "user@example.test", name: "User", resetUrl: "https://example.test/reset" });
       mocks.send.mockResolvedValueOnce({ data: null, error: { name: "validation_error", message: "private recipient details" } });
-      await expect(deliver()).rejects.toThrow(/^RESEND_VALIDATION_ERROR$/);
+      mocks.fetch.mockResolvedValueOnce(Response.json({ message: "private recipient details" }, { status: 422 }));
+      await expect(deliver()).rejects.toThrow(kind === "invitation" ? /^RESEND_VALIDATION_ERROR$/ : /^RESEND_DELIVERY_REJECTED$/);
       mocks.send.mockResolvedValueOnce({ data: null, error: null });
-      await expect(deliver()).rejects.toThrow(/^RESEND_EMPTY_RESPONSE$/);
+      mocks.fetch.mockResolvedValueOnce(Response.json({}));
+      await expect(deliver()).rejects.toThrow(kind === "invitation" ? /^RESEND_EMPTY_RESPONSE$/ : /^RESEND_DELIVERY_TRANSIENT$/);
     },
   );
 
@@ -166,5 +172,35 @@ describe("Resend email adapter", () => {
       "Ana &lt;Souza&gt;",
     );
     expect(mocks.send.mock.calls[0]?.[0].html).not.toContain("<Principal>");
+  });
+});
+
+describe("bounded password recovery REST adapter", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+  it("preserves the capture endpoint, idempotency and abort deadline", async () => {
+    vi.stubEnv("RESEND_API_KEY", "test-only");
+    vi.stubEnv("RESEND_FROM_EMAIL", "sender@example.test");
+    vi.stubEnv("RESEND_API_BASE_URL", "http://capture.example.test");
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ id: "receipt" }));
+    vi.stubGlobal("fetch", fetcher);
+    const { sendPasswordResetEmail } = await loadModule();
+    await sendPasswordResetEmail({ to: "user@example.test", name: "User", resetUrl: "https://app.example.test/reset", idempotencyKey: "password-recovery/test" });
+    expect(fetcher.mock.calls[0]?.[0].toString()).toBe("http://capture.example.test/emails");
+    const options = fetcher.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(options.headers).get("Idempotency-Key")).toBe("password-recovery/test");
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+  it.each([429, 500, 503])("keeps HTTP %s retryable", async (status) => {
+    vi.stubEnv("RESEND_API_KEY", "test-only"); vi.stubEnv("RESEND_FROM_EMAIL", "sender@example.test");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ private: "ignored" }, { status })));
+    const { sendPasswordResetEmail } = await loadModule();
+    await expect(sendPasswordResetEmail({ to: "user@example.test", name: "User", resetUrl: "https://app.example.test/reset" })).rejects.toThrow("RESEND_DELIVERY_TRANSIENT");
+  });
+  it("bounds provider bodies and sanitizes network failures", async () => {
+    vi.stubEnv("RESEND_API_KEY", "test-only"); vi.stubEnv("RESEND_FROM_EMAIL", "sender@example.test");
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response("x".repeat(65_537))).mockRejectedValueOnce(new Error("private token"));
+    vi.stubGlobal("fetch", fetcher);
+    const { sendPasswordResetEmail } = await loadModule();
+    for (let i = 0; i < 2; i++) await expect(sendPasswordResetEmail({ to: "user@example.test", name: "User", resetUrl: "https://app.example.test/reset" })).rejects.toThrow(/^RESEND_DELIVERY_TRANSIENT$/);
   });
 });

@@ -11,6 +11,10 @@ export function runWithPdfAbortSignal<T>(
   return pdfExecution.run(signal, task);
 }
 
+export function getPdfExecutionAbortSignal() {
+  return pdfExecution.getStore();
+}
+
 export function throwIfPdfExecutionAborted() {
   pdfExecution.getStore()?.throwIfAborted();
 }

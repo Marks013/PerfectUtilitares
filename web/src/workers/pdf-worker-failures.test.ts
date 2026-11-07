@@ -35,6 +35,9 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/pdf/processor", () => ({ processPdfJob: mocks.processJob }));
+vi.mock("@/lib/auth/password-recovery-worker", () => ({
+  registerPasswordRecoveryWorker: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/pdf/queue", () => ({
   getPdfQueue: async () => ({ work: mocks.work }),
   getPdfQueueJobId: (id: string) => id,

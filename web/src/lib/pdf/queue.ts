@@ -1,4 +1,5 @@
-import { PgBoss } from "pg-boss";
+import type { PgBoss } from "pg-boss";
+import { getWorkQueue, stopWorkQueue } from "@/lib/jobs/queue";
 import { createHash } from "node:crypto";
 import type { PdfPrincipal } from "@/lib/pdf/access";
 
@@ -10,24 +11,7 @@ const globalForPdfQueue = globalThis as unknown as {
 };
 
 async function startPdfQueue() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_URL não está configurada para a fila de PDFs.");
-  }
-
-  const boss = new PgBoss({
-    connectionString,
-    application_name: "perfect-utilitares-pdf",
-    useListenNotify: true,
-    createSchema: false,
-  });
-
-  boss.on("error", (error) => {
-    console.error("[pdf-queue]", error);
-  });
-
-  await boss.start();
-
+  const boss = await getWorkQueue();
   if (!(await boss.getQueue(PDF_PROCESSING_QUEUE))) {
     await boss.createQueue(PDF_PROCESSING_QUEUE, {
       deleteAfterSeconds: 24 * 60 * 60,
@@ -85,10 +69,6 @@ export async function enqueuePdfJob(jobId: string, principal: PdfPrincipal) {
 }
 
 export async function stopPdfQueue() {
-  const queuePromise = globalForPdfQueue.pdfQueuePromise;
   globalForPdfQueue.pdfQueuePromise = undefined;
-  if (!queuePromise) return;
-
-  const boss = await queuePromise.catch(() => null);
-  await boss?.stop({ graceful: true, timeout: 30_000 });
+  await stopWorkQueue();
 }

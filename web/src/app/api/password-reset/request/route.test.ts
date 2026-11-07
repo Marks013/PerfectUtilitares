@@ -7,7 +7,11 @@ import {
 import { GET, POST } from "./route";
 
 const mocks = vi.hoisted(() => ({
-  findUser: vi.fn(), createInvitation: vi.fn(), deleteInvitation: vi.fn(), send: vi.fn(),
+  findUser: vi.fn(), createInvitation: vi.fn(), deleteInvitation: vi.fn(), send: vi.fn(), enqueue: vi.fn(),
+}));
+vi.mock("@/lib/auth/password-recovery", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/auth/password-recovery")>(),
+  enqueuePasswordRecovery: mocks.enqueue,
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {
   $queryRaw: vi.fn(async () => [{ count: 1, resetAt: new Date(Date.now() + 60_000) }]),
@@ -34,6 +38,8 @@ describe("/api/password-reset/request route", () => {
     beforeEach(() => {
       vi.stubEnv("RESEND_API_KEY", "test-key");
       vi.stubEnv("RESEND_FROM_EMAIL", "sender@example.test");
+      vi.stubEnv("APP_URL", "https://app.example.test");
+      mocks.enqueue.mockReset().mockResolvedValue(undefined);
       mocks.findUser.mockReset().mockResolvedValue(user);
       mocks.createInvitation.mockReset().mockResolvedValue({ id: "invitation-1" });
       mocks.deleteInvitation.mockReset().mockResolvedValue({});
@@ -41,13 +47,16 @@ describe("/api/password-reset/request route", () => {
     });
     afterEach(() => vi.unstubAllEnvs());
 
-    it("creates a tenant-scoped reset token and submits the real route delivery", async () => {
+    it("enqueues a tenant-scoped reset without creating tokens or waiting for email", async () => {
       const response = await POST(request("USER@EXAMPLE.TEST"));
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
       expect(mocks.findUser).toHaveBeenCalledWith(expect.objectContaining({ where: { email: user.email } }));
-      expect(mocks.createInvitation).toHaveBeenCalledWith({ data: expect.objectContaining({ purpose: "PASSWORD_RESET", resetUserId: "user-1", tenantId: "tenant-1", tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), expiresAt: expect.any(Date) }) });
-      expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ to: user.email, resetUrl: expect.stringMatching(/^https:\/\/app\.example\.test\/convite\//) }));
+      expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ userId: user.id, tenantId: user.tenantId,
+        resetStamp: expect.stringMatching(/^[a-f0-9]{64}$/), securityVersion: 1 }));
+      expect(JSON.stringify(mocks.enqueue.mock.calls)).not.toContain(user.email);
+      expect(mocks.createInvitation).not.toHaveBeenCalled();
+      expect(mocks.send).not.toHaveBeenCalled();
       expect(mocks.deleteInvitation).not.toHaveBeenCalled();
     });
 
@@ -61,17 +70,34 @@ describe("/api/password-reset/request route", () => {
         expect(mocks.createInvitation).not.toHaveBeenCalled();
       },
     );
-    it("keeps delivery failure indistinguishable from an unknown account", async () => {
+    it("performs the same enqueue path for unknown and inactive accounts", async () => {
+      for (const found of [null, { ...user, status: "BLOCKED" }]) {
+        mocks.findUser.mockResolvedValueOnce(found);
+        const response = await POST(request());
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        expect(mocks.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ userId: null, tenantId: null, resetStamp: null, securityVersion: null }));
+      }
+      expect(mocks.send).not.toHaveBeenCalled();
+    });
+
+    it("returns honest uniform unavailability before lookup when provider is missing", async () => {
+      vi.stubEnv("RESEND_API_KEY", "");
+      const response = await POST(request());
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: { code: "RECOVERY_UNAVAILABLE" } });
+      expect(mocks.findUser).not.toHaveBeenCalled();
+      expect(mocks.createInvitation).not.toHaveBeenCalled();
+      expect(mocks.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("reports queue failure without exposing account or provider details", async () => {
       const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {
-        mocks.findUser.mockResolvedValueOnce(null);
-        const absent = await POST(request());
-        const absentBody = await absent.text();
-        mocks.send.mockRejectedValueOnce(new Error("private-user@example.test provider details"));
+        mocks.enqueue.mockRejectedValueOnce(new Error("private-user@example.test provider details"));
         const failed = await POST(request());
-        expect(failed.status).toBe(absent.status);
-        expect(await failed.text()).toBe(absentBody);
-        expect(mocks.deleteInvitation).toHaveBeenCalledWith({ where: { id: "invitation-1" } });
+        expect(failed.status).toBe(503);
+        expect(await failed.text()).not.toContain(user.email);
         expect(JSON.stringify(log.mock.calls)).not.toContain("private-user@example.test");
       } finally { log.mockRestore(); }
     });

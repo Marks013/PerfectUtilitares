@@ -278,6 +278,7 @@ let pdfWorkerId;
 let pdfHeartbeatLink;
 const solverSecretPath = path.join(temp, "solver.secret");
 const solverContainerSecretPath = path.join(temp, "solver-container.secret");
+const recoverySecretPath = path.join(temp, "recovery.secret");
 let created = false;
 
 try {
@@ -291,6 +292,7 @@ try {
   // Exercise the real current processor without using or restarting the production solver.
   const solverPort = await freePort();
   const testSolverSecret = randomBytes(32).toString("base64url");
+  await writeFile(recoverySecretPath, randomBytes(32).toString("base64url"), { mode: 0o600 });
   await Promise.all([writeFile(solverSecretPath, testSolverSecret, { mode: 0o600 }), writeFile(solverContainerSecretPath, testSolverSecret, { mode: 0o600 })]);
   // Host and container may have different UIDs; both test-only files stay private.
   if (process.getuid?.() === 0) await chown(solverContainerSecretPath, 1001, 1001);
@@ -341,6 +343,7 @@ try {
     ESCALAS_SOLVER_URL: solverUrl,
     ESCALAS_SOLVER_SECRET_FILE: solverSecretPath,
     E2E_RESEND_CAPTURE_URL: `${mail.baseUrl}/__messages`,
+    PASSWORD_RECOVERY_SECRET_FILE: recoverySecretPath,
     E2E_UNIMED_ADMIN_PASSWORD: unimedPassword,
     E2E_UNIMED_STANDARD_PASSWORD: standardPassword,
     RESEND_API_KEY: "re_e2e_local_only",
@@ -377,6 +380,7 @@ try {
     await access(path.join(cwd, "dist", "pdf-worker.mjs"));
     for (const relative of [
       "public", ".next/static", "dist/ferias-workbook-worker.cjs",
+      "dist/unimed-workbook-worker.cjs",
       "node_modules/@img", "node_modules/pdfkit/js/data",
       "node_modules/pdfjs-dist/cmaps", "node_modules/pdfjs-dist/standard_fonts",
       "node_modules/pdfjs-dist/wasm",
@@ -399,10 +403,14 @@ try {
   }
   if (pdfWorkerImage) {
     pdfHeartbeatLink = await linkPdfWorkerHeartbeat(pdfWorkerHeartbeatPath, path.join(temp, "worker"));
-    const workerEnv = { ...env, NEXT_PUBLIC_SENTRY_DSN: "", SENTRY_DSN: "", SENTRY_AUTH_TOKEN: "" };
+    const workerEnv = {
+      ...env, NEXT_PUBLIC_SENTRY_DSN: "", SENTRY_DSN: "", SENTRY_AUTH_TOKEN: "",
+      PASSWORD_RECOVERY_SECRET_FILE: "/run/secrets/password_recovery_secret",
+    };
     pdfWorkerId = capture("docker", pdfWorkerContainerArguments({
       image: pdfWorkerImage, name: name + "-pdf-worker",
       storageDirectory: env.PDF_STORAGE_DIR, heartbeatDirectory: pdfHeartbeatLink.directory,
+      recoverySecretPath,
       uid: process.getuid(), gid: process.getgid(),
     }), workerEnv);
     worker = start("docker", ["start", "--attach", pdfWorkerId], workerEnv);

@@ -33,7 +33,9 @@ export function ForgotPasswordForm() {
       if (!response?.ok) {
         throw new Error(
           response?.status === 429
-            ? "Muitas tentativas. Aguarde um minuto e tente novamente."
+            ? "Muitas tentativas. Aguarde alguns minutos e tente novamente."
+            : response?.status === 503
+              ? "A recuperação por e-mail está indisponível. Solicite ajuda ao administrador."
             : "Não foi possível enviar o pedido. Tente novamente em instantes.",
         );
       }
@@ -52,7 +54,7 @@ export function ForgotPasswordForm() {
         </h1>
       </div>
       <p className="mt-1 text-sm app-text-muted">
-        Enviaremos um link para você definir uma nova senha.
+        Solicite instruções para definir uma nova senha.
       </p>
 
       <label className="mt-5 block text-sm font-medium app-text">
@@ -87,7 +89,7 @@ export function ForgotPasswordForm() {
           className="mt-4 flex items-center gap-2 app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success"
         >
           <CheckCircle2 className="size-4" aria-hidden="true" />
-          Se o e-mail estiver cadastrado e ativo, enviaremos um link para redefinir a senha.
+          Pedido recebido. Se o e-mail estiver cadastrado e ativo, você receberá as instruções para redefinir a senha.
         </p>
       ) : null}
 

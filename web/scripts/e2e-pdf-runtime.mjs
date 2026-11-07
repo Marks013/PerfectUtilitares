@@ -8,6 +8,8 @@ const workerEnvironment = [
   "PDF_STORAGE_DIR", "PDF_WORKER_HEARTBEAT_PATH",
   "PDF_WORKER_CONCURRENCY", "PDF_WORKER_AUTHENTICATED_GROUP_CONCURRENCY",
   "NEXT_PUBLIC_SENTRY_DSN", "SENTRY_DSN", "SENTRY_AUTH_TOKEN",
+  "PASSWORD_RECOVERY_SECRET_FILE", "RESEND_API_KEY", "RESEND_FROM_EMAIL",
+  "RESEND_API_BASE_URL",
 ];
 
 export function assertPdfWorkerImageRevision(actual, expected) {
@@ -27,8 +29,8 @@ export function pdfWorkerPreflightArguments(image) {
   ];
 }
 
-export function pdfWorkerContainerArguments({ image, name, storageDirectory, heartbeatDirectory, uid, gid }) {
-  if (!path.isAbsolute(storageDirectory) || !path.isAbsolute(heartbeatDirectory)) {
+export function pdfWorkerContainerArguments({ image, name, storageDirectory, heartbeatDirectory, recoverySecretPath, uid, gid }) {
+  if (!path.isAbsolute(storageDirectory) || !path.isAbsolute(heartbeatDirectory) || !path.isAbsolute(recoverySecretPath)) {
     throw new Error("The E2E PDF mounts must use absolute temporary paths.");
   }
   if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid < 0) {
@@ -42,6 +44,7 @@ export function pdfWorkerContainerArguments({ image, name, storageDirectory, hea
     "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=512m,uid=" + uid + ",gid=" + gid + ",mode=1770",
     "--volume", storageDirectory + ":" + storageDirectory,
     "--volume", heartbeatDirectory + ":/app/data/pdf-jobs",
+    "--volume", recoverySecretPath + ":/run/secrets/password_recovery_secret:ro",
     ...workerEnvironment.flatMap(name => ["--env", name]),
     image, "node", "/app/dist/pdf-worker.mjs",
   ];

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   userFind: vi.fn(), userCreate: vi.fn(), userUpdate: vi.fn(),
   invitationFind: vi.fn(), invitationCreate: vi.fn(), invitationUpdate: vi.fn(), invitationDelete: vi.fn(),
   tenantFind: vi.fn(), audit: vi.fn(), lock: vi.fn(), transaction: vi.fn(),
-  hash: vi.fn(), sendInvite: vi.fn(), sendReset: vi.fn(),
+  hash: vi.fn(), sendInvite: vi.fn(), sendReset: vi.fn(), enqueueReset: vi.fn(),
 }));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("bcryptjs", () => ({ hash: mocks.hash }));
@@ -21,6 +21,14 @@ vi.mock("@/lib/email/resend", () => ({
   getAppUrl: () => "https://security.example.test",
   sendInvitationEmail: mocks.sendInvite,
   sendPasswordResetEmail: mocks.sendReset,
+}));
+vi.mock("@/lib/api/rate-limit", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/api/rate-limit")>(),
+  checkSharedRateLimit: async () => ({ limited: false, remaining: 2, resetAt: Date.now() + 60_000 }),
+}));
+vi.mock("@/lib/auth/password-recovery", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/auth/password-recovery")>(),
+  enqueuePasswordRecovery: mocks.enqueueReset,
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {
   $transaction: mocks.transaction,
@@ -190,38 +198,44 @@ describe("issuing invitation and password recovery links", () => {
   it("binds password recovery to the current account security state", async () => {
     mocks.userFind.mockResolvedValueOnce(user);
     const response = await recover(request({ email: user.email.toUpperCase() }));
+    expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
-    const { resetUrl } = mocks.sendReset.mock.calls[0][0];
-    const token = new URL(resetUrl).pathname.slice("/convite/".length);
-    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(mocks.userFind).toHaveBeenCalledWith(expect.objectContaining({ where: { email: user.email } }));
-    expect(mocks.invitationCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
-      purpose: "PASSWORD_RESET", resetUserId: user.id, resetStamp: getSecurityStamp(user),
-      tokenHash: createHash("sha256").update(token).digest("hex"),
-    }) });
+    expect(mocks.enqueueReset).toHaveBeenCalledWith({
+      userId: user.id, tenantId: user.tenantId, securityVersion: user.securityVersion,
+      resetStamp: getSecurityStamp(user), baseUrl: "https://security.example.test", from: "test@example.test",
+    });
+    expect(JSON.stringify(mocks.enqueueReset.mock.calls)).not.toContain(user.email);
+    expect(JSON.stringify(mocks.enqueueReset.mock.calls)).not.toContain(user.passwordHash);
+    expect(mocks.invitationCreate).not.toHaveBeenCalled();
+    expect(mocks.sendReset).not.toHaveBeenCalled();
   });
 
   it.each([null, { ...user, status: "BLOCKED" }, { ...user, tenantId: null }])("conceals unavailable accounts without issuing recovery links: %j", async (currentUser) => {
     mocks.userFind.mockResolvedValueOnce(currentUser);
     expect(await (await recover(request({ email: user.email }))).json()).toEqual({ ok: true });
+    expect(mocks.enqueueReset).toHaveBeenCalledWith(expect.objectContaining({ userId: null, tenantId: null, resetStamp: null, securityVersion: null }));
     expect(mocks.invitationCreate).not.toHaveBeenCalled();
     expect(mocks.sendReset).not.toHaveBeenCalled();
   });
 
-  it.each(["invitation", "recovery"])("handles delivery and cleanup failures without exposing public recovery status: %s", async (kind) => {
+  it.each(["invitation", "recovery"])("preserves invitation cleanup and honest recovery queue errors: %s", async (kind) => {
     const error = new Error("Delivery unavailable");
     mocks.invitationDelete.mockRejectedValueOnce(new Error("Cleanup unavailable"));
     if (kind === "recovery") {
       mocks.userFind.mockResolvedValueOnce(user);
-      mocks.sendReset.mockRejectedValueOnce(error);
+      mocks.enqueueReset.mockRejectedValueOnce(error);
       const response = await recover(request({ email: user.email }));
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: { code: "RECOVERY_UNAVAILABLE" } });
+      expect(mocks.invitationCreate).not.toHaveBeenCalled();
+      expect(mocks.invitationDelete).not.toHaveBeenCalled();
+      expect(mocks.sendReset).not.toHaveBeenCalled();
     } else {
       mocks.sendInvite.mockRejectedValueOnce(error);
       await expect(invite(request({ tenantId: user.tenantId, email: user.email, name: user.name }))).rejects.toBe(error);
+      expect(mocks.invitationDelete).toHaveBeenCalledWith({ where: { id: invitation.id } });
     }
-    expect(mocks.invitationDelete).toHaveBeenCalledWith({ where: { id: invitation.id } });
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/server")>()),
@@ -141,6 +141,12 @@ vi.mock("@/lib/email/resend", () => ({
   getAppUrl: () => "http://localhost:3000",
   sendInvitationEmail: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
+}));
+vi.mock("@/lib/auth/password-recovery", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/auth/password-recovery")>(),
+  enqueuePasswordRecovery: vi.fn(async () => {
+    mocks.calls.push("passwordRecovery.enqueue");
+  }),
 }));
 
 vi.mock("@/lib/prisma", () => {
@@ -622,7 +628,11 @@ const cases: FunctionalRouteCase[] = [
   {
     route: "src/app/api/password-reset/request/route.ts",
     expectedStatus: 200,
+    persistence: "passwordRecovery.enqueue",
     run: () => {
+      vi.stubEnv("RESEND_API_KEY", "test-placeholder");
+      vi.stubEnv("RESEND_FROM_EMAIL", "sender@example.test");
+      vi.stubEnv("APP_URL", "https://recovery.example.test");
       mocks.overrides.set("user.findUnique", null);
       return requestPasswordReset(
         jsonRequest("/api/password-reset/request", {
@@ -642,6 +652,7 @@ describe("functional success paths for account, admin and Jornada routes", () =>
     delete process.env.RESEND_API_KEY;
     delete process.env.RESEND_FROM_EMAIL;
   });
+  afterEach(() => vi.unstubAllEnvs());
 
   for (const routeCase of cases) {
     it(`route-success: ${routeCase.route}`, async () => {

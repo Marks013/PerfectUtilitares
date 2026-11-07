@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
-import readXlsxFile from "read-excel-file/node";
+import { readAddressWorkbook, UnimedWorkbookError } from "@/lib/unimed/workbook-processing";
 import { readMultipartBody } from "@/lib/api/multipart";
 import {
   enforcePersistentRateLimit,
@@ -24,35 +24,12 @@ import {
   UnimedPublishError,
 } from "@/lib/unimed/publisher";
 import { unimedCompetencySchema, zodIssueDetails } from "@/lib/unimed/schema";
-import {
-  UnimedXlsxSecurityError,
-  validateUnimedXlsxArchive,
-} from "@/lib/unimed/xlsx-security";
 
 export const runtime = "nodejs";
 
 const MAX_MULTIPART_OVERHEAD_BYTES = 1024 * 1024;
 const MAX_REQUEST_BYTES =
   UNIMED_IMPORT_LIMITS.maxTotalBytes + MAX_MULTIPART_OVERHEAD_BYTES;
-const MAX_ADDRESS_ROWS = 100_000;
-
-async function readAddressWorkbook(bytes: Buffer, fileName: string) {
-  try {
-    validateUnimedXlsxArchive(bytes);
-    return await readXlsxFile(bytes);
-  } catch (error) {
-    if (error instanceof UnimedXlsxSecurityError) {
-      throw new UnimedImportValidationError(
-        "UNIMED_ADDRESS_FILE_INVALID",
-        error.message,
-      );
-    }
-    throw new UnimedImportValidationError(
-      "UNIMED_ADDRESS_FILE_INVALID",
-      `Base de endereços: a planilha ${fileName} não pôde ser lida como XLSX.`,
-    );
-  }
-}
 const MAX_PARSED_ROWS = 250_000;
 
 function isUploadedFile(value: FormDataEntryValue): value is File {
@@ -232,19 +209,8 @@ export async function POST(request: Request) {
       : undefined;
     let addresses: ReturnType<typeof parseAddressRows> | undefined;
     if (addressFile && addressBytes) {
-      const workbook = await readAddressWorkbook(
-        addressBytes,
-        addressFile.name,
-      );
-      const addressSheet = workbook[0];
-      if (!addressSheet || addressSheet.data.length > MAX_ADDRESS_ROWS) {
-        return jsonError(
-          400,
-          "UNIMED_ADDRESS_FILE_INVALID",
-          "A base de endereços está vazia ou excede o limite de linhas.",
-        );
-      }
-      addresses = parseAddressRows(addressFile.name, addressSheet.data);
+      const rows = await readAddressWorkbook(addressBytes, request.signal);
+      addresses = parseAddressRows(addressFile.name, rows);
     }
     const parsedRows =
       (beneficiaries?.rows.length ?? 0) +
@@ -274,6 +240,10 @@ export async function POST(request: Request) {
     response.headers.set("Cache-Control", "no-store");
     return response;
   } catch (error) {
+    if (error instanceof UnimedWorkbookError) {
+      return jsonError(error.status, error.code, error.message);
+    }
+
     if (error instanceof UnimedPublishError) {
       return jsonError(
         publishErrorStatus(error.code),

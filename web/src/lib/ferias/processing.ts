@@ -2,10 +2,8 @@ import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import type { FeriasInputRow } from "@/lib/ferias/workbook";
 import { FeriasError } from "@/lib/ferias/errors";
-import { prisma } from "@/lib/prisma";
+import { withWorkbookCapacity } from "@/lib/spreadsheets/workbook-capacity";
 
-const LOCK_NAMESPACE = 1_179_796_819;
-const PROCESSING_TIMEOUT_MS = 60_000;
 const WORKER_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
@@ -56,63 +54,23 @@ export async function withFeriasProcessing<T>(
   requestSignal: AbortSignal,
   operation: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  const controller = new AbortController();
-  const onAbort = () => controller.abort(cancelled());
-  requestSignal.addEventListener("abort", onAbort, { once: true });
-  if (requestSignal.aborted) onAbort();
-  const timer = setTimeout(() => controller.abort(timedOut()), PROCESSING_TIMEOUT_MS);
-  timer.unref();
-  let operationError: unknown;
-  let failedInOperation = false;
-  let activeOperation: Promise<T> | undefined;
-  try {
-    assertFeriasActive(controller.signal);
-    return await prisma.$transaction(
-      async (tx) => {
-        assertFeriasActive(controller.signal);
-        for (let slot = 1; slot <= 2; slot += 1) {
-          const [lock] = await tx.$queryRaw<Array<{ acquired: boolean }>>`
-            SELECT pg_try_advisory_xact_lock(${LOCK_NAMESPACE}, ${slot}) AS "acquired"
-          `;
-          if (!lock?.acquired) continue;
-          try {
-            assertFeriasActive(controller.signal);
-            activeOperation = operation(controller.signal);
-            const result = await activeOperation;
-            assertFeriasActive(controller.signal);
-            return result;
-          } catch (error) {
-            failedInOperation = true;
-            operationError = error;
-            throw error;
-          }
-        }
-        throw new FeriasError(
-          "FERIAS_BUSY",
-          "Há duas planilhas em processamento. Aguarde alguns instantes e tente novamente.",
-          503,
-        );
-      },
-      // The operation aborts first; worker termination finishes before releasing its slot.
-      { maxWait: 5_000, timeout: 120_000 },
-    );
-  } catch (error) {
-    // Also stop outstanding work if the database connection loses its transaction.
-    const hadOperationError = failedInOperation;
-    const savedOperationError = operationError;
-    controller.abort(new FeriasError("FERIAS_CAPACITY_UNAVAILABLE", "O processamento foi interrompido. Tente novamente em instantes.", 503));
-    await activeOperation?.catch(() => undefined);
-    if (hadOperationError) throw savedOperationError;
-    if (error instanceof FeriasError) throw error;
-    throw new FeriasError(
-      "FERIAS_CAPACITY_UNAVAILABLE",
-      "Não foi possível iniciar o processamento agora. Tente novamente em instantes.",
-      503,
-    );
-  } finally {
-    clearTimeout(timer);
-    requestSignal.removeEventListener("abort", onAbort);
-  }
+  return withWorkbookCapacity(requestSignal, operation, {
+    owns: (error): error is FeriasError => error instanceof FeriasError,
+    create: (code) => {
+      if (code === "CANCELLED") return cancelled();
+      if (code === "TIMEOUT") return timedOut();
+      if (code === "BUSY") return new FeriasError(
+        "FERIAS_BUSY",
+        "Há duas planilhas em processamento. Aguarde alguns instantes e tente novamente.",
+        503,
+      );
+      return new FeriasError(
+        "FERIAS_CAPACITY_UNAVAILABLE",
+        "Não foi possível iniciar o processamento agora. Tente novamente em instantes.",
+        503,
+      );
+    },
+  });
 }
 
 export function runFeriasWorkbook(

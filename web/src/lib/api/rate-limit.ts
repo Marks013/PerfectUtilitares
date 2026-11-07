@@ -34,9 +34,13 @@ export function getClientIp(headers: Headers) {
 }
 
 export function getHashedRateLimitKey(prefix: string, identifier: string) {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new SharedRateLimitUnavailableError();
+  }
   const identifierHash = createHmac(
     "sha256",
-    process.env.AUTH_SECRET || "perfectutilitares-local-rate-limit",
+    secret || "perfectutilitares-local-rate-limit",
   )
     .update(identifier)
     .digest("hex");

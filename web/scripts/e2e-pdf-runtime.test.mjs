@@ -11,11 +11,13 @@ import {
 test("the E2E PDF runtime mounts only temporary storage and heartbeats, with bounded non-root resources", () => {
   const args = pdfWorkerContainerArguments({
     image: "e2e-pdf-worker", name: "e2e-unique", storageDirectory: "/tmp/task/storage",
+    recoverySecretPath: "/tmp/task/recovery.secret",
     heartbeatDirectory: "/tmp/task/worker/data/pdf-jobs", uid: 1001, gid: 1001,
   });
   const values = flag => args.flatMap((item, index) => item === flag ? [args[index + 1]] : []);
   assert.deepEqual(values("--volume"), [
     "/tmp/task/storage:/tmp/task/storage", "/tmp/task/worker/data/pdf-jobs:/app/data/pdf-jobs",
+    "/tmp/task/recovery.secret:/run/secrets/password_recovery_secret:ro",
   ]);
   assert.deepEqual(values("--network"), ["host"]);
   assert.deepEqual(values("--user"), ["1001:1001"]);
@@ -23,13 +25,18 @@ test("the E2E PDF runtime mounts only temporary storage and heartbeats, with bou
   assert.deepEqual(values("--pids-limit"), ["256"]);
   assert.ok(args.includes("--read-only"));
   assert.ok(values("--env").includes("DATABASE_URL"));
+  assert.ok(values("--env").includes("PASSWORD_RECOVERY_SECRET_FILE"));
+  assert.ok(values("--env").includes("RESEND_API_BASE_URL"));
+  assert.ok(!values("--env").includes("AUTH_SECRET"));
   assert.ok(values("--env").every(value => !value.includes("=")));
   assert.deepEqual(args.slice(-3), ["e2e-pdf-worker", "node", "/app/dist/pdf-worker.mjs"]);
   assert.throws(() => pdfWorkerContainerArguments({
     image: "e2e", name: "test", storageDirectory: "relative", heartbeatDirectory: "/tmp/task", uid: 1001, gid: 1001,
+    recoverySecretPath: "/tmp/task/recovery.secret",
   }), /absolute/);
   assert.throws(() => pdfWorkerContainerArguments({
     image: "e2e", name: "test", storageDirectory: "/tmp/storage", heartbeatDirectory: "/tmp/task", uid: 0, gid: 0,
+    recoverySecretPath: "/tmp/task/recovery.secret",
   }), /non-root/);
 });
 

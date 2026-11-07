@@ -85,7 +85,14 @@ export async function convertPdfToOffice({
           } catch { /* Ignore non-protocol output without logging PDF contents. */ }
         }
       });
-      child.once("error", () => finish(new PdfOfficeError("OFFICE_TOOL_UNAVAILABLE", "O conversor de documentos está indisponível. Tente novamente mais tarde.")));
+      child.once("error", (error) => {
+        const code = "code" in error && typeof error.code === "string"
+          ? error.code : "PDF_OFFICE_CONVERSION_FAILED";
+        finish(new PdfOfficeError(
+          code === "ENOENT" ? "OFFICE_TOOL_UNAVAILABLE" : code,
+          "O conversor de documentos está indisponível. Tente novamente mais tarde.",
+        ));
+      });
       child.once("close", (code) => {
         if (code === 0 && errorCode !== "OFFICE_CONVERSION_TIMEOUT") return finish();
         finish(new PdfOfficeError(errorCode, errorCode === "OFFICE_CONVERSION_TIMEOUT"

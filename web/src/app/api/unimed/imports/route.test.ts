@@ -65,8 +65,18 @@ vi.mock("@/lib/unimed/publisher", () => {
   };
 });
 
-vi.mock("read-excel-file/node", () => ({
-  default: mocks.readXlsxFile,
+vi.mock("@/lib/unimed/workbook-processing", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/unimed/workbook-processing")>(),
+  readAddressWorkbook: async (bytes: Buffer) => {
+    try {
+      const workbook = await mocks.readXlsxFile(bytes);
+      return workbook[0].data;
+    } catch (error) {
+      const { UnimedWorkbookError } = await import("@/lib/unimed/workbook-processing");
+      if (error instanceof UnimedWorkbookError) throw error;
+      throw new UnimedWorkbookError("UNIMED_ADDRESS_FILE_INVALID", "A base de endereços não pôde ser lida como XLSX.", 400);
+    }
+  },
 }));
 
 vi.mock("@/lib/unimed/xlsx-security", async (importOriginal) => {
@@ -81,6 +91,7 @@ vi.mock("@/lib/unimed/xlsx-security", async (importOriginal) => {
 import { GET, POST } from "@/app/api/unimed/imports/route";
 import { UnimedImportValidationError } from "@/lib/unimed/importer";
 import { UnimedPublishError } from "@/lib/unimed/publisher";
+import { UnimedWorkbookError } from "@/lib/unimed/workbook-processing";
 
 const beneficiarySource = {
   fileCount: 1,
@@ -388,6 +399,18 @@ describe("Unimed import API", () => {
     });
     expect(body.error.message).toContain("não pôde ser lida como XLSX");
     expect(body.error.message).not.toContain("internals");
+  });
+
+  it.each([
+    [503, "UNIMED_WORKBOOK_BUSY"],
+    [504, "UNIMED_WORKBOOK_TIMEOUT"],
+    [413, "UNIMED_WORKBOOK_TOO_LARGE"],
+  ] as const)("preserves workbook processing status %s without publishing partial data", async (status, code) => {
+    mocks.readXlsxFile.mockRejectedValue(new UnimedWorkbookError(code, "A base anterior foi preservada.", status));
+    const response = await POST(importRequest());
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toMatchObject({ error: { code } });
+    expect(mocks.publishUnimedImport).not.toHaveBeenCalled();
   });
 
   it("returns safe actionable details for known file validation errors", async () => {

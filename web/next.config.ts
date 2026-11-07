@@ -54,6 +54,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingIncludes: {
     "/api/admin/ferias/*": ["./dist/ferias-workbook-worker.cjs"],
+    "/api/unimed/imports": ["./dist/unimed-workbook-worker.cjs"],
   },
   serverExternalPackages: [
     "@perfectutilitares/smtp",

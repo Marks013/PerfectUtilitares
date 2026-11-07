@@ -1,3 +1,6 @@
+import { addAbortListener } from "node:events";
+import { getPdfExecutionAbortSignal } from "./execution-abort";
+
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
@@ -25,16 +28,47 @@ class Semaphore {
   private active = 0;
   private readonly queue: Array<() => void> = [];
   constructor(private readonly limit: number) {}
-  async run<T>(task: () => Promise<T>) {
-    if (this.active >= this.limit) {
-      await new Promise<void>((resolve) => this.queue.push(resolve));
+  private acquire(signal: AbortSignal | undefined): Promise<void> {
+    signal?.throwIfAborted();
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve();
     }
-    this.active += 1;
+    return new Promise<void>((resolve, reject) => {
+      let subscription: ReturnType<typeof addAbortListener> | undefined;
+      const grant = () => {
+        subscription?.[Symbol.dispose]();
+        resolve();
+      };
+      this.queue.push(grant);
+      if (signal) {
+        subscription = addAbortListener(signal, () => {
+          const index = this.queue.indexOf(grant);
+          if (index < 0) return;
+          this.queue.splice(index, 1);
+          subscription?.[Symbol.dispose]();
+          reject(signal.reason);
+        });
+      }
+    });
+  }
+
+  private release() {
+    const next = this.queue.shift();
+    // Transfer the occupied slot directly; a new caller cannot overtake FIFO.
+    if (next) next();
+    else this.active -= 1;
+  }
+
+  async run<T>(task: () => Promise<T>) {
+    const signal = getPdfExecutionAbortSignal();
+    await this.acquire(signal);
     try {
+      // An abort may follow acquisition but precede this continuation.
+      signal?.throwIfAborted();
       return await task();
     } finally {
-      this.active -= 1;
-      this.queue.shift()?.();
+      this.release();
     }
   }
 }

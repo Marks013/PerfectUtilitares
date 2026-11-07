@@ -80,10 +80,26 @@ describe("PDF-to-Office subprocess boundary", () => {
   it("maps spawn failure and removes its isolated work directory", async () => {
     const child = childProcess();
     mocks.spawn.mockImplementation(() => {
-      queueMicrotask(() => child.emit("error", new Error("ENOENT /private/path")));
+      queueMicrotask(() => child.emit("error", Object.assign(new Error("ENOENT /private/path"), { code: "ENOENT" })));
       return child;
     });
     await expect(convertPdfToOffice(input)).rejects.toMatchObject({ code: "OFFICE_TOOL_UNAVAILABLE", message: expect.not.stringContaining("/private/") });
+    expect(mocks.rm).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["EAGAIN", "EAGAIN"], ["EMFILE", "EMFILE"],
+    [undefined, "PDF_OFFICE_CONVERSION_FAILED"],
+  ])("preserves transient spawn code %s without exposing paths", async (code, expected) => {
+    const child = childProcess();
+    mocks.spawn.mockImplementation(() => {
+      queueMicrotask(() => child.emit("error", Object.assign(new Error("PRIVATE /private/path"), { code })));
+      return child;
+    });
+    await expect(convertPdfToOffice(input)).rejects.toMatchObject({
+      code: expected, message: expect.not.stringMatching(/PRIVATE|private/),
+    });
+    expect(mocks.readFile).not.toHaveBeenCalled();
     expect(mocks.rm).toHaveBeenCalledOnce();
   });
 

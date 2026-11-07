@@ -2,9 +2,11 @@ import * as Sentry from "@sentry/node";
 import { constants as fsConstants } from "node:fs";
 import { access, rename, writeFile } from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
+import { registerPasswordRecoveryWorker } from "@/lib/auth/password-recovery-worker";
 import { processPdfJob } from "@/lib/pdf/processor";
 import { runWithPdfAbortSignal } from "@/lib/pdf/execution-abort";
 import { guardPdfExecution } from "@/lib/pdf/execution-guard";
+import { isNonRetryablePdfError } from "@/lib/pdf/retry-policy";
 import {
   getPdfQueue,
   getPdfQueueJobId,
@@ -44,16 +46,6 @@ Sentry.init({
 });
 
 const boss = await getPdfQueue();
-const nonRetryableConversionErrors = new Set([
-  "PDF_OFFICE_PAGE_LIMIT",
-  "PDF_OFFICE_PAGE_TOO_LARGE",
-  "PDF_OFFICE_PAGE_TOO_COMPLEX",
-  "PDF_OFFICE_OCR_NO_TEXT",
-  "PDF_OFFICE_OUTPUT_TOO_LARGE",
-  "PDF_OFFICE_BATCH_LIMIT",
-  "PDF_IMAGE_TOO_LARGE",
-  "INVALID_IMAGE_OPTIONS",
-]);
 const readWorkerLimit = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 8
@@ -158,7 +150,7 @@ await boss.work<{ jobId: string; recoveryAttempt?: number }, void, typeof workOp
 
       const errorCode = error instanceof Error && "code" in error && typeof error.code === "string"
         ? error.code : "PDF_PROCESSING_FAILED";
-      const nonRetryable = nonRetryableConversionErrors.has(errorCode);
+      const nonRetryable = isNonRetryablePdfError(errorCode);
       const willRetry = !nonRetryable && job.retryCount < job.retryLimit;
       await prisma.pdfJob.updateMany({
         where: {
@@ -203,6 +195,8 @@ await boss.work<{ jobId: string; recoveryAttempt?: number }, void, typeof workOp
     }
   },
 );
+
+await registerPasswordRecoveryWorker(boss);
 
 let cleanupPromise: Promise<unknown> | null = null;
 let presenceMaintenancePromise: Promise<unknown> | null = null;

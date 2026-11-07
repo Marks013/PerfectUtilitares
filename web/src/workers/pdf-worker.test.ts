@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   flush: vi.fn().mockResolvedValue(undefined),
   processJob: vi.fn(),
+  registerRecovery: vi.fn().mockResolvedValue(undefined),
   queryRaw: vi.fn().mockResolvedValue([]),
   reconcile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
@@ -46,6 +47,9 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/pdf/processor", () => ({
   processPdfJob: mocks.processJob,
 }));
+vi.mock("@/lib/auth/password-recovery-worker", () => ({
+  registerPasswordRecoveryWorker: mocks.registerRecovery,
+}));
 
 vi.mock("@/lib/pdf/queue", () => ({
   getPdfQueue: vi.fn().mockResolvedValue({ work: mocks.work }),
@@ -73,11 +77,15 @@ type QueueJob = {
 };
 
 let handleJobs: (jobs: QueueJob[]) => Promise<void>;
+let recoveryReadyBeforeHeartbeat = false;
 
 beforeAll(async () => {
   vi.spyOn(console, "info").mockImplementation(() => undefined);
   await import("@/workers/pdf-worker");
   handleJobs = mocks.work.mock.calls[0]?.[2] as typeof handleJobs;
+  recoveryReadyBeforeHeartbeat = mocks.registerRecovery.mock.calls.length === 1
+    && mocks.registerRecovery.mock.calls[0]?.[0]?.work === mocks.work
+    && mocks.registerRecovery.mock.invocationCallOrder[0] < mocks.writeFile.mock.invocationCallOrder[0];
 });
 
 beforeEach(() => {
@@ -95,6 +103,10 @@ const queueJob = (retryCount = 0, recoveryAttempt = 0): QueueJob => ({
 });
 
 describe("PDF worker idempotency", () => {
+  it("registers recovery on the shared queue before publishing readiness", () => {
+    expect(recoveryReadyBeforeHeartbeat).toBe(true);
+  });
+
   it("does not acknowledge a redelivery while the persisted job is still running", async () => {
     mocks.updateMany.mockResolvedValueOnce({ count: 0 });
     mocks.findUnique.mockResolvedValueOnce({ status: "RUNNING" });
@@ -103,13 +115,21 @@ describe("PDF worker idempotency", () => {
     expect(mocks.cleanupInputs).not.toHaveBeenCalled();
   });
 
-  it.each(["PDF_OFFICE_PAGE_LIMIT", "PDF_IMAGE_TOO_LARGE", "PDF_OFFICE_OCR_NO_TEXT"])(
+  it.each([
+    "PDF_OFFICE_PAGE_LIMIT", "PDF_IMAGE_TOO_LARGE", "PDF_OFFICE_OCR_NO_TEXT",
+    "INVALID_PDF", "INVALID_IMAGE_OPTIONS", "PDF_PAGE_NOT_FOUND",
+    "PDF_TOOL_UNAVAILABLE", "PDF_RENDERER_UNAVAILABLE", "PDF_ANALYZER_UNAVAILABLE",
+    "PDF_WORKER_VERSION_MISMATCH", "PDF_SEMANTIC_INTEGRITY_FAILED",
+    "OFFICE_TOOL_UNAVAILABLE", "OPERATION_NOT_READY",
+    "PDF_STRUCTURAL_INTEGRITY_FAILED", "PDF_VISUAL_INTEGRITY_FAILED",
+  ])(
     "keeps %s terminal without repeating an unchanged conversion",
     async (code) => {
       mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
       mocks.processJob.mockRejectedValueOnce(Object.assign(new Error("Confira o PDF."), { code }));
 
       await expect(handleJobs([queueJob()])).resolves.toBeUndefined();
+      expect(mocks.processJob).toHaveBeenCalledOnce();
 
       expect(mocks.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
         data: expect.objectContaining({ status: "FAILED", errorCode: code,
@@ -119,22 +139,38 @@ describe("PDF worker idempotency", () => {
     },
   );
 
-  it.each([0, 2])("preserves transient error codes and retry policy at attempt %i", async (retryCount) => {
+  it.each([0, 2])("preserves transient timeout codes and retry policy at attempt %i", async (retryCount) => {
     mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
-    const error = Object.assign(new Error("Converter temporarily unavailable"), { code: "OFFICE_TOOL_UNAVAILABLE" });
+    const error = Object.assign(new Error("Converter temporarily unavailable"), { code: "PDF_COMPRESSION_TIMEOUT" });
     mocks.processJob.mockRejectedValueOnce(error);
 
     await expect(handleJobs([queueJob(retryCount)])).rejects.toBe(error);
+    expect(mocks.processJob).toHaveBeenCalledOnce();
 
     expect(mocks.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: retryCount < 2 ? "QUEUED" : "FAILED",
-        errorCode: "OFFICE_TOOL_UNAVAILABLE", completedAt: retryCount < 2 ? null : expect.any(Date) }),
+        errorCode: "PDF_COMPRESSION_TIMEOUT", completedAt: retryCount < 2 ? null : expect.any(Date) }),
     }));
+  });
+
+  it("completes the next delivery after one transient processing failure", async () => {
+    const error = Object.assign(new Error("temporary resource pressure"), { code: "EAGAIN" });
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.processJob.mockRejectedValueOnce(error).mockResolvedValueOnce(undefined);
+    mocks.findUnique.mockResolvedValueOnce({
+      artifacts: [{ sha256: "valid", sizeBytes: 10n }], status: "SUCCEEDED",
+    });
+    await expect(handleJobs([queueJob()])).rejects.toBe(error);
+    expect(mocks.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "QUEUED", errorCode: "EAGAIN" }),
+    }));
+    await expect(handleJobs([queueJob(1)])).resolves.toBeUndefined();
+    expect(mocks.processJob).toHaveBeenCalledTimes(2);
+    expect(mocks.cleanupInputs).toHaveBeenCalledExactlyOnceWith("job-12345678");
   });
 
   it("ignores a duplicate delivery after the job left QUEUED", async () => {
     mocks.updateMany.mockResolvedValueOnce({ count: 0 });
-
     await handleJobs([queueJob()]);
 
     expect(mocks.updateMany).toHaveBeenCalledWith(

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  checkRateLimit,
   checkSharedRateLimit,
   getClientIp,
+  getHashedRateLimitKey,
   getRateLimitKey,
   SharedRateLimitUnavailableError,
 } from "@/lib/api/rate-limit";
@@ -64,5 +66,31 @@ describe("checkSharedRateLimit", () => {
     await expect(
       checkSharedRateLimit("pdf:test", { limit: 2, windowMs: 60_000 }),
     ).rejects.toBeInstanceOf(SharedRateLimitUnavailableError);
+  });
+});
+
+describe("rate-limit secret boundary", () => {
+  it("expires the account cooldown without changing recovery or login state", () => {
+    vi.useFakeTimers();
+    try {
+      const key = getHashedRateLimitKey("account-window-test", "user@example.test");
+      expect(checkRateLimit(key, { limit: 1, windowMs: 15 * 60_000 }).limited).toBe(false);
+      expect(checkRateLimit(key, { limit: 1, windowMs: 15 * 60_000 }).limited).toBe(true);
+      vi.advanceTimersByTime(15 * 60_000);
+      expect(checkRateLimit(key, { limit: 1, windowMs: 15 * 60_000 }).limited).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not use a public fallback in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AUTH_SECRET", "");
+    try { expect(() => getHashedRateLimitKey("login-account", "user@example.test")).toThrow(); }
+    finally { vi.unstubAllEnvs(); }
+  });
+  it("separates account recovery and login without storing email", () => {
+    const login = getHashedRateLimitKey("login-account", "user@example.test");
+    const recovery = getHashedRateLimitKey("password-reset-account", "user@example.test");
+    expect(login).not.toBe(recovery);
+    expect(recovery).not.toContain("user@example.test");
   });
 });

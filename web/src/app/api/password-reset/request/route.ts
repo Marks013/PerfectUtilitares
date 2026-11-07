@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   enforcePersistentRateLimit,
+  jsonError,
   methodNotAllowed,
   readJsonBody,
   requireContentType,
@@ -11,7 +11,8 @@ import {
 } from "@/lib/api/security";
 import { normalizeEmail } from "@/lib/auth/email";
 import { getSecurityStamp } from "@/lib/auth/security-stamp";
-import { getAppUrl, sendPasswordResetEmail } from "@/lib/email/resend";
+import { checkSharedRateLimit, getHashedRateLimitKey } from "@/lib/api/rate-limit";
+import { enqueuePasswordRecovery, getRecoveryConfiguration } from "@/lib/auth/password-recovery";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -19,10 +20,6 @@ export const runtime = "nodejs";
 const requestSchema = z.object({
   email: z.email().max(254),
 });
-
-function hashToken(token: string) {
-  return createHash("sha256").update(token).digest("hex");
-}
 
 export function GET() {
   return methodNotAllowed(["POST"]);
@@ -63,56 +60,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email: normalizeEmail(parsed.data.email) },
-    select: {
-      id: true,
-      passwordHash: true,
-      securityVersion: true,
-      tenantId: true,
-      email: true,
-      name: true,
-      role: true,
-      status: true,
-    },
-  });
+  const configuration = getRecoveryConfiguration();
+  if (!configuration) return jsonError(503, "RECOVERY_UNAVAILABLE",
+    "A recuperação por e-mail está indisponível. Solicite ajuda ao administrador.");
 
-  if (user?.status !== "ACTIVE" || !user.tenantId) {
-    return NextResponse.json({ ok: true });
-  }
-
-  const token = randomBytes(32).toString("base64url");
-  const resetUrl = `${getAppUrl(request)}/convite/${token}`;
-  const invitation = await prisma.userInvitation.create({
-    data: {
-      purpose: "PASSWORD_RESET",
-      resetUserId: user.id,
-      resetStamp: getSecurityStamp(user),
-      tenantId: user.tenantId,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      tokenHash: hashToken(token),
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-    },
-  });
-
-  if (process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL) {
-    try {
-      await sendPasswordResetEmail({
-        to: user.email,
-        name: user.name,
-        resetUrl,
-      });
-    } catch {
-      await prisma.userInvitation
-        .delete({ where: { id: invitation.id } })
-        .catch(() => {});
-      // Keep the public response identical for existing and unknown accounts.
-      // Provider messages can contain recipients or tokens; log only the event.
-      console.error(JSON.stringify({ event: "password_reset_delivery_failed" }));
+  try {
+    const email = normalizeEmail(parsed.data.email);
+    const accountLimit = await checkSharedRateLimit(getHashedRateLimitKey("password-reset-account", email), {
+      limit: 3, windowMs: 15 * 60_000,
+    });
+    if (accountLimit.limited) {
+      const response = jsonError(429, "RATE_LIMITED", "Muitas tentativas. Aguarde alguns minutos e tente novamente.");
+      response.headers.set("Retry-After", String(Math.max(1, Math.ceil((accountLimit.resetAt - Date.now()) / 1_000))));
+      return response;
     }
+    // The same lookup and durable enqueue run for known and unknown addresses.
+    // Sending email never happens on the HTTP response path.
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, passwordHash: true, securityVersion: true, tenantId: true,
+        email: true, name: true, role: true, status: true },
+    });
+    const eligible = user?.status === "ACTIVE" && user.tenantId;
+    await enqueuePasswordRecovery({
+      ...configuration,
+      userId: eligible ? user.id : null,
+      tenantId: eligible ? user.tenantId : null,
+      securityVersion: eligible ? user.securityVersion : null,
+      resetStamp: eligible ? getSecurityStamp(user) : null,
+    });
+    return NextResponse.json({ ok: true });
+  } catch {
+    console.error(JSON.stringify({ event: "password_recovery_request_failed" }));
+    return jsonError(503, "RECOVERY_UNAVAILABLE",
+      "A recuperação por e-mail está indisponível. Solicite ajuda ao administrador.");
   }
-
-  return NextResponse.json({ ok: true });
 }

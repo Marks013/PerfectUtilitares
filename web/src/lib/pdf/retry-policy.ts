@@ -1,0 +1,39 @@
+// These failures require changing the input/options or repairing the worker.
+// Unknown failures and timeouts remain retryable: they may be transient.
+const nonRetryableCodes = new Set([
+  "INPUT_REQUIRED",
+  "INVALID_ANNOTATIONS",
+  "INVALID_CROP",
+  "INVALID_DOCUMENT",
+  "INVALID_FILE_NAME",
+  "INVALID_IMAGE",
+  "INVALID_IMAGE_OPTIONS",
+  "INVALID_MANIFEST",
+  "INVALID_PAGE_SOURCE",
+  "INVALID_PDF",
+  "PDF_EMPTY",
+  "OPERATION_NOT_READY",
+  "OFFICE_TOOL_UNAVAILABLE",
+  "PDF_IMAGE_TOO_LARGE",
+  "PDF_OFFICE_PAGE_LIMIT",
+  "PDF_OFFICE_PAGE_TOO_LARGE",
+  "PDF_OFFICE_PAGE_TOO_COMPLEX",
+  "PDF_OFFICE_OCR_NO_TEXT",
+  "PDF_OFFICE_OUTPUT_TOO_LARGE",
+  "PDF_OFFICE_BATCH_LIMIT",
+  "PDF_PAGE_LIMIT_EXCEEDED",
+  "PDF_PAGE_RENDER_LIMIT_EXCEEDED",
+  "PDF_PAGE_NOT_FOUND",
+  "PDF_RENDER_BATCH_TOO_LARGE",
+  "PDF_TOOL_UNAVAILABLE",
+  "PDF_RENDERER_UNAVAILABLE",
+  "PDF_ANALYZER_UNAVAILABLE",
+  "PDF_WORKER_VERSION_MISMATCH",
+  "PDF_SEMANTIC_INTEGRITY_FAILED",
+  "PDF_STRUCTURAL_INTEGRITY_FAILED",
+  "PDF_VISUAL_INTEGRITY_FAILED",
+]);
+
+export function isNonRetryablePdfError(code: string): boolean {
+  return nonRetryableCodes.has(code);
+}
