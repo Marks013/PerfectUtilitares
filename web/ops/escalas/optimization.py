@@ -161,7 +161,7 @@ def _phase_budget(remaining, names, index):
     return remaining * .5
 
 
-def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None, initial_decision_hints=None, initial_repair_people=None):
+def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None, initial_decision_hints=None, initial_repair_people=None, initial_repair_groups=None, repair_clock_fixes=None):
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
         raise ValueError('incomplete optimization incumbent')
@@ -183,10 +183,13 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                             if name in ('COVERAGE', 'SUNDAY_COVERAGE') and Snapshot(values).value(objective) > 0]
         plans = plans[:first] + [('SECONDARY_POLISH', None,
                                  coverage_members + list(zip(names[first:], objectives[first:])))]
-    repair_first = bool(initial_repair_people and plans and plans[0][0] == 'COVERAGE'
-                        and deadline - time.monotonic() >= 2)
-    if repair_first:
-        plans = [plans[0]] + plans
+    repair_groups = initial_repair_groups or ([initial_repair_people] if initial_repair_people else [])
+    repair_groups = ([set(group) for group in repair_groups[:2] if group]
+                     if plans and plans[0][0] == 'COVERAGE'
+                     and dates and deadline - time.monotonic() >= 2 else [])
+    repair_count = len(repair_groups)
+    if repair_count:
+        plans = [plans[0]] * repair_count + plans
     names = [name for name, _objective, _members in plans]
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
@@ -212,9 +215,9 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             initial_decision_hints.get(variable_index, values[variable_index])
             for variable_index in decision_variables)
     for index, (name, objective, members) in enumerate(plans):
-        repair_phase = repair_first and index == 0
-        phase_index = index - int(repair_first)
-        if index == 1 and initial_decision_hints:
+        repair_phase = index < repair_count
+        phase_index = index - repair_count
+        if index == repair_count and initial_decision_hints:
             _replace_hints(model, values)
         if control is not None:
             control.checkpoint()
@@ -278,7 +281,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             continue
         budget = _phase_budget(remaining, names, index)
         if repair_phase:
-            budget = min(2.1, remaining * .30)
+            large_team = len(repair_groups[index]) > 16
+            budget = min(2.8 if large_team else 2.1, remaining * (.40 if large_team else .30))
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
         engine.parameters.num_workers = 1
@@ -303,7 +307,7 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                                                 coverage_groups=coverage_groups, shortages=sector_coverage,
                                                 sunday_shortages=sunday_coverage)
             if repair_phase:
-                movable_people = initial_repair_people
+                movable_people = repair_groups[index]
             weeks = (len(dates) + 6) // 7
             first = (phase_index - 1) % weeks
             movable_weeks = sorted({first, (first + 1) % weeks})
@@ -314,10 +318,15 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                 if control is not None and offset % 128 == 0:
                     control.checkpoint()
                 fixed = person not in movable_people if movable_people else day not in movable
+                narrowed_clock = (repair_phase and len(movable_people) > 16
+                                  and person in movable_people
+                                  and variable_index in (repair_clock_fixes or {}))
+                fixed = fixed or narrowed_clock
                 if fixed:
                     domain = search_model.proto.variables[variable_index].domain
                     domain.clear()
-                    domain.extend([values[variable_index], values[variable_index]])
+                    value = repair_clock_fixes[variable_index] if narrowed_clock else values[variable_index]
+                    domain.extend([value, value])
         # Model setup belongs to this phase's share, not the later objectives.
         # Do not start a presolve with too little time to use the known incumbent.
         budget = min(budget - (time.monotonic() - preparation_started), deadline - time.monotonic() - 0.10)

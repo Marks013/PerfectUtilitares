@@ -140,6 +140,15 @@ export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours):
   };
 }
 
+/** Changing the calculation scope preserves every day and reference until regeneration. */
+export function changeGenerationMode(input: EscalaInput, generationMode: NonNullable<EscalaInput["generationMode"]>): EscalaInput {
+  if ((input.generationMode ?? "DAYS_AND_HOURS") === generationMode) return input;
+  return { ...input, generationMode,
+    needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
+    demands: input.demands.filter(demand => demand.estimated !== true),
+  };
+}
+
 /** Only changes the proposal preference; imported clocks and locked assignments remain untouched. */
 export function changeContinuousWorkLimit(input: EscalaInput, enabled: boolean): EscalaInput {
   if ((input.policy.limitContinuousWorkBlocks === true) === enabled) return input;
@@ -184,6 +193,7 @@ function absenceDays(input: EscalaInput): string {
 export function scenarioDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
   if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
+  if ((previous.generationMode ?? "DAYS_AND_HOURS") !== (next.generationMode ?? "DAYS_AND_HOURS")) return true;
   return (['employees', 'shifts', 'demands', 'policy'] as const).some((key) => previous[key] !== next[key] && JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
 }
 
@@ -205,6 +215,7 @@ export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidat
 export function coverageDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
   if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
   if ((previous.policy.limitContinuousWorkBlocks === true) !== (next.policy.limitContinuousWorkBlocks === true)) return true;
+  if ((previous.generationMode ?? "DAYS_AND_HOURS") !== (next.generationMode ?? "DAYS_AND_HOURS")) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
   if (previous.employees !== next.employees || previous.shifts !== next.shifts) return true;
   if (previous.demands === next.demands) return false;

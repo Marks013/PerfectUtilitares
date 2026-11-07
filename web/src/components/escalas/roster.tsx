@@ -21,7 +21,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   review?: EscalaRecoveryRequest; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onReviewEmployee?: (employeeId: string) => void; onReviewCoverage?: () => void; onUndo?: (previous: EscalaInput, applied: EscalaInput) => Promise<boolean>; active?: boolean;
 }) {
   const input = useActiveSnapshot(nextInput, active);
-  const [localMode, setLocalMode] = useState<EscalaExportMode>("both");
+  const [localMode, setLocalMode] = useState<EscalaExportMode>(() => input.generationMode === "REST_ONLY" ? "rest" : "both");
   const view = mode ?? localMode;
   const [hoursDate, setHoursDate] = useState("");
   const [filter, setFilter] = useState("");

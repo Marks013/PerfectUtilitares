@@ -62,6 +62,39 @@ beforeEach(() => {
 });
 
 describe("canonical scheduling branch service", () => {
+  it("persists REST_ONLY and generates the fixed-reference preview without another save", async () => {
+    const value = input(); value.generationMode = "REST_ONLY";
+    value.shifts.push({ ...structuredClone(value.shifts[0]), id: "other" });
+    value.employees[0].shiftIds.push("other");
+    const saved = await saveEscala(actor, "w1", 1, value);
+    expect(saved.input.generationMode).toBe("REST_ONLY");
+    expect(mocks.revision.create.mock.calls[0][0].data.input.generationMode).toBe("REST_ONLY");
+    useCurrent(value);
+    const result = await generateEscala(actor, "w1", 1);
+    expect(result.result.status).toBe("FEASIBLE");
+    expect(result.proposalInput.generationMode).toBe("REST_ONLY");
+    expect(mocks.solve.mock.calls[0][0].employees[0].shiftIds).toEqual(["day", "other"]);
+    expect(mocks.revision.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a solver clock substitution on a free REST_ONLY day but allows its locked exception", async () => {
+    const value = input(); value.generationMode = "REST_ONLY";
+    value.demands = [];
+    value.shifts.push({ ...structuredClone(value.shifts[0]), id: "other",
+      segments: value.shifts[0].segments.map(part => ({ ...part, start: part.start + 30, end: part.end + 30 })) });
+    value.employees[0].shiftIds.push("other");
+    const assignments = structuredClone(value.assignments);
+    assignments[0].shiftId = "other";
+    useCurrent(value);
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments, wallTimeSeconds: 0.1, message: "Viável" });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+    value.assignments[0] = { ...assignments[0], locked: true };
+    assignments[0].locked = true;
+    useCurrent(value);
+    expect((await generateEscala(actor, "w1", 1)).result.status).toBe("FEASIBLE");
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+
   it("creates one canonical branch and stores the same identity in its first revision", async () => {
     const value = input(); value.branchCode = "0008";
     mocks.workspace.create.mockResolvedValue(row({ branchCode: "08" }));
@@ -649,6 +682,36 @@ describe("Escalas revision service", () => {
 });
 
 describe("Generation conflict explanations", () => {
+  it.each(["REST_ONLY", "DAYS_AND_HOURS"] as const)("preserves the infeasible diagnosis and offers clock flexibility only for %s", async generationMode => {
+    const value = input(); value.generationMode = generationMode;
+    value.shifts.push({ ...structuredClone(value.shifts[0]), id: "late",
+      segments: value.shifts[0].segments.map(part => ({ ...part, start: part.start + 60, end: part.end + 60 })) });
+    value.employees[0].shiftIds.push("late");
+    value.demands = [{ id: "late-coverage", date: value.startDate, sector: "Reposição", start: 1080, end: 1104, minimum: 1, estimated: false }];
+    useCurrent(value);
+    const before = structuredClone(value);
+    const calculation = { status: "INFEASIBLE", assignments: [], wallTimeSeconds: 0.1, message: "Nenhuma solução para a cobertura obrigatória" };
+    mocks.solve.mockResolvedValue(calculation);
+    const answer = await generateEscala(actor, "w1", 1);
+    expect(answer.result).toMatchObject({ ...calculation, message: expect.stringContaining(calculation.message), conflicts: [] });
+    if (generationMode === "REST_ONLY") {
+      expect(answer.result.message).toContain("os horários de entrada e saída são mantidos");
+      expect(answer.result.message).toContain('Se puder flexibilizá-los, selecione "Folgas e horários" e gere novamente.');
+    } else {
+      expect(answer.result.message).toBe(calculation.message);
+    }
+    expect(calculation.message).toBe("Nenhuma solução para a cobertura obrigatória");
+    expect(answer.proposalInput.generationMode).toBe(generationMode);
+    expect(answer.proposalInput.assignments).toEqual(before.assignments);
+    expect(answer.proposalInput.employees[0].shiftIds).toEqual(["day", "late"]);
+    expect(value).toEqual(before);
+    expect(mocks.workspace.create).not.toHaveBeenCalled();
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+    expect(mocks.audit.create).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it("explains an infeasible mandatory coverage budget without blaming nonexistent locks or changing the workspace", async () => {
     const value = input();
     value.assignments = [];

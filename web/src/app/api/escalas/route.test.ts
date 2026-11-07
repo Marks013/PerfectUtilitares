@@ -23,6 +23,21 @@ beforeEach(() => {
 });
 
 describe("/api/escalas", () => {
+  it("returns a saved REST_ONLY scenario and generates that persisted mode without hiding it in exports", async () => {
+    const restInput = { ...input, generationMode: "REST_ONLY" };
+    mocks.save.mockResolvedValue({ ...workspace, revision: 2, input: restInput });
+    const saved = await POST(command({ action: "SAVE", id: "w1", expectedRevision: 1, input: restInput }));
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ revision: 2, input: restInput });
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 1, restInput);
+    mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: restInput });
+    const generated = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 2 }));
+    expect(generated.status).toBe(200);
+    expect(await generated.json()).toMatchObject({ result: { status: "FEASIBLE" }, proposalInput: restInput });
+    expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 2, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+  });
+
   it("starts, solves, queries and cancels a session-owned operation through functional responses", async () => {
     const operationId = "4ea6210f-fb9a-449f-b6f4-413b3c79ec05";
     mocks.startOperation.mockResolvedValue({ operationId, state: "CREATED" });

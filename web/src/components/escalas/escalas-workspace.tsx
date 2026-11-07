@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
 import { compareBranches } from "@/lib/escalas/order";
 import type { EscalaExportMode } from "@/lib/escalas/presentation";
-import type { WeeklyHours } from "@/lib/escalas/types";
+import type { EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
 import { Rules, Shifts } from "./configuration";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
@@ -17,6 +17,7 @@ import { DeletePlan } from "./delete-plan";
 import { SAVE_LABEL } from "./draft-persistence";
 import { Employees } from "./employees";
 import { recoveryArea, revealRecoveryTarget, type EscalaRecoveryContext, type EscalaRecoveryRequest } from "./recovery-navigation";
+import { GenerationModeOption } from "./generation-mode-option";
 import { ContinuousWorkOption, HoursProposal } from "./hours-proposal";
 import { Mixed42Option } from "./mixed-42-option";
 import { Proposals, Publication, ValidationResults, type ReviewSection } from "./results";
@@ -92,7 +93,13 @@ export function EscalasWorkspace() {
   const [visited, setVisited] = useState<Set<Area>>(() => new Set(["team"]));
   useEffect(() => { setVisited(previous => previous.has(area) ? previous : new Set([...previous, area])); }, [area]);
   const [reviewSection, setReviewSection] = useState<ReviewSection>();
-  const [exportMode, setExportMode] = useState<EscalaExportMode>("both");
+  const [exportSelection, setExportSelection] = useState<{ workspaceId: string; generationMode: NonNullable<EscalaInput["generationMode"]>; mode: EscalaExportMode } | null>(null);
+  const generationMode = input?.generationMode ?? "DAYS_AND_HOURS";
+  const exportMode = exportSelection?.workspaceId === workspace?.id && exportSelection?.generationMode === generationMode
+    ? exportSelection.mode : generationMode === "REST_ONLY" ? "rest" : "both";
+  const setExportMode = (mode: EscalaExportMode) => {
+    setExportSelection({ workspaceId: workspace?.id ?? "", generationMode, mode });
+  };
   const [reviewContext, setReviewContext] = useState<EscalaRecoveryRequest | null>(null);
   const [pendingReview, setPendingReview] = useState<EscalaRecoveryRequest | null>(null);
   const reviewSequence = useRef(0);
@@ -103,7 +110,7 @@ export function EscalasWorkspace() {
     if (openedWorkspace.current === workspace?.id) return;
     openedWorkspace.current = workspace?.id;
     setReviewContext(null);
-    setExportMode("both");
+    setExportSelection(null);
     setPendingReview(null);
     setArea(workspace?.input.assignments.length ? "roster" : workspace?.input.employees.length ? "generate" : "team");
   }, [workspace?.id, workspace?.input.assignments.length, workspace?.input.employees.length]);
@@ -179,7 +186,8 @@ export function EscalasWorkspace() {
         {AREAS.map((item, index) => <button key={item.id} type="button" aria-current={area === item.id ? "step" : undefined} aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={styles.guidedStep} onClick={() => setArea(item.id)}><span className={styles.stepNumber} aria-hidden="true">{index + 1}</span><span><strong>{item.label}</strong><small>{item.id === "team" ? included ? `${included} colaboradores incluídos` : "Use o relatório da sua equipe" : item.id === "generate" ? `${input.defaultWeeklyHours} horas por semana · modelo 5×2` : hasRoster ? "Escala disponível para conferir" : "Confira antes de baixar os arquivos"}</small></span></button>)}
       </nav>
       <section hidden={area !== "generate"} inert={area !== "generate"} id="escala-area-generate" className={`${panelClass} ${styles.generationPanel}`} aria-labelledby="escala-generate-title">
-        <div><p className={styles.eyebrow}>PASSO 2 · O ALGORITMO FAZ A DISTRIBUIÇÃO</p><h2 id="escala-generate-title" className={styles.sectionTitle}>Escolha a jornada e gere sua escala</h2><p className={styles.muted}>Os horários, as folgas e a cobertura estimada são calculados juntos. Você revisa antes de aplicar.</p></div>
+        <div><p className={styles.eyebrow}>PASSO 2 · O ALGORITMO FAZ A DISTRIBUIÇÃO</p><h2 id="escala-generate-title" className={styles.sectionTitle}>Escolha a jornada e gere sua escala</h2><p className={styles.muted}>{generationMode === "REST_ONLY" ? "O algoritmo distribui as folgas usando os horários de referência ajustados à jornada. Você revisa antes de aplicar." : "Os horários, as folgas e a cobertura estimada são calculados juntos. Você revisa antes de aplicar."}</p></div>
+        <GenerationModeOption input={input} disabled={!model.canEdit} onChange={model.update} />
         <div className={styles.contextBar}>
           <fieldset disabled={!model.canEdit} className={styles.journeyField}>
             <Field label="Jornada semanal">{(id) => <select id={id} value={input.defaultWeeklyHours} className={controlClass} onChange={(event) => model.update(changeBranchWeeklyHours(input, Number(event.target.value) as WeeklyHours))}>{HOURS.map((hours) => <option key={hours} value={hours}>{hours} horas</option>)}</select>}</Field>
@@ -187,7 +195,7 @@ export function EscalasWorkspace() {
           <p className={styles.muted}><strong className="text-[color:var(--app-fg)]">{clock(input.defaultWeeklyHours * 12)}</strong> de trabalho por dia no modelo uniforme, em 5 dias.<br />O intervalo fica à parte. Férias, bloqueios e exceções individuais são preservados.</p>
           <div className={styles.mainActions}>
             {model.dirty && <button type="button" className={buttonClass} disabled={!model.canEdit || model.saveState === "saving"} onClick={model.save}>{["error", "conflict", "invalid"].includes(model.saveState) ? "Tentar salvar" : "Salvar agora"}</button>}
-            <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hasRoster ? "Gerar nova proposta" : "Gerar escala e horários"}</button>
+            <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hasRoster ? "Gerar nova proposta" : generationMode === "REST_ONLY" ? "Gerar folgas" : "Gerar escala e horários"}</button>
           </div>
         </div>
         {!included && <div className={styles.nextStep}><p>Primeiro importe a equipe da filial. Nenhuma configuração adicional é necessária para começar.</p><button type="button" className={buttonClass} onClick={() => setArea("team")}>Voltar para importar equipe</button></div>}

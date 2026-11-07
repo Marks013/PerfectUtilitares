@@ -3,10 +3,59 @@ import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility"
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42 } from "./labor-rules";
 import { isGeneratedMixed42Shift, planningWeeklyHours, preparedShiftSignature, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
-import type { EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
+import type { EscalaEmployee, EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
 
 function paidMinutes(shift: EscalaShift): number {
   return shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
+}
+
+/** Order references without deleting manual alternatives needed when the mode changes. */
+function restOnlyReferences(person: EscalaEmployee, shifts: Map<string, EscalaShift>): EscalaEmployee {
+  if (person.planningEnabled === false || person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING") return person;
+  const original = [...(person.sourceSchedule?.weekday ?? "").matchAll(/(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})/g)];
+  const arrival = original.length ? Number(original[0][1]) * 60 + Number(original[0][2]) : null;
+  const last = original.at(-1);
+  const departure = last ? Number(last[3]) * 60 + Number(last[4]) : null;
+  const distance = (shift: EscalaShift) => {
+    const work = shift.segments.filter(segment => segment.kind !== "BREAK");
+    return [arrival === null ? 0 : Math.abs((work[0]?.start ?? 0) - arrival),
+      departure === null ? 0 : Math.abs((work.at(-1)?.end ?? 0) - departure)];
+  };
+  const references = new Map<number, string>();
+  for (const id of person.shiftIds) {
+    const candidate = shifts.get(id);
+    if (!candidate) continue;
+    const minutes = paidMinutes(candidate), previous = references.get(minutes);
+    const existing = previous ? shifts.get(previous) : undefined;
+    const a = distance(candidate), b = existing ? distance(existing) : null;
+    if (!b || a[0] < b[0] || a[0] === b[0] && a[1] < b[1]) references.set(minutes, id);
+  }
+  return { ...person, shiftIds: [...new Set([...references.values(), ...person.shiftIds])] };
+}
+
+/** Independently reject free-day clock substitutions even if the transport returns a valid-shaped result. */
+export function matchesRestOnlyReferences(input: EscalaInput, assignments: EscalaInput["assignments"]): boolean {
+  if (input.generationMode !== "REST_ONLY") return true;
+  const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
+  const employees = new Map(input.employees.map(person => [person.id, person]));
+  const locked = new Map(input.assignments.filter(day => day.locked && day.kind === "WORK")
+    .map(day => [JSON.stringify([day.employeeId, day.date]), day.shiftId]));
+  const references = new Map(input.employees.map(person => {
+    const byDuration = new Map<number, string>();
+    for (const id of person.shiftIds) {
+      const shift = shifts.get(id);
+      if (shift && !byDuration.has(paidMinutes(shift))) byDuration.set(paidMinutes(shift), id);
+    }
+    return [person.id, byDuration];
+  }));
+  return assignments.every(day => {
+    if (day.kind !== "WORK") return true;
+    const person = employees.get(day.employeeId);
+    if (person?.planningEnabled === false) return true;
+    const shift = shifts.get(day.shiftId ?? "");
+    return Boolean(shift && (locked.get(JSON.stringify([day.employeeId, day.date])) === day.shiftId
+      || references.get(day.employeeId)?.get(paidMinutes(shift)) === day.shiftId));
+  });
 }
 
 /** Prepare a preview, without approving documents, inventing attendance or overwriting branch decisions. */
@@ -15,7 +64,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const adjustedEmployeeIds: string[] = [];
   const excludedEmployeeIds: string[] = [];
-  const employees = input.employees.map((original) => {
+  const adjustedEmployees = input.employees.map((original) => {
     const person = applyRestEligibility(original);
     if (isRestPlanningExcludedRole(person.role)) excludedEmployeeIds.push(person.id);
     if (person.planningEnabled === false || person.activeFrom > input.endDate || (person.activeUntil && person.activeUntil < input.startDate)
@@ -78,6 +127,8 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     if (shiftIds.length > 12) throw new EscalaError(422, "ESCALA_SHIFT_OPTIONS_LIMIT", "Os horários propostos e os dias bloqueados excedem 12 alternativas por pessoa. Confira os bloqueios antes de gerar.");
     return { ...person, ...reference, planningEnabled: true, simulationDailyMinutes: candidate.simulationDailyMinutes, originalShiftIds: candidate.originalShiftIds, shiftIds };
   });
+  const employees = input.generationMode === "REST_ONLY"
+    ? adjustedEmployees.map(person => restOnlyReferences(person, shifts)) : adjustedEmployees;
   const adjusted = new Set(adjustedEmployeeIds);
   const excluded = new Set(excludedEmployeeIds);
   // An incompatible unlocked workday is replaced by the solve. Absences, OFF choices and locks remain available.

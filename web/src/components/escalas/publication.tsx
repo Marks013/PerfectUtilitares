@@ -13,12 +13,12 @@ type Format = "pdf" | "xlsx";
 type FileState = { url: string; filename: string; revision: number; mode: EscalaExportMode };
 const CONTENT = { rest: "Folgas", hours: "Horários", both: "Folgas e horários" };
 
-export function Publication({ workspace, validation, dirty, busy, outdated = false, mode = "both", onModeChange, onPublish, onRegenerate, onPrepare, isCurrent }: {
+export function Publication({ workspace, validation, dirty, busy, outdated = false, mode, onModeChange, onPublish, onRegenerate, onPrepare, isCurrent }: {
   workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; outdated?: boolean; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void;
   onPublish: () => void; onRegenerate?: () => void; onPrepare?: () => Promise<EscalaWorkspace | null>; isCurrent?: (workspace: EscalaWorkspace) => boolean;
 }) {
-  const [localMode, setLocalMode] = useState<EscalaExportMode>(mode);
-  const selectedMode = onModeChange ? mode : localMode;
+  const [localMode, setLocalMode] = useState<EscalaExportMode>(() => mode ?? (workspace.input.generationMode === "REST_ONLY" ? "rest" : "both"));
+  const selectedMode = mode ?? localMode;
   const [reviewed, setReviewed] = useState<ReviewedRevision | null>(null);
   const confirmed = isReviewedRevisionCurrent(reviewed, workspace, dirty, outdated);
   useEffect(() => {

@@ -106,6 +106,7 @@ const policy = z.strictObject({
 
 export const escalaInputSchema = z.strictObject({
   simulation: z.boolean().optional(),
+  generationMode: z.enum(["REST_ONLY", "DAYS_AND_HOURS"]).optional(),
   needsRegeneration: z.boolean().optional(),
   schemaVersion: z.literal(1), branchCode: label.transform(canonicalBranchCode), branchName: label, startDate: planningDate, endDate: planningDate,
   visibleMonth: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).optional(),

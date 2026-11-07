@@ -105,6 +105,8 @@ export type EscalaPolicy = {
 };
 export type EscalaInput = {
   schemaVersion: 1;
+  /** Missing preserves the full search; REST_ONLY fixes one reference per daily duration. */
+  generationMode?: "REST_ONLY" | "DAYS_AND_HOURS";
   /** Support scenario: missing administrative evidence remains a publication pending, not approval. */
   simulation?: boolean;
   /** UI scenario changed after a roster existed; persists across saved revisions and reloads. */

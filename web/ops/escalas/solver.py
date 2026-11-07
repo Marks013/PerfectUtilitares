@@ -254,6 +254,15 @@ def solve(data, control=None):
         # Published neighboring assignments constrain the boundary, not fairness history.
         boundary = {**prior, **future}
         changed = []
+        reference_shifts = person["shiftIds"]
+        if data.get("generationMode") == "REST_ONLY":
+            durations = set()
+            reference_shifts = []
+            for sid in person["shiftIds"]:
+                duration = metrics[sid][0]
+                if duration not in durations:
+                    reference_shifts.append(sid)
+                    durations.add(duration)
         active[pid] = [d for d in dates if person["activeFrom"] <= d
                        and (not person.get("activeUntil") or d <= person["activeUntil"])]
         for day in active[pid]:
@@ -265,7 +274,12 @@ def solve(data, control=None):
             work[key] = model.new_bool_var(f"w:{pid}:{day}")
             current = {}
             closed = day in closed_dates
-            for sid in ([] if untimed else person["shiftIds"]):
+            allowed = reference_shifts
+            if (old and old.get("locked") and old["kind"] == "WORK"
+                    and old.get("shiftId") in person["shiftIds"] and old["shiftId"] not in allowed):
+                # A locked extra is specific to this day, not a new free-day reference.
+                allowed = [*allowed, old["shiftId"]]
+            for sid in ([] if untimed else allowed):
                 calendar = shift_calendar(sid, day, day in mixed_days)
                 if calendar is None:
                     continue
@@ -454,11 +468,12 @@ def solve(data, control=None):
     # Explicit metadata avoids parsing employee/shift IDs, which may contain colons.
     decisions = {variable.index: key for key, variable in off.items()}
     warm_decisions = {}
-    repair_people = (_mixed_repair_people(employees, dates, work, baseline, values, policy, mixed_sectors)
-                     if mixed_people else set())
-    # A synchronized mixed baseline stays the comparison incumbent. Supply a
+    repair_groups = _rest_repair_groups(employees, dates, work, baseline, values, policy,
+                                       data["demands"], data.get("visibleMonth"))
+    repair_people = set().union(*repair_groups) if repair_groups else set()
+    # A synchronized baseline stays the comparison incumbent. Supply a
     # staggered alternative only as a nonbinding CP-SAT hint, within this budget.
-    if mixed_people and started + MAX_SECONDS - time.monotonic() > 0.8:
+    if (repair_people or mixed_people) and started + MAX_SECONDS - time.monotonic() > 0.8:
         proposals = balanced_rest_hints(
             [person for person in employees
              if (person["id"] in repair_people if repair_people
@@ -489,7 +504,8 @@ def solve(data, control=None):
                                      sector_coverage=sector_coverage,
                                      decision_variables=decisions,
                                      initial_decision_hints=warm_decisions,
-                                     initial_repair_people=repair_people)
+                                     initial_repair_groups=repair_groups,
+                                     repair_clock_fixes=_repair_clock_fixes(choices, metrics, values))
     # Existing protected disabled records are retained, never allocated or counted as workforce.
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_disabled_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
@@ -500,29 +516,61 @@ def solve(data, control=None):
     return response
 
 
-def _mixed_repair_people(employees, dates, work, baseline, values, policy, mixed_sectors):
-    """Give small sectors with empty Sundays an early, bounded chance to exchange rests."""
+def _repair_clock_fixes(choices, metrics, values):
+    """Keep the incumbent feasible while narrowing clocks only in a repair clone."""
+    fixes = {}
+    for options in choices.values():
+        selected = {}
+        for sid, variable in options.items():
+            duration = metrics[sid][0]
+            if duration not in selected or values[variable.index]:
+                selected[duration] = sid
+        for sid, variable in options.items():
+            if sid != selected[metrics[sid][0]]:
+                # The chosen incumbent clock always remains admissible. A free
+                # duration uses the same ordered reference as REST_ONLY.
+                fixes[variable.index] = 0
+    return fixes
+
+
+def _rest_repair_groups(employees, dates, work, baseline, values, policy, demands, visible_month=None):
+    """Release whole deficient sectors, without assuming sales peaks or staffing minima."""
     sectors = {}
     for person in employees:
-        if person["sector"] in mixed_sectors:
-            sectors.setdefault(person["sector"], []).append(person)
-    sundays = [day for day in dates if date.fromisoformat(day).weekday() == 6]
+        sectors.setdefault(person["sector"], []).append(person)
+    active_dates = set(dates)
+    demanded = {(item["sector"], item["date"]) for item in demands
+                if item["minimum"] > 0 and item["date"] in active_dates
+                and (not visible_month or item["date"].startswith(visible_month + "-"))}
     ranked = []
     for sector, members in sectors.items():
-        if not 2 <= len(members) <= 8:
+        if len(members) < 2:
             continue
-        eligible = [[work[p["id"], day] for p in members
-                     if (p["id"], day) in work and available_weekends(p, [day], baseline, policy)]
-                    for day in sundays]
-        empty = sum(len(group) >= 2 and not any(values[var.index] for var in group)
-                    for group in eligible)
+        empty = []
+        for day in dates:
+            if (sector, day) not in demanded:
+                continue
+            # A presence-only manager has no hourly coverage. Keep them in the
+            # exchange group, but do not let DUTY conceal an empty timed sector.
+            timed = [p for p in members if not has_no_clock(p)]
+            present = [work[p["id"], day] for p in timed if (p["id"], day) in work]
+            eligible = [p for p in timed if (p["id"], day) in work
+                        and available_weekends(p, [day], baseline, policy)]
+            if len(eligible) >= 2 and not any(values[var.index] for var in present):
+                empty.append(day)
         if empty:
-            ranked.append((-empty, len(members), sector, members))
-    selected = set()
-    for _, size, _, members in sorted(ranked):
-        if len(selected) + size <= 16:
-            selected.update(person["id"] for person in members)
-    return selected
+            sunday_count = sum(date.fromisoformat(day).weekday() == 6 for day in empty)
+            ranked.append((-sunday_count, -len(empty), len(members), sector,
+                           {person["id"] for person in members}))
+    # Small sectors share one neighborhood. A large team gets its own complete
+    # exchange group instead of being silently excluded by the old size limit.
+    small, large = set(), []
+    for _, _, size, _, members in sorted(ranked):
+        if size <= 8 and len(small | members) <= 16:
+            small.update(members)
+        else:
+            large.append(members)
+    return ([small] if small else []) + large[:2 - bool(small)]
 
 def _read_assignments(solver, employees, active, baseline, work, choices):
     result = []

@@ -10,7 +10,7 @@ import { compareBranches } from "./order";
 import { addDays, dateRange, monthBounds, visibleDates } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
-import { prepareGeneration } from "./generation";
+import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
 
@@ -285,14 +285,18 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   requireSolverSetup(prepared.input);
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
   const calculation = options ? await solveEscala(contextual, options) : await solveEscala(contextual);
-  const result = calculation.status === "INFEASIBLE" ? { ...calculation, conflicts: findGenerationConflicts(contextual) } : calculation;
+  const result = calculation.status === "INFEASIBLE" ? {
+    ...calculation, conflicts: findGenerationConflicts(contextual),
+    message: contextual.generationMode === "REST_ONLY"
+      ? `${calculation.message} Neste modo, os horários de entrada e saída são mantidos. Se puder flexibilizá-los, selecione "Folgas e horários" e gere novamente.` : calculation.message,
+  } : calculation;
   const proposalInput = result.status === "FEASIBLE" || result.status === "OPTIMAL"
     ? parseEscalaInput({ ...contextual, needsRegeneration: false, assignments: result.assignments }) : contextual;
   preserveLockedAssignments(current.input, proposalInput);
   const latest = await getEscala(actor, id);
   assertRevision(latest, expectedRevision);
   const validation = validateEscala(proposalInput);
-  if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING"))) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING") || !matchesRestOnlyReferences(contextual, result.assignments))) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
   return { result, proposalInput, validation, preparation: prepared.preparation };
 }
 
