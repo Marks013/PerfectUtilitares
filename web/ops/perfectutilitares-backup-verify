@@ -1,8 +1,37 @@
 #!/bin/sh
 set -eu
+umask 077
 
 REPOSITORY=${REPOSITORY:-/home/ubuntu/PerfectUtilitares/web}
 BACKUP_ROOT=${BACKUP_ROOT:-/home/ubuntu/perfectutilitares-backups}
+GUARD_LOCK_FILE=${SERVER_OPERATIONS_LOCK_FILE:-/run/lock/server-operations.lock}
+LOCK_WAIT_SECONDS=${BACKUP_LOCK_WAIT_SECONDS:-1800}
+
+case "$LOCK_WAIT_SECONDS" in
+  ''|*[!0-9]*) echo "BACKUP_LOCK_WAIT_SECONDS invalido" >&2; exit 2 ;;
+esac
+[ "$LOCK_WAIT_SECONDS" -le 3600 ] || {
+  echo "BACKUP_LOCK_WAIT_SECONDS deve ser no maximo 3600" >&2
+  exit 2
+}
+case "$GUARD_LOCK_FILE" in
+  /run/lock/*.lock) ;;
+  *) echo "SERVER_OPERATIONS_LOCK_FILE deve estar em /run/lock e terminar em .lock" >&2; exit 2 ;;
+esac
+[ "$(dirname -- "$GUARD_LOCK_FILE")" = /run/lock ] || {
+  echo "SERVER_OPERATIONS_LOCK_FILE deve estar diretamente em /run/lock" >&2
+  exit 2
+}
+[ ! -L "$GUARD_LOCK_FILE" ] || {
+  echo "Lock global de manutencao nao pode ser link simbolico" >&2
+  exit 2
+}
+exec 8>>"$GUARD_LOCK_FILE"
+flock --wait "$LOCK_WAIT_SECONDS" 8 || {
+  echo "Timeout aguardando o lock global de manutencao" >&2
+  exit 1
+}
+
 requested=${1:-latest}
 BACKUP_ROOT=$(realpath -m -- "$BACKUP_ROOT")
 
@@ -25,9 +54,21 @@ verify_database="perfectutil_verify_$(date -u +%Y%m%d%H%M%S)_$$"
 cleanup_database() {
   docker compose exec -T -e VERIFY_DATABASE="$verify_database" db sh -c \
     'PGPASSWORD="$POSTGRES_PASSWORD" dropdb --username "$POSTGRES_USER" --force --if-exists "$VERIFY_DATABASE"' \
-    >/dev/null 2>&1 || true
+    >/dev/null 2>&1
 }
-trap cleanup_database EXIT HUP INT TERM
+finish() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if ! cleanup_database; then
+    echo "Falha ao remover o banco temporario de verificacao" >&2
+    [ "$status" -ne 0 ] || status=1
+  fi
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 docker compose exec -T -e VERIFY_DATABASE="$verify_database" db sh -c \
   'PGPASSWORD="$POSTGRES_PASSWORD" createdb --username "$POSTGRES_USER" --owner "$POSTGRES_USER" "$VERIFY_DATABASE"'
@@ -44,7 +85,8 @@ cleanup_database
 trap - EXIT HUP INT TERM
 
 if [ -f "$backup/host-files.tar.gz" ]; then
-  if tar -tzf "$backup/host-files.tar.gz" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+  archive_paths=$(tar -tzf "$backup/host-files.tar.gz")
+  if printf '%s\n' "$archive_paths" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
     echo "Arquivo de host contem caminho inseguro" >&2
     exit 1
   fi
