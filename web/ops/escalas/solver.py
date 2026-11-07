@@ -431,6 +431,8 @@ def solve(data, control=None):
     model.clear_hints()
     for variable in seed_variables:
         model.add_hint(variable, seed.value(variable))
+    _preserve_daily_timed_presence(model, employees, dates, choices, shifts,
+                                   data["demands"], values, control)
     sunday_coverage = {}
     sector_coverage = {}
     visible_sunday_coverage = {}
@@ -514,6 +516,41 @@ def solve(data, control=None):
     response['optimization'] = {'budgetSeconds': MAX_SECONDS, 'phases': phases,
                                 'unattemptedObjectives': [name for name, _ in goals if name not in attempted]}
     return response
+
+
+def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, demands, values, control=None):
+    """Preserve staffed sector-days in the feasible seed, not hourly coverage.
+
+    Only positive-demand days already containing timed WORK gain a guard.
+    Empty days remain repair goals; DUTY cannot replace timed presence. Existing
+    absence, closure, fixed-rest and locked-assignment constraints stay intact.
+    WORK segments count on each occupied civil date, including overnight shifts.
+    """
+    sectors = {person["id"]: person["sector"] for person in employees if not has_no_clock(person)}
+    active_dates = set(dates)
+    demanded = {(item["sector"], item["date"]) for item in demands
+                if item["minimum"] > 0 and item["date"] in active_dates}
+    if not demanded:
+        return
+    present, occupied = {}, {}
+    for (pid, day), options in choices.items():
+        if control is not None:
+            control.checkpoint()
+        if pid not in sectors:
+            continue
+        for sid, variable in options.items():
+            if (sid, day) not in occupied:
+                occupied[sid, day] = occupied_dates(day, {"segments": [
+                    segment for segment in shifts[sid]["segments"] if segment["kind"] == "WORK"]})
+            for civil in occupied[sid, day]:
+                key = sectors[pid], civil
+                if key in demanded:
+                    present.setdefault(key, {})[variable.index] = variable
+    for variables in present.values():
+        if control is not None:
+            control.checkpoint()
+        if any(values[index] for index in variables):
+            model.add(sum(variables.values()) >= 1)
 
 
 def _repair_clock_fixes(choices, metrics, values):
