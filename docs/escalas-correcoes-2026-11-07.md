@@ -42,14 +42,14 @@ O refinamento observado nas execuções aprovadas levou aproximadamente 0,312–
 - `npm run quality:code`: aprovado na revisão final; 322 arquivos, 2.536 testes aprovados e três testes já ignorados. Não foi executado o E2E isolado, conforme orientação do usuário.
 - Regressões Python focadas: prioridade, cobertura por setor, presença diária, reparo, domingos, cancelamento e dica separada da referência. A troca de dois dias continua contando uma pessoa e dois registros alterados contra a grade original.
 - Regressões funcionais de preparação, referência estável, horários curtos, interface e exportações reais PDF/XLSX.
-- Compose validado com acesso aos arquivos protegidos. Nenhum segredo, dependência ou esquema SQL alterado.
+- Compose validado com acesso aos arquivos protegidos. Nenhum segredo ou esquema SQL alterado; dependências npm/Python preservadas e correções nativas descritas abaixo.
 - A liberação exige imagens com a mesma revisão, saúde dos serviços e smoke autenticado no servidor; esses resultados constam no relatório de entrega.
 
 ## Dados e recuperação
 
 A primeira construção foi retida pela auditoria de imagens e não foi implantada: havia correções nativas disponíveis para `musl`/`musl-utils` e `zlib`. O Dockerfile passou a exigir, nos dois estágios Alpine, pelo menos `musl`/`musl-utils` 1.2.6-r3 e `zlib` 1.3.2-r1. Não foi desativado o scanner nem criada exceção por CVE. Uma nova construção é necessária por essa correção de segurança, não por alteração adicional de regra de escala.
 
-Referências do fornecedor: [CVE-2026-107891 — musl](https://security.alpinelinux.org/vuln/CVE-2026-107891) e [CVE-2026-85091 — zlib](https://security.alpinelinux.org/vuln/CVE-2026-85091). Não houve alteração de versão de Node, OR-Tools, pacotes npm ou pacotes Python. A verificação posterior confirma os pacotes e a ausência de achados HIGH/CRITICAL nas imagens liberadas.
+Referências do fornecedor: [CVE-2026-107891 — musl](https://security.alpinelinux.org/vuln/CVE-2026-107891) e [CVE-2026-85091 — zlib](https://security.alpinelinux.org/vuln/CVE-2026-85091). Não houve alteração de versão de Node, OR-Tools, pacotes npm ou pacotes Python. A liberação exige confirmar os pacotes e ausência de achados HIGH/CRITICAL; o resultado efetivo é registrado no relatório de entrega.
 
 `coverageBasis` é metadado opcional dentro do JSON da revisão, não autorização, mínimo operacional ou evidência jurídica. Para retroceder a uma versão anterior que rejeite esse campo, ainda usando a aplicação nova, salve os mesmos inputs sem `coverageBasis` pela API normal e com a revisão esperada, antes de trocar as imagens. Não remova horários, demandas, ausências ou histórico. As imagens anteriores são preservadas como recuperação; não se executa migração SQL para esta etapa.
 
