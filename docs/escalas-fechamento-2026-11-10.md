@@ -10,6 +10,8 @@ O horário pode ser alterado e salvo em cada planejamento. **Usar padrão da fil
 
 Mudar o fechamento marca os resultados anteriores para nova geração, mantendo a grade visível para comparação. A estimativa de cobertura é recalculada; mínimos operacionais informados manualmente são preservados. A invalidação também ocorre no servidor, mesmo se um cliente omitir o indicador de proposta desatualizada.
 
+Rascunhos já salvos com trabalho depois do fechamento são sinalizados ao abrir. Isso não grava uma revisão nova nem modifica propostas publicadas.
+
 ## Geração
 
 As jornadas propostas são deslocadas integralmente para mais cedo quando necessário, sem reduzir minutos trabalhados nem a duração do intervalo. Alternativas ordinárias, flexíveis e mistas respeitam o fechamento. A opção mista mantém sua janela diurna e o intervalo de três horas nos dias de nove horas.
@@ -19,6 +21,10 @@ As referências originais importadas, históricos, ausências e bloqueios não s
 ## PDF e XLSX
 
 O relatório de horários apresenta os dias e semanas em que cada variante da jornada mista foi efetivamente usada. O intervalo de três horas aparece explicitamente nos dias de nove horas. Semanas com ausência, dias fora do mês visível e transição de carga não são preenchidas artificialmente como três dias de oito horas e dois de nove horas.
+
+A jornada mista continua desativada até a seleção explícita de setores no planejamento. Sem seleção, uma semana uniforme de 42 horas usa cinco jornadas de 8h24.
+
+Na exportação PDF, **Separar setores por página** começa marcado. Folgas, horários e desfalques do mesmo setor ficam juntos conforme a visualização escolhida. Cada setor inicia uma página; setores grandes continuam em páginas exclusivas, sem reduzir a letra para forçar uma única página. Desmarcar volta ao formato compacto. A opção não altera o XLSX.
 
 ## Validação real do Solver
 

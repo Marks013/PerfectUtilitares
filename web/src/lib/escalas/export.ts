@@ -250,14 +250,40 @@ function compactDates(dates: string[]): string {
   return groups.map((group) => group.length > 1 ? escalaDateLabel(group[0]).split(" ")[0] + "–" + escalaDateLabel(group.at(-1) as string).split(" ")[0] : escalaDateLabel(group[0]).split(" ")[0]).join(", ");
 }
 
-export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Promise<Uint8Array> {
-  const model = buildEscalaPresentation(workspace), document = await PDFDocument.create();
+type PdfLayout = { separateSectors?: boolean };
+
+export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both", { separateSectors = true }: PdfLayout = {}): Promise<Uint8Array> {
+  const document = await PDFDocument.create();
+  const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
+  const model = buildEscalaPresentation(workspace);
+  const coverage = coverageReport(workspace.input);
+  const sectors = [...new Set([...model.people.map(({ employee }) => employee.sector),
+    ...model.excluded.map(({ employee }) => employee.sector), ...coverage.map(row => row.sector)])].sort(compareSectors);
+  if (separateSectors && sectors.length) {
+    for (const sector of sectors) {
+      renderPdfSection(document, font, bold, workspace, mode, {
+        ...model, people: model.people.filter(({ employee }) => employee.sector === sector),
+        hoursPeople: model.hoursPeople.filter(({ employee }) => employee.sector === sector),
+        restPeople: model.restPeople.filter(({ employee }) => employee.sector === sector),
+        excluded: model.excluded.filter(({ employee }) => employee.sector === sector),
+      }, coverage.filter(row => row.sector === sector), sector);
+    }
+  } else renderPdfSection(document, font, bold, workspace, mode, model, coverage);
+  const pages = document.getPages();
+  pages.forEach((item, index) => { item.drawText(`PerfectUtilitares | Filial ${safePdfText(workspace.input.branchCode, font)} | ${index + 1}/${pages.length}`, { x: 26, y: 16, size: 8, font }); });
+  document.setTitle(`Escala - Filial ${workspace.input.branchCode} - ${model.dates[0] ?? workspace.input.startDate}`);
+  return document.save();
+}
+
+function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, workspace: EscalaWorkspace, mode: EscalaExportMode,
+  model: ReturnType<typeof buildEscalaPresentation>, coverage: CoverageReportRow[], sectionSector?: string) {
+  const grouped = sectionSector !== undefined;
   const hourly = hourEntries(model, workspace.input);
   const weekly = hourly.some(row => row.application);
-  const coverage = coverageReport(workspace.input);
   const mixedNotice = mixed42ExportNotice(workspace.input);
-  let reportTitle = mode === "hours" ? "Escala de horários" : "Escala de folgas";
-  const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
+  const hasRest = mode !== "hours" && (!grouped || model.restPeople.length > 0);
+  let reportTitle = hasRest ? "Escala de folgas" : mode !== "rest" && model.hoursPeople.length ? "Escala de horários"
+    : grouped && coverage.length ? "Desfalques de cobertura" : mode === "hours" ? "Escala de horários" : "Escala de folgas";
   const width = 842, height = 595; // A4 landscape, including full monthly grids.
   const margin = 26, labelWidth = 260, cellWidth = (width - 2 * margin - labelWidth) / Math.max(1, model.dates.length);
   let page!: PDFPage;
@@ -266,6 +292,9 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   const newPage = (grid: boolean) => {
     page = document.addPage([width, height]); y = height - margin;
     for (const line of wrapText(model.branch, width - 2 * margin, bold, 12)) { write(line, margin, y, 12, true); y -= 16; }
+    if (grouped) for (const line of wrapText("Setor: " + (sectionSector || "Não informado"), width - 2 * margin, bold, 10)) {
+      write(line, margin, y, 10, true); y -= 14;
+    }
     write(`${reportTitle} | 5x2 | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
     write(`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, margin, y, 8); y -= 12;
     if (mixedNotice) {
@@ -297,9 +326,17 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     }
   };
   const section = (title: string) => { if (y < 85) newPage(false); y -= 8; paragraph(title, 11, true); };
+  const textHeight = (text: string, size = 8.5, strong = false) => wrapText(text, width - 2 * margin, strong ? bold : font, size).length * (size + 4);
+  const sectionHeight = (title: string) => 8 + textHeight(title, 11, true);
+  const cellHeight = (lines: string[][]) => Math.max(...lines.map(values => values.length)) * 11 + 8;
+  const headerLines = (headings: string[], widths: number[]) => headings.map((heading, index) => wrapText(heading, widths[index] - 7, bold, 8));
+  const firstRowHeight = (lines: string[][]) => {
+    const height = cellHeight(lines);
+    return height <= 400 ? height : 19; // Oversized rows can start with one line.
+  };
   const tableHeadings = (headings: string[], widths: number[]) => {
-    const lines = headings.map((heading, index) => wrapText(heading, widths[index] - 7, bold, 8));
-    const rowHeight = Math.max(...lines.map(values => values.length)) * 11 + 8;
+    const lines = headerLines(headings, widths);
+    const rowHeight = cellHeight(lines);
     if (y - rowHeight < 45) newPage(false);
     let x = margin;
     lines.forEach((values, index) => {
@@ -309,8 +346,8 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     });
     y -= rowHeight;
   };
-  newPage(mode !== "hours");
-  if (mode === "hours") paragraph(model.legend, 8);
+  newPage(hasRest);
+  if (mode === "hours" && (!grouped || model.hoursPeople.length)) paragraph(model.legend, 8);
   /** A logical row can span pages; repeat short context cells beside continued content. */
   const paginatedRow = (lines: string[][], widths: number[], size: number, strong: (column: number, line: string) => boolean, continuePage: () => void) => {
     const count = Math.max(...lines.map(values => values.length));
@@ -364,26 +401,28 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     });
     y -= rowHeight;
   }
-  if (!model.people.length) paragraph("Nenhum colaborador incluído nesta proposta.");
-  if (mode !== "rest") {
+  if (!grouped && !model.people.length) paragraph("Nenhum colaborador incluído nesta proposta.");
+  if (mode !== "rest" && (!grouped || hourly.length)) {
     reportTitle = "Escala de horários";
-    if (mode === "both") newPage(false);
-    section("Escala de horários");
-    paragraph("Horários propostos por colaborador. Variantes reais permanecem separadas; intervalos não contam como presença.");
+    if (mode === "both" && !grouped) newPage(false);
+    const description = "Horários propostos por colaborador. Variantes reais permanecem separadas; intervalos não contam como presença.";
     let hoursSector: string | undefined;
     const widths = (weekly ? [0.20, 0.10, 0.05, 0.23, 0.13, 0.08, 0.21] : [0.27, 0.18, 0.05, 0.27, 0.15, 0.08]).map(ratio => ratio * (width - 2 * margin));
     const headings = ["Matrícula / colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada", ...(weekly ? ["Aplicação nas semanas"] : [])];
-    const headerHeight = Math.max(...headings.map((heading, index) => wrapText(heading, widths[index] - 7, bold, 8).length)) * 11 + 8;
+    const headerHeight = cellHeight(headerLines(headings, widths));
     const hoursHeader = () => tableHeadings(headings, widths);
-    for (const row of hourly) {
+    const rows = hourly.map(row => {
       const { employee } = row;
       const cells = [employee.registration + " - " + employee.name, employee.role, row.code, row.schedule, row.interval, row.daily === "Não apurada" ? "—" : row.daily, ...(weekly ? [row.application] : [])];
       const lines = cells.map((value, index) => value.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8.5)));
-      const rowHeight = Math.max(...lines.map(value => value.length)) * 11 + 8;
-      const sectorHeight = 8 + wrapText(employee.sector || "Setor não informado", width - 2 * margin, bold, 11).length * 15 + headerHeight;
-      // Match paginatedRow: ordinary rows stay whole; oversized rows start with one visible line.
-      const firstFragmentHeight = rowHeight <= 400 ? rowHeight : 19;
-      if (y - firstFragmentHeight - (hoursSector !== employee.sector ? sectorHeight : 0) < 45) { newPage(false); hoursSector = undefined; }
+      return { employee, lines, sectorHeight: sectionHeight(employee.sector || "Setor não informado") + headerHeight };
+    });
+    const first = rows[0];
+    if (grouped && first && y - sectionHeight(reportTitle) - textHeight(description) - first.sectorHeight - firstRowHeight(first.lines) < 45) newPage(false);
+    section(reportTitle);
+    paragraph(description);
+    for (const { employee, lines, sectorHeight } of rows) {
+      if (y - firstRowHeight(lines) - (hoursSector !== employee.sector ? sectorHeight : 0) < 45) { newPage(false); hoursSector = undefined; }
       if (hoursSector !== employee.sector) {
         section(employee.sector || "Setor não informado"); hoursSector = employee.sector; hoursHeader();
       }
@@ -401,25 +440,27 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   }
   if (coverage.length) {
     reportTitle = "Desfalques de cobertura";
-    newPage(false);
-    section("Desfalques de cobertura");
-    paragraph("Um resumo por setor, sem repetir cargos ou pequenas variações de horário. Até 3 faixas prioritárias; outras ocorrências ficam na consulta por dia do planejamento.");
-    paragraph("Os picos não se somam. Estimativa automática não é demanda confirmada nem indicação de contratação.");
-    paragraph("Dia inteiro sem cobertura com horário definido não significa ninguém escalado: pessoas ENC podem estar presentes. Sem referência positiva, confirme a necessidade do setor.");
+    const descriptions = [
+      "Um resumo por setor, sem repetir cargos ou pequenas variações de horário. Até 3 faixas prioritárias; outras ocorrências ficam na consulta por dia do planejamento.",
+      "Os picos não se somam. Estimativa automática não é demanda confirmada nem indicação de contratação.",
+      "Dia inteiro sem cobertura com horário definido não significa ninguém escalado: pessoas ENC podem estar presentes. Sem referência positiva, confirme a necessidade do setor.",
+    ];
     const widths = [0.16, 0.20, 0.23, 0.16, 0.25].map(ratio => (width - 2 * margin) * ratio);
     const headings = ["Setor", "Dias com alerta / sem cobertura com horário", "Faixas prioritárias", "Maior diferença", "Base / próximo passo"];
     const tableHeader = () => tableHeadings(headings, widths);
     const continuation = () => { newPage(false); tableHeader(); };
-    tableHeader();
-    for (const row of coverage) {
+    const rows = coverage.map(row => {
       const [sector, alerts, presence, windows, peak, action] = coverageReportCells(row);
       const cells = [sector, "Com desfalque: " + alerts + "\n" + presence, windows, peak, action];
-      const lines = cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8)));
+      return cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8)));
+    });
+    const introHeight = sectionHeight(reportTitle) + descriptions.reduce((sum, description) => sum + textHeight(description), 0) + cellHeight(headerLines(headings, widths));
+    if (!grouped || y - introHeight - firstRowHeight(rows[0]) < 45) newPage(false);
+    section(reportTitle);
+    for (const description of descriptions) paragraph(description);
+    tableHeader();
+    for (const lines of rows) {
       paginatedRow(lines, widths, 8, index => index === 0, continuation);
     }
   }
-  const pages = document.getPages();
-  pages.forEach((item, index) => { item.drawText(`PerfectUtilitares | Filial ${safePdfText(workspace.input.branchCode, font)} | ${index + 1}/${pages.length}`, { x: margin, y: 16, size: 8, font }); });
-  document.setTitle(`Escala - Filial ${workspace.input.branchCode} - ${model.dates[0] ?? workspace.input.startDate}`);
-  return document.save();
 }

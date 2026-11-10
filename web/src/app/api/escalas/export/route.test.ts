@@ -68,7 +68,7 @@ describe("/api/escalas/export", () => {
     expect(strFromU8(zip["xl/workbook.xml"])).toContain("$1:$4");
   });
   it("exports a readable compact draft PDF without the removed load summary", async () => {
-    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&mode=rest"));
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&mode=rest&separateSectors=false"));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/pdf");
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -135,6 +135,25 @@ it("requires recalculation of legacy six-day reports instead of silently exporti
 });
 
 describe("export availability and authorization on cache reuse", () => {
+  it("defaults to grouped PDF, separates the compact cache and leaves XLSX unaffected", async () => {
+    const url = "http://localhost/api/escalas/export?id=w1&mode=rest";
+    const grouped = await GET(new Request(url + "&format=pdf"));
+    const explicit = await GET(new Request(url + "&format=pdf&separateSectors=true"));
+    const compact = await GET(new Request(url + "&format=pdf&separateSectors=false"));
+    expect([grouped.status, explicit.status, compact.status]).toEqual([200, 200, 200]);
+    const bytes = Buffer.from(await grouped.arrayBuffer());
+    expect(Buffer.from(await explicit.arrayBuffer())).toEqual(bytes);
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBe(2);
+    expect((await PDFDocument.load(await compact.arrayBuffer())).getPageCount()).toBe(1);
+    expect(mocks.capacity).toHaveBeenCalledTimes(2);
+    const xlsx = await GET(new Request(url + "&format=xlsx"));
+    const xlsxFlag = await GET(new Request(url + "&format=xlsx&separateSectors=false"));
+    expect([xlsx.status, xlsxFlag.status]).toEqual([200, 200]);
+    expect(Buffer.from(await xlsx.arrayBuffer())).toEqual(Buffer.from(await xlsxFlag.arrayBuffer()));
+    expect(mocks.capacity).toHaveBeenCalledTimes(3);
+    expect((await GET(new Request(url + "&format=pdf&separateSectors=1"))).status).toBe(400);
+    expect(mocks.get).toHaveBeenCalledTimes(5);
+  });
   it("reuses real bytes only after authorizing every request", async () => {
     const url = "http://localhost/api/escalas/export?id=w1&format=xlsx&revision=3";
     const first = await GET(new Request(url)), second = await GET(new Request(url));

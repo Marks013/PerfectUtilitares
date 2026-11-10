@@ -13,7 +13,7 @@ import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
-import { storeClosingMinutes } from "./store-hours";
+import { fitsStoreClosing, storeClosingMinutes } from "./store-hours";
 
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
@@ -35,6 +35,16 @@ export function parseEscalaInput(value: unknown): EscalaInput {
 }
 
 function view(row: WorkspaceRow, input: EscalaInput, permission: EscalaPermission): EscalaWorkspace {
+  // A saved draft can predate the closing rule. Flag its actual workdays on
+  // read, without writing a revision or modifying published history.
+  if (row.status !== "PUBLISHED" && !input.needsRegeneration && input.assignments.length) {
+    const closing = storeClosingMinutes(input);
+    const late = new Set(input.shifts.filter(shift => !fitsStoreClosing(shift, closing)).map(shift => shift.id));
+    const included = new Set(input.employees.filter(person => person.planningEnabled !== false).map(person => person.id));
+    if (late.size && input.assignments.some(day => day.kind === "WORK" && included.has(day.employeeId) && late.has(day.shiftId ?? ""))) {
+      input = { ...input, needsRegeneration: true };
+    }
+  }
   return { id: row.id, revision: row.revision, status: row.status === "PUBLISHED" ? "PUBLISHED" : "DRAFT", input,
     validation: validateEscala(input), ...permission, updatedAt: row.updatedAt.toISOString() };
 }

@@ -49,6 +49,55 @@ async function pdfText(bytes: Uint8Array) {
 }
 
 describe("lean operational files", () => {
+  it.each(["rest", "hours", "both"] as const)("keeps each sector's %s and shortages together on exclusive pages", async (mode) => {
+    const source = scenario();
+    source.input.demands.push({ id: "other", date: "2026-11-02", sector: "Açougue", start: 480, end: 1080, minimum: 1, estimated: true });
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const task = pdfjs.getDocument(pdfJsServerDocumentOptions(await exportEscalaPdf(source, mode)));
+    const document = await task.promise;
+    try {
+      expect(document.numPages).toBe(2);
+      const pages = await Promise.all([1, 2].map(async number => {
+        const page = await document.getPage(number);
+        const content = await page.getTextContent();
+        return content.items.filter(item => "str" in item).map(item => item.str).join(" ");
+      }));
+      expect(pages[0]).toContain("Setor: Açougue");
+      expect(pages[0]).toContain("03 - Bia");
+      expect(pages[0]).not.toContain("Padaria");
+      expect(pages[1]).toContain("Setor: Padaria");
+      expect(pages[1]).toContain("01 - Zélia");
+      expect(pages[1]).not.toContain("Açougue");
+      for (const page of pages) {
+        expect(page).toContain("Desfalques de cobertura");
+        if (mode !== "rest") expect(page).toContain("Horários propostos por colaborador.");
+        if (mode !== "hours") expect(page).toContain("Matrícula / colaborador");
+      }
+    } finally { await task.destroy(); }
+  });
+
+  it("continues a large sector on exclusive pages before moving to the next sector", async () => {
+    const source = scenario();
+    const person = source.input.employees[0];
+    for (let index = 0; index < 38; index++) {
+      const id = `extra-${index}`;
+      source.input.employees.push({ ...person, id, registration: String(100 + index), name: `Pessoa ${index}` });
+    }
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const task = pdfjs.getDocument(pdfJsServerDocumentOptions(await exportEscalaPdf(source, "rest")));
+    const document = await task.promise;
+    try {
+      expect(document.numPages).toBeGreaterThan(3);
+      for (let number = 2; number <= document.numPages; number++) {
+        const page = await document.getPage(number);
+        const content = await page.getTextContent();
+        const text = content.items.filter(item => "str" in item).map(item => item.str).join(" ");
+        expect(text).toContain("Setor: Padaria");
+        expect(text).not.toContain("Açougue");
+      }
+    } finally { await task.destroy(); }
+  });
+
   it("keeps Excel filtering over records only and selects the usable frozen pane", () => {
     const archive = unzipSync(exportEscalaXlsx(scenario()));
     for (const [path, data] of Object.entries(archive)) if (/worksheets\/sheet\d+\.xml$/.test(path)) {
@@ -131,7 +180,7 @@ describe("lean operational files", () => {
     expect(await pdfText(await exportEscalaPdf(source, "hours"))).toContain("Aprendiz Sintético");
   });
   it("prints only proposed schedule variants and excludes support warnings", async () => {
-    const text = await pdfText(await exportEscalaPdf(scenario(), "hours"));
+    const text = await pdfText(await exportEscalaPdf(scenario(), "hours", { separateSectors: false }));
     expect(text).toContain("08:00-12:00 / 13:00-17:24");
     expect(text).toContain("09:00-13:00 / 14:00-18:24");
     const schedule = text.split("Horários propostos por colaborador.")[1].split("Desfalques de cobertura")[0];

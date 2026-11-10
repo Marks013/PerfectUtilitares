@@ -59,6 +59,14 @@ function sample() {
 }
 
 describe("Escalas practical accessibility and publication states", () => {
+  it("defaults to a clearly labeled PDF-only sector separation", () => {
+    const { workspace, validation } = sample();
+    const html = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />);
+    expect(html).toMatch(/<label[^>]*><input(?=[^>]*type="checkbox")(?=[^>]*checked="")[^>]*\/><span>Separar setores por página<\/span><\/label>/);
+    expect(html).toContain("Só no PDF. Desmarque para reunir setores em menos páginas.");
+    expect(html).toContain("Gerar XLSX");
+  });
+
   it("does not ask for a second weekly journey in special rules", () => {
     const { input } = sample();
     const html = renderToStaticMarkup(<Rules input={input} disabled={false} onChange={vi.fn()} />);

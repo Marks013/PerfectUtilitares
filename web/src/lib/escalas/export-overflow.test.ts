@@ -28,6 +28,32 @@ function crowded(): EscalaWorkspace {
 }
 
 describe("large but valid operational reports", () => {
+  it("keeps grouped table headings with data near the bottom of A4 pages", async () => {
+    const workspace = crowded();
+    const drawn: { text: string; page: PDFPage }[] = [];
+    const original = PDFPage.prototype.drawText;
+    const spy = vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: PDFPage, text, options) {
+      drawn.push({ text, page: this });
+      return original.call(this, text, options);
+    });
+    try {
+      for (const count of [7, 8, 9, 10, 11]) {
+        drawn.length = 0;
+        const employees = workspace.input.employees.slice(0, count);
+        const ids = new Set(employees.map(person => person.id));
+        const input = { ...workspace.input, employees, assignments: workspace.input.assignments.filter(day => ids.has(day.employeeId)) };
+        await exportEscalaPdf({ ...workspace, input }, "both");
+        const hasDataOn = (heading: string, matches: (text: string) => boolean) => {
+          const headers = drawn.filter(item => item.text === heading);
+          expect(headers.length).toBeGreaterThan(0);
+          expect(headers.every(header => drawn.some(item => item.page === header.page && matches(item.text)))).toBe(true);
+        };
+        hasDataOn("Horário proposto", text => text.includes("08:00-12:00 /"));
+        hasDataOn("Faixas prioritárias", text => text.startsWith("Com desfalque:"));
+      }
+    } finally { spy.mockRestore(); }
+  });
+
   it("keeps each hourly sector heading beside its first employee on A4", async () => {
     const workspace = crowded();
     workspace.input.demands = [];
@@ -71,7 +97,7 @@ describe("large but valid operational reports", () => {
       return original.call(this, text, options);
     });
     try {
-      const bytes = await exportEscalaPdf(workspace, "hours");
+      const bytes = await exportEscalaPdf(workspace, "hours", { separateSectors: false });
       expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(1);
       expect(drawn.filter(item => item.y < 16)).toEqual([]);
       const report = new Set(drawn.filter(item => item.text.includes("Desfalques de cobertura")).map(item => item.page));

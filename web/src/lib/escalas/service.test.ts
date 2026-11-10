@@ -62,6 +62,20 @@ beforeEach(() => {
 });
 
 describe("canonical scheduling branch service", () => {
+  it("flags a legacy draft with actual work after closing without writing or modifying published history", async () => {
+    const value = input();
+    value.shifts[0].segments = value.shifts[0].segments.map(segment => ({ ...segment, start: segment.start + 180, end: segment.end + 180 }));
+    useCurrent(value);
+    const draft = await getEscala(actor, "w1");
+    expect(draft.input.needsRegeneration).toBe(true);
+    expect(draft.input.assignments).toEqual(value.assignments);
+    expect(draft.validation.issues).toContainEqual(expect.objectContaining({ code: "SCENARIO_OUTDATED" }));
+    expect(value.needsRegeneration).toBeUndefined();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+    useCurrent(value, "PUBLISHED");
+    expect((await getEscala(actor, "w1")).input.needsRegeneration).toBeUndefined();
+  });
+
   it("persists a closing override and invalidates the old roster even when a client omits the stale flag", async () => {
     const before = input();
     const value = { ...before, storeClosingMinutes: 1260, needsRegeneration: false,
