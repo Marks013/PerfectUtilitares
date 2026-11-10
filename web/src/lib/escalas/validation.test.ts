@@ -37,6 +37,43 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
 function codes(input: EscalaInput) { return validateEscala(input).issues.map((issue) => issue.code); }
 
 describe("independent Escalas validation", () => {
+  it.each([
+    { branchCode: "02", closing: undefined, end: 1200 },
+    { branchCode: "0018", closing: undefined, end: 1320 },
+    { branchCode: "02", closing: 1440, end: 1440 },
+  ])("enforces the effective closing on actual work, not historical references: $branchCode/$end", ({ branchCode, closing, end }) => {
+    const input = fixture();
+    input.branchCode = branchCode;
+    input.storeClosingMinutes = closing;
+    input.policy.nightWorkReviewed = true;
+    input.demands = [];
+    const shift = input.shifts[0];
+    const delta = end - Math.max(...shift.segments.map(segment => segment.end));
+    shift.segments = shift.segments.map(segment => ({ ...segment, start: segment.start + delta, end: segment.end + delta }));
+    expect(codes(input)).not.toContain("STORE_CLOSING_EXCEEDED");
+    shift.segments = shift.segments.map(segment => ({ ...segment, start: segment.start + 1, end: segment.end + 1 }));
+    const original = structuredClone(input);
+    const result = validateEscala(input);
+    expect(result.valid).toBe(false);
+    expect(result.readyToPublish).toBe(false);
+    expect(result.issues.filter(issue => issue.code === "STORE_CLOSING_EXCEEDED")).toHaveLength(5);
+    expect(input).toEqual(original);
+    expect(validateEscala(input, { publishedSnapshot: true }).issues.map(issue => issue.code)).not.toContain("STORE_CLOSING_EXCEEDED");
+    const previousShift = { ...structuredClone(shift), id: "history-only" };
+    input.shifts.push(previousShift);
+    input.employees[0].history = input.employees[0].history.map(day => day.kind === "WORK" ? { ...day, shiftId: previousShift.id } : day);
+    shift.segments = shift.segments.map(segment => ({ ...segment, start: segment.start - 1, end: segment.end - 1 }));
+    expect(codes(input)).not.toContain("STORE_CLOSING_EXCEEDED");
+  });
+
+  it("does not reinterpret protected work excluded from planning as current staffing", () => {
+    const input = fixture();
+    input.employees[0].planningEnabled = false;
+    input.assignments = input.assignments.map(day => ({ ...day, locked: true }));
+    input.shifts[0].segments = input.shifts[0].segments.map(segment => ({ ...segment, start: segment.start + 200, end: segment.end + 200 }));
+    expect(codes(input)).not.toContain("STORE_CLOSING_EXCEEDED");
+  });
+
   it("checks shared shifts for each person and reflects an edited shift on the next validation", () => {
     const input = fixture();
     const second = { ...structuredClone(input.employees[0]), id: "person-2", registration: "0002" };

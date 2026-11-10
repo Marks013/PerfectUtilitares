@@ -454,8 +454,9 @@ def solve(data, control=None):
     sector_coverage = {}
     visible_sunday_coverage = {}
     visible_sector_coverage = {}
+    closing_coverage = {}
     coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage,
-                         visible_sunday_coverage, visible_sector_coverage)
+                         visible_sunday_coverage, visible_sector_coverage, closing_coverage)
     if coverage is False:
         return _response("FEASIBLE", result, started)
     if isinstance(coverage, str):
@@ -476,7 +477,9 @@ def solve(data, control=None):
     # Prioritize their person-minute shortages before rotation and preferences.
     concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values)
     sunday_objective = sum(term for terms in sunday_coverage.values() for term in terms)
-    goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective), ("SUNDAY_BALANCE", sum(sundays)),
+    closing_objective = sum(term for terms in closing_coverage.values() for term in terms)
+    goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective),
+             ("CLOSING_COVERAGE", closing_objective), ("SUNDAY_BALANCE", sum(sundays)),
              ("SATURDAY_BALANCE", sum(saturdays)),
              ("REST_DISTRIBUTION", sum(concentration)), ("REST_ROTATION", sum(rotation)),
              ("PEOPLE_CHANGED", sum(people_changed)), ("STABILITY", sum(stability_terms)),
@@ -517,11 +520,13 @@ def solve(data, control=None):
                                      protected_groups={goals[0][0]: sundays + [sum(terms) for terms in sunday_coverage.values()]
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
-                                                       + [sum(terms) for terms in visible_sector_coverage.values()]} if goals else {},
+                                                       + [sum(terms) for terms in visible_sector_coverage.values()]
+                                                       + [sum(terms) for terms in closing_coverage.values()]} if goals else {},
                                      employee_groups=list(groups.values()),
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
                                                       for sector in sector_coverage}, sunday_coverage=sunday_coverage,
                                      sector_coverage=sector_coverage,
+                                     closing_coverage=closing_coverage,
                                      decision_variables=decisions,
                                      initial_decision_hints=warm_decisions,
                                      initial_repair_groups=repair_groups,
@@ -913,7 +918,8 @@ def _civil_rest(model, person, dates, active_days, choices, work, off, prior, sh
     return occupied_weekends
 
 
-def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None, sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None):
+def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None,
+              sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None, closing_terms=None):
     relevant = [d for d in data['demands'] if d['minimum'] > 0
                 and not (scope == 'HARD' and d.get('estimated') is True)
                 and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
@@ -923,6 +929,9 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
     index = {}
     shortages, grouped = [], {}
     visible_month = _coverage_month(data)
+    closing = data.get('storeClosingMinutes') if closing_terms is not None else None
+    if type(closing) is not int or not 1 <= closing <= 1440:
+        closing = None  # Older callers supplied no effective closing time.
 
     def register(pid, day, sid, variable):
         person = by_id[pid]
@@ -961,7 +970,13 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                 intervals.append((left, right, variable))
                 points.update((left, right))
         ordered = sorted(points)
-        estimated = demand.get("estimated") is True
+        in_visible_month = visible_month and demand['date'].startswith(visible_month + '-')
+        is_sunday = estimated and date.fromisoformat(demand['date']).weekday() == 6
+        closing_window = None
+        if (estimated and closing is not None and (not visible_month or in_visible_month)
+                and demand['start'] < closing and demand['end'] > closing - 60):
+            closing_window = (instant(demand['date'], max(0, closing - 60)),
+                              instant(demand['date'], closing))
         for interval_index, (left, right) in enumerate(zip(ordered, ordered[1:])):
             available = [v for start, end, v in intervals if start <= left and end >= right]
             if estimated:
@@ -975,22 +990,23 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                     # Their durations are added, so the person-minute objective is unchanged.
                     key = (minimum, tuple(sorted(v.index for v in variables)), demand['sector'])
                     if key not in grouped:
-                        grouped[key] = [variables, 0, 0, 0, 0]
+                        grouped[key] = [variables, 0, 0, 0, 0, 0]
                     grouped[key][1] += int(right - left)
-                    is_sunday = date.fromisoformat(demand['date']).weekday() == 6
                     if is_sunday:
                         grouped[key][2] += int(right - left)
-                    if visible_month and demand['date'].startswith(visible_month + '-'):
+                    if in_visible_month:
                         grouped[key][3] += int(right - left)
                         if is_sunday:
                             grouped[key][4] += int(right - left)
+                    if closing_window:
+                        grouped[key][5] += max(0, int(min(right, closing_window[1]) - max(left, closing_window[0])))
                 continue
             if not available and demand["minimum"] > 0:
                 minute = int(left - instant(demand["date"], 0))
                 return (f"Cobertura sem horário disponível em {demand['date']} às {minute // 60:02d}:{minute % 60:02d}. "
                         "Confira os turnos permitidos, intervalos de refeição, setor e cargo da faixa antes de alterar o efetivo.")
             model.add(cp_model.LinearExpr.sum(available) >= demand["minimum"])
-    for index, ((minimum, _, sector), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight)) in enumerate(grouped.items()):
+    for index, ((minimum, _, sector), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight, closing_weight)) in enumerate(grouped.items()):
         shortage = model.new_int_var(0, minimum, f'coverage-gap:{index}')
         model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
         shortages.append(weight * shortage)
@@ -999,11 +1015,13 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
         if sunday_terms is not None and sunday_weight:
             sunday_terms.setdefault(sector, []).append(sunday_weight * shortage)
         # Retain horizon guards and also protect the month presented in UI/exports.
-        # Reuse the same shortage variables; no additional solve or date relaxation.
+        # Closing reuses the same shortage variables and does not invent new demand.
         if visible_sector_terms is not None and visible_weight:
             visible_sector_terms.setdefault(sector, []).append(visible_weight * shortage)
         if visible_sunday_terms is not None and visible_sunday_weight:
             visible_sunday_terms.setdefault(sector, []).append(visible_sunday_weight * shortage)
+        if closing_terms is not None and closing_weight:
+            closing_terms.setdefault(sector, []).append(closing_weight * shortage)
         if values is not None:
             present = sum(values[v.index] for v in variables)
             remember(model, values, shortage, max(0, minimum - present))

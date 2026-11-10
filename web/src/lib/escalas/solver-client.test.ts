@@ -56,12 +56,32 @@ describe("isolated schedule processor client", () => {
           key, person[key as "history"].map(entry => ({ ...entry, employeeId: person.id })),
         ])),
       })) };
-      expect(restored).toEqual(escalaInputSchema.parse(original));
+      expect(restored).toEqual({ ...escalaInputSchema.parse(original), storeClosingMinutes: 1200 });
       return Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 1 });
     });
     vi.stubGlobal("fetch", fetch);
     expect((await solveEscala(input)).status).toBe("FEASIBLE");
     expect(input).toEqual(original);
+  });
+
+  it.each([
+    { branchCode: "018", storeClosingMinutes: undefined, expected: 1320 },
+    { branchCode: "18", storeClosingMinutes: 1440, expected: 1440 },
+  ])("sends effective closing for $branchCode and accepts a closing coverage phase", async ({ branchCode, storeClosingMinutes, expected }) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = { ...fixture(), branchCode, storeClosingMinutes };
+    const optimization = {
+      budgetSeconds: 12,
+      phases: [{
+        objective: "CLOSING_COVERAGE", status: "FEASIBLE", wallTimeSeconds: 0.2,
+        budgetSeconds: 0.5, initialValue: 60, incumbentValue: 30,
+      }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, options?: RequestInit) => {
+      expect(JSON.parse(String(options?.body)).input.storeClosingMinutes).toBe(expected);
+      return Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 1, optimization });
+    }));
+    expect((await solveEscala(input)).optimization).toEqual(optimization);
   });
 
   it("rejects an oversized valid schema before sending or waiting for the processor", async () => {
@@ -149,21 +169,21 @@ describe("isolated schedule processor client", () => {
     expect(validateEscala({ ...input, assignments: result.assignments }).valid).toBe(true);
   });
 
-  it.each([14, 15])("validates the bounded diagnostic contract with %i phases", async count => {
+  it.each([15, 16])("validates the bounded diagnostic contract with %i phases", async count => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
-    const names = ["COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "TIE_BREAK"];
+    const names = ["COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "TIE_BREAK"];
     const optimization = { budgetSeconds: 12, phases: names.slice(0, count).map(objective => ({ objective, status: "FEASIBLE", wallTimeSeconds: 0.1, budgetSeconds: 0.2, initialValue: 500, incumbentValue: 400 })) };
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 2, optimization })));
-    if (count === 14) {
+    if (count === 15) {
       const result = await solveEscala(fixture());
       expect(result.optimization).toEqual(optimization);
       expect(result.assignments).toEqual(completeAssignments());
     } else await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
   });
 
-  it("accepts all ten active objectives including Sunday coverage without losing assignments", async () => {
+  it("accepts all eleven active objectives including Sunday and closing coverage without losing assignments", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
-    const objectives = ["COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"];
+    const objectives = ["COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"];
     const optimization = { budgetSeconds: 12, unattemptedObjectives: [], phases: objectives.map(objective => ({
       objective, status: "FEASIBLE", wallTimeSeconds: 0.1, budgetSeconds: 0.2,
       initialValue: 500, incumbentValue: 400, searchScope: "GLOBAL",
@@ -236,7 +256,7 @@ describe("isolated schedule processor client", () => {
     vi.stubGlobal("fetch", fetch);
     expect((await solveEscala(fixture())).status).toBe("OPTIMAL");
     expect(fetch).toHaveBeenCalledWith(new URL("http://escalas-solver:8080/solve"), expect.objectContaining({ method: "POST" }));
-    expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).toEqual({ input: fixture() });
+    expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).toEqual({ input: { ...fixture(), storeClosingMinutes: 1200 } });
   });
   it("preserves bounded numeric phase diagnostics on a real-shaped success response", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");

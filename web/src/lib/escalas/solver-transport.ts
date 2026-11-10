@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import { EscalaSolverError } from "./solver-errors";
+import { storeClosingMinutes } from "./store-hours";
 import type { EscalaAssignment, EscalaInput } from "./types";
 
 type SolverOperation = { operationId: string; cancelToken: string };
@@ -95,7 +96,8 @@ function scopedHistory(entries: EscalaAssignment[]) {
 export async function requestSolver(input: EscalaInput, options: SolverOptions = {}) {
   if (options.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   const body = JSON.stringify({ input: {
-    ...input, employees: input.employees.map(person => ({
+    ...input, storeClosingMinutes: storeClosingMinutes(input),
+    employees: input.employees.map(person => ({
       ...person,
       history: scopedHistory(person.history),
       ...(person.planningHistory ? { planningHistory: scopedHistory(person.planningHistory) } : {}),

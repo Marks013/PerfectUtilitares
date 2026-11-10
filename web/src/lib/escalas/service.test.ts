@@ -62,6 +62,67 @@ beforeEach(() => {
 });
 
 describe("canonical scheduling branch service", () => {
+  it("rejects edited late work even when a caller marks the draft outdated", async () => {
+    const before = input();
+    const changed = structuredClone(before);
+    changed.needsRegeneration = true;
+    changed.shifts[0].segments = changed.shifts[0].segments.map(segment => ({ ...segment, start: segment.start + 157, end: segment.end + 157 }));
+    await expect(saveEscala(actor, "w1", 1, changed)).rejects.toMatchObject({ code: "ESCALA_CLOSING_EXCEEDED", status: 422 });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("saves a reduced closing as an outdated draft, permits unlocking and refuses publication until corrected", async () => {
+    const before = input();
+    before.assignments[0].locked = true;
+    useCurrent(before);
+    const changed = structuredClone(before);
+    changed.storeClosingMinutes = 1020;
+    changed.assignments[0].locked = false;
+    const saved = await saveEscala(actor, "w1", 1, changed);
+    expect(saved.input.needsRegeneration).toBe(true);
+    expect(saved.input.assignments[0].locked).toBe(false);
+    expect(saved.validation.valid).toBe(false);
+    expect(saved.validation.issues).toContainEqual(expect.objectContaining({ code: "STORE_CLOSING_EXCEEDED" }));
+    expect(mocks.revision.create).toHaveBeenCalledOnce();
+    useCurrent(saved.input);
+    await expect(saveEscala(actor, "w1", 1, saved.input, true)).rejects.toMatchObject({ code: "ESCALA_NOT_READY", status: 422 });
+    expect(mocks.revision.create).toHaveBeenCalledOnce();
+    const corrected = structuredClone(saved.input);
+    corrected.shifts[0].segments = corrected.shifts[0].segments.map(segment => ({ ...segment, start: segment.start - 24, end: segment.end - 24 }));
+    corrected.needsRegeneration = false;
+    corrected.demands = corrected.demands.map(demand => ({ ...demand, start: demand.start - 24, end: demand.end - 24 }));
+    const result = await saveEscala(actor, "w1", 1, corrected, true);
+    expect(result.status).toBe("PUBLISHED");
+    expect(result.validation.readyToPublish).toBe(true);
+  });
+
+  it("checks even an already published late snapshot again before idempotent publication", async () => {
+    const value = input();
+    value.demands = [];
+    value.shifts[0].segments = value.shifts[0].segments.map(segment => ({ ...segment, start: segment.start + 157, end: segment.end + 157 }));
+    useCurrent(value, "PUBLISHED");
+    expect((await getEscala(actor, "w1")).validation.issues.map(issue => issue.code)).not.toContain("STORE_CLOSING_EXCEEDED");
+    await expect(saveEscala(actor, "w1", 1, value, true)).rejects.toMatchObject({ code: "ESCALA_NOT_READY" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("stops before the solver when published overlapping work exceeds the current closing", async () => {
+    const current = period("2026-10-26", 2);
+    current.demands = [];
+    const published = period("2026-11-02");
+    published.demands = [];
+    published.shifts[0].segments = published.shifts[0].segments.map(segment => ({ ...segment, start: segment.start + 157, end: segment.end + 157 }));
+    current.assignments = current.assignments.filter(day => day.date < published.startDate);
+    useCurrent(current);
+    mocks.workspace.findMany.mockResolvedValue([{ revisions: [{ input: published }] }]);
+    const original = structuredClone(published);
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_CLOSING_PUBLISHED_CONFLICT", status: 409, message: expect.stringContaining("2026-11-02") });
+    expect(mocks.solve).not.toHaveBeenCalled();
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(published).toEqual(original);
+  });
+
   it("flags a legacy draft with actual work after closing without writing or modifying published history", async () => {
     const value = input();
     value.shifts[0].segments = value.shifts[0].segments.map(segment => ({ ...segment, start: segment.start + 180, end: segment.end + 180 }));

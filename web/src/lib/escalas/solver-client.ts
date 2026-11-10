@@ -7,7 +7,7 @@ import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
 
-const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
+const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -15,7 +15,7 @@ const resultSchema = z.strictObject({
   wallTimeSeconds: z.number().finite().min(0).max(60),
   optimization: z.strictObject({
     budgetSeconds: z.number().finite().min(0).max(60),
-    unattemptedObjectives: z.array(objectiveName).max(10).optional(),
+    unattemptedObjectives: z.array(objectiveName).max(11).optional(),
     phases: z.array(z.strictObject({
       objective: objectiveName,
       status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -39,8 +39,8 @@ const resultSchema = z.strictObject({
       if (phase.members && new Set(phase.members.map(member => member.objective)).size !== phase.members.length) {
         context.addIssue({ code: "custom", path: ["members"], message: "Objetivos conjuntos duplicados" });
       }
-    // Ten ordered objectives plus at most four bounded sector repairs.
-    })).max(14),
+    // Eleven ordered objectives plus at most four bounded sector repairs.
+    })).max(15),
   }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),

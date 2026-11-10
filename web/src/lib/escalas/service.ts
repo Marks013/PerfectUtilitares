@@ -13,7 +13,7 @@ import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
-import { fitsStoreClosing, storeClosingMinutes } from "./store-hours";
+import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes, workAfterStoreClosing } from "./store-hours";
 
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
@@ -46,7 +46,7 @@ function view(row: WorkspaceRow, input: EscalaInput, permission: EscalaPermissio
     }
   }
   return { id: row.id, revision: row.revision, status: row.status === "PUBLISHED" ? "PUBLISHED" : "DRAFT", input,
-    validation: validateEscala(input), ...permission, updatedAt: row.updatedAt.toISOString() };
+    validation: validateEscala(input, { publishedSnapshot: row.status === "PUBLISHED" }), ...permission, updatedAt: row.updatedAt.toISOString() };
 }
 
 export async function listEscalas(actor: EscalaActor) {
@@ -230,6 +230,21 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
       demands: input.demands.filter(demand => demand.estimated !== true) };
   }
   input = publishedPlanningContext(input, []);
+  const lateWork = workAfterStoreClosing(input);
+  if (lateWork.length && !publish) {
+    const previous = new Map(current.input.assignments.map(day => [assignmentKey(day), day]));
+    const previousShifts = new Map(current.input.shifts.map(shift => [shift.id, shift.segments]));
+    const nextShifts = new Map(input.shifts.map(shift => [shift.id, shift.segments]));
+    // Keep an obsolete draft recoverable, including an explicit unlock. Never
+    // accept newly introduced or edited late work, even with a caller-supplied stale flag.
+    const unchangedLateWork = lateWork.every(day => {
+      const old = previous.get(assignmentKey(day));
+      return old?.kind === "WORK" && old.shiftId === day.shiftId
+        && JSON.stringify(previousShifts.get(old.shiftId ?? "")) === JSON.stringify(nextShifts.get(day.shiftId ?? ""));
+    });
+    if (!unchangedLateWork) throw new EscalaError(422, "ESCALA_CLOSING_EXCEEDED", `Há trabalho após o fechamento da loja (${storeClosingLabel(input)}). Ajuste a saída ou gere uma nova proposta antes de salvar. Os registros não foram alterados.`);
+    input = { ...input, needsRegeneration: true };
+  }
   let validation = validateEscala(input);
   const status = publish ? "PUBLISHED" : "DRAFT";
   const alreadyPublished = publish && current.status === "PUBLISHED";
@@ -299,6 +314,8 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const prepared = prepareGeneration(current.input);
   requireSolverSetup(prepared.input);
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
+  const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
+  if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
   const calculation = options ? await solveEscala(contextual, options) : await solveEscala(contextual);
   const result = calculation.status === "INFEASIBLE" ? {
     ...calculation, conflicts: findGenerationConflicts(contextual),

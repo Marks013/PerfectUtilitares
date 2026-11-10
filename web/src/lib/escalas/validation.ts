@@ -6,6 +6,7 @@ import { fixedBoundaryReservations } from "./boundary";
 import { validateEmployee } from "./validation-employee";
 import { validateCoverage, validateJourney, validateUntimedDuty, workJourney, type WorkJourney } from "./validation-time";
 import { CCT_FROM, CCT_UNTIL, SUPERMARKET_CCT, transitionWeeks, usesMixed42, usesMixed42Week } from "./labor-rules";
+import { storeClosingLabel, workAfterStoreClosing } from "./store-hours";
 
 function addEmployeeEntry<T>(index: Map<string, T[]>, employeeId: string, value: T) {
   const entries = index.get(employeeId);
@@ -14,7 +15,7 @@ function addEmployeeEntry<T>(index: Map<string, T[]>, employeeId: string, value:
 }
 
 /** Recalculates from assignments, without trusting optimizer totals or feasibility. */
-export function validateEscala(rawInput: EscalaInput): EscalaValidation {
+export function validateEscala(rawInput: EscalaInput, options: { publishedSnapshot?: boolean } = {}): EscalaValidation {
   const parsed = escalaInputSchema.safeParse(rawInput);
   if (!parsed.success) return {
     valid: false, readyToPublish: false, summaries: [], minimumCoverageMargin: null,
@@ -22,6 +23,10 @@ export function validateEscala(rawInput: EscalaInput): EscalaValidation {
   };
   const input = parsed.data;
   const issues: EscalaIssue[] = [];
+  if (!options.publishedSnapshot) for (const day of workAfterStoreClosing(input)) issues.push({
+    code: "STORE_CLOSING_EXCEEDED", severity: "ERROR", employeeId: day.employeeId, date: day.date,
+    message: `Este dia termina após o fechamento da loja (${storeClosingLabel(input)}). Ajuste a saída ou gere uma nova proposta; se o dia estiver bloqueado, desbloqueie-o antes. O horário importado foi preservado.`,
+  });
   const mixedPeople = new Map(input.employees.filter(person => usesMixed42(input, person)).map(person => [person.id, person]));
   if (input.defaultWeeklyHours === 42 && input.mixed42Sectors?.length) issues.push({
     code: "MIXED_42_SIMULATION", severity: "PENDING",

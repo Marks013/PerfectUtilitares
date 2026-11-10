@@ -83,10 +83,9 @@ def _movable_people(variables, values, groups, limit=36):
 
 
 def _coverage_people(groups, shortages, values, limit=36):
-    """Release the complete sectors with the largest remaining Sunday shortage.
+    """Release complete sectors with the largest shortage for this phase.
 
-    Keep every week movable: transferring one Sunday's rest can require an
-    exchange with a distant week to preserve each person's Sunday rotation.
+    Keep every week movable so off-day exchanges can respect Sunday rotation.
     """
     snapshot = Snapshot(values)
     ranked = sorted(((snapshot.value(sum(shortages.get(sector, []))), sector, tuple(sorted(members)))
@@ -160,7 +159,7 @@ def _phase_budget(remaining, names, index):
     return remaining / (len(names) - index)
 
 
-def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None, initial_decision_hints=None, initial_repair_people=None, initial_repair_groups=None, repair_clock_fixes=None):
+def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None, initial_decision_hints=None, initial_repair_people=None, initial_repair_groups=None, repair_clock_fixes=None, closing_coverage=None):
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
         raise ValueError('incomplete optimization incumbent')
@@ -282,6 +281,8 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
                               if names[index] == 'SUNDAY_BALANCE' else set())
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
+            if names[index] == 'CLOSING_COVERAGE':
+                movable_people = _coverage_people(coverage_groups or {}, closing_coverage or {}, values)
             if name in secondary:
                 movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [],
                                                 coverage_groups=coverage_groups, shortages=sector_coverage,
