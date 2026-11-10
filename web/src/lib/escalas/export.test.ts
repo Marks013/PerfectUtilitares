@@ -354,9 +354,24 @@ describe("Escalas shared monthly presentation and real exports", () => {
 });
 
 describe("separate rest and hourly exports", () => {
-  it.each(["rest", "hours", "both"] as const)("exports the requested %s view as real PDF and XLSX with identical exact schedules", async (mode) => {
-    const workspace = fixture(), before = structuredClone(workspace);
+  it("omits sectors without rest participants rather than creating empty rest pages", async () => {
+    const workspace = fixture();
+    workspace.input.employees.push({ ...workspace.input.employees[0], id: "apprentice", registration: "0004", name: "Aprendiz", role: "AUX. DE SERVIÇOS EM SUPER", sector: "Setor só com aprendiz" });
+    workspace.input.demands = [{ id: "gap-only", date: "2026-11-02", sector: "Setor só estimado", start: 480, end: 540, minimum: 1, estimated: true }];
+    const pages = await pdfContent(await exportEscalaPdf(workspace, "rest"));
+    const text = pages.flat().map(item => item.str).join(" ");
+    expect(pages).toHaveLength(1);
+    expect(text).not.toContain("Setor só com aprendiz");
+    expect(text).not.toContain("Setor só estimado");
+    expect(text).not.toContain("Desfalques de cobertura");
+  }, 20000);
+  it.each((["rest", "hours", "both"] as const).flatMap(mode => [true, false].map(separateSectors => ({ mode, separateSectors }))))("exports the requested $mode view with separateSectors=$separateSectors as real PDF and XLSX", async ({ mode, separateSectors }) => {
+    const workspace = fixture();
+    workspace.input.demands = [{ id: "gap", date: "2026-11-02", sector: "Reposição", start: 480, end: 540, minimum: 3, estimated: true }];
+    const before = structuredClone(workspace);
     const bytes = exportEscalaXlsx(workspace, mode), archive = unzipSync(bytes), workbook = strFromU8(archive["xl/workbook.xml"]);
+    expect((workbook.match(/name="Desfalques"/g) ?? []).length).toBe(mode === "rest" ? 0 : 1);
+    expect(Object.values(archive).map(value => strFromU8(value)).join(" ")).not.toMatch(/Variantes reais permanecem separadas|Até 3 faixas prioritárias|Não some picos/);
     expect(workbook.includes('name="Escala"')).toBe(mode !== "hours");
     expect(workbook.includes('name="Horarios"')).toBe(mode !== "rest");
     const excluded = await readSheet(Buffer.from(bytes), "Excluidos");
@@ -368,7 +383,10 @@ describe("separate rest and hourly exports", () => {
       expect(work?.slice(5, 8)).toEqual(["08:00-12:00 / 13:00-17:24", "12:00-13:00", "08:24"]);
       expect(rows.some((row) => row[1] === "0002" && row[4] === "ENC" && row[7] === "Não apurada")).toBe(true);
     }
-    const text = (await pdfContent(await exportEscalaPdf(workspace, mode))).flat().map((item) => item.str).join(" ");
+    const text = (await pdfContent(await exportEscalaPdf(workspace, mode, { separateSectors }))).flat().map((item) => item.str).join(" ");
+    expect(text.includes("Desfalques de cobertura")).toBe(mode !== "rest");
+    expect(text).not.toMatch(/Um resumo por setor, sem repetir cargos|Até 3 faixas prioritárias|Os picos não se somam|Variantes reais permanecem separadas/);
+    if (mode !== "rest") expect(text).toContain("Até 2 pessoa(s) abaixo da referência do setor");
     expect(text.includes("Escala de folgas")).toBe(mode !== "hours");
     expect(text.includes("Escala de horários")).toBe(mode !== "rest");
     if (mode !== "hours") expect(text).toContain("ENC = Sem horário fixo");

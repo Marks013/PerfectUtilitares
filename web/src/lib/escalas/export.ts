@@ -106,7 +106,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const model = buildEscalaPresentation(workspace);
   const hourly = hourEntries(model, workspace.input);
   const weekly = hourly.some(row => row.application);
-  const coverage = coverageReport(workspace.input);
+  const coverage = mode === "rest" ? [] : coverageReport(workspace.input);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const mixedNotice = mixed42ExportNotice(workspace.input);
@@ -116,7 +116,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[], gaps: [] as number[] };
   const main = [...metadata("Escala de folgas", model.legend),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(escalaDateLabel)]];
-  const hours = [...metadata("Escala de horários", "Horários propostos; intervalos não contam como presença. Variantes reais permanecem separadas."),
+  const hours = [...metadata("Escala de horários", "Horários propostos por colaborador."),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada diária", ...(weekly ? ["Aplicação nas semanas"] : [])]];
   let sector: string | undefined;
   for (const person of restEntries(model)) {
@@ -135,7 +135,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     }
     hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily, ...(weekly ? [row.application] : [])]);
   }
-  const gaps = [...metadata("Desfalques de cobertura", "Resumo por setor. Até 3 faixas prioritárias. Sem cobertura com horário não significa ninguém escalado: pessoas ENC podem estar presentes. Sem meta positiva, confirme a necessidade. Não some picos de horários diferentes."),
+  const gaps = [...metadata("Desfalques de cobertura", "Sem cobertura com horário não significa ninguém escalado: pessoas ENC podem estar presentes. Sem meta positiva, confirme a necessidade."),
     ["Setor", "Dias com alerta", "Dias sem cobertura com horário (parcial / inteiro)", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"],
     ...coverage.map(coverageReportCells)];
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
@@ -256,8 +256,8 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   const document = await PDFDocument.create();
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
   const model = buildEscalaPresentation(workspace);
-  const coverage = coverageReport(workspace.input);
-  const sectors = [...new Set([...model.people.map(({ employee }) => employee.sector),
+  const coverage = mode === "rest" ? [] : coverageReport(workspace.input);
+  const sectors = [...new Set([...(mode === "rest" ? model.restPeople : model.people).map(({ employee }) => employee.sector),
     ...model.excluded.map(({ employee }) => employee.sector), ...coverage.map(row => row.sector)])].sort(compareSectors);
   if (separateSectors && sectors.length) {
     for (const sector of sectors) {
@@ -405,7 +405,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
   if (mode !== "rest" && (!grouped || hourly.length)) {
     reportTitle = "Escala de horários";
     if (mode === "both" && !grouped) newPage(false);
-    const description = "Horários propostos por colaborador. Variantes reais permanecem separadas; intervalos não contam como presença.";
+    const description = "Horários propostos por colaborador.";
     let hoursSector: string | undefined;
     const widths = (weekly ? [0.20, 0.10, 0.05, 0.23, 0.13, 0.08, 0.21] : [0.27, 0.18, 0.05, 0.27, 0.15, 0.08]).map(ratio => ratio * (width - 2 * margin));
     const headings = ["Matrícula / colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada", ...(weekly ? ["Aplicação nas semanas"] : [])];
@@ -441,8 +441,6 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
   if (coverage.length) {
     reportTitle = "Desfalques de cobertura";
     const descriptions = [
-      "Um resumo por setor, sem repetir cargos ou pequenas variações de horário. Até 3 faixas prioritárias; outras ocorrências ficam na consulta por dia do planejamento.",
-      "Os picos não se somam. Estimativa automática não é demanda confirmada nem indicação de contratação.",
       "Dia inteiro sem cobertura com horário definido não significa ninguém escalado: pessoas ENC podem estar presentes. Sem referência positiva, confirme a necessidade do setor.",
     ];
     const widths = [0.16, 0.20, 0.23, 0.16, 0.25].map(ratio => (width - 2 * margin) * ratio);

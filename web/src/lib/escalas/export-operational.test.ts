@@ -49,7 +49,7 @@ async function pdfText(bytes: Uint8Array) {
 }
 
 describe("lean operational files", () => {
-  it.each(["rest", "hours", "both"] as const)("keeps each sector's %s and shortages together on exclusive pages", async (mode) => {
+  it.each(["rest", "hours", "both"] as const)("keeps each sector's %s view on exclusive pages with shortages only in hourly modes", async (mode) => {
     const source = scenario();
     source.input.demands.push({ id: "other", date: "2026-11-02", sector: "Açougue", start: 480, end: 1080, minimum: 1, estimated: true });
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -69,7 +69,7 @@ describe("lean operational files", () => {
       expect(pages[1]).toContain("01 - Zélia");
       expect(pages[1]).not.toContain("Açougue");
       for (const page of pages) {
-        expect(page).toContain("Desfalques de cobertura");
+        expect(page.includes("Desfalques de cobertura")).toBe(mode !== "rest");
         if (mode !== "rest") expect(page).toContain("Horários propostos por colaborador.");
         if (mode !== "hours") expect(page).toContain("Matrícula / colaborador");
       }
