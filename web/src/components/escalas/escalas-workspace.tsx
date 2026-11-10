@@ -20,6 +20,7 @@ import { recoveryArea, revealRecoveryTarget, type EscalaRecoveryContext, type Es
 import { GenerationModeOption } from "./generation-mode-option";
 import { ContinuousWorkOption, HoursProposal } from "./hours-proposal";
 import { Mixed42Option } from "./mixed-42-option";
+import { StoreClosingOption } from "./store-closing-option";
 import { Proposals, Publication, ValidationResults, type ReviewSection } from "./results";
 import { Roster } from "./roster";
 import { useEscalasWorkspace, type WorkspaceSummary } from "./use-escalas-workspace";
@@ -198,6 +199,7 @@ export function EscalasWorkspace() {
             <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hasRoster ? "Gerar nova proposta" : generationMode === "REST_ONLY" ? "Gerar folgas" : "Gerar escala e horários"}</button>
           </div>
         </div>
+        <StoreClosingOption input={input} disabled={!model.canEdit} onChange={model.update} />
         {!included && <div className={styles.nextStep}><p>Primeiro importe a equipe da filial. Nenhuma configuração adicional é necessária para começar.</p><button type="button" className={buttonClass} onClick={() => setArea("team")}>Voltar para importar equipe</button></div>}
         <Mixed42Option input={input} disabled={!model.canEdit} onChange={model.update} />
         <ContinuousWorkOption input={input} disabled={!model.canEdit} onChange={model.update} />

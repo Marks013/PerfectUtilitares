@@ -109,6 +109,7 @@ export const escalaInputSchema = z.strictObject({
   generationMode: z.enum(["REST_ONLY", "DAYS_AND_HOURS"]).optional(),
   needsRegeneration: z.boolean().optional(),
   coverageBasis: z.string().regex(/^coverage-v\d+:[a-f0-9]{16}$/).max(48).optional(),
+  storeClosingMinutes: z.number().int().min(1).max(1440).optional(),
   schemaVersion: z.literal(1), branchCode: label.transform(canonicalBranchCode), branchName: label, startDate: planningDate, endDate: planningDate,
   visibleMonth: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).optional(),
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,

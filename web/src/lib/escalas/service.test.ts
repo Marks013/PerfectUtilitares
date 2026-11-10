@@ -62,6 +62,18 @@ beforeEach(() => {
 });
 
 describe("canonical scheduling branch service", () => {
+  it("persists a closing override and invalidates the old roster even when a client omits the stale flag", async () => {
+    const before = input();
+    const value = { ...before, storeClosingMinutes: 1260, needsRegeneration: false,
+      demands: [...before.demands, { id: "estimate", sector: "Reposição", date: before.startDate, start: 480, end: 720, minimum: 1, estimated: true }] };
+    const saved = await saveEscala(actor, "w1", 1, value);
+    expect(saved.input.storeClosingMinutes).toBe(1260);
+    expect(saved.input.needsRegeneration).toBe(true);
+    expect(saved.input.assignments).toEqual(before.assignments);
+    expect(saved.input.demands).toEqual(before.demands);
+    expect(mocks.revision.create.mock.calls[0][0].data.input.storeClosingMinutes).toBe(1260);
+  });
+
   it("persists REST_ONLY and generates the fixed-reference preview without another save", async () => {
     const value = input(); value.generationMode = "REST_ONLY";
     value.shifts.push({ ...structuredClone(value.shifts[0]), id: "other" });

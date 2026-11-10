@@ -69,6 +69,8 @@ describe("guided scheduling workspace", () => {
     expect(html).toContain("Continuar para jornada e geração");
     expect(html).toContain("Férias e afastamentos são opcionais");
     expect(html).toContain("08:24");
+    expect(html).toContain("Fechamento da loja");
+    expect(html).toMatch(/<input(?=[^>]*type="time")(?=[^>]*value="20:00")[^>]*>/);
     expect(html).toContain("Ajustar pausas de jornadas curtas (opcional)");
     expect(model.generate).not.toHaveBeenCalled();
     expect(model.update).not.toHaveBeenCalled();

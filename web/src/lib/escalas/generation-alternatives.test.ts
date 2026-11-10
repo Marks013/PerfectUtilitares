@@ -162,8 +162,9 @@ describe("bounded automatic clock alternatives", () => {
     expect(saved).toEqual(before);
   });
 
-  it("does not add night work and preserves locked references, absences and source data", () => {
+  it("does not add night work within an explicit closing and preserves locked references, absences and source data", () => {
     const raw = fixture(), source = raw.employees[0].sourceSchedule;
+    raw.storeClosingMinutes = 1330;
     if (!source) throw new Error("Fixture reference missing");
     source.weekday = "12:50-16:30 / 18:30-22:10";
     raw.shifts[0].segments = [{ start: 770, end: 990, kind: "WORK" }, { start: 990, end: 1110, kind: "BREAK" }, { start: 1110, end: 1330, kind: "WORK" }];

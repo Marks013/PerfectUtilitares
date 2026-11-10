@@ -1,6 +1,7 @@
 import { addDays } from "./dates";
 import { proposeAutomaticCoverage } from "./automatic-coverage";
 import { effectiveWeeklyHours, usesMixed42 } from "./labor-rules";
+import { fitProposalToClosing, fitsStoreClosing, storeClosingMinutes } from "./store-hours";
 import type { EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "./types";
 
 /** Legacy references below the saved branch default may be individual contracts and are never raised. */
@@ -73,12 +74,12 @@ export function civilNightWorkMinutes(shift: EscalaShift): number {
 }
 
 /** A small automatic search, with the saved reference first and no added night work. */
-export function automaticShiftAlternatives(person: EscalaEmployee, reference: EscalaShift, limitWorkBlocks: boolean): EscalaShift[] {
+export function automaticShiftAlternatives(person: EscalaEmployee, reference: EscalaShift, limitWorkBlocks: boolean, closing = 1320): EscalaShift[] {
   if (!reference.id.startsWith("prep-") || reference.id !== shiftId(reference)) return [reference];
   const source = originalShift(person);
   if (!source) return [reference];
   const target = minutes(reference), night = civilNightWorkMinutes(reference);
-  const candidates = [reference, ...adjustedShifts(source, target, "BOTH", true, limitWorkBlocks)];
+  const candidates = [reference, ...adjustedShifts(source, target, "BOTH", true, limitWorkBlocks, closing)];
   const [first, meal, last] = reference.segments;
   if (reference.segments.length === 3 && first.kind === "WORK" && meal.kind === "BREAK" && last.kind === "WORK"
     && first.end === meal.start && meal.end === last.start) {
@@ -96,6 +97,7 @@ export function automaticShiftAlternatives(person: EscalaEmployee, reference: Es
   }
   const unique = new Map<string, EscalaShift>();
   for (const candidate of candidates) {
+    if (!fitsStoreClosing(candidate, closing)) continue;
     if (civilNightWorkMinutes(candidate) > night || candidate.segments.some(segment => segment.start < 0 || segment.end > 2880)) continue;
     const signature = preparedShiftSignature(candidate);
     if (!unique.has(signature)) unique.set(signature, candidate);
@@ -105,16 +107,16 @@ export function automaticShiftAlternatives(person: EscalaEmployee, reference: Es
 }
 
 /** Rebuild only an identified automatic FPRE proposal, retaining its selected endpoints. */
-export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: EscalaShift, enabled: boolean): EscalaShift {
+export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: EscalaShift, enabled: boolean, closing = 1320): EscalaShift {
   if (proposal.id.startsWith("flex-") && proposal.id === shiftId(proposal).replace("prep-", "flex-")) {
     // Optional meal alternatives remain stable; only enforce a newly enabled block limit.
     return enabled && requiresWorkBlockBalance(proposal)
-      ? adjustedShifts(proposal, minutes(proposal), "PRESERVE_START", true, true)[0] ?? proposal : proposal;
+      ? adjustedShifts(proposal, minutes(proposal), "PRESERVE_START", true, true, closing)[0] ?? proposal : proposal;
   }
   if (!proposal.id.startsWith("prep-") || proposal.id !== shiftId(proposal)) return proposal;
   const source = originalShift(person);
   if (!source) return proposal;
-  return adjustedShifts(source, minutes(proposal), "BOTH", true, enabled)
+  return adjustedShifts(source, minutes(proposal), "BOTH", true, enabled, closing)
     .find(candidate => candidate.segments[0].start === proposal.segments[0].start
       && candidate.segments.at(-1)?.end === proposal.segments.at(-1)?.end) ?? proposal;
 }
@@ -128,10 +130,10 @@ export function requiresWorkBlockBalance(shift: EscalaShift): boolean {
 }
 
 /** Candidate proposals only: preserve meal duration and either arrival or departure. */
-function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false, limitWorkBlocks = false): EscalaShift[] {
+function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false, limitWorkBlocks = false, closing = 1320): EscalaShift[] {
   const delta = target - minutes(source);
   const positions = source.segments.flatMap((segment, index) => segment.kind === "WORK" ? [index] : []);
-  if (!positions.length || (!simulation && source.segments.some((segment) => segment.kind !== "BREAK" && (segment.start < 300 || segment.end > 1320)))) return [];
+  if (!positions.length || (!simulation && source.segments.some((segment) => segment.kind !== "BREAK" && segment.start < 300))) return [];
   const results: EscalaShift[] = [];
   for (const anchor of ["arrival", "departure"] as const) {
     if ((strategy === "PRESERVE_START" && anchor !== "arrival") || (strategy === "PRESERVE_END" && anchor !== "departure")) continue;
@@ -150,10 +152,12 @@ function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | 
       meal.end += offset;
       last.start += offset;
     }
+    const shiftedForClosing = !fitsStoreClosing(copy, closing);
+    fitProposalToClosing(copy, closing);
     if (copy.segments.some((segment, index) => segment.end <= segment.start || segment.start < (simulation ? 0 : 300) || segment.end > (simulation ? 2880 : 1320)
       || (index > 0 && segment.start < copy.segments[index - 1].end))) continue;
     copy.id = shiftId(copy);
-    copy.name = `Proposta ${Math.floor(target / 60)}h${String(target % 60).padStart(2, "0")} · ${anchor === "arrival" ? "entrada mantida" : "saída mantida"}`;
+    copy.name = `Proposta ${Math.floor(target / 60)}h${String(target % 60).padStart(2, "0")} · ${shiftedForClosing ? "ajustada ao fechamento" : anchor === "arrival" ? "entrada mantida" : "saída mantida"}`;
     if (!results.some((item) => preparedShiftSignature(item) === preparedShiftSignature(copy))) results.push(copy);
   }
   return results;
@@ -165,14 +169,14 @@ export function isGeneratedMixed42Shift(id: string): boolean {
 }
 
 /** Fit the fixed 3h interval without inventing a night schedule. */
-function longMixedShifts(source: EscalaShift, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END"): EscalaShift[] {
+function longMixedShifts(source: EscalaShift, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", closing: number): EscalaShift[] {
   const paid = source.segments.filter(segment => segment.kind !== "BREAK");
   if (!paid.length) return [];
   const starts = new Set([
     ...(strategy !== "PRESERVE_END" ? [paid[0].start] : []),
     ...(strategy !== "PRESERVE_START" ? [paid[paid.length - 1].end - 720] : []),
   ]);
-  return [...starts].filter(start => start >= 300 && start + 720 <= 1320).map(start => {
+  return [...new Set([...starts].map(start => Math.min(start, Math.min(closing, 1320) - 720)))].filter(start => start >= 300).map(start => {
     const shift: EscalaShift = { id: "", name: "Proposta 9h · intervalo de 3h", segments: [
       { start, end: start + 270, kind: "WORK" },
       { start: start + 270, end: start + 450, kind: "BREAK" },
@@ -185,6 +189,7 @@ function longMixedShifts(source: EscalaShift, strategy: "BOTH" | "PRESERVE_START
 /** One explicit branch action, without claiming imported schedules or contracts were confirmed. */
 export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSchedule: "EXCLUDE" | "BRANCH_DEFAULT" = "EXCLUDE", strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END" = "BOTH"): EscalaInput {
   if (input.assignments.some((assignment) => assignment.locked)) throw new Error("A proposta tem dias bloqueados. Preserve a revisão ou peça a um aprovador para desbloquear antes de reaplicar a configuração em lote.");
+  const closing = storeClosingMinutes(input);
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const register = (shift: EscalaShift) => {
     const existing = shifts.get(shift.id);
@@ -219,15 +224,16 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     // An exact saved manual option needs no reconstruction or new identifier.
     const ordinary = sources.flatMap((source) => [...targets].flatMap((target) =>
       !needsLong && originalShiftIds?.includes(source.id) && minutes(source) === target
+        && fitsStoreClosing(source, closing)
         && !(input.policy.limitContinuousWorkBlocks === true && requiresWorkBlockBalance(source))
-        ? [source] : adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true)));
+        ? [source] : adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true, closing)));
     // Old drafts lacking provenance cannot recover discarded manual references.
     const retainedOriginalIds = needsLong && !person.sourceSchedule
       ? originalShiftIds ?? (!person.shiftIds.some(isGeneratedMixed42Shift) ? [...person.shiftIds] : undefined)
       : undefined;
-    const long = needsLong ? sources.flatMap(source => longMixedShifts(source, strategy)) : [];
+    const long = needsLong ? sources.flatMap(source => longMixedShifts(source, strategy, closing)) : [];
     let candidates = needsLong ? (long.length && ordinary.length ? [...long, ...ordinary] : []) : ordinary;
-    if (!candidates.length && !needsLong && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true));
+    if (!candidates.length && !needsLong && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true, closing));
     candidates.forEach(register);
     const longIds = [...new Set(long.map(shift => shift.id))];
     const ordinaryIds = [...new Set(candidates.filter(shift => !isGeneratedMixed42Shift(shift.id)).map(shift => shift.id))];

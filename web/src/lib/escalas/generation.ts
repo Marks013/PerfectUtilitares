@@ -4,6 +4,7 @@ import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility"
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42 } from "./labor-rules";
 import { automaticShiftAlternatives, civilNightWorkMinutes, isGeneratedMixed42Shift, planningWeeklyHours, preparedShiftSignature, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
+import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes } from "./store-hours";
 import type { EscalaEmployee, EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
 
 function paidMinutes(shift: EscalaShift): number {
@@ -72,6 +73,7 @@ export function matchesRestOnlyReferences(input: EscalaInput, assignments: Escal
 /** Prepare a preview, without approving documents, inventing attendance or overwriting branch decisions. */
 export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; preparation: EscalaGenerationPreparation } {
   const input: EscalaInput = { ...rawInput, simulation: true, policy: { ...rawInput.policy, maxConsecutiveWorkDays: effectiveWorkDayLimit(rawInput.policy) } };
+  const closing = storeClosingMinutes(input);
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const adjustedEmployeeIds: string[] = [];
   const excludedEmployeeIds: string[] = [];
@@ -90,12 +92,20 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const mixedWeeks = mixed && weekHours.includes(42);
     const targets = new Set(weekHours.map(hours => mixedWeeks ? 480 : Math.min(hours * 12, person.simulationDailyMinutes ?? Infinity)));
     const allowed = person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
+    const needsClosingAdjustment = allowed.some(shift => !fitsStoreClosing(shift, closing));
+    if (input.assignments.some(day => {
+      const lockedShift = shifts.get(day.shiftId ?? "");
+      return day.employeeId === person.id && day.locked && day.kind === "WORK"
+        && lockedShift && !fitsStoreClosing(lockedShift, closing);
+    })) {
+      throw new EscalaError(422, "ESCALA_CLOSING_LOCK_CONFLICT", `Há um dia bloqueado com saída após ${storeClosingLabel(input)}. Ajuste esse horário ou desbloqueie o dia antes de gerar. O registro foi preservado.`);
+    }
     // Preserve custom distributions. Imported references require adaptation from 6x1 to the requested 5x2 target.
-    const refreshed = allowed.map(shift => refreshProposedWorkBlocks(person, shift, input.policy.limitContinuousWorkBlocks === true));
+    const refreshed = allowed.map(shift => refreshProposedWorkBlocks(person, shift, input.policy.limitContinuousWorkBlocks === true, closing));
     const needsBlockBalance = refreshed.some((shift, index) => shift.id !== allowed[index].id);
     const needsMixedAdjustment = mixedWeeks && (!allowed.some(isMixed42LongShift) || !allowed.some(shift => paidMinutes(shift) === 480));
     const removingMixed = !mixedWeeks && allowed.some(shift => isGeneratedMixed42Shift(shift.id));
-    const needsHoursAdjustment = needsMixedAdjustment || removingMixed || hours !== person.weeklyHours
+    const needsHoursAdjustment = needsClosingAdjustment || needsMixedAdjustment || removingMixed || hours !== person.weeklyHours
       || ((person.sourceSchedule || person.weeklyHoursMode === "BRANCH") && [...targets].some(target => !allowed.some(shift => paidMinutes(shift) === target)));
     const needsAdjustment = needsBlockBalance || needsHoursAdjustment;
     if (!needsAdjustment) return person;
@@ -160,7 +170,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       const reference = shifts.get(id);
       if (!reference || durations.has(paidMinutes(reference))) continue;
       durations.add(paidMinutes(reference));
-      for (const candidate of automaticShiftAlternatives(person, reference, input.policy.limitContinuousWorkBlocks === true)) {
+      for (const candidate of automaticShiftAlternatives(person, reference, input.policy.limitContinuousWorkBlocks === true, closing)) {
         if (!proposed.has(candidate.id) && (proposed.size >= 12 || !used.has(candidate.id) && used.size >= 120)) continue;
         used.add(candidate.id);
         const existing = shifts.get(candidate.id);

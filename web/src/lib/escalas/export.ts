@@ -5,6 +5,10 @@ import { compareSectors, sortScheduleEntries } from "./order";
 import { buildCoveragePresence, sectorCoverageGaps, sectorPresenceGaps } from "./coverage-presence";
 import { summarizeCoverageGaps, type SectorCoverageSummary } from "./coverage-summary";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
+import { mixedWeeklyApplication } from "./mixed-week-report";
+import { storeClosingLabel } from "./store-hours";
+import { visibleDates, weekStart } from "./dates";
+import { usesMixed42Week } from "./labor-rules";
 
 function reportPeriod(value: string): string {
   return value.replace(/(\d{4})-(\d{2})-(\d{2})/g, "$3/$2/$1");
@@ -58,24 +62,30 @@ function sheet(rows: (string | number)[][], widths: number[], grid = false, froz
 
 type ReportPerson = ReturnType<typeof buildEscalaPresentation>["people"][number];
 
-/** Reporting keeps all distinct proposed schedules, not dates or repeated folga rows. */
+/** Keep distinct schedules; mixed journeys also retain their actual weekly application. */
 function proposedRows(person: ReportPerson) {
-  const variants = new Map<string, { code: string; schedule: string; interval: string; daily: string; entry: number }>();
+  const variants = new Map<string, { code: string; schedule: string; interval: string; daily: string; entry: number; dates: string[]; shiftId?: string }>();
   for (const variant of person.proposedVariants) {
     const key = JSON.stringify([variant.schedule, variant.interval, variant.daily]);
     const existing = variants.get(key);
-    if (existing) existing.code += " / " + variant.code;
-    else variants.set(key, { ...variant, entry: Number(variant.schedule.slice(0, 2)) * 60 + Number(variant.schedule.slice(3, 5)) });
+    if (existing) { existing.code += " / " + variant.code; existing.dates.push(...variant.dates); }
+    else variants.set(key, { ...variant, dates: [...variant.dates], entry: Number(variant.schedule.slice(0, 2)) * 60 + Number(variant.schedule.slice(3, 5)) });
   }
   if (variants.size) return [...variants.values()].sort((a, b) => a.entry - b.entry || a.schedule.localeCompare(b.schedule));
   const code = person.cells.some(cell => cell.code === "ENC") ? "ENC" : person.cells.some(cell => cell.code === "NP") ? "NP"
     : person.cells.every(cell => cell.code === "AF") ? "AF" : person.cells.every(cell => cell.code === "FV") ? "FV" : "—";
-  return [{ code, schedule: person.proposedSchedule, interval: "Não se aplica", daily: "Não apurada", entry: Infinity }];
+  return [{ code, schedule: person.proposedSchedule, interval: "Não se aplica", daily: "Não apurada", entry: Infinity, dates: [] as string[], shiftId: undefined }];
 }
 
 /** Flatten before ordering: a person's later variant must not precede someone else's earlier shift. */
-function hourEntries(model: ReturnType<typeof buildEscalaPresentation>) {
-  return sortScheduleEntries(model.hoursPeople.flatMap(person => proposedRows(person).map(row => ({ employee: person.employee, ...row }))));
+function hourEntries(model: ReturnType<typeof buildEscalaPresentation>, input: EscalaInput) {
+  const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
+  return sortScheduleEntries(model.hoursPeople.flatMap(person => proposedRows(person).map(row => {
+    const application = mixedWeeklyApplication(input, person.employee, row.dates);
+    const meal = shifts.get(row.shiftId ?? "")?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? segment.end - segment.start : 0), 0) ?? 0;
+    return { employee: person.employee, ...row, application,
+      interval: application && row.daily === "09:00" && meal ? `${row.interval} (${escalaDuration(meal)})` : row.interval };
+  })));
 }
 
 /** One row per person, with the same sector/clock/name ordering as the hourly report. */
@@ -87,23 +97,27 @@ function mixed42ExportNotice(input: EscalaInput): string {
   if (input.simulation !== true || input.defaultWeeklyHours !== 42 || !input.mixed42Sectors?.length) {
     return "";
   }
+  const weeks = [...new Set(visibleDates(input).map(weekStart))];
+  if (!input.employees.some(person => weeks.some(week => usesMixed42Week(input, person, week)))) return "";
   return "SIMULAÇÃO / NEGOCIAÇÃO: 3 × 8h + 2 × 9h nos setores selecionados; intervalo de 3h nos dias de 9h. Não é autorização operacional.";
 }
 
 export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Uint8Array {
   const model = buildEscalaPresentation(workspace);
+  const hourly = hourEntries(model, workspace.input);
+  const weekly = hourly.some(row => row.application);
   const coverage = coverageReport(workspace.input);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const mixedNotice = mixed42ExportNotice(workspace.input);
   const metadata = (title: string, description = ""): (string | number)[][] => [[model.branch],
     [title + " | " + reportPeriod(model.period) + " | Revisão " + workspace.revision + " | " + model.state + simulation],
-    [[mixedNotice, description].filter(Boolean).join(" | ")]];
+    [[`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, mixedNotice, description].filter(Boolean).join(" | ")]];
   const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[], gaps: [] as number[] };
   const main = [...metadata("Escala de folgas", model.legend),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(escalaDateLabel)]];
   const hours = [...metadata("Escala de horários", "Horários propostos; intervalos não contam como presença. Variantes reais permanecem separadas."),
-    ["Setor", "Matrícula", "Colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada diária"]];
+    ["Setor", "Matrícula", "Colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada diária", ...(weekly ? ["Aplicação nas semanas"] : [])]];
   let sector: string | undefined;
   for (const person of restEntries(model)) {
     const { employee, cells, proposedSchedule } = person;
@@ -114,12 +128,12 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     main.push([employee.sector, employee.registration, employee.name, employee.role, proposedSchedule, ...cells.map(cell => cell.code)]);
   }
   sector = undefined;
-  for (const row of hourEntries(model)) {
+  for (const row of hourly) {
     const { employee } = row;
     if (sector !== employee.sector) {
       sectors.hours.push(hours.length); hours.push(["Setor: " + (employee.sector || "Não informado")]); sector = employee.sector;
     }
-    hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily]);
+    hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily, ...(weekly ? [row.application] : [])]);
   }
   const gaps = [...metadata("Desfalques de cobertura", "Resumo por setor. Até 3 faixas prioritárias. Sem cobertura com horário não significa ninguém escalado: pessoas ENC podem estar presentes. Sem meta positiva, confirme a necessidade. Não some picos de horários diferentes."),
     ["Setor", "Dias com alerta", "Dias sem cobertura com horário (parcial / inteiro)", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"],
@@ -133,7 +147,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   }
   const sheets = [
     ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [12, 9, 25, 18, 28, ...model.dates.map(() => 4.25)], grid: true, sectors: sectors.main }] : []),
-    ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [14, 9, 26, 19, 8, 32, 20, 12], grid: false, sectors: sectors.hours }] : []),
+    ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [14, 9, 26, 19, 8, 32, 20, 12, ...(weekly ? [43] : [])], grid: false, sectors: sectors.hours }] : []),
     ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 1, rows: gaps, widths: [23, 28, 28, 33, 27, 42], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
@@ -238,6 +252,8 @@ function compactDates(dates: string[]): string {
 
 export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Promise<Uint8Array> {
   const model = buildEscalaPresentation(workspace), document = await PDFDocument.create();
+  const hourly = hourEntries(model, workspace.input);
+  const weekly = hourly.some(row => row.application);
   const coverage = coverageReport(workspace.input);
   const mixedNotice = mixed42ExportNotice(workspace.input);
   let reportTitle = mode === "hours" ? "Escala de horários" : "Escala de folgas";
@@ -251,6 +267,7 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     page = document.addPage([width, height]); y = height - margin;
     for (const line of wrapText(model.branch, width - 2 * margin, bold, 12)) { write(line, margin, y, 12, true); y -= 16; }
     write(`${reportTitle} | 5x2 | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
+    write(`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, margin, y, 8); y -= 12;
     if (mixedNotice) {
       for (const line of wrapText(mixedNotice, width - 2 * margin, bold, 8)) {
         write(line, margin, y, 8, true); y -= 12;
@@ -354,14 +371,14 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
     section("Escala de horários");
     paragraph("Horários propostos por colaborador. Variantes reais permanecem separadas; intervalos não contam como presença.");
     let hoursSector: string | undefined;
-    const widths = [0.27, 0.18, 0.05, 0.27, 0.15, 0.08].map(ratio => ratio * (width - 2 * margin));
-    const headings = ["Matrícula / colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada"];
+    const widths = (weekly ? [0.20, 0.10, 0.05, 0.23, 0.13, 0.08, 0.21] : [0.27, 0.18, 0.05, 0.27, 0.15, 0.08]).map(ratio => ratio * (width - 2 * margin));
+    const headings = ["Matrícula / colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada", ...(weekly ? ["Aplicação nas semanas"] : [])];
     const headerHeight = Math.max(...headings.map((heading, index) => wrapText(heading, widths[index] - 7, bold, 8).length)) * 11 + 8;
     const hoursHeader = () => tableHeadings(headings, widths);
-    for (const row of hourEntries(model)) {
+    for (const row of hourly) {
       const { employee } = row;
-      const cells = [employee.registration + " - " + employee.name, employee.role, row.code, row.schedule, row.interval, row.daily === "Não apurada" ? "—" : row.daily];
-      const lines = cells.map((value, index) => wrapText(value, widths[index] - 7, index === 0 ? bold : font, 8.5));
+      const cells = [employee.registration + " - " + employee.name, employee.role, row.code, row.schedule, row.interval, row.daily === "Não apurada" ? "—" : row.daily, ...(weekly ? [row.application] : [])];
+      const lines = cells.map((value, index) => value.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8.5)));
       const rowHeight = Math.max(...lines.map(value => value.length)) * 11 + 8;
       const sectorHeight = 8 + wrapText(employee.sector || "Setor não informado", width - 2 * margin, bold, 11).length * 15 + headerHeight;
       // Match paginatedRow: ordinary rows stay whole; oversized rows start with one visible line.

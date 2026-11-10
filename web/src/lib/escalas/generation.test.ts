@@ -301,7 +301,7 @@ describe("whole-branch generation preparation", () => {
     expect(prepared.input.shifts).toEqual(selected.shifts);
   });
 
-  it("keeps a late reference included by preserving departure when extending it would enter the night period", () => {
+  it("keeps a late reference included by fitting its exact daily target before store closing", () => {
     const value = input();
     const original = value.employees[0].sourceSchedule;
     if (!original) throw new Error("Missing fixture reference");
@@ -310,8 +310,8 @@ describe("whole-branch generation preparation", () => {
     const prepared = prepareGeneration(value);
     const selected = prepared.input.shifts.find((shift) => shift.id === prepared.input.employees[0].shiftIds[0]);
     expect(prepared.preparation.excludedEmployeeIds).toEqual([]);
-    expect(selected?.segments[0].start).toBe(666);
-    expect(selected?.segments.at(-1)?.end).toBe(1290);
+    expect(selected?.segments[0].start).toBe(576);
+    expect(selected?.segments.at(-1)?.end).toBe(1200);
     expect(minutes(prepared.input, selected?.id ?? "")).toBe(504);
   });
 
@@ -324,8 +324,9 @@ describe("whole-branch generation preparation", () => {
     expect(prepared.policy.transitionWeekAccepted).toBeUndefined();
   });
 
-  it("keeps only the original ten night minutes when neither imported adaptation is daytime", () => {
+  it("keeps only the original ten night minutes when a later closing is explicitly configured", () => {
     const value = input();
+    value.storeClosingMinutes = 1330;
     const source = value.employees[0].sourceSchedule;
     if (!source) throw new Error("Referência de teste ausente");
     source.weekday = "12:50-16:30 / 18:30-22:10";
@@ -335,7 +336,7 @@ describe("whole-branch generation preparation", () => {
     const original = structuredClone(value);
     const prepared = prepareGeneration(value).input;
     const selected = prepared.shifts.find(shift => shift.id === prepared.employees[0].shiftIds[0]);
-    expect(selected?.segments).toEqual([{ start: 706, end: 990, kind: "WORK" }, { start: 990, end: 1110, kind: "BREAK" }, { start: 1110, end: 1330, kind: "WORK" }]);
+    expect(selected?.segments).toEqual([{ start: 706, end: 926, kind: "WORK" }, { start: 926, end: 1046, kind: "BREAK" }, { start: 1046, end: 1330, kind: "WORK" }]);
     expect(minutes(prepared, selected?.id ?? "")).toBe(504);
     expect(prepared.assignments).toEqual(original.assignments);
     expect(prepared.shifts.find(shift => shift.id === "source")).toEqual(original.shifts[0]);
@@ -359,7 +360,7 @@ describe("whole-branch generation preparation", () => {
     expect(minutes(prepared, selected?.id ?? "")).toBe(504);
   });
 
-  it("keeps arrival on equal night work across midnight instead of using the unpaid meal as work", () => {
+  it("moves an imported overnight reference before closing without counting its unpaid meal", () => {
     const value = input();
     const source = value.employees[0].sourceSchedule;
     if (!source) throw new Error("Referência de teste ausente");
@@ -367,14 +368,15 @@ describe("whole-branch generation preparation", () => {
     value.shifts[0].segments = [{ start: 1250, end: 1470, kind: "WORK" }, { start: 1470, end: 1590, kind: "BREAK" }, { start: 1590, end: 1810, kind: "WORK" }];
     const prepared = prepareGeneration(value).input;
     const selected = prepared.shifts.find(shift => shift.id === prepared.employees[0].shiftIds[0]);
-    expect(selected?.segments[0].start).toBe(1250);
-    expect(selected?.segments.at(-1)?.end).toBe(1874);
+    expect(selected?.segments[0].start).toBe(576);
+    expect(selected?.segments.at(-1)?.end).toBe(1200);
     expect(minutes(prepared, selected?.id ?? "")).toBe(504);
     expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
   });
 
-  it("does not reconsider valid manually selected night alternatives", () => {
+  it("does not reconsider manually selected night alternatives within an explicit closing", () => {
     const value = input();
+    value.storeClosingMinutes = 1410;
     const source = value.employees[0].sourceSchedule;
     if (!source) throw new Error("Referência de teste ausente");
     source.weekday = "12:50-16:30 / 18:30-22:10";

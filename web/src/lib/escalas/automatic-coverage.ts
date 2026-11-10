@@ -1,5 +1,6 @@
 import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
+import { storeClosingMinutes } from "./store-hours";
 import { validateEscala } from "./validation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 
@@ -89,7 +90,7 @@ function coverageBasis(input: EscalaInput): string {
       sorted([...references.values()]), context(person.history), context(person.planningHistory ?? []), context(person.planningFuture ?? [])];
   });
   const policy = input.policy;
-  const data = [input.startDate, input.endDate, input.defaultWeeklyHours, input.timeZone, [...(input.mixed42Sectors ?? [])].sort(),
+  const data = [input.startDate, input.endDate, input.defaultWeeklyHours, input.timeZone, storeClosingMinutes(input), [...(input.mixed42Sectors ?? [])].sort(),
     [policy.weeklyLimit, policy.dailyLimitMinutes, policy.minInterShiftMinutes, policy.minWeeklyRestMinutes, policy.minMealMinutes,
       policy.maxConsecutiveWorkDays, policy.allowShortMealSimulation === true, policy.limitContinuousWorkBlocks === true,
       [...policy.closedDates].sort(), [...policy.holidayDates].sort(), [...policy.authorizedHolidayDates].sort(), policy.holidayRestAllowed,

@@ -2,6 +2,7 @@ import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, Escala
 import { CCT_FROM, CCT_UNTIL, effectiveWeeklyMinutes, isMixed42LongShift, legalWeeklyHours, SUPERMARKET_CCT, usesMixed42Week } from "@/lib/escalas/labor-rules";
 import { planningWeeklyHours } from "@/lib/escalas/preparation";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
+import { storeClosingMinutes } from "@/lib/escalas/store-hours";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const HOURS: WeeklyHours[] = [40, 42, 44];
@@ -149,6 +150,21 @@ export function changeGenerationMode(input: EscalaInput, generationMode: NonNull
   };
 }
 
+/** Keep the visible roster for comparison; only a real closing-time change invalidates it. */
+export function changeStoreClosingMinutes(input: EscalaInput, closingMinutes: number | undefined): EscalaInput {
+  if (closingMinutes !== undefined && (!Number.isInteger(closingMinutes) || closingMinutes < 1 || closingMinutes > 1440)) {
+    throw new Error("Informe um horário de fechamento válido.");
+  }
+  if (input.storeClosingMinutes === closingMinutes) return input;
+  const updated = { ...input, storeClosingMinutes: closingMinutes };
+  if (storeClosingMinutes(input) === storeClosingMinutes(updated)) return updated;
+  return {
+    ...updated,
+    needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
+    demands: input.demands.filter(demand => demand.estimated !== true),
+  };
+}
+
 /** Only changes the proposal preference; imported clocks and locked assignments remain untouched. */
 export function changeContinuousWorkLimit(input: EscalaInput, enabled: boolean): EscalaInput {
   if ((input.policy.limitContinuousWorkBlocks === true) === enabled) return input;
@@ -192,6 +208,7 @@ function absenceDays(input: EscalaInput): string {
 
 export function scenarioDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
   if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
+  if (storeClosingMinutes(previous) !== storeClosingMinutes(next)) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
   if ((previous.generationMode ?? "DAYS_AND_HOURS") !== (next.generationMode ?? "DAYS_AND_HOURS")) return true;
   return (['employees', 'shifts', 'demands', 'policy'] as const).some((key) => previous[key] !== next[key] && JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
@@ -214,6 +231,7 @@ export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidat
 
 export function coverageDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
   if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
+  if (storeClosingMinutes(previous) !== storeClosingMinutes(next)) return true;
   if ((previous.policy.limitContinuousWorkBlocks === true) !== (next.policy.limitContinuousWorkBlocks === true)) return true;
   if ((previous.generationMode ?? "DAYS_AND_HOURS") !== (next.generationMode ?? "DAYS_AND_HOURS")) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;

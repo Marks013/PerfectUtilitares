@@ -115,6 +115,8 @@ export type EscalaInput = {
   coverageBasis?: string;
   branchCode: string;
   branchName: string;
+  /** Latest end of automatic proposals; absent uses 20:00, except branch 18 at 22:00. */
+  storeClosingMinutes?: number;
   startDate: string;
   endDate: string;
   /** Civil month shown to users. Technical dates retain full weeks for continuity. */

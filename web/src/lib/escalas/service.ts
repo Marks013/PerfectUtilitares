@@ -13,6 +13,7 @@ import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { certificateAuthorizes, CCT_FROM, CCT_UNTIL, collectiveExtensionAuthorized, dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
+import { storeClosingMinutes } from "./store-hours";
 
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
@@ -214,6 +215,10 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
   preserveLockedAssignments(current.input, input, !publish && current.canPublish);
+  if (storeClosingMinutes(current.input) !== storeClosingMinutes(input)) {
+    input = { ...input, needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
+      demands: input.demands.filter(demand => demand.estimated !== true) };
+  }
   input = publishedPlanningContext(input, []);
   let validation = validateEscala(input);
   const status = publish ? "PUBLISHED" : "DRAFT";
