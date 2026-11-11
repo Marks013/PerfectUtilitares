@@ -26,3 +26,19 @@ pessoas-minutos, redução de 38,1%. Permaneceu 21,6% acima da referência antig
 A prova utilizou o runtime existente e o código atual em memória, sem salvar grades.
 As grades concentradas foram preservadas no histórico; a recuperação criou novas
 revisões de rascunho com as folgas anteriores e horários compatíveis com o fechamento.
+
+## Setores pequenos e afastamentos
+
+A validação posterior detectou um caso residual na filial 11: de três pessoas no
+Balcão Padaria, uma estava afastada e as duas disponíveis ficaram de folga juntas.
+A distribuição ainda utilizava o tamanho nominal do grupo em vez da disponibilidade
+diária. A correção usa exposição efetiva sem afastados e uma penalidade preferencial
+para esvaziar o grupo; não transforma a estimativa em mínimo operacional obrigatório.
+Um baseline válido pode ser reavaliado quando deixa setor inteiro de folga em dia
+aberto, com pelo menos duas pessoas disponíveis e estimativa positiva. Demanda zero
+e fechamento não acionam essa tentativa.
+
+Prova real a partir da revisão 36, sem mudar calendário, régua ou forçar regeneração:
+zero setores inteiros de folga nas condições acima, uma pessoa do Balcão Padaria em
+cada domingo, 131 afastamentos preservados e zero erros do validador. O desfalque
+passou de 93.076 para 90.864 pessoas-minutos. A filial 06 não foi recalculada nesse ajuste.

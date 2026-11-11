@@ -192,6 +192,43 @@ class HolidayHintTests(unittest.TestCase):
         self.assertEqual(calls[:2], [(True, cp_model.INFEASIBLE), (True, cp_model.OPTIMAL)])
         self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-03")["kind"], "OFF")
 
+    def test_three_person_sector_uses_two_person_exposure_during_month_long_absence(self):
+        data = fixture(42, people=3, weeks=6, start_date="2026-10-26")
+        data["simulation"] = True
+        data["policy"].update(holidayDates=["2026-11-02", "2026-11-15", "2026-11-20"],
+                              authorizedHolidayDates=["2026-11-02", "2026-11-15", "2026-11-20"])
+        for person in data["employees"]:
+            person.update(maxConsecutiveSundays=1, sundayRestRule="PROTECTIVE", fixedImportedShiftId="day")
+        data["assignments"] = [{"employeeId": "p1", "date": day, "kind": "ABSENCE", "locked": True}
+                               for day in solver.days_between("2026-11-03", "2026-12-02")]
+        before = copy.deepcopy(data)
+        proposed = hints_for(data)
+        self.assertEqual(len(proposed), 3)
+        for day in solver.days_between("2026-11-01", "2026-11-30"):
+            available = [entries[day] for entries in proposed.values() if entries[day]["kind"] != "ABSENCE"]
+            self.assertTrue(any(entry["kind"] == "WORK" for entry in available), day)
+        self.assertTrue(all(proposed["p1"][a["date"]]["kind"] == "ABSENCE" for a in data["assignments"]))
+        dates = solver.days_between(data["startDate"], data["endDate"])
+        active = {person["id"]: dates for person in data["employees"]}
+        source = {(pid, day): entry for pid, entries in proposed.items() for day, entry in entries.items()}
+        source["p0", "2026-11-29"] = {"kind": "OFF"}
+        source["p2", "2026-11-29"] = {"kind": "OFF"}
+        demand = {"date": "2026-11-29", "sector": "Reposição", "start": 480, "end": 720, "minimum": 1, "estimated": True}
+        self.assertEqual(solver._empty_estimated_seed_sectors(data["employees"], active, source, data["policy"], [demand]), {"Reposição"})
+        self.assertEqual(solver._empty_estimated_seed_sectors(data["employees"], active, source, data["policy"], []), set())
+        self.assertEqual(solver._empty_estimated_seed_sectors(data["employees"], active, source, data["policy"], [{**demand, "minimum": 0}]), set())
+        self.assertEqual(solver._empty_estimated_seed_sectors(data["employees"], active, source, {**data["policy"], "closedDates": ["2026-11-29"]}, [demand]), set())
+        self.assertEqual(data, before)
+        seeded = copy.deepcopy(data)
+        seeded["demands"] = [demand]
+        seeded["assignments"] = [{"employeeId": pid, "date": day, **entry, **({"locked": True} if entry["kind"] == "ABSENCE" else {})}
+                                 for pid, entries in proposed.items() for day, entry in entries.items()]
+        result = solver.solve(seeded)
+        self.assertIn(result["status"], ("FEASIBLE", "OPTIMAL"), result)
+        self.assertTrue(any(a["date"] == "2026-11-29" and a["kind"] == "WORK" for a in result["assignments"]))
+        self.assertTrue(all(next(a for a in result["assignments"] if a["employeeId"] == "p1" and a["date"] == original["date"])["kind"] == "ABSENCE"
+                            for original in data["assignments"]))
+
 
 if __name__ == "__main__":
     unittest.main()

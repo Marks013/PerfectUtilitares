@@ -73,6 +73,12 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     unique = list(dict.fromkeys(tuple(sorted(members)) for members in groups.values()))
     memberships = {person["id"]: [index for index, members in enumerate(unique) if person["id"] in members and len(members) > 1]
                    for person in employees}
+    # A person on leave is not an available alternative to the remaining team.
+    # Score rest concentration against actual daily exposure, not nominal staff.
+    active_sets = {pid: set(days) for pid, days in active.items()}
+    group_sizes = {(index, day): sum(day in active_sets.get(pid, set())
+                   and baseline.get((pid, day), {}).get("kind") != "ABSENCE" for pid in members)
+                   for index, members in enumerate(unique) for day in dates}
     counts, result = {}, {}
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
     history_cutoff = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
@@ -144,7 +150,13 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                         # Sunday rotation can synchronize otherwise identical teams.
                         # Prefer staggered sector rests; this remains only a hint.
                         importance = 3 if weekday == 6 else 1
-                        total += importance * sum((2 * counts.get((index, day), 0) + 1) / len(unique[index]) for index in memberships[pid])
+                        for index in memberships[pid]:
+                            capacity, resting = group_sizes[index, day], counts.get((index, day), 0)
+                            total += importance * (2 * resting + 1) / max(1, capacity)
+                            # A stronger soft cost for the last available rest prevents
+                            # moving an avoidable empty sector from Sunday to a weekday.
+                            if capacity >= 2 and resting + 1 >= capacity:
+                                total += 7
                         total += 0.15 * (2 * new_weekdays[weekday] + 1)
                         new_weekdays[weekday] += 1
                         if weekday in person["preferredOffDays"]:

@@ -409,6 +409,7 @@ def solve(data, control=None):
     baseline_hints = _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                        deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
                        mixed_people=mixed_people,
+                       estimated_demands=data["demands"],
                        initial_assignments=data.get('_initialAssignments'))
     remaining = MAX_SECONDS - (time.monotonic() - started)
     if remaining < 0.1:
@@ -434,7 +435,7 @@ def solve(data, control=None):
         baseline_hints = _feasibility_hints(
             model, employees, dates, off, work, choices, active, baseline, metrics, policy,
             deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2),
-            control=control, mixed_people=mixed_people)
+            control=control, mixed_people=mixed_people, estimated_demands=data["demands"])
         remaining = MAX_SECONDS - (time.monotonic() - started)
         if remaining < 0.1:
             return _response('UNKNOWN', [], started)
@@ -449,7 +450,7 @@ def solve(data, control=None):
             model.clear_hints()
             _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                                deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
-                               prefer_baseline=False, mixed_people=mixed_people)
+                               prefer_baseline=False, mixed_people=mixed_people, estimated_demands=data["demands"])
             # Symmetry reduction can discard a complete balanced hint. Verify it
             # as a fixed candidate before allowing an unrestricted replacement.
             remaining = MAX_SECONDS - (time.monotonic() - started)
@@ -732,18 +733,37 @@ def _seed_hint_state(model, off, work, choices):
     return "COMPLETE" if hinted == required else "PARTIAL"
 
 
+def _empty_estimated_seed_sectors(employees, active, source, policy, demands):
+    """An empty suggested sector may try a balanced seed, never a hard minimum."""
+    groups = {}
+    for person in employees:
+        groups.setdefault(person["sector"], []).append(person["id"])
+    active_days = {pid: set(days) for pid, days in active.items()}
+    targets = {(d["sector"], d["date"]) for d in demands
+               if d.get("estimated") is True and d["minimum"] > 0
+               and d["date"] not in policy["closedDates"]}
+    empty = set()
+    for sector, day in targets:
+        available = [pid for pid in groups.get(sector, []) if day in active_days[pid]
+                     and source.get((pid, day), {}).get("kind") != "ABSENCE"]
+        if len(available) >= 2 and all(source.get((pid, day), {}).get("kind") == "OFF" for pid in available):
+            empty.add(sector)
+    return empty
+
+
 def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                        deadline=None, control=None, prefer_baseline=True, mixed_people=frozenset(),
-                       initial_assignments=None):
+                       initial_assignments=None, estimated_demands=()):
     """Hint a preferred seed or saved sectors; CP-SAT verifies the combined draft."""
     holidays = paid_holiday_dates(policy)
     source = (_initial_hint_baseline(initial_assignments, employees, active, baseline, choices)
               if prefer_baseline else None)
     source = source if source is not None else baseline
+    empty_sectors = _empty_estimated_seed_sectors(employees, active, source, policy, estimated_demands)
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
-    comparable = {sector for sector, members in sectors.items() if prefer_baseline and all(
+    comparable = {sector for sector, members in sectors.items() if prefer_baseline and sector not in empty_sectors and all(
         (old := source.get((person['id'], day))) is not None
         and (old['kind'] == 'ABSENCE' or (day in holidays) == (old['kind'] == 'HOLIDAY'))
         and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])
