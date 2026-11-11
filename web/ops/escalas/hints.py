@@ -27,14 +27,16 @@ def holiday_rest_forbidden(policy, day):
                  or policy.get("normativeProfile") == "SINDECOMU_SUPERMARKETS_2026_2027"))
 
 
-def _mixed_week_variants(entries, choices, metrics, baseline, pid):
-    """Choose two long days without changing the proposed rests or locked clocks."""
+def _mixed_week_variants(entries, choices, metrics, baseline, pid, require_two=True):
+    """Choose allowed long days without changing rests, absences or locked clocks."""
     working = [day for day, entry in entries.items() if entry["kind"] == "WORK"]
     candidates = [day for day in working if any(metrics[sid][0] == 540 for sid in choices[pid, day])]
     if not candidates:
         yield entries
         return
-    for long_days in combinations(candidates, min(2, len(working))):
+    counts = (2,) if require_two else range(min(2, len(working)) + 1)
+    variants = (days for count in counts for days in combinations(candidates, count))
+    for long_days in variants:
         long_days, proposal = set(long_days), {day: dict(entry) for day, entry in entries.items()}
         for day in working:
             duration = 540 if day in long_days else 480
@@ -56,10 +58,7 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     These are variable hints only. No target is converted into a staffing constraint,
     and no missing history is fabricated. Unsupported alternatives are left to CP-SAT.
     """
-    # Holiday weeks use a different work/rest count. Let the mandatory model find
-    # the seed rather than forcing an ordinary five-workday/two-rest proposal.
-    if policy.get("holidayDates"):
-        return {}
+    closed_holidays = paid_holiday_dates(policy)
     groups = {}
     leadership = []
     for person in employees:
@@ -109,22 +108,28 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
             if not group:
                 continue
             absent = {day for day in group if baseline.get((pid, day), {}).get("kind") == "ABSENCE"}
-            forced = {day for day in group if day not in absent and (weekdays[day] in fixed or day in policy["closedDates"] or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] == "OFF")}
-            forbidden = {day for day in group if day in absent or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] in ("WORK", "DUTY") or day in policy["holidayDates"] and (not policy["holidayRestAllowed"] or policy.get("normativeProfile") == "SINDECOMU_SUPERMARKETS_2026_2027")}
+            holidays = (set(group) & closed_holidays) - absent
+            closed_weekdays = sum(weekdays[day] != 6 for day in holidays)
+            closed_sundays = sum(weekdays[day] == 6 for day in holidays)
+            forced = {day for day in group if day not in absent | holidays and (weekdays[day] in fixed or day in policy["closedDates"] or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] == "OFF")}
+            forbidden = {day for day in group if day in absent | holidays or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] in ("WORK", "DUTY") or holiday_rest_forbidden(policy, day)}
             candidates = []
-            sizes = (2,) if len(group) == 7 and not absent else range(min(2, len(group)), -1, -1)
+            complete = len(group) == 7 and not absent
+            rest_target = max(0, 2 - closed_sundays)
+            sizes = (rest_target,) if complete else range(min(rest_target, len(group)), -1, -1)
             for size in sizes:
                 for pair in combinations([day for day in group if day not in forbidden], size):
                     rests = set(pair)
-                    if not forced <= rests or len(group) - len(absent) - len(rests) > 5:
+                    work_days = len(group) - len(absent) - len(holidays) - len(rests)
+                    if not forced <= rests or work_days > 5 or complete and work_days != max(0, 5 - closed_weekdays):
                         continue
-                    entries = {day: {"kind": "ABSENCE" if day in absent else "OFF" if day in rests else "DUTY" if person.get("scheduleMode") in ("UNTIMED", "MISSING") else "WORK"} for day in group}
+                    entries = {day: {"kind": "ABSENCE" if day in absent else "HOLIDAY" if day in holidays else "OFF" if day in rests else "DUTY" if person.get("scheduleMode") in ("UNTIMED", "MISSING") else "WORK"} for day in group}
                     for day, entry in entries.items():
                         if entry["kind"] == "WORK":
                             entry["shiftId"] = selected[day]
                     if pid in mixed_people:
                         candidates.extend((rests, variant) for variant in
-                                          _mixed_week_variants(entries, choices, metrics, baseline, pid))
+                                          _mixed_week_variants(entries, choices, metrics, baseline, pid, require_two=complete and not closed_weekdays))
                     else:
                         candidates.append((rests, entries))
             next_beam = []
@@ -193,6 +198,9 @@ def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit,
     upper = max([last, *(day for day in prior if day > last)])
     timeline = [(date.fromisoformat(lower) + timedelta(days=offset)).isoformat() for offset in range((date.fromisoformat(upper) - date.fromisoformat(lower)).days + 1)]
     working = lambda day: known.get(day, {}).get("kind") in ("WORK", "DUTY")
+    regular_rest = lambda day: (known.get(day, {}).get("kind") == "OFF"
+                                or known.get(day, {}).get("kind") == "HOLIDAY"
+                                and date.fromisoformat(day).weekday() == 6)
     maximum = min(5, policy["maxConsecutiveWorkDays"])
     streak = 0
     for day in timeline:
@@ -215,15 +223,17 @@ def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit,
             # A continuous paid span is conservative for overnight civil rest hints.
             for offset in range(start // 1440, (end - 1) // 1440 + 1):
                 civil = (date.fromisoformat(day) + timedelta(days=offset)).isoformat()
-                if civil != day and known.get(civil, {}).get("kind") in ("OFF", "ABSENCE"):
+                if civil != day and known.get(civil, {}).get("kind") in ("OFF", "ABSENCE", "HOLIDAY"):
                     return False
                 occupied.add(civil)
         if day in proposed and entry["kind"] in ("WORK", "DUTY"):
             if day in policy["closedDates"] or day in policy["holidayDates"] and day not in policy["authorizedHolidayDates"] and not policy["_simulation"]:
                 return False
-        if day in proposed and entry["kind"] == "OFF" and person["offPattern"] == "CONSECUTIVE":
+        if day in proposed and entry["kind"] == "OFF" and holiday_rest_forbidden(policy, day):
+            return False
+        if day in proposed and regular_rest(day) and person["offPattern"] == "CONSECUTIVE":
             adjacent = [(date.fromisoformat(day) + timedelta(days=delta)).isoformat() for delta in (-1, 1)]
-            if not any(known.get(other, {}).get("kind") == "OFF" for other in adjacent):
+            if not any(regular_rest(other) for other in adjacent):
                 # The last day's possible pair is checked once the next week is selected.
                 if day != last or final:
                     return False
@@ -245,6 +255,6 @@ def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit,
             if gap < policy["minInterShiftMinutes"]:
                 return False
             if delta > 1 and gap < policy["minWeeklyRestMinutes"]:
-                if any(known.get((date.fromisoformat(day) + timedelta(days=offset)).isoformat(), {}).get("kind") == "OFF" for offset in range(1, delta)):
+                if any(known.get((date.fromisoformat(day) + timedelta(days=offset)).isoformat(), {}).get("kind") in ("OFF", "HOLIDAY") for offset in range(1, delta)):
                     return False
     return True

@@ -422,7 +422,7 @@ def solve(data, control=None):
     # Validate the proposed warm start before symmetry reduction can discard it.
     # Fixing is confined to this solver invocation; the model remains unrestricted.
     # A rejected proposal is not evidence that the actual scheduling model is infeasible.
-    seed.parameters.fix_variables_to_their_hinted_value = True
+    seed.parameters.fix_variables_to_their_hinted_value = _seed_hint_state(model, off, work, choices) == "COMPLETE"
     seed_status = seed.solve(model) if control is None else control.solve(seed, model)
     if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and data.get('_initialAssignments') is not None:
         # A preferred seed is not a saved baseline or evidence of infeasibility.
@@ -439,22 +439,33 @@ def solve(data, control=None):
         if remaining < 0.1:
             return _response('UNKNOWN', [], started)
         seed.parameters.max_time_in_seconds = min(2, remaining)
+        seed.parameters.fix_variables_to_their_hinted_value = _seed_hint_state(model, off, work, choices) == "COMPLETE"
         seed_status = seed.solve(model) if control is None else control.solve(seed, model)
     if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         remaining = MAX_SECONDS - (time.monotonic() - started)
         if remaining < 0.1:
             return _response("UNKNOWN", [], started)
-        seed.parameters.fix_variables_to_their_hinted_value = False
         if baseline_hints:
             model.clear_hints()
             _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                                deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
                                prefer_baseline=False, mixed_people=mixed_people)
-        remaining = MAX_SECONDS - (time.monotonic() - started)
-        if remaining < 0.1:
-            return _response("UNKNOWN", [], started)
-        seed.parameters.max_time_in_seconds = min(6, remaining)
-        seed_status = seed.solve(model) if control is None else control.solve(seed, model)
+            # Symmetry reduction can discard a complete balanced hint. Verify it
+            # as a fixed candidate before allowing an unrestricted replacement.
+            remaining = MAX_SECONDS - (time.monotonic() - started)
+            if remaining < 0.1:
+                return _response("UNKNOWN", [], started)
+            if _seed_hint_state(model, off, work, choices) == "COMPLETE":
+                seed.parameters.fix_variables_to_their_hinted_value = True
+                seed.parameters.max_time_in_seconds = min(2, remaining)
+                seed_status = seed.solve(model) if control is None else control.solve(seed, model)
+        if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            remaining = MAX_SECONDS - (time.monotonic() - started)
+            if remaining < 0.1:
+                return _response("UNKNOWN", [], started)
+            seed.parameters.fix_variables_to_their_hinted_value = False
+            seed.parameters.max_time_in_seconds = min(6, remaining)
+            seed_status = seed.solve(model) if control is None else control.solve(seed, model)
         if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return _response(seed.status_name(seed_status), [], started)
     result = _read_assignments(seed, employees, active, baseline, work, choices, paid_holidays) + retained_disabled_records(data)
@@ -711,14 +722,21 @@ def _initial_hint_baseline(entries, employees, active, baseline, choices):
     return candidate if set(candidate) == required else None
 
 
+def _seed_hint_state(model, off, work, choices):
+    """Only a fully hinted decision roster is a fixed seed, never an empty hint."""
+    required = {variable.index for variable in [*off.values(), *work.values(),
+                *(variable for options in choices.values() for variable in options.values())]}
+    hinted = required.intersection(model.proto.solution_hint.vars)
+    if not hinted:
+        return "NONE"
+    return "COMPLETE" if hinted == required else "PARTIAL"
+
+
 def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                        deadline=None, control=None, prefer_baseline=True, mixed_people=frozenset(),
                        initial_assignments=None):
     """Hint a preferred seed or saved sectors; CP-SAT verifies the combined draft."""
-    # Fixed ordinary seeds are not valid evidence about holiday-week feasibility.
-    # The unrestricted mandatory CP-SAT pass handles these weeks directly.
-    if policy.get("holidayDates"):
-        return False
+    holidays = paid_holiday_dates(policy)
     source = (_initial_hint_baseline(initial_assignments, employees, active, baseline, choices)
               if prefer_baseline else None)
     source = source if source is not None else baseline
@@ -727,7 +745,11 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
         sectors.setdefault(person['sector'], []).append(person)
     comparable = {sector for sector, members in sectors.items() if prefer_baseline and all(
         (old := source.get((person['id'], day))) is not None
+        and (old['kind'] == 'ABSENCE' or (day in holidays) == (old['kind'] == 'HOLIDAY'))
+        and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])
+        and not (old['kind'] == 'OFF' and holiday_rest_forbidden(policy, day))
         and (old['kind'] in ('OFF', 'ABSENCE')
+             or (old['kind'] == 'HOLIDAY' and day in holidays)
              or (old['kind'] == 'DUTY' and has_no_clock(person))
              or (old['kind'] == 'WORK' and not has_no_clock(person)
                  and old.get('shiftId') in choices[person['id'], day]))
