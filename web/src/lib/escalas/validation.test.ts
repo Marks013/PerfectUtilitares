@@ -338,9 +338,12 @@ describe("independent Escalas validation", () => {
     expect(codes(input)).not.toContain("HOLIDAY_WORK");
     input.policy.closedDates = [input.startDate];
     expect(codes(input)).toContain("CLOSED_DATE");
+    // A Sunday holiday keeps Sunday rest, as selected by this planning profile.
     input.policy.holidayDates = [input.endDate];
     input.policy.authorizedHolidayDates = [];
     input.policy.holidayRestAllowed = false;
+    expect(codes(input)).not.toContain("HOLIDAY_REST");
+    input.policy.holidayDates = [addDays(input.endDate, -1)];
     expect(codes(input)).toContain("HOLIDAY_REST");
   });
 

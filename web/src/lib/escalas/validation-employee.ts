@@ -1,4 +1,5 @@
 import { addDays, dateRange, dayOfWeek } from "./dates";
+import { closedHolidayDates } from "./calendar";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
@@ -22,6 +23,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
   const all = [...new Map([...(person.planningHistory ?? []), ...person.history, ...current, ...(person.planningFuture ?? [])].map((item) => [item.date, item])).values()].sort((left, right) => left.date.localeCompare(right.date));
   const byDate = new Map(all.map((assignment) => [assignment.date, assignment]));
   const reservedOffDates = new Set(reservations.map((assignment) => assignment.date));
+  const closedHolidays = closedHolidayDates(input);
   const untimed = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
   const minutesByWeek = new Map<string, number>();
   const longByWeek = new Map<string, number>();
@@ -73,7 +75,10 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     if (assignment.kind === "WORK" && !person.shiftIds.includes(assignment.shiftId ?? "")) issue("SHIFT_NOT_ALLOWED", "Turno não autorizado para este colaborador.", day);
     if ((assignment.kind === "DUTY") !== untimed && (assignment.kind === "DUTY" || assignment.kind === "WORK")) issue("SCHEDULE_MODE", "Dia de trabalho incompatível com o modo de horário do colaborador.", day);
     if ((assignment.kind === "WORK" || assignment.kind === "DUTY") && person.fixedOffDays.includes(dayOfWeek(day))) issue("FIXED_OFF", "Trabalho em dia de folga fixa aprovada.", day);
-    if (assignment.kind === "OFF" && !input.policy.holidayRestAllowed && input.policy.holidayDates.includes(day)) issue("HOLIDAY_REST", "A regra aplicável não permite compensar o descanso semanal neste feriado.", day);
+    if (assignment.kind === "OFF" && dayOfWeek(day) !== 6 && !input.policy.holidayRestAllowed && input.policy.holidayDates.includes(day)) issue("HOLIDAY_REST", "Este feriado aberto não deve substituir a folga semanal. Escolha outro dia; domingos continuam permitidos.", day);
+    if (assignment.kind === "HOLIDAY" && !closedHolidays.has(day)) issue("HOLIDAY_INVALID", "Feriado fechado informado fora do calendário de fechamento. Confira a data.", day);
+    if (closedHolidays.has(day) && assignment.kind !== "ABSENCE" && assignment.kind !== "HOLIDAY") issue("HOLIDAY_CLOSURE", "A loja fecha neste feriado. Gere a proposta para marcar FE, sem usar a folga semanal nem inventar horas trabalhadas.", day);
+    if (assignment.kind === "HOLIDAY" && allWork.some(journey => journey.occupiedDates.includes(day))) issue("HOLIDAY_OCCUPIED", "Há uma jornada anterior entrando no feriado fechado. Ajuste o dia anterior antes de aplicar.", day);
     if (assignment.kind === "OFF" && allWork.some((journey) => journey.assignment.date !== day && journey.occupiedDates.includes(day))) issue("OFF_OCCUPIED", "O dia marcado como folga ainda contém trabalho de uma jornada anterior.", day);
     if (assignment.kind === "ABSENCE" && allWork.some((journey) => journey.occupiedDates.includes(day))) issue("ABSENCE_OCCUPIED", "O afastamento coincide com trabalho de uma jornada que atravessa a meia-noite. Ajuste o horário ou o dia anterior; o afastamento deve permanecer preservado.", day);
   }
@@ -143,18 +148,24 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     if (entries.some((entry) => !entry)) continue;
     const work = entries.filter((entry) => entry?.kind === "WORK" || entry?.kind === "DUTY").length;
     const offs = entries.filter((entry) => entry?.kind === "OFF").map((entry) => entry?.date ?? "");
+    const closedWeekdays = entries.filter(entry => entry?.kind === "HOLIDAY" && closedHolidays.has(entry.date) && dayOfWeek(entry.date) !== 6).length;
+    const closedSundays = entries.filter(entry => entry?.kind === "HOLIDAY" && closedHolidays.has(entry.date) && dayOfWeek(entry.date) === 6).length;
+    const expectedWork = Math.max(0, 5 - closedWeekdays), expectedOff = Math.max(0, 2 - closedSundays);
     const limitedAvailability = active.length < 7 || entries.some((entry) => entry?.kind === "ABSENCE");
     if (usesMixed42Week(input, person, start)) {
       const long = longByWeek.get(start) ?? 0;
-      if (long > 2 || (!limitedAvailability && long !== 2)) issue("MIXED_42_WEEK", "Na jornada mista, a semana completa deve ter dois dias de 9h e três de 8h; nas semanas parciais, não ultrapasse dois dias de 9h.", start);
+      if (long > 2 || (!limitedAvailability && !closedWeekdays && long !== 2)) issue("MIXED_42_WEEK", "Na jornada mista, a semana completa deve ter dois dias de 9h e três de 8h; em semanas com afastamento ou feriado fechado, não ultrapasse dois dias de 9h.", start);
     }
-    if (work > 5 || !limitedAvailability && (work !== 5 || offs.length !== 2)) issue("FIVE_BY_TWO", `Semana 5×2: no máximo 5 dias de trabalho; em semana completa, 5 dias de trabalho e 2 folgas. Encontrados ${work} dia(s) de trabalho e ${offs.length} folga(s), de ${formatDate(start)} a ${formatDate(addDays(start, 6))}.`, start);
-    if (!limitedAvailability && !untimed && minutes !== target * 60) issue("WEEKLY_MINUTES", `Carga semanal de ${minutes} minutos difere dos ${target * 60} minutos vigentes nesta semana.`, start);
-    if (person.offPattern === "CONSECUTIVE" && offs.length === 2) {
-      for (const off of offs) {
+    if (work > 5 || !limitedAvailability && (work !== expectedWork || offs.length !== expectedOff)) issue("FIVE_BY_TWO", `Semana 5×2: esperados ${expectedWork} dias de trabalho e ${expectedOff} folgas regulares, além dos feriados fechados. Encontrados ${work} dia(s) de trabalho e ${offs.length} folga(s), de ${formatDate(start)} a ${formatDate(addDays(start, 6))}.`, start);
+    if (!limitedAvailability && !closedWeekdays && !untimed && minutes !== target * 60) issue("WEEKLY_MINUTES", `Carga semanal de ${minutes} minutos difere dos ${target * 60} minutos vigentes nesta semana.`, start);
+    if (closedWeekdays) issue("HOLIDAY_WEEK", "Semana com feriado fechado: o relatório soma apenas o trabalho planejado. O feriado não vira falta, folga semanal nem horas a repor; a ferramenta não calcula folha de pagamento.", start, "WARNING");
+    const regularRests = [...offs, ...entries.filter(entry => entry?.kind === "HOLIDAY" && closedHolidays.has(entry.date) && dayOfWeek(entry.date) === 6).map(entry => entry?.date ?? "")];
+    const isRegularRest = (date: string) => byDate.get(date)?.kind === "OFF" || byDate.get(date)?.kind === "HOLIDAY" && dayOfWeek(date) === 6;
+    if (person.offPattern === "CONSECUTIVE" && regularRests.length === 2) {
+      for (const off of regularRests) {
         const before = addDays(off, -1);
         const after = addDays(off, 1);
-        if (byDate.get(before)?.kind === "OFF" || byDate.get(after)?.kind === "OFF" || (reservedOffDates.has(after) && !byDate.has(after))) continue;
+        if (isRegularRest(before) || isRegularRest(after) || (reservedOffDates.has(after) && !byDate.has(after))) continue;
         if ((after > input.endDate && !byDate.has(after)) || (before < input.startDate && !byDate.has(before))) issue("CONSECUTIVE_PENDING", "Folga consecutiva na fronteira depende de outro dia de descanso registrado no período adjacente.", off, "PENDING");
         else issue("CONSECUTIVE_OFF", "Folgas consecutivas obrigatórias não foram respeitadas.", off);
       }

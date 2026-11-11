@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isPlanningClosedHoliday } from "./calendar";
 import { addDays, dateRange, dayOfWeek, isDate, monthBounds } from "./dates";
 import { canonicalBranchCode } from "./branch-code";
 
@@ -10,7 +11,7 @@ const weeklyHours = z.union([z.literal(40), z.literal(42), z.literal(44)]);
 const days = z.array(z.number().int().min(0).max(6)).max(7).refine((value) => new Set(value).size === value.length, "Dias duplicados");
 
 const assignment = z.strictObject({
-  employeeId: identifier, date, kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE"]),
+  employeeId: identifier, date, kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE", "HOLIDAY"]),
   shiftId: identifier.optional(), locked: z.boolean().optional(),
 }).superRefine((value, context) => {
   if ((value.kind === "WORK") !== (value.shiftId !== undefined)) {
@@ -50,6 +51,7 @@ const employee = z.strictObject({
   simulationDailyMinutes: z.number().int().min(1).max(600).optional(),
   shiftIds: z.array(identifier).max(12), activeFrom: z.union([date, z.literal("")]), activeUntil: date.optional(),
   originalShiftIds: z.array(identifier).min(1).max(12).refine(ids => new Set(ids).size === ids.length, "Referências de horários duplicadas").optional(),
+  fixedImportedShiftId: identifier.optional(),
   planningEnabled: z.boolean().optional(),
   scheduleMode: z.enum(["TIMED", "MISSING", "UNTIMED"]).optional(),
   planningExclusionReason: z.string().trim().max(240).optional(),
@@ -98,9 +100,15 @@ const policy = z.strictObject({
   allowShortMealSimulation: z.boolean().optional(),
   limitContinuousWorkBlocks: z.boolean().default(false),
   closedDates: z.array(date).max(100), holidayDates: z.array(date).max(100),
+  calendarMode: z.enum(["LOCAL", "MANUAL"]).optional(),
+  calendarProvenance: z.strictObject({ version: z.string().max(60), municipality: z.enum(["UMUARAMA", "ICARAIMA"]),
+    dates: z.array(date).max(100), closedDates: z.array(date).max(100) }).optional(),
+  paidHolidayDates: z.array(date).max(100).optional(),
   authorizedHolidayDates: z.array(date).max(100), holidayRestAllowed: z.boolean(), nightWorkReviewed: z.boolean(),
 }).superRefine((value, context) => {
   if (value.validUntil < value.validFrom) context.addIssue({ code: "custom", path: ["validUntil"], message: "Fim de vigência anterior ao início" });
+  if (value.paidHolidayDates?.some(day => !isPlanningClosedHoliday(day))) context.addIssue({ code: "custom", path: ["paidHolidayDates"], message: "Feriado fechado automático só pode ser Ano Novo, Dia do Trabalhador ou Natal. Outros fechamentos não criam abono de jornada." });
+  if (value.paidHolidayDates?.some(day => !value.closedDates.includes(day) || !value.holidayDates.includes(day))) context.addIssue({ code: "custom", path: ["paidHolidayDates"], message: "Feriado fechado deve constar no calendário e nos fechamentos" });
   if (value.authorizedHolidayDates.some((day) => !value.holidayDates.includes(day))) context.addIssue({ code: "custom", path: ["authorizedHolidayDates"], message: "Autorizações devem corresponder a feriados cadastrados" });
 });
 

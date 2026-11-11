@@ -4,7 +4,7 @@ type SundayRestRule = "PROTECTIVE" | "UNREVIEWED" | "CLT_386" | "COMMERCE";
 export type EscalaAssignment = {
   employeeId: string;
   date: string;
-  kind: "WORK" | "DUTY" | "OFF" | "ABSENCE";
+  kind: "WORK" | "DUTY" | "OFF" | "ABSENCE" | "HOLIDAY";
   shiftId?: string;
   locked?: boolean;
 };
@@ -28,6 +28,8 @@ export type EscalaEmployee = {
   shiftIds: string[];
   /** Manual references retained across the optional mixed-hours simulation, not solver alternatives. */
   originalShiftIds?: string[];
+  /** Derived during preparation: a compatible imported clock is fixed on unlocked workdays. */
+  fixedImportedShiftId?: string;
   /** Empty means employment dates are unknown; it never represents a new admission. */
   activeFrom: string;
   activeUntil?: string;
@@ -69,6 +71,10 @@ export type EscalaPolicy = {
   validUntil: string;
   reviewed: boolean;
   reviewedBy: string;
+  calendarMode?: "LOCAL" | "MANUAL";
+  calendarProvenance?: { version: string; municipality: "UMUARAMA" | "ICARAIMA"; dates: string[]; closedDates: string[] };
+  /** Closed holidays are non-attendance days, never regular weekly OFF or fictitious work credit. */
+  paidHolidayDates?: string[];
   weeklyLimit: WeeklyHours;
   dailyLimitMinutes: number;
   compensationAuthorized: boolean;

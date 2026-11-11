@@ -115,7 +115,7 @@ describe("lean operational files", () => {
   it("exports only selected operational views, retaining data without support worksheets", async () => {
     const source = scenario(), before = structuredClone(source);
     const archive = unzipSync(exportEscalaXlsx(source)), workbook = strFromU8(archive["xl/workbook.xml"]);
-    expect([...workbook.matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1])).toEqual(["Escala", "Horarios", "Desfalques"]);
+    expect([...workbook.matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1])).toEqual(["Escala", "Horarios", "Capacidade", "Desfalques"]);
     expect(workbook).not.toMatch(/Conferencia|Jornadas|Turnos/);
     expect(source).toEqual(before);
   });

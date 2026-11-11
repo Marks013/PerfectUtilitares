@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
+import { holidayLabel } from "./calendar";
 import type { EscalaInput, EscalaWorkspace } from "./types";
 import { compareSectors, sortScheduleEntries } from "./order";
 import { buildCoveragePresence, sectorCoverageGaps, sectorPresenceGaps } from "./coverage-presence";
@@ -9,6 +10,7 @@ import { mixedWeeklyApplication } from "./mixed-week-report";
 import { storeClosingLabel } from "./store-hours";
 import { visibleDates, weekStart } from "./dates";
 import { usesMixed42Week } from "./labor-rules";
+import { weeklySectorCapacity, weeklyCapacityText, weeklyCapacityCaveat } from "./weekly-capacity";
 
 function reportPeriod(value: string): string {
   return value.replace(/(\d{4})-(\d{2})-(\d{2})/g, "$3/$2/$1");
@@ -53,7 +55,7 @@ function sheet(rows: (string | number)[][], widths: number[], grid = false, froz
     const lines = Math.max(1, ...row.map((value, cell) => spreadsheetLines(String(value), title ? available : widths[cell])));
     const height = index < 2 ? Math.max(20, lines * 13 + 4) : index === 2 ? Math.max(22, lines * 13 + 4) : index === header - 1 ? Math.max(34, lines * 13 + 6) : sectors.includes(index) ? Math.max(22, lines * 13 + 4) : Math.min(409, Math.max(22, lines * 13 + 6));
     return `<row r="${index + 1}" ht="${height}" customHeight="1">${row.map((value, cell) => {
-      const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 0 : index === header - 1 ? grid && cell >= frozenColumns ? 10 : 1 : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC"].includes(String(value)) ? 6 : grid && cell >= frozenColumns ? 7 : index % 2 ? 2 : 3;
+      const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 0 : index === header - 1 ? grid && cell >= frozenColumns ? 10 : 1 : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC", "FE"].includes(String(value)) ? 6 : grid && cell >= frozenColumns ? 7 : index % 2 ? 2 : 3;
       const text = `<t xml:space="preserve">${xml(value)}</t>`;
       return typeof value === "number" ? `<c r="${column(cell)}${index + 1}" s="${style}"><v>${value}</v></c>` : `<c r="${column(cell)}${index + 1}" s="${style}" t="inlineStr"><is>${text}</is></c>`;
     }).join("")}</row>`;
@@ -106,16 +108,17 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const model = buildEscalaPresentation(workspace);
   const hourly = hourEntries(model, workspace.input);
   const weekly = hourly.some(row => row.application);
+  const capacities = mode === "rest" ? [] : weeklySectorCapacity(workspace.input);
   const coverage = mode === "rest" ? [] : coverageReport(workspace.input);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const mixedNotice = mixed42ExportNotice(workspace.input);
   const metadata = (title: string, description = ""): (string | number)[][] => [[model.branch],
     [title + " | " + reportPeriod(model.period) + " | Revisão " + workspace.revision + " | " + model.state + simulation],
-    [[`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, mixedNotice, description].filter(Boolean).join(" | ")]];
+    [[`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, model.calendarLabel, model.holidayNotes.length ? "* Feriados: " + model.holidayNotes.join("; ") : "", mixedNotice, description].filter(Boolean).join(" | ")]];
   const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[], gaps: [] as number[] };
   const main = [...metadata("Escala de folgas", model.legend),
-    ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(escalaDateLabel)]];
+    ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(date => escalaDateLabel(date) + (holidayLabel(workspace.input, date) ? "*" : ""))]];
   const hours = [...metadata("Escala de horários", "Horários propostos por colaborador."),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada diária", ...(weekly ? ["Aplicação nas semanas"] : [])]];
   let sector: string | undefined;
@@ -138,6 +141,12 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const gaps = [...metadata("Desfalques de cobertura", "Sem cobertura com horário não significa ninguém escalado: pessoas ENC podem estar presentes. Sem meta positiva, confirme a necessidade."),
     ["Setor", "Dias com alerta", "Dias sem cobertura com horário (parcial / inteiro)", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"],
     ...coverage.map(coverageReportCells)];
+  const decimal = (number: number) => number.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+  const capacity = [...metadata("Capacidade nominal por setor", weeklyCapacityCaveat),
+    ["Setor", "Colab.", "44h (h/sem)", "42h (h/sem)", "40h (h/sem)", "Atual (h/sem)", "Diferença (h/sem)", "Equiv. nominal (adicional)"],
+    ...capacities.map(row => [row.sector || "Não informado", row.people, row.referenceHours, row.hours42, row.hours40,
+      row.currentHours === row.currentHoursMax ? row.currentHours : `${decimal(row.currentHours)}–${decimal(row.currentHoursMax)}`,
+      row.missingHours, `${decimal(row.equivalentPeople)} (+${decimal(row.additionalEquivalentPeople)})`])];
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
     ["Situação", "Setor", "Matrícula", "Colaborador", "Cargo", "Motivo da não inclusão"]];
   sector = undefined;
@@ -148,6 +157,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const sheets = [
     ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [12, 9, 25, 18, 28, ...model.dates.map(() => 4.25)], grid: true, sectors: sectors.main }] : []),
     ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [14, 9, 26, 19, 8, 32, 20, 12, ...(weekly ? [43] : [])], grid: false, sectors: sectors.hours }] : []),
+    ...(capacities.length ? [{ name: "Capacidade", frozenColumns: 1, rows: capacity, widths: [25, 10, 15, 15, 15, 17, 18, 25], grid: false, sectors: [] as number[] }] : []),
     ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 1, rows: gaps, widths: [23, 28, 28, 33, 27, 42], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
@@ -280,6 +290,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
   const grouped = sectionSector !== undefined;
   const hourly = hourEntries(model, workspace.input);
   const weekly = hourly.some(row => row.application);
+  const capacities = new Map(weeklySectorCapacity(workspace.input).map(row => [row.sector, row]));
   const mixedNotice = mixed42ExportNotice(workspace.input);
   const hasRest = mode !== "hours" && (!grouped || model.restPeople.length > 0);
   let reportTitle = hasRest ? "Escala de folgas" : mode !== "rest" && model.hoursPeople.length ? "Escala de horários"
@@ -296,7 +307,10 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
       write(line, margin, y, 10, true); y -= 14;
     }
     write(`${reportTitle} | 5x2 | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
-    write(`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, margin, y, 8); y -= 12;
+    write(`Fechamento da loja: ${storeClosingLabel(workspace.input)} | ${model.calendarLabel}`, margin, y, 8); y -= 12;
+    if (model.holidayNotes.length) for (const line of wrapText("* Feriados: " + model.holidayNotes.join("; "), width - 2 * margin, font, 7.5)) {
+      write(line, margin, y, 7.5); y -= 11;
+    }
     if (mixedNotice) {
       for (const line of wrapText(mixedNotice, width - 2 * margin, bold, 8)) {
         write(line, margin, y, 8, true); y -= 12;
@@ -313,7 +327,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
         const x = margin + labelWidth + index * cellWidth;
         const sunday = new Date(date + "T00:00:00Z").getUTCDay() === 0;
         page.drawRectangle({ x, y: y - 20, width: cellWidth, height: 33, color: sunday ? rgb(0.82, 0.87, 0.94) : rgb(0.94, 0.96, 0.98), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
-        write(date.slice(8), x + 2, y, 8, true);
+        write(date.slice(8) + (holidayLabel(workspace.input, date) ? "*" : ""), x + 2, y, 8, true);
         write(escalaDateLabel(date).split(" ")[1], x + 2, y - 12, 7);
       });
       y -= 30;
@@ -393,7 +407,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     cells.forEach((cell, index) => {
       const x = margin + labelWidth + index * cellWidth;
       const fill = cell.code === "F" ? rgb(0.89, 0.91, 0.97) : cell.code === "NP" ? rgb(0.98, 0.91, 0.91)
-        : ["AF", "ENC", "FV"].includes(cell.code) ? rgb(0.91, 0.94, 0.97) : new Date(model.dates[index] + "T00:00:00Z").getUTCDay() === 0 ? rgb(0.96, 0.97, 0.99) : rgb(1, 1, 1);
+        : ["AF", "ENC", "FV", "FE"].includes(cell.code) ? rgb(0.91, 0.94, 0.97) : new Date(model.dates[index] + "T00:00:00Z").getUTCDay() === 0 ? rgb(0.96, 0.97, 0.99) : rgb(1, 1, 1);
       page.drawRectangle({ x, y: y - rowHeight + 12, width: cellWidth, height: rowHeight, color: fill, borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
       const codeSize = cell.code.length > 2 ? 7 : 7.5;
       const codeFont = cell.code === "F" ? bold : font;
@@ -407,6 +421,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     if (mode === "both" && !grouped) newPage(false);
     const description = "Horários propostos por colaborador.";
     let hoursSector: string | undefined;
+    const capacityShown = new Set<string>();
     const widths = (weekly ? [0.20, 0.10, 0.05, 0.23, 0.13, 0.08, 0.21] : [0.27, 0.18, 0.05, 0.27, 0.15, 0.08]).map(ratio => ratio * (width - 2 * margin));
     const headings = ["Matrícula / colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada", ...(weekly ? ["Aplicação nas semanas"] : [])];
     const headerHeight = cellHeight(headerLines(headings, widths));
@@ -415,16 +430,23 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
       const { employee } = row;
       const cells = [employee.registration + " - " + employee.name, employee.role, row.code, row.schedule, row.interval, row.daily === "Não apurada" ? "—" : row.daily, ...(weekly ? [row.application] : [])];
       const lines = cells.map((value, index) => value.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8.5)));
-      return { employee, lines, sectorHeight: sectionHeight(employee.sector || "Setor não informado") + headerHeight };
+      const capacity = capacities.get(employee.sector);
+      return { employee, lines, sectorHeight: sectionHeight(employee.sector || "Setor não informado") + headerHeight + (capacity ? textHeight("Capacidade nominal: " + weeklyCapacityText(capacity), 8) : 0) };
     });
     const first = rows[0];
-    if (grouped && first && y - sectionHeight(reportTitle) - textHeight(description) - first.sectorHeight - firstRowHeight(first.lines) < 45) newPage(false);
+    if (grouped && first && y - sectionHeight(reportTitle) - textHeight(description) - (capacities.size ? textHeight(weeklyCapacityCaveat, 7.5) : 0) - first.sectorHeight - firstRowHeight(first.lines) < 45) newPage(false);
     section(reportTitle);
     paragraph(description);
+    if (capacities.size) paragraph(weeklyCapacityCaveat, 7.5);
     for (const { employee, lines, sectorHeight } of rows) {
       if (y - firstRowHeight(lines) - (hoursSector !== employee.sector ? sectorHeight : 0) < 45) { newPage(false); hoursSector = undefined; }
       if (hoursSector !== employee.sector) {
-        section(employee.sector || "Setor não informado"); hoursSector = employee.sector; hoursHeader();
+        section(employee.sector || "Setor não informado"); hoursSector = employee.sector;
+        const capacity = capacities.get(employee.sector);
+        if (capacity && !capacityShown.has(employee.sector)) {
+          paragraph("Capacidade nominal: " + weeklyCapacityText(capacity), 8); capacityShown.add(employee.sector);
+        }
+        hoursHeader();
       }
       paginatedRow(lines, widths, 8.5, index => index === 0, () => {
         newPage(false); section((employee.sector || "Setor não informado") + " (continuação)"); hoursHeader();

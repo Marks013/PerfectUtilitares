@@ -8,6 +8,8 @@ import type { EscalaInput } from "./types";
 
 function fixture(): EscalaInput {
   const input = newInput("08", "Referência salva", "2026-11", 40);
+  // Legacy snapshots predate the optional automatic calendar; changing clocks must not migrate their staffing basis.
+  delete input.policy.calendarMode;
   delete input.visibleMonth;
   input.startDate = "2026-11-02"; input.endDate = "2026-11-08"; input.simulation = true;
   input.policy.closedDates = [];

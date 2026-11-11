@@ -124,9 +124,13 @@ describe("Escalas shared monthly presentation and real exports", () => {
   it("freezes useful identity columns and records complete print areas on every workbook sheet", () => {
     const archive = unzipSync(exportEscalaXlsx(fixture()));
     expect(strFromU8(archive["xl/worksheets/sheet1.xml"])).toContain('xSplit="5" ySplit="4" topLeftCell="F5"');
-    for (const index of [2, 4]) expect(strFromU8(archive["xl/worksheets/sheet" + index + ".xml"])).toContain('xSplit="4" ySplit="4" topLeftCell="E5"');
     const workbook = strFromU8(archive["xl/workbook.xml"]);
-    expect(workbook.match(/name="_xlnm.Print_Area"/g)).toHaveLength(4);
+    const sheets = new Map([...workbook.matchAll(/<sheet name="([^"]+)" sheetId="(\d+)"/g)].map(match => [match[1], match[2]]));
+    for (const name of ["Horarios", "Excluidos"]) {
+      expect(strFromU8(archive[`xl/worksheets/sheet${sheets.get(name)}.xml`])).toContain('xSplit="4" ySplit="4" topLeftCell="E5"');
+    }
+    expect(strFromU8(archive[`xl/worksheets/sheet${sheets.get("Capacidade")}.xml`])).toContain('xSplit="1" ySplit="4" topLeftCell="B5"');
+    expect(workbook.match(/name="_xlnm.Print_Area"/g)).toHaveLength(sheets.size);
     expect(workbook).toContain("'Horarios'!$A:$D");
     expect(workbook).toContain("'Escala'!$A:$E");
   });

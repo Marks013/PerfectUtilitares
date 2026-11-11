@@ -1,9 +1,10 @@
 import { visibleDates } from "./dates";
+import { holidayCalendarFor, holidayLabel } from "./calendar";
 import { compareProposedSchedules, sortEmployees, sortHoursEmployees } from "./order";
 import { isRestPlanningExcludedRole } from "./eligibility";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaWorkspace } from "./types";
 
-const ESCALA_LEGEND = "F = Folga | T01/T02 = Turno | ENC = Sem horário fixo | NP = Não processado | AF = Afastado | FV = Fora do vínculo | X = Não incluído ou não considerado";
+const ESCALA_LEGEND = "F = Folga | FE = Feriado, loja fechada | T01/T02 = Turno | ENC = Sem horário fixo | NP = Não processado | AF = Afastado | FV = Fora do vínculo | X = Não incluído ou não considerado";
 export type EscalaExportMode = "rest" | "hours" | "both";
 const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
@@ -30,6 +31,7 @@ export function assignmentPresentation(employee: EscalaEmployee, date: string, a
   if (employee.planningEnabled === false) return { code: "X", description: exclusionPresentation(employee).reason };
   if (date < employee.activeFrom || (employee.activeUntil && date > employee.activeUntil)) return { code: "FV", description: "Fora do período de vínculo" };
   if (!assignment) return { code: "NP", description: "Dia não processado: gere a proposta ou selecione um turno, uma folga ou um afastamento" };
+  if (assignment.kind === "HOLIDAY") return { code: "FE", description: "Feriado — loja fechada" };
   if (assignment.kind === "OFF") return { code: "F", description: "Folga" };
   if (assignment.kind === "ABSENCE") return { code: "AF", description: "Afastado; não conta como folga nem como presença na cobertura" };
   const sourceClocks = employee.sourceSchedule?.weekday.match(/\d{2}:\d{2}/g) ?? [];
@@ -52,6 +54,12 @@ function scheduleText(shift: EscalaShift, breaks: boolean) {
 /** Exact schedule interpretation shared by screen, PDF and Excel; no clock rounding or role inference. */
 export function buildEscalaSchedule(input: EscalaInput) {
   const dates = visibleDates(input), codes = escalaShiftCodes(input);
+  const calendar = holidayCalendarFor(input);
+  const calendarLabel = input.policy.calendarMode !== "LOCAL" ? "Calendário: manual" : `Calendário: ${calendar.label}`;
+  const holidayNotes = dates.flatMap(date => {
+    const label = holidayLabel(input, date);
+    return label ? [`${date.slice(8)}/${date.slice(5, 7)} ${label}${input.policy.closedDates?.includes(date) ? " (fechado)" : ""}`] : [];
+  });
   const assignments = new Map(input.assignments.map((assignment) => [`${assignment.employeeId}\0${assignment.date}`, assignment]));
   const byShift = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const people = sortEmployees(input.employees.filter((employee) => employee.planningEnabled !== false)).map((employee) => {
@@ -83,7 +91,7 @@ export function buildEscalaSchedule(input: EscalaInput) {
     const person = byEmployee.get(employee.id); return person ? [person] : [];
   });
   const restPeople = people.filter(person => !isRestPlanningExcludedRole(person.employee.role));
-  return { dates, codes, people, hoursPeople, restPeople, excluded, legend: ESCALA_LEGEND };
+  return { dates, codes, people, hoursPeople, restPeople, excluded, legend: ESCALA_LEGEND, calendarLabel, holidayNotes };
 }
 
 /** One immutable interpretation for screen cells, PDF and Excel. Technical boundary days remain in input. */

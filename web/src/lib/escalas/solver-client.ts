@@ -44,7 +44,7 @@ const resultSchema = z.strictObject({
   }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
-    kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE"]),
+    kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE", "HOLIDAY"]),
     shiftId: z.string().max(100).optional(), locked: z.boolean().optional(),
   })).max(10500),
 });

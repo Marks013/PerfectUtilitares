@@ -4,7 +4,6 @@ import { CalendarDays } from "lucide-react";
 import styles from "./escalas.module.css";
 import { useEffect, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
-import { compareBranches } from "@/lib/escalas/order";
 import type { EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
@@ -22,8 +21,9 @@ import { ContinuousWorkOption, HoursProposal } from "./hours-proposal";
 import { Mixed42Option } from "./mixed-42-option";
 import { StoreClosingOption } from "./store-closing-option";
 import { Proposals, Publication, ValidationResults, type ReviewSection } from "./results";
+import { PlanSelector } from "./plan-selector";
 import { Roster } from "./roster";
-import { useEscalasWorkspace, type WorkspaceSummary } from "./use-escalas-workspace";
+import { useEscalasWorkspace } from "./use-escalas-workspace";
 import type { ReviewTarget } from "./validation-guidance";
 import { WorkspaceFeedback } from "./workspace-feedback";
 import type { EscalaProblem, EscalaRecoveryAction } from "./workspace-feedback-model";
@@ -67,10 +67,6 @@ function CreatePlan({ disabled, create, initial = false }: { disabled: boolean; 
       </fieldset>
     </form>
   </details>;
-}
-
-function comparePlans(a: WorkspaceSummary, b: WorkspaceSummary) {
-  return compareBranches(a.input, b.input) || b.input.startDate.localeCompare(a.input.startDate) || a.id.localeCompare(b.id);
 }
 
 export function EscalasStatus({ busy, notice, cancellable, onCancel, cancelLabel = "Cancelar análise", failed = false, error = "", problem, onAction, pendingSave = false, hasWorkspace = false }: {
@@ -155,10 +151,7 @@ export function EscalasWorkspace() {
 
     <section className={panelClass} aria-labelledby="escala-list-title">
       <h2 id="escala-list-title" className="sr-only">Selecionar planejamento</h2>
-      {model.workspaces.length > 0 ? <Field label="Selecionar filial e período">{(id) => <select id={id} disabled={Boolean(model.busy)} value={workspace?.id ?? ""} onChange={(event) => { if (event.target.value) model.open(event.target.value); }} className={controlClass}>
-        <option value="">Selecione um planejamento</option>
-        {[...model.workspaces].sort(comparePlans).map((item) => <option key={item.id} value={item.id}>Filial {item.input.branchCode} · {item.input.branchName} · {item.input.visibleMonth ?? `${displayDate(visibleDates(item.input)[0])} a ${displayDate(visibleDates(item.input).at(-1) ?? item.input.endDate)}`} · {item.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</option>)}
-      </select>}</Field> : <p className={styles.muted}>{model.canCreate ? "Comece pela filial e pelo mês. A equipe e a jornada serão definidas neste planejamento." : "Nenhum planejamento disponível para seu acesso."}</p>}
+      {model.workspaces.length > 0 ? <PlanSelector plans={model.workspaces} selectedId={workspace?.id} disabled={Boolean(model.busy)} onSelect={model.open} /> : <p className={styles.muted}>{model.canCreate ? "Comece pela filial e pelo mês. A equipe e a jornada serão definidas neste planejamento." : "Nenhum planejamento disponível para seu acesso."}</p>}
       {model.canCreate && <CreatePlan initial={!model.workspaces.length} disabled={Boolean(model.busy || model.dirty || model.recovery)} create={model.create} />}
     </section>
     {model.pendingOpen && <div className={`${panelClass} border-[color:var(--app-coral)]`} role="alert">

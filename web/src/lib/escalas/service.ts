@@ -301,7 +301,7 @@ function requireSolverSetup(input: EscalaInput) {
     throw new EscalaError(422, "ESCALA_DAILY_EXTENSION_REQUIRED", "A carga escolhida em 5×2 exige mais de 8 horas por dia. Confira a autorização de compensação da filial em Regras trabalhistas; a partir de 16/12/2026, informe também o acordo coletivo vigente. Para simular uma jornada de 8 horas, escolha expressamente 40 horas semanais e gere novamente. Nenhuma carga ou autorização foi alterada automaticamente.");
   }
   const unsupportedHoliday = !input.policy.holidayRestAllowed && input.policy.holidayDates.some((date) => date >= input.startDate && date <= input.endDate
-    && !input.policy.authorizedHolidayDates.includes(date)
+    && !input.policy.authorizedHolidayDates.includes(date) && !input.policy.paidHolidayDates?.includes(date)
     && included.some((person) => date >= person.activeFrom && (!person.activeUntil || date <= person.activeUntil)
       && !input.assignments.some((item) => item.employeeId === person.id && item.date === date && item.kind === "ABSENCE")));
   if (unsupportedHoliday && !input.simulation) throw new EscalaError(422, "ESCALA_HOLIDAY_POLICY_REQUIRED", "Confirme o tratamento do feriado não trabalhado. Esta versão não possui estado próprio de feriado remunerado e não o converterá em DSR, ausência ou horas a repor. Registre a regra aplicável antes de gerar.");

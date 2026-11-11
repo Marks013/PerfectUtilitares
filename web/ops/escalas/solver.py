@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
-from hints import balanced_rest_hints
+from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates
 from optimization import Snapshot, improve, remember
 from weekend_balance import available_weekends, preserve_sunday_presence, weekend_objectives
 
@@ -214,6 +214,7 @@ def solve(data, control=None):
     metrics = {key: shift_metrics(value) for key, value in shifts.items()}
     baseline = {(a["employeeId"], a["date"]): a for a in data["assignments"]}
     closed_dates = set(policy["closedDates"])
+    paid_holidays = paid_holiday_dates(policy)
     if not policy["_simulation"]:
         closed_dates.update(set(policy["holidayDates"]) - set(policy["authorizedHolidayDates"]))
 
@@ -255,7 +256,10 @@ def solve(data, control=None):
         boundary = {**prior, **future}
         changed = []
         reference_shifts = person["shiftIds"]
-        if data.get("generationMode") == "REST_ONLY":
+        fixed_import = person.get("fixedImportedShiftId")
+        if fixed_import in reference_shifts:
+            reference_shifts = [fixed_import]
+        elif data.get("generationMode") == "REST_ONLY":
             durations = set()
             reference_shifts = []
             for sid in person["shiftIds"]:
@@ -270,6 +274,7 @@ def solve(data, control=None):
                 control.checkpoint()
             key, old = (pid, day), baseline.get((pid, day))
             absent = old is not None and old["kind"] == "ABSENCE"
+            holiday = day in paid_holidays and not absent
             off[key] = model.new_bool_var(f"o:{pid}:{day}")
             work[key] = model.new_bool_var(f"w:{pid}:{day}")
             current = {}
@@ -293,14 +298,16 @@ def solve(data, control=None):
                     model.add(work[key] == 0)
             else:
                 model.add(work[key] == sum(current.values()))
-            model.add(work[key] + off[key] == (0 if absent else 1))
+            model.add(work[key] + off[key] == (0 if absent or holiday else 1))
             weekday = date.fromisoformat(day).weekday()
-            if weekday in person["fixedOffDays"] and not absent:
+            if weekday in person["fixedOffDays"] and not absent and not holiday:
                 model.add(off[key] == 1)
-            if day in policy["holidayDates"] and (not policy["holidayRestAllowed"] or policy.get("normativeProfile") == CCT_PROFILE):
+            if holiday_rest_forbidden(policy, day):
                 model.add(off[key] == 0)
             if old and old.get("locked") and not absent:
-                if old["kind"] == "OFF":
+                if old["kind"] == "HOLIDAY" and holiday:
+                    pass
+                elif old["kind"] == "OFF":
                     model.add(off[key] == 1)
                 elif old["kind"] == "DUTY" and untimed:
                     model.add(work[key] == 1)
@@ -309,7 +316,7 @@ def solve(data, control=None):
                 else:
                     model.add(work[key] == 2)  # explicitly infeasible, never replace a locked shift
             if old and not absent:
-                same = (off[key] if old["kind"] == "OFF" else work[key]
+                same = (int(holiday) if old["kind"] == "HOLIDAY" else off[key] if old["kind"] == "OFF" else work[key]
                         if old["kind"] == "DUTY" and untimed else current.get(old.get("shiftId"), 0))
                 changed.append(1 - same)
                 stability_terms.append(1 - same)
@@ -325,14 +332,17 @@ def solve(data, control=None):
         for week in range(0, len(dates), 7):
             group = [d for d in dates[week:week + 7] if d in active[pid]]
             absences = [d for d in group if baseline.get((pid, d), {}).get("kind") == "ABSENCE"]
+            closed_weekdays = sum(d in paid_holidays and date.fromisoformat(d).weekday() != 6 for d in group)
+            closed_sundays = sum(d in paid_holidays and date.fromisoformat(d).weekday() == 6 for d in group)
             if len(group) == 7 and not absences:
-                model.add(sum(work[pid, d] for d in group) == 5)
-                model.add(sum(off[pid, d] for d in group) == 2)
-                if not untimed:
+                model.add(sum(work[pid, d] for d in group) == max(0, 5 - closed_weekdays))
+                model.add(sum(off[pid, d] for d in group) == max(0, 2 - closed_sundays))
+                if not untimed and not closed_weekdays:
                     model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
                               == effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]))
             else:
                 model.add(sum(work[pid, d] for d in group) <= 5)
+            if absences or closed_weekdays:
                 if dates[week] in mixed_days:
                     model.add(sum(v for d in group for s, v in choices[pid, d].items()
                                   if metrics[s][0] == 540) <= 2)
@@ -354,10 +364,14 @@ def solve(data, control=None):
                                       and person["offMode"] in ("FIXED", "MIXED")
                                       and 0 in person["fixedOffDays"]
                                       and adjacent not in boundary
+                                      and adjacent not in paid_holidays
                                       and (not person.get("activeUntil") or adjacent <= person["activeUntil"])
-                                      and not (adjacent in policy["holidayDates"] and (not policy["holidayRestAllowed"] or policy.get("normativeProfile") == CCT_PROFILE)))
-                    neighbors.append(off.get((pid, adjacent), int(boundary.get(adjacent, {}).get("kind") == "OFF" or fixed_boundary)))
-                model.add(off[pid, day] <= sum(neighbors))
+                                      and not holiday_rest_forbidden(policy, adjacent))
+                    sunday_holiday = (date.fromisoformat(adjacent).weekday() == 6
+                                      and (adjacent in paid_holidays or boundary.get(adjacent, {}).get("kind") == "HOLIDAY"))
+                    neighbors.append(1 if sunday_holiday and baseline.get((pid, adjacent), {}).get("kind") != "ABSENCE" else off.get((pid, adjacent), int(boundary.get(adjacent, {}).get("kind") == "OFF" or fixed_boundary)))
+                regular_rest = 1 if day in paid_holidays and date.fromisoformat(day).weekday() == 6 and baseline.get((pid, day), {}).get("kind") != "ABSENCE" else off[pid, day]
+                model.add(regular_rest <= sum(neighbors))
         if person["offPattern"] == "CONSECUTIVE":
             first_future = (date.fromisoformat(dates[-1]) + timedelta(days=1)).isoformat()
             next_future = (date.fromisoformat(dates[-1]) + timedelta(days=2)).isoformat()
@@ -443,7 +457,7 @@ def solve(data, control=None):
         seed_status = seed.solve(model) if control is None else control.solve(seed, model)
         if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return _response(seed.status_name(seed_status), [], started)
-    result = _read_assignments(seed, employees, active, baseline, work, choices) + retained_disabled_records(data)
+    result = _read_assignments(seed, employees, active, baseline, work, choices, paid_holidays) + retained_disabled_records(data)
     values = {variable.index: seed.value(variable) for variable in seed_variables}
     model.clear_hints()
     for variable in seed_variables:
@@ -532,7 +546,7 @@ def solve(data, control=None):
                                      initial_repair_groups=repair_groups,
                                      repair_clock_fixes=_repair_clock_fixes(choices, metrics, values))
     # Existing protected disabled records are retained, never allocated or counted as workforce.
-    result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices) + retained_disabled_records(data)
+    result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices, paid_holidays) + retained_disabled_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
     attempted = {phase['objective'] for phase in phases}
     attempted.update(member['objective'] for phase in phases for member in phase.get('members', []))
@@ -635,7 +649,7 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
             large.append(members)
     return ([small] if small else []) + large[:4 - bool(small)]
 
-def _read_assignments(solver, employees, active, baseline, work, choices):
+def _read_assignments(solver, employees, active, baseline, work, choices, paid_holidays=frozenset()):
     result = []
     for person in employees:
         for day in active[person["id"]]:
@@ -644,6 +658,8 @@ def _read_assignments(solver, employees, active, baseline, work, choices):
             item = {"employeeId": key[0], "date": day, "kind": "OFF"}
             if old.get("kind") == "ABSENCE":
                 item["kind"] = "ABSENCE"
+            elif day in paid_holidays:
+                item["kind"] = "HOLIDAY"
             elif has_no_clock(person) and solver.value(work[key]):
                 item["kind"] = "DUTY"
             else:
@@ -678,7 +694,7 @@ def _initial_hint_baseline(entries, employees, active, baseline, choices):
                 return None
             continue
         old, kind = baseline.get(key, {}), entry.get('kind')
-        if kind not in ('WORK', 'DUTY', 'OFF', 'ABSENCE'):
+        if kind not in ('WORK', 'DUTY', 'OFF', 'ABSENCE', 'HOLIDAY'):
             return None
         if (kind == 'ABSENCE') != (old.get('kind') == 'ABSENCE'):
             return None
@@ -699,6 +715,10 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
                        deadline=None, control=None, prefer_baseline=True, mixed_people=frozenset(),
                        initial_assignments=None):
     """Hint a preferred seed or saved sectors; CP-SAT verifies the combined draft."""
+    # Fixed ordinary seeds are not valid evidence about holiday-week feasibility.
+    # The unrestricted mandatory CP-SAT pass handles these weeks directly.
+    if policy.get("holidayDates"):
+        return False
     source = (_initial_hint_baseline(initial_assignments, employees, active, baseline, choices)
               if prefer_baseline else None)
     source = source if source is not None else baseline
@@ -826,6 +846,7 @@ def _rest(model, person, dates, active_days, choices, off, prior, metrics, polic
     if has_no_clock(person):
         return  # No timestamps exist to establish an hourly rest interval.
     pid = person["id"]
+    holidays = paid_holiday_dates(policy)
     events = {}
     first_relevant = (date.fromisoformat(dates[0]) - timedelta(days=5)).isoformat()
     for day, entry in prior.items():
@@ -865,7 +886,7 @@ def _rest(model, person, dates, active_days, choices, off, prior, metrics, polic
                 model.add(begin - finish >= policy['minInterShiftMinutes']).only_enforce_if(conditions)
             if delta > 1 and earliest - latest < policy['minWeeklyRestMinutes']:
                 for middle in days_between(day, next_day)[1:-1]:
-                    resting = off.get((pid, middle), int(prior.get(middle, {}).get('kind') == 'OFF'))
+                    resting = 1 if middle in holidays else off.get((pid, middle), int(prior.get(middle, {}).get('kind') in ('OFF', 'HOLIDAY')))
                     if isinstance(resting, int) and not resting:
                         continue
                     enforcement = conditions + ([] if isinstance(resting, int) else [resting])
@@ -883,7 +904,7 @@ def _civil_rest(model, person, dates, active_days, choices, work, off, prior, sh
             for occupied in shift_calendar(sid, day)[0]:
                 if occupied != day and (pid, occupied) in off:
                     model.add(variable + off[pid, occupied] <= 1)
-                if occupied != day and prior.get(occupied, {}).get("kind") in ("OFF", "ABSENCE"):
+                if occupied != day and prior.get(occupied, {}).get("kind") in ("OFF", "ABSENCE", "HOLIDAY"):
                     model.add(variable == 0)
                 if date.fromisoformat(occupied).weekday() in (5, 6):
                     weekend_terms.setdefault(occupied, []).append(variable)
@@ -920,7 +941,9 @@ def _civil_rest(model, person, dates, active_days, choices, work, off, prior, sh
 
 def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None,
               sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None, closing_terms=None):
+    closed_holidays = paid_holiday_dates(data["policy"])
     relevant = [d for d in data['demands'] if d['minimum'] > 0
+                and not (d.get('estimated') is True and d['date'] in closed_holidays)
                 and not (scope == 'HARD' and d.get('estimated') is True)
                 and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
     if not relevant:

@@ -133,5 +133,8 @@ export function validateCoverage(input: EscalaInput, presence = buildCoveragePre
 export function interveningOffs(previous: WorkJourney, next: WorkJourney, assignments: Map<string, EscalaAssignment>): boolean {
   const first = addDays(previous.assignment.date, 1);
   const last = addDays(next.assignment.date, -1);
-  return first <= last && dateRange(first, last).some((day) => assignments.get(day)?.kind === "OFF");
+  return first <= last && dateRange(first, last).some((day) => {
+    const kind = assignments.get(day)?.kind;
+    return kind === "OFF" || kind === "HOLIDAY";
+  });
 }

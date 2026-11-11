@@ -5,6 +5,28 @@ from datetime import date, timedelta
 from itertools import combinations
 
 
+def paid_holiday_dates(policy):
+    """Closed operational holidays are real dates, never invented time credits."""
+    closed = set(policy.get("closedDates", []))
+    holidays = set(policy.get("holidayDates", []))
+    result = set()
+    for day in policy.get("paidHolidayDates", []):
+        try:
+            parsed = date.fromisoformat(day)
+        except (ValueError, TypeError):
+            continue
+        if parsed.isoformat() == day and day in closed and day in holidays:
+            result.add(day)
+    return result
+
+
+def holiday_rest_forbidden(policy, day):
+    """Sunday takes precedence over the ordinary open-holiday rest restriction."""
+    return (day in policy.get("holidayDates", []) and date.fromisoformat(day).weekday() != 6
+            and (not policy.get("holidayRestAllowed", False)
+                 or policy.get("normativeProfile") == "SINDECOMU_SUPERMARKETS_2026_2027"))
+
+
 def _mixed_week_variants(entries, choices, metrics, baseline, pid):
     """Choose two long days without changing the proposed rests or locked clocks."""
     working = [day for day, entry in entries.items() if entry["kind"] == "WORK"]
@@ -34,6 +56,10 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     These are variable hints only. No target is converted into a staffing constraint,
     and no missing history is fabricated. Unsupported alternatives are left to CP-SAT.
     """
+    # Holiday weeks use a different work/rest count. Let the mandatory model find
+    # the seed rather than forcing an ordinary five-workday/two-rest proposal.
+    if policy.get("holidayDates"):
+        return {}
     groups = {}
     leadership = []
     for person in employees:

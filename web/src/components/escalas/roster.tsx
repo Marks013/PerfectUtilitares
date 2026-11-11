@@ -3,6 +3,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import { dayOfWeek, visibleDates } from "@/lib/escalas/dates";
+import { holidayLabel } from "@/lib/escalas/calendar";
 import { sortEmployees, sortHoursEmployees } from "@/lib/escalas/order";
 import { assignmentPresentation, buildEscalaSchedule, escalaShiftCodes, type EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, EscalaValidation } from "@/lib/escalas/types";
@@ -92,6 +93,8 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
       <Field label="Buscar nome, matrícula ou cargo">{(id) => <input id={id} type="search" value={filter} className={controlClass} onChange={(event) => { setFilter(event.target.value); setPage(0); setSelected(null); }} />}</Field>
     </div>
     <p className="text-sm">{presentation.legend}</p>
+    <p className={styles.muted}>{presentation.calendarLabel}</p>
+    {presentation.holidayNotes.length > 0 && <p className={styles.muted}>Feriados: {presentation.holidayNotes.join("; ")}</p>}
     {missingCoverage ? <p className={styles.muted}>Cobertura por horário não verificada: a necessidade deste setor ou período ainda não foi informada. Presença diária não equivale a cobertura horária.</p>
       : <p className="text-sm">{coverage.length ? `${coverage.length} faixa(s) de cobertura precisam de conferência. Os dias estão destacados na grade.` : "Nenhuma falta nas faixas de cobertura informadas."} Somente faixas declaradas são verificadas; estimativas não são mínimos confirmados.</p>}
     {view !== "hours" && <><h3 className={styles.sectionTitle}>Escala de folgas</h3>
@@ -107,7 +110,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
               const issues = coverage.filter((issue) => issue.date === date);
               return <th key={date} scope="col" className={styles.dayHeading}>
                 <span className="block">{date.slice(8)}</span><span className="block text-xs font-normal">{WEEKDAYS[dayOfWeek(date)]}</span>
-                {input.policy.holidayDates.includes(date) && <span className="block text-xs">Feriado</span>}
+                {holidayLabel(input, date) && <span className="block text-xs" title={holidayLabel(input, date)}><span aria-hidden="true">Feriado{input.policy.closedDates.includes(date) ? " · fechado" : ""}</span><span className="sr-only">{holidayLabel(input, date)}{input.policy.closedDates.includes(date) ? ", loja fechada" : ""}</span></span>}
                 {issues.length > 0 && <a href={`#escala-cobertura-${date}`} className={styles.coverageLink} aria-label={`${displayDate(date)}: ${issues.length} faixa(s) abaixo da cobertura. Ver detalhes`}>! {issues.length}</a>}
               </th>;
             })}
@@ -138,7 +141,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
                 const inactive = (employee.activeFrom && date < employee.activeFrom) || (employee.activeUntil && date > employee.activeUntil);
                 const gap = coverage.some((issue) => issue.sector === employee.sector && issue.date === date);
                 return <td key={date} className={styles.dayCell}>
-                  {employee.planningEnabled === false || inactive ? <span className={styles.inactiveCell} title={label.description}>{label.code}</span>
+                  {employee.planningEnabled === false || inactive || assignment?.kind === "HOLIDAY" ? <span className={styles.inactiveCell} title={label.description}><span aria-hidden="true">{label.code}</span><span className="sr-only">{employee.name}, {displayDate(date)}: {label.description}</span></span>
                     : <button type="button" disabled={disabled} onClick={() => setSelected({ employeeId: employee.id, date })}
                       className={styles.cellButton} data-kind={assignment?.kind ?? "PENDING"} data-code={label.code} data-locked={Boolean(assignment?.locked)}
                       title={`${label.description}${gap ? ". Setor com cobertura a conferir" : ""}`}
@@ -162,7 +165,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
           const heading = employee.sector !== lastHoursSector; lastHoursSector = employee.sector;
           const cell = scheduleByEmployee.get(employee.id)?.cells.find((item) => item.date === currentDate);
           return [...(heading ? [<tr key={"hours-sector-" + employee.sector}><th scope="rowgroup" colSpan={4} className={styles.sectorHeading}>{employee.sector || "Sem setor informado"}</th></tr>] : []), <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal"><span className="block">{employee.registration} · {employee.name}</span><span className="block text-xs">{employee.sector} · {employee.role}</span></th>
-            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia ainda sem definição"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span><button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV"} onClick={() => setSelected({ employeeId: employee.id, date: currentDate })}>Revisar dia</button></td></tr>];
+            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia ainda sem definição"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span><button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV" || cell?.code === "FE"} onClick={() => setSelected({ employeeId: employee.id, date: currentDate })}>Revisar dia</button></td></tr>];
         })}</tbody>
       </table></div>
     </section>}
@@ -179,7 +182,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
     <p className="text-xs text-[color:var(--app-muted)]">As sugestões em massa consideram todos os colaboradores incluídos da filial, inclusive os ocultos pelos filtros. Os dias técnicos adjacentes continuam sendo conferidos, sem entrar nos totais mensais.</p>
     <p role="status" aria-live="polite" className="text-sm">{notice}</p>
     {coverage.length > 0 && <details id="escala-coverage-roster" className={styles.disclosure}><summary className={styles.disclosureTrigger}>Cobertura a conferir ({coverage.length} faixas)</summary><div className={styles.reviewScroller}><ul className={styles.referenceList}>{coverage.map((issue, index) => <li id={index === coverage.findIndex(row => row.date === issue.date) ? `escala-cobertura-${issue.date}` : undefined} key={JSON.stringify([issue.date, issue.sector, issue.code, issue.message])}><strong>{issue.severity === "ERROR" ? "Mínimo informado" : "Estimativa"}</strong> · {issue.message}</li>)}</ul></div>{onReviewCoverage && <button type="button" className={buttonClass} onClick={onReviewCoverage}>Abrir central de revisão</button>}</details>}
-    {selected && selectedEmployee && <fieldset disabled={disabled} className="space-y-3">
+    {selected && selectedEmployee && assignments.get(`${selected.employeeId}:${selected.date}`)?.kind !== "HOLIDAY" && <fieldset disabled={disabled} className="space-y-3">
       <CellEditor key={`${selected.employeeId}:${selected.date}:${assignments.get(`${selected.employeeId}:${selected.date}`)?.locked}`} employee={selectedEmployee} date={selected.date}
         assignment={assignments.get(`${selected.employeeId}:${selected.date}`)} input={input} canUnlock={canUnlock}
         onCancel={() => setSelected(null)} onApply={(assignment) => apply(applyRosterChanges(input, [assignment], canUnlock))} />

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { isDate } from "@/lib/escalas/dates";
+import { applyLocalHolidayCalendar, holidayCalendarFor } from "@/lib/escalas/calendar";
 import { effectiveWorkDayLimit } from "@/lib/escalas/labor-rules";
 import styles from "./escalas.module.css";
 import type { EscalaInput, EscalaPolicy, EscalaShift } from "@/lib/escalas/types";
@@ -36,6 +37,7 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
   function change<K extends keyof EscalaPolicy>(field: K, value: EscalaPolicy[K]) {
     onChange({ ...input, policy: { ...input.policy, reviewed: false, [field]: value } });
   }
+  const calendar = holidayCalendarFor(input);
   return <section className={panelClass} aria-labelledby="escala-rules-title">
     <div><h2 id="escala-rules-title" className={styles.sectionTitle}>Premissas da simulação</h2><p className={styles.subtitle}>O algoritmo aplica os descansos e preserva as restrições informadas. Nada aqui precisa ser preenchido para gerar um rascunho.</p></div>
     <dl className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
@@ -47,6 +49,14 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
     {input.policy.maxConsecutiveWorkDays > 5 && <p className={styles.errorText}>Esta revisão usa um limite antigo de {input.policy.maxConsecutiveWorkDays} dias. O modelo 5×2 permite no máximo cinco dias consecutivos. Gere novamente para conferir a grade com esse limite.</p>}
     <fieldset disabled={disabled} className={styles.stackSmall}>
       <ShortMealSimulation input={input} onChange={onChange} />
+      <Field label="Calendário de feriados">{id => <select id={id} className={controlClass} value={input.policy.calendarMode ?? "MANUAL"} onChange={event => {
+        const calendarMode = event.target.value as "LOCAL" | "MANUAL";
+        const next = { ...input, policy: { ...input.policy, calendarMode, reviewed: false } };
+        onChange(calendarMode === "LOCAL" ? applyLocalHolidayCalendar(next) : next);
+      }}>
+        <option value="LOCAL">Local automático · {calendar.label}</option><option value="MANUAL">Manual · usar as datas informadas</option>
+      </select>}</Field>
+      <p className={styles.muted}>{input.policy.calendarMode !== "LOCAL" ? "Usa as datas informadas abaixo, sem acrescentar o calendário local." : `Referência local: ${calendar.label}. Fechamento padrão em 01/01, 01/05 e 25/12. Os demais feriados são sinalizados; as folgas de domingo continuam no rodízio.`}</p>
       <details className="space-y-4 border-t border-[color:var(--app-border)] pt-2">
         <summary className={styles.disclosureTrigger}>Datas especiais da filial</summary>
         <DateList label="Datas de fechamento obrigatório" value={input.policy.closedDates} onChange={(value) => change("closedDates", value)} />

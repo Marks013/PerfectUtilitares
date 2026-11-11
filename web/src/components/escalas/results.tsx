@@ -4,6 +4,8 @@ import { memo, useMemo, useRef, useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
 import { summarizeCoverageGaps } from "@/lib/escalas/coverage-summary";
 import { sectorPresenceGaps } from "@/lib/escalas/coverage-presence";
+import { weeklyCapacityCaveat, weeklySectorCapacity } from "@/lib/escalas/weekly-capacity";
+import { WeeklyCapacity } from "./weekly-capacity";
 import { monthlySundays } from "@/lib/escalas/monthly-sundays";
 import type { EscalaRecoveryContext } from "./recovery-navigation";
 import styles from "./escalas.module.css";
@@ -115,28 +117,33 @@ function PresenceGaps({ rows, onResolve }: { rows: ReturnType<typeof sectorPrese
   </div>;
 }
 
-function CoverageGaps({ rows, emptySectors = [], onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; emptySectors?: ReturnType<typeof sectorPresenceGaps>; onResolve?: ResolveReview }) {
+function CoverageGaps({ input, rows, emptySectors = [], onResolve }: { input: EscalaInput; rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; emptySectors?: ReturnType<typeof sectorPresenceGaps>; onResolve?: ResolveReview }) {
+  const capacities = useMemo(() => weeklySectorCapacity(input), [input]);
   const summaries = useMemo(() => {
     const groups = new Map(summarizeCoverageGaps(rows).map(row => [row.sector, row]));
     for (const row of emptySectors) if (!groups.has(row.sector)) groups.set(row.sector, { sector: row.sector, dates: row.dates, noServiceDates: row.dates, minimumDates: [], hasEstimates: true, peakMissing: 0, peakSectorMissing: 0, hasRoleMismatch: false, windows: [] });
+    for (const row of capacities) if (!groups.has(row.sector)) groups.set(row.sector, { sector: row.sector, dates: [], noServiceDates: [], minimumDates: [], hasEstimates: false, peakMissing: 0, peakSectorMissing: 0, hasRoleMismatch: false, windows: [] });
     return [...groups.values()].sort((a, b) => compareSectors(a.sector, b.sector));
-  }, [rows, emptySectors]);
+  }, [rows, emptySectors, capacities]);
   const [selected, setSelected] = useState<{ sector: string; date: string } | null>(null);
   if (!summaries.length) return null;
   return <div className={styles.reviewGroup}>
-    <div><h3 className="font-semibold">Desfalques por setor</h3><p className={styles.muted}>Um resumo por setor. As faixas abaixo são prioridades, não a lista completa. A estimativa automática não é uma necessidade comprovada.</p></div>
+    <div><h3 className="font-semibold">Capacidade e desfalques por setor</h3><p className={styles.muted}>{weeklyCapacityCaveat}</p></div>
     <ul className={styles.coverageGapList}>
       {summaries.map(row => {
         const open = selected?.sector === row.sector;
         const date = open && row.dates.includes(selected.date) ? selected.date : row.dates[0];
         return <li key={row.sector} className={styles.reviewNotice} data-severity={row.minimumDates.length ? "ERROR" : "WARNING"}>
-          <div className={styles.header}><h4 className="font-semibold">{row.sector || "Setor não informado"}</h4><span className={styles.statusTag}>{row.minimumDates.length ? "Rever mínimo informado" : "Referência estimada"}</span></div>
+          <div className={styles.header}><h4 className="font-semibold">{row.sector || "Setor não informado"}</h4><span className={styles.statusTag}>{row.minimumDates.length ? "Rever mínimo informado" : row.dates.length ? "Referência estimada" : "Capacidade nominal"}</span></div>
+          <WeeklyCapacity capacity={capacities.find(capacity => capacity.sector === row.sector)} />
+          {row.dates.length > 0 ? <>
           <PresenceGaps rows={emptySectors.filter(item => item.sector === row.sector)} onResolve={onResolve} />
           <p>{row.dates.length} dia(s) com ponto de atenção{row.noServiceDates.length ? ` · ${row.noServiceDates.length} dia(s) sem presença em alguma faixa` : ""}.</p>
           <ul className="space-y-1 text-sm tabular-nums">{row.windows.map(window => <li key={window.start + ":" + window.end}><strong>{clock(window.start)}–{clock(window.end)}</strong> · {window.dates.length} dia(s) · {window.peakSectorMissing ? `até ${window.peakSectorMissing} pessoa(s) abaixo da referência` : "rever a distribuição das funções"}</li>)}</ul>
           <p className={styles.muted}>Compare com a necessidade real e reveja entradas, intervalos e folgas. Não significa contratar a quantidade indicada.</p>
           <div className={styles.actions}><button type="button" className={buttonClass} aria-expanded={open} onClick={() => setSelected(open ? null : { sector: row.sector, date })}>{open ? "Fechar detalhes" : "Consultar dias e horários"}<span className="sr-only"> de {row.sector}</span></button>{onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.windows[0]?.dates[0] ?? row.dates[0], start: row.windows[0]?.start })}>Ajustar este setor<span className="sr-only"> {row.sector}</span></button>}</div>
           {open && <div className="space-y-3 border-t border-[color:var(--app-border)] pt-3"><Field label={`Dia para conferir em ${row.sector}`}>{id => <select id={id} className={controlClass} value={date} onChange={event => setSelected({ sector: row.sector, date: event.target.value })}>{row.dates.map(day => <option key={day} value={day}>{displayDate(day)}</option>)}</select>}</Field><CoverageDayDetails key={row.sector + date} rows={rows.filter(gap => gap.sector === row.sector && gap.date === date)} onResolve={onResolve} /></div>}
+          </> : <p className={styles.muted}>Nenhum desfalque detectado nas faixas com referência disponível.</p>}
         </li>;
       })}
     </ul>
@@ -183,7 +190,7 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
-    {(diagnostics.coverageGroups.length > 0 || emptySectors.length > 0) && <details><summary className={styles.disclosureTrigger}>Conferir setores com desfalque ({new Set([...diagnostics.coverageGroups.map(row => row.sector), ...emptySectors.map(row => row.sector)]).size})</summary><div className={styles.reviewScroller}><CoverageGaps rows={diagnostics.coverageGroups} emptySectors={emptySectors} /></div></details>}
+    {generated.proposalInput.employees.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir capacidade e desfalques por setor</summary><div className={styles.reviewScroller}><CoverageGaps input={generated.proposalInput} rows={diagnostics.coverageGroups} emptySectors={emptySectors} /></div></details>}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
@@ -216,7 +223,7 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
     <section id="escala-review-content" className={styles.reviewScroller} aria-label={(menus.find(menu => menu.id === view)?.label ?? "Revisão") + " da escala"}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the review region.
       tabIndex={0}>
-      {view === "coverage" ? coverageCount ? <CoverageGaps rows={diagnostics.coverageGroups} emptySectors={emptySectors} onResolve={onResolve} /> : <p>Nenhum desfalque detectado nas faixas com referência disponível.</p> : <>
+      {view === "coverage" ? <CoverageGaps input={input} rows={diagnostics.coverageGroups} emptySectors={emptySectors} onResolve={onResolve} /> : <>
         <h3 className="font-semibold">{view === "errors" ? "Exige correção (" + errors.length + ")" : view === "reviews" ? "Pode continuar com revisão (" + reviews.length + ")" : "Informações e limites de conferência (" + information.length + ")"}</h3>
         {!notices.length && <p className={styles.muted}>Nenhuma ocorrência nesta categoria.</p>}
         <ul className={styles.coverageGapList}>{notices.map(notice => <ReviewNotice key={JSON.stringify([notice.code, notice.message, notice.employeeIds])} notice={notice} input={input} onResolve={onResolve} />)}</ul>

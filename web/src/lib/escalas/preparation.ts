@@ -59,6 +59,17 @@ function originalShift(person: EscalaEmployee): EscalaShift | null {
   return { id: "original", name: "Referência FPRE136", segments };
 }
 
+/** Import provenance, not an inferred contract or a new clock proposal. */
+export function importedShiftReference(person: EscalaEmployee): EscalaShift | null {
+  const source = originalShift(person);
+  return source ? { ...source, id: shiftId(source), name: "Horário importado" } : null;
+}
+
+/** Only untouched generated clocks may be reconstructed from import provenance. */
+export function isAutomaticPreparedShift(shift: EscalaShift): boolean {
+  return shift.id === shiftId(shift) || shift.id === shiftId(shift).replace("prep-", "flex-");
+}
+
 /** Civil work only: unpaid meals and paid pauses do not create night attendance. */
 export function civilNightWorkMinutes(shift: EscalaShift): number {
   return shift.segments.reduce((sum, segment) => {
@@ -239,7 +250,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     const ordinaryIds = [...new Set(candidates.filter(shift => !isGeneratedMixed42Shift(shift.id)).map(shift => shift.id))];
     // Reserve room for both durations even with many manual references.
     const shiftIds = candidates.length && needsLong ? [...longIds.slice(0, 6), ...ordinaryIds.slice(0, 6)] : ordinaryIds.slice(0, 12);
-    return { ...person, ...reference, simulationDailyMinutes, shiftIds, originalShiftIds: retainedOriginalIds, planningEnabled: shiftIds.length > 0,
+    return { ...person, ...reference, simulationDailyMinutes, shiftIds, originalShiftIds: retainedOriginalIds, fixedImportedShiftId: undefined, planningEnabled: shiftIds.length > 0,
       planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });
   // Reference text remains on each imported employee; only keep referenced shift definitions.
