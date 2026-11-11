@@ -1,7 +1,27 @@
 """Bounded lexicographic improvement from a complete, known-feasible incumbent."""
 import time
 import re
+from dataclasses import dataclass
 from ortools.sat.python import cp_model
+from runtime_settings import (COVERAGE_BUDGET_SHARE, LARGE_MODEL_VARIABLES, MOVABLE_PEOPLE_LIMIT,
+                              POLISH_PEOPLE_LIMIT, RANDOM_SEED, SearchSettings)
+
+
+@dataclass
+class ImprovementContext:
+    control: object = None
+    protected_groups: dict | None = None
+    employee_groups: list | None = None
+    decision_variables: dict | None = None
+    coverage_groups: dict | None = None
+    sunday_coverage: dict | None = None
+    sector_coverage: dict | None = None
+    initial_decision_hints: dict | None = None
+    initial_repair_people: set | None = None
+    initial_repair_groups: list | None = None
+    repair_clock_fixes: dict | None = None
+    closing_coverage: dict | None = None
+    settings: SearchSettings | None = None
 
 
 class Snapshot:
@@ -56,7 +76,7 @@ def _objective_floor(model, terms, domain_bounds=None):
     return lower
 
 
-def _movable_people(variables, values, groups, limit=36):
+def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT):
     """Release comparable groups across the month, including tied extremes.
 
     A single high/low pair cannot improve a max-minus-min objective when peers
@@ -82,7 +102,7 @@ def _movable_people(variables, values, groups, limit=36):
     return selected
 
 
-def _coverage_people(groups, shortages, values, limit=36):
+def _coverage_people(groups, shortages, values, limit=MOVABLE_PEOPLE_LIMIT):
     """Release complete sectors with the largest shortage for this phase.
 
     Keep every week movable so off-day exchanges can respect Sunday rotation.
@@ -107,7 +127,7 @@ def _replace_hints(model, values):
     model.proto.solution_hint.values.extend(values.values())
 
 
-def _polish_people(variables, values, groups, limit=18, coverage_groups=None,
+def _polish_people(variables, values, groups, limit=POLISH_PEOPLE_LIMIT, coverage_groups=None,
                    shortages=None, sunday_shortages=None, attempt=0):
     """Rotate bounded sectors by Sunday/total deficit before cosmetic stability."""
     changed = {v.name[len('changed:'):]: values[v.index] for v in variables if v.name.startswith('changed:')}
@@ -130,7 +150,7 @@ def _polish_people(variables, values, groups, limit=18, coverage_groups=None,
         # Keep all exchange partners in normal supermarket sectors. Larger
         # sectors retain a bounded neighborhood rather than growing the budget.
         # Separate attempts release different sectors, not one expensive union.
-        return set(sorted(members, key=lambda pid: (-changed.get(pid, 0), pid))[:36])
+        return set(sorted(members, key=lambda pid: (-changed.get(pid, 0), pid))[:MOVABLE_PEOPLE_LIMIT])
     return stable
 
 
@@ -155,11 +175,20 @@ def _phase_budget(remaining, names, index):
     if index == len(names) - 1:
         return remaining
     if names[index] == 'COVERAGE':
-        return remaining * .55
+        return remaining * COVERAGE_BUDGET_SHARE
     return remaining / (len(names) - index)
 
 
-def improve(model, objectives, values, deadline, names=None, control=None, protected_groups=None, employee_groups=None, decision_variables=None, coverage_groups=None, sunday_coverage=None, sector_coverage=None, initial_decision_hints=None, initial_repair_people=None, initial_repair_groups=None, repair_clock_fixes=None, closing_coverage=None):
+def improve(model, objectives, values, deadline, names=None, *, context=None):
+    context = context or ImprovementContext()
+    control, protected_groups = context.control, context.protected_groups
+    employee_groups, decision_variables = context.employee_groups, context.decision_variables
+    coverage_groups, sunday_coverage = context.coverage_groups, context.sunday_coverage
+    sector_coverage, closing_coverage = context.sector_coverage, context.closing_coverage
+    initial_decision_hints = context.initial_decision_hints
+    initial_repair_people, initial_repair_groups = context.initial_repair_people, context.initial_repair_groups
+    repair_clock_fixes = context.repair_clock_fixes
+    settings = context.settings or SearchSettings.from_environment()
     variables = [model.get_int_var_from_proto_index(i) for i in range(len(model.proto.variables))]
     if len(values) != len(variables):
         raise ValueError('incomplete optimization incumbent')
@@ -264,16 +293,16 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
             budget = min(0.85, remaining * .12)
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
-        engine.parameters.num_workers = 1
-        engine.parameters.random_seed = 37
+        engine.parameters.num_workers = settings.workers
+        engine.parameters.random_seed = RANDOM_SEED
         # Keep propagation, but avoid rebuilding the large LP relaxation in each
         # short phase. The verified complete hint can enter CP search promptly.
         engine.parameters.cp_model_presolve = True
-        engine.parameters.linearization_level = 0
+        engine.parameters.linearization_level = settings.linearization
         engine.parameters.keep_all_feasible_solutions_in_presolve = True
-        engine.parameters.symmetry_level = 0
+        engine.parameters.symmetry_level = settings.symmetry
         search_model = model
-        restricted = repair_phase or (phase_index > 0 and len(variables) > 3000 and len(dates) > 7)
+        restricted = repair_phase or (phase_index > 0 and len(variables) > LARGE_MODEL_VARIABLES and len(dates) > 7)
         if restricted:
             # Keep the joint model, including leadership and all cross-week constraints.
             search_model = model.clone()
@@ -319,6 +348,9 @@ def improve(model, objectives, values, deadline, names=None, control=None, prote
         started = time.monotonic()
         status = engine.solve(search_model) if control is None else control.solve(engine, search_model)
         phase = {'objective': names[index], 'status': engine.status_name(status),
+                 'workers': settings.workers,
+                 'linearizationLevel': settings.linearization,
+                 'symmetryLevel': settings.symmetry,
                  'wallTimeSeconds': round(time.monotonic() - started, 3),
                  'budgetSeconds': round(budget, 3), 'initialValue': incumbent,
                  'incumbentValue': incumbent, 'searchScope': 'GLOBAL'}

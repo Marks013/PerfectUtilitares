@@ -7,6 +7,7 @@ import { validateEmployee } from "./validation-employee";
 import { validateCoverage, validateJourney, validateUntimedDuty, workJourney, type WorkJourney } from "./validation-time";
 import { CCT_FROM, CCT_UNTIL, SUPERMARKET_CCT, transitionWeeks, usesMixed42, usesMixed42Week } from "./labor-rules";
 import { storeClosingLabel, workAfterStoreClosing } from "./store-hours";
+import { referenceExpiryNotice, referenceNotices } from "./reference-notices";
 
 function addEmployeeEntry<T>(index: Map<string, T[]>, employeeId: string, value: T) {
   const entries = index.get(employeeId);
@@ -109,8 +110,10 @@ export function validateEscala(rawInput: EscalaInput, options: { publishedSnapsh
   });
   const coverage = validateCoverage(input);
   issues.push(...coverage.issues);
+  issues.push(...referenceExpiryNotice(input));
+  const reviewedIssues = referenceNotices(issues);
   return {
-    valid: !issues.some((issue) => issue.severity === "ERROR"), readyToPublish: !issues.some((issue) => issue.severity !== "WARNING"),
-    issues, summaries: results.map((result) => result.summary), minimumCoverageMargin: coverage.minimumCoverageMargin, boundaryReservations,
+    valid: !reviewedIssues.some((issue) => issue.severity === "ERROR"), readyToPublish: !reviewedIssues.some((issue) => issue.severity !== "WARNING"),
+    issues: reviewedIssues, summaries: results.map((result) => result.summary), minimumCoverageMargin: coverage.minimumCoverageMargin, boundaryReservations,
   };
 }

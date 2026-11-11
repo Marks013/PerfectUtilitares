@@ -37,6 +37,23 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
 function codes(input: EscalaInput) { return validateEscala(input).issues.map((issue) => issue.code); }
 
 describe("independent Escalas validation", () => {
+  it("keeps documentary references informative while preserving operational checks", () => {
+    const input = fixture();
+    input.policy.reviewed = false;
+    input.policy.source = "";
+    input.policy.reviewedBy = "";
+    input.policy.validUntil = "2026-01-01";
+    const original = structuredClone(input);
+    const result = validateEscala(input);
+    expect(result.valid).toBe(true);
+    expect(result.readyToPublish).toBe(true);
+    expect(result.issues.filter(issue => ["POLICY_PENDING", "POLICY_VALIDITY"].includes(issue.code)).every(issue => issue.severity === "WARNING")).toBe(true);
+    expect(input).toEqual(original);
+    input.policy.dailyLimitMinutes = 480;
+    expect(validateEscala(input).valid).toBe(false);
+    expect(codes(input)).toContain("DAILY_LIMIT");
+  });
+
   it.each([
     { branchCode: "02", closing: undefined, end: 1200 },
     { branchCode: "0018", closing: undefined, end: 1320 },

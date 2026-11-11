@@ -24,7 +24,7 @@ describe("canonical Portuguese sector order in shortage views", () => {
   });
   it("uses numeric and accented order in the coverage sector filters", () => {
     const html = renderToStaticMarkup(<Coverage input={fixture()} disabled={false} onChange={vi.fn()} />);
-    const select = html.match(/<select[^>]*>[\s\S]*?<\/select>/)?.[0] ?? "";
+    const select = (html.match(/<select[^>]*>[\s\S]*?<\/select>/g) ?? []).find(value => value.includes("Todos os setores")) ?? "";
     const names = [...select.matchAll(/<option[^>]*>([^<]+)<\/option>/g)].map(match => match[1]);
     expect(names).toEqual(["Todos os setores", ...expected]);
   });

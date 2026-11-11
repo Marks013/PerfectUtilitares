@@ -1,4 +1,4 @@
-import { EscalaError } from "./access";
+import { EscalaError } from "./errors";
 import { applyLocalHolidayCalendar, assertHolidayLocks } from "./calendar";
 import { retainCoverageReference } from "./automatic-coverage";
 import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility";

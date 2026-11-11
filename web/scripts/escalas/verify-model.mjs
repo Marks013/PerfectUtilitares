@@ -7,6 +7,7 @@ import { dateRange, visibleDates } from "../../src/lib/escalas/dates.ts";
 
 const runtime = process.argv[2];
 const image = process.argv[3];
+const properties = process.argv.includes("--properties");
 if (!runtime || (runtime === "--docker" && !image)) {
   throw new Error("Informe o Python com OR-Tools instalado ou --docker <imagem local>.");
 }
@@ -19,6 +20,7 @@ from solver import solve, days_between
 
 scenarios = []
 data = fixture(42, people=4, weeks=2)
+data["policy"]["maxConsecutiveWorkDays"] = 5
 data["demands"] = [{"id": f"day-{index}", "date": day, "sector": "Reposição",
                     "start": 480, "end": 720, "minimum": 1}
                    for index, day in enumerate(days_between(data["startDate"], data["endDate"]))]
@@ -140,12 +142,20 @@ person["planningFuture"] = [{"employeeId": "p0", "date": "2026-11-09", "kind": "
 data["assignments"] = [{"employeeId": "p0", "date": data["endDate"], "kind": "WORK", "shiftId": "night", "locked": True}]
 scenarios.append(("current-overnight-cannot-occupy-future-rest", data, {"infeasible": "OFF_OCCUPIED"}))
 
+${properties ? `from property_cases import cases
+scenarios = []  # Base scenarios already run separately; generated checks must not repeat them.
+generated = cases()
+assert len(generated) == 30, 'All deterministic property cases must be generated'
+for index, generated_input in enumerate(generated):
+    scenarios.append((f"generated-property-{index}", generated_input, {}))
+` : ""}
+
 for name, data, expectations in scenarios:
     print(json.dumps({"name": name, "input": data, "result": solve(data), "expectations": expectations}))
 `;
-const command = runtime === "--docker" ? "sudo" : runtime;
+const command = runtime === "--docker" ? "docker" : runtime;
 const args = runtime === "--docker" ? [
-  "docker", "run", "--rm", "-i", "--pull=never", "--network", "none", "--read-only",
+  "run", "--rm", "-i", "--pull=never", "--network", "none", "--read-only",
   "--cpus=1", "--memory=1536m", "--mount", `type=bind,src=${directory},dst=/model,readonly`,
   "--workdir", "/model", "--env", "PYTHONDONTWRITEBYTECODE=1", "--entrypoint", "python", image, "-",
 ] : ["-"];
@@ -180,7 +190,7 @@ for (const line of result.stdout.trim().split("\n")) {
     }
     const validation = validateEscala({ ...input, assignments: solved.assignments });
     assert(validation.valid, `${name}: ${validation.issues.filter((issue) => issue.severity === "ERROR").map((issue) => issue.code).join(", ")}`);
-    if (expectations.publishable) assert(validation.readyToPublish, name);
+    if (expectations.publishable) assert(validation.readyToPublish, `${name}: ${[...new Set(validation.issues.filter(issue => issue.severity !== "WARNING").map(issue => issue.code))].join(", ")}`);
     if (expectations.missing) {
       assert(!validation.readyToPublish, name);
       assert(validation.issues.some((issue) => issue.code === "MISSING_SCHEDULE"), name);
@@ -210,5 +220,5 @@ for (const line of result.stdout.trim().split("\n")) {
   passed++;
   console.log(JSON.stringify({ scenario: name, verified: true, status: solved.status, seconds: solved.wallTimeSeconds }));
 }
-assert.equal(passed, 21, "Todos os cenários devem ter sido executados.");
+assert.equal(passed, properties ? 30 : 21, "Todos os cenários devem ter sido executados.");
 console.log(JSON.stringify({ verified: true, scenarios: passed, processor: "CP-SAT", verifier: "TypeScript independent" }));

@@ -1,3 +1,4 @@
+from optimization import ImprovementContext
 """Coverage-focused polish regressions using the production optimizer."""
 import time
 import unittest
@@ -42,7 +43,7 @@ class CoveragePolishTests(unittest.TestCase):
         control = self.DeferredSearch()
         actual, proven, phases = improve(model, [coverage, sunday, stability, preference], values,
             time.monotonic() + 2, ['COVERAGE', 'SUNDAY_COVERAGE', 'STABILITY', 'PREFERENCES'],
-            control=control, protected_groups={'COVERAGE': [coverage, sunday]})
+            context=ImprovementContext(control=control, protected_groups={'COVERAGE': [coverage, sunday]}))
         snapshot = Snapshot(actual)
         self.assertEqual([snapshot.value(coverage), snapshot.value(sunday)], [0, 0])
         self.assertEqual(snapshot.value(stability), 2)
@@ -73,7 +74,7 @@ class CoveragePolishTests(unittest.TestCase):
                 guards = {'COVERAGE': [sector_a, sector_b, sunday_a, sunday_b]} if protected else {}
                 actual, proven, phases = improve(model, [coverage, sunday, stability, preference], values,
                     time.monotonic() + 2, ['COVERAGE', 'SUNDAY_COVERAGE', 'STABILITY', 'PREFERENCES'],
-                    control=self.DeferredSearch(), protected_groups=guards)
+                    context=ImprovementContext(control=self.DeferredSearch(), protected_groups=guards))
                 snapshot = Snapshot(actual)
                 self.assertEqual([actual[weekday_transfer.index], actual[sunday_transfer.index]],
                                  [0, 0] if protected else [1, 1])
@@ -165,7 +166,7 @@ class ProtectedBoundDeduplicationTests(unittest.TestCase):
                           wraps=optimization._upper_bound_key) as normalized:
             result, proven, phases = improve(
                 model, goals, values, time.monotonic() + 1, names,
-                protected_groups={'COVERAGE': [guard, guard + 2]})
+                context=ImprovementContext(protected_groups={'COVERAGE': [guard, guard + 2]}))
         guard_offsets = [call.args[0][2] for call in normalized.call_args_list
                          if call.args[0][0] == (guard.index,)]
         self.assertEqual(guard_offsets, [0, 2])
@@ -200,8 +201,8 @@ class ProtectedBoundDeduplicationTests(unittest.TestCase):
 
         result, _, _ = improve(
             model, [first, later], values, time.monotonic() + 1,
-            ['COVERAGE', 'SUNDAY_COVERAGE'], control=ObserveSearch(),
-            protected_groups={'COVERAGE': [guard]})
+            ['COVERAGE', 'SUNDAY_COVERAGE'], context=ImprovementContext(control=ObserveSearch(),
+            protected_groups={'COVERAGE': [guard]}))
         self.assertEqual(seen, [(1, 1, 0), (1, 1, 0)])
         self.assertEqual(result[guard.index], 0)
         self.assertEqual(self.upper_bounds(model, guard), [2, 0])
@@ -216,7 +217,7 @@ class ProtectedBoundDeduplicationTests(unittest.TestCase):
         _, proven, _ = improve(
             model, goals, values, time.monotonic() + 1,
             ['COVERAGE', 'SUNDAY_COVERAGE'],
-            protected_groups={'COVERAGE': [guard, guard]})
+            context=ImprovementContext(protected_groups={'COVERAGE': [guard, guard]}))
         self.assertFalse(proven)
         self.assertEqual(self.upper_bounds(model, guard), [1])
 

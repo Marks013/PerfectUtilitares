@@ -6,7 +6,7 @@ from unittest.mock import patch
 from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
-from candidate_solver import _rest, instant, shift_metrics
+from solver import _rest, instant, shift_metrics
 from test_solver import fixture
 
 
@@ -33,7 +33,7 @@ class RestEquivalenceTests(unittest.TestCase):
                 prior[day] = {'kind': 'WORK', 'shiftId': sid}
         for day in dates:
             off[person['id'], day] = int(day in off_dates)
-        _rest(model, person, dates, choices, off, prior, shifts, metrics, data['policy'])
+        _rest(model, person, dates, [day for day in dates if (person['id'], day) in choices], choices, off, prior, metrics, data['policy'])
         engine = cp_model.CpSolver()
         engine.parameters.num_workers = 1
         self.assertEqual(engine.solve(model) in (cp_model.OPTIMAL, cp_model.FEASIBLE), expected,
@@ -67,13 +67,13 @@ class RestEquivalenceTests(unittest.TestCase):
             choices[person['id'], day] = options
             off[person['id'], day] = model.new_bool_var('off' + day)
         initial = len(model.proto.constraints)
-        _rest(model, person, dates, choices, off, {}, shifts, metrics, data['policy'])
+        _rest(model, person, dates, dates, choices, off, {}, metrics, data['policy'])
         self.assertLess(len(model.proto.constraints) - initial, 450)
 
 
 class SearchContinuationTests(unittest.TestCase):
     def test_unknown_phase_preserves_incumbent_and_runs_next_real_objective(self):
-        from candidate_optimization import improve
+        from optimization import improve
         model = cp_model.CpModel()
         x, y = model.new_bool_var('coverage'), model.new_bool_var('preference')
         model.add(x + y >= 1)
@@ -92,7 +92,7 @@ class SearchContinuationTests(unittest.TestCase):
         self.assertEqual([phase['status'] for phase in phases], ['UNKNOWN', 'OPTIMAL'])
 
     def test_incidental_improvement_of_prior_goal_cannot_be_lost_later(self):
-        from candidate_optimization import improve
+        from optimization import improve
         model = cp_model.CpModel()
         coverage = model.new_int_var(0, 2, 'coverage')
         distribution, preference = model.new_bool_var('distribution'), model.new_bool_var('preference')
@@ -115,7 +115,7 @@ class SearchContinuationTests(unittest.TestCase):
         self.assertFalse(proven)
 
     def test_all_nonempty_goals_run_with_a_real_baseline_and_preferences(self):
-        import candidate_solver as scheduling
+        import solver as scheduling
         data = fixture(people=3, weeks=1)
         days = scheduling.days_between(data['startDate'], data['endDate'])
         data['assignments'] = [{'employeeId': p['id'], 'date': day,
@@ -134,7 +134,7 @@ class SearchContinuationTests(unittest.TestCase):
         self.assertEqual(len(result['assignments']), 21)
 
     def test_secondary_goal_never_worsens_incumbent_coverage(self):
-        from candidate_optimization import improve
+        from optimization import improve
         model = cp_model.CpModel()
         shortage, preference = model.new_bool_var('shortage'), model.new_bool_var('preference')
         model.add(shortage + preference >= 1)

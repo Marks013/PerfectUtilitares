@@ -96,7 +96,7 @@ function restEntries(model: ReturnType<typeof buildEscalaPresentation>) {
 }
 
 function mixed42ExportNotice(input: EscalaInput): string {
-  if (input.simulation !== true || input.defaultWeeklyHours !== 42 || !input.mixed42Sectors?.length) {
+  if (input.defaultWeeklyHours !== 42 || !input.mixed42Sectors?.length) {
     return "";
   }
   const weeks = [...new Set(visibleDates(input).map(weekStart))];
@@ -143,10 +143,11 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     ...coverage.map(coverageReportCells)];
   const decimal = (number: number) => number.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
   const capacity = [...metadata("Capacidade nominal por setor", weeklyCapacityCaveat),
-    ["Setor", "Colab.", "44h (h/sem)", "42h (h/sem)", "40h (h/sem)", "Atual (h/sem)", "Diferença (h/sem)", "Equiv. nominal (adicional)"],
+    ["Setor", "Colab.", "44h (h/sem)", "42h (h/sem)", "40h (h/sem)", "Atual (h/sem)", "Diferença (h/sem)", "Equiv. nominal (adicional)", "Disponível até (h/sem)", "Horas na grade (período)", "Presenças ENC (período)"],
     ...capacities.map(row => [row.sector || "Não informado", row.people, row.referenceHours, row.hours42, row.hours40,
       row.currentHours === row.currentHoursMax ? row.currentHours : `${decimal(row.currentHours)}–${decimal(row.currentHoursMax)}`,
-      row.missingHours, `${decimal(row.equivalentPeople)} (+${decimal(row.additionalEquivalentPeople)})`])];
+      row.missingHours, `${decimal(row.equivalentPeople)} (+${decimal(row.additionalEquivalentPeople)})`,
+      `${decimal(row.availableHoursMin)}–${decimal(row.availableHoursMax)}`, row.scheduledHours, row.untimedPeopleDays])];
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
     ["Situação", "Setor", "Matrícula", "Colaborador", "Cargo", "Motivo da não inclusão"]];
   sector = undefined;
@@ -157,7 +158,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const sheets = [
     ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [12, 9, 25, 18, 28, ...model.dates.map(() => 4.25)], grid: true, sectors: sectors.main }] : []),
     ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [14, 9, 26, 19, 8, 32, 20, 12, ...(weekly ? [43] : [])], grid: false, sectors: sectors.hours }] : []),
-    ...(capacities.length ? [{ name: "Capacidade", frozenColumns: 1, rows: capacity, widths: [25, 10, 15, 15, 15, 17, 18, 25], grid: false, sectors: [] as number[] }] : []),
+    ...(capacities.length ? [{ name: "Capacidade", frozenColumns: 1, rows: capacity, widths: [25, 10, 15, 15, 15, 17, 18, 25, 22, 22, 22], grid: false, sectors: [] as number[] }] : []),
     ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 1, rows: gaps, widths: [23, 28, 28, 33, 27, 42], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
@@ -334,13 +335,13 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     }
   };
   const paragraph = (text: string, size = 8.5, strong = false) => {
-    for (const line of wrapText(text, width - 2 * margin, strong ? bold : font, size)) {
+    for (const line of wrapText(text, width - 2 * margin - 3, strong ? bold : font, size)) {
       if (y < 50) newPage(false);
       write(line, margin, y, size, strong); y -= size + 4;
     }
   };
   const section = (title: string) => { if (y < 85) newPage(false); y -= 8; paragraph(title, 11, true); };
-  const textHeight = (text: string, size = 8.5, strong = false) => wrapText(text, width - 2 * margin, strong ? bold : font, size).length * (size + 4);
+  const textHeight = (text: string, size = 8.5, strong = false) => wrapText(text, width - 2 * margin - 3, strong ? bold : font, size).length * (size + 4);
   const sectionHeight = (title: string) => 8 + textHeight(title, 11, true);
   const cellHeight = (lines: string[][]) => Math.max(...lines.map(values => values.length)) * 11 + 8;
   const headerLines = (headings: string[], widths: number[]) => headings.map((heading, index) => wrapText(heading, widths[index] - 7, bold, 8));

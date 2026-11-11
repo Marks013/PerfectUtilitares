@@ -3,6 +3,7 @@ import { CCT_FROM, CCT_UNTIL, effectiveWeeklyMinutes, isMixed42LongShift, legalW
 import { planningWeeklyHours } from "@/lib/escalas/preparation";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import { storeClosingMinutes } from "@/lib/escalas/store-hours";
+import { reconcileImport, type ImportChoices } from "./import-reconciliation";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const HOURS: WeeklyHours[] = [40, 42, 44];
@@ -212,7 +213,7 @@ export function scenarioDefinitionChanged(previous: EscalaInput, next: EscalaInp
   if (storeClosingMinutes(previous) !== storeClosingMinutes(next)) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
   if ((previous.generationMode ?? "DAYS_AND_HOURS") !== (next.generationMode ?? "DAYS_AND_HOURS")) return true;
-  return (['employees', 'shifts', 'demands', 'policy'] as const).some((key) => previous[key] !== next[key] && JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
+  return (['employees', 'shifts', 'demands', 'policy', 'movementPriorities'] as const).some((key) => previous[key] !== next[key] && JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
 }
 
 export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidation | null): boolean {
@@ -280,30 +281,8 @@ export function replaceAssignment(assignments: EscalaAssignment[], next: EscalaA
   return [...assignments.filter((item) => item.employeeId !== next.employeeId || item.date !== next.date), next];
 }
 
-export function mergeImport(input: EscalaInput, employees: EscalaEmployee[], shifts: EscalaShift[]): EscalaInput {
-  const registrations = new Set(input.employees.map((item) => item.registration));
-  if (
-    employees.some((item) => registrations.has(item.registration)) ||
-    new Set(employees.map((item) => item.registration)).size !== employees.length
-  ) {
-    throw new Error(
-      "A prévia contém matrícula já cadastrada. Revise os registros antes de importar; nenhum dado foi substituído.",
-    );
-  }
-  if (input.employees.length + employees.length > 250)
-    throw new Error("A filial comporta até 250 colaboradores por proposta. Reduza os registros da importação.");
-  const byId = new Map(input.shifts.map((shift) => [shift.id, shift]));
-  for (const shift of shifts) {
-    if (byId.has(shift.id) && JSON.stringify(byId.get(shift.id)) !== JSON.stringify(shift)) {
-      throw new Error("Um identificador de horário já existe com configuração diferente. Revise a importação.");
-    }
-    byId.set(shift.id, shift);
-  }
-  return {
-    ...input,
-    employees: [...input.employees, ...employees],
-    shifts: [...byId.values()],
-  };
+export function mergeImport(input: EscalaInput, employees: EscalaEmployee[], shifts: EscalaShift[], choices?: ImportChoices): EscalaInput {
+  return reconcileImport(input, employees, shifts, choices);
 }
 
 export function errorMessage(error: unknown) {

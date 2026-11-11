@@ -13,6 +13,13 @@ COPY requirements.txt ./
 RUN python3.13 -m pip --python /opt/solver install --require-hashes --only-binary=:all: -r requirements.txt \
     && python3.13 -m pip --python /opt/solver check
 
+# Optional CI tools have their own target and never enter the runtime image.
+FROM dependencies AS development
+ENV PATH=/opt/solver/bin:$PATH
+COPY development-requirements.txt ./
+RUN /usr/bin/python3.13 -m pip --python /opt/solver install --require-hashes --only-binary=:all: -r development-requirements.txt \
+    && /usr/bin/python3.13 -m pip --python /opt/solver check
+
 FROM python-base AS runtime
 ENV PATH=/opt/solver/bin:$PATH
 COPY --from=dependencies /opt/solver /opt/solver
@@ -26,7 +33,8 @@ LABEL org.opencontainers.image.title="PerfectUtilitares Escalas Solver" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
-COPY solver.py hints.py optimization.py weekend_balance.py server.py control.py worker.py service_security.py service_operations.py ./
+COPY solver.py hints.py optimization.py weekend_balance.py server.py control.py worker.py service_security.py service_operations.py \
+     policy_reference.py policy-reference.json runtime_settings.py diagnostics.py leadership.py model_input.py ./
 USER 1001:1001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3).read()"]
 CMD ["python", "server.py"]

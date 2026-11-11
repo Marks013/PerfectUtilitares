@@ -5,6 +5,7 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from model_input import ModelInputError, validate_model_input
 from service_operations import OperationError, Operations, PROCESS_TIMEOUT_SECONDS, run_operation
 from service_security import authorized, load_secret, operation_identity
 from worker import run_worker
@@ -122,6 +123,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body(MAX_BODY)
             if not isinstance(payload, dict) or set(payload) != {"input"} or not isinstance(payload["input"], dict):
                 raise ValueError("INVALID_MODEL_INPUT")
+            validate_model_input(payload["input"])
             operation = self.server.operations.start(request_id, token_hash)
             try:
                 outcome = run_operation(payload["input"], operation, self.server.operation_timeout, self.server.worker_target)
@@ -136,6 +138,8 @@ class Handler(BaseHTTPRequestHandler):
                 code = outcome.get("error", "SOLVER_FAILED")
                 return self.reply(400 if code == "INVALID_MODEL_INPUT" else 500, {"error": code, "state": state})
             self.reply(200, outcome["result"])
+        except ModelInputError as error:
+            self.reply(400, {"error": "INVALID_MODEL_INPUT", "fields": error.fields})
         except OperationError as error:
             body = {"error": error.code}
             if error.state:

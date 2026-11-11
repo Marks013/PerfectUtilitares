@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { EscalaError } from "./access";
+import { EscalaError } from "./errors";
 import type { EscalaImportPreview, ImportOptions } from "./import";
 import { sortEmployees } from "./order";
 import { applyRestEligibility } from "./eligibility";
 import type { EscalaShift } from "./types";
 import { canonicalBranchCode as normalizeBranch } from "./branch-code";
+import { classifyFpre136Schedule } from "./fpre136-schedule";
+import { inferLeadership } from "./leadership";
 
 const cell = (value: unknown) => String(value ?? "").trim();
 const sectorPattern = /^(\d{2})\.\d+\s*,\s*([^,]+),\s*(.+)$/;
@@ -20,12 +22,6 @@ export function isFpre136Rows(rows: unknown[][]) {
   return rows.some((row) => cell(row[0]) === "Quadro de Horários")
     && rows.some((row) => cell(row[1]) === "Nome" && cell(row[2]) === "Cargo" && cell(row[3]) === "Horário")
     && rows.some((row) => cell(row[1]) === "-" && cell(row[3]) === "Pág.:");
-}
-
-function schedule(times: unknown[]) {
-  const values = times.map(cell);
-  if (values.some((value) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) throw new Error("Horário FPRE136 inválido.");
-  return `${values[0]}-${values[1]} / ${values[2]}-${values[3]}`;
 }
 
 function required(value: unknown, max: number) {
@@ -68,22 +64,22 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
       const registration = required(row[0], 60), name = required(row[2], 160), role = required(row[3], 120);
       const sector = required(record.sector, 120);
       if (registrations.has(registration)) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
-      const weekday = schedule([row[4], row[6], row[7], row[9]]);
       if (!record.saturday) throw new Error("Linha de sábado ausente no FPRE136.");
-      const saturday = schedule([record.saturday[1], record.saturday[3], record.saturday[4], record.saturday[6]]);
-      const missing = [row[4], row[6], row[7], row[9]].every((value) => cell(value) === "00:00");
-      const paidPeriods = weekday.split(" / ").filter((period) => period !== "00:00-00:00");
-      const shift = missing ? undefined : parseShift(paidPeriods.join(" / "));
+      const classified = classifyFpre136Schedule({ report: "FPRE136", weekday: [row[4], row[6], row[7], row[9]],
+        saturday: [record.saturday[1], record.saturday[3], record.saturday[4], record.saturday[6]] });
+      const shift = classified.mode === "TIMED" ? parseShift(classified.paidPeriods.join(" / ")) : undefined;
       if (shift && shift.segments.filter((segment) => segment.kind === "WORK").reduce((total, segment) => total + segment.end - segment.start, 0) > 600) throw new Error("Jornada FPRE136 excede 600 minutos de trabalho.");
       if (shift && !shifts.has(shift.id) && shifts.size >= 120) throw new Error("A proposta aceita até 120 horários distintos.");
       const id = `imp-${createHash("sha256").update(`${branchCode}:${registration}`).digest("hex").slice(0, 24)}`;
       result.employees.push({ id, registration, name, sector, role, weeklyHours: options.defaultWeeklyHours, weeklyHoursMode: "BRANCH",
-        shiftIds: shift ? [shift.id] : [], activeFrom: "", planningEnabled: true, scheduleMode: missing ? "MISSING" : "TIMED",
-        sourceSchedule: { report: "FPRE136", code: required(record.code, 40), description: required(record.description, 180), weekday, saturday },
+        leadership: inferLeadership({ role, sector }),
+        shiftIds: shift ? [shift.id] : [], activeFrom: "", planningEnabled: true, scheduleMode: classified.mode,
+        sourceSchedule: { report: "FPRE136", code: required(record.code, 40), description: required(record.description, 180), weekday: classified.weekday, saturday: classified.saturday },
         offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, sundayRestRule: "PROTECTIVE",
         preferredOffDays: [], historyKnown: false, history: [] });
       if (shift) shifts.set(shift.id, shift);
-      if (missing && result.report) result.report.missingSchedule++;
+      if (classified.mode === "MISSING" && result.report) result.report.missingSchedule++;
+      for (const message of classified.warnings) result.issues.push({ line: record.line, message });
       registrations.add(registration);
     } catch (error) { result.issues.push({ line: record.line, message: error instanceof Error ? error.message : "Linha FPRE136 inválida." }); }
   }

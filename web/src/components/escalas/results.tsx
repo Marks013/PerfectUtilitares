@@ -4,6 +4,7 @@ import { memo, useMemo, useRef, useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
 import { summarizeCoverageGaps } from "@/lib/escalas/coverage-summary";
 import { sectorPresenceGaps } from "@/lib/escalas/coverage-presence";
+import { LeadershipSummary } from "./leadership-summary";
 import { weeklyCapacityCaveat, weeklySectorCapacity } from "@/lib/escalas/weekly-capacity";
 import { WeeklyCapacity } from "./weekly-capacity";
 import { monthlySundays } from "@/lib/escalas/monthly-sundays";
@@ -13,6 +14,7 @@ import { compareSectors, sortEmployees } from "@/lib/escalas/order";
 import type {
   EscalaAssignment,
   EscalaInput,
+  EscalaSolveResult,
   EscalaValidation,
 } from "@/lib/escalas/types";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
@@ -180,7 +182,7 @@ function useActiveDiagnostics(input: EscalaInput, issues: EscalaValidation["issu
 }
 
 export const Proposals = memo(function Proposals({ input: nextInput, generated: nextGenerated, disabled, onGenerated, onDismiss, active = true }: {
-  input: EscalaInput; generated: { result: { status: string; message: string }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
+  input: EscalaInput; generated: { result: { status: string; message: string; optimization?: EscalaSolveResult["optimization"] }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
   disabled: boolean; onGenerated: () => void; onDismiss: () => void; active?: boolean;
 }) {
   const { input, generated } = useActiveSnapshot({ input: nextInput, generated: nextGenerated }, active);
@@ -190,6 +192,7 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
+    <LeadershipSummary counts={generated.result.optimization?.leadership} />
     {generated.proposalInput.employees.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir capacidade e desfalques por setor</summary><div className={styles.reviewScroller}><CoverageGaps input={generated.proposalInput} rows={diagnostics.coverageGroups} emptySectors={emptySectors} /></div></details>}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />

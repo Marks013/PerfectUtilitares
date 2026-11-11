@@ -4,10 +4,10 @@ import unittest
 from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
-from candidate_optimization import Snapshot, improve, _movable_weeks
+from optimization import ImprovementContext, Snapshot, improve, _movable_people
 from unittest.mock import patch
 from weekend_balance import available_weekends, weekend_objectives
-from candidate_solver import solve
+from solver import solve
 from test_solver import fixture
 
 
@@ -54,7 +54,14 @@ class WeekendPriorityTests(unittest.TestCase):
             variables.append(variable)
             values[variable.index] = value
         days = [(date(2026, 11, 2) + timedelta(days=i)).isoformat() for i in range(21)]
-        self.assertEqual(_movable_weeks(variables, values, days, 'SUNDAY_BALANCE', 1), [0, 2])
+        peer = model.new_int_var(0, 10000, 'weekend-rate:6:q')
+        variables.append(peer)
+        values[peer.index] = 0
+        self.assertEqual(_movable_people(variables, values, [['p', 'q']], limit=2), {'p', 'q'})
+        for variable in variables:
+            if variable.name.startswith('weekend-occupied:p:') and date.fromisoformat(variable.name[-10:]).weekday() == 5:
+                values[variable.index] = 1 - values[variable.index]
+        self.assertEqual(_movable_people(variables, values, [['p', 'q']], limit=2), {'p', 'q'})
 
     def test_saturday_gain_cannot_purchase_a_worse_sunday_rate(self):
         model = cp_model.CpModel()
@@ -75,7 +82,7 @@ class WeekendPriorityTests(unittest.TestCase):
         self.assertEqual(combined.value(state), 1)
         actual, proven, phases = improve(model, [sum(sundays), sum(saturdays)], values,
             time.monotonic()+2, ['SUNDAY_BALANCE', 'SATURDAY_BALANCE'],
-            protected_groups={'SUNDAY_BALANCE': sundays})
+            context=ImprovementContext(protected_groups={'SUNDAY_BALANCE': sundays}))
         self.assertEqual(actual[state.index], 0)
         self.assertEqual([actual[v.index] for v in sundays+saturdays], [0, 10000])
         self.assertTrue(proven)
@@ -89,7 +96,7 @@ class WeekendPriorityTests(unittest.TestCase):
         def capture(*args, **kwargs):
             seen.append(args[2][6]['p0'][1])
             return weekend_objectives(*args, **kwargs)
-        with patch('candidate_solver.weekend_objectives', capture):
+        with patch('solver.weekend_objectives', capture):
             result = solve(data)
         self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
         self.assertEqual(seen, [0])
@@ -135,7 +142,7 @@ class WeekendPriorityTests(unittest.TestCase):
         with patch.object(cp_model.CpSolver, 'solve', first_unknown):
             actual, proven, phases = improve(model, [a+b, preference],
                 {a.index: 2, b.index: 0, preference.index: 1}, time.monotonic()+2,
-                ['SUNDAY_BALANCE', 'PREFERENCES'], protected_groups={'SUNDAY_BALANCE': [a, b]})
+                ['SUNDAY_BALANCE', 'PREFERENCES'], context=ImprovementContext(protected_groups={'SUNDAY_BALANCE': [a, b]}))
         self.assertEqual([actual[v.index] for v in (a, b, preference)], [2, 0, 1])
         self.assertFalse(proven)
         self.assertEqual(phases[0]['status'], 'UNKNOWN')
@@ -161,7 +168,7 @@ class WeekendPriorityTests(unittest.TestCase):
             actual, proven, _ = improve(model, [a+b, saturday, preference],
                 {a.index: 2, b.index: 2, saturday.index: 1, preference.index: 1}, time.monotonic()+2,
                 ['SUNDAY_BALANCE', 'SATURDAY_BALANCE', 'PREFERENCES'],
-                protected_groups={'SUNDAY_BALANCE': [a, b]})
+                context=ImprovementContext(protected_groups={'SUNDAY_BALANCE': [a, b]}))
         self.assertEqual([actual[v.index] for v in (a, b, saturday, preference)], [1, 1, 0, 1])
         self.assertFalse(proven)
 
@@ -209,7 +216,7 @@ class CooperativeControlTests(unittest.TestCase):
         native = improve
         def no_time(model, objectives, values, deadline, *args, **kwargs):
             return native(model, objectives, values, time.monotonic()-1, *args, **kwargs)
-        with patch('candidate_solver.improve', no_time):
+        with patch('solver.improve', no_time):
             result = solve(fixture(people=3))
         self.assertEqual(result['status'], 'FEASIBLE')
         self.assertEqual(result['optimization']['phases'], [])

@@ -4,8 +4,9 @@ import time
 import unittest
 
 from ortools.sat.python import cp_model
-from optimization import Snapshot, improve
+from optimization import ImprovementContext, Snapshot, improve
 from solver import _coverage, _coverage_month
+from test_solver import fixture
 
 
 class VisibleMonthTests(unittest.TestCase):
@@ -31,7 +32,7 @@ class VisibleMonthTests(unittest.TestCase):
         self.assertEqual(_coverage_month(data), '2026-10')
 
     def test_legacy_month_guard_prevents_border_compensation(self):
-        data = {'startDate': '2026-10-26', 'endDate': '2026-12-06', 'demands': [
+        data = {'startDate': '2026-10-26', 'endDate': '2026-12-06', 'policy': fixture()['policy'], 'demands': [
             {'id': 'visible', 'date': '2026-11-01', 'sector': 'Reposição', 'start': 480, 'end': 600, 'minimum': 1, 'estimated': True},
             {'id': 'border', 'date': '2026-12-06', 'sector': 'Reposição', 'start': 480, 'end': 720, 'minimum': 1, 'estimated': True},
         ]}
@@ -47,14 +48,14 @@ class VisibleMonthTests(unittest.TestCase):
         self.assertEqual(Snapshot(values).value(sum(monthly_sectors['Reposição'])), 0)
         self.assertEqual(Snapshot(values).value(sum(monthly_sundays['Reposição'])), 0)
         guards = [sum(terms) for scope in (sectors, sundays, monthly_sectors, monthly_sundays) for terms in scope.values()]
-        result, _, _ = improve(model, [sum(goals)], values, time.monotonic() + 1, ['COVERAGE'], protected_groups={'COVERAGE': guards})
+        result, _, _ = improve(model, [sum(goals)], values, time.monotonic() + 1, ['COVERAGE'], context=ImprovementContext(protected_groups={'COVERAGE': guards}))
         self.assertEqual(result[visible.index], 1)
         self.assertEqual(Snapshot(result).value(sum(goals)), 240)
 
     def test_closing_coverage_improves_without_a_sunday_or_total_trade(self):
         monday, sunday, border = '2026-11-02', '2026-11-08', '2026-12-06'
         sector = 'Reposição'
-        data = {'startDate': '2026-10-26', 'endDate': border, 'storeClosingMinutes': 1200, 'demands': [
+        data = {'startDate': '2026-10-26', 'endDate': border, 'policy': fixture()['policy'], 'storeClosingMinutes': 1200, 'demands': [
             {'date': monday, 'sector': sector, 'start': 1080, 'end': 1140, 'minimum': 1, 'estimated': True},
             {'date': monday, 'sector': sector, 'start': 1140, 'end': 1200, 'minimum': 2, 'estimated': True},
             {'date': sunday, 'sector': sector, 'start': 1080, 'end': 1140, 'minimum': 1, 'estimated': True},
@@ -80,7 +81,7 @@ class VisibleMonthTests(unittest.TestCase):
         actual, _, phases = improve(
             model, goals, initial, time.monotonic() + 2,
             ['COVERAGE', 'SUNDAY_COVERAGE', 'CLOSING_COVERAGE'],
-            protected_groups={'COVERAGE': [coverage, sunday_coverage, closing_coverage]})
+            context=ImprovementContext(protected_groups={'COVERAGE': [coverage, sunday_coverage, closing_coverage]}))
         self.assertEqual([Snapshot(actual).value(goal) for goal in goals], [180, 60, 60])
         self.assertEqual([actual[late.index], actual[sun.index], actual[extra.index]], [1, 1, 0])
         self.assertEqual(phases[-1]['objective'], 'CLOSING_COVERAGE')
@@ -88,7 +89,7 @@ class VisibleMonthTests(unittest.TestCase):
 
     def test_closing_at_midnight_only_weights_the_last_hour_and_reuses_gaps(self):
         day = '2026-11-02'
-        data = {'startDate': day, 'endDate': '2026-11-08', 'storeClosingMinutes': 1440, 'demands': [
+        data = {'startDate': day, 'endDate': '2026-11-08', 'policy': fixture()['policy'], 'storeClosingMinutes': 1440, 'demands': [
             {'date': day, 'sector': 'Caixa', 'start': 1365, 'end': 1440, 'minimum': 1, 'estimated': True},
         ]}
         model = cp_model.CpModel()

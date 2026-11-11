@@ -20,6 +20,8 @@ export type EscalaEmployee = {
   name: string;
   sector: string;
   role: string;
+  /** Operational responsibility only; never evidence of a legal classification or hourly substitution. */
+  leadership?: { role: "SECTOR" | "BRANCH" | "NONE"; source: "INFERRED" | "MANUAL"; sectors: string[] };
   weeklyHours: WeeklyHours;
   /** FPRE136 has no contract-hours field; a branch reference remains adjustable until individually overridden. */
   weeklyHoursMode?: "BRANCH" | "INDIVIDUAL";
@@ -132,6 +134,8 @@ export type EscalaInput = {
   mixed42Sectors?: string[];
   timeZone: "America/Sao_Paulo";
   policy: EscalaPolicy;
+  /** Explicit operational priorities; absence never implies weekend peaks or confirmed staffing demand. */
+  movementPriorities?: { startDate: string; endDate: string; sector?: string; level: "LOW" | "NORMAL" | "HIGH" }[];
   employees: EscalaEmployee[];
   shifts: EscalaShift[];
   demands: EscalaDemand[];
@@ -173,7 +177,7 @@ export type EscalaGenerationConflict = {
   role?: string;
 };
 type EscalaOptimizationPhase = {
-  objective: "COVERAGE" | "SUNDAY_COVERAGE" | "CLOSING_COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK" | "SECONDARY_POLISH";
+  objective: "COVERAGE" | "SUNDAY_COVERAGE" | "CLOSING_COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "LEADERSHIP" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK" | "SECONDARY_POLISH";
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
   wallTimeSeconds: number;
   budgetSeconds: number;
@@ -181,6 +185,9 @@ type EscalaOptimizationPhase = {
   bestBound?: number;
   searchScope?: "GLOBAL" | "SELECTED_PEOPLE" | "ROLLING_WEEKS" | "ROLLING_WEEK";
   initialValue?: number;
+  workers?: 1 | 2;
+  linearizationLevel?: number;
+  symmetryLevel?: number;
   movableWeeks?: number;
   movablePeople?: number;
   /** One joint search; timings are not repeated for its protected objectives. */
@@ -193,7 +200,12 @@ type EscalaOptimizationPhase = {
 };
 export type EscalaSolveResult = {
   /** Numeric diagnostics only; no employee identifiers or personal payload. */
-  optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[]; unattemptedObjectives?: EscalaOptimizationPhase["objective"][] };
+  optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[]; unattemptedObjectives?: EscalaOptimizationPhase["objective"][];
+    constructionSeconds?: number; feasibilitySeconds?: number; refinementSeconds?: number; stopReason?: string;
+    leadership?: { criticalSectorDays: number; criticalSectorDaysWithoutLeader: number; prioritizedSectorDays: number;
+      prioritizedSectorDaysWithoutLeader: number; timedCoverageIncluded: false } };
+  /** Safe explanatory families; never a full model dump or a minimum-conflict guarantee. */
+  solverDiagnostics?: { family: string; message: string; dates?: string[] }[];
   /** Concrete necessary-condition conflicts, never an invented diagnosis. */
   conflicts?: EscalaGenerationConflict[];
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";

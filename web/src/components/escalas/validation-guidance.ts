@@ -17,9 +17,9 @@ const GUIDANCE: Record<string, Guidance> = {
   SCHEDULE_UNVERIFIED: { title: "Folgas planejadas, sem horário fixo", instruction: "As folgas são planejadas normalmente. Sem horário informado, essas pessoas ficam fora da contagem por hora. Se houver um horário conhecido, acrescente-o ao cadastro.", target: "team", action: "Conferir horários não informados" },
   SCENARIO_OUTDATED: { title: "Atualizar a proposta", instruction: "O cenário mudou. Gere e aplique uma nova proposta para atualizar horários, folgas e cobertura, depois salve a revisão.", target: "generate", action: "Gerar proposta atualizada" },
   DAY_PENDING: { title: "Folgas ainda não geradas", instruction: "Peça uma sugestão em massa. O sistema distribui trabalho e folgas para toda a equipe incluída, preservando as decisões bloqueadas.", target: "generate", action: "Gerar proposta mensal" },
-  POLICY_PENDING: { title: "Conferência antes de publicar", instruction: "Não é necessário preencher documentos para testar o rascunho. A conferência formal deve ser feita antes da publicação." },
-  POLICY_VALIDITY: { title: "Ajustar a vigência da norma", instruction: "A norma informada precisa abranger todo o período da escala.", target: "rules", action: "Conferir vigência" },
-  CCT_VALIDITY: { title: "Atualizar a convenção coletiva", instruction: "O período está fora da vigência da CCT cadastrada. Confira o instrumento aplicável antes de continuar.", target: "rules", action: "Conferir convenção" },
+  POLICY_PENDING: { title: "Referência documental opcional", instruction: "Você pode gerar, exportar e publicar internamente. A ausência de documentos não altera as regras do cenário nem confirma conformidade." },
+  POLICY_VALIDITY: { title: "Referência fora da vigência", instruction: "A referência salva não cobre todo o período. Isso não bloqueia o planejamento nem a publicação interna.", target: "rules", action: "Consultar referência" },
+  CCT_VALIDITY: { title: "Convenção como referência", instruction: "O período está fora da vigência cadastrada. A escala continua utilizável, sem considerar a convenção vencida uma autorização.", target: "rules", action: "Consultar referência" },
   COVERAGE_PENDING: { title: "Cobertura dos setores ainda não sugerida", instruction: "A sugestão em massa completa a estimativa de cobertura que estiver faltando. Confira os mínimos da operação antes de publicar.", target: "generate", action: "Sugerir para toda a filial" },
   COVERAGE_REVIEW_PENDING: { title: "Referência automática de cobertura", instruction: "A distribuição estimada não comprova a necessidade da loja. Confira os horários e informe mínimos somente quando houver uma necessidade operacional conhecida.", target: "coverage", action: "Consultar cobertura por setor" },
   ESTIMATED_COVERAGE_GAP: { title: "Distribuição abaixo da referência estimada", instruction: "Compare as faixas com a operação real. A diferença em relação à estimativa não prova falta de pessoal; avalie turnos e folgas sem mudar bloqueios individuais.", target: "coverage", action: "Conferir faixas abaixo da estimativa" },
@@ -42,8 +42,8 @@ export function isReviewInformation(code: string, severity: EscalaIssue["severit
 
 export function reviewNoticeText(code: string): { title: string; message: string } | undefined {
   const text: Record<string, { title: string; message: string }> = {
-    POLICY_PENDING: { title: "Conferência antes de publicar", message: "Você já pode gerar, revisar e exportar o rascunho. A conferência das regras da filial fica para a publicação formal." },
-    POLICY_VALIDITY: { title: "Conferência das datas da regra", message: "A regra salva não cobre todas as datas. Isso precisa de revisão antes da publicação formal." },
+    POLICY_PENDING: { title: "Referência documental opcional", message: "Você pode gerar, revisar, exportar e publicar internamente. Isso não certifica conformidade nem altera as regras configuradas." },
+    POLICY_VALIDITY: { title: "Referência fora da vigência", message: "A referência salva não cobre todas as datas. Ela permanece informativa, sem bloquear a publicação interna." },
     SCHEDULE_UNVERIFIED: { title: "Folgas planejadas, sem horário fixo", message: "Essas pessoas participam das folgas. Como não têm horário informado, ficam fora da contagem de pessoas por hora." },
     SHORT_REFERENCE_PRESERVED: { title: "Horário reduzido mantido", message: "O horário mais curto da importação foi mantido. O sistema não aumentou essa jornada sozinho." },
     HISTORY_UNVERIFIED: { title: "Sem dados do mês anterior", message: "A proposta usa os dias conhecidos. Se precisar conferir a passagem entre meses, acrescente o histórico real." },

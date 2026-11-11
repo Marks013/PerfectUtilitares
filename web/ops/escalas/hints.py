@@ -81,6 +81,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                    for index, members in enumerate(unique) for day in dates}
     counts, result = {}, {}
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
+    if not dates or not employees:
+        return {}
     history_cutoff = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
     for person in sorted(employees, key=lambda item: hashlib.sha256(item["id"].encode()).digest()):
         if control is not None:

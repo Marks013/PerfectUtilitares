@@ -1,3 +1,4 @@
+import copy
 import unittest
 
 from solver import solve
@@ -68,13 +69,18 @@ class Mixed42Test(unittest.TestCase):
                 self.assertEqual(solve(data)["status"], "INFEASIBLE")
 
     def test_no_override_outside_scope_or_in_40_hour_week(self):
-        for field, value in [("simulation", False), ("mixed42Sectors", ["reposiçao"]),
+        for field, value in [("mixed42Sectors", ["reposiçao"]),
                              ("defaultWeeklyHours", 44), ("simulationDailyMinutes", 480)]:
             with self.subTest(field=field):
                 data = mixed_fixture()
                 (data["employees"][0] if field == "simulationDailyMinutes" else data)[field] = value
                 data["assignments"] = [locked("2027-01-05")]
                 self.assertEqual(solve(data)["status"], "INFEASIBLE")
+        operational = mixed_fixture()
+        operational["simulation"] = False
+        original_policy = copy.deepcopy(operational["policy"])
+        self.assertIn(solve(operational)["status"], ("FEASIBLE", "OPTIMAL"))
+        self.assertEqual(operational["policy"], original_policy)
         data = mixed_fixture(start="2027-12-13")
         result = solve(data)
         self.assertIn(result["status"], ("FEASIBLE", "OPTIMAL"), result)

@@ -1,3 +1,4 @@
+from optimization import ImprovementContext
 """Operational priorities remain movable without sacrificing protected coverage."""
 import time
 import unittest
@@ -38,7 +39,7 @@ class PolishPriorityTests(unittest.TestCase):
         values, _, _ = improve(
             model, [coverage, 1 - moved, moved], {moved.index: 0, coverage.index: 0},
             time.monotonic() + 1, ['COVERAGE', 'REST_DISTRIBUTION', 'STABILITY'],
-            protected_groups={'COVERAGE': [coverage]})
+            context=ImprovementContext(protected_groups={'COVERAGE': [coverage]}))
         self.assertEqual(values[moved.index], 0)
         self.assertEqual(values[coverage.index], 0)
 

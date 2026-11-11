@@ -10,7 +10,7 @@ export function escalaJson(value: unknown, status = 200) {
 export function escalaFailure(error: unknown) {
   if (error instanceof EscalaError) return jsonError(error.status, error.code, error.message);
   if (error instanceof EscalaSolverError) return jsonError(
-    error.code === "SOLVER_INPUT_TOO_LARGE" ? 413 : error.code === "SOLVER_BUSY" ? 429 : error.code === "SOLVER_CANCELLED" ? 409 : error.code === "SOLVER_TIMED_OUT" ? 504 : 503,
+    error.code === "SOLVER_INVALID_INPUT" ? 400 : error.code === "SOLVER_INTERNAL_ERROR" ? 500 : error.code === "SOLVER_INPUT_TOO_LARGE" ? 413 : error.code === "SOLVER_BUSY" ? 429 : error.code === "SOLVER_CANCELLED" ? 409 : error.code === "SOLVER_TIMED_OUT" ? 504 : 503,
     error.code, error.message);
   if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
     return jsonError(409, "ESCALA_ALREADY_EXISTS", "Já existe uma escala para esta filial e período. Abra a proposta existente.");

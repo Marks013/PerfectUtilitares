@@ -1,3 +1,4 @@
+from optimization import ImprovementContext
 """Sector repair targets real empty operating days without weakening protection."""
 import time
 import unittest
@@ -68,11 +69,11 @@ class SectorRepairTests(unittest.TestCase):
         initial = {first.index: 0, other.index: 1}
         values, _, phases = improve(
             model, [other - first], initial, time.monotonic() + 4, ["COVERAGE"],
-            protected_groups={"COVERAGE": [-first, other]},
+            context=ImprovementContext(protected_groups={"COVERAGE": [-first, other]},
             decision_variables={first.index: ("first", "2026-11-08"),
                                 other.index: ("other", "2026-11-08")},
             initial_repair_groups=[{"first"}, {"other", *(f"peer{i}" for i in range(16))}],
-            repair_clock_fixes={first.index: 0})
+            repair_clock_fixes={first.index: 0}))
         self.assertEqual([p["incumbentValue"] for p in phases[:2]], [0, -1])
         self.assertEqual(values, {first.index: 1, other.index: 0})
 
@@ -82,9 +83,9 @@ class SectorRepairTests(unittest.TestCase):
         initial = {a.index: 1, b.index: 1, protected.index: 0}
         values, _, phases = improve(
             model, [a + b - protected], initial, time.monotonic() + 4, ["COVERAGE"],
-            protected_groups={"COVERAGE": [a, b, protected]},
+            context=ImprovementContext(protected_groups={"COVERAGE": [a, b, protected]},
             decision_variables={v.index: (v.name, "2026-11-08") for v in (a, b, protected)},
-            initial_repair_groups=[{"a"}, {"b"}])
+            initial_repair_groups=[{"a"}, {"b"}]))
         self.assertEqual([p["searchScope"] for p in phases[:2]],
                          ["SELECTED_PEOPLE", "SELECTED_PEOPLE"])
         self.assertEqual([p["incumbentValue"] for p in phases[:2]], [1, 0])

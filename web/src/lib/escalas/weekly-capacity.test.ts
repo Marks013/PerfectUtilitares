@@ -46,6 +46,25 @@ describe("nominal weekly sector capacity", () => {
     expect(weeklySectorCapacity(input)[0]).toMatchObject({ people: 10, currentHours: 420 });
     expect(weeklyCapacityCaveat).toContain("antes de afastamentos, feriados e disponibilidade no mês");
   });
+  it("separates available capacity from nominal hours, actual scheduled work and untimed daily presence", () => {
+    const input = fixture();
+    input.policy.closedDates = [];
+    input.employees = input.employees.slice(0, 2);
+    input.employees[1].scheduleMode = "UNTIMED";
+    input.employees[1].shiftIds = [];
+    const firstWeek = input.startDate;
+    const days = Array.from({ length: 7 }, (_, index) => new Date(Date.parse(firstWeek + "T12:00:00Z") + index * 86400000).toISOString().slice(0, 10));
+    input.assignments = days.map(date => ({ employeeId: input.employees[0].id, date, kind: "ABSENCE" as const }));
+    input.assignments.push({ employeeId: input.employees[1].id, date: firstWeek, kind: "DUTY" });
+    const original = structuredClone(input);
+    const [row] = weeklySectorCapacity(input);
+    expect(row.currentHours).toBe(42);
+    expect(row.availableHoursMin).toBe(0);
+    expect(row.availableHoursMax).toBeGreaterThan(0);
+    expect(row.scheduledHours).toBe(0);
+    expect(row.untimedPeopleDays).toBe(1);
+    expect(input).toEqual(original);
+  });
   it("uses actual effective current hours across a transition without representing the reference as legally permitted work", () => {
     const [row] = weeklySectorCapacity(fixture(44, "2026-12"));
     expect(row).toMatchObject({ referenceHours: 440, currentHours: 420, currentHoursMax: 440, scenarioWeeklyHours: 42 });

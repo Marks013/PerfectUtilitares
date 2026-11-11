@@ -2,12 +2,8 @@ import type { AppSession } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { canonicalBranchCode } from "./branch-code";
 
-export class EscalaError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) {
-    super(message);
-    this.name = "EscalaError";
-  }
-}
+import { EscalaError } from "./errors";
+export { EscalaError } from "./errors";
 
 export type EscalaActor = { userId: string | null; tenantId: string; admin: boolean; moduleSessionId?: string; accountSessionId?: string };
 export type EscalaPermission = { canEdit: boolean; canPublish: boolean };

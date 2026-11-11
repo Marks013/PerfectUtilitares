@@ -1,6 +1,8 @@
-type SolverErrorCode = "SOLVER_BUSY" | "SOLVER_UNAVAILABLE" | "SOLVER_INVALID_RESPONSE" | "SOLVER_AUTH_FAILED" | "SOLVER_CANCELLED" | "SOLVER_TIMED_OUT" | "SOLVER_INPUT_TOO_LARGE" | "SOLVER_REFINEMENT_FAILED";
+type SolverErrorCode = "SOLVER_BUSY" | "SOLVER_UNAVAILABLE" | "SOLVER_INVALID_INPUT" | "SOLVER_INTERNAL_ERROR" | "SOLVER_INVALID_RESPONSE" | "SOLVER_AUTH_FAILED" | "SOLVER_CANCELLED" | "SOLVER_TIMED_OUT" | "SOLVER_INPUT_TOO_LARGE" | "SOLVER_REFINEMENT_FAILED";
 
 const messages: Record<SolverErrorCode, string> = {
+  SOLVER_INVALID_INPUT: "Algum dado deste planejamento não pôde ser lido pelo cálculo. Confira a equipe, os horários e as restrições; sua escala salva foi mantida.",
+  SOLVER_INTERNAL_ERROR: "O cálculo encontrou uma falha interna. Sua escala salva foi mantida; tente novamente e, se persistir, avise o responsável pelo sistema.",
   SOLVER_BUSY: "Há um cálculo em andamento. Aguarde o cálculo atual terminar e tente novamente.",
   SOLVER_UNAVAILABLE: "Não foi possível acessar o cálculo. Sua escala salva foi mantida; tente novamente.",
   SOLVER_INVALID_RESPONSE: "O cálculo não passou pela conferência. Sua escala salva foi mantida; tente novamente.",

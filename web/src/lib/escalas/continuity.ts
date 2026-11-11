@@ -1,6 +1,6 @@
 import { canonicalBranchCode } from "./branch-code";
 import { createHash } from "node:crypto";
-import { EscalaError } from "./access";
+import { EscalaError } from "./errors";
 import { fixedBoundaryReservations } from "./boundary";
 import { addDays } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";

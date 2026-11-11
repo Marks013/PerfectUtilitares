@@ -4,6 +4,7 @@ import { effectiveWeeklyHours } from "./labor-rules";
 import { compareSectors } from "./order";
 import { planningWeeklyHours } from "./preparation";
 import type { EscalaInput, WeeklyHours } from "./types";
+import { weeklySectorAvailability } from "./weekly-availability";
 
 export type WeeklySectorCapacity = {
   sector: string;
@@ -19,6 +20,11 @@ export type WeeklySectorCapacity = {
   missingHours: number;
   equivalentPeople: number;
   additionalEquivalentPeople: number;
+  availableHoursMin: number;
+  availableHoursMax: number;
+  scheduledHours: number;
+  timedPeopleDays: number;
+  untimedPeopleDays: number;
 };
 
 export const weeklyCapacityCaveat = "Comparação nominal, antes de afastamentos, feriados e disponibilidade no mês. Não comprova cobertura nem indica contratação.";
@@ -28,6 +34,7 @@ const number = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
 export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[] {
   const weeks = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
   if (!weeks.length) return [];
+  const availability = weeklySectorAvailability(input);
   const scenarioWeeklyHours = Math.min(...weeks.map(week => effectiveWeeklyHours({ weeklyHours: input.defaultWeeklyHours }, week))) as WeeklyHours;
   const shifts = new Set(input.shifts.map(shift => shift.id));
   const sectors = new Map<string, { row: WeeklySectorCapacity; current: number[] }>();
@@ -38,6 +45,7 @@ export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[]
     if (!sector) {
       sector = { row: { sector: person.sector, people: 0, untimedPeople: 0, shortReferencePeople: 0,
         referenceHours: 0, hours42: 0, hours40: 0, currentHours: 0, currentHoursMax: 0, scenarioWeeklyHours,
+        availableHoursMin: 0, availableHoursMax: 0, scheduledHours: 0, timedPeopleDays: 0, untimedPeopleDays: 0,
         missingHours: 0, equivalentPeople: 0, additionalEquivalentPeople: 0 }, current: weeks.map(() => 0) };
       sectors.set(person.sector, sector);
     }
@@ -60,6 +68,7 @@ export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[]
     weeks.forEach((week, index) => { current[index] += effectiveWeeklyHours(reference, week); });
   }
   return [...sectors.values()].map(({ row, current }) => {
+    Object.assign(row, availability.get(row.sector));
     row.currentHours = Math.min(...current);
     row.currentHoursMax = Math.max(...current);
     row.missingHours = Math.max(0, row.referenceHours - row.currentHours);
@@ -73,12 +82,15 @@ export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[]
 export function weeklyCapacityText(row: WeeklySectorCapacity): string {
   const excluded = [row.untimedPeople ? `${row.untimedPeople} sem horário apurado` : "",
     row.shortReferencePeople ? `${row.shortReferencePeople} com referência curta sem carga semanal confirmada` : ""].filter(Boolean);
-  if (!row.people) return `Capacidade semanal não apurada${excluded.length ? ": " + excluded.join("; ") : "."}`;
+  if (!row.people) return `Capacidade semanal não apurada${excluded.length ? ": " + excluded.join("; ") : "."}. Na grade: ${row.untimedPeopleDays} presença(s) ENC no período; sem cobertura por horário.`;
   const current = row.currentHours === row.currentHoursMax ? number.format(row.currentHours) : `${number.format(row.currentHours)}–${number.format(row.currentHoursMax)}`;
   const parts = [`${row.people} colaborador(es) com horário`, `Referência 44h: ${number.format(row.referenceHours)}h/semana`,
     `42h: ${number.format(row.hours42)}h`, `40h: ${number.format(row.hours40)}h`, `Atual: ${current}h/semana`];
   if (row.missingHours) parts.push(`${row.currentHours !== row.currentHoursMax ? "Até " : ""}${number.format(row.missingHours)}h a menos que a referência`,
     `Equivalência da referência em ${row.scenarioWeeklyHours}h: ${number.format(row.equivalentPeople)} pessoas (+${number.format(row.additionalEquivalentPeople)} equivalente)`);
   if (excluded.length) parts.push(`Fora desta conta: ${excluded.join("; ")}`);
+  const available = row.availableHoursMin === row.availableHoursMax ? number.format(row.availableHoursMin) : `${number.format(row.availableHoursMin)}–${number.format(row.availableHoursMax)}`;
+  parts.push(`Disponibilidade conhecida: até ${available}h/semana; não garante cobertura`,
+    `Na grade: ${number.format(row.scheduledHours)}h com horário e ${row.untimedPeopleDays} presença(s) ENC no período`);
   return parts.join(" · ") + ".";
 }

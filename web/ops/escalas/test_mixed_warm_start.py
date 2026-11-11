@@ -1,3 +1,4 @@
+from optimization import ImprovementContext
 """Mixed warm starts preserve the incumbent and stagger free weekly rests."""
 import copy
 import time
@@ -86,10 +87,10 @@ class MixedWarmStartTests(unittest.TestCase):
         values = {sunday.index: 1, sector.index: 0, objective.index: 1}
         actual, _, _ = improve(
             model, [objective], values, time.monotonic() + 1, ["COVERAGE"],
-            protected_groups={"COVERAGE": [sunday, sector]},
+            context=ImprovementContext(protected_groups={"COVERAGE": [sunday, sector]},
             decision_variables={sunday.index: ("p", "2026-11-08"),
                                 sector.index: ("q", "2026-11-08")},
-            initial_decision_hints={sunday.index: 1, sector.index: 1})
+            initial_decision_hints={sunday.index: 1, sector.index: 1}))
         self.assertEqual(actual[sector.index], 0)
         self.assertLessEqual(actual[sunday.index], values[sunday.index])
         self.assertLessEqual(actual[objective.index], values[objective.index])
@@ -101,10 +102,10 @@ class MixedWarmStartTests(unittest.TestCase):
         initial = {small.index: 1, other.index: 1}
         values, _, phases = improve(
             model, [small + other], initial, time.monotonic() + 3, ["COVERAGE"],
-            protected_groups={"COVERAGE": [small, other]},
+            context=ImprovementContext(protected_groups={"COVERAGE": [small, other]},
             decision_variables={small.index: ("small", "2026-11-08"),
                                 other.index: ("other", "2026-11-08")},
-            initial_repair_people={"small"})
+            initial_repair_people={"small"}))
         self.assertEqual([phase["searchScope"] for phase in phases],
                          ["SELECTED_PEOPLE", "GLOBAL"])
         self.assertEqual([(phase["initialValue"], phase["incumbentValue"])
@@ -116,11 +117,11 @@ class MixedWarmStartTests(unittest.TestCase):
         captured = {}
 
         def inspect(model, objectives, values, deadline, names, **kwargs):
-            overrides = kwargs["initial_decision_hints"]
+            overrides = kwargs["context"].initial_decision_hints
             captured["changed"] = sum(values[index] != value
                                       for index, value in overrides.items())
             captured["initial"] = copy.deepcopy(values)
-            captured["guards"] = kwargs["protected_groups"]
+            captured["guards"] = kwargs["context"].protected_groups
             return values, False, []
 
         with patch("solver.improve", side_effect=inspect):

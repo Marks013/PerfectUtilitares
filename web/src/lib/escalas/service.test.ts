@@ -636,7 +636,12 @@ describe("Escalas revision service", () => {
     expect(result).toMatchObject({ revision: 2, status: "PUBLISHED" });
     expect(mocks.revision.create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: "PUBLISHED", revision: 2 }) });
     const pending = input(); pending.policy.reviewed = false;
-    await expect(saveEscala(actor, "w1", 1, pending, true)).rejects.toMatchObject({ status: 422 });
+    const internal = await saveEscala(actor, "w1", 1, pending, true);
+    expect(internal.status).toBe("PUBLISHED");
+    expect(internal.input.policy.reviewed).toBe(false);
+    expect(internal.validation.issues).toContainEqual(expect.objectContaining({ code: "POLICY_PENDING", severity: "WARNING" }));
+    const invalid = input(); invalid.assignments = [];
+    await expect(saveEscala(actor, "w1", 1, invalid, true)).rejects.toMatchObject({ status: 422 });
     mocks.revision.findUnique.mockResolvedValue(version(input(), 1, "PUBLISHED"));
     expect((await saveEscala(actor, "w1", 1, input(), true)).revision).toBe(1);
   });
@@ -734,7 +739,7 @@ describe("Escalas revision service", () => {
     mocks.revision.findUnique.mockResolvedValue(version(holiday));
     const proposal = await generateEscala(actor, "w1", 1);
     expect(proposal.proposalInput.policy.authorizedHolidayDates).toEqual([]);
-    expect(proposal.validation.issues.some(issue => issue.code === "HOLIDAY_WORK" && issue.severity === "PENDING")).toBe(true);
+    expect(proposal.validation.issues.some(issue => issue.code === "HOLIDAY_WORK" && issue.severity === "WARNING")).toBe(true);
     expect(proposal.validation.readyToPublish).toBe(false);
     expect(mocks.solve).toHaveBeenCalledOnce();
   });

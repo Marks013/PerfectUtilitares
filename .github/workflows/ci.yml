@@ -15,12 +15,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
-    name: Quality, PostgreSQL and build
-    # Use the same ARM64 architecture as the hashed PDF runtime wheels.
+  quality:
+    name: Code, dependencies and PostgreSQL
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 40
-
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17
@@ -35,11 +33,100 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
     defaults:
       run:
         working-directory: web
+    env:
+      CI: "true"
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/perfectutilitares_ci?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-in-production
+      ADMIN_EMAIL: admin-ci@example.test
+      ADMIN_PASSWORD: ci-only-admin-password
+      DEFAULT_TENANT_NAME: CI
+      DEFAULT_TENANT_SLUG: ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Install PDF rendering tools for code regressions
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y poppler-utils
+      - name: Validate and audit dependencies
+        run: |
+          npm ls --all
+          npm audit --audit-level=moderate
+          npm --prefix ops/pdf-worker audit --audit-level=moderate
+          npm --prefix ops/migrator audit --audit-level=moderate
+          npm run security:python
+      - name: Deploy database migrations
+        run: npm run prisma:generate && npm run db:deploy
+      - name: Run checks without a browser
+        run: npm run quality:code
+      - name: Smoke Prisma runtime
+        run: npm run prisma:smoke
+      - name: Ensure checks did not modify tracked files
+        working-directory: .
+        run: git diff --exit-code -- .
 
+  solver:
+    name: Solver and independent verifier
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build production and development processors
+        run: |
+          docker build --target runtime -t web-escalas-solver ops/escalas
+          docker build --target development -t web-escalas-solver-development ops/escalas
+      - name: Run production solver regressions
+        run: npm run test:escalas:python
+      - name: Check Python code
+        run: docker run --rm --read-only --network none --cpus 1 --memory 1536m --volume "$PWD/ops/escalas:/model:ro" --workdir /model --entrypoint /opt/solver/bin/ruff web-escalas-solver-development check --no-cache .
+      - name: Verify Python results independently in TypeScript
+        run: npm run test:escalas:model
+      - name: Verify generated property cases independently in TypeScript
+        run: npm run test:escalas:properties
+
+  browser:
+    name: Production build and browser flows
+    needs: [quality, solver]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: perfectutilitares_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d perfectutilitares_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: web
     env:
       CI: "true"
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/perfectutilitares_ci?schema=public
@@ -55,104 +142,72 @@ jobs:
       E2E_PDF_WORKER_IMAGE: web-pdf-worker-e2e
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: web/package-lock.json
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Install Chromium for browser tests
+      - name: Install Chromium
         run: npx playwright install --with-deps chromium
-
-      - name: Install PDF rendering tools for regression tests
+      - name: Install PDF rendering tools
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y poppler-utils
-
-      - name: Validate dependency tree
-        run: npm ls --all
-
-      - name: Audit dependencies
+      - name: Prepare production runtimes
         run: |
-          npm audit --audit-level=moderate
-          npm --prefix ops/pdf-worker audit --audit-level=moderate
-          npm --prefix ops/migrator audit --audit-level=moderate
-          node --test scripts/audit-python-locks.test.mjs
-          npm run security:python
-
-      - name: Deploy database migrations
-        run: npm run prisma:generate && npm run db:deploy
-
-      - name: Prepare isolated scheduling processor
-        run: docker build -t web-escalas-solver ops/escalas
-
-      - name: Run scheduling solver regressions
-        run: docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,uid=1001,gid=1001,mode=1770 --cpus 1 --memory 1536m --pids-limit 96 --network none --env PYTHONDONTWRITEBYTECODE=1 --volume "$PWD/ops/escalas:/model:ro" --workdir /model --entrypoint python web-escalas-solver -B -m unittest discover -s . -p 'test_*.py'
-
-      - name: Prepare production PDF runtime for browser regressions
-        run: |
+          docker build -t web-escalas-solver ops/escalas
           docker build --target pdf-worker --build-arg SOURCE_REVISION="$SOURCE_REVISION" --tag "$E2E_PDF_WORKER_IMAGE" .
-
-      - name: Run quality checks
-        run: npm run quality
-
-      - name: Smoke Prisma runtime
-        run: npm run prisma:smoke
-
       - name: Build web application
         run: npm run build
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-
       - name: Build PDF worker
         run: npm run build:pdf-worker
-
-      - name: Run browser and persistence E2E
+      - name: Run browser and persistence E2E once
         run: npm run test:e2e:isolated
         env:
           E2E_PRODUCTION: "1"
-
+      - name: Keep synthetic browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: synthetic-browser-failures
+          path: |
+            web/test-results/
+            web/playwright-report/
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Ensure build did not modify tracked files
         working-directory: .
         run: git diff --exit-code -- .
 
   docker:
     name: Docker images
-    # Match production and the hashed CPython/Alpine ARM64 wheels.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
-
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
-
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: web/package-lock.json
-
       - name: Prepare non-secret CI environment
         working-directory: web
         run: |
           cp .env.example .env
           npm run setup:env
-
       - name: Validate Compose
         working-directory: web
         run: docker compose config --quiet
-
       - name: Build every runtime image
         working-directory: web
-        run: docker compose build app migrate pdf-worker
+        run: docker compose build app migrate pdf-worker escalas-solver

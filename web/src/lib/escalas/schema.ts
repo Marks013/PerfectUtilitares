@@ -47,6 +47,9 @@ const shift = z.strictObject({
 const employee = z.strictObject({
   id: identifier, registration: label, name: label,
   sector: z.string().trim().max(160), role: z.string().trim().max(160), weeklyHours,
+  leadership: z.strictObject({ role: z.enum(["SECTOR", "BRANCH", "NONE"]), source: z.enum(["INFERRED", "MANUAL"]),
+    sectors: z.array(label).max(250).refine(values => new Set(values).size === values.length, "Setores de responsabilidade duplicados"),
+  }).refine(value => value.role !== "NONE" || value.sectors.length === 0, "Sem liderança não deve conter setores de responsabilidade").optional(),
   weeklyHoursMode: z.enum(["BRANCH", "INDIVIDUAL"]).optional(),
   simulationDailyMinutes: z.number().int().min(1).max(600).optional(),
   shiftIds: z.array(identifier).max(12), activeFrom: z.union([date, z.literal("")]), activeUntil: date.optional(),
@@ -123,6 +126,9 @@ export const escalaInputSchema = z.strictObject({
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,
   mixed42Sectors: z.array(label).max(250)
     .refine(sectors => new Set(sectors).size === sectors.length, "Setores duplicados na jornada mista").optional(),
+  movementPriorities: z.array(z.strictObject({ startDate: date, endDate: date, sector: label.optional(),
+    level: z.enum(["LOW", "NORMAL", "HIGH"]),
+  }).refine(value => value.endDate >= value.startDate, "Fim da prioridade anterior ao início")).max(250).optional(),
   employees: z.array(employee).max(250), shifts: z.array(shift).max(120),
   demands: z.array(z.strictObject({
     id: identifier, date, sector: label, role: label.optional(),
@@ -176,5 +182,9 @@ export const escalaInputSchema = z.strictObject({
   });
   value.demands.forEach((demand, index) => {
     if (demand.end <= demand.start || demand.date < value.startDate || demand.date > value.endDate) context.addIssue({ code: "custom", path: ["demands", index], message: "Faixa de cobertura inválida ou fora do período" });
+  });
+  value.movementPriorities?.forEach((priority, index) => {
+    if (priority.startDate < value.startDate || priority.endDate > value.endDate)
+      context.addIssue({ code: "custom", path: ["movementPriorities", index], message: "Prioridade de movimento fora do período da escala" });
   });
 });

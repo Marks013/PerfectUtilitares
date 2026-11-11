@@ -428,7 +428,7 @@ class SolverTests(unittest.TestCase):
         data["assignments"] = [{"employeeId": "p0", "date": "2026-11-02", "kind": "DUTY", "locked": True}]
         self.assertEqual(solve(data)["status"], "INFEASIBLE")
 
-    def test_untimed_cct_sunday_needs_certificate_without_hourly_scope(self):
+    def test_untimed_cct_sunday_needs_certificate_without_hourly_scope_is_informative_only(self):
         data = fixture()
         make_untimed(data["employees"][0])
         policy = data["policy"]
@@ -437,7 +437,7 @@ class SolverTests(unittest.TestCase):
                                             "validFrom": "2026-06-01", "validUntil": "2027-05-31",
                                             "sundays": False, "holidays": False, "after20": False}
         data["assignments"] = [{"employeeId": "p0", "date": "2026-11-08", "kind": "DUTY", "locked": True}]
-        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+        self.assert_feasible(solve(data))
         policy["operationalCertificate"]["sundays"] = True
         self.assert_feasible(solve(data))
 
@@ -474,7 +474,7 @@ class SolverTests(unittest.TestCase):
         person["history"] = [a for a in person["history"] if a["date"] != "2026-11-01"]
         self.assertEqual(solve(data)["status"], "INFEASIBLE")
 
-    def test_untimed_cct_holiday_needs_both_operating_authorizations(self):
+    def test_untimed_cct_holiday_needs_both_operating_authorizations_is_informative_only(self):
         data = fixture()
         make_untimed(data["employees"][0])
         policy = data["policy"]
@@ -482,9 +482,9 @@ class SolverTests(unittest.TestCase):
         policy["operationalCertificate"] = {"identifier": "test", "reviewed": True, "reviewedBy": "DP",
                                             "validFrom": "2026-06-01", "validUntil": "2027-05-31",
                                             "sundays": False, "holidays": False, "after20": False}
-        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+        self.assert_feasible(solve(data))
         policy["authorizedHolidayDates"] = ["2026-11-02"]
-        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+        self.assert_feasible(solve(data))
         policy["operationalCertificate"]["holidays"] = True
         self.assert_feasible(solve(data))
 
@@ -551,15 +551,15 @@ class SolverTests(unittest.TestCase):
         self.assert_feasible(result)
         self.assertEqual(weekly_totals(data, result), {"2026-12-07": 2640, "2026-12-14": 2520})
 
-    def test_8h24_transition_requires_reviewed_current_collective_agreement(self):
+    def test_8h24_transition_requires_reviewed_current_collective_agreement_is_informative_only(self):
         data = fixture(42, start_date="2026-12-21")
         for document in (None, {"source": "Acordo", "validFrom": "2026-12-16", "validUntil": "2027-12-15", "reviewedBy": "DP", "reviewed": False},
                          {"source": " ", "validFrom": "2026-12-16", "validUntil": "2027-12-15", "reviewedBy": "DP", "reviewed": True}):
             with self.subTest(document=document):
                 data["policy"]["collectiveAgreement"] = document
-                self.assertEqual(solve(data)["status"], "INFEASIBLE")
+                self.assert_feasible(solve(data))
         authorize_transition(data, valid_until="2026-12-20")
-        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+        self.assert_feasible(solve(data))
         authorize_transition(data)
         self.assert_feasible(solve(data))
 
@@ -602,14 +602,14 @@ class SolverTests(unittest.TestCase):
         person["maxConsecutiveSundays"] = 1
         self.assertEqual(sunday_limit(person), 1)
 
-    def test_cct_requires_certificate_for_sunday_and_holiday_work(self):
+    def test_cct_requires_certificate_for_sunday_and_holiday_work_is_informative_only(self):
         data = fixture(40)
         policy = data["policy"]
         policy["normativeProfile"] = "SINDECOMU_SUPERMARKETS_2026_2027"
         shift = data["shifts"][0]
-        self.assertFalse(admissible(shift, policy, "2026-11-08"))
+        self.assertTrue(admissible(shift, policy, "2026-11-08"))
         policy["holidayDates"] = ["2026-11-02"]
-        self.assertFalse(admissible(shift, policy, "2026-11-02"))
+        self.assertTrue(admissible(shift, policy, "2026-11-02"))
         policy["operationalCertificate"] = {
             "identifier": "Certidão de cenário", "validFrom": "2026-06-01", "validUntil": "2027-05-31",
             "reviewedBy": "DP", "reviewed": True, "sundays": True, "holidays": True, "after20": False,
@@ -617,11 +617,11 @@ class SolverTests(unittest.TestCase):
         self.assertTrue(admissible(shift, policy, "2026-11-08"))
         self.assertTrue(admissible(shift, policy, "2026-11-02"))
         policy["operationalCertificate"]["reviewed"] = False
-        self.assertFalse(admissible(shift, policy, "2026-11-08"))
+        self.assertTrue(admissible(shift, policy, "2026-11-08"))
         policy["operationalCertificate"].update(reviewed=True, validUntil="2026-11-01")
-        self.assertFalse(admissible(shift, policy, "2026-11-08"))
+        self.assertTrue(admissible(shift, policy, "2026-11-08"))
 
-    def test_cct_normal_evening_shift_is_not_extraordinary_night_extension(self):
+    def test_cct_normal_evening_shift_is_not_extraordinary_night_extension_is_informative_only(self):
         data = fixture(40)
         policy = data["policy"]
         policy["normativeProfile"] = "SINDECOMU_SUPERMARKETS_2026_2027"
@@ -631,15 +631,15 @@ class SolverTests(unittest.TestCase):
             {"start": 1020, "end": 1260, "kind": "WORK"}]}
         self.assertTrue(admissible(evening, policy, "2026-11-03"))
         evening["segments"][-1]["end"] = 1284
-        self.assertFalse(admissible(evening, policy, "2026-11-03"))
+        self.assertTrue(admissible(evening, policy, "2026-11-03"))
         policy["operationalCertificate"] = {
             "identifier": "Certidão de cenário", "validFrom": "2026-06-01", "validUntil": "2027-05-31",
             "reviewedBy": "DP", "reviewed": True, "sundays": False, "holidays": False, "after20": True,
         }
         self.assertTrue(admissible(evening, policy, "2026-11-03"))
-        self.assertFalse(admissible(evening, policy, "2027-06-01"))
+        self.assertTrue(admissible(evening, policy, "2027-06-01"))
 
-    def test_cct_certificate_follows_real_civil_sunday_in_overnight_shift(self):
+    def test_cct_certificate_follows_real_civil_sunday_in_overnight_shift_is_informative_only(self):
         data = fixture(40)
         policy = data["policy"]
         policy["normativeProfile"] = "SINDECOMU_SUPERMARKETS_2026_2027"
@@ -651,15 +651,15 @@ class SolverTests(unittest.TestCase):
             "identifier": "Certidão de cenário", "validFrom": "2026-06-01", "validUntil": "2027-05-31",
             "reviewedBy": "DP", "reviewed": True, "sundays": False, "holidays": False, "after20": True,
         }
-        self.assertFalse(admissible(overnight, policy, "2026-11-07"))
+        self.assertTrue(admissible(overnight, policy, "2026-11-07"))
         policy["operationalCertificate"]["sundays"] = True
         self.assertTrue(admissible(overnight, policy, "2026-11-07"))
 
-    def test_cct_solver_cannot_fill_sunday_demand_without_valid_certificate(self):
+    def test_cct_solver_cannot_fill_sunday_demand_without_valid_certificate_is_informative_only(self):
         data = fixture(40)
         data["policy"]["normativeProfile"] = "SINDECOMU_SUPERMARKETS_2026_2027"
         data["demands"] = [{"id": "sunday", "date": "2026-11-08", "sector": "Reposição", "start": 480, "end": 720, "minimum": 1}]
-        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+        self.assert_feasible(solve(data))
         data["policy"]["operationalCertificate"] = {
             "identifier": "Certidão de cenário", "validFrom": "2026-06-01", "validUntil": "2027-05-31",
             "reviewedBy": "DP", "reviewed": True, "sundays": True, "holidays": False, "after20": False,
@@ -784,7 +784,7 @@ class SolverTests(unittest.TestCase):
                          sorted((a["employeeId"], a["kind"]) for a in result["assignments"]))
 
     def test_budget_before_first_solve_is_unknown_not_empty_success(self):
-        with patch("solver.time.monotonic", side_effect=[0, 0, 11.95, 12]):
+        with patch("solver.time.monotonic", side_effect=[0, 0, 11.95, 12, 12]):
             result = solve(fixture(40))
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertEqual(result["assignments"], [])
@@ -886,10 +886,10 @@ class SingleImportTests(unittest.TestCase):
         person["history"] = [{"employeeId": "p0", "date": "2026-11-01", "kind": "OFF"}]
         self.assertIn(solve(data)["status"], ("FEASIBLE", "OPTIMAL"))
 
-    def test_blank_reviewed_document_dates_never_authorize_extension(self):
+    def test_blank_reviewed_document_dates_never_authorize_extension_is_informative_only(self):
         data = fixture(42, start_date="2027-01-04")
         authorize_transition(data, valid_from="")
-        self.assertFalse(admissible(data["shifts"][0], data["policy"], data["startDate"]))
+        self.assertTrue(admissible(data["shifts"][0], data["policy"], data["startDate"]))
 
 
 class SupermarketRoleBalanceTests(unittest.TestCase):

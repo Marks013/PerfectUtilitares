@@ -101,7 +101,7 @@ describe("concise holiday identification in real reports", () => {
     const [capacity] = weeklySectorCapacity(workspace.input), bytes = exportEscalaXlsx(workspace, "hours");
     const rows = await readSheet(Buffer.from(bytes), "Capacidade");
     expect(rows[2][0]).toContain(weeklyCapacityCaveat);
-    expect(rows[3]).toEqual(["Setor", "Colab.", "44h (h/sem)", "42h (h/sem)", "40h (h/sem)", "Atual (h/sem)", "Diferença (h/sem)", "Equiv. nominal (adicional)"]);
+    expect(rows[3]).toEqual(["Setor", "Colab.", "44h (h/sem)", "42h (h/sem)", "40h (h/sem)", "Atual (h/sem)", "Diferença (h/sem)", "Equiv. nominal (adicional)", "Disponível até (h/sem)", "Horas na grade (período)", "Presenças ENC (período)"]);
     expect(rows[4].slice(0, 7)).toEqual(["Caixa", 10, capacity.referenceHours, capacity.hours42, capacity.hours40, capacity.currentHours, capacity.missingHours]);
     expect(capacity.referenceHours).toBe(440);
     expect(capacity.currentHours).toBe(hours === 42 ? 420 : 400);

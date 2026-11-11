@@ -73,10 +73,12 @@ describe("extended unpaid meal intervals", () => {
   it.each([
     { reviewed: false }, { source: " " }, { reviewedBy: " " },
     { validUntil: "2026-11-01" }, { validFrom: "2026-11-03" },
-  ])("does not infer authorization from incomplete, expired or unreviewed evidence: %j", (change) => {
+  ])("uses the selected operational maximum without fabricating documentary approval: %j", (change) => {
     const input = fixture(240);
     input.policy.mealIntervalAgreement = { ...agreement(), ...change };
-    expect(mealIssues(input)).toEqual([expect.objectContaining({ severity: "ERROR" })]);
+    const before = structuredClone(input);
+    expect(mealIssues(input)).toEqual([]);
+    expect(input).toEqual(before);
   });
 
   it("does not treat an unrelated collective agreement as a meal exception", () => {
@@ -85,14 +87,15 @@ describe("extended unpaid meal intervals", () => {
     expect(mealIssues(input)).toHaveLength(1);
   });
 
-  it("checks the actual journey date across expiry, not only the start of the plan", () => {
+  it("keeps the configured interval after the reference expires, without claiming authorization", () => {
     const input = fixture(240);
     input.policy.mealIntervalAgreement = { ...agreement(), validUntil: "2026-11-02" };
     const result = validateEscala(input);
     expect(result.issues.filter((issue) => issue.code === "MEAL_INTERVAL_EXCESSIVE").map((issue) => issue.date))
-      .toEqual(["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"]);
-    expect(result.valid).toBe(false);
-    expect(result.readyToPublish).toBe(false);
+      .toEqual([]);
+    expect(result.valid).toBe(true);
+    expect(result.readyToPublish).toBe(true);
+    expect(input.policy.mealIntervalAgreement.validUntil).toBe("2026-11-02");
   });
 
   it("revalidates generated work assignments rather than trusting a feasible status", () => {

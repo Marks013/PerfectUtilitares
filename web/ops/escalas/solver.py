@@ -7,17 +7,15 @@ from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
+from diagnostics import ConflictRegistry
 from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates
-from optimization import Snapshot, improve, remember
+from leadership import leadership_objective, leadership_summary
+from optimization import ImprovementContext, Snapshot, improve, remember
+from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
+from runtime_settings import MAX_SECONDS, RANDOM_SEED
 from weekend_balance import available_weekends, preserve_sunday_presence, weekend_objectives
 
 ZONE = ZoneInfo("America/Sao_Paulo")
-MAX_SECONDS = 12
-TRANSITION_42_DATE = "2026-12-16"
-TRANSITION_40_DATE = "2027-12-16"
-CCT_PROFILE = "SINDECOMU_SUPERMARKETS_2026_2027"
-CCT_FROM = "2026-06-01"
-CCT_UNTIL = "2027-05-31"
 
 
 def days_between(start, end):
@@ -68,7 +66,8 @@ def occupied_dates(day, shift):
 
 
 def legal_weekly_hours(day):
-    return 40 if day >= TRANSITION_40_DATE else 42 if day >= TRANSITION_42_DATE else 44
+    stage = "second" if day >= TRANSITION_40_DATE else "first" if day >= TRANSITION_42_DATE else "before"
+    return REFERENCE["weeklyHours"][stage]
 
 
 def effective_weekly_hours(person, week_end):
@@ -104,40 +103,17 @@ def certificate_authorizes(policy, day, scope):
 
 
 def cct_admissible(shift, policy, day):
-    if policy.get("_simulation") or policy.get("normativeProfile") != CCT_PROFILE:
-        return True
-    if not CCT_FROM <= day <= CCT_UNTIL:
-        return False
-    for civil in occupied_dates(day, shift):
-        if date.fromisoformat(civil).weekday() == 6 and not certificate_authorizes(policy, civil, "sundays"):
-            return False
-        if civil in policy["holidayDates"] and not certificate_authorizes(policy, civil, "holidays"):
-            return False
-    paid, _start, _end = shift_metrics(shift)
-    extension_or_night = paid > 480 or any(s["kind"] != "BREAK" and (s["start"] < 300 or s["end"] > 1320)
-                                          for s in shift["segments"])
-    for segment in shift["segments"]:
-        if segment["kind"] == "BREAK":
-            continue
-        for offset in range(segment["start"] // 1440, (segment["end"] - 1) // 1440 + 1):
-            if extension_or_night and max(segment["start"], offset * 1440 + 1200) < min(segment["end"], (offset + 1) * 1440):
-                civil = (date.fromisoformat(day) + timedelta(days=offset)).isoformat()
-                if not certificate_authorizes(policy, civil, "after20"):
-                    return False
+    # Documentary references do not block drafts or internal publication.
+    # Explicit operational limits remain enforced by admissible().
     return True
 
 
 def maximum_meal_minutes(policy, day):
     document = policy.get('mealIntervalAgreement')
-    if not reviewed_document(document, day, 'source'):
-        return 120
-    try:
-        date.fromisoformat(document['validFrom'])
-        date.fromisoformat(document['validUntil'])
-    except (ValueError, TypeError):
-        return 120
-    maximum = document.get('maximumMinutes')
-    return maximum if type(maximum) is int and 121 <= maximum <= 360 else 120
+    maximum = document.get('maximumMinutes') if isinstance(document, dict) else None
+    minimum = REFERENCE["mealMinutes"]["standardMaximum"]
+    ceiling = REFERENCE["mealMinutes"]["extendedMaximum"]
+    return maximum if type(maximum) is int and minimum < maximum <= ceiling else minimum
 
 
 def _is_mixed_42_long_shift(shift):
@@ -153,10 +129,11 @@ def _is_mixed_42_long_shift(shift):
 
 def admissible(shift, policy, day, mixed_42=False):
     paid, _start, _end = shift_metrics(shift)
-    ceiling = 480 if day >= TRANSITION_40_DATE else 504 if day >= TRANSITION_42_DATE else 600
-    # Only the exact long turn gets the simulated exception, not the saved policy.
+    stage = "second" if day >= TRANSITION_40_DATE else "first" if day >= TRANSITION_42_DATE else "before"
+    ceiling = REFERENCE["dailyMinutes"][stage]
+    # Only the exact, explicitly selected mixed turn gets this exception.
     long_turn = False
-    if mixed_42 and policy.get("_simulation") and day < TRANSITION_40_DATE:
+    if mixed_42 and day < TRANSITION_40_DATE:
         long_turn = paid == 540 and _is_mixed_42_long_shift(shift)
         if paid != 480 and not long_turn:
             return False
@@ -164,15 +141,12 @@ def admissible(shift, policy, day, mixed_42=False):
         return False
     if paid > 480 and not policy["compensationAuthorized"] and not policy.get("_simulation"):
         return False
-    if paid > 480 and TRANSITION_42_DATE <= day < TRANSITION_40_DATE and not policy.get("_simulation"):
-        if not reviewed_document(policy.get("collectiveAgreement"), day, "source"):
-            return False
     if not cct_admissible(shift, policy, day):
         return False
     first, last = shift["segments"][0]["start"], shift["segments"][-1]["end"]
     meals = [s["end"] - s["start"] for s in shift["segments"]
              if s["kind"] == "BREAK" and s["start"] > first and s["end"] < last]
-    if paid > 360 and max(meals, default=0) > maximum_meal_minutes(policy, day) and not policy.get('_simulation'):
+    if paid > 360 and max(meals, default=0) > maximum_meal_minutes(policy, day) and not policy.get('_simulation') and not long_turn:
         return False
     short_pause_flex = policy.get("_simulation") and policy.get("allowShortMealSimulation") is True
     required = policy["minMealMinutes"] if paid > 360 else (15 if paid > 240 and not short_pause_flex else 0)
@@ -180,13 +154,8 @@ def admissible(shift, policy, day, mixed_42=False):
 
 
 def untimed_admissible(policy, day):
-    if policy.get("_simulation"):
-        return True
-    if policy.get("normativeProfile") != CCT_PROFILE:
-        return True
-    return (CCT_FROM <= day <= CCT_UNTIL
-            and (date.fromisoformat(day).weekday() != 6 or certificate_authorizes(policy, day, "sundays"))
-            and (day not in policy["holidayDates"] or certificate_authorizes(policy, day, "holidays")))
+    # Presence-only planning does not certify documentary approval.
+    return True
 
 
 def has_no_clock(person):
@@ -208,15 +177,13 @@ def solve(data, control=None):
     if not 1 <= len(employees) <= 250 or not 7 <= len(dates) <= 42 or len(dates) % 7:
         raise ValueError("model bounds")
     policy = {**data["policy"], "_simulation": data.get("simulation") is True}
-    mixed_sectors = set(data.get("mixed42Sectors", [])) if policy["_simulation"] and data["defaultWeeklyHours"] == 42 else set()
+    mixed_sectors = set(data.get("mixed42Sectors", [])) if data["defaultWeeklyHours"] == 42 else set()
     mixed_people = set()
     shifts = {s["id"]: s for s in data["shifts"]}
     metrics = {key: shift_metrics(value) for key, value in shifts.items()}
     baseline = {(a["employeeId"], a["date"]): a for a in data["assignments"]}
     closed_dates = set(policy["closedDates"])
     paid_holidays = paid_holiday_dates(policy)
-    if not policy["_simulation"]:
-        closed_dates.update(set(policy["holidayDates"]) - set(policy["authorizedHolidayDates"]))
 
     @lru_cache(maxsize=None)
     def shift_calendar(sid, day, mixed_42=False):
@@ -229,6 +196,7 @@ def solve(data, control=None):
         return occupied, not closed_dates.isdisjoint(occupied)
 
     model = cp_model.CpModel()
+    conflicts = ConflictRegistry()
     work, off, choices, history, active = {}, {}, {}, {}, {}
     preference_terms, stability_terms, people_changed, tie_terms = [], [], [], []
     weekend_totals = {5: {}, 6: {}}
@@ -291,20 +259,21 @@ def solve(data, control=None):
                 occupied, overlaps_closure = calendar
                 current[sid] = model.new_bool_var(f"s:{pid}:{day}:{sid}")
                 if closed or overlaps_closure or any(baseline.get((pid, d), {}).get("kind") == "ABSENCE" for d in occupied):
-                    model.add(current[sid] == 0)
+                    conflicts.track(model.add(current[sid] == 0), "AVAILABILITY")
             choices[key] = current
             if untimed:
                 if closed or not untimed_admissible(policy, day):
-                    model.add(work[key] == 0)
+                    conflicts.track(model.add(work[key] == 0), "AVAILABILITY")
             else:
-                model.add(work[key] == sum(current.values()))
-            model.add(work[key] + off[key] == (0 if absent or holiday else 1))
+                conflicts.track(model.add(work[key] == sum(current.values())), "AVAILABILITY")
+            conflicts.track(model.add(work[key] + off[key] == (0 if absent or holiday else 1)), "AVAILABILITY")
             weekday = date.fromisoformat(day).weekday()
             if weekday in person["fixedOffDays"] and not absent and not holiday:
-                model.add(off[key] == 1)
+                conflicts.track(model.add(off[key] == 1), "BLOCKS")
             if holiday_rest_forbidden(policy, day):
-                model.add(off[key] == 0)
+                conflicts.track(model.add(off[key] == 0), "AVAILABILITY")
             if old and old.get("locked") and not absent:
+                lock_start = len(model.proto.constraints)
                 if old["kind"] == "HOLIDAY" and holiday:
                     pass
                 elif old["kind"] == "OFF":
@@ -315,6 +284,7 @@ def solve(data, control=None):
                     model.add(current[old["shiftId"]] == 1)
                 else:
                     model.add(work[key] == 2)  # explicitly infeasible, never replace a locked shift
+                conflicts.track_range(model, lock_start, "BLOCKS")
             if old and not absent:
                 same = (int(holiday) if old["kind"] == "HOLIDAY" else off[key] if old["kind"] == "OFF" else work[key]
                         if old["kind"] == "DUTY" and untimed else current.get(old.get("shiftId"), 0))
@@ -335,24 +305,26 @@ def solve(data, control=None):
             closed_weekdays = sum(d in paid_holidays and date.fromisoformat(d).weekday() != 6 for d in group)
             closed_sundays = sum(d in paid_holidays and date.fromisoformat(d).weekday() == 6 for d in group)
             if len(group) == 7 and not absences:
-                model.add(sum(work[pid, d] for d in group) == max(0, 5 - closed_weekdays))
-                model.add(sum(off[pid, d] for d in group) == max(0, 2 - closed_sundays))
+                conflicts.track(model.add(sum(work[pid, d] for d in group) == max(0, 5 - closed_weekdays)), "DAYS_WORKED")
+                conflicts.track(model.add(sum(off[pid, d] for d in group) == max(0, 2 - closed_sundays)), "DAYS_WORKED")
                 if not untimed and not closed_weekdays:
-                    model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                              == effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]))
+                    conflicts.track(model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
+                                    == effective_weekly_minutes(person, dates[week + 6], policy["_simulation"])), "WEEKLY_MINUTES")
             else:
-                model.add(sum(work[pid, d] for d in group) <= 5)
+                conflicts.track(model.add(sum(work[pid, d] for d in group) <= 5), "DAYS_WORKED")
             if absences or closed_weekdays:
                 if dates[week] in mixed_days:
                     model.add(sum(v for d in group for s, v in choices[pid, d].items()
                                   if metrics[s][0] == 540) <= 2)
             if not untimed:
-                model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                          <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60))
+                conflicts.track(model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
+                                <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60)), "WEEKLY_MINUTES")
+        rest_start = len(model.proto.constraints)
         _streaks(model, person, dates, work, off, boundary, active[pid], policy)
         _rest(model, person, dates, active[pid], choices, off, boundary, metrics, policy)
         civil_weekends = _civil_rest(model, person, dates, active[pid], choices, work, off, boundary, shifts,
                                      lambda sid, day: shift_calendar(sid, day, day in mixed_days))
+        conflicts.track_range(model, rest_start, "REST")
         for day in active[pid]:
             if control is not None:
                 control.checkpoint()
@@ -397,11 +369,16 @@ def solve(data, control=None):
             # Explicit unavailable dates are not opportunities or a rotation debt.
             opportunities = len(available) + known if available else 0
             weekend_totals[weekday][pid] = (sum(civil_weekends[d] for d in available) + historical, opportunities)
+    coverage_start = len(model.proto.constraints)
     hard_coverage = _coverage(model, data, employees, choices, shifts, started, "HARD")
+    conflicts.track_range(model, coverage_start, "COVERAGE")
+    construction_finished = time.monotonic()
     if hard_coverage is False:
         return _response("UNKNOWN", [], started)
     if isinstance(hard_coverage, str):
-        return _response("INFEASIBLE", [], started, hard_coverage)
+        response = _response("INFEASIBLE", [], started, hard_coverage)
+        response["solverDiagnostics"] = [{"family": "COVERAGE", "message": hard_coverage}]
+        return response
     # Find a mandatory-feasible incumbent before adding thousands of optional staffing goals.
     # Optional optimization must never consume the only opportunity to return a complete draft.
     if MAX_SECONDS - (time.monotonic() - started) < 0.1:
@@ -419,7 +396,7 @@ def solve(data, control=None):
     seed.parameters.max_time_in_seconds = min(2, remaining)
     seed.parameters.stop_after_first_solution = True
     seed.parameters.num_workers = 1
-    seed.parameters.random_seed = 37
+    seed.parameters.random_seed = RANDOM_SEED
     # Validate the proposed warm start before symmetry reduction can discard it.
     # Fixing is confined to this solver invocation; the model remains unrestricted.
     # A rejected proposal is not evidence that the actual scheduling model is infeasible.
@@ -468,9 +445,14 @@ def solve(data, control=None):
             seed.parameters.max_time_in_seconds = min(6, remaining)
             seed_status = seed.solve(model) if control is None else control.solve(seed, model)
         if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return _response(seed.status_name(seed_status), [], started)
+            response = _response(seed.status_name(seed_status), [], started)
+            if seed_status == cp_model.INFEASIBLE:
+                response["solverDiagnostics"] = conflicts.diagnose(model, started + MAX_SECONDS, control)
+                response["wallTimeSeconds"] = round(time.monotonic() - started, 3)
+            return response
     result = _read_assignments(seed, employees, active, baseline, work, choices, paid_holidays) + retained_disabled_records(data)
     values = {variable.index: seed.value(variable) for variable in seed_variables}
+    feasibility_finished = time.monotonic()
     model.clear_hints()
     for variable in seed_variables:
         model.add_hint(variable, seed.value(variable))
@@ -504,8 +486,10 @@ def solve(data, control=None):
     concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values)
     sunday_objective = sum(term for terms in sunday_coverage.values() for term in terms)
     closing_objective = sum(term for terms in closing_coverage.values() for term in terms)
+    leader_terms, leader_checks = leadership_objective(model, data, employees, dates, work, values)
     goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective),
              ("CLOSING_COVERAGE", closing_objective), ("SUNDAY_BALANCE", sum(sundays)),
+             ("LEADERSHIP", sum(leader_terms)),
              ("SATURDAY_BALANCE", sum(saturdays)),
              ("REST_DISTRIBUTION", sum(concentration)), ("REST_ROTATION", sum(rotation)),
              ("PEOPLE_CHANGED", sum(people_changed)), ("STABILITY", sum(stability_terms)),
@@ -542,7 +526,7 @@ def solve(data, control=None):
     decisions.update({variable.index: key for key, options in choices.items()
                       for variable in options.values()})
     values, proven, phases = improve(model, [objective for _, objective in goals], values,
-                                     started + MAX_SECONDS, [name for name, _ in goals], control=control,
+                                     started + MAX_SECONDS, [name for name, _ in goals], context=ImprovementContext(control=control,
                                      protected_groups={goals[0][0]: sundays + [sum(terms) for terms in sunday_coverage.values()]
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
@@ -556,14 +540,22 @@ def solve(data, control=None):
                                      decision_variables=decisions,
                                      initial_decision_hints=warm_decisions,
                                      initial_repair_groups=repair_groups,
-                                     repair_clock_fixes=_repair_clock_fixes(choices, metrics, values))
+                                     repair_clock_fixes=_repair_clock_fixes(choices, metrics, values)))
     # Existing protected disabled records are retained, never allocated or counted as workforce.
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices, paid_holidays) + retained_disabled_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
     attempted = {phase['objective'] for phase in phases}
     attempted.update(member['objective'] for phase in phases for member in phase.get('members', []))
     response['optimization'] = {'budgetSeconds': MAX_SECONDS, 'phases': phases,
-                                'unattemptedObjectives': [name for name, _ in goals if name not in attempted]}
+                                'unattemptedObjectives': [name for name, _ in goals if name not in attempted],
+                                'constructionSeconds': round(construction_finished - started, 3),
+                                'feasibilitySeconds': round(feasibility_finished - construction_finished, 3),
+                                'refinementSeconds': round(time.monotonic() - feasibility_finished, 3),
+                                'stopReason': 'OBJECTIVES_PROVEN' if proven else 'TIME_BUDGET'
+                                if time.monotonic() >= started + MAX_SECONDS - 0.2 else 'BOUNDED_REFINEMENT'}
+    leader_metrics = leadership_summary(leader_checks, Snapshot(values))
+    if leader_metrics is not None:
+        response['optimization']['leadership'] = leader_metrics
     return response
 
 

@@ -4,7 +4,7 @@ import unittest
 from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
-from optimization import Snapshot, improve, _movable_people, _coverage_people
+from optimization import ImprovementContext, Snapshot, improve, _movable_people, _coverage_people
 from solver import _feasibility_hints, solve
 from test_solver import fixture
 from weekend_balance import available_weekends, weekend_objectives
@@ -48,8 +48,8 @@ class ProductionSundayTests(unittest.TestCase):
                 return engine.solve(current)
         control = Inspect()
         actual, _, phases = improve(model, [0, work['p', days[0]], -work['q', days[0]]], values,
-            time.monotonic() + 2, ['COVERAGE', 'STABILITY', 'PREFERENCES'], control=control,
-            decision_variables=decisions, coverage_groups={'first': ['p'], 'other': ['q', 'r', 's', 't', 'u']})
+            time.monotonic() + 2, ['COVERAGE', 'STABILITY', 'PREFERENCES'], context=ImprovementContext(control=control,
+            decision_variables=decisions, coverage_groups={'first': ['p'], 'other': ['q', 'r', 's', 't', 'u']}))
         self.assertGreaterEqual(control.checkpoints, 3)
         self.assertEqual(actual[work['p', days[0]].index], 0)
         self.assertEqual(actual[work['q', days[0]].index], 0)
@@ -74,7 +74,7 @@ class ProductionSundayTests(unittest.TestCase):
                   for variable in [*rests.values(), preference, coverage, *padding]}
         actual, proven, phases = improve(model, [coverage, first + second, -preference], values,
             time.monotonic() + 2, ['COVERAGE', 'STABILITY', 'PREFERENCES'],
-            protected_groups={'COVERAGE': [coverage]}, coverage_groups={'sector': ['p', 'q']})
+            context=ImprovementContext(protected_groups={'COVERAGE': [coverage]}, coverage_groups={'sector': ['p', 'q']}))
         self.assertEqual((actual[first.index], actual[second.index], actual[preference.index]), (0, 0, 1))
         self.assertEqual(actual[coverage.index], 0)
         self.assertFalse(proven)
@@ -104,7 +104,7 @@ class ProductionSundayTests(unittest.TestCase):
             def solve(self, _engine, _model):
                 return cp_model.UNKNOWN
         actual, proven, phases = improve(model, [stability, -preference], values,
-            time.monotonic() + 1, ['STABILITY', 'PREFERENCES'], control=Unknown())
+            time.monotonic() + 1, ['STABILITY', 'PREFERENCES'], context=ImprovementContext(control=Unknown()))
         self.assertEqual(actual, values)
         self.assertFalse(proven)
         self.assertEqual(phases[0]['status'], 'UNKNOWN')
@@ -178,7 +178,7 @@ class ProductionSundayTests(unittest.TestCase):
         values = {coverage.index: 0, sunday.index: 0, fairness.index: 1, stability.index: 1, preference.index: 0}
         actual, proven, phases = improve(model, [coverage, fairness, stability, -preference], values,
             time.monotonic() + 1, ['COVERAGE', 'SUNDAY_BALANCE', 'STABILITY', 'PREFERENCES'],
-            protected_groups={'COVERAGE': [coverage, sunday]})
+            context=ImprovementContext(protected_groups={'COVERAGE': [coverage, sunday]}))
         self.assertEqual([actual[v.index] for v in (coverage, sunday, fairness, stability, preference)], [0, 0, 0, 0, 1])
         self.assertFalse(proven)
         self.assertEqual([phase['objective'] for phase in phases],
@@ -213,7 +213,7 @@ class ProductionSundayTests(unittest.TestCase):
                 guards = [sum(terms) for terms in sectors.values()] + [sum(terms) for terms in sundays.values()]
                 if protect_visible:
                     guards += [sum(terms) for terms in monthly_sectors.values()] + [sum(terms) for terms in monthly_sundays.values()]
-                result, _, _ = improve(model, [sum(goals)], values, time.monotonic() + 1, ['COVERAGE'], protected_groups={'COVERAGE': guards})
+                result, _, _ = improve(model, [sum(goals)], values, time.monotonic() + 1, ['COVERAGE'], context=ImprovementContext(protected_groups={'COVERAGE': guards}))
                 self.assertEqual(result[visible.index], int(protect_visible))
                 self.assertEqual(Snapshot(result).value(sum(goals)), 240 if protect_visible else 120)
 
@@ -242,7 +242,7 @@ class ProductionSundayTests(unittest.TestCase):
         baseline['p1', dates[0]] = {'employeeId': 'p1', 'date': dates[0], 'kind': 'OFF'}
         replacement = {'p1': {day: {'kind': 'OFF'} for day in dates}}
         with patch('solver.balanced_rest_hints', return_value=replacement) as balanced:
-            reused = _feasibility_hints(model, data['employees'], dates, off, work, choices, active, baseline, {}, {})
+            reused = _feasibility_hints(model, data['employees'], dates, off, work, choices, active, baseline, {}, data['policy'])
         self.assertTrue(reused)
         self.assertEqual([person['id'] for person in balanced.call_args.args[0]], ['p1'])
         hinted = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
@@ -266,9 +266,9 @@ class ProductionSundayTests(unittest.TestCase):
                            for person in data['employees'] for day in days]
         def inspect_guards(model, objectives, values, deadline, names, **kwargs):
             snapshot = Snapshot(values)
-            self.assertEqual({sector: snapshot.value(sum(terms)) for sector, terms in kwargs['sunday_coverage'].items()},
+            self.assertEqual({sector: snapshot.value(sum(terms)) for sector, terms in kwargs['context'].sunday_coverage.items()},
                              {'Reposição': 240, 'Caixa': 240})
-            bounds = [snapshot.value(term) for term in kwargs['protected_groups'][names[0]]]
+            bounds = [snapshot.value(term) for term in kwargs['context'].protected_groups[names[0]]]
             self.assertEqual(bounds[-2:], [480, 480])
             return values, False, []
         with patch('solver.improve', side_effect=inspect_guards) as optimize:
@@ -314,7 +314,7 @@ class ProductionSundayTests(unittest.TestCase):
                     entries[0]['kind'] = 'DUTY'
                 baseline = {(entry['employeeId'], entry['date']): entry for entry in entries}
                 with patch('solver.balanced_rest_hints', return_value={}) as balanced:
-                    exact = _feasibility_hints(model, [person], dates, off, work, choices, active, baseline, {'day': (480,)}, {'_simulation': False})
+                    exact = _feasibility_hints(model, [person], dates, off, work, choices, active, baseline, {'day': (480,)}, {**fixture()['policy'], '_simulation': False})
                 self.assertEqual(exact, case == 'complete')
                 self.assertEqual(balanced.call_count, int(case != 'complete'))
                 if exact:
@@ -436,7 +436,7 @@ class ProductionSundayTests(unittest.TestCase):
         actual, _, phases = improve(
             model, [sum(sundays), sum(saturdays)], values,
             time.monotonic() + 2, ['SUNDAY_BALANCE', 'SATURDAY_BALANCE'],
-            protected_groups={'SUNDAY_BALANCE': sundays})
+            context=ImprovementContext(protected_groups={'SUNDAY_BALANCE': sundays}))
         self.assertEqual(actual[trade.index], 0)
         self.assertEqual([actual[v.index] for v in sundays + saturdays],
                          [0, 10000])
@@ -465,7 +465,7 @@ class ProductionSundayTests(unittest.TestCase):
         values[p_rate.index] = 10000
         actual, proven, phases = improve(
             model, [coverage, p_rate], values, time.monotonic() + 3,
-            ['COVERAGE', 'SUNDAY_BALANCE'], employee_groups=[['p', 'q']])
+            ['COVERAGE', 'SUNDAY_BALANCE'], context=ImprovementContext(employee_groups=[['p', 'q']]))
         self.assertEqual(actual[first.index], 0)
         self.assertEqual(actual[second.index], 0)
         self.assertEqual(actual[coverage.index], 0)
@@ -513,7 +513,7 @@ class ProductionSundayTests(unittest.TestCase):
             model, [a + b, preference],
             {a.index: 2, b.index: 0, preference.index: 1},
             time.monotonic() + 2, ['SUNDAY_BALANCE', 'PREFERENCES'],
-            protected_groups={'SUNDAY_BALANCE': [a, b]}, control=ObserveSearch())
+            context=ImprovementContext(protected_groups={'SUNDAY_BALANCE': [a, b]}, control=ObserveSearch()))
         self.assertEqual(len(phases), 2)
         self.assertTrue(observed)
         self.assertEqual((actual[a.index], actual[b.index]), observed[0])
@@ -567,7 +567,7 @@ class ProductionSundayTests(unittest.TestCase):
         decisions[target.index] = ('p:leader', days[6])
         actual, _, phases = improve(model, [coverage, rate], values, time.monotonic() + 2,
                                      ['COVERAGE', 'SUNDAY_BALANCE'],
-                                     employee_groups=[['p:leader', 'q']], decision_variables=decisions)
+                                     context=ImprovementContext(employee_groups=[['p:leader', 'q']], decision_variables=decisions))
         self.assertEqual(actual[target.index], 0)
         self.assertEqual(phases[-1]['searchScope'], 'SELECTED_PEOPLE')
 
@@ -577,10 +577,14 @@ class SavedDraftSundayTests(unittest.TestCase):
         data = fixture(people=2, weeks=2)
         days = [(date.fromisoformat(data['startDate']) + timedelta(days=n)).isoformat()
                 for n in range(14)]
-        for person in data['employees']:
-            for day in days:
+        for person_index, person in enumerate(data['employees']):
+            for day_index, day in enumerate(days):
+                # A genuinely usable saved sector: one colleague covers each
+                # Sunday, with equal Sunday totals and no collective empty day.
+                first_pattern = (person_index + day_index // 7) % 2 == 0
+                rest_days = (1, 5) if first_pattern else (0, 6)
                 entry = {'employeeId': person['id'], 'date': day,
-                         'kind': 'OFF' if date.fromisoformat(day).weekday() >= 5 else 'WORK'}
+                         'kind': 'OFF' if date.fromisoformat(day).weekday() in rest_days else 'WORK'}
                 if entry['kind'] == 'WORK':
                     entry['shiftId'] = 'day'
                 data['assignments'].append(entry)
@@ -642,7 +646,9 @@ class SavedDraftSundayTests(unittest.TestCase):
         self.assertGreaterEqual(len(observed), 2)
         self.assertEqual(observed[0], (cp_model.INFEASIBLE, True))
         self.assertIn(observed[1][0], (cp_model.FEASIBLE, cp_model.OPTIMAL))
-        self.assertFalse(observed[1][1])
+        # An invalid saved draft now retries the complete balanced seed fixed,
+        # rather than discarding its distribution in an unrestricted search.
+        self.assertTrue(observed[1][1])
         self.assertEqual(len(result['assignments']), 7)
         self.assertEqual(sum(a['kind'] == 'WORK' for a in result['assignments']), 5)
         self.assertEqual(sum(a['kind'] == 'OFF' for a in result['assignments']), 2)
@@ -658,7 +664,7 @@ class SundayCoverageGuardTests(unittest.TestCase):
         sunday = 5 * trade
         values = {trade.index: 0, weekday.index: 10}
         actual, _, _ = improve(model, [weekday + sunday], values, time.monotonic() + 2,
-                                ['COVERAGE'], protected_groups={'COVERAGE': [sunday]})
+                                ['COVERAGE'], context=ImprovementContext(protected_groups={'COVERAGE': [sunday]}))
         self.assertEqual(actual[trade.index], 0)
         self.assertEqual(actual[weekday.index], 10)
 
@@ -743,7 +749,7 @@ class SundayCoveragePriorityTests(unittest.TestCase):
         second = 10 * (1 - trade)
         actual, _, _ = improve(model, [first + second], {trade.index: 0},
                                 time.monotonic() + 1, ['COVERAGE'],
-                                protected_groups={'COVERAGE': [first, second]})
+                                context=ImprovementContext(protected_groups={'COVERAGE': [first, second]}))
         # The global objective alone would exchange ten missing minutes in one
         # sector for three in another, worsening a previously covered sector.
         self.assertEqual(actual[trade.index], 0)
@@ -795,8 +801,8 @@ class SundayCoveragePriorityTests(unittest.TestCase):
                   for v in [*rests, total, *padding]}
         actual, proven, phases = improve(
             model, [total, first], values, time.monotonic() + 2,
-            ['COVERAGE', 'SUNDAY_COVERAGE'], coverage_groups={'Caixa': ['p']},
-            sunday_coverage={'Caixa': [first]})
+            ['COVERAGE', 'SUNDAY_COVERAGE'], context=ImprovementContext(coverage_groups={'Caixa': ['p']},
+            sunday_coverage={'Caixa': [first]}))
         self.assertEqual(actual[first.index], 0)
         self.assertEqual(actual[last.index], 0)
         self.assertFalse(proven)

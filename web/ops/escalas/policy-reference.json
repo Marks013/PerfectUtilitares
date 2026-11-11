@@ -1,0 +1,11 @@
+{
+  "transition42Date": "2026-12-16",
+  "transition40Date": "2027-12-16",
+  "cctProfile": "SINDECOMU_SUPERMARKETS_2026_2027",
+  "cctFrom": "2026-06-01",
+  "cctUntil": "2027-05-31",
+  "weeklyHours": { "before": 44, "first": 42, "second": 40 },
+  "dailyMinutes": { "before": 600, "first": 504, "second": 480 },
+  "mealMinutes": { "standardMaximum": 120, "extendedMaximum": 360 },
+  "mixed42": { "longMinutes": 540, "breakMinutes": 180, "blockMinutes": 270 }
+}

@@ -4,6 +4,7 @@ import { CalendarDays } from "lucide-react";
 import styles from "./escalas.module.css";
 import { useEffect, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
+import { planningMonth } from "@/lib/escalas/planning-month";
 import type { EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
@@ -44,7 +45,7 @@ const TOOLS: { id: Area; label: string }[] = [
 function CreatePlan({ disabled, create, initial = false }: { disabled: boolean; create: (input: ReturnType<typeof newInput>) => void; initial?: boolean }) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(planningMonth);
   const [error, setError] = useState("");
   return <details className={styles.disclosure} open={initial || undefined}>
     <summary className={styles.disclosureTrigger}>Criar planejamento</summary>

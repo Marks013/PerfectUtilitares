@@ -131,6 +131,8 @@ export async function requestSolver(input: EscalaInput, options: SolverOptions =
     throw new EscalaSolverError("SOLVER_UNAVAILABLE");
   }
   if ([401, 403].includes(response.status)) throw new EscalaSolverError("SOLVER_AUTH_FAILED");
+  if (response.status === 400 || response.status === 422) throw new EscalaSolverError("SOLVER_INVALID_INPUT");
+  if (response.status === 500) throw new EscalaSolverError("SOLVER_INTERNAL_ERROR");
   if (response.status === 429) throw new EscalaSolverError("SOLVER_BUSY");
   if (response.status === 413) throw new EscalaSolverError("SOLVER_INPUT_TOO_LARGE");
   if (response.status === 504) throw new EscalaSolverError("SOLVER_TIMED_OUT");

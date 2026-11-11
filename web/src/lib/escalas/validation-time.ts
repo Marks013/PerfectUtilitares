@@ -45,7 +45,7 @@ export function validateJourney(input: EscalaInput, journey: WorkJourney, toAbso
   const { assignment, shift, minutes } = journey;
   const issues: EscalaIssue[] = [];
   const issue = (code: string, message: string, severity: EscalaIssue["severity"] = "ERROR", date = assignment.date) => issues.push({ code, message, severity, employeeId: assignment.employeeId, date });
-  const longMixed = mixed42 && input.simulation === true && isMixed42LongShift(shift);
+  const longMixed = mixed42 && isMixed42LongShift(shift);
   if (mixed42 && minutes !== 480 && !longMixed) issue("MIXED_42_SHIFT", "No cenário misto, use 8h ou 9h de trabalho; o dia de 9h tem dois blocos de 4h30 e intervalo de 3h.");
   // The mixed scenario has its own publication pending; avoid one duplicate per long day.
   if (!longMixed && minutes > input.policy.dailyLimitMinutes) issue("DAILY_LIMIT", "A jornada ultrapassa o limite diário autorizado.");

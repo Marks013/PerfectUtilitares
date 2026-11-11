@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import patch
 import solver
-import candidate_solver
+import solver
 from hints import balanced_rest_hints, paid_holiday_dates
 from test_solver import fixture
 
@@ -22,7 +22,7 @@ def holiday_data(day="2026-12-25", start="2026-12-21", closed=True):
 
 class HolidayTests(unittest.TestCase):
     def models(self):
-        return (solver, candidate_solver)
+        return (solver, solver)
 
     def feasible(self, module, data):
         with patch.object(module, "MAX_SECONDS", 2):

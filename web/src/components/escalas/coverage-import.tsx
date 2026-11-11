@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { ProcessingBar } from "./workspace-feedback";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/types";
 import { compareSectors, sortEmployees } from "@/lib/escalas/order";
+import { ImportChanges } from "./import-changes";
+import { previewImportReconciliation, type ImportChoices } from "./import-reconciliation";
+import { MovementPriorities } from "./movement-priorities";
 import { proposeAutomaticCoverage, summarizeAutomaticCoverage } from "@/lib/escalas/automatic-coverage";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import {
@@ -42,6 +45,7 @@ export function ImportEmployees({
   onChange: (input: EscalaInput) => void;
 }) {
   const [previewResult, setPreview] = useState<{ scenario: string; value: ImportPreview } | null>(null);
+  const [choices, setChoices] = useState<ImportChoices>({ updateRegistrations: [], scheduleRegistrations: [] });
   const scenario = JSON.stringify([input.branchCode, input.startDate, input.defaultWeeklyHours]);
   const currentScenario = useRef(scenario);
   currentScenario.current = scenario;
@@ -59,6 +63,7 @@ export function ImportEmployees({
     setStatus("Conferindo arquivo e selecionando a equipe da filial…");
     setError("");
     setPreview(null);
+    setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
     try {
       const form = new FormData();
       form.set("file", file);
@@ -138,8 +143,10 @@ export function ImportEmployees({
           {preview.report && <p className="text-sm">
             FPRE136 · filial {preview.report.branchCode} — {preview.report.branchName}: {preview.report.sourceEmployees}
             {" "}colaboradores na fonte; {preview.report.otherBranchesExcluded} de outras filiais ignorados;
-            {" "}{preview.report.missingSchedule} sem horário informado, incluídos na simulação de presença e folgas.
+            {" "}{preview.employees.filter(person => person.scheduleMode === "UNTIMED").length} ENC sem horário controlado;
+            {" "}{preview.report.missingSchedule} referências de horário para conferir.
           </p>}
+          <ImportChanges input={input} employees={preview.employees} shifts={preview.shifts} choices={choices} disabled={disabled || busy} onChange={setChoices} />
           <p className="text-sm">Horários não informados não geram horas nem cobertura horária fictícias. Referências curtas são preservadas e sinalizadas para revisão, sem excluir a pessoa da proposta.</p>
           {preview.issues.length > 0 && (
             <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm">
@@ -192,12 +199,13 @@ export function ImportEmployees({
           </div>
           <button
             type="button"
-            disabled={disabled || busy || preview.employees.length === 0}
+            disabled={disabled || busy || preview.employees.length === 0 || previewImportReconciliation(input, preview.employees, preview.shifts).some(entry => entry.status === "CONFLICT")}
             className={primaryClass}
             onClick={() => {
               try {
-                onChange(mergeImport(input, preview.employees, preview.shifts));
-                setStatus(`Importação aplicada: ${preview.employees.length} colaboradores. ${preview.issues.length ? `Avisos do arquivo: ${preview.issues.length}. Os registros aceitos estão disponíveis para gerar a proposta.` : "Equipe pronta para gerar a proposta."}`);
+                const added = previewImportReconciliation(input, preview.employees, preview.shifts).filter(entry => entry.status === "NEW").length;
+                onChange(mergeImport(input, preview.employees, preview.shifts, { ...choices, branchCode: preview.report?.branchCode }));
+                setStatus(`Importação aplicada: ${added} novos; ${choices.updateRegistrations.length} atualizações confirmadas. Demais registros e decisões preservados.${preview.issues.length ? ` Avisos do arquivo: ${preview.issues.length}.` : " Equipe pronta para gerar a proposta."}`);
                 setPreview(null);
                 setFile(null);
               } catch (cause) {
@@ -346,6 +354,7 @@ export function Coverage({
         </fieldset>}
       </div>}
       {notice && <p role="status" className="text-sm">{notice}</p>}
+      <MovementPriorities key={`${input.branchCode}:${input.startDate}:${input.endDate}`} input={input} disabled={disabled} onChange={onChange} />
       <details className="space-y-3">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">Mínimos obrigatórios (opcional)</summary>
       <p className="text-sm text-[color:var(--app-muted)]">Use somente quando houver uma necessidade operacional conhecida. O algoritmo respeita esse mínimo como obrigatório; um valor impossível será informado, não reduzido silenciosamente.</p>

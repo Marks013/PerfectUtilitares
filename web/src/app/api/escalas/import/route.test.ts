@@ -47,9 +47,9 @@ describe("/api/escalas/import", () => {
     const response = await POST(upload(report, "FPRE136.CSV"));
     expect(response.status).toBe(200);
     const { preview } = await response.json();
-    expect(preview.report).toMatchObject({ branchCode: "02", sourceEmployees: 2, otherBranchesExcluded: 1, missingSchedule: 1 });
+    expect(preview.report).toMatchObject({ branchCode: "02", sourceEmployees: 2, otherBranchesExcluded: 1, missingSchedule: 0 });
     expect(preview.employees).toHaveLength(1);
-    expect(preview.employees[0]).toMatchObject({ registration: "1", activeFrom: "", planningEnabled: true, scheduleMode: "MISSING", shiftIds: [], sundayRestRule: "PROTECTIVE" });
+    expect(preview.employees[0]).toMatchObject({ registration: "1", activeFrom: "", planningEnabled: true, scheduleMode: "UNTIMED", shiftIds: [], sundayRestRule: "PROTECTIVE" });
     expect(preview.issues).toEqual([]);
     expect(preview.shifts).toEqual([]);
     expect(JSON.stringify(preview)).not.toContain("Outra Pessoa");

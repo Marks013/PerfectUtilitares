@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { parse } from "csv-parse/sync";
 import { readSheet } from "read-excel-file/node";
 import { validateXlsxArchive } from "@/lib/spreadsheets/xlsx-security";
-import { EscalaError } from "./access";
+import { EscalaError } from "./errors";
 import type { EscalaEmployee, EscalaShift, WeeklyHours } from "./types";
 import { isFpre136Text, isFpre136Rows, previewFpre136Rows } from "./fpre136";
 

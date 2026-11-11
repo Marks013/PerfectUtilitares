@@ -67,7 +67,7 @@ describe("42h mixed distribution for selected sectors", () => {
     expect(raw).toEqual(original);
   });
 
-  it("validates 42h in transition, blocks publication, and rejects malformed long shifts", () => {
+  it("validates the explicit mixed distribution for internal use and rejects malformed long shifts", () => {
     const raw = input();
     raw.startDate = "2027-01-04"; raw.endDate = "2027-01-10";
     raw.mixed42Sectors = ["Setor"]; raw.policy.dailyLimitMinutes = 528;
@@ -84,7 +84,7 @@ describe("42h mixed distribution for selected sectors", () => {
     expect(result.readyToPublish).toBe(false);
     expect(result.summaries[0].workedMinutes).toBe(2520);
     expect(result.issues.filter(issue => issue.code === "MIXED_42_SIMULATION")).toHaveLength(1);
-    expect(validateEscala({ ...prepared, simulation: false }).issues.some(issue => issue.code === "DISTRIBUTION_DAILY_LIMIT")).toBe(true);
+    expect(validateEscala({ ...prepared, simulation: false }).issues.some(issue => issue.code === "DISTRIBUTION_DAILY_LIMIT")).toBe(false);
     const corrupted = structuredClone(prepared);
     const bad = corrupted.shifts.find(shift => shift.id === long.id);
     if (!bad) throw new Error("Horário de 9h ausente.");

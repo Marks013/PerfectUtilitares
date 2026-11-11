@@ -7,15 +7,30 @@ import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
 
-const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
+const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
   message: z.string().max(1000),
   wallTimeSeconds: z.number().finite().min(0).max(60),
+  solverDiagnostics: z.array(z.strictObject({
+    family: z.enum(["AVAILABILITY", "BLOCKS", "DAYS_WORKED", "WEEKLY_MINUTES", "COVERAGE", "REST"]), message: z.string().min(1).max(500),
+    dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(42).optional(),
+  })).max(12).optional(),
   optimization: z.strictObject({
     budgetSeconds: z.number().finite().min(0).max(60),
-    unattemptedObjectives: z.array(objectiveName).max(11).optional(),
+    constructionSeconds: z.number().finite().min(0).max(60).optional(),
+    feasibilitySeconds: z.number().finite().min(0).max(60).optional(),
+    refinementSeconds: z.number().finite().min(0).max(60).optional(),
+    stopReason: z.string().max(100).optional(),
+    leadership: z.strictObject({
+      criticalSectorDays: z.number().int().min(0).max(10500),
+      criticalSectorDaysWithoutLeader: z.number().int().min(0).max(10500),
+      prioritizedSectorDays: z.number().int().min(0).max(10500),
+      prioritizedSectorDaysWithoutLeader: z.number().int().min(0).max(10500),
+      timedCoverageIncluded: z.literal(false),
+    }).optional(),
+    unattemptedObjectives: z.array(objectiveName).max(12).optional(),
     phases: z.array(z.strictObject({
       objective: objectiveName,
       status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -25,6 +40,9 @@ const resultSchema = z.strictObject({
       bestBound: z.number().finite().optional(),
       searchScope: z.enum(["GLOBAL", "SELECTED_PEOPLE", "ROLLING_WEEKS", "ROLLING_WEEK"]).optional(),
       initialValue: z.number().finite().int().optional(),
+      workers: z.union([z.literal(1), z.literal(2)]).optional(),
+      linearizationLevel: z.number().int().min(0).max(2).optional(),
+      symmetryLevel: z.number().int().min(0).max(2).optional(),
       movableWeeks: z.number().int().min(1).max(6).optional(),
       movablePeople: z.number().int().min(1).max(250).optional(),
       members: z.array(z.strictObject({
@@ -40,7 +58,7 @@ const resultSchema = z.strictObject({
         context.addIssue({ code: "custom", path: ["members"], message: "Objetivos conjuntos duplicados" });
       }
     // Eleven ordered objectives plus at most four bounded sector repairs.
-    })).max(15),
+    })).max(16),
   }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),

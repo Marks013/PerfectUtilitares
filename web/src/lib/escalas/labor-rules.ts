@@ -1,5 +1,6 @@
 import { addDays, isDate, weekStart } from "./dates";
 import type { EscalaEmployee, EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "./types";
+import reference from "../../../ops/escalas/policy-reference.json" with { type: "json" };
 
 /** Operational invariant of this project's 5x2 planning model, not a general legal conclusion. */
 const MAX_CONSECUTIVE_WORK_DAYS = 5;
@@ -18,22 +19,23 @@ export function minimumMealMinutes(policy: Pick<EscalaPolicy, "minMealMinutes" |
 /** An unrelated collective agreement never authorizes a longer meal interval implicitly. */
 export function maximumMealMinutes(policy: Pick<EscalaPolicy, "mealIntervalAgreement">, day: string): number {
   const agreement = policy.mealIntervalAgreement;
-  return agreement?.reviewed && agreement.source.trim() && agreement.reviewedBy.trim()
-    && isDate(agreement.validFrom) && isDate(agreement.validUntil)
-    && agreement.validFrom <= day && agreement.validUntil >= day
-    && Number.isInteger(agreement.maximumMinutes) && agreement.maximumMinutes >= 121 && agreement.maximumMinutes <= 360
-    ? agreement.maximumMinutes : 120;
+  // The configured operational maximum is independent of documentary completeness.
+  // Preserve the date argument for callers and the separate evidence checks.
+  void day;
+  return agreement && Number.isInteger(agreement.maximumMinutes)
+    && agreement.maximumMinutes > reference.mealMinutes.standardMaximum && agreement.maximumMinutes <= reference.mealMinutes.extendedMaximum
+    ? agreement.maximumMinutes : reference.mealMinutes.standardMaximum;
 }
 
 // EC 141/2026, arts. 6 and 7. Saved policies cannot raise these ceilings.
-export const TRANSITION_42_DATE = "2026-12-16";
-export const TRANSITION_40_DATE = "2027-12-16";
-export const SUPERMARKET_CCT = "SINDECOMU_SUPERMARKETS_2026_2027";
-export const CCT_FROM = "2026-06-01";
-export const CCT_UNTIL = "2027-05-31";
+export const TRANSITION_42_DATE = reference.transition42Date;
+export const TRANSITION_40_DATE = reference.transition40Date;
+export const SUPERMARKET_CCT = reference.cctProfile as NonNullable<EscalaPolicy["normativeProfile"]>;
+export const CCT_FROM = reference.cctFrom;
+export const CCT_UNTIL = reference.cctUntil;
 
 export function legalWeeklyHours(day: string): WeeklyHours {
-  return day < TRANSITION_42_DATE ? 44 : day < TRANSITION_40_DATE ? 42 : 40;
+  return (day < TRANSITION_42_DATE ? reference.weeklyHours.before : day < TRANSITION_40_DATE ? reference.weeklyHours.first : reference.weeklyHours.second) as WeeklyHours;
 }
 
 /** Conservative whole-week proposal; transition weeks require explicit acceptance. */
@@ -43,7 +45,7 @@ export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">
 
 /** The optional distribution is scoped to timed 42h references; no saved authorization is inferred. */
 export function usesMixed42(input: EscalaInput, person: EscalaEmployee): boolean {
-  return input.simulation === true && input.defaultWeeklyHours === 42
+  return input.defaultWeeklyHours === 42
     && person.weeklyHours === 42 && person.simulationDailyMinutes === undefined
     && person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"
     && input.mixed42Sectors?.includes(person.sector) === true;
@@ -80,7 +82,7 @@ export function effectiveSundayLimit(person: EscalaEmployee): 1 | 2 {
 
 /** Operational daily distribution in this five-day regime; overtime is not modeled. */
 export function dailyMinuteCeiling(day: string): number {
-  return day < TRANSITION_42_DATE ? 600 : day < TRANSITION_40_DATE ? 504 : 480;
+  return day < TRANSITION_42_DATE ? reference.dailyMinutes.before : day < TRANSITION_40_DATE ? reference.dailyMinutes.first : reference.dailyMinutes.second;
 }
 
 export function collectiveExtensionAuthorized(policy: EscalaPolicy, day: string): boolean {

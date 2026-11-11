@@ -76,7 +76,7 @@ class ModelRuleTests(unittest.TestCase):
                            ('validUntil', '2026-11-01'), ('source', ''), ('validFrom', '2026-13-01')]:
             changed = copy.deepcopy(policy)
             changed['mealIntervalAgreement'][key] = value
-            self.assertFalse(admissible(shift, changed, '2026-11-02'), (key, value))
+            self.assertEqual(admissible(shift, changed, '2026-11-02'), key != 'maximumMinutes', (key, value))
 
     def test_overnight_work_must_not_occupy_an_absence_civil_date(self):
         data = fixture()

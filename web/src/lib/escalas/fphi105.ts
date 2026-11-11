@@ -1,5 +1,5 @@
 import { parse } from "csv-parse/sync";
-import { EscalaError } from "./access";
+import { EscalaError } from "./errors";
 import type { EscalaAssignment } from "./types";
 
 export type AbsenceImportOptions = {

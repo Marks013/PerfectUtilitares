@@ -6,8 +6,10 @@ import { useEffect, useRef, useState } from "react";
 import { revealRecoveryElement, type EscalaRecoveryRequest } from "./recovery-navigation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { sortEmployees } from "@/lib/escalas/order";
+import { currentLeadership } from "@/lib/escalas/leadership";
 import { BulkControls } from "./bulk-controls";
 import { ExcludedEmployees } from "./excluded-employees";
+import { LeadershipFields } from "./leadership-fields";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { addDate, displayDate, HOURS, newEmployee, replaceAssignment, WEEKDAYS } from "./workspace-model";
 
@@ -172,6 +174,7 @@ export function EmployeeEditor({
       if (draft.fixedOffDays.length !== expected) throw new Error(`Esta modalidade exige ${expected} dia(s) fixo(s).`);
       onSave({
         ...draft,
+        leadership: currentLeadership(draft),
         name: draft.name.trim(),
         registration: draft.registration.trim(),
         sector: draft.sector.trim(),
@@ -406,6 +409,7 @@ export function EmployeeEditor({
         values={draft.preferredOffDays}
         change={(values) => change("preferredOffDays", values)}
       />
+      <LeadershipFields employee={draft} input={input} onChange={value => change("leadership", value)} />
       <details className="space-y-3 border-t border-[color:var(--app-border)] pt-3">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">
           Histórico anterior e continuidade (avançado, opcional)
