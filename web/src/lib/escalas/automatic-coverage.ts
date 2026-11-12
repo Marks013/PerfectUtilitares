@@ -131,7 +131,9 @@ export function retainCoverageReference(previous: EscalaInput, prepared: EscalaI
     || !completeRoster(previous) || !completeRoster(prepared)) return undefined;
   const basis = coverageBasis(prepared);
   if (previous.coverageBasis ? previous.coverageBasis !== basis : !allowLegacy || coverageBasis(previous) !== basis) return undefined;
-  if (!validateEscala(previous).valid) return undefined;
+  // Repairing rest placement must not move the existing coverage ruler.
+  const validation = validateEscala(previous);
+  if (validation.issues.some(issue => issue.severity === "ERROR" && issue.code !== "CONSECUTIVE_REST_LIMIT")) return undefined;
   return { ...prepared, demands: previous.demands, coverageBasis: basis };
 }
 

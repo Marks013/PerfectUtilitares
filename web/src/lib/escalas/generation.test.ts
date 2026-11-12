@@ -457,6 +457,6 @@ describe("whole-branch generation preparation", () => {
     const value = input(); value.employees[0].sourceSchedule = undefined;
     value.demands = dateRange(value.startDate, value.endDate).map((date) => ({ id: `manual-${date}`, date, sector: "Setor", start: 420, end: 980, minimum: 0 }));
     value.policy.coverageReview = "CONFIRMED";
-    expect(prepareGeneration(value).input).toEqual({ ...value, simulation: true });
+    expect(prepareGeneration(value).input).toEqual({ ...value, restRulesVersion: 1, simulation: true });
   });
 });

@@ -113,6 +113,7 @@ export type EscalaPolicy = {
 };
 export type EscalaInput = {
   schemaVersion: 1;
+  restRulesVersion?: 1;
   /** Missing preserves the full search; REST_ONLY fixes one reference per daily duration. */
   generationMode?: "REST_ONLY" | "DAYS_AND_HOURS";
   /** Support scenario: missing administrative evidence remains a publication pending, not approval. */
@@ -177,7 +178,7 @@ export type EscalaGenerationConflict = {
   role?: string;
 };
 type EscalaOptimizationPhase = {
-  objective: "COVERAGE" | "SUNDAY_COVERAGE" | "CLOSING_COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "LEADERSHIP" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK" | "SECONDARY_POLISH";
+  objective: "COVERAGE" | "SUNDAY_COVERAGE" | "CLOSING_COVERAGE" | "REST_DISTRIBUTION" | "SUNDAY_BALANCE" | "LEADERSHIP" | "REST_SPACING" | "UNTIMED_ROTATION" | "SATURDAY_BALANCE" | "WEEKEND_BALANCE" | "REST_ROTATION" | "PEOPLE_CHANGED" | "STABILITY" | "PREFERENCES" | "TIE_BREAK" | "SECONDARY_POLISH";
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
   wallTimeSeconds: number;
   budgetSeconds: number;

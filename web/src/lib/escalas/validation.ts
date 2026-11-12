@@ -98,6 +98,7 @@ export function validateEscala(rawInput: EscalaInput, options: { publishedSnapsh
     journeys: journeysByEmployee.get(person.id) ?? [],
     reservations: reservationsByEmployee.get(person.id) ?? [],
     days, visible, weekByDate,
+    enforceRestSpacing: !options.publishedSnapshot,
   }));
   issues.push(...results.flatMap((result) => result.issues));
   if (input.simulation) {

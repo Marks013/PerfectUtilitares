@@ -320,7 +320,7 @@ def solve(data, control=None):
                 conflicts.track(model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
                                 <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60)), "WEEKLY_MINUTES")
         rest_start = len(model.proto.constraints)
-        _streaks(model, person, dates, work, off, boundary, active[pid], policy)
+        _streaks(model, person, dates, work, off, boundary, active[pid], policy, baseline=baseline)
         _rest(model, person, dates, active[pid], choices, off, boundary, metrics, policy)
         civil_weekends = _civil_rest(model, person, dates, active[pid], choices, work, off, boundary, shifts,
                                      lambda sid, day: shift_calendar(sid, day, day in mixed_days))
@@ -483,13 +483,18 @@ def solve(data, control=None):
                                             Snapshot(values), values, control)
     # Unconfirmed staffing estimates are planning goals, never approved minima.
     # Prioritize their person-minute shortages before rotation and preferences.
-    concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values)
+    untimed_rotation = []
+    concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy,
+                                                 values, untimed_rotation=untimed_rotation)
+    spacing, spacing_people = _rest_spacing(model, employees, dates, off, baseline, history, policy, values)
     sunday_objective = sum(term for terms in sunday_coverage.values() for term in terms)
     closing_objective = sum(term for terms in closing_coverage.values() for term in terms)
     leader_terms, leader_checks = leadership_objective(model, data, employees, dates, work, values)
     goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective),
              ("CLOSING_COVERAGE", closing_objective), ("SUNDAY_BALANCE", sum(sundays)),
              ("LEADERSHIP", sum(leader_terms)),
+             ("REST_SPACING", sum(spacing)),
+             ("UNTIMED_ROTATION", sum(untimed_rotation)),
              ("SATURDAY_BALANCE", sum(saturdays)),
              ("REST_DISTRIBUTION", sum(concentration)), ("REST_ROTATION", sum(rotation)),
              ("PEOPLE_CHANGED", sum(people_changed)), ("STABILITY", sum(stability_terms)),
@@ -528,11 +533,16 @@ def solve(data, control=None):
     values, proven, phases = improve(model, [objective for _, objective in goals], values,
                                      started + MAX_SECONDS, [name for name, _ in goals], context=ImprovementContext(control=control,
                                      protected_groups={goals[0][0]: sundays + [sum(terms) for terms in sunday_coverage.values()]
+                                                       + [sum(terms) for terms in spacing_people.values()]
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
                                                        + [sum(terms) for terms in visible_sector_coverage.values()]
                                                        + [sum(terms) for terms in closing_coverage.values()]} if goals else {},
                                      employee_groups=list(groups.values()),
+                                     untimed_people={person['id'] for person in employees if has_no_clock(person)},
+                                     rest_spacing=spacing_people,
+                                     rest_spacing_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
+                                                          for sector in {p['sector'] for p in employees}},
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
                                                       for sector in sector_coverage}, sunday_coverage=sunday_coverage,
                                      sector_coverage=sector_coverage,
@@ -795,8 +805,56 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     return bool(comparable)
 
 
-def _streaks(model, person, dates, work, off, prior, active, policy):
+def _variable_rest_streaks(model, person, dates, off, prior, active, baseline, policy):
+    """Cap variable regular OFF runs without rewriting imposed boundary records."""
+    if person['offMode'] != 'VARIABLE':
+        return
+    pid = person['id']
+    active_set = set(active)
+    closed_holidays = paid_holiday_dates(policy)
+    first = (date.fromisoformat(dates[0]) - timedelta(days=2)).isoformat()
+    last = (date.fromisoformat(dates[-1]) + timedelta(days=2)).isoformat()
+    timeline = days_between(first, last)
+    for index in range(2, len(timeline)):
+        window = timeline[index - 2:index + 1]
+        mutable = [day for day in window if day in active_set and (pid, day) in off
+                   and day not in policy['closedDates'] and day not in closed_holidays
+                   and baseline.get((pid, day), {}).get('kind') not in ('ABSENCE', 'HOLIDAY')
+                   and not baseline.get((pid, day), {}).get('locked')
+                   and date.fromisoformat(day).weekday() not in person['fixedOffDays']]
+        if not mutable:
+            continue  # Fully imposed OFFs and historical-only windows remain intact.
+        terms = [off.get((pid, day), int(prior.get(day, {}).get('kind') == 'OFF')) for day in window]
+        model.add(sum(terms) <= 2)
+
+
+def _rest_spacing(model, employees, dates, off, baseline, history, policy, values):
+    """Prefer separated variable rests; explicit consecutive choices stay untouched."""
+    terms, by_person = [], {}
+    for person in employees:
+        if person['offMode'] != 'VARIABLE' or person['offPattern'] != 'ANY':
+            continue
+        pid = person['id']
+        boundary = {**history.get(pid, {}), **{entry['date']: entry for entry in person.get('planningFuture', [])}}
+        first = (date.fromisoformat(dates[0]) - timedelta(days=1)).isoformat()
+        last = (date.fromisoformat(dates[-1]) + timedelta(days=1)).isoformat()
+        timeline = days_between(first, last)
+        for before, after in zip(timeline, timeline[1:]):
+            if (pid, before) not in off and (pid, after) not in off:
+                continue
+            pair = model.new_bool_var(f'rest-pair:{pid}:{before}')
+            members = [off.get((pid, day), int(boundary.get(day, {}).get('kind') == 'OFF')) for day in (before, after)]
+            model.add_min_equality(pair, members)
+            pair_value = min(values[item.index] if not isinstance(item, int) else item for item in members)
+            remember(model, values, pair, pair_value)
+            terms.append(pair)
+            by_person.setdefault(pid, []).append(pair)
+    return terms, by_person
+
+
+def _streaks(model, person, dates, work, off, prior, active, policy, baseline=None):
     pid = person["id"]
+    _variable_rest_streaks(model, person, dates, off, prior, active, baseline or {}, policy)
     first = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
     timeline = days_between(first, max([dates[-1], *prior]))
     maximum = min(5, policy["maxConsecutiveWorkDays"])
@@ -828,7 +886,8 @@ def _historical_weekdays(prior, shifts, start, weekday):
     return len(occupied), len(known | occupied)
 
 
-def _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values=None):
+def _rest_distribution(model, employees, dates, off, active, baseline, history, policy, values=None,
+                       untimed_rotation=None):
     """Soft daily presence and rotation goals; never invent a staffing minimum."""
     sectors, concentration, rotation = {}, [], []
     leadership = []
@@ -876,9 +935,19 @@ def _rest_distribution(model, employees, dates, off, active, baseline, history, 
             deviation = model.new_int_var(0, 7 * opportunities, f"weekday-rest:{pid}:{weekday}")
             model.add_abs_equality(deviation, 7 * rests - 2 * opportunities)
             rotation.append(deviation)
+            convex = None
+            if untimed_rotation is not None and has_no_clock(person):
+                # L1 is linear beyond the target: e.g. counts (4,2,2) and (3,3,2)
+                # can tie. Squared deviation makes repeated weekday rests increasingly costly.
+                convex = model.new_int_var(0, (7 * opportunities) ** 2, f'untimed-rotation:{pid}:{weekday}')
+                model.add_multiplication_equality(convex, [deviation, deviation])
+                untimed_rotation.append(convex)
             if values is not None:
                 rests_value = sum(values[off[pid, day].index] for day in available) + sum(entry["kind"] == "OFF" for entry in known)
-                remember(model, values, deviation, abs(7 * rests_value - 2 * opportunities))
+                deviation_value = abs(7 * rests_value - 2 * opportunities)
+                remember(model, values, deviation, deviation_value)
+                if convex is not None:
+                    remember(model, values, convex, deviation_value ** 2)
     return concentration, rotation
 
 

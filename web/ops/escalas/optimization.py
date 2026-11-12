@@ -6,6 +6,8 @@ from ortools.sat.python import cp_model
 from runtime_settings import (COVERAGE_BUDGET_SHARE, LARGE_MODEL_VARIABLES, MOVABLE_PEOPLE_LIMIT,
                               POLISH_PEOPLE_LIMIT, RANDOM_SEED, SearchSettings)
 
+REST_PHASE_WEIGHT = 3
+
 
 @dataclass
 class ImprovementContext:
@@ -22,6 +24,9 @@ class ImprovementContext:
     repair_clock_fixes: dict | None = None
     closing_coverage: dict | None = None
     settings: SearchSettings | None = None
+    untimed_people: set | None = None
+    rest_spacing: dict | None = None
+    rest_spacing_groups: dict | None = None
 
 
 class Snapshot:
@@ -127,6 +132,22 @@ def _replace_hints(model, values):
     model.proto.solution_hint.values.extend(values.values())
 
 
+def _spacing_people(groups, spacing, values):
+    """Release whole sectors whose members retain adjacent OFFs, including ENC."""
+    snapshot = Snapshot(values)
+    ranked = sorted((snapshot.value(sum(term for pid in members for term in spacing.get(pid, []))),
+                     sector, tuple(sorted(members))) for sector, members in groups.items())
+    selected = set()
+    for score, _sector, members in reversed(ranked):
+        if score <= 0:
+            continue
+        if not selected and len(members) > MOVABLE_PEOPLE_LIMIT:
+            return set(members)
+        if len(selected | set(members)) <= MOVABLE_PEOPLE_LIMIT:
+            selected.update(members)
+    return selected
+
+
 def _polish_people(variables, values, groups, limit=POLISH_PEOPLE_LIMIT, coverage_groups=None,
                    shortages=None, sunday_shortages=None, attempt=0):
     """Rotate bounded sectors by Sunday/total deficit before cosmetic stability."""
@@ -176,7 +197,11 @@ def _phase_budget(remaining, names, index):
         return remaining
     if names[index] == 'COVERAGE':
         return remaining * COVERAGE_BUDGET_SHARE
-    return remaining / (len(names) - index)
+    # Reserve usable time for variable rest quality instead of treating these
+    # two operational goals like cosmetic tie-breaking. The global deadline is unchanged.
+    weights = [REST_PHASE_WEIGHT if name in ('REST_SPACING', 'UNTIMED_ROTATION') else 1
+               for name in names[index:]]
+    return remaining * weights[0] / sum(weights)
 
 
 def improve(model, objectives, values, deadline, names=None, *, context=None):
@@ -302,7 +327,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         engine.parameters.keep_all_feasible_solutions_in_presolve = True
         engine.parameters.symmetry_level = settings.symmetry
         search_model = model
-        restricted = repair_phase or (phase_index > 0 and len(variables) > LARGE_MODEL_VARIABLES and len(dates) > 7)
+        restricted = (repair_phase or name in ('REST_SPACING', 'UNTIMED_ROTATION')
+                      or (phase_index > 0 and len(variables) > LARGE_MODEL_VARIABLES and len(dates) > 7))
         if restricted:
             # Keep the joint model, including leadership and all cross-week constraints.
             search_model = model.clone()
@@ -312,6 +338,14 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
             if names[index] == 'CLOSING_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, closing_coverage or {}, values)
+            if names[index] == 'UNTIMED_ROTATION':
+                movable_people = set(context.untimed_people or [])
+            if names[index] == 'REST_SPACING':
+                movable_people = _spacing_people(context.rest_spacing_groups or coverage_groups or {},
+                                                 context.rest_spacing or {}, values)
+                if not movable_people:
+                    movable_people = {pid for pid, terms in (context.rest_spacing or {}).items()
+                                      if Snapshot(values).value(sum(terms)) > 0}
             if name in secondary:
                 movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [],
                                                 coverage_groups=coverage_groups, shortages=sector_coverage,

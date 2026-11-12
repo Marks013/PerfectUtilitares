@@ -187,7 +187,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                                   if weekdays[day] == 6 and entry['kind'] == 'OFF')
                 if signature in signatures:
                     continue
-                if _compatible(person, candidate[1], prior, metrics, policy, instant, sunday_limit, final_week):
+                if _compatible(person, candidate[1], prior, metrics, policy, instant, sunday_limit, final_week,
+                               baseline=baseline):
                     beam.append(candidate)
                     signatures.add(signature)
                     if len(beam) == 2:
@@ -205,7 +206,7 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     return result
 
 
-def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit, final):
+def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit, final, baseline=None):
     known = {**prior, **proposed}
     first, last = min(proposed), max(proposed)
     lower = (date.fromisoformat(first) - timedelta(days=21)).isoformat()
@@ -216,6 +217,21 @@ def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit,
                                 or known.get(day, {}).get("kind") == "HOLIDAY"
                                 and date.fromisoformat(day).weekday() == 6)
     maximum = min(5, policy["maxConsecutiveWorkDays"])
+    if person['offMode'] == 'VARIABLE':
+        baseline = baseline or {}
+        closed_holidays = paid_holiday_dates(policy)
+        for index in range(2, len(timeline)):
+            window = timeline[index - 2:index + 1]
+            if not all(known.get(day, {}).get('kind') == 'OFF' for day in window):
+                continue
+            mutable = any(day in proposed and day not in policy['closedDates']
+                          and day not in closed_holidays
+                          and baseline.get((person['id'], day), {}).get('kind') not in ('ABSENCE', 'HOLIDAY')
+                          and not baseline.get((person['id'], day), {}).get('locked')
+                          and date.fromisoformat(day).weekday() not in person['fixedOffDays']
+                          for day in window)
+            if mutable:
+                return False
     streak = 0
     for day in timeline:
         streak = streak + 1 if working(day) else 0

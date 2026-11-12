@@ -284,7 +284,18 @@ export function EmployeeEditor({
             />
           )}
         </Field>
-        <Field label="Distribuição das folgas">
+        <div className="space-y-2">
+          <Check label="Fixar dias de folga (opcional)" checked={draft.offMode !== "VARIABLE"}
+            onChange={checked => setDraft(previous => ({ ...previous,
+              offMode: checked ? "MIXED" : "VARIABLE", fixedOffDays: [],
+            }))} />
+          <p className="text-sm text-[color:var(--app-muted)]">
+            {draft.offMode === "VARIABLE"
+              ? "O algoritmo varia os dias e prioriza folgas separadas. Duas seguidas ficam para quando a cobertura ou os descansos exigirem."
+              : "Escolha abaixo quais dias devem permanecer fixos. O algoritmo preservará essa escolha."}
+          </p>
+        </div>
+        {draft.offMode !== "VARIABLE" && <Field label="Quantas folgas fixas?">
           {(id) => (
             <select
               id={id}
@@ -295,12 +306,11 @@ export function EmployeeEditor({
               }}
               className={controlClass}
             >
-              <option value="VARIABLE">Duas variáveis</option>
               <option value="MIXED">Uma fixa e uma variável</option>
               <option value="FIXED">Duas fixas aprovadas</option>
             </select>
           )}
-        </Field>
+        </Field>}
         <Field label="Organização das folgas">
           {(id) => (
             <select
@@ -309,7 +319,7 @@ export function EmployeeEditor({
               onChange={(event) => change("offPattern", event.target.value as EscalaEmployee["offPattern"])}
               className={controlClass}
             >
-              <option value="ANY">Separadas ou consecutivas</option>
+              <option value="ANY">Priorizar folgas separadas (padrão)</option>
               <option value="PREFER_CONSECUTIVE">Preferir consecutivas</option>
               <option value="CONSECUTIVE">Consecutivas obrigatórias</option>
             </select>

@@ -6,8 +6,10 @@ import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
+import { validateEscala } from "./validation";
+import { EscalaError } from "./errors";
 
-const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
+const objectiveName = z.enum(["COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -30,7 +32,7 @@ const resultSchema = z.strictObject({
       prioritizedSectorDaysWithoutLeader: z.number().int().min(0).max(10500),
       timedCoverageIncluded: z.literal(false),
     }).optional(),
-    unattemptedObjectives: z.array(objectiveName).max(12).optional(),
+    unattemptedObjectives: z.array(objectiveName).max(16).optional(),
     phases: z.array(z.strictObject({
       objective: objectiveName,
       status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
@@ -57,8 +59,8 @@ const resultSchema = z.strictObject({
       if (phase.members && new Set(phase.members.map(member => member.objective)).size !== phase.members.length) {
         context.addIssue({ code: "custom", path: ["members"], message: "Objetivos conjuntos duplicados" });
       }
-    // Eleven ordered objectives plus at most four bounded sector repairs.
-    })).max(16),
+    // Operational rest objectives and at most four bounded sector repairs.
+    })).max(20),
   }).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
@@ -80,6 +82,14 @@ export async function solveEscala(
   } catch (error) {
     console.error({ event: "escala_refinement_failed", errorType: error instanceof Error ? error.name : "Unknown" });
     throw new EscalaSolverError("SOLVER_REFINEMENT_FAILED");
+  }
+  // Never discard an established roster merely because a new rest criterion needs local repair.
+  // An unrestricted fallback from an invalid old seed can lose its protected staffing quality.
+  const initialValidation = validateEscala(parsed);
+  if (initialValidation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT")
+    && !initialValidation.issues.some(issue => issue.severity === "ERROR" && issue.code !== "CONSECUTIVE_REST_LIMIT")
+    && !validateEscala(refined).valid) {
+    throw new EscalaError(409, "ESCALA_REST_REPAIR_PENDING", "O cálculo não encontrou, no prazo disponível, uma redistribuição das folgas que preservasse a cobertura. A grade salva foi mantida; confira as folgas e os horários desse setor antes de aplicar outra proposta.");
   }
   const payload = await requestSolver(parsed, {
     ...options,

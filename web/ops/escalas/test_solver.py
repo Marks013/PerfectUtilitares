@@ -158,11 +158,24 @@ class SolverTests(unittest.TestCase):
         person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "DUTY"}]
         self.assertEqual(solve(data)["status"], "INFEASIBLE")
 
+    def test_consecutive_boundary_pair_does_not_authorize_three_variable_rests(self):
+        data = fixture(40)
+        person = data["employees"][0]
+        make_untimed(person)
+        person["offPattern"] = "CONSECUTIVE"
+        person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "OFF"},
+                                     {"employeeId": person["id"], "date": "2026-11-10", "kind": "DUTY"}]
+        # Prior Saturday/Sunday OFF plus mandatory next Monday OFF leave no
+        # two-rest weekly pair without creating a three-OFF boundary block.
+        self.assertEqual(solve(data)["status"], "INFEASIBLE")
+
     def test_first_future_consecutive_rest_preserves_its_current_neighbor(self):
         data = fixture(40)
         person = data["employees"][0]
         make_untimed(person)
         person["offPattern"] = "CONSECUTIVE"
+        # An absence is not an OFF: Sunday/Monday remains a valid two-day pair.
+        next(entry for entry in person["history"] if entry["date"] == "2026-10-31")["kind"] = "ABSENCE"
         person["planningFuture"] = [{"employeeId": person["id"], "date": "2026-11-09", "kind": "OFF"},
                                      {"employeeId": person["id"], "date": "2026-11-10", "kind": "DUTY"}]
         result = solve(data)

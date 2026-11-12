@@ -39,6 +39,19 @@ function completeAssignments(): EscalaInput["assignments"] {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it("keeps an established draft instead of replacing an unrepaired rest pattern with an unrestricted fallback", async () => {
+    const input = fixture(); input.restRulesVersion = 1; input.endDate = "2026-11-15";
+    input.shifts[0].segments = [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }];
+    input.assignments = Array.from({ length: 14 }, (_, index) => {
+      const work = index < 5 || index >= 8 && index <= 12;
+      const date = new Date(Date.parse("2026-11-02T12:00:00Z") + index * 86400000).toISOString().slice(0, 10);
+      return { employeeId: "p1", date, kind: work ? "WORK" as const : "OFF" as const, ...(work ? { shiftId: "day" } : {}) };
+    });
+    const before = structuredClone(input), fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    expect(validateEscala(input).issues.filter(issue => issue.severity === "ERROR").every(issue => issue.code === "CONSECUTIVE_REST_LIMIT")).toBe(true);
+    await expect(solveEscala(input)).rejects.toMatchObject({ code: "ESCALA_REST_REPAIR_PENDING", status: 409 });
+    expect(fetch).not.toHaveBeenCalled(); expect(input).toEqual(before);
+  });
   it("sends scoped history without repeating IDs and preserves every scheduling field", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const input = fixture();
@@ -183,18 +196,18 @@ describe("isolated schedule processor client", () => {
     expect(sent?.demands).toEqual(input.demands);
     expect(sent?.assignments).toEqual(input.assignments);
     expect(seed).not.toEqual(input.assignments);
-    expect(seed?.filter((entry, index) => entry.kind !== input.assignments[index]?.kind)).toHaveLength(2);
+    expect(seed?.filter((entry, index) => entry.kind !== input.assignments[index]?.kind)).toHaveLength(4);
     expect(seed?.find(a => a.employeeId === "p1" && a.date === "2026-11-05")?.kind).toBe("WORK");
     expect(result.assignments).toEqual(seed);
     expect(validateEscala({ ...input, assignments: result.assignments }).valid).toBe(true);
   });
 
-  it.each([16, 17])("validates the bounded diagnostic contract with %i phases", async count => {
+  it.each([20, 21])("validates the bounded diagnostic contract with %i phases", async count => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
-    const names = ["COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "SUNDAY_BALANCE", "LEADERSHIP", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "TIE_BREAK"];
+    const names = ["COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "TIE_BREAK", "TIE_BREAK", "TIE_BREAK"];
     const optimization = { budgetSeconds: 12, phases: names.slice(0, count).map(objective => ({ objective, status: "FEASIBLE", wallTimeSeconds: 0.1, budgetSeconds: 0.2, initialValue: 500, incumbentValue: 400 })) };
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 2, optimization })));
-    if (count === 16) {
+    if (count === 20) {
       const result = await solveEscala(fixture());
       expect(result.optimization).toEqual(optimization);
       expect(result.assignments).toEqual(completeAssignments());

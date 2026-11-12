@@ -1,4 +1,5 @@
 import { addDays, dateRange, dayOfWeek } from "./dates";
+import { regularRestQuality } from "./rest-spacing";
 import { closedHolidayDates } from "./calendar";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
@@ -15,9 +16,10 @@ type EmployeeValidationContext = {
   days: readonly string[];
   visible: ReadonlySet<string>;
   weekByDate: ReadonlyMap<string, string>;
+  enforceRestSpacing?: boolean;
 };
 
-export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { current, journeys, reservations, days, visible, weekByDate }: EmployeeValidationContext): { issues: EscalaIssue[]; summary: EscalaEmployeeSummary } {
+export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { current, journeys, reservations, days, visible, weekByDate, enforceRestSpacing = true }: EmployeeValidationContext): { issues: EscalaIssue[]; summary: EscalaEmployeeSummary } {
   const issues: EscalaIssue[] = [];
   const issue = (code: string, message: string, date?: string, severity: EscalaIssue["severity"] = "ERROR") => issues.push({ code, message, severity, employeeId: person.id, ...(date ? { date } : {}) });
   const all = [...new Map([...(person.planningHistory ?? []), ...person.history, ...current, ...(person.planningFuture ?? [])].map((item) => [item.date, item])).values()].sort((left, right) => left.date.localeCompare(right.date));
@@ -49,6 +51,10 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     return { issues, summary };
   }
   if (!person.sector || !person.role) issue("ORGANIZATION_PENDING", "Informe setor e cargo antes da publicação.", undefined, "PENDING");
+  if (enforceRestSpacing) for (const date of regularRestQuality(input, person, current).longWindows) {
+    // Historical drafts stay readable/exportable; every newly generated proposal adopts this criterion.
+    issue("CONSECUTIVE_REST_LIMIT", "Há três folgas comuns seguidas. Gere uma nova proposta para distribuí-las; bloqueios e afastamentos serão preservados.", date, input.restRulesVersion === 1 ? "ERROR" : "WARNING");
+  }
   if (!untimed && !person.shiftIds.length) issue("EMPLOYEE_SHIFT_PENDING", "Nenhum horário de planejamento definido. Use a configuração em lote da filial ou mantenha este registro fora da geração.", undefined, "PENDING");
   if (person.scheduleMode === "MISSING") issue("MISSING_SCHEDULE", "Horário não informado: presença e folgas podem ser simuladas, mas horas, intervalos e cobertura horária não foram verificados. Informe um horário ou confirme explicitamente o modo sem controle de horário antes da publicação.", undefined, "PENDING");
   if (untimed) issue("UNTIMED_REST_UNVERIFIED", "Sem horário fixo: o rodízio confere dias de trabalho, folgas e domingos. Horas e intervalos entre jornadas não foram apurados nem presumidos; o cadastro não certifica enquadramento de exceção da CLT.", undefined, "WARNING");

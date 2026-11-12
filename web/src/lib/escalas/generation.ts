@@ -76,7 +76,7 @@ export function matchesRestOnlyReferences(input: EscalaInput, assignments: Escal
 
 /** Prepare a preview, without approving documents, inventing attendance or overwriting branch decisions. */
 export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; preparation: EscalaGenerationPreparation } {
-  const input: EscalaInput = applyLocalHolidayCalendar({ ...rawInput, simulation: true, policy: { ...rawInput.policy, maxConsecutiveWorkDays: effectiveWorkDayLimit(rawInput.policy) } });
+  const input: EscalaInput = applyLocalHolidayCalendar({ ...rawInput, restRulesVersion: 1, simulation: true, policy: { ...rawInput.policy, maxConsecutiveWorkDays: effectiveWorkDayLimit(rawInput.policy) } });
   const holidayLock = assertHolidayLocks(input);
   if (holidayLock) throw new EscalaError(422, "ESCALA_HOLIDAY_LOCK_CONFLICT", `Há um dia bloqueado em ${holidayLock}, quando a loja fecha por feriado. Confira e desbloqueie esse dia antes de gerar; nenhum bloqueio ou afastamento foi alterado.`);
   const closing = storeClosingMinutes(input);
