@@ -4,6 +4,7 @@ export type ReviewTarget = "generate" | "rules" | "coverage" | "team" | "roster"
 type Guidance = { title: string; instruction: string; target?: ReviewTarget; action?: string };
 
 const GUIDANCE: Record<string, Guidance> = {
+  SATURDAY_REST_FORBIDDEN: { title: "Sábado sem folga comum", instruction: "Gere novamente para redistribuir as folgas. Se o sábado estiver bloqueado ou definido como folga fixa, confira essa decisão antes de gerar. Férias e afastamentos não serão alterados.", target: "generate", action: "Gerar proposta atualizada" },
   WORK_STREAK: { title: "Mais de cinco dias consecutivos", instruction: "Interrompa a sequência com uma folga ou gere uma proposta atualizada. O limite vale também entre semanas e meses, quando há histórico disponível.", target: "roster", action: "Conferir sequência na escala" },
   FIVE_BY_TWO_POLICY_OUTDATED: { title: "Recalcular o modelo 5×2", instruction: "A revisão usa um limite antigo. Gere e aplique novamente para conferir a escala com no máximo cinco dias consecutivos.", target: "generate", action: "Recalcular a proposta" },
   SIMULATION_SHORT_MEAL_FLEX: { title: "Intervalo curto flexibilizado nesta simulação", instruction: "Nesta simulação, foi dispensado o intervalo mínimo de 15 minutos em jornadas acima de quatro e até seis horas. Isso não dispensa intervalos de jornadas maiores nem certifica regularidade. Confira os horários afetados.", target: "intervals", action: "Ver opção de pausa nesta simulação" },

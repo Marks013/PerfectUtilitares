@@ -3,6 +3,7 @@ import hashlib
 import time
 from datetime import date, timedelta
 from itertools import combinations
+from rest_quality import visible_month
 
 
 def paid_holiday_dates(policy):
@@ -25,6 +26,14 @@ def holiday_rest_forbidden(policy, day):
     return (day in policy.get("holidayDates", []) and date.fromisoformat(day).weekday() != 6
             and (not policy.get("holidayRestAllowed", False)
                  or policy.get("normativeProfile") == "SINDECOMU_SUPERMARKETS_2026_2027"))
+
+
+def saturday_rest_forbidden(policy, day, old=None):
+    """Apply v2 to generated dates while retaining known monthly padding."""
+    month = policy.get('_visibleMonth')
+    return (policy.get('_restRulesVersion', 1) >= 2
+            and date.fromisoformat(day).weekday() == 5
+            and not (old and month and not day.startswith(month + '-')))
 
 
 def _mixed_week_variants(entries, choices, metrics, baseline, pid, require_two=True):
@@ -51,13 +60,41 @@ def _mixed_week_variants(entries, choices, metrics, baseline, pid, require_two=T
             yield proposal
 
 
+def _spacing_rank(person, entries, prior, baseline, policy):
+    """Prefer fewer adjustable pairs without mistaking an imposed rest for a choice."""
+    if person['offMode'] != 'VARIABLE' or person['offPattern'] != 'ANY':
+        return 0, 0
+    known = {**prior, **entries}
+    pairs, imposed = 0, 0
+    for after, entry in known.items():
+        before = (date.fromisoformat(after) - timedelta(days=1)).isoformat()
+        if before not in entries and after not in entries:
+            continue
+        if policy.get('_visibleMonth') and not after.startswith(policy['_visibleMonth'] + '-'):
+            continue
+        if after < person['activeFrom'] or person.get('activeUntil') and after > person['activeUntil']:
+            continue
+        if entry['kind'] != 'OFF' or known.get(before, {}).get('kind') != 'OFF':
+            continue
+        pairs += 1
+        adjustable = any(day in entries and not baseline.get((person['id'], day), {}).get('locked')
+                         and day not in policy['closedDates']
+                         and date.fromisoformat(day).weekday() not in person['fixedOffDays']
+                         for day in (before, after))
+        imposed += int(not adjustable)
+    return max(0, pairs - 2) - max(0, imposed - 2), pairs - imposed
+
+
 def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
-                        deadline=None, control=None, mixed_people=frozenset()):
+                        deadline=None, control=None, mixed_people=frozenset(),
+                        preserve_rest_pattern=False):
     """Balance opportunities before the bounded optimizer adds optional staffing goals.
 
     These are variable hints only. No target is converted into a staffing constraint,
     and no missing history is fabricated. Unsupported alternatives are left to CP-SAT.
     """
+    if policy.get('_generationMode') == 'HOURS_ONLY':
+        return {}  # Day redistribution is not an hours-only seed operation.
     closed_holidays = paid_holiday_dates(policy)
     groups = {}
     leadership = []
@@ -83,6 +120,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
     if not dates or not employees:
         return {}
+    if '_visibleMonth' not in policy:
+        policy = {**policy, '_visibleMonth': visible_month({'startDate': dates[0], 'endDate': dates[-1]})}
     history_cutoff = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
     for person in sorted(employees, key=lambda item: hashlib.sha256(item["id"].encode()).digest()):
         if control is not None:
@@ -116,11 +155,21 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
             if not group:
                 continue
             absent = {day for day in group if baseline.get((pid, day), {}).get("kind") == "ABSENCE"}
-            holidays = (set(group) & closed_holidays) - absent
+            holidays = ((set(group) & closed_holidays)
+                        | {day for day in group if baseline.get((pid, day), {}).get('kind') == 'HOLIDAY'}) - absent
             closed_weekdays = sum(weekdays[day] != 6 for day in holidays)
             closed_sundays = sum(weekdays[day] == 6 for day in holidays)
             forced = {day for day in group if day not in absent | holidays and (weekdays[day] in fixed or day in policy["closedDates"] or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] == "OFF")}
             forbidden = {day for day in group if day in absent | holidays or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] in ("WORK", "DUTY") or holiday_rest_forbidden(policy, day)}
+            forbidden.update(day for day in group
+                             if saturday_rest_forbidden(policy, day, baseline.get((pid, day))))
+            if preserve_rest_pattern:
+                # Rebuild clocks around saved OFFs for this candidate only.
+                # Conflicting mandatory rules reject it; no model lock is added.
+                saved_rests = {day for day in group
+                               if baseline.get((pid, day), {}).get('kind') == 'OFF'}
+                forced.update(saved_rests)
+                forbidden.update(set(group) - saved_rests)
             candidates = []
             complete = len(group) == 7 and not absent
             rest_target = max(0, 2 - closed_sundays)
@@ -172,12 +221,12 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
             if not next_beam:
                 beam = []
                 break
-            next_beam.sort(key=lambda item: item[0])
-            # Keep two distinct Sunday trajectories through the whole month.
+            next_beam.sort(key=lambda item: (*_spacing_rank(person, item[1], prior, baseline, policy), item[0]))
+            # Keep two distinct Sunday trajectories, each with two weekday variants.
             # A greedy first week can force the same rest parity on the sector.
-            # Rank first and skip duplicate Sunday patterns before temporal checks.
+            # Repeated clock variants do not consume the weekday-spacing slots.
             beam = []
-            signatures = set()
+            signatures = {}
             for candidate in next_beam:
                 if control is not None:
                     control.checkpoint()
@@ -185,19 +234,23 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                     return result
                 signature = tuple(day for day, entry in candidate[1].items()
                                   if weekdays[day] == 6 and entry['kind'] == 'OFF')
-                if signature in signatures:
+                rests = tuple(day for day, entry in candidate[1].items() if entry['kind'] == 'OFF')
+                variants = signatures.get(signature, set())
+                if (signature not in signatures and len(signatures) >= 2
+                        or len(variants) >= 2 or rests in variants):
                     continue
                 if _compatible(person, candidate[1], prior, metrics, policy, instant, sunday_limit, final_week,
                                baseline=baseline):
                     beam.append(candidate)
-                    signatures.add(signature)
-                    if len(beam) == 2:
+                    variants.add(rests)
+                    signatures[signature] = variants
+                    if len(beam) == 4:
                         break
             if not beam:
                 break
         if not beam:
             continue  # Incomplete information or a difficult alternative remains CP-SAT's task.
-        _, entries, _ = min(beam, key=lambda item: item[0])
+        _, entries, _ = min(beam, key=lambda item: (*_spacing_rank(person, item[1], prior, baseline, policy), item[0]))
         result[pid] = entries
         for day, entry in entries.items():
             if entry["kind"] == "OFF":
@@ -260,6 +313,9 @@ def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit,
             if day in policy["closedDates"] or day in policy["holidayDates"] and day not in policy["authorizedHolidayDates"] and not policy["_simulation"]:
                 return False
         if day in proposed and entry["kind"] == "OFF" and holiday_rest_forbidden(policy, day):
+            return False
+        if (day in proposed and entry['kind'] == 'OFF'
+                and saturday_rest_forbidden(policy, day, (baseline or {}).get((person['id'], day)))):
             return False
         if day in proposed and regular_rest(day) and person["offPattern"] == "CONSECUTIVE":
             adjacent = [(date.fromisoformat(day) + timedelta(days=delta)).isoformat() for delta in (-1, 1)]

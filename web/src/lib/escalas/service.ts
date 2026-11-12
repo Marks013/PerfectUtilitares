@@ -6,6 +6,7 @@ import { escalaInputSchema } from "./schema";
 import { EscalaSolverError, solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
 import { findGenerationConflicts } from "./generation-conflicts";
+import { generationScenarioBasis, isHoursReferenceOnly, matchesHoursOnlyAssignments } from "./hours-reference";
 import { compareBranches } from "./order";
 import { addDays, dateRange, monthBounds, visibleDates } from "./dates";
 import { fixedBoundaryReservations } from "./boundary";
@@ -225,6 +226,12 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
   preserveLockedAssignments(current.input, input, !publish && current.canPublish);
+  const scenarioChanged = generationScenarioBasis(current.input) !== generationScenarioBasis(input);
+  const preparedProposal = !input.needsRegeneration && input.generationBasis === generationScenarioBasis(input);
+  if ((scenarioChanged || current.input.needsRegeneration) && !preparedProposal) {
+    input = { ...input, needsRegeneration: true, generationBasis: undefined };
+  }
+  if (isHoursReferenceOnly(input) && !preparedProposal) input = { ...input, needsRegeneration: true };
   if (storeClosingMinutes(current.input) !== storeClosingMinutes(input)) {
     input = { ...input, needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
       demands: input.demands.filter(demand => demand.estimated !== true) };
@@ -291,18 +298,31 @@ function requireSolverSetup(input: EscalaInput) {
       && (minutes.get(shiftId) ?? Infinity) > Math.min(input.policy.dailyLimitMinutes, dailyMinuteCeiling(date)))))) {
     throw new EscalaError(422, "ESCALA_DAILY_LIMIT", "Os horários excedem o limite diário na vigência selecionada. Reaplique a configuração em lote da equipe para propor horários compatíveis; um acordo não amplia o teto deste regime.");
   }
-  if (!input.simulation && !input.policy.compensationAuthorized && dateRange(input.startDate, input.endDate).some((date) =>
-    timed.some((person) => person.activeFrom <= date && (!person.activeUntil || person.activeUntil >= date)
-      && person.shiftIds.every((shiftId) => (minutes.get(shiftId) ?? Infinity) > 480)))) {
-    throw new EscalaError(422, "ESCALA_DAILY_EXTENSION_REQUIRED", "A distribuição acima de 8 horas está desativada neste cenário. Ative a opção de distribuição diária ou escolha 40 horas semanais. Nenhuma configuração foi alterada automaticamente.");
-  }
+  // Administrative compensation evidence is classified by referenceNotices; operational ceilings above remain mandatory.
 }
 
 export async function generateEscala(actor: EscalaActor, id: string, expectedRevision: number, options?: import("./solver-transport").SolverOptions) {
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, "edit");
   assertRevision(current, expectedRevision);
+  if (current.input.generationMode === "HOURS_ONLY" && !isHoursReferenceOnly(current.input)) {
+    const existing = new Set(current.input.assignments.map(day => `${day.employeeId}\0${day.date}`));
+    const incomplete = current.input.employees.some(person => person.planningEnabled !== false
+      && dateRange(current.input.startDate, current.input.endDate).some(date => date >= person.activeFrom
+        && (!person.activeUntil || date <= person.activeUntil) && !existing.has(`${person.id}\0${date}`)));
+    if (incomplete) throw new EscalaError(422, "ESCALA_HOURS_BASELINE_INCOMPLETE", "A grade está incompleta. Complete os dias ou gere folgas e horários antes de ajustar somente os horários; nenhum dia foi inventado.");
+  }
   const prepared = prepareGeneration(current.input);
+  if (isHoursReferenceOnly(prepared.input)) {
+    const proposalInput = parseEscalaInput({ ...prepared.input, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared.input) });
+    preserveLockedAssignments(current.input, proposalInput);
+    if (!matchesHoursOnlyAssignments(current.input, proposalInput)) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+    const validation = validateEscala(proposalInput);
+    if (!validation.valid) throw new EscalaError(422, "ESCALA_HOURS_REFERENCE_INVALID", "Alguns horários não atendem às regras do cenário. Confira entrada, intervalo, saída e fechamento; nenhum dia de trabalho ou folga foi criado.");
+    const latest = await getEscala(actor, id); assertRevision(latest, expectedRevision);
+    return { result: { status: "FEASIBLE" as const, assignments: proposalInput.assignments, wallTimeSeconds: 0,
+      message: "Referências de horários preparadas. Nenhuma presença diária, folga ou cobertura foi gerada." }, proposalInput, validation, preparation: prepared.preparation };
+  }
   requireSolverSetup(prepared.input);
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
@@ -316,9 +336,17 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
     message: contextual.generationMode === "REST_ONLY"
       ? `${calculation.message} Neste modo, os horários de entrada e saída são mantidos. Se puder flexibilizá-los, selecione "Folgas e horários" e gere novamente.` : calculation.message,
   } : calculation;
-  const proposalInput = result.status === "FEASIBLE" || result.status === "OPTIMAL"
-    ? parseEscalaInput({ ...contextual, needsRegeneration: false, assignments: result.assignments }) : contextual;
+  let proposalInput = contextual;
+  if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
+    try {
+      proposalInput = parseEscalaInput({ ...contextual, needsRegeneration: false, generationBasis: generationScenarioBasis(contextual), assignments: result.assignments });
+    } catch {
+      // Context was parsed before invoking the worker. Only its returned assignments are new here.
+      throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+    }
+  }
   preserveLockedAssignments(current.input, proposalInput);
+  if (!matchesHoursOnlyAssignments(current.input, proposalInput)) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
   const latest = await getEscala(actor, id);
   assertRevision(latest, expectedRevision);
   const validation = validateEscala(proposalInput);

@@ -16,10 +16,10 @@ function reference(weekday = "07:00-11:00 / 13:00-16:20"): EscalaInput {
 }
 function complete(value: EscalaInput): EscalaInput {
   const person = value.employees[0];
-  return { ...value, assignments: dateRange(value.startDate, value.endDate).map(date => ({ employeeId: person.id, date, kind: dayOfWeek(date) < 5 ? "WORK" as const : "OFF" as const, ...(dayOfWeek(date) < 5 ? { shiftId: person.shiftIds[0] } : {}) })) };
+  return { ...value, assignments: dateRange(value.startDate, value.endDate).map(date => ({ employeeId: person.id, date, kind: [3, 6].includes(dayOfWeek(date)) ? "OFF" as const : "WORK" as const, ...(![3, 6].includes(dayOfWeek(date)) ? { shiftId: person.shiftIds[0] } : {}) })) };
 }
 describe("support simulation without administrative prerequisites", () => {
-  it("prepares exact 42h/8h24 and keeps absent authorizations as publication pending, not a broken draft", () => {
+  it("prepares exact 42h/8h24 with documentary notices and a separate coverage review pending", () => {
     const original = reference(); const snapshot = structuredClone(original);
     const proposal = prepareGeneration(original).input;
     expect(proposal.simulation).toBe(true);
@@ -30,17 +30,20 @@ describe("support simulation without administrative prerequisites", () => {
     const validation = validateEscala(complete(proposal));
     expect(validation.valid).toBe(true);
     expect(validation.readyToPublish).toBe(false);
-    expect(validation.issues.some(issue => issue.code === "COMPENSATION_REQUIRED" && issue.severity === "PENDING")).toBe(true);
+    expect(validation.issues.some(issue => issue.code === "COMPENSATION_REQUIRED" && issue.severity === "WARNING")).toBe(true);
+    expect(validation.issues.some(issue => issue.code === "COVERAGE_REVIEW_PENDING" && issue.severity === "PENDING")).toBe(true);
   });
-  it("preserves short imported clocks and participation without inventing a full-time contract", () => {
+  it("preserves a short principal reference while excluding it from generation without inventing a contract", () => {
     const original = reference("07:00-11:00");
+    original.shifts = [{ id: "source", name: "Original 4h", segments: [{ start: 420, end: 660, kind: "WORK" }] }];
+    const before = structuredClone(original);
     const proposal = prepareGeneration(original);
-    expect(proposal.preparation.excludedEmployeeIds).toEqual([]);
-    expect(proposal.input.employees[0]).toMatchObject({ planningEnabled: true, weeklyHours: 42, simulationDailyMinutes: 240 });
-    expect(effectiveWeeklyMinutes(proposal.input.employees[0], proposal.input.startDate)).toBe(1200);
-    const validation = validateEscala(complete(proposal.input));
-    expect(validation.valid).toBe(true);
-    expect(validation.issues.some(issue => issue.code === "SHORT_REFERENCE_PRESERVED" && issue.severity === "PENDING")).toBe(true);
+    expect(proposal.preparation.excludedEmployeeIds).toEqual(["p1"]);
+    expect(proposal.input.employees[0]).toMatchObject({ planningEnabled: false, weeklyHours: 42, shiftIds: ["source"] });
+    expect(proposal.input.employees[0].simulationDailyMinutes).toBeUndefined();
+    expect(proposal.input.shifts).toEqual(original.shifts);
+    expect(proposal.input.assignments).toEqual([]);
+    expect(original).toEqual(before);
     expect(proposal.input.employees[0].sourceSchedule).toEqual(original.employees[0].sourceSchedule);
     expect(escalaInputSchema.safeParse(proposal.input).success).toBe(true);
   });

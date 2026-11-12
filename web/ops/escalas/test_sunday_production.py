@@ -255,6 +255,7 @@ class ProductionSundayTests(unittest.TestCase):
 
     def test_sector_guards_start_from_the_exact_validated_saved_roster(self):
         from unittest.mock import patch
+        from optimization import _expression_terms
         data = fixture(40, people=2)
         data['employees'][1]['sector'] = 'Caixa'
         days = [(date.fromisoformat(data['startDate']) + timedelta(days=i)).isoformat() for i in range(7)]
@@ -268,8 +269,13 @@ class ProductionSundayTests(unittest.TestCase):
             snapshot = Snapshot(values)
             self.assertEqual({sector: snapshot.value(sum(terms)) for sector, terms in kwargs['context'].sunday_coverage.items()},
                              {'Reposição': 240, 'Caixa': 240})
-            bounds = [snapshot.value(term) for term in kwargs['context'].protected_groups[names[0]]]
-            self.assertEqual(bounds[-2:], [480, 480])
+            context = kwargs['context']
+            guards = {_expression_terms(term) for term in context.protected_groups[names[0]]}
+            sector_terms = {sector: sum(terms) for sector, terms in context.sector_coverage.items()}
+            self.assertEqual({sector: snapshot.value(term) for sector, term in sector_terms.items()},
+                             {'Reposição': 480, 'Caixa': 480})
+            for term in sector_terms.values():
+                self.assertIn(_expression_terms(term), guards)
             return values, False, []
         with patch('solver.improve', side_effect=inspect_guards) as optimize:
             result = solve(data)
@@ -575,6 +581,15 @@ class ProductionSundayTests(unittest.TestCase):
 class SavedDraftSundayTests(unittest.TestCase):
     def test_complete_feasible_draft_keeps_its_sunday_balance_during_coverage(self):
         data = fixture(people=2, weeks=2)
+        # p1 rests on the first Monday. Keep two historical rests, but avoid
+        # an illegal Saturday/Sunday/Monday OFF run across the saved boundary.
+        for entry in data['employees'][1]['history']:
+            if entry['date'] == '2026-10-30':
+                entry['kind'] = 'OFF'
+                entry.pop('shiftId', None)
+            elif entry['date'] == '2026-10-31':
+                entry['kind'] = 'WORK'
+                entry['shiftId'] = 'day'
         days = [(date.fromisoformat(data['startDate']) + timedelta(days=n)).isoformat()
                 for n in range(14)]
         for person_index, person in enumerate(data['employees']):
@@ -667,6 +682,29 @@ class SundayCoverageGuardTests(unittest.TestCase):
                                 ['COVERAGE'], context=ImprovementContext(protected_groups={'COVERAGE': [sunday]}))
         self.assertEqual(actual[trade.index], 0)
         self.assertEqual(actual[weekday.index], 10)
+
+    def test_clock_adaptation_hints_do_not_lock_saved_rest_days(self):
+        from unittest.mock import patch
+        data = fixture(40)
+        days = [(date.fromisoformat(data['startDate']) + timedelta(days=i)).isoformat() for i in range(7)]
+        saved_rests = {days[3], days[6]}
+        baseline = {('p0', day): {'kind': 'OFF'} for day in saved_rests}
+        model = cp_model.CpModel()
+        off = {('p0', day): model.new_bool_var('off-' + day) for day in days}
+        work = {key: model.new_bool_var('work-' + key[1]) for key in off}
+        choices = {key: {'day': model.new_bool_var('shift-' + key[1])} for key in off}
+        args = (model, data['employees'], days, off, work, choices, {'p0': days},
+                baseline, {'day': (480, 480, 1020)}, {**data['policy'], '_simulation': False})
+        self.assertTrue(_feasibility_hints(*args))
+        hinted = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
+        self.assertEqual({day for (_, day), variable in off.items() if hinted[variable.index]}, saved_rests)
+        self.assertEqual(len(model.proto.constraints), 0)
+        self.assertTrue(all(tuple(variable.domain) == (0, 1) for variable in model.proto.variables))
+        model.clear_hints()
+        with patch('solver.balanced_rest_hints', return_value={}) as balanced:
+            self.assertFalse(_feasibility_hints(*args, prefer_baseline=False))
+        self.assertEqual(balanced.call_count, 1)
+        self.assertFalse(balanced.call_args.kwargs.get('preserve_rest_pattern', False))
 
     def test_adapting_clocks_reuses_the_existing_rest_pattern_as_a_hint(self):
         data = fixture(people=1, weeks=2)

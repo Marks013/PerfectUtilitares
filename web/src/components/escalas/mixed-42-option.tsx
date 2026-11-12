@@ -24,7 +24,7 @@ export function Mixed42Option({ input, disabled, onChange }: {
   const count = sectors.filter((sector) => selected.includes(sector)).length;
   return <details className={panelClass}>
     <summary className={styles.disclosureTrigger}>Jornada mista de 42h (opcional){count > 0 && " · setores selecionados: " + count}</summary>
-    <p id={hint} className={styles.muted}>Nas semanas efetivas de 42h, os setores selecionados terão 3 dias de 8h e 2 dias de 9h. Nos dias de 9h, o intervalo fixo não trabalhado é de 3h. Sem seleção, o modelo de 42h continua uniforme, com 8h24 por dia.</p>
+    <p id={hint} className={styles.muted}>{input.generationMode === "HOURS_ONLY" && !input.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY") ? "Prepara referências de 8h e 9h, com intervalo de 3h na referência de 9h. A distribuição de três dias de 8h e dois de 9h só poderá ser conferida quando houver grade." : "Nas semanas efetivas de 42h, os setores selecionados terão 3 dias de 8h e 2 dias de 9h. Nos dias de 9h, o intervalo fixo não trabalhado é de 3h."} Sem seleção, o modelo de 42h continua uniforme, com 8h24 por dia.</p>
     <p className={styles.muted}>Uso em simulação. Selecionar um setor não confirma autorização para aplicar essa jornada na operação.</p>
     {sectors.length > 0 ? <fieldset disabled={disabled} aria-describedby={hint} className={styles.stackSmall}>
       <legend className={styles.fieldLabel}>Setores que usarão jornada mista</legend>

@@ -66,6 +66,8 @@ def validate_model_input(data):
     horizon = (date.fromisoformat(data["endDate"]) - date.fromisoformat(data["startDate"])).days + 1
     _require(7 <= horizon <= 42 and horizon % 7 == 0, "endDate", "INVALID_HORIZON")
     _require(data.get("defaultWeeklyHours") in (40, 42, 44), "defaultWeeklyHours")
+    if 'restRulesVersion' in data:
+        _integer(data['restRulesVersion'], 'restRulesVersion', 1, 2147483647)
     if "simulation" in data:
         _require(type(data["simulation"]) is bool, "simulation", "EXPECTED_BOOLEAN")
     if "storeClosingMinutes" in data:

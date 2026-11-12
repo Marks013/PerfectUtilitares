@@ -20,7 +20,7 @@ describe("canonical Portuguese sector order in shortage views", () => {
     const names = [...html.matchAll(/<h4[^>]*>([^<]+)<\/h4>/g)].map(match => match[1]);
     expect(names).toEqual(expected);
     expect(html.match(/Rever mínimo informado/g)).toHaveLength(1);
-    expect(html.match(/Referência estimada/g)).toHaveLength(4);
+    expect(html.match(/<span class="[^"]*statusTag[^"]*">Referência estimada<\/span>/g)).toHaveLength(4);
   });
   it("uses numeric and accented order in the coverage sector filters", () => {
     const html = renderToStaticMarkup(<Coverage input={fixture()} disabled={false} onChange={vi.fn()} />);

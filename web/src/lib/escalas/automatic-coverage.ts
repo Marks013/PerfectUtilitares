@@ -66,7 +66,7 @@ function roundedTargets(expected: number[], group: Group, monday: string, days: 
 }
 
 /** Browser-safe invalidation only: this fingerprint does not certify or authenticate demand. */
-function coverageBasis(input: EscalaInput): string {
+export function coverageBasis(input: EscalaInput): string {
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const clock = (shift?: EscalaShift) => shift?.segments.map(segment => [segment.kind, segment.start, segment.end]) ?? null;
   const sorted = <T>(items: T[]) => items.sort((a, b) => {
@@ -131,9 +131,11 @@ export function retainCoverageReference(previous: EscalaInput, prepared: EscalaI
     || !completeRoster(previous) || !completeRoster(prepared)) return undefined;
   const basis = coverageBasis(prepared);
   if (previous.coverageBasis ? previous.coverageBasis !== basis : !allowLegacy || coverageBasis(previous) !== basis) return undefined;
-  // Repairing rest placement must not move the existing coverage ruler.
+  // Repairing rest placement, including the v2 Saturday upgrade, must not move the coverage ruler.
+  // These scheduling conflicts remain errors in the independent result validator.
   const validation = validateEscala(previous);
-  if (validation.issues.some(issue => issue.severity === "ERROR" && issue.code !== "CONSECUTIVE_REST_LIMIT")) return undefined;
+  if (validation.issues.some(issue => issue.severity === "ERROR"
+    && issue.code !== "CONSECUTIVE_REST_LIMIT" && issue.code !== "SATURDAY_REST_FORBIDDEN")) return undefined;
   return { ...prepared, demands: previous.demands, coverageBasis: basis };
 }
 

@@ -31,16 +31,21 @@ describe("persisted staffing comparison basis", () => {
     expect(first.coverageBasis).toMatch(/^coverage-v1:[a-f0-9]{16}$/);
     const second = prepareGeneration(first).input;
     expect(second.demands).toBe(first.demands); expect(second.coverageBasis).toBe(first.coverageBasis);
+    expect(validateEscala(second).issues).toContainEqual(expect.objectContaining({ code: "SATURDAY_REST_FORBIDDEN", severity: "ERROR" }));
+    expect(validateEscala(second).valid).toBe(false); // Retaining a target never approves an incompatible Saturday roster.
     expect(escalaInputSchema.safeParse(second).success).toBe(true);
     expect(input).toEqual(before);
   });
   it("preserves the same ruler after weekday swaps, extra allowed shifts and JSONB property ordering", () => {
-    const input = prepareGeneration(fixture()).input, changed = structuredClone(input);
+    const raw = fixture();
+    raw.assignments = raw.assignments.map(day => day.date === "2026-11-05" ? { employeeId: day.employeeId, date: day.date, kind: "OFF" as const }
+      : day.date === "2026-11-07" ? { ...day, kind: "WORK" as const, shiftId: "day" } : day);
+    const input = prepareGeneration(raw).input, changed = structuredClone(input);
     changed.shifts.push({ id: "alternative", name: "Alternativa", segments: [{ start: 540, end: 780, kind: "WORK" }, { start: 780, end: 840, kind: "BREAK" }, { start: 840, end: 1080, kind: "WORK" }] });
     changed.employees[0].shiftIds.push("alternative");
     changed.shifts[0].segments = changed.shifts[0].segments.map(({ start, end, kind }) => ({ end, kind, start }));
     changed.assignments = changed.assignments.map(assignment => assignment.employeeId === "p1" && assignment.date === "2026-11-02" ? { employeeId: "p1", date: assignment.date, kind: "OFF" }
-      : assignment.employeeId === "p1" && assignment.date === "2026-11-07" ? { employeeId: "p1", date: assignment.date, kind: "WORK", shiftId: "day" } : assignment);
+      : assignment.employeeId === "p1" && assignment.date === "2026-11-05" ? { employeeId: "p1", date: assignment.date, kind: "WORK", shiftId: "day" } : assignment);
     expect(validateEscala(changed).valid).toBe(true);
     const regenerated = prepareGeneration(changed).input;
     expect(regenerated.coverageBasis).toBe(input.coverageBasis);

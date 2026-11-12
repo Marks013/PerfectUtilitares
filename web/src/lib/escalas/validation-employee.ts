@@ -47,13 +47,18 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     maxStreak: 0, sundaysWorked: 0,
   };
   if (person.planningEnabled === false) {
-    if (current.some(entry => !entry.locked && entry.kind !== "ABSENCE")) issue("DISABLED_ASSIGNMENT", "Há atribuições para uma pessoa fora da geração. Remova as atribuições ou inclua a pessoa na proposta.");
+    // In clock-only mode these are preserved historical cells, never current staffing contributions.
+    if (input.generationMode !== "HOURS_ONLY" && current.some(entry => !entry.locked && entry.kind !== "ABSENCE")) issue("DISABLED_ASSIGNMENT", "Há atribuições para uma pessoa fora da geração. Remova as atribuições ou inclua a pessoa na proposta.");
     return { issues, summary };
   }
   if (!person.sector || !person.role) issue("ORGANIZATION_PENDING", "Informe setor e cargo antes da publicação.", undefined, "PENDING");
+  if (enforceRestSpacing && (input.restRulesVersion ?? 0) >= 2) for (const record of current) {
+    if (record.kind === "OFF" && dayOfWeek(record.date) === 5 && isActive(person, record.date))
+      issue("SATURDAY_REST_FORBIDDEN", "Sábado não permite folga comum neste planejamento. Gere novamente; afastamentos e feriados de fechamento serão preservados. Se o dia estiver bloqueado, confira o bloqueio antes de gerar.", record.date);
+  }
   if (enforceRestSpacing) for (const date of regularRestQuality(input, person, current).longWindows) {
     // Historical drafts stay readable/exportable; every newly generated proposal adopts this criterion.
-    issue("CONSECUTIVE_REST_LIMIT", "Há três folgas comuns seguidas. Gere uma nova proposta para distribuí-las; bloqueios e afastamentos serão preservados.", date, input.restRulesVersion === 1 ? "ERROR" : "WARNING");
+    issue("CONSECUTIVE_REST_LIMIT", "Há três folgas comuns seguidas. Gere uma nova proposta para distribuí-las; bloqueios e afastamentos serão preservados.", date, (input.restRulesVersion ?? 0) >= 1 ? "ERROR" : "WARNING");
   }
   if (!untimed && !person.shiftIds.length) issue("EMPLOYEE_SHIFT_PENDING", "Nenhum horário de planejamento definido. Use a configuração em lote da filial ou mantenha este registro fora da geração.", undefined, "PENDING");
   if (person.scheduleMode === "MISSING") issue("MISSING_SCHEDULE", "Horário não informado: presença e folgas podem ser simuladas, mas horas, intervalos e cobertura horária não foram verificados. Informe um horário ou confirme explicitamente o modo sem controle de horário antes da publicação.", undefined, "PENDING");

@@ -5,6 +5,7 @@ import { allowedBranches, branchPermission, escalaActor, requireEscalaPermission
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import { validateEscala } from "./validation";
 import { publishedPlanningContext } from "./continuity";
+import { generationScenarioBasis } from "./hours-reference";
 
 const mocks = vi.hoisted(() => ({
   workspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
@@ -26,6 +27,15 @@ function input(): EscalaInput {
     assignments: Array.from({ length: 7 }, (_, index) => ({ employeeId: "e1", date: new Date(Date.UTC(2026, 9, 26 + index)).toISOString().slice(0, 10), kind: index < 5 ? "WORK" as const : "OFF" as const, ...(index < 5 ? { shiftId: "day" } : {}) })),
   };
 }
+/** Complete v2 proposal: Thursday/Sunday rest, Saturday work, unchanged manual staffing minima. */
+function generatedInput(): EscalaInput {
+  const value = input();
+  value.assignments = value.assignments.map(day => day.date === "2026-10-29" ? { employeeId: day.employeeId, date: day.date, kind: "OFF" as const }
+    : day.date === "2026-10-31" ? { ...day, kind: "WORK" as const, shiftId: "day" } : day);
+  value.demands = value.demands.map(demand => ({ ...demand, minimum: demand.date === "2026-10-29" || demand.date === "2026-11-01" ? 0 : 1 }));
+  return value;
+}
+
 function row(overrides = {}) { return { id: "w1", tenantId: actor.tenantId, branchCode: "02", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01", revision: 1, status: "DRAFT", updatedAt: new Date("2026-10-26T12:00:00Z"), ...overrides }; }
 function version(value = input(), revision = 1, status = "DRAFT") { return { input: value, revision, status, createdAt: row().updatedAt }; }
 
@@ -58,10 +68,67 @@ beforeEach(() => {
   mocks.peers.mockResolvedValue([]);
   mocks.advisory.mockResolvedValue(1);
   mocks.transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({ escalaWorkspace: { ...mocks.workspace, findMany: mocks.peers }, escalaRevision: mocks.revision, auditLog: mocks.audit, $executeRaw: mocks.advisory }));
-  mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments, wallTimeSeconds: 0.1, message: "Proposta viável" });
+  mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: generatedInput().assignments, wallTimeSeconds: 0.1, message: "Proposta viável" });
 });
 
 describe("canonical scheduling branch service", () => {
+  it("permits internal publication with unconfirmed compensation while preserving the configured flag", async () => {
+    const value = input(); value.simulation = false; value.policy.compensationAuthorized = false;
+    useCurrent(value);
+    const saved = await saveEscala(actor, "w1", 1, value, true);
+    expect(saved.status).toBe("PUBLISHED");
+    expect(saved.validation.readyToPublish).toBe(true);
+    expect(saved.validation.issues).toContainEqual(expect.objectContaining({ code: "COMPENSATION_REQUIRED", severity: "WARNING" }));
+    expect(saved.input.policy.compensationAuthorized).toBe(false);
+    expect(mocks.revision.create.mock.calls[0][0].data.input.policy.compensationAuthorized).toBe(false);
+  });
+  it("prepares and saves real hours references without a roster or a solver request", async () => {
+    const value = input(); value.generationMode = "HOURS_ONLY"; value.needsRegeneration = true;
+    value.assignments = [{ employeeId: "e1", date: value.startDate, kind: "ABSENCE", locked: true }];
+    useCurrent(value);
+    const generated = await generateEscala(actor, "w1", 1);
+    expect(mocks.solve).not.toHaveBeenCalled();
+    expect(generated.proposalInput.assignments).toEqual(value.assignments);
+    expect(generated.preparation.generatedCoverageSlots).toBe(0);
+    expect(generated.validation.valid).toBe(true);
+    expect(generated.validation.readyToPublish).toBe(false);
+    expect(generated.validation.summaries).toEqual([]);
+    const saved = await saveEscala(actor, "w1", 1, generated.proposalInput);
+    expect(saved.input.needsRegeneration).toBe(false);
+    expect(saved.validation.valid).toBe(true);
+    await expect(saveEscala(actor, "w1", 1, generated.proposalInput, true)).rejects.toMatchObject({ code: "ESCALA_NOT_READY" });
+  });
+  it.each(["mode", "hours", "team"])("invalidates prepared references after changing %s with no assignments", async field => {
+    const value = input(); value.generationMode = "HOURS_ONLY"; value.assignments = [];
+    value.generationBasis = generationScenarioBasis(value); useCurrent(value);
+    const next = structuredClone(value);
+    if (field === "mode") next.generationMode = "REST_ONLY";
+    if (field === "hours") next.defaultWeeklyHours = 44;
+    if (field === "team") next.employees.push({ ...next.employees[0], id: "e2", registration: "0002" });
+    const saved = await saveEscala(actor, "w1", 1, next);
+    expect(saved.input.needsRegeneration).toBe(true);
+    expect(saved.input.generationBasis).toBeUndefined();
+  });
+  it("keeps prepared references valid after editing display labels only", async () => {
+    const value = input(); value.generationMode = "HOURS_ONLY"; value.assignments = [];
+    value.generationBasis = generationScenarioBasis(value); useCurrent(value);
+    const next = structuredClone(value); next.branchName = "Título revisado";
+    next.employees[0].name = "Pessoa de teste"; next.shifts[0].name = "Referência revisada";
+    const saved = await saveEscala(actor, "w1", 1, next);
+    expect(saved.input.needsRegeneration).not.toBe(true);
+    expect(saved.validation.valid).toBe(true);
+  });
+  it("rejects incomplete HOURS_ONLY baselines before calling the solver", async () => {
+    const value = input(); value.generationMode = "HOURS_ONLY"; value.assignments.pop(); useCurrent(value);
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_HOURS_BASELINE_INCOMPLETE" });
+    expect(mocks.solve).not.toHaveBeenCalled();
+  });
+  it("independently rejects a solver changing HOURS_ONLY work and rest classifications", async () => {
+    const value = input(); value.generationMode = "HOURS_ONLY"; useCurrent(value);
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", message: "Changed", wallTimeSeconds: 1,
+      assignments: value.assignments.map(day => day.date === value.startDate ? { ...day, kind: "OFF" } : day) });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
   it("rejects edited late work even when a caller marks the draft outdated", async () => {
     const before = input();
     const changed = structuredClone(before);
@@ -73,7 +140,8 @@ describe("canonical scheduling branch service", () => {
   });
 
   it("saves a reduced closing as an outdated draft, permits unlocking and refuses publication until corrected", async () => {
-    const before = input();
+    const before = generatedInput();
+    before.demands.push(...dateRange(before.startDate, before.endDate).map(date => ({ id: `outside-morning-${date}`, date, sector: "Reposição", start: 0, end: 1020, minimum: 0 })));
     before.assignments[0].locked = true;
     useCurrent(before);
     const changed = structuredClone(before);
@@ -91,8 +159,14 @@ describe("canonical scheduling branch service", () => {
     const corrected = structuredClone(saved.input);
     corrected.shifts[0].segments = corrected.shifts[0].segments.map(segment => ({ ...segment, start: segment.start - 24, end: segment.end - 24 }));
     corrected.needsRegeneration = false;
-    corrected.demands = corrected.demands.map(demand => ({ ...demand, start: demand.start - 24, end: demand.end - 24 }));
-    const result = await saveEscala(actor, "w1", 1, corrected, true);
+    corrected.demands = corrected.demands.map(demand => demand.minimum > 0 ? { ...demand, start: demand.start - 24, end: demand.end - 24 } : demand);
+    const correctedDraft = await saveEscala(actor, "w1", 1, corrected);
+    expect(correctedDraft.input.needsRegeneration).toBe(true); // A caller-supplied false flag does not certify preparation.
+    useCurrent(correctedDraft.input);
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: corrected.assignments, wallTimeSeconds: 0.1, message: "Verified corrected clocks" });
+    const generated = await generateEscala(actor, "w1", 1);
+    expect(generated.proposalInput.needsRegeneration).toBe(false);
+    const result = await saveEscala(actor, "w1", 1, generated.proposalInput, true);
     expect(result.status).toBe("PUBLISHED");
     expect(result.validation.readyToPublish).toBe(true);
   });
@@ -150,7 +224,7 @@ describe("canonical scheduling branch service", () => {
   });
 
   it("persists REST_ONLY and generates the fixed-reference preview without another save", async () => {
-    const value = input(); value.generationMode = "REST_ONLY";
+    const value = generatedInput(); value.generationMode = "REST_ONLY";
     value.shifts.push({ ...structuredClone(value.shifts[0]), id: "other" });
     value.employees[0].shiftIds.push("other");
     const saved = await saveEscala(actor, "w1", 1, value);
@@ -165,7 +239,7 @@ describe("canonical scheduling branch service", () => {
   });
 
   it("rejects a solver clock substitution on a free REST_ONLY day but allows its locked exception", async () => {
-    const value = input(); value.generationMode = "REST_ONLY";
+    const value = generatedInput(); value.generationMode = "REST_ONLY";
     value.demands = [];
     value.shifts.push({ ...structuredClone(value.shifts[0]), id: "other",
       segments: value.shifts[0].segments.map(part => ({ ...part, start: part.start + 30, end: part.end + 30 })) });
@@ -657,17 +731,18 @@ describe("Escalas revision service", () => {
     expect(() => preserveLockedAssignments(previous, previous)).not.toThrow();
   });
   it("generates a preview and revalidates it without persisting", async () => {
+    useCurrent(generatedInput());
     const result = await generateEscala(actor, "w1", 1);
     expect(result.validation.valid).toBe(true);
     expect(result.validation.readyToPublish).toBe(false);
     expect(result.validation.issues.some(issue => issue.code === "COVERAGE_REVIEW_PENDING")).toBe(true);
-    expect(result.proposalInput.assignments).toEqual(input().assignments);
+    expect(result.proposalInput.assignments).toEqual(generatedInput().assignments);
     expect(mocks.transaction).not.toHaveBeenCalled();
     mocks.solve.mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 1, message: "Prazo encerrado" });
     const unfinished = await generateEscala(actor, "w1", 1);
     expect(unfinished.proposalInput.simulation).toBe(true);
-    expect(unfinished.proposalInput.assignments).toEqual(input().assignments);
-    expect(unfinished.proposalInput.demands.filter(demand => demand.estimated !== true)).toEqual(input().demands);
+    expect(unfinished.proposalInput.assignments).toEqual(generatedInput().assignments);
+    expect(unfinished.proposalInput.demands.filter(demand => demand.estimated !== true)).toEqual(generatedInput().demands);
   });
   it("rejects a generated response when another editor changed the revision", async () => {
     mocks.revision.findUnique.mockResolvedValueOnce(version()).mockResolvedValueOnce(version(input(), 2));
@@ -701,7 +776,7 @@ describe("Escalas revision service", () => {
     expect(mocks.solve).not.toHaveBeenCalled();
   });
   it("generates rest rotation for an untimed manager without requiring a fictitious shift", async () => {
-    const value = input();
+    const value = generatedInput();
     value.employees[0] = { ...value.employees[0], scheduleMode: "UNTIMED", shiftIds: [] };
     value.shifts = []; value.demands = [];
     value.assignments = value.assignments.map((item) => ({ employeeId: item.employeeId, date: item.date, kind: item.kind === "WORK" ? "DUTY" : item.kind }));
@@ -725,17 +800,22 @@ describe("Escalas revision service", () => {
     useCurrent(cct);
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_CCT_HOLIDAY_REST", status: 422 });
     const extended = input(); extended.policy.compensationAuthorized = false;
+    extended.assignments = extended.assignments.map(day => day.date === "2026-10-29" ? { employeeId: day.employeeId, date: day.date, kind: "OFF" as const }
+      : day.date === "2026-10-31" ? { ...day, kind: "WORK" as const, shiftId: "day" } : day);
+    extended.demands = extended.demands.map(demand => ({ ...demand, minimum: demand.date === "2026-10-29" || demand.date === "2026-11-01" ? 0 : 1 }));
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: extended.assignments, wallTimeSeconds: 0.1, message: "Synthetic valid v2 proposal" });
     useCurrent(extended);
     const proposal = await generateEscala(actor, "w1", 1);
     expect(proposal.proposalInput.simulation).toBe(true);
     expect(proposal.proposalInput.policy.compensationAuthorized).toBe(false);
     expect(proposal.validation.valid).toBe(true);
     expect(proposal.validation.readyToPublish).toBe(false);
-    expect(proposal.validation.issues.some(issue => issue.code === "COMPENSATION_REQUIRED" && issue.severity === "PENDING")).toBe(true);
+    expect(proposal.validation.issues).toContainEqual(expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING", severity: "PENDING" }));
+    expect(proposal.validation.issues.some(issue => issue.code === "COMPENSATION_REQUIRED" && issue.severity === "WARNING")).toBe(true);
     expect(mocks.solve).toHaveBeenCalledOnce();
   });
   it("does not misclassify unsupported non-worked holidays as a staffing impossibility", async () => {
-    const holiday = input(); holiday.policy.holidayRestAllowed = false; holiday.policy.holidayDates = ["2026-10-28"];
+    const holiday = generatedInput(); holiday.policy.holidayRestAllowed = false; holiday.policy.holidayDates = ["2026-10-28"];
     mocks.revision.findUnique.mockResolvedValue(version(holiday));
     const proposal = await generateEscala(actor, "w1", 1);
     expect(proposal.proposalInput.policy.authorizedHolidayDates).toEqual([]);
@@ -743,14 +823,20 @@ describe("Escalas revision service", () => {
     expect(proposal.validation.readyToPublish).toBe(false);
     expect(mocks.solve).toHaveBeenCalledOnce();
   });
-  it("cannot publish a support simulation whose authorizations are still pending", async () => {
+  it("permits internal publication with documentary warnings but still rejects operational violations", async () => {
     const pending = { ...input(), simulation: true };
     pending.policy.compensationAuthorized = false;
     useCurrent(pending);
-    await expect(saveEscala(actor, "w1", 1, pending, true)).rejects.toMatchObject({ status: 422, code: "ESCALA_NOT_READY" });
-    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
-    expect(mocks.revision.create).not.toHaveBeenCalled();
-    expect(mocks.audit.create).not.toHaveBeenCalled();
+    const saved = await saveEscala(actor, "w1", 1, pending, true);
+    expect(saved.status).toBe("PUBLISHED");
+    expect(saved.input.policy.compensationAuthorized).toBe(false);
+    expect(saved.validation.issues).toContainEqual(expect.objectContaining({ code: "COMPENSATION_REQUIRED", severity: "WARNING" }));
+    const writes = mocks.workspace.updateMany.mock.calls.length;
+    const invalid = structuredClone(pending); invalid.policy.dailyLimitMinutes = 480;
+    await expect(saveEscala(actor, "w1", 1, invalid, true)).rejects.toMatchObject({ status: 422, code: "ESCALA_NOT_READY" });
+    expect(mocks.workspace.updateMany).toHaveBeenCalledTimes(writes);
+    expect(mocks.revision.create).toHaveBeenCalledTimes(1);
+    expect(mocks.audit.create).toHaveBeenCalledTimes(1);
   });
   it("never returns a hard-invalid solved proposal for application", async () => {
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments.map((item) => ({ employeeId: item.employeeId, date: item.date, kind: "OFF" })), wallTimeSeconds: 0.1, message: "Resposta inconsistente" });
@@ -758,7 +844,7 @@ describe("Escalas revision service", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
   it("clears the persisted regeneration marker only for a successful verified proposal", async () => {
-    const stale = { ...input(), needsRegeneration: true };
+    const stale = { ...generatedInput(), needsRegeneration: true };
     useCurrent(stale);
     const completed = await generateEscala(actor, "w1", 1);
     expect(completed.proposalInput.needsRegeneration).toBe(false);

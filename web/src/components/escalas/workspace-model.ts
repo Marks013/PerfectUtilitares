@@ -137,7 +137,7 @@ export function newEmployee(hours: WeeklyHours, shiftId?: string | string[]): Es
 /** Resolve legacy branch references before changing the selected branch target. */
 export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours): EscalaInput {
   if (input.defaultWeeklyHours === hours) return input;
-  return { ...input, defaultWeeklyHours: hours, mixed42Sectors: undefined,
+  return { ...input, defaultWeeklyHours: hours, needsRegeneration: true,
     employees: input.employees.map((person) => ({ ...person, ...planningWeeklyHours(person, input.defaultWeeklyHours, hours) })),
     demands: input.demands.filter((demand) => !demand.estimated),
   };
@@ -147,7 +147,7 @@ export function changeBranchWeeklyHours(input: EscalaInput, hours: WeeklyHours):
 export function changeGenerationMode(input: EscalaInput, generationMode: NonNullable<EscalaInput["generationMode"]>): EscalaInput {
   if ((input.generationMode ?? "DAYS_AND_HOURS") === generationMode) return input;
   return { ...input, generationMode,
-    needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
+    needsRegeneration: input.needsRegeneration || input.assignments.length > 0 || generationMode === "HOURS_ONLY",
     demands: input.demands.filter(demand => demand.estimated !== true),
   };
 }

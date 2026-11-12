@@ -51,6 +51,9 @@ def leadership_objective(model, data, employees, dates, work, values):
             if available:
                 model.add(sum(available) == 0).only_enforce_if(missing)
             remember(model, values, missing, int(present == 0))
+            # Preserve known leadership on declared peaks before any soft phase.
+            if weight == PRIORITY['HIGH'] and present:
+                model.add(missing == 0)
             terms.append(weight * missing)
             checks.append((sector, day, weight, missing))
     return terms, checks

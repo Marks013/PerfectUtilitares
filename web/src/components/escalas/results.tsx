@@ -2,9 +2,12 @@
 
 import { memo, useMemo, useRef, useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
+import { analyzeCoverage, type CoverageAnalysisSlice, type CoverageDemandMetrics } from "@/lib/escalas/coverage-analysis";
+import { isHoursReferenceOnly } from "@/lib/escalas/hours-reference";
 import { summarizeCoverageGaps } from "@/lib/escalas/coverage-summary";
 import { sectorPresenceGaps } from "@/lib/escalas/coverage-presence";
 import { LeadershipSummary } from "./leadership-summary";
+import { RestDistributionSummary, type RestDistributionSearch } from "./rest-distribution-summary";
 import { weeklyCapacityCaveat, weeklySectorCapacity } from "@/lib/escalas/weekly-capacity";
 import { WeeklyCapacity } from "./weekly-capacity";
 import { monthlySundays } from "@/lib/escalas/monthly-sundays";
@@ -90,16 +93,19 @@ function Changes({ input, assignments }: { input: EscalaInput; assignments: Esca
 
 type ResolveReview = (target: ReviewTarget, context?: EscalaRecoveryContext) => void;
 
-function CoverageDayDetails({ rows, onResolve }: { rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; onResolve?: ResolveReview }) {
+function CoverageDayDetails({ rows, sector, estimatedAvailable, onResolve }: { rows: CoverageAnalysisSlice[]; sector: string; estimatedAvailable: boolean; onResolve?: ResolveReview }) {
   const [page, setPage] = useState(0);
-  const ordered = [...rows].sort((a, b) => a.start - b.start || a.end - b.end || Number(a.estimated) - Number(b.estimated));
+  const ordered = rows.flatMap(slice => ([{ reference: slice.confirmed, estimated: false }, { reference: slice.estimated, estimated: true }] as const)
+    .flatMap(({ reference, estimated }) => reference && reference.missing !== null && (!estimated || estimatedAvailable) ? [{ slice, reference, estimated }] : []))
+    .sort((a, b) => a.slice.start - b.slice.start || a.slice.end - b.slice.end || Number(a.estimated) - Number(b.estimated));
   const pages = Math.max(1, Math.ceil(ordered.length / 12)), current = Math.min(page, pages - 1);
   return <div className="space-y-3">
+    {!ordered.length && <p>Detalhes de cobertura indisponíveis para este dia.</p>}
     <ul className="divide-y divide-[color:var(--app-border)] text-sm">
-      {ordered.slice(current * 12, current * 12 + 12).map((row, index) => <li key={JSON.stringify([row.start, row.end, row.roles, index])} className="space-y-1 py-3">
-        <p className="tabular-nums"><strong>{clock(row.start)}–{clock(row.end)}</strong> · {row.present} trabalhando / {row.minimum} {row.estimated ? "na estimativa" : "no mínimo informado"}{row.present === 0 ? " · Sem presença nesta faixa" : ""}</p>
-        {row.roles.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir funções nesta faixa</summary><ul>{row.roles.map(role => <li key={JSON.stringify([role.role, role.estimated])}>{role.role}: {role.present} trabalhando / {role.minimum} {role.estimated ? "na estimativa" : "no mínimo informado"}.</li>)}</ul></details>}
-        {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.date, start: row.start })}>Conferir este setor e horário</button>}
+      {ordered.slice(current * 12, current * 12 + 12).map(({ slice, reference, estimated }, index) => <li key={JSON.stringify([slice.start, slice.end, estimated, index])} className="space-y-1 py-3">
+        <p className="tabular-nums"><strong>{clock(slice.start)}–{clock(slice.end)}</strong> · {slice.presentKnown} trabalhando / {reference.required} {estimated ? "na estimativa" : "no mínimo informado"}{slice.presentKnown === 0 ? " · Sem presença nesta faixa" : ""}</p>
+        {reference.roles.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir funções nesta faixa</summary><ul>{reference.roles.map(role => <li key={role.role}>{role.role}: {role.present} trabalhando / {role.required} {estimated ? "na estimativa" : "no mínimo informado"}.</li>)}</ul></details>}
+        {onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector, date: slice.date, start: slice.start })}>Conferir este setor e horário</button>}
       </li>)}
     </ul>
     {pages > 1 && <div className={styles.actions}><button type="button" className={buttonClass} disabled={!current} onClick={() => setPage(current - 1)}>Anterior</button><span className="text-sm">Faixas {current * 12 + 1}–{Math.min(ordered.length, (current + 1) * 12)} de {ordered.length}</span><button type="button" className={buttonClass} disabled={current + 1 === pages} onClick={() => setPage(current + 1)}>Próxima</button></div>}
@@ -119,8 +125,18 @@ function PresenceGaps({ rows, onResolve }: { rows: ReturnType<typeof sectorPrese
   </div>;
 }
 
-function CoverageGaps({ input, rows, emptySectors = [], onResolve }: { input: EscalaInput; rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; emptySectors?: ReturnType<typeof sectorPresenceGaps>; onResolve?: ResolveReview }) {
+function coverageHours(minutes: number | null) {
+  return minutes === null ? "indisponível" : `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(minutes / 60)} h`;
+}
+
+function CoverageMeasure({ label, value }: { label: string; value: CoverageDemandMetrics | null }) {
+  if (!value) return null;
+  return <p>{label}: {coverageHours(value.deficitPersonMinutes)} de horas de pessoas faltantes no período · pico simultâneo considerando funções: {value.peakMissing === null ? "indisponível" : `${value.peakMissing} pessoa(s)`} · pico por quantidade de pessoas: {value.peakSectorMissing === null ? "indisponível" : `${value.peakSectorMissing} pessoa(s)`}.</p>;
+}
+
+function CoverageGaps({ input, rows, emptySectors = [], onResolve, referenceOrigin = "PERSISTED" }: { input: EscalaInput; rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; emptySectors?: ReturnType<typeof sectorPresenceGaps>; onResolve?: ResolveReview; referenceOrigin?: "PREPARED" | "PERSISTED" }) {
   const capacities = useMemo(() => weeklySectorCapacity(input), [input]);
+  const analysis = useMemo(() => analyzeCoverage(input, input, { referenceOrigin, details: true }), [input, referenceOrigin]);
   const summaries = useMemo(() => {
     const groups = new Map(summarizeCoverageGaps(rows).map(row => [row.sector, row]));
     for (const row of emptySectors) if (!groups.has(row.sector)) groups.set(row.sector, { sector: row.sector, dates: row.dates, noServiceDates: row.dates, minimumDates: [], hasEstimates: true, peakMissing: 0, peakSectorMissing: 0, hasRoleMismatch: false, windows: [] });
@@ -128,24 +144,37 @@ function CoverageGaps({ input, rows, emptySectors = [], onResolve }: { input: Es
     return [...groups.values()].sort((a, b) => compareSectors(a.sector, b.sector));
   }, [rows, emptySectors, capacities]);
   const [selected, setSelected] = useState<{ sector: string; date: string } | null>(null);
-  if (!summaries.length) return null;
+  const referenceUnavailable = analysis.basis.status === "MISSING" || analysis.basis.status === "STALE" || analysis.basis.needsRegeneration;
+  if (!summaries.length || isHoursReferenceOnly(input)) return null;
   return <div className={styles.reviewGroup}>
     <div><h3 className="font-semibold">Capacidade e desfalques por setor</h3><p className={styles.muted}>{weeklyCapacityCaveat}</p></div>
+    {analysis.dates.length > 0 && <p className={styles.muted}>Período analisado: {displayDate(analysis.dates[0])} a {displayDate(analysis.dates[analysis.dates.length - 1])}. As horas de trabalho do período são diferentes da capacidade nominal semanal abaixo.</p>}
+    {referenceUnavailable && <p className={styles.muted}>Referência de cobertura indisponível ou desatualizada. Gere uma proposta atualizada para conferir as estimativas.</p>}
     <ul className={styles.coverageGapList}>
       {summaries.map(row => {
         const open = selected?.sector === row.sector;
         const date = open && row.dates.includes(selected.date) ? selected.date : row.dates[0];
+        const actual = analysis.sectors.find(sector => sector.sector === row.sector);
+        const metrics = [actual?.confirmed, actual?.estimated].filter(value => value != null);
+        const noShortage = !referenceUnavailable && actual?.status === "READY" && metrics.length > 0
+          && metrics.every(value => value.deficitPersonMinutes === 0);
         return <li key={row.sector} className={styles.reviewNotice} data-severity={row.minimumDates.length ? "ERROR" : "WARNING"}>
           <div className={styles.header}><h4 className="font-semibold">{row.sector || "Setor não informado"}</h4><span className={styles.statusTag}>{row.minimumDates.length ? "Rever mínimo informado" : row.dates.length ? "Referência estimada" : "Capacidade nominal"}</span></div>
           <WeeklyCapacity capacity={capacities.find(capacity => capacity.sector === row.sector)} />
+          {actual && <div className="space-y-1 text-sm">
+            <p>Horas de trabalho com horário no período: {coverageHours(actual.availablePersonMinutes)}{actual.status === "PARTIAL" ? " · informação parcial" : ""}.</p>
+            {actual.withoutClockPeople > 0 && <p>{actual.withoutClockPeople} pessoa(s) sem horário informado são apresentadas separadamente.</p>}
+            {!analysis.basis.needsRegeneration && <><CoverageMeasure label="Necessidade informada" value={actual.confirmed} /><CoverageMeasure label="Referência estimada, não confirmada" value={actual.estimated} /></>}
+          </div>}
+          {noShortage && <p className={styles.muted}>Nenhum desfalque detectado nas faixas com referência disponível.</p>}
           {row.dates.length > 0 ? <>
-          <PresenceGaps rows={emptySectors.filter(item => item.sector === row.sector)} onResolve={onResolve} />
-          <p>{row.dates.length} dia(s) com ponto de atenção{row.noServiceDates.length ? ` · ${row.noServiceDates.length} dia(s) sem presença em alguma faixa` : ""}.</p>
-          <ul className="space-y-1 text-sm tabular-nums">{row.windows.map(window => <li key={window.start + ":" + window.end}><strong>{clock(window.start)}–{clock(window.end)}</strong> · {window.dates.length} dia(s) · {window.peakSectorMissing ? `até ${window.peakSectorMissing} pessoa(s) abaixo da referência` : "rever a distribuição das funções"}</li>)}</ul>
+          {actual?.unknownPersonDays === 0 && <PresenceGaps rows={emptySectors.filter(item => item.sector === row.sector)} onResolve={onResolve} />}
+          <p>{actual?.status === "READY" ? `${row.dates.length} dia(s) com ponto de atenção.` : "Há informações de cobertura a conferir."}</p>
+          {!analysis.basis.needsRegeneration && <ul className="space-y-1 text-sm tabular-nums">{([{ label: "Necessidade informada", window: actual?.confirmed?.peakWindow }, { label: "Referência estimada", window: referenceUnavailable ? null : actual?.estimated?.peakWindow }]).map(({ label, window }) => window && <li key={label}>{label}: {displayDate(window.date)} · {clock(window.start)}–{clock(window.end)} · pico de {window.missing} pessoa(s).</li>)}</ul>}
           <p className={styles.muted}>Compare com a necessidade real e reveja entradas, intervalos e folgas. Não significa contratar a quantidade indicada.</p>
           <div className={styles.actions}><button type="button" className={buttonClass} aria-expanded={open} onClick={() => setSelected(open ? null : { sector: row.sector, date })}>{open ? "Fechar detalhes" : "Consultar dias e horários"}<span className="sr-only"> de {row.sector}</span></button>{onResolve && <button type="button" className={buttonClass} onClick={() => onResolve("coverage", { sector: row.sector, date: row.windows[0]?.dates[0] ?? row.dates[0], start: row.windows[0]?.start })}>Ajustar este setor<span className="sr-only"> {row.sector}</span></button>}</div>
-          {open && <div className="space-y-3 border-t border-[color:var(--app-border)] pt-3"><Field label={`Dia para conferir em ${row.sector}`}>{id => <select id={id} className={controlClass} value={date} onChange={event => setSelected({ sector: row.sector, date: event.target.value })}>{row.dates.map(day => <option key={day} value={day}>{displayDate(day)}</option>)}</select>}</Field><CoverageDayDetails key={row.sector + date} rows={rows.filter(gap => gap.sector === row.sector && gap.date === date)} onResolve={onResolve} /></div>}
-          </> : <p className={styles.muted}>Nenhum desfalque detectado nas faixas com referência disponível.</p>}
+          {open && <div className="space-y-3 border-t border-[color:var(--app-border)] pt-3"><Field label={`Dia para conferir em ${row.sector}`}>{id => <select id={id} className={controlClass} value={date} onChange={event => setSelected({ sector: row.sector, date: event.target.value })}>{row.dates.map(day => <option key={day} value={day}>{displayDate(day)}</option>)}</select>}</Field><CoverageDayDetails key={row.sector + date} sector={row.sector} rows={analysis.basis.needsRegeneration ? [] : (actual?.details ?? []).filter(slice => slice.date === date)} estimatedAvailable={!referenceUnavailable} onResolve={onResolve} /></div>}
+          </> : !noShortage && <p className={styles.muted}>Detalhes de cobertura indisponíveis para este setor.</p>}
         </li>;
       })}
     </ul>
@@ -182,7 +211,7 @@ function useActiveDiagnostics(input: EscalaInput, issues: EscalaValidation["issu
 }
 
 export const Proposals = memo(function Proposals({ input: nextInput, generated: nextGenerated, disabled, onGenerated, onDismiss, active = true }: {
-  input: EscalaInput; generated: { result: { status: string; message: string; optimization?: EscalaSolveResult["optimization"] }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
+  input: EscalaInput; generated: { result: { status: string; message: string; optimization?: EscalaSolveResult["optimization"]; restQuality?: { search: RestDistributionSearch } }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
   disabled: boolean; onGenerated: () => void; onDismiss: () => void; active?: boolean;
 }) {
   const { input, generated } = useActiveSnapshot({ input: nextInput, generated: nextGenerated }, active);
@@ -193,7 +222,8 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
     <LeadershipSummary counts={generated.result.optimization?.leadership} />
-    {generated.proposalInput.employees.length > 0 && <details><summary className={styles.disclosureTrigger}>Conferir capacidade e desfalques por setor</summary><div className={styles.reviewScroller}><CoverageGaps input={generated.proposalInput} rows={diagnostics.coverageGroups} emptySectors={emptySectors} /></div></details>}
+    <RestDistributionSummary input={generated.proposalInput} previousInput={input} search={generated.result.restQuality?.search} />
+    {generated.proposalInput.employees.length > 0 && !isHoursReferenceOnly(generated.proposalInput) && <details><summary className={styles.disclosureTrigger}>Conferir capacidade e desfalques por setor</summary><div className={styles.reviewScroller}><CoverageGaps input={generated.proposalInput} rows={diagnostics.coverageGroups} emptySectors={emptySectors} referenceOrigin="PREPARED" /></div></details>}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
@@ -222,6 +252,7 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
   return <section className={panelClass} aria-labelledby="escala-validation-title">
     <div className={styles.header}><h2 id="escala-validation-title" className={styles.sectionTitle}>Central de revisão</h2><span className={styles.muted}>{errors.length} erro(s) · {reviews.length} aviso(s)</span></div>
     <p className="text-sm">{errors.length ? "Há impedimentos técnicos. Escolha uma ocorrência para conferir a correção sugerida." : "Nenhum impedimento técnico detectado. Avisos e estimativas ficam separados para consulta opcional."}</p>
+    <RestDistributionSummary input={input} />
     <fieldset className={styles.reviewTabs}><legend className="sr-only">Tipo de revisão</legend>{menus.map(menu => <button type="button" key={menu.id} className={buttonClass} aria-pressed={view === menu.id} aria-controls="escala-review-content" onClick={() => { setView(menu.id); onSectionChange?.(menu.id); }}>{menu.label} ({menu.count})</button>)}</fieldset>
     <section id="escala-review-content" className={styles.reviewScroller} aria-label={(menus.find(menu => menu.id === view)?.label ?? "Revisão") + " da escala"}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the review region.

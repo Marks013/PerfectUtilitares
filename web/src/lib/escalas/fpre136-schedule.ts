@@ -35,3 +35,24 @@ export function classifyFpre136Schedule(source: { report: "FPRE136"; weekday: un
   return { mode: "TIMED", weekday: weekday.text, saturday: saturday.text,
     paidPeriods: periods.map(([start, end]) => `${start}-${end}`), warnings };
 }
+
+/** Principal weekday duration only; a shorter Saturday never defines a reduced weekday. */
+export function fpre136WeekdayMinutes(weekday: string): number | null {
+  const parts = weekday.split(/\s*\/\s*/);
+  if (!parts.length || parts.length > 2) return null;
+  const values: string[] = [];
+  for (const part of parts) {
+    const match = /^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/.exec(part.trim());
+    if (!match) return null;
+    values.push(match[1], match[2]);
+  }
+  while (values.length < 4) values.push(zero);
+  try {
+    const classified = classifyFpre136Schedule({ report: "FPRE136", weekday: values, saturday: [zero, zero, zero, zero] });
+    if (classified.mode !== "TIMED") return null;
+    const minute = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+    return classified.paidPeriods.reduce((total, period) => {
+      const [start, end] = period.split("-"); return total + minute(end) - minute(start);
+    }, 0);
+  } catch { return null; }
+}

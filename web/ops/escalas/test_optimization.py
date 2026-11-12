@@ -128,7 +128,7 @@ class SearchContinuationTests(unittest.TestCase):
         result = scheduling.solve(data)
         self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
         phases = result['optimization']['phases']
-        self.assertEqual([phase['objective'] for phase in phases], ['COVERAGE', 'SUNDAY_BALANCE', 'REST_SPACING', 'SATURDAY_BALANCE',
+        self.assertEqual([phase['objective'] for phase in phases], ['COVERAGE', 'REST_SPACING', 'SUNDAY_BALANCE', 'SATURDAY_BALANCE',
             'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED', 'STABILITY', 'PREFERENCES', 'TIE_BREAK'])
         self.assertTrue(all(phase['status'] in ('OPTIMAL', 'FEASIBLE') for phase in phases))
         self.assertEqual(len(result['assignments']), 21)

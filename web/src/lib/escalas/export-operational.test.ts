@@ -5,6 +5,8 @@ import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import { newInput, newEmployee } from "@/components/escalas/workspace-model";
 import type { EscalaWorkspace } from "./types";
 import { exportEscalaPdf, exportEscalaXlsx } from "./export";
+import { coverageBasis } from "./automatic-coverage";
+import { exportedDateISO } from "./export-test-utils";
 
 function scenario(): EscalaWorkspace {
   const input = newInput("08", "Loja sintética", "2026-11", 42);
@@ -24,6 +26,7 @@ function scenario(): EscalaWorkspace {
     { employeeId: "r", date: "2026-11-02", kind: "WORK", shiftId: "a" },
   ];
   input.demands = [{ id: "d", date: "2026-11-02", sector: "Padaria", start: 480, end: 1080, minimum: 1, estimated: true }];
+  input.coverageBasis = coverageBasis(input);
   return { id: "proof", revision: 9, status: "DRAFT", canEdit: true, canPublish: false, updatedAt: "2026-10-29", input,
     validation: { valid: true, readyToPublish: false, summaries: [], minimumCoverageMargin: null,
       issues: [{ code: "HISTORY_UNVERIFIED", severity: "WARNING", message: "Informação administrativa de suporte" }] } };
@@ -187,21 +190,24 @@ describe("lean operational files", () => {
     expect(schedule).not.toMatch(/02\/11|03\/11|Dia\(s\)|Folga/);
     expect(text).not.toMatch(/Conferência da proposta|Informação administrativa|certifica conformidade|Histórico anterior/);
   }, 20000);
-  it("keeps a compact sector summary with exact priority windows in both files", async () => {
+  it("keeps a compact sector summary with the central peak occurrence in both files", async () => {
     const source = scenario(), rows = await readSheet(Buffer.from(exportEscalaXlsx(source)), "Desfalques");
     expect(rows.slice(4)).toHaveLength(1);
     expect(rows[4][0]).toBe("Padaria");
-    expect(rows[4][1]).toBe("02/11");
-    expect(rows[4][3]).toBe("12:00-13:00 · 1 dia(s)\n17:24-18:00 · 1 dia(s)");
-    expect(rows[4][4]).toContain("Até 1 pessoa(s)");
+    expect(rows[4][1]).toBe("Estimada");
+    expect(rows[4][2]).toBe(1);
+    expect(rows[4]).toHaveLength(8);
+    expect(exportedDateISO(rows[4][3])).toBe("2026-11-02");
+    expect(rows[4][4]).toBe("12:00-13:00");
     const text = await pdfText(await exportEscalaPdf(source));
     expect(text).not.toContain("Faixa analisada:");
-    expect(text).toContain("Faixas prioritárias");
+    expect(text).toContain("Dia do maior desfalque");
+    expect(text).toContain("Horário do maior desfalque");
     expect(text).toContain("12:00-13:00");
-    expect(text).toContain("Estimativa automática");
+    expect(text).toContain("Estimada");
   }, 20000);
 
-  it("groups accented sectors, increasing hours and related roles without duplicating a daily occurrence", async () => {
+  it("keeps accented sectors grouped without turning an unknown TIMED cohort into numeric peaks", async () => {
     const source = scenario();
     source.input.employees = []; source.input.assignments = []; source.input.shifts = [];
     source.input.demands = [
@@ -213,22 +219,20 @@ describe("lean operational files", () => {
       ]),
       { id: "duplicate", date: "2026-11-02", sector: "Açougue", role: "Auxiliar", start: 480, end: 540, minimum: 1, estimated: true },
     ];
+    source.input.coverageBasis = coverageBasis(source.input);
     const before = structuredClone(source);
     const rows = (await readSheet(Buffer.from(exportEscalaXlsx(source)), "Desfalques")).slice(4);
     expect(rows.map(row => row[0])).toEqual(["Açougue", "Hortifrúti"]);
-    expect(rows[0][1]).toBe("02/11–03/11, 09/11");
-    expect(rows[0][2]).toBe("Em alguma faixa: 02/11–03/11, 09/11");
-    expect(rows[0][3]).toBe("08:00-09:00 · 3 dia(s)\n14:00-15:00 · 1 dia(s)");
-    expect(rows[0][4]).toContain("Até 3 pessoa(s)");
-    expect(rows[1][4]).toContain("Até 1 pessoa(s)");
+    expect(rows[0][1]).toBe("Estimada · parcial");
+    expect(rows[0].slice(2, 6)).toEqual(["—", "—", "—", "—"]);
+    expect(rows[1].slice(2, 6)).toEqual(["—", "—", "—", "—"]);
     expect(rows.flat().join(" ")).not.toMatch(/Auxiliar:|Zelador:/);
     const text = await pdfText(await exportEscalaPdf(source, "hours"));
     expect(text.indexOf("Açougue")).toBeLessThan(text.indexOf("Hortifrúti"));
-    expect(text.indexOf("08:00-09:00")).toBeLessThan(text.indexOf("14:00-15:00"));
     expect(text).not.toMatch(/Auxiliar:|Zelador:/);
-    expect(text).toContain("02/11–03/11, 09/11");
+    expect(text).toContain("Estimada · parcial");
     expect(text).not.toContain("Faixa analisada:");
-    expect(text).toContain("Até 3 pessoa(s)");
+    expect(text).not.toContain("Até 3 pessoa(s)");
     expect(text).not.toContain("24 de");
     expect(source).toEqual(before);
   }, 20000);

@@ -4,6 +4,7 @@ import { newEmployee, newInput } from "@/components/escalas/workspace-model";
 import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import { exportEscalaPdf, exportEscalaXlsx } from "./export";
 import type { EscalaWorkspace } from "./types";
+import { exportedDurationMinutes } from "./export-test-utils";
 
 function scenario(): EscalaWorkspace {
   const input = newInput("08", "Loja sintética", "2026-11", 42);
@@ -50,7 +51,7 @@ describe("actual mixed weekly journeys in operational reports", () => {
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(source, "hours")), "Horarios");
     expect(rows[2][0]).toContain("Fechamento da loja: 20:00");
     expect(rows[3]).toContain("Aplicação nas semanas");
-    const short = rows.find(row => row[7] === "08:00"), long = rows.find(row => row[7] === "09:00");
+    const short = rows.find(row => exportedDurationMinutes(row[7]) === 480), long = rows.find(row => exportedDurationMinutes(row[7]) === 540);
     expect(short?.[8]).toContain("02/11–08/11: 3 dias · Seg 02, Qua 04, Qui 05");
     expect(short?.[8]).toContain("09/11–15/11: 2 dias · Seg 09, Qua 11");
     expect(long?.[8]).toContain("02/11–08/11: 2 dias · Ter 03, Sex 06");
@@ -66,9 +67,9 @@ describe("actual mixed weekly journeys in operational reports", () => {
       { employeeId: "p", date: "2026-11-01", kind: "WORK", shiftId: "eight" },
     ];
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(source, "hours")), "Horarios");
-    const actual = rows.find(row => row[7] === "08:00");
+    const actual = rows.find(row => exportedDurationMinutes(row[7]) === 480);
     expect(actual?.[8]).toBe("26/10–01/11: 1 dia · Dom 01");
-    expect(rows.some(row => row[7] === "09:00")).toBe(false);
+    expect(rows.some(row => exportedDurationMinutes(row[7]) === 540)).toBe(false);
     expect(rows.flat().join(" ")).not.toContain("Sáb 31");
   });
   it("does not claim a mixed 42h distribution after the transition to 40h", async () => {
@@ -89,10 +90,10 @@ describe("actual mixed weekly journeys in operational reports", () => {
       { employeeId: "p", date: "2027-12-20", kind: "WORK", shiftId: "eight" },
     ];
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(source, "hours")), "Horarios");
-    const actual = rows.find(row => row[7] === "08:00");
+    const actual = rows.find(row => exportedDurationMinutes(row[7]) === 480);
     expect(actual?.[8]).toContain("06/12–12/12: 1 dia · Seg 06");
     expect(actual?.[8]).toContain("20/12–26/12: 1 dia · Seg 20");
-    expect(rows.some(row => row[7] === "09:00")).toBe(false);
+    expect(rows.some(row => exportedDurationMinutes(row[7]) === 540)).toBe(false);
   });
   it("prints the same weekly dates and 3h meal in bounded A4 PDF cells", async () => {
     const source = scenario(); source.input.storeClosingMinutes = 1260;

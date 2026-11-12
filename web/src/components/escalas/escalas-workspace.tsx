@@ -17,7 +17,8 @@ import { DeletePlan } from "./delete-plan";
 import { SAVE_LABEL } from "./draft-persistence";
 import { Employees } from "./employees";
 import { recoveryArea, revealRecoveryTarget, type EscalaRecoveryContext, type EscalaRecoveryRequest } from "./recovery-navigation";
-import { GenerationModeOption } from "./generation-mode-option";
+import { GenerationModeOption, hasHourReferences } from "./generation-mode-option";
+import { HoursReferencePreview } from "./hours-reference-preview";
 import { ContinuousWorkOption, HoursProposal } from "./hours-proposal";
 import { Mixed42Option } from "./mixed-42-option";
 import { StoreClosingOption } from "./store-closing-option";
@@ -93,8 +94,11 @@ export function EscalasWorkspace() {
   const [reviewSection, setReviewSection] = useState<ReviewSection>();
   const [exportSelection, setExportSelection] = useState<{ workspaceId: string; generationMode: NonNullable<EscalaInput["generationMode"]>; mode: EscalaExportMode } | null>(null);
   const generationMode = input?.generationMode ?? "DAYS_AND_HOURS";
+  const hoursOnly = generationMode === "HOURS_ONLY";
+  const referencesOnly = Boolean(input && hoursOnly && !input.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY"));
+  const tools = referencesOnly ? TOOLS.filter(tool => tool.id !== "coverage") : TOOLS;
   const exportMode = exportSelection?.workspaceId === workspace?.id && exportSelection?.generationMode === generationMode
-    ? exportSelection.mode : generationMode === "REST_ONLY" ? "rest" : "both";
+    ? hoursOnly ? "hours" : exportSelection.mode : hoursOnly ? "hours" : generationMode === "REST_ONLY" ? "rest" : "both";
   const setExportMode = (mode: EscalaExportMode) => {
     setExportSelection({ workspaceId: workspace?.id ?? "", generationMode, mode });
   };
@@ -181,7 +185,7 @@ export function EscalasWorkspace() {
         {AREAS.map((item, index) => <button key={item.id} type="button" aria-current={area === item.id ? "step" : undefined} aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={styles.guidedStep} onClick={() => setArea(item.id)}><span className={styles.stepNumber} aria-hidden="true">{index + 1}</span><span><strong>{item.label}</strong><small>{item.id === "team" ? included ? `${included} colaboradores incluídos` : "Use o relatório da sua equipe" : item.id === "generate" ? `${input.defaultWeeklyHours} horas por semana · modelo 5×2` : hasRoster ? "Escala disponível para conferir" : "Confira antes de baixar os arquivos"}</small></span></button>)}
       </nav>
       <section hidden={area !== "generate"} inert={area !== "generate"} id="escala-area-generate" className={`${panelClass} ${styles.generationPanel}`} aria-labelledby="escala-generate-title">
-        <div><p className={styles.eyebrow}>PASSO 2 · O ALGORITMO FAZ A DISTRIBUIÇÃO</p><h2 id="escala-generate-title" className={styles.sectionTitle}>Escolha a jornada e gere sua escala</h2><p className={styles.muted}>{generationMode === "REST_ONLY" ? "O algoritmo distribui as folgas usando os horários de referência ajustados à jornada. Você revisa antes de aplicar." : "Os horários, as folgas e a cobertura estimada são calculados juntos. Você revisa antes de aplicar."}</p></div>
+        <div><p className={styles.eyebrow}>PASSO 2 · ESCOLHA O RESULTADO</p><h2 id="escala-generate-title" className={styles.sectionTitle}>Escolha a jornada e gere sua proposta</h2><p className={styles.muted}>{hoursOnly ? "Ajusta horários sem redistribuir os dias. Se ainda não há grade, prepara referências de horários para conferência." : generationMode === "REST_ONLY" ? "O algoritmo distribui as folgas usando os horários de referência ajustados à jornada. Você revisa antes de aplicar." : "Os horários, as folgas e a cobertura estimada são calculados juntos. Você revisa antes de aplicar."}</p></div>
         <GenerationModeOption input={input} disabled={!model.canEdit} onChange={model.update} />
         <div className={styles.contextBar}>
           <fieldset disabled={!model.canEdit} className={styles.journeyField}>
@@ -190,7 +194,7 @@ export function EscalasWorkspace() {
           <p className={styles.muted}><strong className="text-[color:var(--app-fg)]">{clock(input.defaultWeeklyHours * 12)}</strong> de trabalho por dia no modelo uniforme, em 5 dias.<br />O intervalo fica à parte. Férias, bloqueios e exceções individuais são preservados.</p>
           <div className={styles.mainActions}>
             {model.dirty && <button type="button" className={buttonClass} disabled={!model.canEdit || model.saveState === "saving"} onClick={model.save}>{["error", "conflict", "invalid"].includes(model.saveState) ? "Tentar salvar" : "Salvar agora"}</button>}
-            <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hasRoster ? "Gerar nova proposta" : generationMode === "REST_ONLY" ? "Gerar folgas" : "Gerar escala e horários"}</button>
+            <button type="button" className={primaryClass} disabled={!model.canEdit || included === 0} onClick={model.generate}>{model.busy ? "Processando…" : hoursOnly ? referencesOnly ? "Gerar referências de horários" : "Gerar proposta de horários" : hasRoster ? "Gerar nova proposta" : generationMode === "REST_ONLY" ? "Gerar folgas" : "Gerar escala e horários"}</button>
           </div>
         </div>
         <StoreClosingOption input={input} disabled={!model.canEdit} onChange={model.update} />
@@ -198,14 +202,14 @@ export function EscalasWorkspace() {
         <Mixed42Option input={input} disabled={!model.canEdit} onChange={model.update} />
         <ContinuousWorkOption input={input} disabled={!model.canEdit} onChange={model.update} />
         <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />
-        {input.employees.length > 0 && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
+        {input.employees.length > 0 && generationMode !== "REST_ONLY" && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
         <button type="button" className={`${buttonClass} ${styles.quietAction}`} onClick={() => resolve("intervals")}>Ajustar pausas de jornadas curtas (opcional)</button>
         {!workspace.canEdit && <p className={styles.muted}>Acesso de consulta nesta filial.</p>}
       </section>
 
-      <details className={styles.optionalTools} open={TOOLS.some(item => item.id === area) || undefined}>
+      <details className={styles.optionalTools} open={tools.some(item => item.id === area) || undefined}>
         <summary className={styles.disclosureTrigger}>Ferramentas e ajustes opcionais</summary>
-        <nav aria-label="Áreas do planejamento" className={styles.actions}>{TOOLS.map(item => <button key={item.id} type="button" aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={`${buttonClass} ${styles.areaTab}`} onClick={() => setArea(item.id)}>{item.label}</button>)}</nav>
+        <nav aria-label="Áreas do planejamento" className={styles.actions}>{tools.map(item => <button key={item.id} type="button" aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={`${buttonClass} ${styles.areaTab}`} onClick={() => setArea(item.id)}>{item.label}</button>)}</nav>
       </details>
 
       {visited.has("team") && <section hidden={area !== "team"} inert={area !== "team"} id="escala-area-team" aria-labelledby="escala-team-title" className={styles.stackSmall}>
@@ -223,20 +227,26 @@ export function EscalasWorkspace() {
 
       {visited.has("roster") && <section hidden={area !== "roster"} inert={area !== "roster"} id="escala-area-roster" className={styles.stackSmall} aria-label="Revisar escala mensal">
         <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />
-        <div><p className={styles.eyebrow}>PASSO 3 · CONFIRA O RESULTADO</p><h2 className={styles.sectionTitle}>Revise a escala e baixe os arquivos</h2><p className={styles.muted}>Confira os horários e as folgas. Para ajustar um dia, selecione a célula na grade.</p></div>
+        <div><p className={styles.eyebrow}>PASSO 3 · CONFIRA O RESULTADO</p><h2 className={styles.sectionTitle}>Revise e baixe os arquivos</h2><p className={styles.muted}>{referencesOnly ? "Confira os horários de referência por setor. Nenhuma presença ou folga foi inventada." : hoursOnly ? "Confira os horários. Os dias de trabalho, folgas e afastamentos foram mantidos." : "Confira os horários e as folgas. Para ajustar um dia, selecione a célula na grade."}</p></div>
         {model.outdated && hasRoster && <div role="status" className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-4 text-sm"><strong>Cenário alterado.</strong> A grade anterior fica visível para comparação, mas precisa ser gerada novamente antes de exportar.</div>}
         <Proposals active={area === "roster"} input={input} generated={model.generated} disabled={!model.canEdit} onGenerated={model.applyGenerated} onDismiss={model.dismissProposals} />
         <div id="escala-roster" tabIndex={-1} className="min-w-0">
-          {hasRoster ? <Roster active={area === "roster"} key={workspace.id} input={input} review={reviewContext?.target === "roster" ? reviewContext : undefined} mode={exportMode} onModeChange={setExportMode} onReviewEmployee={employeeId => resolve("team", { employeeId })} onReviewCoverage={() => { setReviewSection("coverage"); setArea("review"); }} validation={model.validation} disabled={!model.canEdit} canUnlock={workspace.canPublish} onUndo={model.undoRoster} onChange={model.update} /> : !model.generated && <div className={`${panelClass} ${styles.emptyState}`}><h2 className={styles.sectionTitle}>Sua escala mensal aparecerá aqui</h2><p className="mt-2 text-sm text-[color:var(--app-muted)]">{included ? "Escolha a jornada e gere a proposta. O algoritmo prepara os horários, as folgas e a cobertura estimada." : "Importe a equipe para começar."}</p>{!included && <button type="button" className={`${buttonClass} mt-4`} onClick={() => setArea("team")}>Importar equipe</button>}</div>}
+          {referencesOnly && hasHourReferences(input) ? <HoursReferencePreview input={input} /> : hasRoster ? <Roster active={area === "roster"} key={workspace.id} input={input} review={reviewContext?.target === "roster" ? reviewContext : undefined} mode={exportMode} onModeChange={setExportMode} onReviewEmployee={employeeId => resolve("team", { employeeId })} onReviewCoverage={() => { setReviewSection("coverage"); setArea("review"); }} validation={model.validation} disabled={!model.canEdit} canUnlock={workspace.canPublish} onUndo={model.undoRoster} onChange={model.update} /> : !model.generated && <div className={`${panelClass} ${styles.emptyState}`}><h2 className={styles.sectionTitle}>Seu resultado aparecerá aqui</h2><p className="mt-2 text-sm text-[color:var(--app-muted)]">{included ? "Escolha a jornada e gere a proposta. O algoritmo prepara somente o conteúdo selecionado." : "Importe a equipe para começar."}</p>{!included && <button type="button" className={`${buttonClass} mt-4`} onClick={() => setArea("team")}>Importar equipe</button>}</div>}
         </div>
-        {hasRoster && <><div className={styles.actions}><button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Onde falta gente?</button><button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir avisos e orientações</button><button type="button" className={buttonClass} onClick={() => setArea("generate")}>Mudar jornada ou gerar novamente</button></div><Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onRegenerate={model.generate} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} /></>}
+        {(hasRoster || referencesOnly && hasHourReferences(input)) && <><div className={styles.actions}>{!referencesOnly && <button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Onde falta gente?</button>}<button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir avisos e orientações</button><button type="button" className={buttonClass} onClick={() => setArea("generate")}>Mudar jornada ou gerar novamente</button></div><Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onRegenerate={model.generate} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} /></>}
       </section>}
 
-      {visited.has("coverage") && <section hidden={area !== "coverage"} inert={area !== "coverage"} id="escala-area-coverage" className={styles.stackSmall} aria-label="Cobertura da filial"><CoverageTimeline key={workspace.id} input={input} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}
+      {!referencesOnly && visited.has("coverage") && <section hidden={area !== "coverage"} inert={area !== "coverage"} id="escala-area-coverage" className={styles.stackSmall} aria-label="Cobertura da filial"><CoverageTimeline key={workspace.id} input={input} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}
 
       {visited.has("review") && <section hidden={area !== "review"} inert={area !== "review"} id="escala-area-review" className={styles.stackSmall} aria-label="Central de revisão e suporte">
         <ValidationResults active={area === "review"} section={reviewSection} onSectionChange={setReviewSection} input={input} validation={model.validation} onResolve={model.canEdit ? resolve : undefined} />
-        <section className={panelClass}><h2 className={styles.sectionTitle}>Sugestões e critérios do planejamento</h2><p className={styles.muted}>Nada é corrigido apenas por abrir esta área. Uma nova proposta pode ser comparada e descartada antes de aplicar.</p><div className={styles.actions}><button type="button" className={buttonClass} disabled={!model.canEdit || !included} onClick={model.generate}>Sugerir nova distribuição de folgas e horários</button><button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Conferir desfalques por horário</button></div><p className="text-sm">Prioridades: preservar restrições obrigatórias; melhorar a cobertura estimada por setor e cargo; distribuir folgas e fins de semana; reduzir alterações; respeitar preferências individuais. Pessoas com cargos diferentes não se substituem automaticamente.</p><p className="text-sm">Preferências são as escolhas explícitas cadastradas para esta equipe. Não há aprendizado automático nem envio de dados a serviços externos. Ausência de interação não significa aprovação.</p><p className="text-sm">FPRE136 fornece horários originais, não comprova a carga semanal contratual. A jornada selecionada orienta o cenário; cargas individuais explicitamente informadas são preservadas.</p></section>
+        <section className={panelClass}><h2 className={styles.sectionTitle}>Sugestões e critérios do planejamento</h2>
+          <p className={styles.muted}>Nada é corrigido apenas por abrir esta área. Uma nova proposta pode ser comparada e descartada antes de aplicar.</p>
+          <div className={styles.actions}><button type="button" className={buttonClass} disabled={!model.canEdit || !included} onClick={model.generate}>{hoursOnly ? "Sugerir novos horários" : generationMode === "REST_ONLY" ? "Sugerir nova distribuição de folgas" : "Sugerir nova distribuição de folgas e horários"}</button>{!referencesOnly && <button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Conferir desfalques por horário</button>}</div>
+          <p className="text-sm">{referencesOnly ? "Prioridades: preparar referências coerentes com a jornada e o fechamento. Não cria dias de trabalho, folgas ou cobertura diária." : hoursOnly ? "Prioridades: preservar os dias de trabalho, folgas, afastamentos e bloqueios; ajustar somente os horários permitidos para melhorar a cobertura." : "Prioridades: preservar restrições obrigatórias; melhorar a cobertura estimada por setor e cargo; distribuir folgas e fins de semana; reduzir alterações; respeitar preferências individuais."} Pessoas com cargos diferentes não se substituem automaticamente.</p>
+          <p className="text-sm">Preferências são as escolhas explícitas cadastradas para esta equipe. Não há aprendizado automático nem envio de dados a serviços externos. Ausência de interação não significa aprovação.</p>
+          <p className="text-sm">FPRE136 fornece horários originais, não comprova a carga semanal contratual. A jornada selecionada orienta o cenário; cargas individuais explicitamente informadas são preservadas.</p>
+        </section>
       </section>}
 
       {visited.has("adjustments") && <section hidden={area !== "adjustments"} inert={area !== "adjustments"} id="escala-area-adjustments" className={styles.stack} aria-label="Exceções do planejamento">

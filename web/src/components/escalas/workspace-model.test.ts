@@ -78,6 +78,22 @@ describe("Escalas workspace model", () => {
     expect(input.defaultWeeklyHours).toBe(44);
   });
 
+  it("marks hourly references stale after a journey change without a roster and preserves choices", () => {
+    const input = newInput("02", "Centro", "2026-11", 42);
+    input.generationMode = "HOURS_ONLY";
+    input.mixed42Sectors = ["Setor teste"];
+    input.employees = [{ ...employee("one"), weeklyHours: 40, weeklyHoursMode: "INDIVIDUAL" }];
+    const next = changeBranchWeeklyHours(input, 44);
+    expect(next.needsRegeneration).toBe(true);
+    expect(next.assignments).toEqual([]);
+    expect(next.mixed42Sectors).toEqual(input.mixed42Sectors);
+    expect(next.employees[0].weeklyHours).toBe(40);
+    expect(next.shifts).toEqual(input.shifts);
+    expect(next.policy).toEqual(input.policy);
+    expect(input.defaultWeeklyHours).toBe(42);
+    expect(changeBranchWeeklyHours(input, 42)).toBe(input);
+  });
+
   it("invalidates planning outputs after hours, team or constraints change but not after manual day editing", () => {
     const input = newInput("02", "Centro", "2026-11", 44);
     expect(scenarioDefinitionChanged(input, structuredClone(input))).toBe(false);

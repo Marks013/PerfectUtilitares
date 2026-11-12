@@ -22,11 +22,11 @@ function fixture() {
 }
 
 describe("calculation scope choice", () => {
-  it("defaults to days and hours with two explicitly labelled radio choices", () => {
+  it("defaults to days and hours with three explicitly labelled radio choices", () => {
     const onChange = vi.fn();
     const html = renderToStaticMarkup(<GenerationModeOption input={fixture()} disabled={false} onChange={onChange} />);
     expect(html).toContain("O que gerar?");
-    expect(html.match(/type="radio"/g)).toHaveLength(2);
+    expect(html.match(/type="radio"/g)).toHaveLength(3);
     expect(html).toMatch(/<input(?=[^>]*value="DAYS_AND_HOURS")(?=[^>]*checked="")[^>]*>/);
     expect(html).not.toMatch(/<input(?=[^>]*value="REST_ONLY")(?=[^>]*checked="")[^>]*>/);
     expect(html).toContain("Folgas e horários");

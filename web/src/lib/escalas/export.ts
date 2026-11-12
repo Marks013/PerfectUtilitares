@@ -3,14 +3,13 @@ import { strToU8, zipSync } from "fflate";
 import { holidayLabel } from "./calendar";
 import type { EscalaInput, EscalaWorkspace } from "./types";
 import { compareSectors, sortScheduleEntries } from "./order";
-import { buildCoveragePresence, sectorCoverageGaps, sectorPresenceGaps } from "./coverage-presence";
-import { summarizeCoverageGaps, type SectorCoverageSummary } from "./coverage-summary";
+import { analyzeCoverage, type CoverageAnalysis, type CoverageDemandMetrics, type CoverageSectorAnalysis } from "./coverage-analysis";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
 import { mixedWeeklyApplication } from "./mixed-week-report";
 import { storeClosingLabel } from "./store-hours";
 import { visibleDates, weekStart } from "./dates";
 import { usesMixed42Week } from "./labor-rules";
-import { weeklySectorCapacity, weeklyCapacityText, weeklyCapacityCaveat } from "./weekly-capacity";
+import { isHoursReferenceOnly } from "./hours-reference";
 
 function reportPeriod(value: string): string {
   return value.replace(/(\d{4})-(\d{2})-(\d{2})/g, "$3/$2/$1");
@@ -41,28 +40,64 @@ const XLSX_REPORT_STYLES = XLSX_STYLES.replace('<fonts count="2">', '<fonts coun
     + '<xf numFmtId="0" fontId="2" fillId="6" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs>');
 
 /** Conservative Calibri-width estimate: wide glyphs must not hide wrapped rows. */
+type SpreadsheetCell = string | number | { value: number; format: "duration" | "decimal" | "date" };
+const dateCell = (date: string): SpreadsheetCell => ({ value: Date.parse(date + "T00:00:00Z") / 86400000 + 25569, format: "date" });
+const durationCell = (text: string): SpreadsheetCell => {
+  const clock = /^(\d+):([0-5]\d)$/.exec(text);
+  return clock ? { value: (Number(clock[1]) * 60 + Number(clock[2])) / 1440, format: "duration" } : text;
+};
+const decimalCell = (value: number): SpreadsheetCell => ({ value, format: "decimal" });
+const spreadsheetValue = (cell: SpreadsheetCell) => typeof cell === "object" ? cell.value : cell;
+const spreadsheetText = (cell: SpreadsheetCell): string => typeof cell !== "object" ? String(cell)
+  : cell.format === "duration" ? escalaDuration(Math.round(cell.value * 1440))
+    : cell.format === "date" ? reportPeriod(new Date((cell.value - 25569) * 86400000).toISOString().slice(0, 10))
+    : cell.value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Number formats change presentation only; the generator keeps the original numeric precision.
+const XLSX_TYPED_STYLES = XLSX_REPORT_STYLES
+  .replace('<fonts count="3">', '<numFmts count="3"><numFmt numFmtId="164" formatCode="[h]:mm"/><numFmt numFmtId="165" formatCode="#,##0.00"/><numFmt numFmtId="166" formatCode="dd/mm/yyyy"/></numFmts><fonts count="3">')
+  .replace('<cellXfs count="11">', '<cellXfs count="20">')
+  .replace('</cellXfs>', [164, 165, 1].flatMap(numFmtId => [0, 3].map(fillId =>
+    `<xf numFmtId="${numFmtId}" fontId="0" fillId="${fillId}" borderId="1" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>`)).join("")
+    + '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+    + [0, 3].map(fillId => `<xf numFmtId="166" fontId="0" fillId="${fillId}" borderId="1" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>`).join("") + '</cellXfs>');
+
 function spreadsheetLines(text: string, width: number): number {
   return text.split("\n").reduce((count, line) => count + Math.max(1, Math.ceil([...line].reduce((units, character) =>
     units + (/\s/u.test(character) ? 0.75 : /[MWmw@%]/u.test(character) ? 2 : /[A-ZÀ-Þ]/u.test(character) ? 1.5 : /[^\u0020-\u00ff]/u.test(character) ? 2 : 1.2), 0) / Math.max(1, width - 1))), 0);
 }
 
-function sheet(rows: (string | number)[][], widths: number[], grid = false, frozenColumns = grid ? 5 : 0, sectors: number[] = []) {
+function sheet(rows: SpreadsheetCell[][], widths: number[], grid = false, frozenColumns = grid ? 5 : 0, sectors: number[] = []) {
   const header = 4, last = `${column(widths.length - 1)}${rows.length}`;
   const activeCell = `${column(frozenColumns)}${header + 1}`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 75 : 90}" zoomScaleNormal="100"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/><selection pane="${frozenColumns ? "bottomRight" : "bottomLeft"}" activeCell="${activeCell}" sqref="${activeCell}"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
     const title = index < 3 || sectors.includes(index);
     const available = title ? widths.reduce((sum, width) => sum + width, 0) - 2 : 0;
-    const lines = Math.max(1, ...row.map((value, cell) => spreadsheetLines(String(value), title ? available : widths[cell])));
+    const lines = Math.max(1, ...row.map((value, cell) => index === header - 1 && grid && cell >= frozenColumns
+      ? spreadsheetText(value).split("\n").length : spreadsheetLines(spreadsheetText(value), title ? available : widths[cell])));
     const height = index < 2 ? Math.max(20, lines * 13 + 4) : index === 2 ? Math.max(22, lines * 13 + 4) : index === header - 1 ? Math.max(34, lines * 13 + 6) : sectors.includes(index) ? Math.max(22, lines * 13 + 4) : Math.min(409, Math.max(22, lines * 13 + 6));
     return `<row r="${index + 1}" ht="${height}" customHeight="1">${row.map((value, cell) => {
-      const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 0 : index === header - 1 ? grid && cell >= frozenColumns ? 10 : 1 : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC", "FE"].includes(String(value)) ? 6 : grid && cell >= frozenColumns ? 7 : index % 2 ? 2 : 3;
-      const text = `<t xml:space="preserve">${xml(value)}</t>`;
-      return typeof value === "number" ? `<c r="${column(cell)}${index + 1}" s="${style}"><v>${value}</v></c>` : `<c r="${column(cell)}${index + 1}" s="${style}" t="inlineStr"><is>${text}</is></c>`;
+      const raw = spreadsheetValue(value);
+      const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 17 : index === header - 1 ? grid && cell >= frozenColumns ? 10 : 1
+        : typeof value === "object" ? (value.format === "duration" ? 11 : value.format === "decimal" ? 13 : 18) + (index % 2 ? 0 : 1)
+          : typeof raw === "number" ? 15 + (index % 2 ? 0 : 1)
+            : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC", "FE"].includes(String(value)) ? 6 : grid && cell >= frozenColumns ? 7 : index % 2 ? 2 : 3;
+      const text = `<t xml:space="preserve">${xml(raw)}</t>`;
+      return typeof raw === "number" ? `<c r="${column(cell)}${index + 1}" s="${style}"><v>${raw}</v></c>` : `<c r="${column(cell)}${index + 1}" s="${style}" t="inlineStr"><is>${text}</is></c>`;
     }).join("")}</row>`;
   }).join("")}</sheetData><autoFilter ref="A${header}:${last}"/>${`<mergeCells count="${3 + sectors.length}">${[1, 2, 3, ...sectors.map(index => index + 1)].map((row) => `<mergeCell ref="A${row}:${column(widths.length - 1)}${row}"/>`).join("")}</mergeCells>`}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.15" footer="0.15"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;LPerfectUtilitares&amp;RPágina &amp;P de &amp;N</oddFooter></headerFooter></worksheet>`;
 }
 
 type ReportPerson = ReturnType<typeof buildEscalaPresentation>["people"][number];
+
+function reportLegend(model: ReturnType<typeof buildEscalaPresentation>): string {
+  if (!model.dates.length) return model.legend;
+  const codes = new Set(model.people.flatMap(person => person.cells.map(cell => cell.code)));
+  const entries = [["F", "Folga"], ["FE", "Feriado, fechado"], ["ENC", "Sem horário fixo"], ["NP", "Não processado"], ["AF", "Afastado"], ["FV", "Fora do vínculo"]];
+  return [codes.size && [...codes].some(code => /^T\d+$/.test(code)) ? "Txx = Turno" : "",
+    ...entries.filter(([code]) => codes.has(code)).map(([code, meaning]) => `${code} = ${meaning}`),
+    model.excluded.length ? "X = Não incluído" : ""].filter(Boolean).join(". ");
+}
 
 /** Keep distinct schedules; mixed journeys also retain their actual weekly application. */
 function proposedRows(person: ReportPerson) {
@@ -74,7 +109,8 @@ function proposedRows(person: ReportPerson) {
     else variants.set(key, { ...variant, dates: [...variant.dates], entry: Number(variant.schedule.slice(0, 2)) * 60 + Number(variant.schedule.slice(3, 5)) });
   }
   if (variants.size) return [...variants.values()].sort((a, b) => a.entry - b.entry || a.schedule.localeCompare(b.schedule));
-  const code = person.cells.some(cell => cell.code === "ENC") ? "ENC" : person.cells.some(cell => cell.code === "NP") ? "NP"
+  const code = !person.cells.length ? person.employee.scheduleMode === "UNTIMED" ? "ENC" : "NP"
+    : person.cells.some(cell => cell.code === "ENC") ? "ENC" : person.cells.some(cell => cell.code === "NP") ? "NP"
     : person.cells.every(cell => cell.code === "AF") ? "AF" : person.cells.every(cell => cell.code === "FV") ? "FV" : "—";
   return [{ code, schedule: person.proposedSchedule, interval: "Não se aplica", daily: "Não apurada", entry: Infinity, dates: [] as string[], shiftId: undefined }];
 }
@@ -83,7 +119,7 @@ function proposedRows(person: ReportPerson) {
 function hourEntries(model: ReturnType<typeof buildEscalaPresentation>, input: EscalaInput) {
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   return sortScheduleEntries(model.hoursPeople.flatMap(person => proposedRows(person).map(row => {
-    const application = mixedWeeklyApplication(input, person.employee, row.dates);
+    const application = isHoursReferenceOnly(input) ? "" : mixedWeeklyApplication(input, person.employee, row.dates);
     const meal = shifts.get(row.shiftId ?? "")?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? segment.end - segment.start : 0), 0) ?? 0;
     return { employee: person.employee, ...row, application,
       interval: application && row.daily === "09:00" && meal ? `${row.interval} (${escalaDuration(meal)})` : row.interval };
@@ -105,21 +141,25 @@ function mixed42ExportNotice(input: EscalaInput): string {
 }
 
 export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Uint8Array {
+  const referencesOnly = isHoursReferenceOnly(workspace.input);
+  if (referencesOnly) mode = "hours";
   const model = buildEscalaPresentation(workspace);
   const hourly = hourEntries(model, workspace.input);
   const weekly = hourly.some(row => row.application);
-  const capacities = mode === "rest" ? [] : weeklySectorCapacity(workspace.input);
-  const coverage = mode === "rest" ? [] : coverageReport(workspace.input);
+  const analysis = referencesOnly || mode === "rest" ? null : analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", details: true });
+  const capacities = analysis?.sectors ?? [];
+  const coverage = coverageReport(analysis);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
-  const mixedNotice = mixed42ExportNotice(workspace.input);
-  const metadata = (title: string, description = ""): (string | number)[][] => [[model.branch],
-    [title + " | " + reportPeriod(model.period) + " | Revisão " + workspace.revision + " | " + model.state + simulation],
+  const mixedNotice = referencesOnly ? "" : mixed42ExportNotice(workspace.input);
+  const legend = reportLegend(model);
+  const metadata = (title: string, description = ""): SpreadsheetCell[][] => [[model.branch],
+    [title + ". " + reportPeriod(model.period) + ". Jornada escolhida: " + workspace.input.defaultWeeklyHours + "h. Revisão " + workspace.revision + ". " + model.state + simulation],
     [[`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, model.calendarLabel, model.holidayNotes.length ? "* Feriados: " + model.holidayNotes.join("; ") : "", mixedNotice, description].filter(Boolean).join(" | ")]];
   const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[], gaps: [] as number[] };
-  const main = [...metadata("Escala de folgas", model.legend),
-    ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(date => escalaDateLabel(date) + (holidayLabel(workspace.input, date) ? "*" : ""))]];
-  const hours = [...metadata("Escala de horários", "Horários propostos por colaborador."),
+  const main = [...metadata("Escala de folgas", legend),
+    ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(date => date.slice(8) + (holidayLabel(workspace.input, date) ? "*" : "") + "\n" + escalaDateLabel(date).split(" ")[1])]];
+  const hours = [...metadata(referencesOnly ? "Referências de horários" : "Escala de horários", referencesOnly ? legend : "Horários propostos por colaborador."),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Turno", "Horário proposto", "Intervalo", "Jornada diária", ...(weekly ? ["Aplicação nas semanas"] : [])]];
   let sector: string | undefined;
   for (const person of restEntries(model)) {
@@ -136,18 +176,22 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     if (sector !== employee.sector) {
       sectors.hours.push(hours.length); hours.push(["Setor: " + (employee.sector || "Não informado")]); sector = employee.sector;
     }
-    hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, row.daily, ...(weekly ? [row.application] : [])]);
+    hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, durationCell(row.daily), ...(weekly ? [row.application] : [])]);
   }
-  const gaps = [...metadata("Desfalques de cobertura", "Sem cobertura com horário não significa ninguém escalado: pessoas ENC podem estar presentes. Sem meta positiva, confirme a necessidade."),
-    ["Setor", "Dias com alerta", "Dias sem cobertura com horário (parcial / inteiro)", "Faixas prioritárias", "Maior diferença simultânea", "Base / próximo passo"],
+  const gaps = [...metadata("Desfalques de cobertura", "Trabalho com horário. Referências confirmada e estimada independentes."),
+    ["Setor", "Referência", "Maior desfalque (pessoas)", "Dia do maior desfalque", "Horário do maior desfalque", "Falta acumulada (horas da equipe)", "Dias com alerta", "Dias com faixa sem equipe com horário"],
     ...coverage.map(coverageReportCells)];
-  const decimal = (number: number) => number.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
-  const capacity = [...metadata("Capacidade nominal por setor", weeklyCapacityCaveat),
-    ["Setor", "Colab.", "44h (h/sem)", "42h (h/sem)", "40h (h/sem)", "Atual (h/sem)", "Diferença (h/sem)", "Equiv. nominal (adicional)", "Disponível até (h/sem)", "Horas na grade (período)", "Presenças ENC (período)"],
-    ...capacities.map(row => [row.sector || "Não informado", row.people, row.referenceHours, row.hours42, row.hours40,
-      row.currentHours === row.currentHoursMax ? row.currentHours : `${decimal(row.currentHours)}–${decimal(row.currentHoursMax)}`,
-      row.missingHours, `${decimal(row.equivalentPeople)} (+${decimal(row.additionalEquivalentPeople)})`,
-      `${decimal(row.availableHoursMin)}–${decimal(row.availableHoursMax)}`, row.scheduledHours, row.untimedPeopleDays])];
+  const capacity = [...metadata("Capacidade nominal por setor", "Nominal semanal; horas WORK apuradas no período."),
+    ["Setor", "Pessoas com origem", "Origem nominal", "Referência (h/sem)", "Cenário 42h (h/sem)", "Cenário 40h (h/sem)", "Atual (h/sem)", "Dif. no cenário escolhido (h/sem)", "Equiv. nominal (adicional)", "WORK conhecido (h no período)", "Crédito WORK e pausa paga (h no período)", "Sem relógio (pessoas)", "Sem relógio (pessoas-dia)"],
+    ...capacities.map(row => {
+      const nominal = row.nominal, chosen = nominal.scenarios.find(item => item.weeklyHours === workspace.input.defaultWeeklyHours);
+      return [row.sector || "Não informado", nominal.referencePeople, nominalOrigin(nominal), nullableDecimal(nominal.referenceCapacityHours),
+        nullableDecimal(nominal.scenarios.find(item => item.weeklyHours === 42)?.capacityHours ?? null),
+        nullableDecimal(nominal.scenarios.find(item => item.weeklyHours === 40)?.capacityHours ?? null),
+        nominalRange(nominal.candidateWeeklyHoursMin, nominal.candidateWeeklyHoursMax), nullableDecimal(chosen?.lostHours ?? null),
+        chosen?.equivalentPeople === null || chosen?.equivalentPeople === undefined ? "—" : `${decimal(chosen.equivalentPeople)} (+${chosen.additionalEquivalentPeople === null ? "—" : decimal(chosen.additionalEquivalentPeople)})`,
+        decimalCell(row.knownWorkPersonMinutes / 60), nullableDecimal(row.creditedPersonMinutes === null ? null : row.creditedPersonMinutes / 60), row.withoutClockPeople, row.withoutClockPersonDays];
+    })];
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
     ["Situação", "Setor", "Matrícula", "Colaborador", "Cargo", "Motivo da não inclusão"]];
   sector = undefined;
@@ -156,10 +200,10 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     excluded.push([code, employee.sector, employee.registration, employee.name, employee.role, reason]);
   }
   const sheets = [
-    ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [12, 9, 25, 18, 28, ...model.dates.map(() => 4.25)], grid: true, sectors: sectors.main }] : []),
-    ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [14, 9, 26, 19, 8, 32, 20, 12, ...(weekly ? [43] : [])], grid: false, sectors: sectors.hours }] : []),
-    ...(capacities.length ? [{ name: "Capacidade", frozenColumns: 1, rows: capacity, widths: [25, 10, 15, 15, 15, 17, 18, 25, 22, 22, 22], grid: false, sectors: [] as number[] }] : []),
-    ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 1, rows: gaps, widths: [23, 28, 28, 33, 27, 42], grid: false, sectors: sectors.gaps }] : []),
+    ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [18, 9, 25, 18, 28, ...model.dates.map(() => 5.25)], grid: true, sectors: sectors.main }] : []),
+    ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [18, 9, 26, 19, 8, 32, 20, 12, ...(weekly ? [43] : [])], grid: false, sectors: sectors.hours }] : []),
+    ...(capacities.length ? [{ name: "Capacidade", frozenColumns: 1, rows: capacity, widths: [22, 12, 27, 16, 16, 16, 18, 20, 23, 20, 22, 14, 16], grid: false, sectors: [] as number[] }] : []),
+    ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 2, rows: gaps, widths: [22, 18, 19, 20, 22, 24, 25, 29], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
   // Excel filters and sorting need contiguous records, not merged sector separator rows.
@@ -177,53 +221,56 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     "_rels/.rels": strToU8('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
     "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((entry, index) => `<sheet name="${entry.name}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets><definedNames>${printDefinitions}</definedNames></workbook>`),
     "xl/_rels/workbook.xml.rels": strToU8(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`),
-    "xl/styles.xml": strToU8(XLSX_REPORT_STYLES),
+    "xl/styles.xml": strToU8(XLSX_TYPED_STYLES),
   };
   for (const [index, entry] of sheets.entries()) files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheet(entry.rows, entry.widths, entry.grid, entry.frozenColumns, entry.sectors));
   return zipSync(files, { level: 6 });
 }
 
-function priorityWindows(row: SectorCoverageSummary): string {
-  return row.windows.map(window => escalaDuration(window.start) + "-" + escalaDuration(window.end) + " · " + window.dates.length + " dia(s)").join("\n");
+const decimal = (value: number) => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+const nullableDecimal = (value: number | null): SpreadsheetCell => value === null ? "—" : decimalCell(value);
+const nominalRange = (minimum: number | null, maximum: number | null): SpreadsheetCell => minimum === null || maximum === null ? "—"
+  : minimum === maximum ? decimalCell(minimum) : `${decimal(minimum)}–${decimal(maximum)}`;
+
+function nominalOrigin(nominal: CoverageSectorAnalysis["nominal"]): string {
+  const labels: Record<string, string> = { FPRE136_INFERRED: "FPRE136", CONFIGURED_INDIVIDUAL: "Individual", HYPOTHETICAL: "Hipótese", REGISTERED: "Cadastro", INFERRED: "Inferida" };
+  return [...nominal.sourceGroups.map(group => `${labels[group.origin] ?? group.origin}: ${decimal(group.weeklyHours)}h (${group.people})`),
+    nominal.withoutReferencePeople ? `Sem origem: ${nominal.withoutReferencePeople}` : ""].filter(Boolean).join("; ") || "Não informada";
 }
 
-function coveragePeak(row: SectorCoverageSummary): string {
-  const sector = row.peakSectorMissing ? "Até " + row.peakSectorMissing + " pessoa(s) abaixo da referência do setor" : "Quantidade total do setor atendida";
-  return sector + (row.hasRoleMismatch ? "; conferir também a distribuição das funções" : "");
+function nominalReportText(row: CoverageSectorAnalysis, input: EscalaInput): string {
+  const nominal = row.nominal, selected = nominal.scenarios.find(item => item.weeklyHours === input.defaultWeeklyHours);
+  const hours = (value: number | null) => value === null ? "não apurada" : decimal(value) + "h";
+  const range = nominalRange(nominal.candidateWeeklyHoursMin, nominal.candidateWeeklyHoursMax);
+  return `Nominal semanal: ${hours(nominal.referenceCapacityHours)}; ${nominal.referencePeople} com origem. ${nominalOrigin(nominal)}. `
+    + nominal.scenarios.map(item => `${item.weeklyHours}h: ${hours(item.capacityHours)}`).join("; ")
+    + `. Atual: ${spreadsheetText(range)} h/sem. ${selected?.lostHours === null || selected?.lostHours === undefined ? "" : `Diferença nominal: ${decimal(selected.lostHours)} h/sem. `}`
+    + `WORK conhecido no período: ${escalaDuration(row.knownWorkPersonMinutes)}. Sem relógio: ${row.withoutClockPeople} pessoa(s).`;
 }
 
-function coverageAction(row: SectorCoverageSummary): string {
-  const base = row.minimumDates.length ? "Mínimo informado não atendido em " + row.minimumDates.length + " dia(s)" + (row.hasEstimates ? "; também há estimativas" : "")
-    : "Estimativa automática; confirme a necessidade real";
-  return base + ". Reveja entradas, intervalos e folgas. Detalhes por dia no planejamento.";
+type CoverageReportRow = { sector: string; ruler: "confirmed" | "estimated" | null; metrics: CoverageDemandMetrics | null; data: CoverageSectorAnalysis };
+
+/** Format the central analysis only. Each independent ruler retains its own peak and person-minutes. */
+function coverageReport(analysis: CoverageAnalysis | null): CoverageReportRow[] {
+  return (analysis?.sectors ?? []).flatMap<CoverageReportRow>(data => {
+    const rulers = (["confirmed", "estimated"] as const).filter(ruler => (data[ruler]?.requiredPersonMinutes ?? 0) > 0);
+    if (rulers.length) return rulers.map(ruler => ({ sector: data.sector, ruler, metrics: data[ruler], data }));
+    return data.details?.some(slice => slice.presentKnown === 0 && slice.unknownPeople === 0 && (slice.confirmed !== null || slice.estimated !== null))
+      ? [{ sector: data.sector, ruler: null, metrics: null, data }] : [];
+  });
 }
 
-type CoverageReportRow = { sector: string; summary?: SectorCoverageSummary; presence?: ReturnType<typeof sectorPresenceGaps>[number] };
-
-/** One shared row per sector, including presence facts that a zero estimate cannot report. */
-function coverageReport(input: EscalaInput): CoverageReportRow[] {
-  const presence = buildCoveragePresence(input);
-  const groups = new Map<string, CoverageReportRow>(summarizeCoverageGaps(sectorCoverageGaps(input, presence))
-    .map(summary => [summary.sector, { sector: summary.sector, summary }]));
-  if (input.assignments.length) for (const gap of sectorPresenceGaps(input, presence)) {
-    const row = groups.get(gap.sector) ?? { sector: gap.sector };
-    row.presence = gap;
-    groups.set(gap.sector, row);
-  }
-  return [...groups.values()].sort((a, b) => compareSectors(a.sector, b.sector));
-}
-
-function coverageReportCells(row: CoverageReportRow): string[] {
-  const fullDates = row.presence?.dates ?? [];
-  const full = new Set(fullDates);
-  const partialDates = row.summary?.noServiceDates.filter(date => !full.has(date)) ?? [];
-  const noPresence = [fullDates.length ? "Dia inteiro: " + compactDates(fullDates) : "",
-    partialDates.length ? "Em alguma faixa: " + compactDates(partialDates) : ""].filter(Boolean).join("\n") || "—";
-  const unknownDates = row.presence?.withoutPositiveReferenceDates ?? [];
-  const action = [row.summary ? coverageAction(row.summary) : "Não há presença com horário nesses dias.",
-    unknownDates.length ? "Sem referência positiva: " + compactDates(unknownDates) + ". Confirme se o setor deve funcionar nesses dias antes de ajustar folgas." : ""].filter(Boolean).join(" ");
-  return [row.sector || "Não informado", row.summary ? compactDates(row.summary.dates) : "—", noPresence,
-    row.summary ? priorityWindows(row.summary) : "—", row.summary ? coveragePeak(row.summary) : "Necessidade não definida", action];
+function coverageReportCells(row: CoverageReportRow): SpreadsheetCell[] {
+  const metrics = row.metrics, peak = metrics?.peakWindow;
+  const rulerKey = row.ruler;
+  const alerts = rulerKey ? (row.data.details ?? []).filter(slice => (slice[rulerKey]?.missing ?? 0) > 0).map(slice => slice.date) : [];
+  const noWork = (row.data.details ?? []).filter(slice => slice.presentKnown === 0 && slice.unknownPeople === 0 && (slice.confirmed !== null || slice.estimated !== null)).map(slice => slice.date);
+  const ruler = row.ruler === "confirmed" ? "Confirmada" : row.ruler === "estimated" ? "Estimada" : "Sem referência";
+  return [row.sector || "Não informado", ruler + (metrics?.peakMissing === null ? " · parcial" : ""),
+    metrics?.peakMissing ?? "—", peak ? dateCell(peak.date) : "—",
+    peak ? `${escalaDuration(peak.start)}-${escalaDuration(peak.end)}` : "—",
+    metrics?.deficitPersonMinutes === null || metrics?.deficitPersonMinutes === undefined ? "—" : { value: metrics.deficitPersonMinutes / 1440, format: "duration" },
+    compactDates(alerts) || "—", compactDates(noWork) || "—"];
 }
 
 function safePdfText(text: string, font: PDFFont) {
@@ -252,22 +299,27 @@ function wrapText(text: string, width: number, font: PDFFont, size: number): str
 
 /** Group contiguous civil dates without hiding a missing day or crossing an unknown range. */
 function compactDates(dates: string[]): string {
+  const sameMonth = new Set(dates.map(date => date.slice(0, 7))).size === 1;
+  const label = (date: string) => sameMonth ? date.slice(8) : escalaDateLabel(date).split(" ")[0];
   const groups: string[][] = [];
   for (const date of [...new Set(dates)].sort()) {
     const last = groups.at(-1), previous = last?.at(-1);
     if (last && previous && Date.parse(date + "T00:00:00Z") - Date.parse(previous + "T00:00:00Z") === 86400000) last.push(date);
     else groups.push([date]);
   }
-  return groups.map((group) => group.length > 1 ? escalaDateLabel(group[0]).split(" ")[0] + "–" + escalaDateLabel(group.at(-1) as string).split(" ")[0] : escalaDateLabel(group[0]).split(" ")[0]).join(", ");
+  return groups.map(group => group.length > 1 ? label(group[0]) + "–" + label(group.at(-1) as string) : label(group[0])).join(", ");
 }
 
 type PdfLayout = { separateSectors?: boolean };
 
 export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both", { separateSectors = true }: PdfLayout = {}): Promise<Uint8Array> {
+  const referencesOnly = isHoursReferenceOnly(workspace.input);
+  if (referencesOnly) mode = "hours";
   const document = await PDFDocument.create();
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
   const model = buildEscalaPresentation(workspace);
-  const coverage = mode === "rest" ? [] : coverageReport(workspace.input);
+  const analysis = referencesOnly || mode === "rest" ? null : analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", details: true });
+  const coverage = coverageReport(analysis);
   const sectors = [...new Set([...(mode === "rest" ? model.restPeople : model.people).map(({ employee }) => employee.sector),
     ...model.excluded.map(({ employee }) => employee.sector), ...coverage.map(row => row.sector)])].sort(compareSectors);
   if (separateSectors && sectors.length) {
@@ -277,24 +329,25 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
         hoursPeople: model.hoursPeople.filter(({ employee }) => employee.sector === sector),
         restPeople: model.restPeople.filter(({ employee }) => employee.sector === sector),
         excluded: model.excluded.filter(({ employee }) => employee.sector === sector),
-      }, coverage.filter(row => row.sector === sector), sector);
+      }, coverage.filter(row => row.sector === sector), analysis, sector);
     }
-  } else renderPdfSection(document, font, bold, workspace, mode, model, coverage);
+  } else renderPdfSection(document, font, bold, workspace, mode, model, coverage, analysis);
   const pages = document.getPages();
   pages.forEach((item, index) => { item.drawText(`PerfectUtilitares | Filial ${safePdfText(workspace.input.branchCode, font)} | ${index + 1}/${pages.length}`, { x: 26, y: 16, size: 8, font }); });
-  document.setTitle(`Escala - Filial ${workspace.input.branchCode} - ${model.dates[0] ?? workspace.input.startDate}`);
+  document.setTitle(`${referencesOnly ? "Referências de horários" : "Escala"} - Filial ${workspace.input.branchCode} - ${model.dates[0] ?? workspace.input.startDate}`);
   return document.save();
 }
 
 function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, workspace: EscalaWorkspace, mode: EscalaExportMode,
-  model: ReturnType<typeof buildEscalaPresentation>, coverage: CoverageReportRow[], sectionSector?: string) {
+  model: ReturnType<typeof buildEscalaPresentation>, coverage: CoverageReportRow[], analysis: CoverageAnalysis | null, sectionSector?: string) {
   const grouped = sectionSector !== undefined;
+  const referencesOnly = isHoursReferenceOnly(workspace.input);
   const hourly = hourEntries(model, workspace.input);
   const weekly = hourly.some(row => row.application);
-  const capacities = new Map(weeklySectorCapacity(workspace.input).map(row => [row.sector, row]));
-  const mixedNotice = mixed42ExportNotice(workspace.input);
+  const capacities = new Map((analysis?.sectors ?? []).map(row => [row.sector, row]));
+  const mixedNotice = referencesOnly ? "" : mixed42ExportNotice(workspace.input);
   const hasRest = mode !== "hours" && (!grouped || model.restPeople.length > 0);
-  let reportTitle = hasRest ? "Escala de folgas" : mode !== "rest" && model.hoursPeople.length ? "Escala de horários"
+  let reportTitle = referencesOnly ? "Referências de horários" : hasRest ? "Escala de folgas" : mode !== "rest" && model.hoursPeople.length ? "Escala de horários"
     : grouped && coverage.length ? "Desfalques de cobertura" : mode === "hours" ? "Escala de horários" : "Escala de folgas";
   const width = 842, height = 595; // A4 landscape, including full monthly grids.
   const margin = 26, labelWidth = 260, cellWidth = (width - 2 * margin - labelWidth) / Math.max(1, model.dates.length);
@@ -307,8 +360,8 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     if (grouped) for (const line of wrapText("Setor: " + (sectionSector || "Não informado"), width - 2 * margin, bold, 10)) {
       write(line, margin, y, 10, true); y -= 14;
     }
-    write(`${reportTitle} | 5x2 | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
-    write(`Fechamento da loja: ${storeClosingLabel(workspace.input)} | ${model.calendarLabel}`, margin, y, 8); y -= 12;
+    write(`${reportTitle}${referencesOnly ? "" : " | 5x2"} | Jornada ${workspace.input.defaultWeeklyHours}h | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
+    write([`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, model.calendarLabel].filter(Boolean).join(" | "), margin, y, 8); y -= 12;
     if (model.holidayNotes.length) for (const line of wrapText("* Feriados: " + model.holidayNotes.join("; "), width - 2 * margin, font, 7.5)) {
       write(line, margin, y, 7.5); y -= 11;
     }
@@ -317,7 +370,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
         write(line, margin, y, 8, true); y -= 12;
       }
     }
-    if (grid) for (const line of wrapText(model.legend, width - 2 * margin, font, 8)) { write(line, margin, y, 8); y -= 12; }
+    if (grid) for (const line of wrapText(reportLegend(model), width - 2 * margin, font, 8)) { write(line, margin, y, 8); y -= 12; }
     if (workspace.input.simulation && workspace.input.policy.allowShortMealSimulation) { write("Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h.", margin, y, 8); y -= 13; }
     y -= 5;
     if (grid) {
@@ -362,7 +415,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     y -= rowHeight;
   };
   newPage(hasRest);
-  if (mode === "hours" && (!grouped || model.hoursPeople.length)) paragraph(model.legend, 8);
+  if (mode === "hours" && (!grouped || model.hoursPeople.length)) paragraph(reportLegend(model), 8);
   /** A logical row can span pages; repeat short context cells beside continued content. */
   const paginatedRow = (lines: string[][], widths: number[], size: number, strong: (column: number, line: string) => boolean, continuePage: () => void) => {
     const count = Math.max(...lines.map(values => values.length));
@@ -418,9 +471,9 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
   }
   if (!grouped && !model.people.length) paragraph("Nenhum colaborador incluído nesta proposta.");
   if (mode !== "rest" && (!grouped || hourly.length)) {
-    reportTitle = "Escala de horários";
+    reportTitle = referencesOnly ? "Referências de horários" : "Escala de horários";
     if (mode === "both" && !grouped) newPage(false);
-    const description = "Horários propostos por colaborador.";
+    const description = referencesOnly ? "Horários de referência por colaborador." : "Horários propostos por colaborador.";
     let hoursSector: string | undefined;
     const capacityShown = new Set<string>();
     const widths = (weekly ? [0.20, 0.10, 0.05, 0.23, 0.13, 0.08, 0.21] : [0.27, 0.18, 0.05, 0.27, 0.15, 0.08]).map(ratio => ratio * (width - 2 * margin));
@@ -432,20 +485,19 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
       const cells = [employee.registration + " - " + employee.name, employee.role, row.code, row.schedule, row.interval, row.daily === "Não apurada" ? "—" : row.daily, ...(weekly ? [row.application] : [])];
       const lines = cells.map((value, index) => value.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8.5)));
       const capacity = capacities.get(employee.sector);
-      return { employee, lines, sectorHeight: sectionHeight(employee.sector || "Setor não informado") + headerHeight + (capacity ? textHeight("Capacidade nominal: " + weeklyCapacityText(capacity), 8) : 0) };
+      return { employee, lines, sectorHeight: sectionHeight(employee.sector || "Setor não informado") + headerHeight + (capacity ? textHeight(nominalReportText(capacity, workspace.input), 8) : 0) };
     });
     const first = rows[0];
-    if (grouped && first && y - sectionHeight(reportTitle) - textHeight(description) - (capacities.size ? textHeight(weeklyCapacityCaveat, 7.5) : 0) - first.sectorHeight - firstRowHeight(first.lines) < 45) newPage(false);
+    if (grouped && first && y - sectionHeight(reportTitle) - textHeight(description) - first.sectorHeight - firstRowHeight(first.lines) < 45) newPage(false);
     section(reportTitle);
     paragraph(description);
-    if (capacities.size) paragraph(weeklyCapacityCaveat, 7.5);
     for (const { employee, lines, sectorHeight } of rows) {
       if (y - firstRowHeight(lines) - (hoursSector !== employee.sector ? sectorHeight : 0) < 45) { newPage(false); hoursSector = undefined; }
       if (hoursSector !== employee.sector) {
         section(employee.sector || "Setor não informado"); hoursSector = employee.sector;
         const capacity = capacities.get(employee.sector);
         if (capacity && !capacityShown.has(employee.sector)) {
-          paragraph("Capacidade nominal: " + weeklyCapacityText(capacity), 8); capacityShown.add(employee.sector);
+          paragraph(nominalReportText(capacity, workspace.input), 8); capacityShown.add(employee.sector);
         }
         hoursHeader();
       }
@@ -463,22 +515,17 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
   }
   if (coverage.length) {
     reportTitle = "Desfalques de cobertura";
-    const descriptions = [
-      "Dia inteiro sem cobertura com horário definido não significa ninguém escalado: pessoas ENC podem estar presentes. Sem referência positiva, confirme a necessidade do setor.",
-    ];
-    const widths = [0.16, 0.20, 0.23, 0.16, 0.25].map(ratio => (width - 2 * margin) * ratio);
-    const headings = ["Setor", "Dias com alerta / sem cobertura com horário", "Faixas prioritárias", "Maior diferença", "Base / próximo passo"];
+    const widths = [0.16, 0.10, 0.11, 0.11, 0.13, 0.12, 0.13, 0.14].map(ratio => (width - 2 * margin) * ratio);
+    const headings = ["Setor", "Referência", "Maior desfalque (pessoas)", "Dia do maior desfalque", "Horário do maior desfalque", "Falta acumulada (horas da equipe)", "Dias com alerta", "Dias com faixa sem equipe com horário"];
     const tableHeader = () => tableHeadings(headings, widths);
     const continuation = () => { newPage(false); tableHeader(); };
     const rows = coverage.map(row => {
-      const [sector, alerts, presence, windows, peak, action] = coverageReportCells(row);
-      const cells = [sector, "Com desfalque: " + alerts + "\n" + presence, windows, peak, action];
+      const cells = coverageReportCells(row).map(spreadsheetText);
       return cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8)));
     });
-    const introHeight = sectionHeight(reportTitle) + descriptions.reduce((sum, description) => sum + textHeight(description), 0) + cellHeight(headerLines(headings, widths));
+    const introHeight = sectionHeight(reportTitle) + cellHeight(headerLines(headings, widths));
     if (!grouped || y - introHeight - firstRowHeight(rows[0]) < 45) newPage(false);
     section(reportTitle);
-    for (const description of descriptions) paragraph(description);
     tableHeader();
     for (const lines of rows) {
       paginatedRow(lines, widths, 8, index => index === 0, continuation);

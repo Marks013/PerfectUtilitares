@@ -6,8 +6,12 @@ import { readSheet } from "read-excel-file/node";
 import type { AppSession } from "@/auth";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { EscalaError } from "@/lib/escalas/access";
-import { createEscalaExportCache } from "@/lib/escalas/export-cache";
+import { createEscalaExportCache, ESCALA_EXPORT_CONTENT_VERSION } from "@/lib/escalas/export-cache";
 import { ResourceCapacityError } from "@/lib/system/resource-capacity";
+import { generationScenarioBasis } from "@/lib/escalas/hours-reference";
+import { escalaInputSchema } from "@/lib/escalas/schema";
+import { validateEscala } from "@/lib/escalas/validation";
+import { exportedDurationMinutes } from "@/lib/escalas/export-test-utils";
 import { GET, POST } from "./route";
 
 const mocks = vi.hoisted(() => ({ session: null as AppSession | null, get: vi.fn(), limit: vi.fn(), capacity: vi.fn(), cache: null as unknown as ReturnType<typeof createEscalaExportCache> }));
@@ -32,6 +36,83 @@ beforeEach(() => {
   mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
   mocks.get.mockResolvedValue(workspace()); mocks.limit.mockResolvedValue(null); mocks.capacity.mockResolvedValue(undefined);
   mocks.cache = createEscalaExportCache();
+});
+
+describe("/api/escalas/export references without a roster", () => {
+  function references() {
+    const current = workspace();
+    current.input.generationMode = "HOURS_ONLY";
+    current.input.assignments = [{ employeeId: "e1", date: "2026-10-26", kind: "ABSENCE", locked: true }];
+    // Persisted references use the same normalized scenario fingerprint as production.
+    current.input = escalaInputSchema.parse({ ...current.input, needsRegeneration: false });
+    current.input.generationBasis = generationScenarioBasis(current.input);
+    current.validation = validateEscala(current.input);
+    current.canPublish = false;
+    return current;
+  }
+  it.each(["pdf", "xlsx"])("returns real 2xx %s content for an authorized references revision", async (format) => {
+    const current = references(), original = JSON.stringify(current.input);
+    expect(current.validation.valid).toBe(true);
+    expect(current.input.generationBasis).toBe(generationScenarioBasis(current.input));
+    expect(current.validation.issues.some(issue => issue.code === "SCENARIO_OUTDATED")).toBe(false);
+    mocks.get.mockResolvedValue(current);
+    const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=${format}&mode=hours&revision=3&separateSectors=false`));
+    expect(response.status).toBe(200);
+    expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 3);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (format === "xlsx") {
+      const zip = unzipSync(bytes), workbook = strFromU8(zip["xl/workbook.xml"]);
+      expect(workbook).toContain('name="Horarios"');
+      for (const sheet of ["Escala", "Capacidade", "Desfalques"]) expect(workbook).not.toContain(`name="${sheet}"`);
+      const rows = await readSheet(Buffer.from(bytes), "Horarios");
+      expect(rows[1][0]).toContain("Referências de horários");
+      expect(rows[2][0]).toContain("sem grade diária");
+      expect(rows.slice(4).some(row => row[5] === "08:00-12:00 / 13:00-17:24" && exportedDurationMinutes(row[7]) === 504)).toBe(true);
+    } else {
+      expect(response.headers.get("content-type")).toBe("application/pdf");
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const loading = pdfjs.getDocument(pdfJsServerDocumentOptions(bytes));
+      const document = await loading.promise;
+      try {
+        const pages: string[] = [];
+        for (let index = 1; index <= document.numPages; index++) {
+          const content = await (await document.getPage(index)).getTextContent();
+          pages.push(content.items.filter(item => "str" in item).map(item => item.str).join(" "));
+        }
+        const text = pages.join(" ");
+        expect(text).toContain("Referências de horários");
+        expect(text).toContain("sem grade diária");
+        expect(text).toContain("08:00-12:00 / 13:00-17:24");
+        for (const forbidden of ["Capacidade nominal", "Desfalques de cobertura", "Escala de folgas", "Calendário:", "5x2", "F = Folga"]) expect(text).not.toContain(forbidden);
+      } finally { await loading.destroy(); }
+    }
+    expect(JSON.stringify(current.input)).toBe(original);
+  });
+  it.each(["rest", "both"])("rejects a %s view without a roster", async mode => {
+    mocks.get.mockResolvedValue(references());
+    const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=xlsx&mode=${mode}`));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "ESCALA_HOURS_REFERENCES_ONLY" } });
+    expect(mocks.capacity).not.toHaveBeenCalled();
+  });
+  it.each(["invalid", "stale"])("rejects %s references before generating a file", async state => {
+    const current = references();
+    if (state === "invalid") {
+      current.input.employees[0].shiftIds = [];
+      current.input.generationBasis = generationScenarioBasis(current.input);
+    } else current.input.needsRegeneration = true;
+    current.validation = validateEscala(current.input);
+    expect(current.validation.valid).toBe(false);
+    expect(current.validation.issues).toContainEqual(expect.objectContaining({
+      code: state === "invalid" ? "EMPLOYEE_SHIFT_PENDING" : "SCENARIO_OUTDATED", severity: "ERROR",
+    }));
+    mocks.get.mockResolvedValue(current);
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&mode=hours"));
+    expect(response.status).toBe(409);
+    // Invalid reference validation is checked before the legacy stale-scenario guard.
+    expect(await response.json()).toMatchObject({ error: { code: "ESCALA_HOURS_REFERENCE_INVALID" } });
+    expect(mocks.capacity).not.toHaveBeenCalled();
+  });
 });
 
 describe("/api/escalas/export", () => {
@@ -64,7 +145,7 @@ describe("/api/escalas/export", () => {
     const details = await readSheet(bytes, "Horarios");
     const detail = details.find(row => row[2] === "Ána Silva");
     expect(detail?.[4]).toBe("T01");
-    expect(detail?.[7]).toBe("08:24");
+    expect(exportedDurationMinutes(detail?.[7])).toBe(504);
     expect(strFromU8(zip["xl/workbook.xml"])).toContain("$1:$4");
   });
   it("exports a readable compact draft PDF without the removed load summary", async () => {
@@ -118,7 +199,9 @@ describe("/api/escalas/export mode boundaries", () => {
     expect(workbook.includes('name="Horarios"')).toBe(mode !== "rest");
     if (mode !== "rest") {
       const rows = await readSheet(Buffer.from(bytes), "Horarios");
-      expect(rows).toContainEqual(["Reposição", "0001", "Ána Silva", "Repositor", "T01", "08:00-12:00 / 13:00-17:24", "12:00-13:00", "08:24"]);
+      const row = rows.find(row => row[1] === "0001");
+      expect(row?.slice(0, 7)).toEqual(["Reposição", "0001", "Ána Silva", "Repositor", "T01", "08:00-12:00 / 13:00-17:24", "12:00-13:00"]);
+      expect(exportedDurationMinutes(row?.[7])).toBe(504);
     }
     expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 3);
   });
@@ -135,6 +218,24 @@ it("requires recalculation of legacy six-day reports instead of silently exporti
 });
 
 describe("export availability and authorization on cache reuse", () => {
+  it.each(["pdf", "xlsx"])("isolates real %s bytes from an obsolete generator version at the same revision", async format => {
+    const suffix = ["t1", "w1", 3, "both", format, format === "pdf" ? true : null];
+    const obsolete = new Uint8Array([1, 2, 3]);
+    await mocks.cache.get(JSON.stringify(suffix), () => obsolete);
+    await mocks.cache.get(JSON.stringify(["obsolete-report-version", ...suffix]), () => obsolete);
+    const lookup = vi.spyOn(mocks.cache, "get");
+    const url = `http://localhost/api/escalas/export?id=w1&format=${format}&revision=3`;
+    const first = await GET(new Request(url)), second = await GET(new Request(url));
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const bytes = new Uint8Array(await first.arrayBuffer());
+    expect(bytes).not.toEqual(obsolete);
+    expect(new Uint8Array(await second.arrayBuffer())).toEqual(bytes);
+    expect(lookup.mock.calls.map(([key]) => JSON.parse(key)[0])).toEqual([ESCALA_EXPORT_CONTENT_VERSION, ESCALA_EXPORT_CONTENT_VERSION]);
+    expect(mocks.capacity).toHaveBeenCalledTimes(1);
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    if (format === "pdf") expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
+    else expect(strFromU8(unzipSync(bytes)["xl/workbook.xml"])).toContain('name="Horarios"');
+  });
   it("defaults to grouped PDF, separates the compact cache and leaves XLSX unaffected", async () => {
     const url = "http://localhost/api/escalas/export?id=w1&mode=rest";
     const grouped = await GET(new Request(url + "&format=pdf"));

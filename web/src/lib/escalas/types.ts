@@ -113,13 +113,15 @@ export type EscalaPolicy = {
 };
 export type EscalaInput = {
   schemaVersion: 1;
-  restRulesVersion?: 1;
+  restRulesVersion?: 1 | 2;
   /** Missing preserves the full search; REST_ONLY fixes one reference per daily duration. */
-  generationMode?: "REST_ONLY" | "DAYS_AND_HOURS";
+  generationMode?: "REST_ONLY" | "DAYS_AND_HOURS" | "HOURS_ONLY";
   /** Support scenario: missing administrative evidence remains a publication pending, not approval. */
   simulation?: boolean;
   /** UI scenario changed after a roster existed; persists across saved revisions and reloads. */
   needsRegeneration?: boolean;
+  /** Scenario fingerprint for a prepared proposal; neither authorization nor attendance evidence. */
+  generationBasis?: string;
   /** Versioned cache-invalidation fingerprint, not evidence of operational demand or authorization. */
   coverageBasis?: string;
   branchCode: string;
@@ -200,6 +202,12 @@ type EscalaOptimizationPhase = {
 
 };
 export type EscalaSolveResult = {
+  /** Independently derived diagnostics; never accepted as input or persisted as scheduling rules. */
+  restQuality?: {
+    before: import("./rest-quality").RestPairSummary; after: import("./rest-quality").RestPairSummary;
+    search: { attempted: boolean; retainedReference: boolean };
+    preparationSeconds: number; requestSeconds: number;
+  };
   /** Numeric diagnostics only; no employee identifiers or personal payload. */
   optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[]; unattemptedObjectives?: EscalaOptimizationPhase["objective"][];
     constructionSeconds?: number; feasibilitySeconds?: number; refinementSeconds?: number; stopReason?: string;

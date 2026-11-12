@@ -38,17 +38,20 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
     onChange({ ...input, policy: { ...input.policy, reviewed: false, [field]: value } });
   }
   const calendar = holidayCalendarFor(input);
+  const hoursOnly = input.generationMode === "HOURS_ONLY";
   return <section className={panelClass} aria-labelledby="escala-rules-title">
     <div><h2 id="escala-rules-title" className={styles.sectionTitle}>Premissas da simulação</h2><p className={styles.subtitle}>O algoritmo aplica os descansos e preserva as restrições informadas. Nada aqui precisa ser preenchido para gerar um rascunho.</p></div>
     <dl className="grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
-      <div><dt className="text-[color:var(--app-muted)]">Regime</dt><dd className="font-semibold">5 dias + 2 folgas</dd></div>
+      {!hoursOnly && <div><dt className="text-[color:var(--app-muted)]">Regime</dt><dd className="font-semibold">5 dias + 2 folgas</dd></div>}
       <div><dt className="text-[color:var(--app-muted)]">Jornada escolhida</dt><dd className="font-semibold">{input.defaultWeeklyHours}h · {input.defaultWeeklyHours === 42 && input.mixed42Sectors?.length ? "distribuição mista por setor" : clock(input.defaultWeeklyHours * 12) + " por dia no modelo uniforme"}</dd></div>
       <div><dt className="text-[color:var(--app-muted)]">Entre jornadas</dt><dd className="font-semibold">{clock(input.policy.minInterShiftMinutes)} mínimas</dd></div>
-      <div><dt className="text-[color:var(--app-muted)]">Sequência máxima</dt><dd className="font-semibold">{effectiveWorkDayLimit(input.policy)} dias</dd></div>
+      {!hoursOnly && <div><dt className="text-[color:var(--app-muted)]">Sequência máxima</dt><dd className="font-semibold">{effectiveWorkDayLimit(input.policy)} dias</dd></div>}
     </dl>
     {input.policy.maxConsecutiveWorkDays > 5 && <p className={styles.errorText}>Esta revisão usa um limite antigo de {input.policy.maxConsecutiveWorkDays} dias. O modelo 5×2 permite no máximo cinco dias consecutivos. Gere novamente para conferir a grade com esse limite.</p>}
     <fieldset disabled={disabled} className={styles.stackSmall}>
       <ShortMealSimulation input={input} onChange={onChange} />
+      <details className={styles.stackSmall}>
+        <summary className={styles.disclosureTrigger}>{hoursOnly ? "Consultar calendário e regras dos dias já registrados" : "Calendário e regras da filial"}</summary>
       <Field label="Calendário de feriados">{id => <select id={id} className={controlClass} value={input.policy.calendarMode ?? "MANUAL"} onChange={event => {
         const calendarMode = event.target.value as "LOCAL" | "MANUAL";
         const next = { ...input, policy: { ...input.policy, calendarMode, reviewed: false } };
@@ -64,6 +67,7 @@ export function Rules({ input, disabled, onChange }: { input: EscalaInput; disab
         <p className={styles.muted}>O sistema aplica os limites de descanso e refeição da filial ao gerar. As regras já registradas foram preservadas.</p>
       </details>
       <LaborPolicyFields input={input} onChange={onChange} />
+      </details>
     </fieldset>
   </section>;
 }

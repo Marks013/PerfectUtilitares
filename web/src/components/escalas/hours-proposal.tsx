@@ -61,8 +61,8 @@ export function hoursProposalGroups(input: EscalaInput, proposed: EscalaInput) {
       return shift ? shiftText(shift) : "";
     }).join(" / ") || "Sem horário fixo";
     const proposal = person.planningEnabled === false ? [person.planningExclusionReason || "Fora da geração"]
-      : person.scheduleMode === "MISSING" ? ["Sem horário fixo · folgas planejadas"]
-      : person.scheduleMode === "UNTIMED" ? ["ENC · folgas planejadas sem horário fixo"]
+      : person.scheduleMode === "MISSING" ? [input.generationMode === "HOURS_ONLY" ? "Sem horário fixo · informe uma referência para propor a jornada" : "Sem horário fixo · folgas planejadas"]
+      : person.scheduleMode === "UNTIMED" ? [input.generationMode === "HOURS_ONLY" ? "ENC · sem horário fixo, nenhum horário foi atribuído" : "ENC · folgas planejadas sem horário fixo"]
       : person.shiftIds.flatMap((id) => {
         const shift = afterShifts.get(id);
         return shift ? [`${shiftText(shift)} (${clock(duration(shift))} trabalhadas)`] : [];
@@ -76,7 +76,7 @@ export function hoursProposalGroups(input: EscalaInput, proposed: EscalaInput) {
 }
 
 export function HoursProposal({ input, disabled, onChange }: { input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void }) {
-  const [anchor, setAnchor] = useState<Anchor>("arrival");
+  const [anchor, setAnchor] = useState<Anchor>("both");
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -88,15 +88,15 @@ export function HoursProposal({ input, disabled, onChange }: { input: EscalaInpu
     try {
       const prepared = adaptCompatibleSchedules(input, strategy === "arrival" ? "PRESERVE_START" : strategy === "departure" ? "PRESERVE_END" : "BOTH");
       setExceptions(prepared.exceptions); onChange(prepared.input);
-      setNotice(prepared.exceptions.length ? "Horários compatíveis ajustados. As exceções abaixo permanecem incluídas, sem alteração de restrições." : "Horários ajustados no rascunho. O salvamento automático confirmará a revisão; gere novamente as folgas.");
+      setNotice(prepared.exceptions.length ? "Horários compatíveis ajustados. As exceções abaixo permanecem incluídas, sem alteração de restrições." : "Horários ajustados no rascunho. O salvamento automático confirmará a revisão; gere uma nova proposta para conferir o resultado.");
     } catch (cause) { setError(errorMessage(cause)); }
   }
   return <details className={panelClass} aria-labelledby="escala-adjust-hours-title">
     <summary id="escala-adjust-hours-title" className={styles.disclosureTrigger}>Horários para {input.defaultWeeklyHours}h · conferir ou ajustar manualmente</summary>
-    <p className={styles.muted}>Ao gerar, o sistema sugere os horários usando a jornada escolhida. Use esta área se quiser manter a saída ou comparar os originais. Intervalos e dias bloqueados são preservados.</p>
-    {mixed ? <p className={styles.muted}>Com setores em jornada mista, use Gerar escala e horários para preparar as duas durações. Para voltar ao ajuste uniforme manual, desmarque os setores.</p> : timed ? <fieldset disabled={disabled} className="flex flex-wrap items-end gap-3">
+    <p className={styles.muted}>O padrão compara alternativas de entrada e saída conforme a jornada e a cobertura disponível. Sem grade, prepara referências, sem prometer cobertura. Abra esta área somente para comparar os originais ou fazer um ajuste manual. Intervalos e dias bloqueados são preservados.</p>
+    {mixed ? <p className={styles.muted}>Com setores em jornada mista, use {input.generationMode === "HOURS_ONLY" ? "Gerar referências de horários ou Gerar proposta de horários" : "Gerar escala e horários"} para preparar as duas durações. Para voltar ao ajuste uniforme manual, desmarque os setores.</p> : timed ? <fieldset disabled={disabled} className="flex flex-wrap items-end gap-3">
       <Field label="Como ajustar os horários?">{id => <select id={id} className={controlClass} value={anchor} onChange={event => setAnchor(event.target.value as Anchor)}>
-        <option value="arrival">Manter entrada e intervalo, ajustar a saída</option><option value="departure">Manter saída e intervalo, ajustar a entrada</option><option value="both">Comparar alternativas de entrada ou saída preservada</option>
+        <option value="both">Automático · comparar alternativas conforme cobertura</option><option value="arrival">Manual · Manter entrada e intervalo, ajustar a saída</option><option value="departure">Manual · Manter saída e intervalo, ajustar a entrada</option>
       </select>}</Field>
       <button type="button" className={primaryClass} onClick={() => apply(anchor)}>Ajustar horários no rascunho</button>
     </fieldset> : <p className="text-sm">Pessoas sem horário fixo participam normalmente das folgas. A contagem por hora considera somente horários informados.</p>}

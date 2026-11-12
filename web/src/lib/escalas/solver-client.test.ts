@@ -28,12 +28,14 @@ function fixture(): EscalaInput {
       weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-11-02", offMode: "VARIABLE", fixedOffDays: [],
       offPattern: "ANY", maxConsecutiveSundays: 2, preferredOffDays: [], historyKnown: false, history: [] }],
     demands: [], assignments: [],
-    shifts: [{ id: "day", name: "Dia", segments: [{ start: 480, end: 984, kind: "WORK" }] }],
+    shifts: [{ id: "day", name: "Dia", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
   };
 }
 
 function completeAssignments(): EscalaInput["assignments"] {
-  return Array.from({ length: 7 }, (_, day) => ({ employeeId: "p1", date: `2026-11-0${day + 2}`, kind: "OFF" as const }));
+  // Monday rest also separates the scoped Sunday history from five actual workdays.
+  return Array.from({ length: 7 }, (_, day) => ({ employeeId: "p1", date: `2026-11-0${day + 2}`,
+    ...(day === 0 || day === 6 ? { kind: "OFF" as const } : { kind: "WORK" as const, shiftId: "day" }) }));
 }
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
@@ -55,9 +57,12 @@ describe("isolated schedule processor client", () => {
   it("sends scoped history without repeating IDs and preserves every scheduling field", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const input = fixture();
+    // Employment must include the locked planning day and actual work preceding the current horizon.
+    input.employees[0].activeFrom = "2026-10-31";
     input.employees[0].history = [{ employeeId: "p1", date: "2026-11-01", kind: "WORK", shiftId: "day", locked: false }];
     input.employees[0].planningHistory = [{ employeeId: "p1", date: "2026-10-31", kind: "OFF", locked: true }];
     input.employees[0].planningFuture = [{ employeeId: "p1", date: "2026-11-09", kind: "ABSENCE" }];
+    expect(validateEscala({ ...input, assignments: completeAssignments() }).valid).toBe(true);
     const original = structuredClone(input);
     const fetch = vi.fn(async (_url: unknown, options?: RequestInit) => {
       const sent = JSON.parse(String(options?.body)).input;
@@ -333,6 +338,12 @@ describe("isolated schedule processor client", () => {
     const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
     await expect(solveEscala({ ...fixture(), endDate: "2026-11-99" })).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects a structurally complete all-OFF response with missing weekly work", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const assignments = completeAssignments().map(({ employeeId, date }) => ({ employeeId, date, kind: "OFF" }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments, message: "Invalid claim", wallTimeSeconds: 1 })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
   });
   it("rejects a success with missing active dates instead of replacing the roster", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");

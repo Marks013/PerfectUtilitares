@@ -47,9 +47,9 @@ describe("mixed 42-hour sector choice", () => {
     expect(scenarioDefinitionChanged(next, changeMixed42Sectors(next, []))).toBe(true);
   });
 
-  it("clears selection when changing hours or removing the matching sector", () => {
+  it("retains selection when changing hours and clears it when removing the matching sector", () => {
     const input = changeMixed42Sectors(fixture(), ["FRENTE DE CAIXA"]);
-    expect(changeBranchWeeklyHours(input, 40).mixed42Sectors).toBeUndefined();
+    expect(changeBranchWeeklyHours(input, 40).mixed42Sectors).toEqual(["FRENTE DE CAIXA"]);
     const updated = { ...input, employees: input.employees.filter((person) => person.id !== "caixa") };
     expect(pruneMixed42Sectors(updated).mixed42Sectors).toBeUndefined();
     expect(renderToStaticMarkup(<Mixed42Option input={changeBranchWeeklyHours(input, 40)} disabled={false} onChange={vi.fn()} />)).toBe("");

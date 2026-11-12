@@ -51,32 +51,32 @@ describe("bounded automatic clock alternatives", () => {
     expect(second.input.assignments).toEqual(saved.assignments);
   });
 
-  it("keeps a short imported roster intact after clock expansion, a refined workday and repeated preparation", () => {
+  it("excludes a legacy short imported roster without expanding its clock, preserving protected records", () => {
     const raw = fixture(), source = raw.employees[0].sourceSchedule;
     if (!source) throw new Error("Fixture reference missing");
     source.weekday = "14:00-17:00 / 17:15-20:05";
     raw.shifts[0].segments = [{ start: 840, end: 1020, kind: "WORK" },
       { start: 1020, end: 1035, kind: "BREAK" }, { start: 1035, end: 1205, kind: "WORK" }];
-    const expanded = prepareGeneration(raw).input, choices = options(expanded);
-    expect(choices).toHaveLength(3);
-    expect(expanded.employees[0].simulationDailyMinutes).toBe(350);
-    expanded.assignments = [
-      { employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: choices[1].id },
+    raw.employees[0].simulationDailyMinutes = 350;
+    raw.assignments = [
+      { employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: "source" },
       { employeeId: "p1", date: "2026-11-03", kind: "OFF" },
-      { employeeId: "p1", date: "2026-11-04", kind: "WORK", shiftId: choices[2].id },
-      { employeeId: "p1", date: "2026-11-05", kind: "WORK", shiftId: choices[0].id, locked: true },
+      { employeeId: "p1", date: "2026-11-04", kind: "WORK", shiftId: "source" },
+      { employeeId: "p1", date: "2026-11-05", kind: "WORK", shiftId: "source", locked: true },
       { employeeId: "p1", date: "2026-11-06", kind: "ABSENCE" },
     ];
-    const original = structuredClone(expanded);
-    const first = prepareGeneration(expanded), second = prepareGeneration(first.input);
+    const original = structuredClone(raw);
+    const first = prepareGeneration(raw), second = prepareGeneration(first.input);
     for (const result of [first, second]) {
       expect(result.preparation.adjustedEmployeeIds).toEqual([]);
-      expect(result.input.assignments).toEqual(original.assignments);
-      expect(result.input.employees).toEqual(original.employees);
+      expect(result.preparation.excludedEmployeeIds).toEqual(["p1"]);
+      expect(result.input.assignments).toEqual(original.assignments.filter(record => record.locked || record.kind === "ABSENCE"));
+      expect(result.input.employees[0].planningEnabled).toBe(false);
+      expect(result.input.employees[0].sourceSchedule).toEqual(original.employees[0].sourceSchedule);
       expect(result.input.shifts).toEqual(original.shifts);
       expect(result.input.demands).toEqual(original.demands);
     }
-    expect(expanded).toEqual(original);
+    expect(raw).toEqual(original);
   });
 
   it("does not delete work using an unchanged clock when another unused alternative is rebalanced", () => {
@@ -112,7 +112,7 @@ describe("bounded automatic clock alternatives", () => {
     expect(prepareGeneration({ ...fixture(), generationMode: "REST_ONLY" }).input.employees[0].shiftIds).toHaveLength(1);
   });
 
-  it("retains short references and keeps every optional continuous work block within 4h30", () => {
+  it("excludes short references and keeps every included optional continuous work block within 4h30", () => {
     const raw = fixture(); raw.policy.limitContinuousWorkBlocks = true;
     const balanced = options(prepareGeneration(raw).input);
     expect(balanced.length).toBeGreaterThan(1);
@@ -122,8 +122,8 @@ describe("bounded automatic clock alternatives", () => {
     source.weekday = "07:00-12:00";
     raw.shifts[0].segments = [{ start: 420, end: 720, kind: "WORK" }];
     const short = prepareGeneration(raw).input;
-    expect(short.employees[0].simulationDailyMinutes).toBe(300);
-    expect(options(short).every(shift => paid(shift) === 300)).toBe(true);
+    expect(short.employees[0].planningEnabled).toBe(false);
+    expect(short.shifts).toEqual(raw.shifts);
   });
 
   it.each([119, 120])("fits optional alternatives around %i required manual, original, historical and locked references", required => {

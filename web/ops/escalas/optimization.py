@@ -198,7 +198,10 @@ def _phase_budget(remaining, names, index):
     if index == len(names) - 1:
         return remaining
     if names[index] == 'COVERAGE':
-        return remaining * COVERAGE_BUDGET_SHARE
+        reserve = min(3.0, remaining / 2) if 'REST_SPACING' in names[index + 1:] else 0
+        return min(remaining * COVERAGE_BUDGET_SHARE, remaining - reserve)
+    if names[index] == 'REST_SPACING':
+        return min(3.0, remaining)
     # Reserve usable time for variable rest quality instead of treating these
     # two operational goals like cosmetic tie-breaking. The global deadline is unchanged.
     weights = [REST_PHASE_WEIGHT if name in ('REST_SPACING', 'UNTIMED_ROTATION') else 1
@@ -242,6 +245,11 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
     if repair_count:
         plans = [plans[0]] * repair_count + plans
     names = [name for name, _objective in plans]
+    spacing_index = names.index('REST_SPACING') if 'REST_SPACING' in names else -1
+    # One shared cutoff protects the reserve across all repeated coverage repairs.
+    # This starts only after the verified incumbent and model construction exist.
+    spacing_reserve = min(3.0, max(0, deadline - time.monotonic() - .10) / 2) if spacing_index > 0 else 0
+    coverage_cutoff = deadline - .10 - spacing_reserve
     polish_attempt = 0
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
@@ -318,6 +326,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             # Cheap, independent neighborhoods must not consume the main search
             # or all secondary goals, even when several sectors need attention.
             budget = min(0.85, remaining * .12)
+        if 0 <= index < spacing_index:
+            budget = min(budget, max(0, coverage_cutoff - time.monotonic()))
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
         engine.parameters.num_workers = settings.workers

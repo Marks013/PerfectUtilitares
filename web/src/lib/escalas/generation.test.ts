@@ -106,14 +106,15 @@ describe("42h mixed distribution for selected sectors", () => {
     expect(new Set(forty.employees[0].shiftIds.map(id => minutes(forty, id)))).toEqual(new Set([480]));
   });
 
-  it("does not extend short imported references to 8h or 9h", () => {
+  it("excludes short imported references instead of extending them to 8h or 9h", () => {
     const raw = input(); raw.mixed42Sectors = ["Setor"];
     const source = raw.employees[0].sourceSchedule;
     if (!source) throw new Error("Referência importada ausente.");
     source.weekday = "07:00-12:00";
     const { input: prepared } = prepareGeneration(raw);
-    expect(prepared.employees[0].simulationDailyMinutes).toBe(300);
-    expect(prepared.employees[0].shiftIds.map(id => minutes(prepared, id))).toEqual([300]);
+    expect(prepared.employees[0].planningEnabled).toBe(false);
+    expect(prepared.employees[0].sourceSchedule).toEqual(source);
+    expect(prepared.shifts).toEqual(raw.shifts);
   });
 
   it("restores exact manual options after a persisted mixed draft without exposing originals to the solver", () => {
@@ -168,7 +169,7 @@ describe("42h mixed distribution for selected sectors", () => {
 });
 
 describe("whole-branch generation preparation", () => {
-  it("retains a saved short-reference roster when preparation changes no scheduling semantics", () => {
+  it("excludes a saved short-reference roster while retaining its protected records and original input", () => {
     const value = input();
     value.startDate = "2026-10-26"; value.endDate = "2026-12-06"; value.simulation = true;
     const reference = value.employees[0].sourceSchedule;
@@ -184,8 +185,10 @@ describe("whole-branch generation preparation", () => {
     const original = structuredClone(prepared);
     const result = prepareGeneration(prepared);
     expect(result.preparation.adjustedEmployeeIds).toEqual([]);
-    expect(result.input.assignments).toEqual(original.assignments);
-    expect(result.input.employees[0].simulationDailyMinutes).toBe(350);
+    expect(result.preparation.excludedEmployeeIds).toEqual(["p1"]);
+    expect(result.input.assignments).toEqual(original.assignments.filter(record => record.locked || record.kind === "ABSENCE"));
+    expect(result.input.employees[0].planningEnabled).toBe(false);
+    expect(result.input.employees[0].sourceSchedule).toEqual(original.employees[0].sourceSchedule);
     expect(result.input.employees[0].weeklyHours).toBe(42);
     expect(result.input.shifts).toEqual(original.shifts);
     expect(prepared).toEqual(original);
@@ -275,7 +278,8 @@ describe("whole-branch generation preparation", () => {
     const prepared = prepareGeneration(value);
     expect(prepared.preparation).toMatchObject({ adjustedEmployeeIds: ["p1"], excludedEmployeeIds: [], includedEmployees: 1, untimedEmployees: 0 });
     expect(prepared.preparation.generatedCoverageSlots).toBeGreaterThan(0);
-    expect(prepared.input.employees[0].shiftIds.map((id) => minutes(prepared.input, id))).toEqual([504]);
+    expect(prepared.input.employees[0].shiftIds.length).toBeGreaterThan(1);
+    expect(prepared.input.employees[0].shiftIds.every((id) => minutes(prepared.input, id) === 504)).toBe(true);
     expect(prepared.input.shifts[0].segments[0].start).toBe(420);
     expect(prepared.input.policy).toEqual({ ...value.policy, coverageReview: "SUGGESTED" });
     expect(prepared.input.employees[0]).toMatchObject({ offMode: "MIXED", fixedOffDays: [2], offPattern: "PREFER_CONSECUTIVE", maxConsecutiveSundays: 2, sundayRestRule: "COMMERCE", preferredOffDays: [3], historyKnown: false });
@@ -402,16 +406,16 @@ describe("whole-branch generation preparation", () => {
     expect(prepared.input.employees[1].shiftIds).toEqual([]);
   });
 
-  it("lists an unsafe short imported journey as an exception instead of expanding its hours", () => {
+  it("lists a short principal imported journey outside generation instead of expanding its hours", () => {
     const value = input(); const source = value.employees[0].sourceSchedule;
     if (!source) throw new Error("Referência de teste ausente");
     value.employees[0].sourceSchedule = { ...source, weekday: "07:00-11:00" };
     value.shifts[0].segments = [{ start: 420, end: 660, kind: "WORK" }];
     const prepared = prepareGeneration(value);
-    expect(prepared.preparation.excludedEmployeeIds).toEqual([]);
-    expect(prepared.input.employees[0]).toMatchObject({ planningEnabled: true, simulationDailyMinutes: 240, weeklyHours: 42 });
-    expect(prepared.preparation.includedEmployees).toBe(1);
-    expect(prepared.input.employees[0].shiftIds.every((id) => minutes(prepared.input, id) === 240)).toBe(true);
+    expect(prepared.preparation.excludedEmployeeIds).toEqual(["p1"]);
+    expect(prepared.input.employees[0]).toMatchObject({ planningEnabled: false, weeklyHours: 42 });
+    expect(prepared.preparation.includedEmployees).toBe(0);
+    expect(prepared.input.shifts).toEqual(value.shifts);
     expect(prepared.input.employees).toHaveLength(1);
   });
 
@@ -428,15 +432,15 @@ describe("whole-branch generation preparation", () => {
     expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
   });
 
-  it.each(["ABSENCE", "OFF"] as const)("does not exclude an incompatible person who has a preserved %s commitment", (kind) => {
+  it.each(["ABSENCE", "OFF"] as const)("excludes a short principal reference but preserves its %s commitment", (kind) => {
     const value = input(); const source = value.employees[0].sourceSchedule;
     if (!source) throw new Error("Referência de teste ausente");
     value.employees[0].sourceSchedule = { ...source, weekday: "07:00-11:00" };
     value.assignments = [{ employeeId: "p1", date: value.startDate, kind, locked: kind === "OFF" }];
     const prepared = prepareGeneration(value);
-    expect(prepared.preparation.excludedEmployeeIds).toEqual([]);
+    expect(prepared.preparation.excludedEmployeeIds).toEqual(["p1"]);
     expect(prepared.input.assignments).toEqual(value.assignments);
-    expect(prepared.input.employees[0].simulationDailyMinutes).toBe(240);
+    expect(prepared.input.employees[0].planningEnabled).toBe(false);
     expect(value.employees[0].planningEnabled).toBe(true);
   });
 
@@ -457,6 +461,6 @@ describe("whole-branch generation preparation", () => {
     const value = input(); value.employees[0].sourceSchedule = undefined;
     value.demands = dateRange(value.startDate, value.endDate).map((date) => ({ id: `manual-${date}`, date, sector: "Setor", start: 420, end: 980, minimum: 0 }));
     value.policy.coverageReview = "CONFIRMED";
-    expect(prepareGeneration(value).input).toEqual({ ...value, restRulesVersion: 1, simulation: true });
+    expect(prepareGeneration(value).input).toEqual({ ...value, restRulesVersion: 2, simulation: true });
   });
 });

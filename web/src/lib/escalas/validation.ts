@@ -1,4 +1,5 @@
 import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
+import { isHoursReferenceOnly, validateHoursReferences } from "./hours-reference";
 import { absoluteMinute, dateRange, visibleDates } from "./dates";
 import { escalaInputSchema } from "./schema";
 import { sortEmployees } from "./order";
@@ -23,6 +24,7 @@ export function validateEscala(rawInput: EscalaInput, options: { publishedSnapsh
     issues: parsed.error.issues.slice(0, 50).map((entry) => ({ code: "INPUT_INVALID", severity: "ERROR", message: `${entry.path.join(".")}: ${entry.message}` })),
   };
   const input = parsed.data;
+  if (isHoursReferenceOnly(input)) return validateHoursReferences(input);
   const issues: EscalaIssue[] = [];
   if (!options.publishedSnapshot) for (const day of workAfterStoreClosing(input)) issues.push({
     code: "STORE_CLOSING_EXCEEDED", severity: "ERROR", employeeId: day.employeeId, date: day.date,

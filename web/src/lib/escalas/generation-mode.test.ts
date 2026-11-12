@@ -20,11 +20,13 @@ function fixture(): EscalaInput {
 }
 
 describe("REST_ONLY generation references", () => {
-  it("keeps ordinary search as the default and accepts only the two supported modes", () => {
+  it("keeps ordinary search as the default and accepts exactly the three supported modes", () => {
     const input = fixture(), before = structuredClone(input);
     expect(prepareGeneration(input).input.employees[0].shiftIds).toEqual(["late", "early"]);
-    expect(escalaInputSchema.safeParse({ ...input, generationMode: "HOURS_ONLY" }).success).toBe(false);
+    expect(escalaInputSchema.safeParse({ ...input, generationMode: "HOURS_ONLY" }).success).toBe(true);
+    expect(escalaInputSchema.safeParse({ ...input, generationMode: "REST_ONLY" }).success).toBe(true);
     expect(escalaInputSchema.safeParse({ ...input, generationMode: "DAYS_AND_HOURS" }).success).toBe(true);
+    expect(escalaInputSchema.safeParse({ ...input, generationMode: "UNKNOWN_MODE" }).success).toBe(false);
     expect(input).toEqual(before);
   });
 

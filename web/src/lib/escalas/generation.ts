@@ -1,7 +1,8 @@
 import { EscalaError } from "./errors";
 import { applyLocalHolidayCalendar, assertHolidayLocks } from "./calendar";
+import { isHoursReferenceOnly } from "./hours-reference";
 import { retainCoverageReference } from "./automatic-coverage";
-import { applyRestEligibility, isRestPlanningExcludedRole } from "./eligibility";
+import { applyRestEligibility, isRestPlanningExcludedRole, isShortFpre136Schedule } from "./eligibility";
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42 } from "./labor-rules";
 import { automaticShiftAlternatives, civilNightWorkMinutes, importedShiftReference, isAutomaticPreparedShift, isGeneratedMixed42Shift, planningWeeklyHours, preparedShiftSignature, prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
@@ -76,7 +77,7 @@ export function matchesRestOnlyReferences(input: EscalaInput, assignments: Escal
 
 /** Prepare a preview, without approving documents, inventing attendance or overwriting branch decisions. */
 export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; preparation: EscalaGenerationPreparation } {
-  const input: EscalaInput = applyLocalHolidayCalendar({ ...rawInput, restRulesVersion: 1, simulation: true, policy: { ...rawInput.policy, maxConsecutiveWorkDays: effectiveWorkDayLimit(rawInput.policy) } });
+  const input: EscalaInput = applyLocalHolidayCalendar({ ...rawInput, restRulesVersion: 2, simulation: true, policy: { ...rawInput.policy, maxConsecutiveWorkDays: effectiveWorkDayLimit(rawInput.policy) } });
   const holidayLock = assertHolidayLocks(input);
   if (holidayLock) throw new EscalaError(422, "ESCALA_HOLIDAY_LOCK_CONFLICT", `Há um dia bloqueado em ${holidayLock}, quando a loja fecha por feriado. Confira e desbloqueie esse dia antes de gerar; nenhum bloqueio ou afastamento foi alterado.`);
   const closing = storeClosingMinutes(input);
@@ -86,7 +87,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const adaptedOptions = new Map<string, Set<string>>();
   const adjustedEmployees = input.employees.map((original) => {
     const person: EscalaEmployee = { ...applyRestEligibility(original), fixedImportedShiftId: undefined };
-    if (isRestPlanningExcludedRole(person.role)) excludedEmployeeIds.push(person.id);
+    if (isRestPlanningExcludedRole(person.role) || isShortFpre136Schedule(person)) excludedEmployeeIds.push(person.id);
     if (person.planningEnabled === false || person.activeFrom > input.endDate || (person.activeUntil && person.activeUntil < input.startDate)
       || (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return person;
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
@@ -136,10 +137,11 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     // Start from the existing arrival; a narrower search also produces more stable previews.
     // Keep an explicitly selected set of shifts above, and try departure only when arrival is unsafe.
     const rosterReference = { ...input, employees: [person], assignments: [] };
+    const strategy = input.generationMode === "REST_ONLY" ? "PRESERVE_START" : "BOTH";
     let prepared = needsBlockBalance && !needsHoursAdjustment
       ? { ...rosterReference, shifts: refreshed, employees: [{ ...person, shiftIds: refreshed.map(shift => shift.id) }] }
       : mixedWeeks ? prepareRoster(rosterReference, hours, "EXCLUDE", "BOTH")
-        : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_START");
+        : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", strategy);
     if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_END");
     // Prefer a daytime adaptation. Retain short/night references as a bounded civil-minute simulation when needed.
     if (!mixedWeeks && prepared.employees[0].planningEnabled === false) {
@@ -179,14 +181,16 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   });
   const excluded = new Set(excludedEmployeeIds);
   // Existing work also reserves space until the final allowed clocks are known.
-  const eligibleAssignments = input.assignments.filter((item) => !excluded.has(item.employeeId) || item.locked || item.kind === "ABSENCE");
+  const eligibleAssignments = input.generationMode === "HOURS_ONLY" ? input.assignments
+    : input.assignments.filter((item) => !excluded.has(item.employeeId) || item.locked || item.kind === "ABSENCE");
   // Reserve mandatory references before spending the shared limit on optional clocks.
   const used = new Set([...adjustedEmployees.flatMap((person) => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...eligibleAssignments.flatMap((item) => item.shiftId ? [item.shiftId] : []),
     ...adjustedEmployees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
   // Expand only identified automatic references in the explicitly selected full mode.
   // Extra choices do not invalidate a saved roster or replace its clock reference.
   const alternatives = adjustedEmployees.map(person => {
-    if (input.generationMode !== "DAYS_AND_HOURS" || person.planningEnabled === false || person.fixedImportedShiftId
+    const automaticClockMode = input.generationMode === "DAYS_AND_HOURS" || input.generationMode === "HOURS_ONLY" || adaptedOptions.has(person.id);
+    if (!automaticClockMode || input.generationMode === "REST_ONLY" || person.planningEnabled === false || person.fixedImportedShiftId
       || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || usesMixed42(input, person)) return person;
     const proposed = new Map(person.shiftIds.map(id => [id, shifts.get(id)]).filter((entry): entry is [string, EscalaShift] => Boolean(entry[1])));
     const durations = new Set<number>();
@@ -212,14 +216,18 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const employees = input.generationMode === "REST_ONLY"
     ? alternatives.map(person => restOnlyReferences(person, shifts)) : alternatives;
   // A changed option does not invalidate work that still uses an unchanged permitted clock.
-  const assignments = eligibleAssignments.filter(item => item.kind !== "WORK" || item.locked
+  // HOURS_ONLY keeps the saved work/rest cells; the processor may replace only their clocks.
+  const assignments = input.generationMode === "HOURS_ONLY" ? eligibleAssignments
+    : eligibleAssignments.filter(item => item.kind !== "WORK" || item.locked
     || !adaptedOptions.has(item.employeeId) || adaptedOptions.get(item.employeeId)?.has(item.shiftId ?? ""));
   const retainedIds = new Set([...employees.flatMap(person => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...assignments.flatMap(item => item.shiftId ? [item.shiftId] : []),
     ...employees.flatMap(person => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap(item => item.shiftId ? [item.shiftId] : []))]);
   const retained = [...shifts.values()].filter((shift) => retainedIds.has(shift.id));
   if (retained.length > 120) throw new EscalaError(422, "ESCALA_SHIFT_LIMIT", "A adaptação exige mais de 120 horários. Reduza o período ou as alternativas da filial antes de gerar.");
   const prepared: EscalaInput = { ...input, employees, shifts: retained, assignments };
-  const covered = retainCoverageReference(rawInput, prepared, true) ?? proposeCoverage(prepared);
+  const covered = isHoursReferenceOnly(prepared)
+    ? { ...prepared, coverageBasis: undefined, demands: prepared.demands.filter(demand => !demand.estimated) }
+    : retainCoverageReference(rawInput, prepared, true) ?? proposeCoverage(prepared);
   const generatedCoverageSlots = covered.demands.filter((demand) => demand.estimated === true).length;
   const proposal = covered;
   const included = employees.filter((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));

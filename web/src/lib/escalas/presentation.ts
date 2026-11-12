@@ -2,6 +2,7 @@ import { visibleDates } from "./dates";
 import { holidayCalendarFor, holidayLabel } from "./calendar";
 import { compareProposedSchedules, sortEmployees, sortHoursEmployees } from "./order";
 import { isRestPlanningExcludedRole } from "./eligibility";
+import { isHoursReferenceOnly } from "./hours-reference";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaWorkspace } from "./types";
 
 const ESCALA_LEGEND = "F = Folga | FE = Feriado, loja fechada | T01/T02 = Turno | ENC = Sem horário fixo | NP = Não processado | AF = Afastado | FV = Fora do vínculo | X = Não incluído ou não considerado";
@@ -53,9 +54,9 @@ function scheduleText(shift: EscalaShift, breaks: boolean) {
 
 /** Exact schedule interpretation shared by screen, PDF and Excel; no clock rounding or role inference. */
 export function buildEscalaSchedule(input: EscalaInput) {
-  const dates = visibleDates(input), codes = escalaShiftCodes(input);
-  const calendar = holidayCalendarFor(input);
-  const calendarLabel = input.policy.calendarMode !== "LOCAL" ? "Calendário: manual" : `Calendário: ${calendar.label}`;
+  const referencesOnly = isHoursReferenceOnly(input);
+  const dates = referencesOnly ? [] : visibleDates(input), codes = escalaShiftCodes(input);
+  const calendarLabel = referencesOnly ? "" : input.policy.calendarMode !== "LOCAL" ? "Calendário: manual" : `Calendário: ${holidayCalendarFor(input).label}`;
   const holidayNotes = dates.flatMap(date => {
     const label = holidayLabel(input, date);
     return label ? [`${date.slice(8)}/${date.slice(5, 7)} ${label}${input.policy.closedDates?.includes(date) ? " (fechado)" : ""}`] : [];
@@ -77,9 +78,22 @@ export function buildEscalaSchedule(input: EscalaInput) {
       const entry = variants.get(cell.shiftId) ?? { shiftId: cell.shiftId, code: cell.code, schedule: cell.schedule, interval: cell.interval, daily: cell.daily, dates: [] };
       entry.dates.push(cell.date); variants.set(cell.shiftId, entry);
     }
+    if (referencesOnly && employee.scheduleMode !== "UNTIMED" && employee.scheduleMode !== "MISSING") {
+      const durations = new Set<number>();
+      const references = employee.shiftIds.map(id => byShift.get(id)).filter((shift): shift is EscalaShift => !!shift)
+        .sort((left, right) => compareProposedSchedules(scheduleText(left, false), scheduleText(right, false)) || left.id.localeCompare(right.id));
+      for (const shift of references) {
+        const id = shift.id;
+        const minutes = shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
+        if (durations.has(minutes)) continue; durations.add(minutes);
+        variants.set(id, { shiftId: id, code: codes.get(id) ?? "", schedule: scheduleText(shift, false),
+          interval: scheduleText(shift, true) || "Sem intervalo informado", daily: escalaDuration(minutes), dates: [] });
+      }
+    }
     const proposedVariants = [...variants.values()].sort((left, right) => compareProposedSchedules(left.schedule, right.schedule));
     const proposedSchedule = proposedVariants.length === 1 ? proposedVariants[0].schedule
-      : proposedVariants.length > 1 ? "Varia no mês: " + proposedVariants.map((entry) => entry.code + " " + entry.schedule).join(" | ")
+      : proposedVariants.length > 1 ? (referencesOnly ? "Referências: " : "Varia no mês: ") + proposedVariants.map((entry) => entry.code + " " + entry.schedule).join(" | ")
+      : referencesOnly ? employee.scheduleMode === "UNTIMED" ? "ENC — Sem horário fixo" : "NP — horário ainda não informado"
       : cells.some((cell) => cell.code === "ENC") ? "ENC — Sem horário fixo"
       : cells.some((cell) => cell.code === "NP") ? "NP — horário ainda não processado" : "Sem trabalho com horário neste período";
     return { employee, cells, proposedSchedule, proposedVariants };
@@ -90,14 +104,14 @@ export function buildEscalaSchedule(input: EscalaInput) {
   const hoursPeople = sortHoursEmployees(input).flatMap(employee => {
     const person = byEmployee.get(employee.id); return person ? [person] : [];
   });
-  const restPeople = people.filter(person => !isRestPlanningExcludedRole(person.employee.role));
-  return { dates, codes, people, hoursPeople, restPeople, excluded, legend: ESCALA_LEGEND, calendarLabel, holidayNotes };
+  const restPeople = referencesOnly ? [] : people.filter(person => !isRestPlanningExcludedRole(person.employee.role));
+  return { dates, codes, people, hoursPeople, restPeople, excluded, legend: referencesOnly ? "Referências de horários, sem grade diária." : ESCALA_LEGEND, calendarLabel, holidayNotes };
 }
 
 /** One immutable interpretation for screen cells, PDF and Excel. Technical boundary days remain in input. */
 export function buildEscalaPresentation(workspace: EscalaWorkspace) {
   const { input } = workspace, base = buildEscalaSchedule(input);
-  const { dates } = base;
+  const dates = visibleDates(input);
   return { ...base,
     branch: `Filial ${input.branchCode} - ${input.branchName}`, period: `${dates[0] ?? input.startDate} a ${dates.at(-1) ?? input.endDate}`,
     state: workspace.status === "PUBLISHED" ? "PUBLICADA" : "RASCUNHO" };

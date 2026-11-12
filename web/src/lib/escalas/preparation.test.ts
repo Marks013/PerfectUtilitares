@@ -7,6 +7,7 @@ import { prepareRoster, proposeCoverage } from "./preparation";
 import { escalaInputSchema } from "./schema";
 import { validateEscala } from "./validation";
 import { exportEscalaXlsx } from "./export";
+import { exportedDurationMinutes } from "./export-test-utils";
 import type { EscalaInput } from "./types";
 
 function fixture(startDate = "2026-11-02", hours: 40 | 42 | 44 = 42): EscalaInput {
@@ -99,14 +100,16 @@ describe("dated legal limits and one-file planning", () => {
 });
 
 describe("automatic split-shift work-block preference", () => {
-  it("balances two short-journey blocks without dispensing with or inventing a pause", () => {
+  it("excludes a short principal imported journey without changing its reference or inventing a pause", () => {
     const input = fixture(); input.simulation = true;
     input.employees[0].sourceSchedule = { report: "FPRE136", code: "short", description: "Curta", weekday: "07:00-11:40 / 12:40-13:00", saturday: "07:00-11:40" };
+    const original = structuredClone(input);
     const result = prepareRoster(input, 42, "EXCLUDE", "PRESERVE_START");
-    const shift = result.shifts[0];
-    expect(shift.segments).toEqual([{ start: 420, end: 690, kind: "WORK" }, { start: 690, end: 750, kind: "BREAK" }, { start: 750, end: 780, kind: "WORK" }]);
-    expect(paid(result, shift.id)).toBe(300);
+    expect(result.employees[0].planningEnabled).toBe(false);
+    expect(result.employees[0].sourceSchedule).toEqual(original.employees[0].sourceSchedule);
+    expect(result.shifts).toEqual(original.shifts);
     expect(result.policy.allowShortMealSimulation).toBeUndefined();
+    expect(input).toEqual(original);
   });
   it.each([200, 210, 220, 230, 240])("balances a %i-minute opening block into exact 8h24 without moving endpoints", firstMinutes => {
     const input = fixture();
@@ -333,7 +336,7 @@ describe("branch-wide proposal preparation", () => {
     const bytes = exportEscalaXlsx({ id: "w", revision: 1, status: "DRAFT", input, validation, canEdit: true, canPublish: true, updatedAt: "2028-01-03" });
     const archive = unzipSync(bytes);
     const rows = await readSheet(Buffer.from(bytes), "Horarios");
-    expect(rows.find(row => row[1] === "0001")?.[7]).toBe("08:00");
+    expect(exportedDurationMinutes(rows.find(row => row[1] === "0001")?.[7])).toBe(480);
     expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/name="(?:Conferencia|Jornadas|Turnos)"/);
     expect(validation.issues.some(issue => issue.code === "HISTORY_UNVERIFIED")).toBe(true);
   });

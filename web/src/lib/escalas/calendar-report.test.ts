@@ -7,7 +7,7 @@ import { dateRange } from "./dates";
 import { exportEscalaPdf, exportEscalaXlsx } from "./export";
 import { assignmentPresentation, buildEscalaPresentation, escalaShiftCodes } from "./presentation";
 import type { EscalaWorkspace } from "./types";
-import { weeklyCapacityCaveat, weeklyCapacityText, weeklySectorCapacity } from "./weekly-capacity";
+import { analyzeCoverage } from "./coverage-analysis";
 
 function fixture(month = "2026-12", branch = "02"): EscalaWorkspace {
   const raw = newInput(branch, "Loja de teste", month, 42);
@@ -59,8 +59,9 @@ describe("concise holiday identification in real reports", () => {
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(workspace, "rest")), "Escala");
     expect(rows[2][0]).toContain("Calendário: Icaraíma-PR");
     expect(rows[2][0]).toContain("25/12 Natal (fechado)");
-    const christmas = rows[3].indexOf("25/12 Sex*");
+    const christmas = rows[3].indexOf("25*\nSex");
     expect(christmas).toBeGreaterThan(4);
+    expect(rows[3].filter(value => value === "25*\nSex")).toHaveLength(1);
     expect(rows[4][christmas]).toBe("FE");
     const pages = await readPdf(await exportEscalaPdf(workspace, "rest"));
     expect(pages).toHaveLength(1);
@@ -82,7 +83,10 @@ describe("concise holiday identification in real reports", () => {
     expect(model.holidayNotes).not.toContain("15/11 Proclamação da República (fechado)");
     expect(model.calendarLabel).toBe("Calendário: Umuarama-PR");
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(workspace, "rest")), "Escala");
-    expect(rows[4][rows[3].indexOf("15/11 Dom*")]).toBe("T01");
+    const holiday = rows[3].indexOf("15*\nDom");
+    expect(holiday).toBeGreaterThan(4);
+    expect(rows[3].filter(value => value === "15*\nDom")).toHaveLength(1);
+    expect(rows[4][holiday]).toBe("T01");
   });
 
   it("identifies manual dates without claiming an automatic municipal profile", () => {
@@ -93,26 +97,41 @@ describe("concise holiday identification in real reports", () => {
     expect(model.calendarLabel).toBe("Calendário: manual");
     expect(model.holidayNotes).toEqual(["10/12 Feriado cadastrado"]);
   });
-  it.each([42, 40] as const)("keeps nominal sector capacity separate and matches shared calculations at %ih", async hours => {
+  it.each([42, 40] as const)("keeps source-backed nominal capacity separate and matches the central comparison at %ih", async hours => {
     const workspace = fixture();
     workspace.input.defaultWeeklyHours = hours;
-    workspace.input.employees = Array.from({ length: 10 }, (_, index) => ({ ...workspace.input.employees[0], id: `p${index}`, registration: String(index), name: `Pessoa ${index}`, weeklyHours: hours, weeklyHoursMode: "BRANCH" as const }));
+    workspace.input.employees = Array.from({ length: 10 }, (_, index) => ({ ...workspace.input.employees[0], id: `p${index}`, registration: String(index), name: `Pessoa ${index}`, weeklyHours: hours, weeklyHoursMode: "BRANCH" as const,
+      sourceSchedule: { report: "FPRE136" as const, code: "original", description: "Original de 44 horas", weekday: "08:00-12:00 / 13:00-17:00", saturday: "08:00-12:00 / 00:00-00:00" } }));
     workspace.input.assignments = [];
-    const [capacity] = weeklySectorCapacity(workspace.input), bytes = exportEscalaXlsx(workspace, "hours");
+    const [capacity] = analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED" }).sectors;
+    if (!capacity) throw new Error("Nominal sector missing from the central comparison");
+    const nominal = capacity.nominal, selected = nominal.scenarios.find(scenario => scenario.weeklyHours === hours);
+    if (!selected) throw new Error("Chosen nominal scenario missing");
+    const bytes = exportEscalaXlsx(workspace, "hours");
     const rows = await readSheet(Buffer.from(bytes), "Capacidade");
-    expect(rows[2][0]).toContain(weeklyCapacityCaveat);
-    expect(rows[3]).toEqual(["Setor", "Colab.", "44h (h/sem)", "42h (h/sem)", "40h (h/sem)", "Atual (h/sem)", "Diferença (h/sem)", "Equiv. nominal (adicional)", "Disponível até (h/sem)", "Horas na grade (período)", "Presenças ENC (período)"]);
-    expect(rows[4].slice(0, 7)).toEqual(["Caixa", 10, capacity.referenceHours, capacity.hours42, capacity.hours40, capacity.currentHours, capacity.missingHours]);
-    expect(capacity.referenceHours).toBe(440);
-    expect(capacity.currentHours).toBe(hours === 42 ? 420 : 400);
-    expect(capacity.missingHours).toBe(hours === 42 ? 20 : 40);
-    expect(rows[4][7]).toBe(hours === 42 ? "10,48 (+0,48)" : "11 (+1)");
-    const pdf = (await readPdf(await exportEscalaPdf(workspace, "hours"))).join(" ");
-    expect(pdf).toContain("Capacidade nominal:");
-    // Compare the same display text, allowing only PDF line wrapping whitespace.
-    expect(pdf.replace(/\s+/g, " ")).toContain(weeklyCapacityText(capacity).replace(/\s+/g, " "));
+    expect(rows[2][0]).toContain("Nominal semanal; horas WORK apuradas no período.");
+    expect(rows[3]).toEqual(["Setor", "Pessoas com origem", "Origem nominal", "Referência (h/sem)", "Cenário 42h (h/sem)", "Cenário 40h (h/sem)", "Atual (h/sem)", "Dif. no cenário escolhido (h/sem)", "Equiv. nominal (adicional)", "WORK conhecido (h no período)", "Crédito WORK e pausa paga (h no período)", "Sem relógio (pessoas)", "Sem relógio (pessoas-dia)"]);
+    expect(rows[4].slice(0, 2)).toEqual(["Caixa", 10]);
+    expect(rows[4][2]).toBe("FPRE136: 44h (10)");
+    expect(nominal.referencePeople).toBe(10); expect(nominal.withoutReferencePeople).toBe(0);
+    expect(nominal.referenceCapacityHours).toBe(440);
+    expect(rows[4].slice(3, 6)).toEqual([nominal.referenceCapacityHours, 420, 400]);
+    expect(selected.capacityHours).toBe(hours === 42 ? 420 : 400);
+    expect(selected.lostHours).toBe(hours === 42 ? 20 : 40); expect(rows[4][7]).toBe(selected.lostHours);
+    const { candidateWeeklyHoursMin: minimum, candidateWeeklyHoursMax: maximum } = nominal;
+    if (minimum === null || maximum === null) throw new Error("Known nominal candidates must have weekly bounds");
+    const number = (value: number) => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+    expect(rows[4][6]).toBe(minimum === maximum ? minimum : number(minimum) + "–" + number(maximum));
+    expect(rows[4][8]).toBe(hours === 42 ? "10,48 (+0,48)" : "11 (+1)");
+    expect(rows[4][9]).toBe(0); expect(capacity.knownWorkPersonMinutes).toBe(0);
+    const pdf = (await readPdf(await exportEscalaPdf(workspace, "hours"))).join(" ").replace(/\s+/g, " ");
+    expect(pdf).toContain("Nominal semanal: 440h; 10 com origem.");
+    expect(pdf).toContain("FPRE136: 44h (10)");
+    expect(pdf).toContain("42h: 420h; 40h: 400h");
+    expect(pdf).toContain("Diferença nominal: " + selected.lostHours + " h/sem.");
+    expect(pdf).toContain("WORK conhecido no período: 00:00");
     const restPdf = (await readPdf(await exportEscalaPdf(workspace, "rest"))).join(" ");
-    expect(restPdf).not.toContain("Capacidade nominal:");
+    expect(restPdf).not.toContain("Nominal semanal:");
     const rest = exportEscalaXlsx(workspace, "rest");
     const { unzipSync, strFromU8 } = await import("fflate");
     expect(strFromU8(unzipSync(rest)["xl/workbook.xml"])).not.toContain('name="Capacidade"');

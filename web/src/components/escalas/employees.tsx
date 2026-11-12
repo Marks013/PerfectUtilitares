@@ -284,6 +284,12 @@ export function EmployeeEditor({
             />
           )}
         </Field>
+        {input.generationMode === "HOURS_ONLY" && <details>
+          <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">Consultar regras dos dias já registrados</summary>
+          <p className="text-sm text-[color:var(--app-muted)]">Neste modo, os dias já registrados são preservados. A organização das folgas não será recalculada.</p>
+          <p className="text-sm">Organização registrada: {draft.offMode === "VARIABLE" ? "variável" : draft.offMode === "MIXED" ? "uma folga fixa" : "duas folgas fixas"}. Dias fixos: {draft.fixedOffDays.map(day => ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"][day]).join(", ") || "nenhum"}. Limite de domingos seguidos: {draft.maxConsecutiveSundays}.</p>
+        </details>}
+        {input.generationMode !== "HOURS_ONLY" && <>
         <div className="space-y-2">
           <Check label="Fixar dias de folga (opcional)" checked={draft.offMode !== "VARIABLE"}
             onChange={checked => setDraft(previous => ({ ...previous,
@@ -365,8 +371,9 @@ export function EmployeeEditor({
             </select>
           )}
         </Field>
+        </>}
       </div>
-      <Field label="Horário de trabalho" hint="Sem horário fixo, o sistema planeja as folgas, mas não conta essa pessoa por hora.">
+      <Field label="Horário de trabalho" hint={input.generationMode === "HOURS_ONLY" ? "Informe uma referência real para propor horários. Sem horário fixo, nenhuma jornada fictícia é atribuída." : "Sem horário fixo, o sistema planeja as folgas, mas não conta essa pessoa por hora."}>
         {(id) => <select id={id} value={draft.scheduleMode ?? "TIMED"} className={controlClass}
           onChange={(event) => setDraft((previous) => ({
             ...previous,
@@ -374,13 +381,13 @@ export function EmployeeEditor({
             ...(event.target.value !== "TIMED" ? { shiftIds: [] } : {}),
           }))}>
           <option value="TIMED">Com horário informado</option>
-          <option value="MISSING">Horário não informado (simular presença e folgas)</option>
+          <option value="MISSING">{input.generationMode === "HOURS_ONLY" ? "Horário não informado (não atribuir referência fictícia)" : "Horário não informado (simular presença e folgas)"}</option>
           <option value="UNTIMED">Sem horário fixo · enquadramento conferido</option>
         </select>}
       </Field>
-      {draft.scheduleMode === "MISSING" && <p className="text-sm">Essa pessoa participa das folgas. Se o arquivo trouxe horários zerados, eles ficam identificados como sem horário fixo (ENC). Acrescente um horário somente se houver uma referência real.</p>}
+      {draft.scheduleMode === "MISSING" && <p className="text-sm">{input.generationMode === "HOURS_ONLY" ? "Nenhuma referência fictícia será atribuída." : "Essa pessoa participa das folgas."} Se o arquivo trouxe horários zerados, eles ficam identificados como sem horário fixo (ENC). Acrescente um horário somente se houver uma referência real.</p>}
       {draft.scheduleMode === "UNTIMED" && <p className="text-sm">
-        Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo cinco dias seguidos de trabalho.
+        {input.generationMode === "HOURS_ONLY" ? "Os dias já registrados são mantidos; sem grade, não são criadas presenças ou folgas." : "Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo cinco dias seguidos de trabalho."}
         Os dias de trabalho não recebem turno nem horas fictícias. A carga semanal é apenas uma referência cadastral.
       </p>}
       <Check
@@ -407,18 +414,18 @@ export function EmployeeEditor({
           ))}
         </div>
       </fieldset>}
-      {draft.offMode !== "VARIABLE" && (
+      {input.generationMode !== "HOURS_ONLY" && draft.offMode !== "VARIABLE" && (
         <DayChoices
           label="Dias fixos aprovados"
           values={draft.fixedOffDays}
           change={(values) => change("fixedOffDays", values)}
         />
       )}
-      <DayChoices
+      {input.generationMode !== "HOURS_ONLY" && <DayChoices
         label="Preferências de folga (não são bloqueios)"
         values={draft.preferredOffDays}
         change={(values) => change("preferredOffDays", values)}
-      />
+      />}
       <LeadershipFields employee={draft} input={input} onChange={value => change("leadership", value)} />
       <details className="space-y-3 border-t border-[color:var(--app-border)] pt-3">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">

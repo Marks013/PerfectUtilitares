@@ -1,15 +1,93 @@
 """Daily deficit and Saturday fairness must not migrate to another day or group."""
+import copy
 import time
 import unittest
 from unittest.mock import patch
 
 from ortools.sat.python import cp_model
 from optimization import ImprovementContext, Snapshot, improve, _movable_people
-from solver import _coverage, solve
+from solver import _coverage, _coverage_reference_slices, solve
 from test_solver import fixture
 
 
 class DailyCoverageTests(unittest.TestCase):
+    def reference(self, minimum=1, start=480, end=540, role=None, estimated=True):
+        return {'date': '2026-11-02', 'sector': 'Caixa', 'start': start,
+                'end': end, 'minimum': minimum, 'estimated': estimated,
+                **({'role': role} if role else {})}
+
+    def reference_objective(self, demands, people=()):
+        model, values, choices, employees = cp_model.CpModel(), {}, {}, []
+        for i, (role, present) in enumerate(people):
+            pid = f'p{i}'
+            variable = model.new_bool_var(pid)
+            values[variable.index] = present
+            choices[pid, '2026-11-02'] = {'day': variable}
+            employees.append({'id': pid, 'sector': 'Caixa', 'role': role, 'history': []})
+        data = {'startDate': '2026-11-02', 'endDate': '2026-11-08',
+                'policy': fixture()['policy'], 'demands': demands, 'storeClosingMinutes': 540}
+        daily, closing, sectors = {}, {}, {}
+        terms = _coverage(model, data, employees, choices,
+                          {'day': {'segments': [{'start': 480, 'end': 600, 'kind': 'WORK'}]}},
+                          time.monotonic(), 'ESTIMATED', values, sector_terms=sectors,
+                          closing_terms=closing, daily_terms=daily)
+        snapshot = Snapshot(values)
+        return snapshot.value(sum(terms)), {key: snapshot.value(sum(items)) for key, items in daily.items()}, \
+            {key: snapshot.value(sum(items)) for key, items in closing.items()}
+
+    def test_duplicate_one_hour_estimate_penalizes_one_hour(self):
+        row = self.reference()
+        before = copy.deepcopy(row)
+        result = self.reference_objective([row, copy.deepcopy(row)])
+        self.assertEqual(result, (60, {('Caixa', '2026-11-02'): 60}, {'Caixa': 60}))
+        self.assertEqual(row, before)
+
+    def test_partial_overlaps_use_highest_floor_only_in_overlap(self):
+        rows = [self.reference(2, 480, 540), self.reference(3, 510, 570)]
+        result = self.reference_objective(rows)
+        self.assertEqual(result[0], 240)  # 30*2 + 30*3 + 30*3.
+        self.assertEqual(result[1]['Caixa', '2026-11-02'], 240)
+        self.assertEqual(result[2]['Caixa'], 150)
+
+    def test_role_maxima_sum_without_adding_general_reference_again(self):
+        rows = [self.reference(2, role='Caixa'), self.reference(1, role='Caixa'),
+                self.reference(1, role='Fiscal'), self.reference(3)]
+        self.assertEqual(self.reference_objective(rows)[0], 180)
+        self.assertEqual(self.reference_objective(rows, [('Caixa', 1), ('Fiscal', 1)])[0], 60)
+        self.assertEqual(self.reference_objective(rows, [('Caixa', 1), ('Caixa', 1)])[0], 60)
+        self.assertEqual(self.reference_objective(rows, [('Caixa', 1), ('Caixa', 1), ('Fiscal', 1)])[0], 0)
+
+    def test_total_surplus_does_not_cancel_missing_distinct_function(self):
+        rows = [self.reference(1, role='Caixa'), self.reference(1, role='Fiscal'), self.reference(2)]
+        self.assertEqual(self.reference_objective(rows, [('Caixa', 1), ('Caixa', 1), ('Caixa', 1)])[0], 60)
+
+    def test_confirmed_and_estimated_targets_stay_separate_and_immutable(self):
+        rows = [self.reference(1, estimated=False), self.reference(3, role='Caixa', estimated=False),
+                self.reference(2, role='Caixa', estimated=False), self.reference(1, role='Fiscal', estimated=False),
+                self.reference(8, role='Caixa')]
+        before = copy.deepcopy(rows)
+        slices = list(_coverage_reference_slices(rows))
+        hard = next(row for row in slices if not row['estimated'])
+        soft = next(row for row in slices if row['estimated'])
+        self.assertEqual((hard['minimum'], hard['roles']), (4, {'Caixa': 3, 'Fiscal': 1}))
+        self.assertEqual((soft['minimum'], soft['roles']), (8, {'Caixa': 8}))
+        self.assertEqual(rows, before)
+
+    def test_hard_role_floor_remains_a_constraint_even_with_general_surplus(self):
+        model = cp_model.CpModel()
+        present = model.new_bool_var('wrong-role')
+        data = {'startDate': '2026-11-02', 'endDate': '2026-11-08', 'policy': fixture()['policy'],
+                'demands': [self.reference(1, role='Fiscal', estimated=False)] * 2}
+        result = _coverage(model, data, [{'id': 'p', 'sector': 'Caixa', 'role': 'Caixa', 'history': []}],
+                           {('p', '2026-11-02'): {'day': present}},
+                           {'day': {'segments': [{'start': 480, 'end': 540, 'kind': 'WORK'}]}},
+                           time.monotonic(), 'HARD')
+        self.assertEqual(result, [])
+        engine = cp_model.CpSolver()
+        engine.parameters.num_workers = 1
+        engine.parameters.max_time_in_seconds = 1
+        self.assertEqual(engine.solve(model), cp_model.INFEASIBLE)
+
     def coverage_model(self):
         model = cp_model.CpModel()
         monday = model.new_bool_var('monday')

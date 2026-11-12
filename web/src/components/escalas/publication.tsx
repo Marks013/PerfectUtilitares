@@ -7,6 +7,7 @@ import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } fro
 import { responseMessage } from "./workspace-model";
 import { ProcessingBar } from "./workspace-feedback";
 import { isReviewedRevisionCurrent, type ReviewedRevision } from "./publication-review";
+import { hasHourReferences } from "./generation-mode-option";
 import styles from "./escalas.module.css";
 
 type Format = "pdf" | "xlsx";
@@ -17,8 +18,10 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
   workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; outdated?: boolean; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void;
   onPublish: () => void; onRegenerate?: () => void; onPrepare?: () => Promise<EscalaWorkspace | null>; isCurrent?: (workspace: EscalaWorkspace) => boolean;
 }) {
-  const [localMode, setLocalMode] = useState<EscalaExportMode>(() => mode ?? (workspace.input.generationMode === "REST_ONLY" ? "rest" : "both"));
-  const selectedMode = mode ?? localMode;
+  const hoursOnly = workspace.input.generationMode === "HOURS_ONLY";
+  const referencesOnly = hoursOnly && !workspace.input.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY");
+  const [localMode, setLocalMode] = useState<EscalaExportMode>(() => mode ?? (hoursOnly ? "hours" : workspace.input.generationMode === "REST_ONLY" ? "rest" : "both"));
+  const selectedMode = hoursOnly ? "hours" : mode ?? localMode;
   const [separateSectors, setSeparateSectors] = useState(true);
   const [reviewed, setReviewed] = useState<ReviewedRevision | null>(null);
   const confirmed = isReviewedRevisionCurrent(reviewed, workspace, dirty, outdated);
@@ -36,8 +39,9 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
     const owned = urls.current;
     return () => { owned.forEach(url => { URL.revokeObjectURL(url); }); owned.clear(); };
   }, []);
-  const blocked = busy || outdated || Boolean(exporting) || !workspace.input.assignments.length;
-  const ready = workspace.canPublish && !dirty && !blocked && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
+  const hasReferences = hasHourReferences(workspace.input);
+  const blocked = busy || outdated || Boolean(exporting) || (hoursOnly ? !hasReferences : !workspace.input.assignments.length);
+  const ready = !referencesOnly && workspace.canPublish && !dirty && !blocked && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
   const isDownloadCurrent = (file: FileState | undefined) => Boolean(file
     && file.workspaceId === workspace.id && file.revision === workspace.revision && file.mode === selectedMode
     && (file.separateSectors === undefined || file.separateSectors === separateSectors) && !dirty && !outdated);
@@ -74,7 +78,8 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
 
   return <section className={panelClass} aria-labelledby="escala-publication-title">
     <div><h2 id="escala-publication-title" className={styles.sectionTitle}>Arquivos do planejamento</h2><p className={styles.subtitle}>Filial {workspace.input.branchCode} · {workspace.input.visibleMonth ?? workspace.input.startDate} · revisão salva {workspace.revision} · {CONTENT[selectedMode]}</p></div>
-    <Field label="Conteúdo do PDF e XLSX">{id => <select id={id} className={controlClass} disabled={Boolean(exporting)} value={selectedMode} onChange={event => { const value = event.target.value as EscalaExportMode; if (onModeChange) onModeChange(value); else setLocalMode(value); }}><option value="rest">Somente escala de folgas</option><option value="hours">Somente escala de horários</option><option value="both">Folgas e horários</option></select>}</Field>
+    <Field label="Conteúdo do PDF e XLSX">{id => <select id={id} className={controlClass} disabled={Boolean(exporting) || hoursOnly} value={selectedMode} onChange={event => { const value = event.target.value as EscalaExportMode; if (onModeChange) onModeChange(value); else setLocalMode(value); }}>{!hoursOnly && <option value="rest">Somente escala de folgas</option>}<option value="hours">{referencesOnly ? "Referências de horários" : "Somente escala de horários"}</option>{!hoursOnly && <option value="both">Folgas e horários</option>}</select>}</Field>
+    {referencesOnly && <p className={styles.muted}>Arquivo de referências: ainda não há distribuição completa dos dias. Não representa presença diária nem cobertura garantida.</p>}
     <div className={styles.stackSmall}><Check label="Separar setores por página" checked={separateSectors} disabled={exporting === "pdf"} onChange={setSeparateSectors} />
       <p className={styles.muted}>Só no PDF. Desmarque para reunir setores em menos páginas.</p></div>
     <div className={styles.fileGrid}>{(["pdf", "xlsx"] as const).map(format => {

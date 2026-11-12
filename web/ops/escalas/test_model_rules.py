@@ -3,11 +3,48 @@ import copy
 import unittest
 from datetime import date, timedelta
 
-from solver import admissible, solve
+from solver import admissible, effective_weekly_minutes, shift_metrics, solve
 from test_solver import fixture
 
 
 class ModelRuleTests(unittest.TestCase):
+    def test_42_and_44h_simulation_does_not_fabricate_compensation_authorization(self):
+        for hours, daily in ((42, 504), (44, 528)):
+            with self.subTest(hours=hours):
+                data = fixture(hours)
+                data['simulation'] = True
+                data['policy']['compensationAuthorized'] = False
+                before = copy.deepcopy(data)
+                policy = {**data['policy'], '_simulation': data['simulation'] is True}
+                shift = data['shifts'][0]
+                self.assertEqual(shift_metrics(shift)[0], daily)
+                self.assertTrue(admissible(shift, policy, '2026-11-02'))
+                self.assertEqual(effective_weekly_minutes(data['employees'][0], '2026-11-08', True), daily * 5)
+                self.assertFalse(admissible(shift, {**policy, '_simulation': False}, '2026-11-02'))
+                self.assertFalse(policy['compensationAuthorized'])
+                self.assertEqual(data, before)
+
+    def test_extended_reference_keeps_daily_cap_and_full_meal_in_simulation(self):
+        for hours, daily in ((42, 504), (44, 528)):
+            with self.subTest(hours=hours):
+                data = fixture(hours)
+                policy = {**data['policy'], '_simulation': True,
+                          'compensationAuthorized': False, 'allowShortMealSimulation': True}
+                shift = data['shifts'][0]
+                self.assertFalse(admissible(shift, {**policy, 'dailyLimitMinutes': daily - 1}, '2026-11-02'))
+                # A former six-hour continuous reference cannot become 504/528
+                # paid minutes without acquiring the full required meal break.
+                uninterrupted = {'id': 'expanded', 'segments': [
+                    {'start': 480, 'end': 480 + daily, 'kind': 'WORK'}]}
+                self.assertFalse(admissible(uninterrupted, policy, '2026-11-02'))
+                short_meal = copy.deepcopy(shift)
+                short_meal['segments'][1]['end'] -= 1
+                short_meal['segments'][2]['start'] -= 1
+                short_meal['segments'][2]['end'] -= 1
+                self.assertEqual(shift_metrics(short_meal)[0], daily)
+                self.assertFalse(admissible(short_meal, policy, '2026-11-02'))
+                self.assertTrue(admissible(shift, policy, '2026-11-02'))
+
     def test_legacy_six_day_cap_cannot_allow_six_across_weeks(self):
         data = fixture(42, weeks=2)
         data["policy"]["maxConsecutiveWorkDays"] = 6

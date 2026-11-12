@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { visibleDates } from "@/lib/escalas/dates";
+import { coverageBasis } from "@/lib/escalas/automatic-coverage";
 import { buildEscalaDiagnostics } from "@/lib/escalas/diagnostics";
 import type { EscalaValidation } from "@/lib/escalas/types";
 import { Employees, EmployeeEditor } from "./employees";
@@ -109,6 +110,13 @@ describe("Escalas readable operational review", () => {
     const {input,date} = sample();
     input.demands = [{id:"estimate",date,sector:"Reposição",role:"Repositor",start:836,end:845,minimum:1,estimated:true}, {id:"minimum",date,sector:"Caixas",role:"Operador",start:810,end:815,minimum:1,estimated:false}];
     const validation: EscalaValidation={valid:false,readyToPublish:false,issues:[],summaries:[],minimumCoverageMargin:-1};
+    const incomplete = renderToStaticMarkup(<ValidationResults input={input} validation={validation} onResolve={vi.fn()} />);
+    expect(incomplete).toContain("Referência de cobertura indisponível ou desatualizada");
+    expect(incomplete).not.toContain("14:00–14:05");
+    for (const day of visibleDates(input).filter(value => value !== date)) {
+      for (const employeeId of ["a", "b"]) input.assignments.push({ employeeId, date: day, kind: "OFF" });
+    }
+    input.coverageBasis = coverageBasis(input);
     const diagnostics = buildEscalaDiagnostics(input, []);
     expect(diagnostics.coverageGroups.some((row) => row.start === 840)).toBe(true);
     const html=renderToStaticMarkup(<ValidationResults input={input} validation={validation} onResolve={vi.fn()} />);

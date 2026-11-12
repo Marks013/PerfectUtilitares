@@ -1,8 +1,10 @@
 import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
 import { keepsPriorityLeader } from "./movement";
 import { keepsSaturdayBalance } from "./saturday-balance";
-import { buildCoveragePresence } from "./coverage-presence";
+import { buildCoveragePresence, sectorCoverageGaps } from "./coverage-presence";
 import { regularRestQuality } from "./rest-spacing";
+import { preservesRestDistribution, restPairSummary } from "./rest-quality";
+import { validateEscala } from "./validation";
 import { validateEmployee } from "./validation-employee";
 import { workJourney } from "./validation-time";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaValidation } from "./types";
@@ -81,6 +83,100 @@ export function exchangeRestRepair(input: EscalaInput, validation: EscalaValidat
           const proposal = { ...input, assignments: input.assignments.map(record => replacements.get(record) ?? record) };
           if (!keepsSaturdayBalance(input, proposal.assignments)) continue;
           if (!keepsPriorityLeader(proposal, person, work.date) || !keepsPriorityLeader(proposal, peer, off.date)) continue;
+          return proposal;
+        }
+      }
+    }
+  }
+  return input;
+}
+
+/** Improve a valid roster by exchanging two complete duties, not isolated cells. */
+export function exchangeRestImprovement(input: EscalaInput, validation: EscalaValidation, deadline: number,
+  state: { checked: number } = { checked: 0 }): EscalaInput {
+  if (!validation.valid || performance.now() >= deadline || state.checked >= 32) return input;
+  const records = new Map<string, EscalaAssignment[]>();
+  for (const record of input.assignments) {
+    const group = records.get(record.employeeId) ?? [];
+    group.push(record); records.set(record.employeeId, group);
+  }
+  const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
+  const visible = new Set(visibleDates(input));
+  const quality = restPairSummary(input);
+  const ranked = new Map(quality.people.map(person => [person.employeeId, person]));
+  const noClock = (person: EscalaEmployee) => person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
+  const eligible = input.employees.filter(person => person.planningEnabled !== false && person.offMode === "VARIABLE" && person.offPattern === "ANY")
+    .sort((a, b) => (ranked.get(b.id)?.correctableExcess ?? 0) - (ranked.get(a.id)?.correctableExcess ?? 0)
+      || (ranked.get(b.id)?.adjustablePairs ?? 0) - (ranked.get(a.id)?.adjustablePairs ?? 0) || a.id.localeCompare(b.id));
+  const peers = new Map<string, EscalaEmployee[]>();
+  for (const person of eligible) {
+    const key = JSON.stringify([person.sector, person.role, noClock(person)]);
+    const group = peers.get(key) ?? []; group.push(person); peers.set(key, group);
+  }
+  const editable = (person: EscalaEmployee, record: EscalaAssignment) => visible.has(record.date) && !record.locked
+    && dayOfWeek(record.date) !== 6 && record.date >= person.activeFrom && (!person.activeUntil || record.date <= person.activeUntil)
+    && !input.policy.closedDates.includes(record.date) && !person.fixedOffDays.includes(dayOfWeek(record.date));
+  const dailyDeficits = (proposal: EscalaInput, sector: string, dates: Set<string>) => {
+    const result = new Map<string, number>();
+    const local = { ...proposal, employees: proposal.employees.filter(person => person.sector === sector),
+      demands: proposal.demands.filter(demand => demand.sector === sector && dates.has(demand.date)) };
+    for (const gap of sectorCoverageGaps(local)) {
+      if (gap.sector !== sector || !dates.has(gap.date)) continue;
+      const roles = new Map<string, number>();
+      for (const role of gap.roles) roles.set(role.role, Math.max(roles.get(role.role) ?? 0, role.minimum - role.present, 0));
+      const roleMissing = [...roles.values()].reduce((total, missing) => total + missing, 0);
+      const missing = Math.max(0, gap.minimum - gap.present, roleMissing);
+      result.set(gap.date, (result.get(gap.date) ?? 0) + missing * (gap.end - gap.start));
+    }
+    return result;
+  };
+  const deficits = new Map<string, Map<string, number>>();
+  for (const person of eligible) {
+    if (performance.now() >= deadline || state.checked >= 32) return input;
+    if (!(ranked.get(person.id)?.adjustablePairs)) continue;
+    const own = records.get(person.id) ?? [];
+    const ownQuality = regularRestQuality(input, person, own);
+    const pairedDays = new Set(own.filter(record => record.kind === "OFF"
+      && own.some(other => other.kind === "OFF" && [addDays(record.date, -1), addDays(record.date, 1)].includes(other.date))).map(record => record.date));
+    // A Sunday/history boundary may be the other half of the pair.
+    if (!pairedDays.size) own.filter(record => record.kind === "OFF").forEach(record => { pairedDays.add(record.date); });
+    const kind = noClock(person) ? "DUTY" : "WORK";
+    for (const off of own.filter(record => record.kind === "OFF" && pairedDays.has(record.date) && editable(person, record))) {
+      for (const work of own.filter(record => record.kind === kind && editable(person, record) && weekStart(record.date) === weekStart(off.date))) {
+        if (performance.now() >= deadline || state.checked >= 32) return input;
+        const shift = shifts.get(work.shiftId ?? "");
+        if (kind === "WORK" && (!shift || shift.segments.some(segment => segment.start < 0 || segment.end > 1440))) continue;
+        for (const peer of peers.get(JSON.stringify([person.sector, person.role, noClock(person)])) ?? []) {
+          if (peer.id === person.id) continue;
+          if (performance.now() >= deadline || state.checked >= 32) return input;
+          const other = records.get(peer.id) ?? [];
+          const peerWork = other.find(record => record.date === off.date && record.kind === kind && editable(peer, record));
+          const peerOff = other.find(record => record.date === work.date && record.kind === "OFF" && editable(peer, record));
+          if (!peerWork || !peerOff) continue;
+          const peerShift = shifts.get(peerWork.shiftId ?? "");
+          if (kind === "WORK" && (!peerShift || peerShift.segments.some(segment => segment.start < 0 || segment.end > 1440))) continue;
+          const asOff = (record: EscalaAssignment): EscalaAssignment => { const { shiftId: _shift, ...rest } = record; return { ...rest, kind: "OFF" }; };
+          const asWork = (record: EscalaAssignment, source: EscalaAssignment): EscalaAssignment => ({ ...record, kind,
+            ...(kind === "WORK" ? { shiftId: source.shiftId } : {}) });
+          const replacements = new Map<EscalaAssignment, EscalaAssignment>([[work, asOff(work)], [off, asWork(off, work)],
+            [peerWork, asOff(peerWork)], [peerOff, asWork(peerOff, peerWork)]]);
+          const proposal = { ...input, assignments: input.assignments.map(record => replacements.get(record) ?? record) };
+          const nextOwn = regularRestQuality(proposal, person), peerQuality = regularRestQuality(input, peer), nextPeer = regularRestQuality(proposal, peer);
+          if (nextOwn.longWindows.length > ownQuality.longWindows.length || nextPeer.longWindows.length > peerQuality.longWindows.length
+            || nextOwn.adjacentPairs + nextPeer.adjacentPairs > ownQuality.adjacentPairs + peerQuality.adjacentPairs
+            || !preservesRestDistribution(input, proposal, true)) continue;
+          state.checked++;
+          if (!keepsSaturdayBalance(input, proposal.assignments)) continue;
+          if (!keepsPriorityLeader(proposal, person, work.date) || !keepsPriorityLeader(proposal, peer, off.date)) continue;
+          if (kind === "WORK") {
+            const dates = new Set([work.date, off.date]);
+            const cacheKey = JSON.stringify([person.sector, ...[...dates].sort()]);
+            let previous = deficits.get(cacheKey);
+            if (!previous) { previous = dailyDeficits(input, person.sector, dates); deficits.set(cacheKey, previous); }
+            const current = dailyDeficits(proposal, person.sector, dates);
+            if ([...dates].some(day => (current.get(day) ?? 0) > (previous.get(day) ?? 0))) continue;
+          }
+          if (performance.now() >= deadline || !validateEscala(proposal).valid || performance.now() >= deadline) continue;
           return proposal;
         }
       }

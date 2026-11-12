@@ -6,7 +6,10 @@ import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
+import { restPairSummary } from "./rest-quality";
+import { selectVerifiedRoster } from "./roster-quality";
 import { validateEscala } from "./validation";
+import { matchesHoursOnlyAssignments } from "./hours-reference";
 import { EscalaError } from "./errors";
 
 const objectiveName = z.enum(["COVERAGE", "MOVEMENT_COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
@@ -73,12 +76,15 @@ export async function solveEscala(
   input: EscalaInput,
   options?: SolverOptions,
 ): Promise<EscalaSolveResult> {
+  const started = performance.now();
   const parsed = escalaInputSchema.parse(input);
   // Cheap verified day exchanges seed the bounded optimizer without changing its staffing target.
   if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   let refined: EscalaInput;
   try {
-    refined = refineRoster(parsed);
+    // Clock-only generation must compare against the original days, even if moving rest days could improve their spacing.
+    refined = parsed.generationMode === "HOURS_ONLY" ? parsed
+      : selectVerifiedRoster(parsed, refineRoster(parsed)).input;
   } catch (error) {
     console.error({ event: "escala_refinement_failed", errorType: error instanceof Error ? error.name : "Unknown" });
     throw new EscalaSolverError("SOLVER_REFINEMENT_FAILED");
@@ -91,9 +97,10 @@ export async function solveEscala(
     && !validateEscala(refined).valid) {
     throw new EscalaError(409, "ESCALA_REST_REPAIR_PENDING", "O cálculo não encontrou, no prazo disponível, uma redistribuição das folgas que preservasse a cobertura. A grade salva foi mantida; confira as folgas e os horários desse setor antes de aplicar outra proposta.");
   }
+  const preparationSeconds = (performance.now() - started) / 1000;
   const payload = await requestSolver(parsed, {
     ...options,
-    initialAssignments: refined === parsed ? undefined : refined.assignments,
+    initialAssignments: refined === parsed || !validateEscala(refined).valid ? undefined : refined.assignments,
   });
   try {
     const result = resultSchema.parse(payload);
@@ -102,7 +109,8 @@ export async function solveEscala(
       escalaInputSchema.parse({ ...parsed, assignments: result.assignments });
       const assignments = new Map(result.assignments.map((item) => [`${item.employeeId}\0${item.date}`, item]));
       const retained = new Set(parsed.employees.filter(person => person.planningEnabled === false).map(person => person.id));
-      let expected = parsed.assignments.filter(item => retained.has(item.employeeId) && (item.locked || item.kind === "ABSENCE")).length;
+      let expected = parsed.assignments.filter(item => retained.has(item.employeeId)
+        && (parsed.generationMode === "HOURS_ONLY" || item.locked || item.kind === "ABSENCE")).length;
       for (const person of parsed.employees) {
         if (person.planningEnabled === false) continue;
         for (const day of dateRange(parsed.startDate, parsed.endDate)) {
@@ -121,6 +129,35 @@ export async function solveEscala(
       throw new Error("Unexpected assignments on unsuccessful solve");
     }
     if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+    if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
+      const selected = selectVerifiedRoster(refined, { ...parsed, assignments: result.assignments });
+      // A selector without a valid incumbent can return the proposal unchanged. It is never proof of feasibility.
+      const finalInput = escalaInputSchema.parse({ ...parsed, assignments: selected.input.assignments });
+      const finalDays = new Map(finalInput.assignments.map(day => [`${day.employeeId}\0${day.date}`, day]));
+      if (parsed.assignments.some(day => {
+        const next = finalDays.get(`${day.employeeId}\0${day.date}`);
+        return day.kind === "ABSENCE" && next?.kind !== "ABSENCE"
+          || day.locked && (next?.kind !== day.kind || next.shiftId !== day.shiftId || !next.locked);
+      })) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+      const finalValidation = validateEscala(finalInput);
+      if (!finalValidation.valid || finalValidation.issues.some(issue => issue.code === "DAY_PENDING")
+        || !matchesHoursOnlyAssignments(parsed, finalInput)) {
+        throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+      }
+      if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+      const restQuality = {
+        before: restPairSummary(parsed), after: restPairSummary(selected.input),
+        search: { attempted: refined.assignments !== parsed.assignments || (result.optimization?.phases.some(phase => phase.objective === "REST_SPACING") ?? false),
+          retainedReference: selected.retainedReference },
+        preparationSeconds: Math.round(preparationSeconds * 1000) / 1000,
+        requestSeconds: Math.round((performance.now() - started)) / 1000,
+      };
+      if (selected.retainedReference) return {
+        status: "FEASIBLE", assignments: selected.input.assignments, wallTimeSeconds: result.wallTimeSeconds, restQuality,
+        message: "A alternativa calculada piorou uma condição protegida. Mantivemos a melhor grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos.",
+      };
+      return { ...result, assignments: finalInput.assignments, restQuality };
+    }
     return result;
   } catch (error) {
     if (error instanceof EscalaSolverError) throw error;

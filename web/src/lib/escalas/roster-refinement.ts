@@ -2,7 +2,7 @@ import { absoluteMinute, addDays as importDate, dateRange, dayOfWeek, visibleDat
 import { keepsPriorityLeader } from "./movement";
 import { keepsSaturdayBalance } from "./saturday-balance";
 import { regularRestQuality } from "./rest-spacing";
-import { exchangeRestRepair } from "./rest-exchange";
+import { exchangeRestImprovement, exchangeRestRepair } from "./rest-exchange";
 import { repairUntimedRests } from "./untimed-rest-repair";
 import { buildCoveragePresence } from "./coverage-presence";
 import { validateEscala } from "./validation";
@@ -28,7 +28,9 @@ export function refineRoster(input: EscalaInput, budgetMs?: number): EscalaInput
   let validation = validateEscala(input);
   const repairing = validation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT");
   for (let pass = 0; pass < 32 && state.checked < 32 && performance.now() < deadline - 160; pass++) {
-    let next = refinePass(proposal, deadline - 120, state, validation);
+    // Offer a safe joint exchange before independent improvements consume every check.
+    let next = validation.valid ? exchangeRestImprovement(proposal, validation, deadline - 120, state) : proposal;
+    if (next === proposal) next = refinePass(proposal, deadline - 120, state, validation);
     if (next === proposal && validation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT")) next = exchangeRestRepair(proposal, validation, deadline - 120);
     if (next === proposal && validation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT")) next = repairUntimedRests(proposal, validation, deadline - 120);
     if (next === proposal) break;

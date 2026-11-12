@@ -6,7 +6,8 @@ import { resourceCapacityErrorResponse } from "@/lib/api/resource-capacity";
 import { assertResourceCapacity } from "@/lib/system/resource-capacity";
 import { getEscala } from "@/lib/escalas/service";
 import { exportEscalaPdf, exportEscalaXlsx } from "@/lib/escalas/export";
-import { escalaExportCache } from "@/lib/escalas/export-cache";
+import { isHoursReferenceOnly } from "@/lib/escalas/hours-reference";
+import { escalaExportCache, ESCALA_EXPORT_CONTENT_VERSION } from "@/lib/escalas/export-cache";
 import { escalaFailure } from "../http";
 
 export const runtime = "nodejs";
@@ -26,11 +27,13 @@ export async function GET(request: Request) {
     const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-export:" + owner, limit: 20, windowMs: 60_000 });
     if (limited) return limited;
     const workspace = await getEscala(guard.actor, parsed.data.id, parsed.data.revision);
+    if (isHoursReferenceOnly(workspace.input) && parsed.data.mode !== "hours") return jsonError(409, "ESCALA_HOURS_REFERENCES_ONLY", "Este planejamento contém somente referências de horários. Selecione o relatório de jornadas ou gere também as folgas antes de exportar uma escala completa.");
+    if (isHoursReferenceOnly(workspace.input) && !workspace.validation.valid) return jsonError(409, "ESCALA_HOURS_REFERENCE_INVALID", "Confira os horários indicados antes de exportar as referências.");
     if (workspace.input.needsRegeneration || workspace.input.policy.maxConsecutiveWorkDays > 5) return jsonError(409, "ESCALA_SCENARIO_OUTDATED", "Gere e aplique uma nova proposta, depois salve a revisão para exportar o cenário atualizado.");
     const pdf = parsed.data.format === "pdf";
     const separateSectors = parsed.data.separateSectors === "true";
     // Authorization and stale-scenario checks deliberately precede all cache access.
-    const key = JSON.stringify([guard.actor.tenantId, workspace.id, workspace.revision, parsed.data.mode, parsed.data.format, pdf ? separateSectors : null]);
+    const key = JSON.stringify([ESCALA_EXPORT_CONTENT_VERSION, guard.actor.tenantId, workspace.id, workspace.revision, parsed.data.mode, parsed.data.format, pdf ? separateSectors : null]);
     const content = await escalaExportCache.get(key, async () => {
       await assertResourceCapacity({ inputBytes: Buffer.byteLength(JSON.stringify(workspace.input)), multiplier: 4 });
       return pdf ? exportEscalaPdf(workspace, parsed.data.mode, { separateSectors }) : exportEscalaXlsx(workspace, parsed.data.mode);

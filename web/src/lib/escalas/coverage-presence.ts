@@ -137,8 +137,8 @@ function suggestion(estimated: boolean, roles: CoverageRoleGap[]) {
 }
 
 /** One operational occurrence per sector/date/exact slice, with deficient functions as context. */
-export function sectorCoverageGaps(input: EscalaInput, index = buildCoveragePresence(input)): SectorCoverageGap[] {
-  const dates = new Set(visibleDates(input));
+export function sectorCoverageGaps(input: EscalaInput, index = buildCoveragePresence(input), scope: readonly string[] = visibleDates(input)): SectorCoverageGap[] {
+  const dates = new Set(scope);
   const groups = new Map<string, EscalaInput["demands"]>();
   const groupsWithMinimum = new Set<EscalaInput["demands"]>();
   for (const demand of input.demands) {
