@@ -830,7 +830,12 @@ def _empty_estimated_seed_sectors(employees, active, source, policy, demands):
 def _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                        deadline=None, control=None, prefer_baseline=True, mixed_people=frozenset(),
                        initial_assignments=None, estimated_demands=()):
-    """Hint a preferred seed or saved sectors; CP-SAT verifies the combined draft."""
+    """Hint a preferred seed, saved sectors or a rebuilt saved rest pattern.
+
+    Return whether any saved reference was reused, so a rejected candidate can
+    retry without it. This is not proof that the original roster is comparable
+    or feasible; CP-SAT verifies the complete candidate before using its guards.
+    """
     hours_only = policy.get('_generationMode') == 'HOURS_ONLY'
     if hours_only and not prefer_baseline:
         return False  # Retry without hints rather than redistribute preserved days.

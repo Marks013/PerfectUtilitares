@@ -137,24 +137,29 @@ class HolidayHintTests(unittest.TestCase):
         model.add_hint(choices["day"]["clock"], 0)
         self.assertEqual(solver._seed_hint_state(model, off, work, choices), "COMPLETE")
 
-    def tracked_seed(self, data):
-        calls, comparable = [], []
+    def tracked_seed(self, data, first_decisions=None):
+        calls, reused_reference = [], []
         original_solve, original_hints = cp_model.CpSolver.solve, solver._feasibility_hints
 
         def capture(instance, model, *args, **kwargs):
             status = original_solve(instance, model, *args, **kwargs)
+            if not calls and first_decisions is not None and status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
+                first_decisions.update({variable.name: instance.value(variable)
+                                        for index in range(len(model.proto.variables))
+                                        for variable in [model.get_int_var_from_proto_index(index)]
+                                        if variable.name.startswith(('o:', 'w:'))})
             calls.append((instance.parameters.fix_variables_to_their_hinted_value, status))
             return status
 
         def capture_hints(*args, **kwargs):
             result = original_hints(*args, **kwargs)
-            comparable.append(result)
+            reused_reference.append(result)
             return result
 
         with patch.object(cp_model.CpSolver, "solve", capture), patch.object(solver, "_feasibility_hints", capture_hints):
             result = solver.solve(data)
         self.assertIn(result["status"], ("FEASIBLE", "OPTIMAL"), result)
-        return result, calls, comparable
+        return result, calls, reused_reference
 
     def test_legacy_work_on_new_closed_holiday_uses_a_verified_balanced_seed_first(self):
         data = fixture(42, start_date="2026-12-21")
@@ -164,9 +169,17 @@ class HolidayHintTests(unittest.TestCase):
         data["assignments"] = [{"employeeId": "p0", "date": day, "kind": "WORK", "shiftId": "day"}
                                if date.fromisoformat(day).weekday() < 5 else {"employeeId": "p0", "date": day, "kind": "OFF"}
                                for day in solver.days_between(data["startDate"], data["endDate"])]
-        result, calls, comparable = self.tracked_seed(data)
-        self.assertFalse(comparable[0])
+        first_decisions = {}
+        result, calls, reused_reference = self.tracked_seed(data, first_decisions)
+        self.assertTrue(reused_reference[0])  # Saved OFFs survive; the old WORK roster does not.
         self.assertEqual(calls[0], (True, cp_model.OPTIMAL))
+        self.assertEqual({name[len('o:p0:'):] for name, value in first_decisions.items()
+                          if name.startswith('o:p0:') and value}, {'2026-12-26', '2026-12-27'})
+        self.assertEqual({name[len('w:p0:'):] for name, value in first_decisions.items()
+                          if name.startswith('w:p0:') and value},
+                         {'2026-12-21', '2026-12-22', '2026-12-23', '2026-12-24'})
+        self.assertEqual(first_decisions['w:p0:2026-12-25'], 0)
+        self.assertEqual(first_decisions['o:p0:2026-12-25'], 0)
         self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-12-25")["kind"], "HOLIDAY")
 
     def test_legacy_rest_on_an_open_weekday_holiday_is_not_a_comparable_seed(self):
@@ -176,9 +189,16 @@ class HolidayHintTests(unittest.TestCase):
         data["assignments"] = [{"employeeId": "p0", "date": day, "kind": "OFF"}
                                if day in ("2026-11-20", "2026-11-22") else {"employeeId": "p0", "date": day, "kind": "WORK", "shiftId": "day"}
                                for day in solver.days_between(data["startDate"], data["endDate"])]
-        result, calls, comparable = self.tracked_seed(data)
-        self.assertFalse(comparable[0])
+        first_decisions = {}
+        result, calls, reused_reference = self.tracked_seed(data, first_decisions)
+        self.assertFalse(reused_reference[0])
         self.assertEqual(calls[0], (True, cp_model.OPTIMAL))
+        first_rests = {name[len('o:p0:'):] for name, value in first_decisions.items()
+                       if name.startswith('o:p0:') and value}
+        self.assertEqual(len(first_rests), 2)
+        self.assertNotEqual(first_rests, {'2026-11-20', '2026-11-22'})
+        self.assertEqual(first_decisions['o:p0:2026-11-20'], 0)
+        self.assertEqual(first_decisions['w:p0:2026-11-20'], 1)
         self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-20")["kind"], "WORK")
 
     def test_rejected_baseline_revalidates_the_balanced_fallback_before_unrestricted_search(self):
@@ -187,8 +207,8 @@ class HolidayHintTests(unittest.TestCase):
         data["assignments"] = [{"employeeId": "p0", "date": day, "kind": "WORK", "shiftId": "day"}
                                if date.fromisoformat(day).weekday() < 5 else {"employeeId": "p0", "date": day, "kind": "OFF"}
                                for day in solver.days_between(data["startDate"], data["endDate"])]
-        result, calls, comparable = self.tracked_seed(data)
-        self.assertTrue(comparable[0])
+        result, calls, reused_reference = self.tracked_seed(data)
+        self.assertEqual(reused_reference[:2], [True, False])
         self.assertEqual(calls[:2], [(True, cp_model.INFEASIBLE), (True, cp_model.OPTIMAL)])
         self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-03")["kind"], "OFF")
 
