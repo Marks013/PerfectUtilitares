@@ -51,5 +51,7 @@ describe("comparable Saturday protection during local preparation", () => {
     const next = input.assignments.map(record => record.date === "2026-11-06" ? { ...record, kind: "WORK" as const, shiftId: "night" } : record);
     expect(keepsSaturdayBalance(input, next)).toBe(false);
     expect(keepsSaturdayBalance(input, [...input.assignments].reverse())).toBe(true);
+    input.shifts[0].segments = [{ start: 1380, end: 1440, kind: "WORK" }, { start: 1440, end: 1455, kind: "PAID_BREAK" }];
+    expect(keepsSaturdayBalance(input, next)).toBe(false);
   });
 });

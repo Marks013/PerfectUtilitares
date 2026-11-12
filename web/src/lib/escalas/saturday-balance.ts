@@ -18,7 +18,7 @@ export function saturdayBalance(input: EscalaInput, assignments = input.assignme
       if (record.kind === "DUTY") dates.add(record.date);
       if (record.kind !== "WORK") continue;
       for (const segment of shifts.get(record.shiftId ?? "")?.segments ?? []) {
-        if (segment.kind !== "WORK") continue;
+        if (segment.kind === "BREAK") continue;
         for (let offset = Math.floor(segment.start / 1440); offset <= Math.floor((segment.end - 1) / 1440); offset++) dates.add(addDays(record.date, offset));
       }
     }
