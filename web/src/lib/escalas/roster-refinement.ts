@@ -9,7 +9,7 @@ type Slice = { start: number; end: number; present: number; general: number; rol
 type Candidate = { person: EscalaEmployee; work: EscalaAssignment; off: EscalaAssignment; gain: number };
 const key = (date: string, sector: string) => `${date}\0${sector}`;
 
-/** One deterministic local improvement, never a substitute for the solver or its verifier. */
+/** A bounded batch of independent sector improvements, never a substitute for the solver or its verifier. */
 export function refineRoster(input: EscalaInput, budgetMs = 1500): EscalaInput {
   if (!Number.isFinite(budgetMs) || budgetMs <= 0) return input;
   const deadline = performance.now() + Math.min(budgetMs, 1500);
@@ -114,8 +114,14 @@ export function refineRoster(input: EscalaInput, budgetMs = 1500): EscalaInput {
     civilMinutes.set(id, value);
     return value;
   };
-  for (const { person, work, off } of candidates.slice(0, 32)) {
-    if (expired()) return input;
+  const replacements = new Map<EscalaAssignment, EscalaAssignment>();
+  const improvedSectors = new Set<string>();
+  let checked = 0;
+  for (const { person, work, off } of candidates) {
+    if (expired()) break;
+    // Timelines stay exact: one exchange per sector cannot consume another selected exchange's gain.
+    if (improvedSectors.has(person.sector)) continue;
+    if (checked++ >= 32) break;
     const { shiftId: _shiftId, ...oldWork } = work;
     const newOff: EscalaAssignment = { ...oldWork, kind: "OFF" };
     const newWork: EscalaAssignment = { ...off, kind: "WORK", shiftId: work.shiftId };
@@ -127,8 +133,12 @@ export function refineRoster(input: EscalaInput, budgetMs = 1500): EscalaInput {
     const check = validateEmployee(input, person, { current, journeys,
       reservations: (baseline.boundaryReservations ?? []).filter(record => record.employeeId === person.id), days, visible, weekByDate });
     if (check.issues.some(issue => issue.severity === "ERROR")) continue;
-    const proposal: EscalaInput = { ...input, assignments: input.assignments.map(replace) };
-    if (validateEscala(proposal).valid && !expired()) return proposal;
+    replacements.set(work, newOff);
+    replacements.set(off, newWork);
+    improvedSectors.add(person.sector);
   }
-  return input;
+  if (!replacements.size || expired()) return input;
+  // Verify the combined proposal once; never publish a partially checked batch.
+  const proposal: EscalaInput = { ...input, assignments: input.assignments.map(record => replacements.get(record) ?? record) };
+  return validateEscala(proposal).valid && !expired() ? proposal : input;
 }

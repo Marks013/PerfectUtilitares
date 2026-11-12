@@ -90,4 +90,24 @@ describe("bounded roster refinement against fixed staffing references", () => {
     const noDemand = fixture(); noDemand.demands = [];
     expect(refineRoster(noDemand)).toBe(noDemand);
   });
+  it("repairs independent sectors in one bounded pass, without mutating their references or Sundays", () => {
+    const input = fixture(), second = fixture();
+    second.employees.forEach(person => { person.id += "-bakery"; person.registration += "-bakery"; person.sector = "Padaria"; });
+    second.assignments.forEach(record => { record.employeeId += "-bakery"; });
+    second.demands.forEach(demand => { demand.id += "-bakery"; demand.sector = "Padaria"; });
+    input.employees.push(...second.employees);
+    input.assignments.push(...second.assignments);
+    input.demands.push(...second.demands);
+    const original = structuredClone(input);
+    const refined = refineRoster(input);
+    expect(validateEscala(refined).valid).toBe(true);
+    for (const employeeId of ["p1", "p1-bakery"]) {
+      expect(refined.assignments.find(record => record.employeeId === employeeId && record.date === "2026-11-03"))
+        .toMatchObject({ kind: "WORK", shiftId: "day" });
+      expect(refined.assignments.find(record => record.employeeId === employeeId && record.date === "2026-11-04"))
+        .toMatchObject({ kind: "OFF" });
+    }
+    expect(refined.assignments.filter(record => record.date === "2026-11-08")).toEqual(original.assignments.filter(record => record.date === "2026-11-08"));
+    expect(input).toEqual(original);
+  });
 });

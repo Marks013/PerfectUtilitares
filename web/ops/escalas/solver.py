@@ -645,13 +645,19 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
                            {person["id"] for person in members}))
     # Small sectors share one neighborhood. A large team gets its own complete
     # exchange group instead of being silently excluded by the old size limit.
-    small, large = set(), []
-    for _, _, _, _, size, _, members in sorted(ranked):
+    # Anchor the union at its highest-ranked member, not unconditionally first.
+    # Grouping must not displace a more urgent sector from the four attempts.
+    small, groups, small_rank = set(), [], None
+    for rank, (_, _, _, _, size, _, members) in enumerate(sorted(ranked)):
         if size <= 8 and len(small | members) <= 16:
+            if not small:
+                small_rank = rank
             small.update(members)
         else:
-            large.append(members)
-    return ([small] if small else []) + large[:4 - bool(small)]
+            groups.append((rank, members))
+    if small:
+        groups.append((small_rank, small))
+    return [members for _, members in sorted(groups, key=lambda item: item[0])[:4]]
 
 def _read_assignments(solver, employees, active, baseline, work, choices, paid_holidays=frozenset()):
     result = []

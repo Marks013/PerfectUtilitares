@@ -112,5 +112,56 @@ class SingletonRepairTests(unittest.TestCase):
         self.assertEqual(groups, [{'p0', 'p1'}])
 
 
+class RepairOrderTests(unittest.TestCase):
+    def test_large_sector_keeps_each_operational_priority_above_a_small_union(self):
+        cases = [
+            ('EMPTY_SUNDAY', '2026-11-08', 0, 1, 0, 0, 0, 1000),
+            ('EMPTY_WEEKDAY', '2026-11-04', 0, 1, 0, 100, 0, 1000),
+            ('SUNDAY_DEFICIT', '2026-11-08', 1, 1, 100, 1, 100, 1000),
+            ('TOTAL_DEFICIT', '2026-11-04', 1, 1, 0, 0, 100, 10),
+        ]
+        for name, day, large_work, small_work, large_sunday, small_sunday, large_gap, small_gap in cases:
+            with self.subTest(priority=name):
+                data = fixture(42, people=11)
+                model = cp_model.CpModel()
+                large = {person['id'] for person in data['employees'][:9]}
+                for person in data['employees']:
+                    person['sector'] = 'Maior' if person['id'] in large else 'Menor'
+                work = {(person['id'], day): model.new_bool_var(person['id']) for person in data['employees']}
+                values = {variable.index: large_work if pid in large else small_work
+                          for (pid, _), variable in work.items()}
+                demands = [{'sector': sector, 'date': day, 'minimum': 1} for sector in ('Maior', 'Menor')]
+                groups = _rest_repair_groups(data['employees'], [day], work, {}, values, data['policy'], demands,
+                    sector_shortages={'Maior': [large_gap], 'Menor': [small_gap]},
+                    sunday_shortages={'Maior': [large_sunday], 'Menor': [small_sunday]})
+                self.assertEqual(groups[0], large)
+                self.assertEqual(groups[1], {person['id'] for person in data['employees'][9:]})
+
+    def test_four_group_cap_does_not_displace_a_higher_priority_large_sector(self):
+        data = fixture(42, people=37)
+        expected = []
+        for index, person in enumerate(data['employees']):
+            person['sector'] = str(min(index // 9, 4))
+        for index in range(4):
+            expected.append({person['id'] for person in data['employees'] if person['sector'] == str(index)})
+        groups = _rest_repair_groups(data['employees'], ['2026-11-08'], {}, {}, {}, data['policy'], [],
+            sector_shortages={str(index): [100 - 10 * index] for index in range(4)} | {'4': [1]})
+        self.assertEqual(groups, expected)
+        self.assertEqual(len(groups), 4)
+
+    def test_small_union_retains_its_best_priority_and_sixteen_person_limit(self):
+        data = fixture(42, people=26)
+        for index, person in enumerate(data['employees']):
+            person['sector'] = 'A' if index < 8 else 'B' if index < 16 else 'C' if index < 25 else 'D'
+        groups = _rest_repair_groups(data['employees'], ['2026-11-08'], {}, {}, {}, data['policy'], [],
+            sector_shortages={'A': [100], 'B': [10], 'C': [50], 'D': [5]})
+        self.assertEqual(groups, [
+            {person['id'] for person in data['employees'][:16]},
+            {person['id'] for person in data['employees'][16:25]},
+            {data['employees'][25]['id']},
+        ])
+        self.assertEqual(len(groups[0]), 16)
+
+
 if __name__ == '__main__':
     unittest.main()
