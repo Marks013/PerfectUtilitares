@@ -16,6 +16,17 @@ def responsibility(person):
         return {"role": "SECTOR", "sectors": [person["sector"]]}
     return {"role": "NONE", "sectors": []}
 
+def movement_priority(priorities, sector, day):
+    """An explicit sector/day decision overrides the branch-wide reference."""
+    matched = [entry for entry in priorities if entry["startDate"] <= day <= entry["endDate"]
+               and (not entry.get("sector") or entry["sector"] == sector)]
+    if not matched:
+        return None
+    # An explicit sector priority overrides the branch-wide default for this day.
+    specific = [entry for entry in matched if entry.get("sector") == sector]
+    return max(PRIORITY[entry["level"]] for entry in specific or matched)
+
+
 def leadership_objective(model, data, employees, dates, work, values):
     priorities = data.get("movementPriorities", [])
     if not priorities:
@@ -29,17 +40,16 @@ def leadership_objective(model, data, employees, dates, work, values):
         for day in dates:
             if day in data["policy"].get("closedDates", []):
                 continue
-            matched = [entry for entry in priorities if entry["startDate"] <= day <= entry["endDate"]
-                       and (not entry.get("sector") or entry["sector"] == sector)]
-            if not matched:
+            weight = movement_priority(priorities, sector, day)
+            if weight is None:
                 continue
-            # An explicit sector priority overrides the branch-wide default for this day.
-            specific = [entry for entry in matched if entry.get("sector") == sector]
-            weight = max(PRIORITY[entry["level"]] for entry in specific or matched)
             available = [work[person["id"], day] for person in leaders if (person["id"], day) in work]
             missing = model.new_bool_var(f"leadership-gap:{len(checks)}")
             model.add(sum(available) + missing >= 1)
             present = sum(values[variable.index] for variable in available)
+            # The metric remains exact even when the leadership phase is not reached.
+            if available:
+                model.add(sum(available) == 0).only_enforce_if(missing)
             remember(model, values, missing, int(present == 0))
             terms.append(weight * missing)
             checks.append((sector, day, weight, missing))

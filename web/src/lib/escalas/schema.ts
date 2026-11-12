@@ -184,8 +184,11 @@ export const escalaInputSchema = z.strictObject({
   value.demands.forEach((demand, index) => {
     if (demand.end <= demand.start || demand.date < value.startDate || demand.date > value.endDate) context.addIssue({ code: "custom", path: ["demands", index], message: "Faixa de cobertura inválida ou fora do período" });
   });
+  const movementSectors = new Set([...value.employees.map(person => person.sector), ...value.demands.map(demand => demand.sector)]);
   value.movementPriorities?.forEach((priority, index) => {
     if (priority.startDate < value.startDate || priority.endDate > value.endDate)
       context.addIssue({ code: "custom", path: ["movementPriorities", index], message: "Prioridade de movimento fora do período da escala" });
+    if (priority.sector && !movementSectors.has(priority.sector))
+      context.addIssue({ code: "custom", path: ["movementPriorities", index, "sector"], message: "Setor de movimento não encontrado. Escolha um setor da equipe ou da cobertura." });
   });
 });

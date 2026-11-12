@@ -24,6 +24,7 @@ class ImprovementContext:
     repair_clock_fixes: dict | None = None
     closing_coverage: dict | None = None
     settings: SearchSettings | None = None
+    movement_coverage: dict | None = None
     untimed_people: set | None = None
     rest_spacing: dict | None = None
     rest_spacing_groups: dict | None = None
@@ -340,6 +341,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                 movable_people = _coverage_people(coverage_groups or {}, closing_coverage or {}, values)
             if names[index] == 'UNTIMED_ROTATION':
                 movable_people = set(context.untimed_people or [])
+            if names[index] == 'MOVEMENT_COVERAGE':
+                movable_people = _coverage_people(coverage_groups or {}, context.movement_coverage or {}, values)
             if names[index] == 'REST_SPACING':
                 movable_people = _spacing_people(context.rest_spacing_groups or coverage_groups or {},
                                                  context.rest_spacing or {}, values)

@@ -23,12 +23,43 @@ function fixture(): EscalaInput {
 }
 
 describe("bounded roster refinement against fixed staffing references", () => {
+  it("does not remove both shared sector leaders through independent exchanges in the same batch", () => {
+    const input = fixture(), other = fixture();
+    other.employees.forEach(person => { person.id += "-bakery"; person.registration += "-bakery"; person.sector = "Padaria"; });
+    other.assignments.forEach(record => { record.employeeId += "-bakery"; });
+    other.demands.forEach(demand => { demand.id += "-bakery"; demand.sector = "Padaria"; });
+    input.employees.push(...other.employees); input.assignments.push(...other.assignments); input.demands.push(...other.demands);
+    for (const id of ["p1", "p1-bakery"]) {
+      const person = input.employees.find(person => person.id === id);
+      if (!person) throw new Error("Missing fixture leader");
+      person.leadership = { role: "SECTOR", source: "MANUAL", sectors: ["Loja"] };
+    }
+    input.movementPriorities = [{ startDate: "2026-11-04", endDate: "2026-11-04", sector: "Loja", level: "HIGH" }];
+    const result = refineRoster(input);
+    expect(validateEscala(result).valid).toBe(true);
+    expect(result.assignments.filter(record => ["p1", "p1-bakery"].includes(record.employeeId)
+      && record.date === "2026-11-04" && record.kind === "WORK")).toHaveLength(1);
+  });
+  it("keeps a timed sector leader on a declared peak even when another role already meets the hourly floor", () => {
+    const input = fixture(); input.employees[0].role = "Encarregado";
+    expect(refineRoster(input)).not.toBe(input);
+    input.movementPriorities = [{ startDate: "2026-11-04", endDate: "2026-11-04", sector: "Loja", level: "HIGH" }];
+    expect(refineRoster(input)).toBe(input);
+  });
   it("keeps the original when the monotonic preparation budget expires", () => {
     const input = fixture(), original = structuredClone(input);
     expect(refineRoster(input, 0)).toBe(input);
     const clock = vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(2000);
     try { expect(refineRoster(input)).toBe(input); } finally { clock.mockRestore(); }
     expect(input).toEqual(original);
+  });
+  it("does not move a deficit into an explicitly high-movement day for a larger monthly gain", () => {
+    const input = fixture();
+    input.demands = input.demands.filter(demand => demand.date !== "2026-11-04" || demand.start === 480);
+    input.demands.filter(demand => demand.date === "2026-11-04").forEach(demand => { demand.minimum = 2; });
+    expect(refineRoster(input)).not.toBe(input);
+    input.movementPriorities = [{ startDate: "2026-11-04", endDate: "2026-11-04", sector: "Loja", level: "HIGH" }];
+    expect(refineRoster(input)).toBe(input);
   });
   it("exchanges one unlocked weekday pair, keeps the exact clock and demand, and passes the independent verifier", () => {
     const input = fixture(), before = structuredClone(input);

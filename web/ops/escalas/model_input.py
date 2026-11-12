@@ -159,3 +159,7 @@ def validate_model_input(data):
         _integer(demand.get("end"), prefix + ".end", 1, 1440)
         _require(demand["end"] > demand["start"], prefix, "INVALID_INTERVAL")
         _integer(demand.get("minimum"), prefix + ".minimum", 0, 250)
+    sectors = {person['sector'] for person in people} | {demand['sector'] for demand in data['demands']}
+    for index, priority in enumerate(data.get('movementPriorities', [])):
+        if 'sector' in priority:
+            _require(priority['sector'] in sectors, f'movementPriorities[{index}].sector', 'UNKNOWN_REFERENCE')

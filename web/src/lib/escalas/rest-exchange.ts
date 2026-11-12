@@ -1,4 +1,5 @@
 import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
+import { keepsPriorityLeader, movementLevel } from "./movement";
 import { buildCoveragePresence } from "./coverage-presence";
 import { regularRestQuality } from "./rest-spacing";
 import { validateEmployee } from "./validation-employee";
@@ -58,7 +59,11 @@ export function exchangeRestRepair(input: EscalaInput, validation: EscalaValidat
           const peerOff = peerRecords.find(record => record.date === work.date && record.kind === "OFF" && editable(peer, record));
           const peerShift = shifts.get(peerWork?.shiftId ?? "");
           if (!peerWork || !peerOff || !peerShift || peerShift.segments.some(segment => segment.start < 0 || segment.end > 1440)) continue;
-          if (deficit(person.sector, work.date, person.id, { person: peer, shift: peerShift }) + deficit(person.sector, off.date, peer.id, { person, shift }) > originalDeficit) continue;
+          const workDeficit = deficit(person.sector, work.date, person.id, { person: peer, shift: peerShift });
+          const offDeficit = deficit(person.sector, off.date, peer.id, { person, shift });
+          if (workDeficit + offDeficit > originalDeficit
+            || movementLevel(input, person.sector, work.date) === "HIGH" && workDeficit > deficit(person.sector, work.date)
+            || movementLevel(input, person.sector, off.date) === "HIGH" && offDeficit > deficit(person.sector, off.date)) continue;
           const asOff = (record: EscalaAssignment): EscalaAssignment => {
             const { shiftId: _shift, ...rest } = record; return { ...rest, kind: "OFF" };
           };
@@ -72,7 +77,9 @@ export function exchangeRestRepair(input: EscalaInput, validation: EscalaValidat
           if (nextQuality.longWindows.length >= quality.longWindows.length || nextPeerQuality.longWindows.length > peerQuality.longWindows.length
             || nextQuality.adjacentPairs + nextPeerQuality.adjacentPairs > quality.adjacentPairs + peerQuality.adjacentPairs) continue;
           if (!validPerson(person, next) || !validPerson(peer, nextPeer) || performance.now() >= deadline) continue;
-          return { ...input, assignments: input.assignments.map(record => replacements.get(record) ?? record) };
+          const proposal = { ...input, assignments: input.assignments.map(record => replacements.get(record) ?? record) };
+          if (!keepsPriorityLeader(proposal, person, work.date) || !keepsPriorityLeader(proposal, peer, off.date)) continue;
+          return proposal;
         }
       }
     }

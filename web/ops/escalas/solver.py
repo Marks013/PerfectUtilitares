@@ -9,7 +9,7 @@ from ortools.sat.python import cp_model
 
 from diagnostics import ConflictRegistry
 from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates
-from leadership import leadership_objective, leadership_summary
+from leadership import PRIORITY, leadership_objective, leadership_summary, movement_priority
 from optimization import ImprovementContext, Snapshot, improve, remember
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
 from runtime_settings import MAX_SECONDS, RANDOM_SEED
@@ -463,8 +463,11 @@ def solve(data, control=None):
     visible_sunday_coverage = {}
     visible_sector_coverage = {}
     closing_coverage = {}
+    movement_coverage, priority_coverage, movement_groups = [], {}, {}
     coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage,
-                         visible_sunday_coverage, visible_sector_coverage, closing_coverage)
+                         visible_sunday_coverage, visible_sector_coverage, closing_coverage,
+                         movement_terms=movement_coverage, priority_terms=priority_coverage,
+                         movement_groups=movement_groups)
     if coverage is False:
         return _response("FEASIBLE", result, started)
     if isinstance(coverage, str):
@@ -490,7 +493,8 @@ def solve(data, control=None):
     sunday_objective = sum(term for terms in sunday_coverage.values() for term in terms)
     closing_objective = sum(term for terms in closing_coverage.values() for term in terms)
     leader_terms, leader_checks = leadership_objective(model, data, employees, dates, work, values)
-    goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective),
+    goals = [("COVERAGE", sum(coverage)), ("MOVEMENT_COVERAGE", sum(movement_coverage)),
+             ("SUNDAY_COVERAGE", sunday_objective),
              ("CLOSING_COVERAGE", closing_objective), ("SUNDAY_BALANCE", sum(sundays)),
              ("LEADERSHIP", sum(leader_terms)),
              ("REST_SPACING", sum(spacing)),
@@ -537,7 +541,8 @@ def solve(data, control=None):
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
                                                        + [sum(terms) for terms in visible_sector_coverage.values()]
-                                                       + [sum(terms) for terms in closing_coverage.values()]} if goals else {},
+                                                       + [sum(terms) for terms in closing_coverage.values()]
+                                                       + [sum(terms) for terms in priority_coverage.values()]} if goals else {},
                                      employee_groups=list(groups.values()),
                                      untimed_people={person['id'] for person in employees if has_no_clock(person)},
                                      rest_spacing=spacing_people,
@@ -547,6 +552,7 @@ def solve(data, control=None):
                                                       for sector in sector_coverage}, sunday_coverage=sunday_coverage,
                                      sector_coverage=sector_coverage,
                                      closing_coverage=closing_coverage,
+                                     movement_coverage=movement_groups,
                                      decision_variables=decisions,
                                      initial_decision_hints=warm_decisions,
                                      initial_repair_groups=repair_groups,
@@ -1049,7 +1055,8 @@ def _civil_rest(model, person, dates, active_days, choices, work, off, prior, sh
 
 
 def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None,
-              sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None, closing_terms=None):
+              sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None, closing_terms=None,
+              movement_terms=None, priority_terms=None, movement_groups=None):
     closed_holidays = paid_holiday_dates(data["policy"])
     relevant = [d for d in data['demands'] if d['minimum'] > 0
                 and not (d.get('estimated') is True and d['date'] in closed_holidays)
@@ -1064,6 +1071,9 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
     closing = data.get('storeClosingMinutes') if closing_terms is not None else None
     if type(closing) is not int or not 1 <= closing <= 1440:
         closing = None  # Older callers supplied no effective closing time.
+    priorities = data.get('movementPriorities', [])
+    movement_enabled = bool(priorities) and movement_terms is not None
+    priority_cache = {}
 
     def register(pid, day, sid, variable):
         person = by_id[pid]
@@ -1109,6 +1119,12 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                 and demand['start'] < closing and demand['end'] > closing - 60):
             closing_window = (instant(demand['date'], max(0, closing - 60)),
                               instant(demand['date'], closing))
+        priority_key = demand['sector'], demand['date']
+        if priority_key not in priority_cache:
+            priority_cache[priority_key] = movement_priority(priorities, *priority_key)
+        priority = priority_cache[priority_key]
+        # Missing movement data is neutral, not an inferred weekend peak.
+        movement_weight = (priority if priority is not None else PRIORITY['NORMAL']) if movement_enabled else 0
         for interval_index, (left, right) in enumerate(zip(ordered, ordered[1:])):
             available = [v for start, end, v in intervals if start <= left and end >= right]
             if estimated:
@@ -1122,7 +1138,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                     # Their durations are added, so the person-minute objective is unchanged.
                     key = (minimum, tuple(sorted(v.index for v in variables)), demand['sector'])
                     if key not in grouped:
-                        grouped[key] = [variables, 0, 0, 0, 0, 0]
+                        grouped[key] = [variables, 0, 0, 0, 0, 0, 0, {}]
                     grouped[key][1] += int(right - left)
                     if is_sunday:
                         grouped[key][2] += int(right - left)
@@ -1130,6 +1146,10 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                         grouped[key][3] += int(right - left)
                         if is_sunday:
                             grouped[key][4] += int(right - left)
+                    grouped[key][6] += movement_weight * int(right - left)
+                    if priority_terms is not None and priority == PRIORITY['HIGH']:
+                        prioritized = grouped[key][7]
+                        prioritized[priority_key] = prioritized.get(priority_key, 0) + int(right - left)
                     if closing_window:
                         grouped[key][5] += max(0, int(min(right, closing_window[1]) - max(left, closing_window[0])))
                 continue
@@ -1138,7 +1158,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                 return (f"Cobertura sem horário disponível em {demand['date']} às {minute // 60:02d}:{minute % 60:02d}. "
                         "Confira os turnos permitidos, intervalos de refeição, setor e cargo da faixa antes de alterar o efetivo.")
             model.add(cp_model.LinearExpr.sum(available) >= demand["minimum"])
-    for index, ((minimum, _, sector), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight, closing_weight)) in enumerate(grouped.items()):
+    for index, ((minimum, _, sector), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight, closing_weight, movement_weight, prioritized)) in enumerate(grouped.items()):
         shortage = model.new_int_var(0, minimum, f'coverage-gap:{index}')
         model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
         shortages.append(weight * shortage)
@@ -1154,6 +1174,14 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
             visible_sunday_terms.setdefault(sector, []).append(visible_sunday_weight * shortage)
         if closing_terms is not None and closing_weight:
             closing_terms.setdefault(sector, []).append(closing_weight * shortage)
+        if movement_terms is not None and movement_weight:
+            term = movement_weight * shortage
+            movement_terms.append(term)
+            if movement_groups is not None:
+                movement_groups.setdefault(sector, []).append(term)
+        if priority_terms is not None:
+            for sector_day, minutes in prioritized.items():
+                priority_terms.setdefault(sector_day, []).append(minutes * shortage)
         if values is not None:
             present = sum(values[v.index] for v in variables)
             remember(model, values, shortage, max(0, minimum - present))

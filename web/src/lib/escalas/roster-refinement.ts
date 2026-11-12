@@ -1,6 +1,8 @@
 import { absoluteMinute, addDays as importDate, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
+import { keepsPriorityLeader, movementLevel } from "./movement";
 import { regularRestQuality } from "./rest-spacing";
 import { exchangeRestRepair } from "./rest-exchange";
+import { repairUntimedRests } from "./untimed-rest-repair";
 import { buildCoveragePresence } from "./coverage-presence";
 import { validateEscala } from "./validation";
 import { validateEmployee } from "./validation-employee";
@@ -27,6 +29,7 @@ export function refineRoster(input: EscalaInput, budgetMs?: number): EscalaInput
   for (let pass = 0; pass < 32 && state.checked < 32 && performance.now() < deadline - 160; pass++) {
     let next = refinePass(proposal, deadline - 120, state, validation);
     if (next === proposal && validation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT")) next = exchangeRestRepair(proposal, validation, deadline - 120);
+    if (next === proposal && validation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT")) next = repairUntimedRests(proposal, validation, deadline - 120);
     if (next === proposal) break;
     proposal = next;
     validation = validateEscala(proposal);
@@ -125,7 +128,9 @@ function refinePass(input: EscalaInput, deadline: number, state: { checked: numb
       if (!shift || shift.segments.some(segment => segment.start < 0 || segment.end > 1440)) continue;
       const sectorDay = presence.get(key(work.date, person.sector)) ?? [];
       if (!sectorDay.some(interval => interval.employee.id !== person.id)) continue;
+      if (!keepsPriorityLeader(input, person, work.date)) continue;
       const loss = change(person, work.date, shift, -1);
+      if (loss > 0 && movementLevel(input, person.sector, work.date) === "HIGH") continue;
       for (const off of offs) {
         if (weekByDate.get(work.date) !== weekByDate.get(off.date)) continue;
         const gain = -change(person, off.date, shift, 1) - loss;
@@ -171,6 +176,10 @@ function refinePass(input: EscalaInput, deadline: number, state: { checked: numb
       reservations: (baseline.boundaryReservations ?? []).filter(record => record.employeeId === person.id), days, visible, weekByDate });
     if (check.issues.some(issue => issue.severity === "ERROR" && !(longGain > 0 && issue.code === "CONSECUTIVE_REST_LIMIT"))) continue;
     if (regularRestQuality(input, person, current).adjacentPairs > regularRestQuality(input, person, assignments.get(person.id) ?? []).adjacentPairs) continue;
+    // Earlier independent-sector exchanges may share an explicitly responsible leader.
+    if (input.movementPriorities?.length && !keepsPriorityLeader({ ...input,
+      assignments: input.assignments.map(record => replace(replacements.get(record) ?? record)),
+    }, person, work.date)) continue;
     replacements.set(work, newOff);
     replacements.set(off, newWork);
     improvedPeople.add(person.id); usedSectorDates.add(sourceDay); usedSectorDates.add(targetDay);

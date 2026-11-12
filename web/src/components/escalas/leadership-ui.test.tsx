@@ -9,9 +9,13 @@ import { newEmployee, newInput } from "./workspace-model";
 describe("optional operational controls", () => {
   it("keeps movement optional, labelled and free of presumed weekend peaks", () => {
     const html = renderToStaticMarkup(<MovementPriorities input={newInput("02", "Filial", "2026-11", 42)} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain("Dias de maior movimento e liderança (opcional)");
+    expect(html).toContain("Movimento da loja (opcional)");
     expect(html).toContain("não presume movimento maior no fim de semana");
     expect(html).not.toContain("<details open");
+    expect(html).toContain("Repetir em dias da semana");
+    expect(html).not.toContain("Quais dias desse período?");
+    expect(html).not.toContain('checked=""');
+    expect(html).toContain('value="2026-11-01"');
     expect(html).toContain("<label");
   });
   it("offers responsibility correction without calling a manager a sector substitute", () => {
