@@ -53,11 +53,11 @@ describe("bounded roster refinement against fixed staffing references", () => {
     try { expect(refineRoster(input)).toBe(input); } finally { clock.mockRestore(); }
     expect(input).toEqual(original);
   });
-  it("does not move a deficit into an explicitly high-movement day for a larger monthly gain", () => {
+  it("does not move a deficit into any other day for a larger monthly gain, even without movement data", () => {
     const input = fixture();
     input.demands = input.demands.filter(demand => demand.date !== "2026-11-04" || demand.start === 480);
     input.demands.filter(demand => demand.date === "2026-11-04").forEach(demand => { demand.minimum = 2; });
-    expect(refineRoster(input)).not.toBe(input);
+    expect(refineRoster(input)).toBe(input);
     input.movementPriorities = [{ startDate: "2026-11-04", endDate: "2026-11-04", sector: "Loja", level: "HIGH" }];
     expect(refineRoster(input)).toBe(input);
   });

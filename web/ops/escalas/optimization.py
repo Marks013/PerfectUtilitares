@@ -82,14 +82,15 @@ def _objective_floor(model, terms, domain_bounds=None):
     return lower
 
 
-def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT):
+def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT, weekday=6):
     """Release comparable groups across the month, including tied extremes.
 
     A single high/low pair cannot improve a max-minus-min objective when peers
     share either extreme. Keep the complete group within the search budget.
     """
-    rates = {v.name[len('weekend-rate:6:'):]: values[v.index] for v in variables
-             if v.name.startswith('weekend-rate:6:')}
+    prefix = f'weekend-rate:{weekday}:'
+    rates = {v.name[len(prefix):]: values[v.index] for v in variables
+             if v.name.startswith(prefix)}
     ranked = []
     for members in groups:
         eligible = sorted(pid for pid in members if pid in rates)
@@ -349,11 +350,13 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                 if not movable_people:
                     movable_people = {pid for pid, terms in (context.rest_spacing or {}).items()
                                       if Snapshot(values).value(sum(terms)) > 0}
-            if name in secondary:
+            if name in secondary and name != 'SATURDAY_BALANCE':
                 movable_people = _polish_people(variables, values, list((coverage_groups or {}).values()) or employee_groups or [],
                                                 coverage_groups=coverage_groups, shortages=sector_coverage,
                                                 sunday_shortages=sunday_coverage, attempt=polish_attempt)
                 polish_attempt += 1
+            if name == 'SATURDAY_BALANCE':
+                movable_people = _movable_people(variables, values, employee_groups or [], weekday=5)
             if repair_phase:
                 movable_people = repair_groups[index]
             weeks = (len(dates) + 6) // 7

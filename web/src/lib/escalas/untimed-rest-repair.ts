@@ -1,5 +1,6 @@
 import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
 import { keepsPriorityLeader } from "./movement";
+import { keepsSaturdayBalance } from "./saturday-balance";
 import { regularRestQuality } from "./rest-spacing";
 import { validateEmployee } from "./validation-employee";
 import { workJourney } from "./validation-time";
@@ -49,7 +50,9 @@ export function repairUntimedRests(input: EscalaInput, validation: EscalaValidat
       const result = validateEmployee(input, person, { current, journeys, days, visible, weekByDate,
         reservations: (validation.boundaryReservations ?? []).filter(record => record.employeeId === person.id) });
       if (result.issues.some(issue => issue.severity === "ERROR" && issue.code !== "CONSECUTIVE_REST_LIMIT")) continue;
-      return { ...input, assignments: input.assignments.map(record => replacements.get(record) ?? record) };
+      const assignments = input.assignments.map(record => replacements.get(record) ?? record);
+      if (!keepsSaturdayBalance(input, assignments)) continue;
+      return { ...input, assignments };
     }
   }
   return input;

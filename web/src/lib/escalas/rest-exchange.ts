@@ -1,5 +1,6 @@
 import { absoluteMinute, addDays, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
-import { keepsPriorityLeader, movementLevel } from "./movement";
+import { keepsPriorityLeader } from "./movement";
+import { keepsSaturdayBalance } from "./saturday-balance";
 import { buildCoveragePresence } from "./coverage-presence";
 import { regularRestQuality } from "./rest-spacing";
 import { validateEmployee } from "./validation-employee";
@@ -62,8 +63,8 @@ export function exchangeRestRepair(input: EscalaInput, validation: EscalaValidat
           const workDeficit = deficit(person.sector, work.date, person.id, { person: peer, shift: peerShift });
           const offDeficit = deficit(person.sector, off.date, peer.id, { person, shift });
           if (workDeficit + offDeficit > originalDeficit
-            || movementLevel(input, person.sector, work.date) === "HIGH" && workDeficit > deficit(person.sector, work.date)
-            || movementLevel(input, person.sector, off.date) === "HIGH" && offDeficit > deficit(person.sector, off.date)) continue;
+            || workDeficit > deficit(person.sector, work.date)
+            || offDeficit > deficit(person.sector, off.date)) continue;
           const asOff = (record: EscalaAssignment): EscalaAssignment => {
             const { shiftId: _shift, ...rest } = record; return { ...rest, kind: "OFF" };
           };
@@ -78,6 +79,7 @@ export function exchangeRestRepair(input: EscalaInput, validation: EscalaValidat
             || nextQuality.adjacentPairs + nextPeerQuality.adjacentPairs > quality.adjacentPairs + peerQuality.adjacentPairs) continue;
           if (!validPerson(person, next) || !validPerson(peer, nextPeer) || performance.now() >= deadline) continue;
           const proposal = { ...input, assignments: input.assignments.map(record => replacements.get(record) ?? record) };
+          if (!keepsSaturdayBalance(input, proposal.assignments)) continue;
           if (!keepsPriorityLeader(proposal, person, work.date) || !keepsPriorityLeader(proposal, peer, off.date)) continue;
           return proposal;
         }

@@ -1,5 +1,6 @@
 import { absoluteMinute, addDays as importDate, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
-import { keepsPriorityLeader, movementLevel } from "./movement";
+import { keepsPriorityLeader } from "./movement";
+import { keepsSaturdayBalance } from "./saturday-balance";
 import { regularRestQuality } from "./rest-spacing";
 import { exchangeRestRepair } from "./rest-exchange";
 import { repairUntimedRests } from "./untimed-rest-repair";
@@ -130,7 +131,8 @@ function refinePass(input: EscalaInput, deadline: number, state: { checked: numb
       if (!sectorDay.some(interval => interval.employee.id !== person.id)) continue;
       if (!keepsPriorityLeader(input, person, work.date)) continue;
       const loss = change(person, work.date, shift, -1);
-      if (loss > 0 && movementLevel(input, person.sector, work.date) === "HIGH") continue;
+      // A monthly gain cannot silently move a shortage to another sector/day.
+      if (loss > 0) continue;
       for (const off of offs) {
         if (weekByDate.get(work.date) !== weekByDate.get(off.date)) continue;
         const gain = -change(person, off.date, shift, 1) - loss;
@@ -182,6 +184,8 @@ function refinePass(input: EscalaInput, deadline: number, state: { checked: numb
     }, person, work.date)) continue;
     replacements.set(work, newOff);
     replacements.set(off, newWork);
+    const candidate = input.assignments.map(record => replacements.get(record) ?? record);
+    if (!keepsSaturdayBalance(input, candidate)) { replacements.delete(work); replacements.delete(off); continue; }
     improvedPeople.add(person.id); usedSectorDates.add(sourceDay); usedSectorDates.add(targetDay);
   }
   if (!replacements.size || expired()) return input;

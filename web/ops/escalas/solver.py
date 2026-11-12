@@ -463,11 +463,12 @@ def solve(data, control=None):
     visible_sunday_coverage = {}
     visible_sector_coverage = {}
     closing_coverage = {}
+    daily_coverage = {}
     movement_coverage, priority_coverage, movement_groups = [], {}, {}
     coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage,
                          visible_sunday_coverage, visible_sector_coverage, closing_coverage,
                          movement_terms=movement_coverage, priority_terms=priority_coverage,
-                         movement_groups=movement_groups)
+                         movement_groups=movement_groups, daily_terms=daily_coverage)
     if coverage is False:
         return _response("FEASIBLE", result, started)
     if isinstance(coverage, str):
@@ -536,13 +537,14 @@ def solve(data, control=None):
                       for variable in options.values()})
     values, proven, phases = improve(model, [objective for _, objective in goals], values,
                                      started + MAX_SECONDS, [name for name, _ in goals], context=ImprovementContext(control=control,
-                                     protected_groups={goals[0][0]: sundays + [sum(terms) for terms in sunday_coverage.values()]
+                                     protected_groups={goals[0][0]: sundays + saturdays + [sum(terms) for terms in sunday_coverage.values()]
                                                        + [sum(terms) for terms in spacing_people.values()]
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
                                                        + [sum(terms) for terms in visible_sector_coverage.values()]
                                                        + [sum(terms) for terms in closing_coverage.values()]
-                                                       + [sum(terms) for terms in priority_coverage.values()]} if goals else {},
+                                                       + [sum(terms) for terms in priority_coverage.values()]
+                                                       + [sum(terms) for terms in daily_coverage.values()]} if goals else {},
                                      employee_groups=list(groups.values()),
                                      untimed_people={person['id'] for person in employees if has_no_clock(person)},
                                      rest_spacing=spacing_people,
@@ -1056,7 +1058,7 @@ def _civil_rest(model, person, dates, active_days, choices, work, off, prior, sh
 
 def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None,
               sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None, closing_terms=None,
-              movement_terms=None, priority_terms=None, movement_groups=None):
+              movement_terms=None, priority_terms=None, movement_groups=None, daily_terms=None):
     closed_holidays = paid_holiday_dates(data["policy"])
     relevant = [d for d in data['demands'] if d['minimum'] > 0
                 and not (d.get('estimated') is True and d['date'] in closed_holidays)
@@ -1138,7 +1140,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                     # Their durations are added, so the person-minute objective is unchanged.
                     key = (minimum, tuple(sorted(v.index for v in variables)), demand['sector'])
                     if key not in grouped:
-                        grouped[key] = [variables, 0, 0, 0, 0, 0, 0, {}]
+                        grouped[key] = [variables, 0, 0, 0, 0, 0, 0, {}, {}]
                     grouped[key][1] += int(right - left)
                     if is_sunday:
                         grouped[key][2] += int(right - left)
@@ -1150,6 +1152,9 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                     if priority_terms is not None and priority == PRIORITY['HIGH']:
                         prioritized = grouped[key][7]
                         prioritized[priority_key] = prioritized.get(priority_key, 0) + int(right - left)
+                    if daily_terms is not None:
+                        daily = grouped[key][8]
+                        daily[priority_key] = daily.get(priority_key, 0) + int(right - left)
                     if closing_window:
                         grouped[key][5] += max(0, int(min(right, closing_window[1]) - max(left, closing_window[0])))
                 continue
@@ -1158,7 +1163,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                 return (f"Cobertura sem horário disponível em {demand['date']} às {minute // 60:02d}:{minute % 60:02d}. "
                         "Confira os turnos permitidos, intervalos de refeição, setor e cargo da faixa antes de alterar o efetivo.")
             model.add(cp_model.LinearExpr.sum(available) >= demand["minimum"])
-    for index, ((minimum, _, sector), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight, closing_weight, movement_weight, prioritized)) in enumerate(grouped.items()):
+    for index, ((minimum, _, sector), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight, closing_weight, movement_weight, prioritized, daily)) in enumerate(grouped.items()):
         shortage = model.new_int_var(0, minimum, f'coverage-gap:{index}')
         model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
         shortages.append(weight * shortage)
@@ -1182,6 +1187,10 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
         if priority_terms is not None:
             for sector_day, minutes in prioritized.items():
                 priority_terms.setdefault(sector_day, []).append(minutes * shortage)
+        # Reuse the shortage variable, but retain each civil day's duration.
+        if daily_terms is not None:
+            for sector_day, minutes in daily.items():
+                daily_terms.setdefault(sector_day, []).append(minutes * shortage)
         if values is not None:
             present = sum(values[v.index] for v in variables)
             remember(model, values, shortage, max(0, minimum - present))
