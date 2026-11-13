@@ -201,8 +201,9 @@ test("optional absence preview preserves existing absences and locked work befor
   const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
   const generatedResponse = await generating;
-  expect(generatedResponse.status()).toBe(200);
   const generated = await generatedResponse.json();
+  const failureCode = typeof generated?.error?.code === "string" && /^[A-Z_]+$/.test(generated.error.code) ? generated.error.code : "UNCLASSIFIED";
+  expect(generatedResponse.status(), `GENERATE public code: ${failureCode}`).toBe(200);
   expect(["FEASIBLE", "OPTIMAL"]).toContain(generated.result.status);
   expect(generated.validation.valid).toBe(true);
   const expected = ["a:2026-11-03", "a:2026-11-05", "a:2026-11-06", "b:2026-11-09", "b:2026-11-10", "b:2026-11-11"];

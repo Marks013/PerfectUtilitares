@@ -45,8 +45,9 @@ export function OperationalReports({ workspace, disabled }: { workspace: EscalaW
       if (!valid()) return;
       if (!response.ok) {
         if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
-        const body = await response.json().catch(() => null) as { error?: string; message?: string } | null;
-        throw new Error(response.status === 409 ? "A revisão mudou. Reabra o planejamento e confira o relatório novamente." : typeof body?.message === "string" ? body.message : typeof body?.error === "string" ? body.error : "Não foi possível preparar o relatório. Tente novamente.");
+        const body = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+        const revisionChanged = response.status === 409 && body?.error?.code === "ESCALA_INVALID_OPERATIONAL_SELECTION";
+        throw new Error(revisionChanged ? "A revisão mudou. Reabra o planejamento e confira o relatório novamente." : typeof body?.error?.message === "string" ? body.error.message : "Não foi possível preparar o relatório. Tente novamente.");
       }
       if (!(response.headers.get("content-type") ?? "").toLowerCase().includes(OPERATIONAL_REPORT_CONTENT_TYPE)) throw new Error("O servidor não retornou um PDF válido.");
       const blob = await response.blob();

@@ -87,7 +87,11 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     expect(unchanged.input.assignments).toEqual(input.assignments);
     await page.locator('button[aria-controls="escala-area-team"]').click();
     const team = page.locator("#escala-team-restrictions");
-    await team.locator("summary").click();
+    const teamToggle = team.locator(":scope > summary").filter({ hasText: /^Consultar equipe e restrições individuais$/ });
+    await expect(teamToggle).toHaveCount(1);
+    await expect(teamToggle).toBeVisible();
+    await teamToggle.click();
+    await expect(team).toHaveAttribute("open", "");
     await team.getByRole("button", { name: "Trocar turno de Pessoa de teste", exact: true }).click();
     const swap = page.getByRole("region", { name: "Trocar turno de Pessoa de teste", exact: true });
     async function chooseAndPreview(code: number, partial = false) {
@@ -206,9 +210,13 @@ test("global initial catalog is atomic and stale pagination cannot pollute a new
     expect(repeated.entries).toEqual(page1.entries);
     await page.locator('button[aria-controls="escala-area-team"]').click();
     const team = page.locator("#escala-team-restrictions");
-    await team.locator("summary").click();
-    await team.getByRole("button", { name: /Trocar turno/ }).first().click();
-    const swap = page.getByRole("region", { name: /Trocar turno de/ });
+    const teamToggle = team.locator(":scope > summary").filter({ hasText: /^Consultar equipe e restrições individuais$/ });
+    await expect(teamToggle).toHaveCount(1);
+    await expect(teamToggle).toBeVisible();
+    await teamToggle.click();
+    await expect(team).toHaveAttribute("open", "");
+    await team.getByRole("button", { name: "Trocar turno de Pessoa 0", exact: true }).click();
+    const swap = page.getByRole("region", { name: "Trocar turno de Pessoa 0", exact: true });
     await expect(swap.getByRole("button", { name: "Carregar mais turnos" })).toBeVisible();
     let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
     let captured!: () => void; const pending = new Promise<void>(resolve => { captured = resolve; });

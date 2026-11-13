@@ -89,6 +89,19 @@ describe("GET optional operational PDF", () => {
     const response = await GET(request()); expect(response.status).toBe(409);
     expect(mocks.capacity).not.toHaveBeenCalled();
   });
+  it.each(["REST_ONLY", "HOURS_ONLY", "DAYS_AND_HOURS"] as const)("rejects the CI221 empty-reference fixture in %s instead of emitting a fabricated PDF", async mode => {
+    const current = await mocks.get();
+    current.input.generationMode = mode;
+    current.input.employees[0].shiftIds = [];
+    current.input.assignments = [{ employeeId: "a", date: "2026-12-02", kind: "ABSENCE", locked: true }, { employeeId: "a", date: "2026-12-25", kind: "HOLIDAY", locked: true }];
+    current.validation = validateEscala(current.input);
+    const before = structuredClone(current);
+    const response = await GET(request("&section=variants"));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "ESCALA_REPORT_REFERENCES_INVALID" } });
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(mocks.capacity).not.toHaveBeenCalled(); expect(current).toEqual(before);
+  });
   it("rejects invalid reference clocks without requiring a monthly roster", async () => {
     const current = await mocks.get(); current.input.assignments = []; current.input.needsRegeneration = true;
     current.input.shifts[0].segments[2].end = 1260; current.validation = validateEscala(current.input);

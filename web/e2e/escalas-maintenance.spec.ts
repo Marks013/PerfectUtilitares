@@ -67,7 +67,10 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   const roster = page.getByRole("region", { name: "Grade mensal da filial", exact: true });
   await expect(roster).toBeVisible();
   await expect(roster.getByRole("columnheader")).toHaveCount(31);
-  await expect(roster.getByText("01/11/2026 a 30/11/2026", { exact: false })).toBeVisible();
+  const periodHeader = roster.getByText(`Filial ${branch} · Filial sintética E2E. 01/11/2026 a 30/11/2026.`, { exact: false });
+  await expect(periodHeader).toHaveCount(1);
+  await expect(periodHeader).toBeVisible();
+  await expect(periodHeader).toContainText("01/11/2026 a 30/11/2026");
   expect(await roster.locator('button[aria-label*="31/10/2026"]').count()).toBe(0);
   expect(await roster.locator('button[aria-label*="01/12/2026"]').count()).toBe(0);
   const anaCell = roster.getByRole("button", { name: /^Ana Sintética, 02\/11\/2026:/ });

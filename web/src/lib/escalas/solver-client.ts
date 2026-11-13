@@ -74,6 +74,17 @@ const resultSchema = z.strictObject({
   })).max(10500),
 });
 
+/** Pending days are permitted in drafts, never in an incumbent used to replace a calculated roster. */
+function verifiedCompleteRoster(input: EscalaInput): boolean {
+  if (!input.assignments.length) return false;
+  const assigned = new Set(input.assignments.map(day => `${day.employeeId}\0${day.date}`));
+  const dates = dateRange(input.startDate, input.endDate);
+  if (!input.employees.every(person => person.planningEnabled === false || dates.every(date =>
+    date < person.activeFrom || Boolean(person.activeUntil && date > person.activeUntil) || assigned.has(`${person.id}\0${date}`)))) return false;
+  const validation = validateEscala(input);
+  return validation.valid && !validation.issues.some(issue => issue.code === "DAY_PENDING");
+}
+
 export async function solveEscala(
   input: EscalaInput,
   options?: SolverOptions,
@@ -85,8 +96,8 @@ export async function solveEscala(
   let refined: EscalaInput;
   try {
     // Clock-only generation must compare against the original days, even if moving rest days could improve their spacing.
-    refined = parsed.generationMode === "HOURS_ONLY" ? parsed
-      : selectVerifiedRoster(parsed, refineRoster(parsed)).input;
+    refined = parsed.generationMode === "HOURS_ONLY" ? parsed : verifiedCompleteRoster(parsed)
+      ? selectVerifiedRoster(parsed, refineRoster(parsed)).input : refineRoster(parsed);
   } catch {
     logSolverRejection("refinement", "REFINEMENT_FAILED");
     throw new EscalaSolverError("SOLVER_REFINEMENT_FAILED");
@@ -102,7 +113,7 @@ export async function solveEscala(
   const preparationSeconds = (performance.now() - started) / 1000;
   const payload = await requestSolver(parsed, {
     ...options,
-    initialAssignments: refined === parsed || !validateEscala(refined).valid ? undefined : refined.assignments,
+    initialAssignments: refined === parsed || !verifiedCompleteRoster(refined) ? undefined : refined.assignments,
   });
   let stage = "result-schema", reason = "SCHEMA_INVALID";
   let details: Parameters<typeof logSolverRejection>[2];
@@ -169,7 +180,9 @@ export async function solveEscala(
     if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
     if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
       stage = "selection-recheck"; reason = "RECHECK_FAILED"; details = undefined;
-      const selected = selectVerifiedRoster(refined, { ...parsed, assignments: result.assignments });
+      const candidate = { ...parsed, assignments: result.assignments };
+      const selected = verifiedCompleteRoster(refined) ? selectVerifiedRoster(refined, candidate)
+        : { input: candidate, retainedReference: false };
       // A selector without a valid incumbent can return the proposal unchanged. It is never proof of feasibility.
       stage = "assignment-schema"; reason = "SCHEMA_INVALID";
       const finalInput = escalaInputSchema.parse({ ...parsed, assignments: selected.input.assignments });
