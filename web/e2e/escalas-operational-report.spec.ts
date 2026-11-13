@@ -4,24 +4,48 @@ import { selectEscalasWorkspace } from "./escalas-selection";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { PDFDocument } from "pdf-lib";
-import type { APIResponse, Response } from "@playwright/test";
+import type { APIResponse, Download, Response } from "@playwright/test";
 import { pdfJsServerDocumentOptions } from "../src/lib/pdf/pdfjs-server";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
-async function expectSavedReferencePdf(response: APIResponse | Response, workspace: EscalaWorkspace) {
+async function downloadedBytes(file: Download) {
+  expect(await file.failure()).toBeNull();
+  const stream = await file.createReadStream();
+  if (!stream) throw new Error("The operational PDF download has no readable file");
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
+async function expectSavedReferencePdf(response: APIResponse | Response, workspace: EscalaWorkspace, fileBytes?: Uint8Array) {
   const query = new URL(response.url()).searchParams;
   expect(query.get("workspaceId")).toBe(workspace.id);
   expect(query.get("revision")).toBe(String(workspace.revision));
   expect(query.get("month")).toBe(workspace.input.visibleMonth);
+  if ("request" in response) expect(response.request().method()).toBe("GET");
   // Report the structured failure code for this synthetic workspace, never a binary PDF body.
   const failure = response.ok() ? null : await response.json().catch(() => null) as { error?: { code?: string } } | null;
   expect(response.status(), `operational-report code=${failure?.error?.code ?? "none"}`).toBe(200);
   expect(response.headers()["content-type"]).toContain("application/pdf");
-  const bytes = new Uint8Array(await response.body());
-  expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
+  const observed = new Uint8Array(await response.body());
+  if (fileBytes !== undefined) {
+    // Compare both observations when the network observer exposes a body. The download is the user artifact.
+    test.info().annotations.push({ type: "operational-pdf-bytes", description: JSON.stringify({ networkBytes: observed.byteLength, downloadBytes: fileBytes.byteLength, equal: Buffer.from(observed).equals(Buffer.from(fileBytes)) }) });
+    if (observed.byteLength > 0) expect(Buffer.from(observed)).toEqual(Buffer.from(fileBytes));
+  }
+  const text = await expectReferencePdfBytes(fileBytes ?? observed);
+  expect(text).toContain(workspace.input.branchCode);
+  expect(text).toContain(`Revisão ${workspace.revision}`);
+}
+
+async function expectReferencePdfBytes(source: Uint8Array) {
+  expect(source.byteLength, "The PDF artifact must not be empty").toBeGreaterThan(5);
+  expect(Buffer.from(source.subarray(0, 5)).toString("ascii"), "The original artifact must start with %PDF-").toBe("%PDF-");
+  // Give each parser its own copy: PDF.js may transfer its input buffer to a worker.
+  expect((await PDFDocument.load(Uint8Array.from(source))).getPageCount()).toBeGreaterThan(0);
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const task = pdfjs.getDocument(pdfJsServerDocumentOptions(bytes)), document = await task.promise;
+  const task = pdfjs.getDocument(pdfJsServerDocumentOptions(Uint8Array.from(source))), document = await task.promise;
   try {
     const parts: string[] = [];
     for (let i = 1; i <= document.numPages; i++) {
@@ -33,8 +57,15 @@ async function expectSavedReferencePdf(response: APIResponse | Response, workspa
     expect(text).toContain("08:00-12:00"); expect(text).toContain("13:00-17:00");
     expect(text).toContain("sem grade diária");
     expect(text).not.toMatch(/Calendário mensal|Mapa diário|Pessoas-dia/);
+    return text;
   } finally { await task.destroy(); }
 }
+
+test("operational PDF bytes reject empty, non-PDF and truncated files", async () => {
+  for (const bytes of [new Uint8Array(), Buffer.from("not a PDF"), Buffer.from("%PDF-1.7\ntruncated")]) {
+    await expect(expectReferencePdfBytes(bytes)).rejects.toThrow();
+  }
+});
 
 for (const mode of ["REST_ONLY", "HOURS_ONLY", "DAYS_AND_HOURS"] as const) {
   test(`operational PDF uses saved references without inventing a roster: ${mode}`, async ({ page }) => {
@@ -73,14 +104,18 @@ for (const mode of ["REST_ONLY", "HOURS_ONLY", "DAYS_AND_HOURS"] as const) {
       const download = page.waitForEvent("download");
       await panel.getByRole("button", { name: "Gerar PDF operacional" }).click();
       const response = await request;
-      await expectSavedReferencePdf(response, workspace);
+      const file = await download;
+      try {
+        expect(file.suggestedFilename()).toContain(".pdf");
+        expect(file.url()).toMatch(/^blob:/);
+        await expectSavedReferencePdf(response, workspace, await downloadedBytes(file));
+      } finally { await file.delete(); }
       const query = new URL(response.url()).searchParams;
       expect(query.get("workspaceId")).toBe(workspace.id);
       expect(query.get("revision")).toBe(String(workspace.revision));
       expect(query.get("month")).toBe("2026-11");
       expect(query.getAll("section")).toEqual(["journeys", "variants"]);
       expect(query.getAll("sector")).toEqual(["Loja"]);
-      const file = await download; expect(file.suggestedFilename()).toContain(".pdf"); await file.delete();
       await expect(panel.getByText("Concluído.", { exact: false })).toBeVisible();
       const current: EscalaWorkspace = await page.request.get("/api/escalas?id=" + workspace.id).then(result => result.json());
       expect(current.revision).toBe(workspace.revision);
@@ -139,6 +174,7 @@ test("a delayed PDF from the previous workspace never starts a download", async 
     let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
     let captured!: (response: APIResponse) => void; const pending = new Promise<APIResponse>(resolve => { captured = resolve; });
     await page.route("**/api/escalas/operational-report?*", async route => {
+      expect(route.request().method()).toBe("GET");
       const response = await route.fetch(); captured(response); await gate;
       await route.fulfill({ response }).catch(() => {});
     });
