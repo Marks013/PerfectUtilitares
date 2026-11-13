@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
+import { selectEscalasWorkspace } from "./escalas-selection";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { dateRange } from "../src/lib/escalas/dates";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
@@ -21,7 +22,7 @@ async function fixture(page: Page, locked = false) {
   expect(response.status()).toBe(201);
   const workspace: EscalaWorkspace = await response.json();
   await page.goto("/escala");
-  await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+  await selectEscalasWorkspace(page, workspace);
   return workspace;
 }
 async function removeFixture(page: Page, id: string) {

@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { selectEscalasWorkspace } from "./escalas-selection";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { loginAsAdmin } from "./admin-session";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
@@ -27,7 +28,7 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
   const created: EscalaWorkspace = await createdResponse.json();
   try {
     await page.goto("/escala");
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
+    await selectEscalasWorkspace(page, created);
     await page.getByRole("button", { name: "Ajustar pausas de jornadas curtas (opcional)", exact: true }).click();
     const pause = page.getByLabel("Simular jornadas de 4 a 6 horas sem pausa", { exact: true });
     await expect(pause).toBeVisible();

@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { selectEscalasWorkspace } from "./escalas-selection";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
 import { unzipSync, strFromU8 } from "fflate";
@@ -43,7 +44,7 @@ test("revision confirmation, inactive panels, canonical identity and excluded-pe
     expect(await duplicate.json()).toMatchObject({ error: { code: "ESCALA_ALREADY_EXISTS" } });
 
     await page.goto("/escala");
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectEscalasWorkspace(page, workspace);
     await page.getByRole("button", { name: /^Revisar e exportar/ }).click();
     const confirmation = page.getByRole("checkbox", { name: "Conferi esta revisão da filial " + branch, exact: true });
     const approval = page.getByRole("button", { name: "Publicar proposta", exact: true });

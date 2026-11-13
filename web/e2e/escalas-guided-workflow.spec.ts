@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "./fixtures";
+import { selectEscalasWorkspace } from "./escalas-selection";
 import { PDFDocument } from "pdf-lib";
 import { strFromU8, unzipSync } from "fflate";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
@@ -42,7 +43,7 @@ async function selectAdjustments(page: Page) {
 }
 async function open(page: Page, workspace: EscalaWorkspace, step: "generate" | "roster" = "generate") {
   await page.goto("/escala");
-  await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+  await selectEscalasWorkspace(page, workspace);
   await selectStep(page, step);
   await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue(String(workspace.input.defaultWeeklyHours));
 }
@@ -55,6 +56,29 @@ async function cleanup(page: Page, id: string) {
   const current = await read(page, id);
   expect((await page.request.delete("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { workspaceId: id, expectedRevision: current.revision } })).status()).toBe(200);
 }
+
+test("the three generation modes show relevant controls", async ({ page }) => {
+  await loginAsAdmin(page);
+  const workspace = await fixture(page, "modes");
+  try {
+    await open(page, workspace);
+    const both = page.getByRole("radio", { name: "Folgas e horários", exact: true });
+    const rest = page.getByRole("radio", { name: "Só folgas", exact: true });
+    const hours = page.getByRole("radio", { name: "Só horários", exact: true });
+    const adjustment = page.locator("#escala-adjust-hours-title");
+    await expect(both).toBeChecked();
+    await expect(adjustment).toBeVisible();
+    await rest.check();
+    await expect(rest).toBeChecked();
+    await expect(adjustment).toHaveCount(0);
+    await hours.check();
+    await expect(hours).toBeChecked();
+    await expect(adjustment).toBeVisible();
+    await expect.poll(async () => (await read(page, workspace.id)).input.generationMode).toBe("HOURS_ONLY");
+    await both.check();
+    await expect.poll(async () => (await read(page, workspace.id)).input.generationMode).toBe("DAYS_AND_HOURS");
+  } finally { await cleanup(page, workspace.id); }
+});
 
 test("autosave serializes real writes and a delayed acknowledgement never replaces newer typing", async ({ page }) => {
   await loginAsAdmin(page);
@@ -84,7 +108,7 @@ test("autosave serializes real writes and a delayed acknowledgement never replac
     expect(writes).toEqual([{ revision: workspace.revision, hours: 40 }, { revision: workspace.revision + 1, hours: 44 }]);
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
     await page.reload();
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectEscalasWorkspace(page, workspace);
     await selectStep(page, "generate");
     await expect(journey).toHaveValue("44");
   } finally { release.release(); await page.unrouteAll({ behavior: "wait" }); await cleanup(page, workspace.id); }
@@ -110,7 +134,7 @@ test("a lost acknowledgement is reconciled by GET without duplicating a committe
     expect(saved.revision).toBe(workspace.revision + 1);
     expect(writes).toBe(1); expect(reads).toBeGreaterThan(0);
     await page.reload();
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectEscalasWorkspace(page, workspace);
     await selectStep(page, "generate");
     await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue("40");
   } finally { await page.unrouteAll({ behavior: "wait" }); await cleanup(page, workspace.id); }
@@ -166,7 +190,7 @@ test("an external revision conflict preserves both the newer server content and 
     expect(saved.revision).toBe(workspace.revision + 1); expect(writes).toBe(1);
     page.once("dialog", dialog => void dialog.accept());
     await page.reload();
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectEscalasWorkspace(page, workspace);
     await selectStep(page, "generate");
     await expect(page.getByRole("alert", { name: "Rascunho recuperável", exact: true })).toBeVisible();
     await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveValue("42");
@@ -174,7 +198,7 @@ test("an external revision conflict preserves both the newer server content and 
     const preserved = await page.evaluate(id => sessionStorage.getItem("perfectutilitares.escalas.draft:" + id), workspace.id);
     expect(JSON.parse(preserved!).input.defaultWeeklyHours).toBe(40);
     await page.reload();
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectEscalasWorkspace(page, workspace);
     expect(await page.evaluate(id => sessionStorage.getItem("perfectutilitares.escalas.draft:" + id), workspace.id)).toBe(preserved);
     expect((await read(page, workspace.id)).input.branchName).toBe("Edição externa preservada");
   } finally { release.release(); await page.unrouteAll({ behavior: "wait" }); await cleanup(page, workspace.id); }
@@ -248,7 +272,7 @@ test("shared operational access is independent, scoped, revocable and restores a
     const list = await page.request.get("/api/escalas").then(response => response.json()); expect(list.workspaces.some((item: { id: string }) => item.id === foreign.id)).toBe(false);
     expect((await page.request.get("/api/unimed/access/session")).status()).toBe(401);
     expect((await page.request.post("/api/unimed/access/session", { headers: { origin }, data: { password } })).status()).toBe(200);
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(workspace.id);
+    await selectEscalasWorkspace(page, workspace);
     await selectStep(page, "generate");
     await page.getByLabel("Jornada semanal", { exact: true }).selectOption("40");
     await page.getByRole("button", { name: "Bloquear Escalas", exact: true }).click();

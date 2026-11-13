@@ -4,18 +4,11 @@ import { newEmployee, newInput } from "../src/components/escalas/workspace-model
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import type { Page } from "@playwright/test";
 import { loginAsAdmin } from "./admin-session";
+import { selectEscalasWorkspace } from "./escalas-selection";
 
 async function openWorkspace(page: Page, workspace: EscalaWorkspace) {
   await page.goto("/escala");
-  await page.getByLabel("Filial", { exact: true }).selectOption(workspace.input.branchCode);
-  await expect(page.getByLabel("Filial", { exact: true })).toHaveValue(workspace.input.branchCode);
-  const month = workspace.input.visibleMonth || workspace.input.startDate.slice(0, 7);
-  await page.getByLabel("Ano", { exact: true }).selectOption(month.slice(0, 4));
-  await expect(page.getByLabel("Ano", { exact: true })).toHaveValue(month.slice(0, 4));
-  await page.getByLabel("Mês", { exact: true }).selectOption(month.slice(5));
-  await expect(page.getByLabel("Mês", { exact: true })).toHaveValue(month.slice(5));
-  const duplicate = page.getByLabel("Planejamento", { exact: true });
-  if (await duplicate.count()) await duplicate.selectOption(workspace.id);
+  await selectEscalasWorkspace(page, workspace);
 }
 
 test.beforeEach(async ({ page }) => {

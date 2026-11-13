@@ -116,6 +116,14 @@ make_untimed(person)
 person["offPattern"] = "CONSECUTIVE"
 person["planningFuture"] = [{"employeeId": "p0", "date": "2026-11-09", "kind": "OFF"},
                              {"employeeId": "p0", "date": "2026-11-10", "kind": "DUTY"}]
+# Keep the original impossible boundary as an explicit negative scenario.
+conflict = copy.deepcopy(data)
+conflict["restRulesVersion"] = 1
+conflict["assignments"] = [{"employeeId": "p0", "date": day, "kind": "OFF" if index < 2 else "DUTY"}
+                           for index, day in enumerate(days_between(data["startDate"], data["endDate"]))]
+scenarios.append(("future-consecutive-rest-rejects-three-off-boundary", conflict, {"infeasible": "CONSECUTIVE_REST_LIMIT"}))
+# Match the viable Python regression: absence is not OFF, allowing the boundary pair.
+next(entry for entry in person["history"] if entry["date"] == "2026-10-31")["kind"] = "ABSENCE"
 scenarios.append(("future-consecutive-rest-preserves-current-neighbor", data, {"lastOff": True, "currentDays": 7}))
 blocked = copy.deepcopy(data)
 blocked["assignments"] = [{"employeeId": "p0", "date": day, "kind": "OFF" if index < 2 else "DUTY",
@@ -220,5 +228,5 @@ for (const line of result.stdout.trim().split("\n")) {
   passed++;
   console.log(JSON.stringify({ scenario: name, verified: true, status: solved.status, seconds: solved.wallTimeSeconds }));
 }
-assert.equal(passed, properties ? 30 : 21, "Todos os cenários devem ter sido executados.");
+assert.equal(passed, properties ? 30 : 22, "Todos os cenários devem ter sido executados.");
 console.log(JSON.stringify({ verified: true, scenarios: passed, processor: "CP-SAT", verifier: "TypeScript independent" }));

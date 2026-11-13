@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { selectEscalasWorkspace } from "./escalas-selection";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
 
@@ -61,7 +62,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   });
   expect(preparing.status()).toBe(200);
   await page.reload();
-  await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(imported.id);
+  await selectEscalasWorkspace(page, imported);
   await page.getByLabel("Visualização da escala", { exact: true }).selectOption("rest");
   const roster = page.getByRole("region", { name: "Grade mensal da filial", exact: true });
   await expect(roster).toBeVisible();

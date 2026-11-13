@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "./fixtures";
+import { selectEscalasWorkspace } from "./escalas-selection";
 import { parse } from "csv-parse/sync";
 import { pdfJsServerDocumentOptions } from "../src/lib/pdf/pdfjs-server";
 import { strFromU8, unzipSync } from "fflate";
@@ -163,7 +164,7 @@ test("optional absence preview preserves existing absences and locked work befor
   const created: EscalaWorkspace = await createdResponse.json();
   disposableId = created.id;
   await page.goto("/escala");
-  await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
+  await selectEscalasWorkspace(page, created);
   await page.locator('button[aria-controls="escala-area-team"]').click();
   await page.locator('button[aria-controls="escala-area-team"]').click();
   await page.getByText("Importar afastamentos e férias (opcional)", { exact: true }).click();
@@ -193,7 +194,7 @@ test("optional absence preview preserves existing absences and locked work befor
   expect(stale.input.needsRegeneration).toBe(true);
   expect((await page.request.get("/api/escalas/export?id=" + stale.id + "&revision=" + stale.revision + "&format=xlsx")).status()).toBe(409);
   await page.reload();
-  await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
+  await selectEscalasWorkspace(page, created);
   await page.locator('button[aria-controls="escala-area-roster"]').click();
   await expect(page.getByRole("button", { name: "Gerar PDF", exact: true })).toBeDisabled();
   await page.locator('button[aria-controls="escala-area-generate"]').click();

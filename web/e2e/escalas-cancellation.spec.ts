@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { selectEscalasWorkspace } from "./escalas-selection";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { loginAsAdmin } from "./admin-session";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
@@ -21,7 +22,7 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
   let operationId: string | undefined;
   try {
     await page.goto("/escala");
-    await page.getByLabel("Selecionar filial e período", { exact: true }).selectOption(created.id);
+    await selectEscalasWorkspace(page, created);
     const started = page.waitForResponse(result => result.url().endsWith("/api/escalas") && result.request().method() === "POST" && result.request().postDataJSON()?.action === "START_GENERATION");
     await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
     const registration = await started;
