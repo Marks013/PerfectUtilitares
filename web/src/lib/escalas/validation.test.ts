@@ -182,16 +182,17 @@ describe("independent Escalas validation", () => {
     expect(result.issues).toContainEqual(expect.objectContaining({ code: "DISABLED_ASSIGNMENT", employeeId: disabled.id, severity: "ERROR" }));
   });
 
-  it("keeps an unconfirmed estimated coverage gap visible without claiming the draft is ready", () => {
+  it("keeps estimated gaps visible while allowing a valid draft to publish internally", () => {
     const input = fixture(40);
     input.policy.coverageReview = "SUGGESTED";
     input.demands[0].minimum = 2;
     input.demands[0].estimated = true;
     const result = validateEscala(input);
     expect(result.valid).toBe(true);
-    expect(result.readyToPublish).toBe(false);
+    expect(result.readyToPublish).toBe(true);
     expect(result.minimumCoverageMargin).toBe(-1);
-    expect(result.issues).toContainEqual(expect.objectContaining({ code: "ESTIMATED_COVERAGE_GAP", severity: "PENDING", date: input.startDate }));
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "ESTIMATED_COVERAGE_GAP", severity: "WARNING", date: input.startDate }));
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING", severity: "WARNING" }));
     input.policy.coverageReview = "CONFIRMED";
     expect(validateEscala(input).valid).toBe(true);
     expect(codes(input)).toContain("ESTIMATED_COVERAGE_GAP");

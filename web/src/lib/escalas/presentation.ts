@@ -1,4 +1,5 @@
 import { visibleDates } from "./dates";
+import { effectiveScheduleMode } from "./fpre136-schedule";
 import { holidayCalendarFor, holidayLabel } from "./calendar";
 import { compareProposedSchedules, sortEmployees, sortHoursEmployees } from "./order";
 import { isRestPlanningExcludedRole } from "./eligibility";
@@ -36,9 +37,7 @@ export function assignmentPresentation(employee: EscalaEmployee, date: string, a
   if (assignment.kind === "HOLIDAY") return { code: "FE", description: "Feriado — loja fechada" };
   if (assignment.kind === "OFF") return { code: "F", description: "Folga" };
   if (assignment.kind === "ABSENCE") return { code: "AF", description: "Afastado; não conta como folga nem como presença na cobertura" };
-  const sourceClocks = employee.sourceSchedule?.weekday.match(/\d{2}:\d{2}/g) ?? [];
-  const allZeroSource = employee.scheduleMode === "MISSING" && sourceClocks.length > 0 && sourceClocks.every(clock => clock === "00:00");
-  if (employee.scheduleMode === "UNTIMED" || allZeroSource) return { code: "ENC", description: "Sem horário fixo: participa das folgas; não entra na contagem de pessoas por horário" };
+  if (effectiveScheduleMode(employee) === "UNTIMED") return { code: "ENC", description: "Sem horário fixo: participa das folgas; não entra na contagem de pessoas por horário" };
   if (assignment.kind === "DUTY" || employee.scheduleMode === "MISSING") return { code: "NP", description: "Horário não processado: presença diária planejada sem horário informado; defina um horário para apurar horas e cobertura" };
   const code = codes.get(assignment.shiftId ?? "");
   return code ? { code, description: `Turno planejado ${code}` } : { code: "NP", description: "Horário não processado: turno não encontrado; selecione um turno válido" };
@@ -79,7 +78,7 @@ export function buildEscalaSchedule(input: EscalaInput) {
       const entry = variants.get(cell.shiftId) ?? { shiftId: cell.shiftId, code: cell.code, schedule: cell.schedule, interval: cell.interval, daily: cell.daily, dates: [] };
       entry.dates.push(cell.date); variants.set(cell.shiftId, entry);
     }
-    const choices = employeeReferenceShiftChoices(input, employee);
+    const choices = effectiveScheduleMode(employee) === "UNTIMED" ? [] : employeeReferenceShiftChoices(input, employee);
     if (!variants.size) {
       for (const choice of choices) {
         const shift = (byShift.get(choice.shiftId) as NonNullable<ReturnType<typeof byShift.get>>);
@@ -95,7 +94,7 @@ export function buildEscalaSchedule(input: EscalaInput) {
     const proposedVariants = [...variants.values()].sort((left, right) => compareProposedSchedules(left.schedule, right.schedule));
     const proposedSchedule = proposedVariants.length === 1 ? proposedVariants[0].schedule
       : proposedVariants.length > 1 ? (referencesOnly ? "Referências: " : "Varia no mês: ") + proposedVariants.map((entry) => entry.code + " " + entry.schedule).join(" | ")
-      : referencesOnly ? employee.scheduleMode === "UNTIMED" ? "ENC — Sem horário fixo" : "NP — horário ainda não informado"
+      : referencesOnly ? effectiveScheduleMode(employee) === "UNTIMED" ? "ENC — Sem horário fixo" : "NP — horário ainda não informado"
       : cells.some((cell) => cell.code === "ENC") ? "ENC — Sem horário fixo"
       : cells.some((cell) => cell.code === "NP") ? "NP — horário ainda não processado" : "Sem trabalho com horário neste período";
     return { employee, cells, proposedSchedule, proposedVariants };

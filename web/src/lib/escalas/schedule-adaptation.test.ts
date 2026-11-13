@@ -23,8 +23,8 @@ describe("explicit compatible schedule adaptation", () => {
     expect(result.input.shifts).toContainEqual(input.shifts[0]); expect(result.input.needsRegeneration).toBe(true); expect(result.input.employees[0].planningEnabled).not.toBe(false);
   });
   it("keeps an incompatible person included and identifies them instead of silently removing them", () => {
-    // A real incompatibility: this full span cannot fit before closing without shortening its meal.
-    const input = sample(); input.simulation = false; input.shifts[0].segments = [{ start: 420, end: 660, kind: "WORK" }, { start: 660, end: 1800, kind: "BREAK" }, { start: 1800, end: 2000, kind: "WORK" }];
+    // A real incompatibility: the exact paid target and minimum meal cannot fit before closing.
+    const input = sample(); input.simulation = false; input.storeClosingMinutes = 540;
     const result = adaptCompatibleSchedules(input, "PRESERVE_START");
     expect(result.input.employees).toEqual(input.employees); expect(result.exceptions).toEqual([expect.objectContaining({ employeeId: "one", registration: "1" })]);
   });

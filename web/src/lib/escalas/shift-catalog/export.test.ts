@@ -48,6 +48,31 @@ beforeEach(() => {
 });
 
 describe("turn TXT manifest", () => {
+  it.each([true, false])("uses UNTIMED for legacy four-zero omissions with an explicit selection: %s", async selected => {
+    const value = workspace();
+    value.input.employees[0].scheduleMode = "MISSING";
+    value.input.employees[0].sourceSchedule = { report: "FPRE136", code: "0", description: "Synthetic", weekday: "00:00-00:00 / 00:00-00:00", saturday: "00:00-00:00" };
+    const before = structuredClone(value);
+    state.getEscala.mockResolvedValue(value);
+    const manifest = await createTurnoExportManifest(actor, { month: 12, year: 2026, selections: [{ ...selections[0], employees: selected ? selections[0].employees : [selections[0].employees[1]] }] });
+    expect(manifest.rowCount).toBe(1);
+    expect(manifest.omissions).toContainEqual(expect.objectContaining({ employeeId: "e1", reason: "UNTIMED" }));
+    await expect(downloadTurnoExport(actor, manifest.manifestId, "TXT1", false)).rejects.toMatchObject({ code: "TURNO_EXPORT_OMISSIONS" });
+    const downloaded = await downloadTurnoExport(actor, manifest.manifestId, "TXT1", true);
+    expect(new TextDecoder().decode(downloaded.bytes)).toBe("0008,08:00,12:00,14:00,18:24\r\n");
+    expect(value).toEqual(before);
+  });
+  it("keeps incomplete clocks MISSING and exports a real 07–11 single period exactly", async () => {
+    const value = workspace(); value.input.employees[0].scheduleMode = "MISSING";
+    value.input.employees[0].sourceSchedule = { report: "FPRE136", code: "0", description: "Synthetic", weekday: "07:00-00:00 / 00:00-00:00", saturday: "00:00-00:00" };
+    value.input.employees[1].scheduleMode = "TIMED"; value.input.employees[1].shiftIds = ["single"];
+    value.input.shifts.push({ id: "single", name: "Single", segments: [{ start: 420, end: 660, kind: "WORK" }] });
+    state.getEscala.mockResolvedValue(value); state.queryRaw.mockResolvedValue([{ code: 1501, firstIn: 420, firstOut: 660, secondIn: 0, secondOut: 0 }]);
+    const manifest = await createTurnoExportManifest(actor, { month: 12, year: 2026, selections: [{ ...selections[0], employees: [selections[0].employees[0], { employeeId: "e2", localShiftId: "single" }] }] });
+    expect(manifest.omissions).toContainEqual(expect.objectContaining({ employeeId: "e1", reason: "MISSING" }));
+    const downloaded = await downloadTurnoExport(actor, manifest.manifestId, "TXT1", true);
+    expect(new TextDecoder().decode(downloaded.bytes)).toBe("0008,07:00,11:00,00:00,00:00\r\n");
+  });
   it("accepts an explicitly selected dated manual reference outside shiftIds", async () => {
     const value = workspace() as EscalaWorkspace;
     value.input.shifts.push({ id: "manual", name: "Manual", segments: [{ start: 420, end: 660, kind: "WORK" }, { start: 660, end: 720, kind: "BREAK" }, { start: 720, end: 960, kind: "WORK" }] });

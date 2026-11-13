@@ -1,3 +1,5 @@
+import type { EscalaEmployee } from "./types";
+
 type Classification = {
   mode: "TIMED" | "MISSING" | "UNTIMED";
   weekday: string;
@@ -34,6 +36,17 @@ export function classifyFpre136Schedule(source: { report: "FPRE136"; weekday: un
   }
   return { mode: "TIMED", weekday: weekday.text, saturday: saturday.text,
     paidPeriods: periods.map(([start, end]) => `${start}-${end}`), warnings };
+}
+
+/** Interpret legacy zero clocks at consumption time; never migrate saved employees or infer from role. */
+export function effectiveScheduleMode(person: Pick<EscalaEmployee, "scheduleMode" | "sourceSchedule">): EscalaEmployee["scheduleMode"] {
+  if (person.scheduleMode === "TIMED" || person.scheduleMode === "UNTIMED" || person.sourceSchedule?.report !== "FPRE136") return person.scheduleMode;
+  const match = /^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\s*\/\s*(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/.exec(person.sourceSchedule.weekday.trim());
+  if (!match) return person.scheduleMode;
+  try {
+    return classifyFpre136Schedule({ report: "FPRE136", weekday: match.slice(1), saturday: [zero, zero, zero, zero] }).mode === "UNTIMED"
+      ? "UNTIMED" : person.scheduleMode;
+  } catch { return person.scheduleMode; }
 }
 
 /** Principal weekday duration only; a shorter Saturday never defines a reduced weekday. */

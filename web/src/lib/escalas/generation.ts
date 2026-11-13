@@ -113,13 +113,14 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const targets = new Set(weekHours.map(hours => mixedWeeks ? 480 : Math.min(hours * 12, person.simulationDailyMinutes ?? Infinity)));
     const allowed = person.shiftIds.map((id) => shifts.get(id)).filter((shift): shift is EscalaShift => Boolean(shift));
     const needsClosingAdjustment = allowed.some(shift => !fitsStoreClosing(shift, closing));
-    const insufficientAutomaticMeal = (shift: EscalaShift) => isAutomaticPreparedShift(shift)
-      && mealMinutes(shift) < minimumMealMinutes(input.policy, paidMinutes(shift), input.simulation);
-    const needsMealRepair = allowed.some(insufficientAutomaticMeal);
+    const invalidAutomaticMeal = (shift: EscalaShift) => isAutomaticPreparedShift(shift)
+      && (mealMinutes(shift) < minimumMealMinutes(input.policy, paidMinutes(shift), input.simulation)
+        || mealMinutes(shift) > maximumMealMinutes(input.policy, input.startDate));
+    const needsMealRepair = allowed.some(invalidAutomaticMeal);
     if (input.assignments.some(day => {
       const shift = shifts.get(day.shiftId ?? "");
-      return day.employeeId === person.id && day.locked && day.kind === "WORK" && shift && insufficientAutomaticMeal(shift);
-    })) throw new EscalaError(422, "ESCALA_MEAL_LOCK_CONFLICT", "Há um horário automático bloqueado sem o intervalo mínimo configurado. Confira o registro e seu bloqueio antes de gerar; os dados foram preservados.");
+      return day.employeeId === person.id && day.locked && day.kind === "WORK" && shift && invalidAutomaticMeal(shift);
+    })) throw new EscalaError(422, "ESCALA_MEAL_LOCK_CONFLICT", "Há um horário automático bloqueado com intervalo fora dos limites configurados. Confira o registro e seu bloqueio antes de gerar; os dados foram preservados.");
     if (input.assignments.some(day => {
       const lockedShift = shifts.get(day.shiftId ?? "");
       return day.employeeId === person.id && day.locked && day.kind === "WORK"
@@ -128,6 +129,10 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       throw new EscalaError(422, "ESCALA_CLOSING_LOCK_CONFLICT", `Há um dia bloqueado com saída após ${storeClosingLabel(input)}. Ajuste esse horário ou desbloqueie o dia antes de gerar. O registro foi preservado.`);
     }
     // Five matching workdays prove compatibility with this scenario, not the original employment contract.
+    if (imported && compatibleImport && !mixedWeeks && mealMinutes(imported) > maximumMealMinutes(input.policy, input.startDate)
+      && allowed.some(shift => preparedShiftSignature(shift) === preparedShiftSignature(imported) || isAutomaticPreparedShift(shift))) {
+      throw new EscalaError(422, "ESCALA_IMPORTED_MEAL_CONFLICT", "O horário importado já corresponde à jornada escolhida, mas o intervalo excede o máximo configurado. Ele não foi alterado. Confira o horário individual ou a configuração documentada do intervalo antes de gerar.");
+    }
     if (imported && compatibleImport && !mixedWeeks && !needsMealRepair
       && mealMinutes(imported) >= minimumMealMinutes(input.policy, paidMinutes(imported), input.simulation)
       && allowed.some(shift => preparedShiftSignature(shift) === preparedShiftSignature(imported) || isAutomaticPreparedShift(shift))) {
@@ -151,8 +156,8 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const removingMixed = !mixedWeeks && allowed.some(shift => isGeneratedMixed42Shift(shift.id));
     const needsHoursAdjustment = needsClosingAdjustment || needsMixedAdjustment || removingMixed || hours !== person.weeklyHours
       || ((person.sourceSchedule || person.weeklyHoursMode === "BRANCH") && [...targets].some(target => !allowed.some(shift => paidMinutes(shift) === target)));
-    if (needsMealRepair && !needsHoursAdjustment && refreshed.some(insufficientAutomaticMeal)) {
-      throw new EscalaError(422, "ESCALA_MEAL_REFERENCE_CONFLICT", "Não foi possível encaixar o intervalo mínimo configurado nos horários automáticos antes do fechamento. Confira entrada, saída e intervalo da equipe; nenhum dado foi alterado.");
+    if (needsMealRepair && !needsHoursAdjustment && refreshed.some(invalidAutomaticMeal)) {
+      throw new EscalaError(422, "ESCALA_MEAL_REFERENCE_CONFLICT", "Não foi possível encaixar o intervalo nos limites configurados e antes do fechamento. Confira entrada, saída e intervalo da equipe; nenhum dado foi alterado.");
     }
     const needsAdjustment = needsBlockBalance || needsHoursAdjustment;
     if (!needsAdjustment) return person;
@@ -176,7 +181,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       : prepared.employees[0];
     const commitments = input.assignments.filter((item) => item.employeeId === person.id && (item.locked || item.kind === "ABSENCE" || item.kind === "HOLIDAY"));
     if (candidate.planningEnabled === false) {
-      if (needsMealRepair) throw new EscalaError(422, "ESCALA_MEAL_REFERENCE_CONFLICT", "Não foi possível encaixar o intervalo mínimo configurado nos horários automáticos antes do fechamento. Confira entrada, saída e intervalo da equipe; nenhum dado foi alterado.");
+      if (needsMealRepair) throw new EscalaError(422, "ESCALA_MEAL_REFERENCE_CONFLICT", "Não foi possível encaixar o intervalo nos limites configurados e antes do fechamento. Confira entrada, saída e intervalo da equipe; nenhum dado foi alterado.");
       if (mixedWeeks) throw new EscalaError(422, "ESCALA_MIXED_42_SHIFT_REQUIRED", `Não há horário diurno compatível com 9h de trabalho e 3h de intervalo para ${person.registration} · ${person.name} (${person.sector}). Confira a entrada ou a saída de referência, ou retire o setor da jornada mista. Nenhum registro foi alterado.`);
       if (commitments.length) throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", "Há um horário importado incompatível com a jornada 5×2 e dias bloqueados ou ausências já registrados. Confira as exceções da equipe antes de gerar; os registros foram preservados.");
       throw new EscalaError(422, "ESCALA_REFERENCE_REVIEW_REQUIRED", `Não foi possível adaptar o horário de ${person.registration} · ${person.name} (${person.sector}) para a jornada escolhida. Ninguém foi excluído. Use Ajustar horários para manter a saída ou confira o horário individual; bloqueios e afastamentos permanecem preservados.`);
@@ -223,7 +228,8 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       const reference = shifts.get(id);
       if (!reference || durations.has(paidMinutes(reference))) continue;
       durations.add(paidMinutes(reference));
-      for (const candidate of automaticShiftAlternatives(person, reference, input.policy.limitContinuousWorkBlocks === true, closing)) {
+      for (const candidate of automaticShiftAlternatives(person, reference, input.policy.limitContinuousWorkBlocks === true, closing,
+        maximumMealMinutes(input.policy, input.startDate))) {
         if (!proposed.has(candidate.id) && (proposed.size >= 12 || !used.has(candidate.id) && used.size >= 120)) continue;
         used.add(candidate.id);
         const existing = shifts.get(candidate.id);

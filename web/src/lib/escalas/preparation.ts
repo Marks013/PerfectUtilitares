@@ -87,13 +87,13 @@ export function civilNightWorkMinutes(shift: EscalaShift): number {
 }
 
 /** A small automatic search, with the saved reference first and no added night work. */
-export function automaticShiftAlternatives(person: EscalaEmployee, reference: EscalaShift, limitWorkBlocks: boolean, closing = 1320): EscalaShift[] {
+export function automaticShiftAlternatives(person: EscalaEmployee, reference: EscalaShift, limitWorkBlocks: boolean, closing = 1320, maximumMeal = Infinity): EscalaShift[] {
   if (!reference.id.startsWith("prep-") || reference.id !== shiftId(reference)) return [reference];
   const source = originalShift(person);
   if (!source) return [reference];
   const target = minutes(reference), night = civilNightWorkMinutes(reference);
   const referenceMeal = Math.max(0, ...reference.segments.filter(segment => segment.kind === "BREAK").map(segment => segment.end - segment.start));
-  const candidates = [reference, ...adjustedShifts(source, target, "BOTH", true, limitWorkBlocks, closing, referenceMeal)];
+  const candidates = [reference, ...adjustedShifts(source, target, "BOTH", true, limitWorkBlocks, closing, referenceMeal, maximumMeal)];
   const [first, meal, last] = reference.segments;
   if (reference.segments.length === 3 && first.kind === "WORK" && meal.kind === "BREAK" && last.kind === "WORK"
     && first.end === meal.start && meal.end === last.start) {
@@ -111,6 +111,7 @@ export function automaticShiftAlternatives(person: EscalaEmployee, reference: Es
   }
   const unique = new Map<string, EscalaShift>();
   for (const candidate of candidates) {
+    if (candidate.segments.some(segment => segment.kind === "BREAK" && segment.end - segment.start > maximumMeal)) continue;
     if (!fitsStoreClosing(candidate, closing)) continue;
     if (civilNightWorkMinutes(candidate) > night || candidate.segments.some(segment => segment.start < 0 || segment.end > 2880)) continue;
     const signature = preparedShiftSignature(candidate);
@@ -120,26 +121,29 @@ export function automaticShiftAlternatives(person: EscalaEmployee, reference: Es
   return [...unique.values()];
 }
 
-/** Rebuild identified automatic proposals; an insufficient meal also requires a new clock. */
+/** Rebuild identified automatic proposals when a meal is outside the configured bounds. */
 export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: EscalaShift, enabled: boolean, closing = 1320, minimumMeal = 0, maximumMeal = Infinity): EscalaShift {
   if (!isAutomaticPreparedShift(proposal)) return proposal;
   const first = proposal.segments[0].start, last = proposal.segments.at(-1)?.end ?? first;
   const meal = Math.max(0, ...proposal.segments.filter(segment => segment.kind === "BREAK" && segment.start > first && segment.end < last).map(segment => segment.end - segment.start));
-  if (meal < minimumMeal) {
+  if (meal < minimumMeal || meal > maximumMeal) {
     // Repair the saved proposal, not the immutable imported source. Paid minutes stay exact.
     const candidates = adjustedShifts(proposal, minutes(proposal), "BOTH", true, enabled, closing, minimumMeal, maximumMeal);
-    return candidates.find(candidate => Math.max(0, ...candidate.segments.filter(segment => segment.kind === "BREAK" && segment.start > candidate.segments[0].start && segment.end < (candidate.segments.at(-1)?.end ?? 0)).map(segment => segment.end - segment.start)) >= minimumMeal) ?? proposal;
+    return candidates.find(candidate => {
+      const intervals = candidate.segments.filter(segment => segment.kind === "BREAK").map(segment => segment.end - segment.start);
+      return Math.max(0, ...intervals) >= minimumMeal && intervals.every(length => length <= maximumMeal);
+    }) ?? proposal;
   }
   if (proposal.id.startsWith("flex-") && proposal.id === shiftId(proposal).replace("prep-", "flex-")) {
     // Optional meal alternatives remain stable; only enforce a newly enabled block limit.
     return enabled && requiresWorkBlockBalance(proposal)
-      ? adjustedShifts(proposal, minutes(proposal), "PRESERVE_START", true, true, closing)[0] ?? proposal : proposal;
+      ? adjustedShifts(proposal, minutes(proposal), "PRESERVE_START", true, true, closing, minimumMeal, maximumMeal)[0] ?? proposal : proposal;
   }
   if (!proposal.id.startsWith("prep-") || proposal.id !== shiftId(proposal)) return proposal;
   const source = originalShift(person);
   if (!source) return proposal;
   const referenceMeal = Math.max(0, ...proposal.segments.filter(segment => segment.kind === "BREAK").map(segment => segment.end - segment.start));
-  return adjustedShifts(source, minutes(proposal), "BOTH", true, enabled, closing, referenceMeal)
+  return adjustedShifts(source, minutes(proposal), "BOTH", true, enabled, closing, referenceMeal, maximumMeal)
     .find(candidate => candidate.segments[0].start === proposal.segments[0].start
       && candidate.segments.at(-1)?.end === proposal.segments.at(-1)?.end) ?? proposal;
 }
@@ -152,19 +156,19 @@ export function requiresWorkBlockBalance(shift: EscalaShift): boolean {
     && (first.end - first.start > 270 || last.end - last.start > 270);
 }
 
-/** Candidate proposals only: preserve existing meals; add the configured meal to a continuous block. */
+/** Candidate proposals only: bound unpaid meals without changing paid minutes or imported evidence. */
 function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false, limitWorkBlocks = false, closing = 1320, minimumMeal = 0, maximumMeal = Infinity): EscalaShift[] {
   const delta = target - minutes(source);
   const positions = source.segments.flatMap((segment, index) => segment.kind === "WORK" ? [index] : []);
   if (!positions.length || (!simulation && source.segments.some((segment) => segment.kind !== "BREAK" && segment.start < 300))) return [];
   const results: EscalaShift[] = [];
+  if (minimumMeal > maximumMeal) return results;
   for (const anchor of ["arrival", "departure"] as const) {
     if ((strategy === "PRESERVE_START" && anchor !== "arrival") || (strategy === "PRESERVE_END" && anchor !== "departure")) continue;
     const copy = structuredClone(source);
     if (anchor === "arrival") copy.segments[positions[positions.length - 1]].end += delta;
     else copy.segments[positions[0]].start -= delta;
     if (source.segments.length === 1 && positions.length === 1 && minimumMeal > 0) {
-      if (minimumMeal > maximumMeal) continue;
       const start = anchor === "arrival" ? source.segments[0].start : source.segments[0].end - target - minimumMeal;
       const firstMinutes = Math.floor(target / 2);
       copy.segments = [
@@ -172,6 +176,20 @@ function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | 
         { start: start + firstMinutes, end: start + firstMinutes + minimumMeal, kind: "BREAK" },
         { start: start + firstMinutes + minimumMeal, end: start + target + minimumMeal, kind: "WORK" },
       ];
+    }
+    // Move only the proposed side of each unpaid interval; paid blocks retain their duration.
+    for (let index = 1; index < copy.segments.length - 1; index++) {
+      const interval = copy.segments[index];
+      if (interval.kind !== "BREAK") continue;
+      const length = interval.end - interval.start;
+      const offset = Math.min(maximumMeal, Math.max(minimumMeal, length)) - length;
+      if (anchor === "arrival") {
+        interval.end += offset;
+        for (const block of copy.segments.slice(index + 1)) { block.start += offset; block.end += offset; }
+      } else {
+        interval.start -= offset;
+        for (const block of copy.segments.slice(0, index)) { block.start -= offset; block.end -= offset; }
+      }
     }
     if (limitWorkBlocks && requiresWorkBlockBalance(copy)) {
       if (target > 540) continue;

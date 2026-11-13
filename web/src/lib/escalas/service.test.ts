@@ -843,7 +843,8 @@ describe("Escalas revision service", () => {
     useCurrent(generatedInput());
     const result = await generateEscala(actor, "w1", 1);
     expect(result.validation.valid).toBe(true);
-    expect(result.validation.readyToPublish).toBe(false);
+    expect(result.validation.readyToPublish).toBe(true);
+    expect(result.validation.issues.every(issue => issue.severity === "WARNING")).toBe(true);
     expect(result.validation.issues.some(issue => issue.code === "COVERAGE_REVIEW_PENDING")).toBe(true);
     expect(result.proposalInput.assignments).toEqual(generatedInput().assignments);
     expect(mocks.transaction).not.toHaveBeenCalled();
@@ -862,7 +863,7 @@ describe("Escalas revision service", () => {
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
-  it("generates one joint preview with pending policy and automatically proposed coverage, without approving or persisting", async () => {
+  it("generates one joint preview with documentary warnings and proposed coverage, without approving or persisting", async () => {
     const value = input(); value.assignments = []; value.demands = [];
     value.policy.reviewed = false; value.policy.source = ""; value.policy.reviewedBy = "";
     useCurrent(value);
@@ -873,7 +874,8 @@ describe("Escalas revision service", () => {
     expect(result.preparation.generatedCoverageSlots).toBeGreaterThan(0);
     expect(result.proposalInput.policy).toMatchObject({ reviewed: false, source: "", reviewedBy: "", coverageReview: "SUGGESTED" });
     expect(result.validation.valid).toBe(true);
-    expect(result.validation.readyToPublish).toBe(false);
+    expect(result.validation.readyToPublish).toBe(true);
+    expect(result.validation.issues.every(issue => issue.severity === "WARNING")).toBe(true);
     expect(result.validation.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "POLICY_PENDING" }), expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING" })]));
     expect(result.validation.issues.some((issue) => issue.code === "DAY_PENDING" || issue.code === "COVERAGE_PENDING")).toBe(false);
     expect(mocks.transaction).not.toHaveBeenCalled();
@@ -918,8 +920,9 @@ describe("Escalas revision service", () => {
     expect(proposal.proposalInput.simulation).toBe(true);
     expect(proposal.proposalInput.policy.compensationAuthorized).toBe(false);
     expect(proposal.validation.valid).toBe(true);
-    expect(proposal.validation.readyToPublish).toBe(false);
-    expect(proposal.validation.issues).toContainEqual(expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING", severity: "PENDING" }));
+    expect(proposal.validation.readyToPublish).toBe(true);
+    expect(proposal.validation.issues.every(issue => issue.severity === "WARNING")).toBe(true);
+    expect(proposal.validation.issues).toContainEqual(expect.objectContaining({ code: "COVERAGE_REVIEW_PENDING", severity: "WARNING" }));
     expect(proposal.validation.issues.some(issue => issue.code === "COMPENSATION_REQUIRED" && issue.severity === "WARNING")).toBe(true);
     expect(mocks.solve).toHaveBeenCalledOnce();
   });
@@ -929,7 +932,8 @@ describe("Escalas revision service", () => {
     const proposal = await generateEscala(actor, "w1", 1);
     expect(proposal.proposalInput.policy.authorizedHolidayDates).toEqual([]);
     expect(proposal.validation.issues.some(issue => issue.code === "HOLIDAY_WORK" && issue.severity === "WARNING")).toBe(true);
-    expect(proposal.validation.readyToPublish).toBe(false);
+    expect(proposal.validation.readyToPublish).toBe(true);
+    expect(proposal.validation.issues.every(issue => issue.severity === "WARNING")).toBe(true);
     expect(mocks.solve).toHaveBeenCalledOnce();
   });
   it("permits internal publication with documentary warnings but still rejects operational violations", async () => {

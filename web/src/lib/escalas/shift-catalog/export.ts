@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getEscala } from "../service";
 import { EscalaError } from "../errors";
 import { canonicalBranchCode } from "../branch-code";
+import { effectiveScheduleMode } from "../fpre136-schedule";
 import type { EscalaActor } from "../access";
 import type { EscalaWorkspace } from "../types";
 import type {
@@ -109,19 +110,20 @@ async function buildExportRows(actor: EscalaActor, month: number, year: number, 
     const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
 
     for (const person of people) {
+      const mode = effectiveScheduleMode(person);
       const localShiftId = choices.get(person.id);
       if (!localShiftId) {
-        omissions.push(omission(workspace.id, person.id, person.registration, "NO_REFERENCE"));
+        omissions.push(omission(workspace.id, person.id, person.registration, mode === "UNTIMED" ? "UNTIMED" : "NO_REFERENCE"));
         continue;
       }
       if (/[,"\u2028\u2029\p{Cc}]/u.test(person.registration)) {
         throw new EscalaError(422, "TURNO_REGISTRATION_UNSUPPORTED", "A matrícula contém delimitador ou caractere de controle. Corrija o valor na origem antes de gerar o TXT.");
       }
-      if (person.scheduleMode === "MISSING") {
+      if (mode === "MISSING") {
         omissions.push(omission(workspace.id, person.id, person.registration, "MISSING"));
         continue;
       }
-      if (person.scheduleMode === "UNTIMED") {
+      if (mode === "UNTIMED") {
         omissions.push(omission(workspace.id, person.id, person.registration, "UNTIMED"));
         continue;
       }

@@ -1,4 +1,4 @@
-import { preparedShiftSignature, prepareRoster } from "./preparation";
+import { importedShiftReference, preparedShiftSignature, prepareRoster } from "./preparation";
 import type { EscalaInput } from "./types";
 
 export type ScheduleStrategy = "PRESERVE_START" | "PRESERVE_END" | "BOTH";
@@ -14,9 +14,20 @@ export function adaptCompatibleSchedules(input: EscalaInput, strategy: ScheduleS
     const candidate = prepared.employees[0];
     const locked = input.assignments.filter(day => day.employeeId === person.id && day.locked).flatMap(day => day.shiftId ? [day.shiftId] : []);
     const allowed = [...new Set([...candidate.shiftIds, ...locked])];
-    if (candidate.planningEnabled === false || allowed.length > 12) {
+    const source = importedShiftReference(person);
+    const references = source ? [source] : (person.manualShiftBaseIds ?? person.originalShiftIds ?? person.shiftIds)
+      .flatMap(id => { const shift = shifts.get(id); return shift ? [shift] : []; });
+    const movedAnchor = strategy !== "BOTH" && candidate.shiftIds.some(id => {
+      const proposed = prepared.shifts.find(shift => shift.id === id);
+      return proposed && !references.some(reference => strategy === "PRESERVE_START"
+        ? reference.segments[0].start === proposed.segments[0].start
+        : reference.segments.at(-1)?.end === proposed.segments.at(-1)?.end);
+    });
+    if (candidate.planningEnabled === false || allowed.length > 12 || movedAnchor) {
       exceptions.push({ employeeId: person.id, registration: person.registration, name: person.name,
-        reason: allowed.length > 12 ? "Os horários bloqueados e as alternativas excedem 12 opções. Confira os turnos permitidos." : candidate.planningExclusionReason || "Não foi possível preservar este horário. Experimente manter a saída ou confira o turno individual." });
+        reason: movedAnchor ? "O fechamento e os limites de jornada ou intervalo não permitem manter a entrada ou saída escolhida. O horário foi preservado; confira a referência ou escolha outra estratégia."
+          : allowed.length > 12 ? "Os horários bloqueados e as alternativas excedem 12 opções. Confira os turnos permitidos."
+          : candidate.planningExclusionReason || "Não foi possível preservar este horário. Experimente manter a saída ou confira o turno individual." });
       return person;
     }
     for (const shift of prepared.shifts) {

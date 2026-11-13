@@ -95,11 +95,15 @@ def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT, weekd
     prefix = f'weekend-rate:{weekday}:'
     rates = {v.name[len(prefix):]: values[v.index] for v in variables
              if v.name.startswith(prefix)}
+    date_prefix = f'weekend-date-spread:{weekday}:'
+    date_spreads = {int(v.name[len(date_prefix):]): values[v.index] for v in variables
+                    if v.name.startswith(date_prefix)}
     ranked = []
-    for members in groups:
+    for index, members in enumerate(groups):
         eligible = sorted(pid for pid in members if pid in rates)
         if len(eligible) > 1:
-            spread = max(rates[pid] for pid in eligible) - min(rates[pid] for pid in eligible)
+            spread = max(max(rates[pid] for pid in eligible) - min(rates[pid] for pid in eligible),
+                         date_spreads.get(index, 0))
             if spread:
                 ranked.append((spread, tuple(eligible)))
     selected = set()
@@ -295,6 +299,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
     # Original variable domains do not change during improve. Neighborhoods fix
     # only cloned domains and must never populate or read this cache.
     domain_bounds = {}
+    objective_cache = {}
+    current_objective = None
     _replace_hints(model, values)
     if initial_decision_hints:
         # Hints never replace the feasible incumbent used by all no-regression
@@ -316,7 +322,11 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             proven = False
             break
         preparation_started = time.monotonic()
-        model.minimize(objective)
+        # Consecutive sector repairs reuse the exact same coverage expression.
+        # Flatten its coefficients and domain floor once, not once per clone.
+        if objective is not current_objective:
+            model.minimize(objective)
+            current_objective = objective
         new_groups = list(protected_groups.get(names[index], []))
         # Count original group provenance for the conservative proof metadata,
         # but only register each equivalent expression once for propagation.
@@ -335,14 +345,19 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             # Per-group no-regression narrows the global lexicographic search.
             proven = False
         # CpObjectiveProto stores the integer linear objective before presolve.
-        proto = model.proto.objective
-        terms = (tuple(proto.vars), tuple(proto.coeffs), int(proto.offset))
-        objective_key = _upper_bound_key(terms)
+        cached = objective_cache.get(id(objective))
+        if cached is None:
+            proto = model.proto.objective
+            terms = (tuple(proto.vars), tuple(proto.coeffs), int(proto.offset))
+            objective_key = _upper_bound_key(terms)
+            lower = _objective_floor(model, terms, domain_bounds)
+            objective_cache[id(objective)] = terms, objective_key, lower
+        else:
+            terms, objective_key, lower = cached
         visited.append((objective, terms, objective_key))
         incumbent = _linear_value(terms, values)
         # A new search may not worsen even its own goal relative to the known draft.
         add_upper_bound(objective, terms, objective_key, incumbent)
-        lower = _objective_floor(model, terms, domain_bounds)
         if lower == incumbent:
             if repair_phase:
                 continue

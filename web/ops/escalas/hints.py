@@ -141,13 +141,21 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                 abs(metrics[sid][0] - target), sid != old.get('shiftId'), sid), default=None)
         saved_work = {day for day in available if pid in preserve_work_people
                       and baseline.get((pid, day), {}).get('kind') in ('WORK', 'DUTY')}
+        sunday_costs = {}
 
         def candidate_rank(item):
             # Saved presence is a soft migration preference, never a lock or
             # proof of v2 feasibility. Keep useful Sundays ahead of aesthetics.
             lost = [day for day in saved_work if day in item[1]
                     and item[1][day]['kind'] not in ('WORK', 'DUTY')]
+            signature = tuple(day for day, entry in item[1].items()
+                              if weekdays[day] == 6 and entry['kind'] == 'OFF')
+            if signature not in sunday_costs:
+                sunday_costs[signature] = sum(
+                    (2 * counts.get((index, day), 0) + 1) / max(1, group_sizes[index, day])
+                    for day in signature for index in memberships[pid])
             return (sum(weekdays[day] == 6 for day in lost), len(lost),
+                    sunday_costs[signature],
                     *_spacing_rank(person, item[1], prior, baseline, policy), item[0])
 
         history_rests = [0] * 7

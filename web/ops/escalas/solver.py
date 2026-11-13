@@ -15,7 +15,7 @@ from optimization import ImprovementContext, Snapshot, improve, remember
 from rest_quality import build_rest_quality, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
 from runtime_settings import MAX_SECONDS, RANDOM_SEED
-from weekend_balance import available_weekends, preserve_sunday_presence, weekend_objectives
+from weekend_balance import available_weekends, preserve_sunday_presence, sunday_distribution, weekend_objectives
 
 ZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -550,9 +550,12 @@ def _solve(data, control=None, started=None):
         groups.setdefault(key, []).append(person["id"])
     sundays, saturdays = weekend_objectives(model, groups, weekend_totals,
                                             Snapshot(values), values, control)
+    date_spreads, sunday_presence, untimed_spreads = sunday_distribution(
+        model, groups, employees, dates, work, baseline, policy, values, control)
+    sundays.extend(date_spreads)
     # Unconfirmed staffing estimates are planning goals, never approved minima.
     # Prioritize their person-minute shortages before rotation and preferences.
-    untimed_rotation = []
+    untimed_rotation = list(untimed_spreads)
     concentration, rotation = _rest_distribution(model, employees, dates, off, active, baseline, history, policy,
                                                  values, untimed_rotation=untimed_rotation)
     rest_quality = build_rest_quality(model, {**data, 'assignments': result}, employees, off,
@@ -620,7 +623,8 @@ def _solve(data, control=None, started=None):
                                                        # Ordinary estimates may redistribute between dates;
                                                        # sector/month/Sunday/closing totals above cannot worsen.
                                                        + [sum(terms) for terms in priority_coverage.values()],
-                                                       'SUNDAY_BALANCE': sundays,
+                                                       'UNTIMED_ROTATION': sunday_presence,
+                                                       'SUNDAY_BALANCE': sundays + sunday_presence,
                                                        'SATURDAY_BALANCE': saturdays,
                                                        'REST_SPACING': rest_quality['guards']} if goals else {},
                                      employee_groups=list(groups.values()),
@@ -1203,16 +1207,23 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
     priorities = data.get('movementPriorities', [])
     movement_enabled = bool(priorities) and movement_terms is not None
     priority_cache = {}
+    segment_cache = {}
 
     def register(pid, day, sid, variable):
         person = by_id[pid]
-        for segment in shifts[sid]["segments"]:
-            if segment["kind"] != "WORK":
-                continue
-            start, end = instant(day, segment["start"]), instant(day, segment["end"])
-            for offset in range(segment["start"] // 1440, (segment["end"] - 1) // 1440 + 1):
-                civil = (date.fromisoformat(day) + timedelta(days=offset)).isoformat()
-                index.setdefault((person["sector"], civil), []).append((start, end, variable, person["role"]))
+        key = day, sid
+        if key not in segment_cache:
+            segments = []
+            for segment in shifts[sid]["segments"]:
+                if segment["kind"] != "WORK":
+                    continue
+                start, end = instant(day, segment["start"]), instant(day, segment["end"])
+                for offset in range(segment["start"] // 1440, (segment["end"] - 1) // 1440 + 1):
+                    civil = (date.fromisoformat(day) + timedelta(days=offset)).isoformat()
+                    segments.append((civil, start, end))
+            segment_cache[key] = segments
+        for civil, start, end in segment_cache[key]:
+            index.setdefault((person["sector"], civil), []).append((start, end, variable, person["role"]))
 
     for (pid, day), options in choices.items():
         for sid, variable in options.items():

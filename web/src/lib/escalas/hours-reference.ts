@@ -1,4 +1,5 @@
 import { dateRange } from "./dates";
+import { effectiveScheduleMode } from "./fpre136-schedule";
 import { usesMixed42Week } from "./labor-rules";
 import { referenceNotices } from "./reference-notices";
 import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes } from "./store-hours";
@@ -59,13 +60,14 @@ export function validateHoursReferences(input: EscalaInput): EscalaValidation {
   const calendarCodes = new Set(["CLOSED_DATE", "HOLIDAY_WORK", "CCT_SUNDAY_CERTIFICATE", "CCT_HOLIDAY_CERTIFICATE", "CCT_NIGHT_CERTIFICATE"]);
   const included = input.employees.filter(person => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
   if (input.needsRegeneration || input.generationBasis !== generationScenarioBasis(input)) issues.push({ code: "SCENARIO_OUTDATED", severity: "ERROR", message: "Prepare novamente as referências após alterar modo, jornada ou equipe antes de exportar." });
-  if (!included.some(person => person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING" && person.shiftIds.some(id => shifts.has(id)))) {
+  if (!included.some(person => effectiveScheduleMode(person) !== "UNTIMED" && effectiveScheduleMode(person) !== "MISSING" && person.shiftIds.some(id => shifts.has(id)))) {
     issues.push({ code: "HOURS_REFERENCE_PENDING", severity: "ERROR", message: "Não há horários reais preparados para exportar. Informe uma referência para a equipe com jornada controlada." });
   }
   if (!included.length) issues.push({ code: "ACTIVE_EMPLOYEES_PENDING", severity: "ERROR", message: "Inclua colaboradores com horário para preparar as referências." });
   for (const person of included) {
-    if (person.scheduleMode === "MISSING") issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "WARNING", employeeId: person.id, message: "Este colaborador está sem horário informado e não tem referência para exportar. As referências reais dos demais permanecem disponíveis." });
-    if (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING") continue;
+    const mode = effectiveScheduleMode(person);
+    if (mode === "MISSING") issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "WARNING", employeeId: person.id, message: "Este colaborador está sem horário informado e não tem referência para exportar. As referências reais dos demais permanecem disponíveis." });
+    if (mode === "UNTIMED" || mode === "MISSING") continue;
     if (!person.shiftIds.length) issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "ERROR", employeeId: person.id, message: "Informe um horário de referência para este colaborador." });
     for (const id of person.shiftIds) {
       if (person.manualShiftOverrides?.some(choice => choice.shiftId === id) && !person.manualShiftBaseIds?.includes(id)) continue;

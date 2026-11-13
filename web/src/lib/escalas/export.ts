@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import { holidayLabel } from "./calendar";
+import { effectiveScheduleMode } from "./fpre136-schedule";
 import type { EscalaInput, EscalaWorkspace } from "./types";
 import { compareSectors, sortScheduleEntries } from "./order";
 import { analyzeCoverage, type CoverageAnalysis, type CoverageSectorAnalysis } from "./coverage-analysis";
@@ -111,7 +112,7 @@ function proposedRows(person: ReportPerson) {
     else variants.set(key, { ...variant, dates: [...variant.dates], entry: Number(variant.schedule.slice(0, 2)) * 60 + Number(variant.schedule.slice(3, 5)) });
   }
   if (variants.size) return [...variants.values()].sort((a, b) => a.entry - b.entry || a.schedule.localeCompare(b.schedule));
-  const code = !person.cells.length ? person.employee.scheduleMode === "UNTIMED" ? "ENC" : "NP"
+  const code = !person.cells.length ? effectiveScheduleMode(person.employee) === "UNTIMED" ? "ENC" : "NP"
     : person.cells.some(cell => cell.code === "ENC") ? "ENC" : person.cells.some(cell => cell.code === "NP") ? "NP"
     : person.cells.every(cell => cell.code === "AF") ? "AF" : person.cells.every(cell => cell.code === "FV") ? "FV" : "—";
   return [{ code, schedule: person.proposedSchedule, interval: "Não se aplica", daily: "Não apurada", entry: Infinity, dates: [] as string[], shiftId: undefined }];
