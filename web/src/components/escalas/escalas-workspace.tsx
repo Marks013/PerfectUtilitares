@@ -22,9 +22,12 @@ import { HoursReferencePreview } from "./hours-reference-preview";
 import { ContinuousWorkOption, HoursProposal } from "./hours-proposal";
 import { Mixed42Option } from "./mixed-42-option";
 import { StoreClosingOption } from "./store-closing-option";
+import { OperationalReports } from "./operational-reports";
 import { Proposals, Publication, ValidationResults, type ReviewSection } from "./results";
 import { PlanSelector } from "./plan-selector";
 import { Roster } from "./roster";
+import { ShiftSwap } from "./shift-catalog/shift-swap";
+import { TurnoExport } from "./shift-catalog/turno-export";
 import { useEscalasWorkspace } from "./use-escalas-workspace";
 import type { ReviewTarget } from "./validation-guidance";
 import { WorkspaceFeedback } from "./workspace-feedback";
@@ -90,6 +93,7 @@ export function EscalasWorkspace() {
   const { input, workspace, conflict } = model;
   const [area, setArea] = useState<Area>("team");
   const [visited, setVisited] = useState<Set<Area>>(() => new Set(["team"]));
+  const [swapId, setSwapId] = useState<string | null>(null);
   useEffect(() => { setVisited(previous => previous.has(area) ? previous : new Set([...previous, area])); }, [area]);
   const [reviewSection, setReviewSection] = useState<ReviewSection>();
   const [exportSelection, setExportSelection] = useState<{ workspaceId: string; generationMode: NonNullable<EscalaInput["generationMode"]>; mode: EscalaExportMode } | null>(null);
@@ -111,6 +115,7 @@ export function EscalasWorkspace() {
   useEffect(() => {
     if (openedWorkspace.current === workspace?.id) return;
     openedWorkspace.current = workspace?.id;
+    setSwapId(null);
     setReviewContext(null);
     setExportSelection(null);
     setPendingReview(null);
@@ -143,6 +148,8 @@ export function EscalasWorkspace() {
     resolve(action, context);
   }
   const included = input?.employees.filter((person) => person.planningEnabled !== false).length ?? 0;
+  const latestModel = useRef(model); latestModel.current = model;
+  const swapEmployee = input?.employees.find(person => person.id === swapId);
   const hasRoster = Boolean(input?.assignments.length);
   const hasCalculatedRoster = Boolean(input?.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY" || day.kind === "OFF"));
   return <div className={styles.workspace}>
@@ -159,6 +166,8 @@ export function EscalasWorkspace() {
       {model.workspaces.length > 0 ? <PlanSelector plans={model.workspaces} selectedId={workspace?.id} disabled={Boolean(model.busy)} onSelect={model.open} /> : <p className={styles.muted}>{model.canCreate ? "Comece pela filial e pelo mês. A equipe e a jornada serão definidas neste planejamento." : "Nenhum planejamento disponível para seu acesso."}</p>}
       {model.canCreate && <CreatePlan initial={!model.workspaces.length} disabled={Boolean(model.busy || model.dirty || model.recovery)} create={model.create} />}
     </section>
+    {model.workspaces.length > 0 && <TurnoExport plans={model.workspaces} disabled={Boolean(model.busy || model.dirty || model.recovery || model.saveState !== "saved")} />}
+    {workspace && input && <OperationalReports key={`${workspace.id}:${workspace.revision}`} workspace={workspace} disabled={Boolean(model.busy || model.dirty || model.recovery || model.saveState !== "saved")} />}
     {model.pendingOpen && <div className={`${panelClass} border-[color:var(--app-coral)]`} role="alert">
       <p>Há alterações não salvas neste planejamento.</p>
       <div className={styles.actions}>
@@ -220,7 +229,8 @@ export function EscalasWorkspace() {
           <div id="escala-team-review" tabIndex={-1} className="scroll-mt-24 rounded-md p-2 focus:outline-2 focus:outline-[color:var(--app-action-blue)]">
             {reviewContext?.target === "team" && <p className={styles.muted}>Localize o colaborador indicado e use Editar para conferir folgas fixas e horários permitidos. Dias bloqueados e ausências aparecem na área Escala. Nada será alterado apenas por abrir esta conferência.</p>}
           </div>
-          <Employees input={input} disabled={!model.canEdit} onChange={(next) => model.update(pruneMixed42Sectors(next))} review={reviewContext?.target === "team" ? reviewContext : undefined} />
+          <Employees input={input} disabled={!model.canEdit} swapDisabled={model.dirty || model.saveState !== "saved"} onSwap={person => setSwapId(person.id)} onChange={(next) => model.update(pruneMixed42Sectors(next))} review={reviewContext?.target === "team" ? reviewContext : undefined} />
+          {swapEmployee && generationMode !== "REST_ONLY" && <ShiftSwap key={workspace.id + ":" + workspace.revision + ":" + swapEmployee.id} workspace={workspace} employee={swapEmployee} disabled={!model.canEdit || model.dirty || model.saveState !== "saved"} onClose={() => setSwapId(null)} onApplied={() => { setSwapId(null); if (latestModel.current.workspace?.id === workspace.id) latestModel.current.open(workspace.id); }} />}
         </details>}
         {included > 0 && <div className={styles.nextStep}><div><strong>Equipe pronta para o próximo passo</strong><p className={styles.muted}>Férias e afastamentos são opcionais. Você pode importá-los acima antes de gerar.</p></div><button type="button" className={primaryClass} onClick={() => setArea("generate")}>Continuar para jornada e geração</button></div>}
       </section>}

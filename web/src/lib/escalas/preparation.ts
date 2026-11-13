@@ -5,6 +5,7 @@ import { fitProposalToClosing, fitsStoreClosing, storeClosingMinutes } from "./s
 import { applyRestEligibility } from "./eligibility";
 import type { EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "./types";
 
+import { materializeManualShiftOverrides } from "./shift-catalog/manual-override";
 /** Legacy references below the saved branch default may be individual contracts and are never raised. */
 export function planningWeeklyHours(person: EscalaEmployee, savedDefault: WeeklyHours, requested: WeeklyHours): Pick<EscalaEmployee, "weeklyHours" | "weeklyHoursMode"> {
   if (person.weeklyHoursMode === "INDIVIDUAL") return { weeklyHours: person.weeklyHours, weeklyHoursMode: "INDIVIDUAL" };
@@ -119,8 +120,16 @@ export function automaticShiftAlternatives(person: EscalaEmployee, reference: Es
   return [...unique.values()];
 }
 
-/** Rebuild only an identified automatic FPRE proposal, retaining its selected endpoints. */
-export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: EscalaShift, enabled: boolean, closing = 1320): EscalaShift {
+/** Rebuild identified automatic proposals; an insufficient meal also requires a new clock. */
+export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: EscalaShift, enabled: boolean, closing = 1320, minimumMeal = 0, maximumMeal = Infinity): EscalaShift {
+  if (!isAutomaticPreparedShift(proposal)) return proposal;
+  const first = proposal.segments[0].start, last = proposal.segments.at(-1)?.end ?? first;
+  const meal = Math.max(0, ...proposal.segments.filter(segment => segment.kind === "BREAK" && segment.start > first && segment.end < last).map(segment => segment.end - segment.start));
+  if (meal < minimumMeal) {
+    // Repair the saved proposal, not the immutable imported source. Paid minutes stay exact.
+    const candidates = adjustedShifts(proposal, minutes(proposal), "BOTH", true, enabled, closing, minimumMeal, maximumMeal);
+    return candidates.find(candidate => Math.max(0, ...candidate.segments.filter(segment => segment.kind === "BREAK" && segment.start > candidate.segments[0].start && segment.end < (candidate.segments.at(-1)?.end ?? 0)).map(segment => segment.end - segment.start)) >= minimumMeal) ?? proposal;
+  }
   if (proposal.id.startsWith("flex-") && proposal.id === shiftId(proposal).replace("prep-", "flex-")) {
     // Optional meal alternatives remain stable; only enforce a newly enabled block limit.
     return enabled && requiresWorkBlockBalance(proposal)
@@ -143,7 +152,7 @@ export function requiresWorkBlockBalance(shift: EscalaShift): boolean {
     && (first.end - first.start > 270 || last.end - last.start > 270);
 }
 
-/** Candidate proposals only: preserve existing meals; add a policy meal when expanding one continuous block. */
+/** Candidate proposals only: preserve existing meals; add the configured meal to a continuous block. */
 function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END", simulation = false, limitWorkBlocks = false, closing = 1320, minimumMeal = 0, maximumMeal = Infinity): EscalaShift[] {
   const delta = target - minutes(source);
   const positions = source.segments.flatMap((segment, index) => segment.kind === "WORK" ? [index] : []);
@@ -154,7 +163,7 @@ function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | 
     const copy = structuredClone(source);
     if (anchor === "arrival") copy.segments[positions[positions.length - 1]].end += delta;
     else copy.segments[positions[0]].start -= delta;
-    if (source.segments.length === 1 && positions.length === 1 && delta > 0 && target > 360 && minimumMeal > 0) {
+    if (source.segments.length === 1 && positions.length === 1 && minimumMeal > 0) {
       if (minimumMeal > maximumMeal) continue;
       const start = anchor === "arrival" ? source.segments[0].start : source.segments[0].end - target - minimumMeal;
       const firstMinutes = Math.floor(target / 2);
@@ -225,7 +234,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     if (eligible.planningEnabled === false) return eligible;
     if ((person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return { ...person, planningEnabled: true, planningExclusionReason: undefined, shiftIds: [] };
     const source = originalShift(person);
-    const originalShiftIds = !person.sourceSchedule ? person.originalShiftIds : undefined;
+    const originalShiftIds = !person.sourceSchedule ? person.manualShiftBaseIds ?? person.originalShiftIds : undefined;
     const base = person.sourceSchedule ? (source ? [source] : []) : (originalShiftIds ?? person.shiftIds)
       .filter(id => !isGeneratedMixed42Shift(id)).map(id => shifts.get(id))
       .filter((shift): shift is EscalaShift => Boolean(shift));
@@ -254,7 +263,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
         ? [source] : adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true, closing,
           minimumMealMinutes(input.policy, target, input.simulation), maximumMealMinutes(input.policy, input.startDate))));
     // Old drafts lacking provenance cannot recover discarded manual references.
-    const retainedOriginalIds = needsLong && !person.sourceSchedule
+    const retainedOriginalIds = person.manualShiftOverrides?.length ? person.originalShiftIds ?? [...person.shiftIds] : needsLong && !person.sourceSchedule
       ? originalShiftIds ?? (!person.shiftIds.some(isGeneratedMixed42Shift) ? [...person.shiftIds] : undefined)
       : undefined;
     const long = needsLong ? sources.flatMap(source => longMixedShifts(source, strategy, closing)) : [];
@@ -266,16 +275,17 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     const ordinaryIds = [...new Set(candidates.filter(shift => !isGeneratedMixed42Shift(shift.id)).map(shift => shift.id))];
     // Reserve room for both durations even with many manual references.
     const shiftIds = candidates.length && needsLong ? [...longIds.slice(0, 6), ...ordinaryIds.slice(0, 6)] : ordinaryIds.slice(0, 12);
-    return { ...person, ...reference, simulationDailyMinutes, shiftIds, originalShiftIds: retainedOriginalIds, fixedImportedShiftId: undefined, planningEnabled: shiftIds.length > 0,
+    return { ...person, ...reference, simulationDailyMinutes, shiftIds, originalShiftIds: retainedOriginalIds, fixedImportedShiftId: undefined,
+      ...(person.manualShiftOverrides?.length ? { manualShiftBaseIds: [...shiftIds] } : {}), planningEnabled: shiftIds.length > 0,
       planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });
   // Reference text remains on each imported employee; only keep referenced shift definitions.
   const used = new Set([...employees.flatMap((person) => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
   const retained = [...shifts.values()].filter((shift) => used.has(shift.id));
   if (retained.length > 120) throw new Error("A configuração gerou mais de 120 horários. Reduza as opções de horários da filial antes de aplicar.");
-  return { ...input, defaultWeeklyHours: hours, employees, shifts: retained,
-    assignments: input.assignments.filter((assignment) => assignment.kind === "ABSENCE"),
-    policy: { ...input.policy, ...(input.policy.coverageReview ? { coverageReview: "SUGGESTED" as const } : {}) } };
+  return materializeManualShiftOverrides({ ...input, defaultWeeklyHours: hours, employees, shifts: retained,
+    assignments: input.assignments.filter((assignment) => assignment.kind === "ABSENCE" || assignment.kind === "HOLIDAY"),
+    policy: { ...input.policy, ...(input.policy.coverageReview ? { coverageReview: "SUGGESTED" as const } : {}) } });
 }
 
 /** Backward-compatible entry point; automatic estimates never become confirmed minima. */

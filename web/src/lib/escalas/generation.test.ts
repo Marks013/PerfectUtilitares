@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { dateRange } from "./dates";
+import { addDays, dateRange } from "./dates";
 import { prepareGeneration } from "./generation";
 import { prepareRoster } from "./preparation";
 import { escalaInputSchema } from "./schema";
 import { isMixed42LongShift } from "./labor-rules";
+import { generationScenarioBasis } from "./hours-reference";
 import { validateEscala } from "./validation";
 import type { EscalaInput } from "./types";
 import { adaptCompatibleSchedules } from "./schedule-adaptation";
@@ -23,6 +24,109 @@ function input(): EscalaInput {
 }
 
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
+
+function legacyContinuousReference(hours: 40 | 42, blocks: boolean): EscalaInput {
+  const value = input();
+  value.generationMode = "HOURS_ONLY"; value.defaultWeeklyHours = hours;
+  value.storeClosingMinutes = 1080;
+  value.policy.normativeProfile = "CUSTOM";
+  value.policy.limitContinuousWorkBlocks = blocks; value.policy.allowShortMealSimulation = false;
+  value.employees[0].weeklyHours = hours; value.employees[0].weeklyHoursMode = "BRANCH";
+  (value.employees[0].sourceSchedule as NonNullable<typeof value.employees[0]['sourceSchedule']>).weekday = "07:00-13:00 / 00:00-00:00";
+  const segments: EscalaInput["shifts"][number]["segments"] = [{ start: 420, end: 420 + hours * 12, kind: "WORK" }];
+  let hash = 2166136261;
+  for (const character of JSON.stringify(segments)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  value.shifts.push({ id: `prep-${(hash >>> 0).toString(16)}`, name: "Legacy automatic", segments });
+  value.employees[0].shiftIds = [value.shifts[1].id];
+  value.employees[0].originalShiftIds = ["source"];
+  return value;
+}
+
+describe("legacy automatic meal repair and excluded-record retention", () => {
+  it("uses the configured meal instead of a hidden default", () => {
+    const value = legacyContinuousReference(42, false);
+    value.policy.minMealMinutes = 90;
+    const prepared = prepareGeneration(value).input;
+    expect(prepared.policy.minMealMinutes).toBe(90);
+    for (const shift of prepared.shifts.filter(s => prepared.employees[0].shiftIds.includes(s.id))) {
+      expect(Math.max(...shift.segments.filter(s => s.kind === "BREAK").map(s => s.end - s.start))).toBeGreaterThanOrEqual(90);
+    }
+  });
+  it("does not restore a continuous import over its repaired automatic reference on a second preparation", () => {
+    const value = legacyContinuousReference(42, false);
+    (value.employees[0].sourceSchedule as NonNullable<typeof value.employees[0]['sourceSchedule']>).weekday = "07:00-15:24";
+    value.shifts[0].segments = structuredClone(value.shifts[1].segments);
+    const original = structuredClone(value);
+    const prepared = prepareGeneration(value).input;
+    expect(prepareGeneration(prepared).input).toEqual(prepared);
+    expect(prepared.shifts.find(s => s.id === "source")).toEqual(value.shifts[0]);
+    expect(value).toEqual(original);
+  });
+  it.each([[42, true], [42, false], [40, true], [40, false]] as const)("repairs %ih references with block preference %s without attendance", (hours, blocks) => {
+    const value = legacyContinuousReference(hours, blocks), original = structuredClone(value);
+    const prepared = prepareGeneration(value).input;
+    expect(prepared.assignments).toEqual([]);
+    expect(prepared.storeClosingMinutes).toBe(value.storeClosingMinutes);
+    expect(prepared.policy.minMealMinutes).toBe(value.policy.minMealMinutes);
+    expect(prepared.policy.compensationAuthorized).toBe(false);
+    expect(prepared.policy.limitContinuousWorkBlocks).toBe(blocks);
+    expect(prepared.employees[0].sourceSchedule).toEqual(value.employees[0].sourceSchedule);
+    expect(prepared.shifts.find(s => s.id === "source")).toEqual(value.shifts[0]);
+    const allowed = prepared.shifts.filter(s => prepared.employees[0].shiftIds.includes(s.id));
+    expect(allowed.length).toBeGreaterThan(0);
+    for (const shift of allowed) {
+      expect(minutes(prepared, shift.id)).toBe(hours * 12);
+      expect(Math.max(0, ...shift.segments.filter(s => s.kind === "BREAK").map(s => s.end - s.start))).toBeGreaterThanOrEqual(60);
+      expect(Math.max(...shift.segments.map(s => s.end))).toBeLessThanOrEqual(1080);
+    }
+    const ready = { ...prepared, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared) };
+    expect(validateEscala(ready).valid).toBe(true);
+    expect(prepareGeneration(prepared).input).toEqual(prepared);
+    expect(value).toEqual(original);
+  });
+
+  it("fits a repaired reference to closing and rejects an impossible meal without mutating input", () => {
+    const value = legacyContinuousReference(42, false);
+    value.storeClosingMinutes = 900;
+    const prepared = prepareGeneration(value).input;
+    expect(prepared.shifts.filter(s => prepared.employees[0].shiftIds.includes(s.id)).every(s => (s.segments.at(-1) as (typeof s.segments)[number]).end <= 900)).toBe(true);
+    value.storeClosingMinutes = 540;
+    const original = structuredClone(value);
+    expect(() => prepareGeneration(value)).toThrow(expect.objectContaining({ code: "ESCALA_MEAL_REFERENCE_CONFLICT" }));
+    expect(value).toEqual(original);
+  });
+
+  it("keeps manual clocks and refuses to change an invalid locked automatic clock", () => {
+    const manual = legacyContinuousReference(42, false);
+    manual.shifts[1].id = "manual-clock"; manual.employees[0].shiftIds = ["manual-clock"];
+    const prepared = prepareGeneration(manual).input;
+    expect(prepared.employees[0].shiftIds).toEqual(["manual-clock"]);
+    expect(prepared.shifts.find(s => s.id === "manual-clock")).toEqual(manual.shifts[1]);
+    const value = legacyContinuousReference(42, false);
+    value.assignments = [{ employeeId: "p1", date: value.startDate, kind: "WORK", shiftId: value.shifts[1].id, locked: true }];
+    const original = structuredClone(value);
+    expect(() => prepareGeneration(value)).toThrow(expect.objectContaining({ code: "ESCALA_MEAL_LOCK_CONFLICT" }));
+    expect(value).toEqual(original);
+  });
+
+  it.each(["DAYS_AND_HOURS", "HOURS_ONLY"] as const)("retains excluded absences/holidays/locks in %s", mode => {
+    const value = input(); value.generationMode = mode;
+    value.employees[0].planningEnabled = false;
+    value.assignments = [
+      { employeeId: "p1", date: value.startDate, kind: "ABSENCE" },
+      { employeeId: "p1", date: addDays(value.startDate, 1), kind: "ABSENCE", locked: true },
+      { employeeId: "p1", date: addDays(value.startDate, 2), kind: "HOLIDAY" },
+      { employeeId: "p1", date: addDays(value.startDate, 3), kind: "HOLIDAY", locked: true },
+      { employeeId: "p1", date: addDays(value.startDate, 4), kind: "WORK", shiftId: "source" },
+      { employeeId: "p1", date: addDays(value.startDate, 5), kind: "WORK", shiftId: "source", locked: true },
+    ];
+    const original = structuredClone(value);
+    const prepared = prepareGeneration(value).input;
+    expect(prepared.assignments).toEqual(value.assignments.filter(day => mode === "HOURS_ONLY" || day.kind !== "WORK" || day.locked));
+    expect(prepared.shifts.find(s => s.id === "source")).toEqual(value.shifts[0]);
+    expect(value).toEqual(original);
+  });
+});
 
 describe("42h mixed distribution for selected sectors", () => {
   it("regenerates and adapts a saved mixed roster with JSONB segment key ordering", () => {

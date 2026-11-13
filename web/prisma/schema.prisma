@@ -219,6 +219,9 @@ model Tenant {
   escalaModuleSessions    EscalaModuleSession[]
   escalaWorkspaces        EscalaWorkspace[]
   escalaAccesses          EscalaBranchAccess[]
+  shiftCatalogSequence    ShiftCatalogSequence?
+  shiftCatalogEntries     ShiftCatalogEntry[]
+  turnoExportManifests    TurnoExportManifest[]
   createdAt               DateTime                       @default(now())
   updatedAt               DateTime                       @updatedAt
 }
@@ -302,6 +305,45 @@ model EscalaBranchAccess {
 
   @@unique([tenantId, userId, branchCode])
   @@index([tenantId, branchCode])
+}
+
+model ShiftCatalogSequence {
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nextCode  Int      @default(1500)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ShiftCatalogEntry {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code       Int
+  firstIn    Int
+  firstOut   Int
+  secondIn   Int
+  secondOut  Int
+  createdAt  DateTime @default(now())
+
+  @@unique([tenantId, code], map: "shift_catalog_tenant_code_key")
+  @@unique([tenantId, firstIn, firstOut, secondIn, secondOut], map: "shift_catalog_tenant_clocks_key")
+}
+
+model TurnoExportManifest {
+  id                        String   @id @default(cuid())
+  tenantId                  String
+  tenant                    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdByUserId           String?
+  createdByAccountSessionId String?
+  createdByModuleSessionId  String?
+  payload                   Json
+  expiresAt                 DateTime
+  createdAt                 DateTime @default(now())
+
+  @@unique([tenantId, id], map: "turno_export_manifest_tenant_id_key")
+  @@index([tenantId, expiresAt], map: "turno_export_manifest_tenant_expires_idx")
 }
 
 model UserInvitation {

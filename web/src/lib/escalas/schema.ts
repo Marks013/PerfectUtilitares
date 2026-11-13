@@ -3,6 +3,7 @@ import { isPlanningClosedHoliday } from "./calendar";
 import { addDays, dateRange, dayOfWeek, isDate, monthBounds } from "./dates";
 import { canonicalBranchCode } from "./branch-code";
 
+import { manualCatalogShift } from "./shift-catalog/manual-override";
 const identifier = z.string().trim().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u, "Identificador inválido");
 const label = z.string().trim().min(1).max(160);
 const date = z.string().refine(isDate, "Informe uma data real no formato AAAA-MM-DD, entre 1900 e 2099");
@@ -44,6 +45,14 @@ const shift = z.strictObject({
   }
 });
 
+const manualShiftOverride = z.strictObject({
+  catalogCode: z.number().int().min(1500).max(2_000_000_000), shiftId: identifier,
+  markings: z.tuple([z.string().max(5), z.string().max(5), z.string().max(5), z.string().max(5)]), effectiveFrom: date, effectiveUntil: date,
+}).superRefine((value, context) => {
+  if (value.effectiveUntil < value.effectiveFrom) context.addIssue({ code: "custom", path: ["effectiveUntil"], message: "Vigência manual invertida" });
+  try { manualCatalogShift(value); } catch { context.addIssue({ code: "custom", path: ["markings"], message: "Marcações manuais inválidas" }); }
+});
+
 const employee = z.strictObject({
   id: identifier, registration: label, name: label,
   sector: z.string().trim().max(160), role: z.string().trim().max(160), weeklyHours,
@@ -57,6 +66,9 @@ const employee = z.strictObject({
   fixedImportedShiftId: identifier.optional(),
   planningEnabled: z.boolean().optional(),
   scheduleMode: z.enum(["TIMED", "MISSING", "UNTIMED"]).optional(),
+  manualShiftOverrides: z.array(manualShiftOverride).min(1).max(12).optional(),
+  manualShiftBaseIds: z.array(identifier).min(1).max(12).refine(ids => new Set(ids).size === ids.length, "Referências base duplicadas").optional(),
+  manualShiftByDate: z.record(date, identifier).refine(map => Object.keys(map).length <= 42, "Vigência manual excede o horizonte").optional(),
   planningExclusionReason: z.string().trim().max(240).optional(),
   sourceSchedule: z.strictObject({ report: z.literal("FPRE136"), code: z.string().trim().max(40),
     description: z.string().trim().max(180), weekday: z.string().trim().max(180), saturday: z.string().trim().max(180) }).optional(),
@@ -176,6 +188,28 @@ export const escalaInputSchema = z.strictObject({
     if (person.originalShiftIds?.some((id) => !shiftIds.has(id))) context.addIssue({ code: "custom", path: ["employees", index, "originalShiftIds"], message: "Referência original de horário inexistente" });
     checkAssignments(person.history, ["employees", index, "history"], person.id);
     checkAssignments(person.planningHistory ?? [], ["employees", index, "planningHistory"], person.id);
+    if (person.manualShiftBaseIds?.some(id => !shiftIds.has(id))) context.addIssue({ code: "custom", path: ["employees", index, "manualShiftBaseIds"], message: "Referência base inexistente" });
+    const intervals = [...(person.manualShiftOverrides ?? [])].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+    if (!intervals.length && (person.manualShiftBaseIds || person.manualShiftByDate))
+      context.addIssue({ code: "custom", path: ["employees", index, "manualShiftOverrides"], message: "Metadados manuais exigem uma seleção persistida" });
+    if (intervals.length && person.scheduleMode !== "TIMED")
+      context.addIssue({ code: "custom", path: ["employees", index, "manualShiftOverrides"], message: "Seleção manual exige empregado com horário controlado" });
+    intervals.forEach((selection, position) => {
+      if (selection.effectiveFrom < value.startDate || selection.effectiveUntil > value.endDate || selection.effectiveFrom < person.activeFrom || person.activeUntil && selection.effectiveUntil > person.activeUntil)
+        context.addIssue({ code: "custom", path: ["employees", index, "manualShiftOverrides"], message: "Seleção manual fora do planejamento ou vínculo" });
+      if (position && intervals[position - 1].effectiveUntil >= selection.effectiveFrom)
+        context.addIssue({ code: "custom", path: ["employees", index, "manualShiftOverrides"], message: "Seleções manuais sobrepostas" });
+    });
+    if (person.manualShiftByDate) {
+      const expected: Record<string, string> = {};
+      if (isDate(value.startDate) && isDate(value.endDate) && person.planningEnabled !== false) for (const day of dateRange(value.startDate, value.endDate)) {
+        const selection = intervals.find(entry => day >= entry.effectiveFrom && day <= entry.effectiveUntil);
+        if (selection && day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil)) expected[day] = selection.shiftId;
+      }
+      const ordered = (map: Record<string, string>) => JSON.stringify(Object.entries(map).sort(([a], [b]) => a.localeCompare(b)));
+      if (!intervals.length || ordered(expected) !== ordered(person.manualShiftByDate) || Object.values(person.manualShiftByDate).some(id => !shiftIds.has(id)))
+        context.addIssue({ code: "custom", path: ["employees", index, "manualShiftByDate"], message: "Mapa manual divergente da seleção persistida" });
+    }
     checkAssignments(person.planningFuture ?? [], ["employees", index, "planningFuture"], person.id, true);
     const duplicate = value.employees.slice(0, index).some((previous) => previous.registration === person.registration
       && previous.activeFrom <= (person.activeUntil ?? "2099-12-31")

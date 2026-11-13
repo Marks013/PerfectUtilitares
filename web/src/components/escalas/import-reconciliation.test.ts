@@ -1,6 +1,43 @@
 import { describe, expect, it } from "vitest";
 import { mergeImport, newEmployee, newInput } from "./workspace-model";
 import { previewImportReconciliation } from "./import-reconciliation";
+import { reconcileImport } from "./import-reconciliation";
+import { materializeManualShiftOverrides, withManualShiftOverride } from "@/lib/escalas/shift-catalog/manual-override";
+import type { EscalaInput } from "@/lib/escalas/types";
+
+describe("manual catalog references across explicit CSV reconciliation", () => {
+  it.each([false, true])("retains intervals, markings and records when replaceClock=%s", replaceClock => {
+    const person: EscalaInput["employees"][number] = {
+      id: "e", registration: "001", name: "Synthetic", sector: "A", role: "Repositor", weeklyHours: 42, weeklyHoursMode: "BRANCH", shiftIds: ["source"],
+      activeFrom: "", scheduleMode: "TIMED", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, preferredOffDays: [], historyKnown: false,
+      history: [], sourceSchedule: { report: "FPRE136", code: "X", description: "Original", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" },
+    };
+    const value: EscalaInput = {
+      schemaVersion: 1, branchCode: "01", branchName: "Synthetic", startDate: "2026-11-02", endDate: "2026-11-08", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
+      policy: { source: "", validFrom: "2026-01-01", validUntil: "2027-12-31", reviewed: false, reviewedBy: "", weeklyLimit: 44, dailyLimitMinutes: 528, compensationAuthorized: false,
+        minMealMinutes: 60, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+      employees: [withManualShiftOverride(person, { catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-11-03", effectiveUntil: "2026-11-05" })],
+      shifts: [{ id: "source", name: "Source", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }], demands: [],
+      assignments: [{ employeeId: "e", date: "2026-11-03", kind: "ABSENCE" }, { employeeId: "e", date: "2026-11-04", kind: "OFF", locked: true }],
+    };
+    const prepared = materializeManualShiftOverrides(value);
+    const incoming = { ...person, id: "csv-new-id", name: "Updated synthetic", shiftIds: ["csv-new-shift"], sourceSchedule: { ...(person.sourceSchedule as NonNullable<typeof person.sourceSchedule>), description: "Updated reference", weekday: "09:00-13:00 / 14:00-18:00" } };
+    const shift = { ...structuredClone(value.shifts[0]), id: "csv-new-shift" };
+    const next = reconcileImport(prepared, [incoming], [shift], { updateRegistrations: ["001"], scheduleRegistrations: replaceClock ? ["001"] : [] });
+    expect(next.employees[0].id).toBe("e");
+    expect(next.employees[0].manualShiftOverrides).toEqual(prepared.employees[0].manualShiftOverrides);
+    expect(next.employees[0].manualShiftByDate).toEqual(prepared.employees[0].manualShiftByDate);
+    expect(next.employees[0].manualShiftBaseIds).toEqual(replaceClock ? ["csv-new-shift"] : ["source"]);
+    expect(next.shifts.find(s => s.id === "catalog-1500")).toEqual(prepared.shifts.find(s => s.id === "catalog-1500"));
+    expect(next.assignments).toEqual(prepared.assignments);
+    expect(next.employees[0].history).toEqual(person.history);
+    for (const scheduleMode of ["UNTIMED", "MISSING"] as const) {
+      expect(() => reconcileImport(prepared, [{ ...incoming, scheduleMode, shiftIds: [] }], [], {
+        updateRegistrations: ["001"], scheduleRegistrations: ["001"],
+      })).toThrow(/seleção manual/);
+    }
+  });
+});
 
 describe("confirmed import reconciliation", () => {
   it("updates approved source fields and preserves identity, decisions and absences", () => {

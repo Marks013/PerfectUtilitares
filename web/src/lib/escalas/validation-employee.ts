@@ -5,6 +5,7 @@ import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInp
 import { interveningOffs, type WorkJourney } from "./validation-time";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 
+import { manualAssignmentIssues, manualShiftAt } from "./shift-catalog/manual-override";
 function isActive(person: EscalaEmployee, day: string): boolean {
   return day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil);
 }
@@ -48,9 +49,10 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
   };
   if (person.planningEnabled === false) {
     // In clock-only mode these are preserved historical cells, never current staffing contributions.
-    if (input.generationMode !== "HOURS_ONLY" && current.some(entry => !entry.locked && entry.kind !== "ABSENCE")) issue("DISABLED_ASSIGNMENT", "Há atribuições para uma pessoa fora da geração. Remova as atribuições ou inclua a pessoa na proposta.");
+    if (input.generationMode !== "HOURS_ONLY" && current.some(entry => !entry.locked && entry.kind !== "ABSENCE" && entry.kind !== "HOLIDAY")) issue("DISABLED_ASSIGNMENT", "Há atribuições para uma pessoa fora da geração. Remova as atribuições ou inclua a pessoa na proposta.");
     return { issues, summary };
   }
+  issues.push(...manualAssignmentIssues({ ...input, employees: [person], assignments: [...current] }));
   if (!person.sector || !person.role) issue("ORGANIZATION_PENDING", "Informe setor e cargo antes da publicação.", undefined, "PENDING");
   if (enforceRestSpacing && (input.restRulesVersion ?? 0) >= 2) for (const record of current) {
     if (record.kind === "OFF" && dayOfWeek(record.date) === 5 && isActive(person, record.date))
@@ -83,7 +85,9 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
       issue("DAY_PENDING", "Dia de vínculo ainda sem trabalho, folga ou ausência definido.", day, "PENDING");
       continue;
     }
-    if (assignment.kind === "WORK" && !person.shiftIds.includes(assignment.shiftId ?? "")) issue("SHIFT_NOT_ALLOWED", "Turno não autorizado para este colaborador.", day);
+    if (assignment.kind === "WORK" && !person.shiftIds.includes(assignment.shiftId ?? "")
+      && manualShiftAt(person, day) !== assignment.shiftId && !(person.manualShiftOverrides?.length && assignment.locked))
+      issue("SHIFT_NOT_ALLOWED", "Turno não autorizado para este colaborador.", day);
     if ((assignment.kind === "DUTY") !== untimed && (assignment.kind === "DUTY" || assignment.kind === "WORK")) issue("SCHEDULE_MODE", "Dia de trabalho incompatível com o modo de horário do colaborador.", day);
     if ((assignment.kind === "WORK" || assignment.kind === "DUTY") && person.fixedOffDays.includes(dayOfWeek(day))) issue("FIXED_OFF", "Trabalho em dia de folga fixa aprovada.", day);
     if (assignment.kind === "OFF" && dayOfWeek(day) !== 6 && !input.policy.holidayRestAllowed && input.policy.holidayDates.includes(day)) issue("HOLIDAY_REST", "Este feriado aberto não deve substituir a folga semanal. Escolha outro dia; domingos continuam permitidos.", day);

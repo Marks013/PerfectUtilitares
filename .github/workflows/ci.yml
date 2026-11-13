@@ -171,6 +171,7 @@ jobs:
         run: npm run test:e2e:isolated
         env:
           E2E_PRODUCTION: "1"
+          E2E_EMPTY_TURNO_CATALOG: "1"
       - name: Keep synthetic browser failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

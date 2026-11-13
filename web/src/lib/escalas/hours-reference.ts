@@ -5,6 +5,7 @@ import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes } from "./stor
 import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
 import { validateJourney, workJourney } from "./validation-time";
 
+import { manualShiftAt, manualShiftIssues } from "./shift-catalog/manual-override";
 /** Stable calculation inputs only: display labels and trusted published context do not invalidate proposals. */
 export function generationScenarioBasis(input: EscalaInput): string {
   const policy = Object.fromEntries(Object.entries(input.policy).filter(([key]) => !["source", "reviewedBy", "reviewed"].includes(key)));
@@ -15,7 +16,7 @@ export function generationScenarioBasis(input: EscalaInput): string {
     mixed42Sectors: input.defaultWeeklyHours === 42 ? [...(input.mixed42Sectors ?? [])].sort() : [],
     movementPriorities: input.movementPriorities,
     employees: input.employees.map(person => Object.fromEntries(Object.entries(person).filter(([key]) =>
-      !["name", "planningHistory", "planningFuture", "fixedImportedShiftId", "originalShiftIds", "planningExclusionReason"].includes(key))))
+      !["name", "planningHistory", "planningFuture", "fixedImportedShiftId", "originalShiftIds", "manualShiftByDate", "planningExclusionReason"].includes(key))))
       .sort((a, b) => String(a.id).localeCompare(String(b.id))),
     shifts: input.shifts.map(shift => ({ id: shift.id, segments: shift.segments })).sort((a, b) => a.id.localeCompare(b.id)),
     demands: input.demands.filter(demand => !demand.estimated).map(demand =>
@@ -53,7 +54,7 @@ export function isHoursReferenceOnly(input: EscalaInput): boolean {
 
 /** Validate permitted clocks, without claiming daily presence or a published monthly roster. */
 export function validateHoursReferences(input: EscalaInput): EscalaValidation {
-  const issues: EscalaIssue[] = [], shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
+  const issues: EscalaIssue[] = manualShiftIssues(input), shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const dates = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
   const calendarCodes = new Set(["CLOSED_DATE", "HOLIDAY_WORK", "CCT_SUNDAY_CERTIFICATE", "CCT_HOLIDAY_CERTIFICATE", "CCT_NIGHT_CERTIFICATE"]);
   const included = input.employees.filter(person => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
@@ -67,10 +68,12 @@ export function validateHoursReferences(input: EscalaInput): EscalaValidation {
     if (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING") continue;
     if (!person.shiftIds.length) issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "ERROR", employeeId: person.id, message: "Informe um horário de referência para este colaborador." });
     for (const id of person.shiftIds) {
+      if (person.manualShiftOverrides?.some(choice => choice.shiftId === id) && !person.manualShiftBaseIds?.includes(id)) continue;
       const shift = shifts.get(id);
       if (!shift) continue; // Input schema reports missing references before this branch.
       if (!fitsStoreClosing(shift, storeClosingMinutes(input))) issues.push({ code: "STORE_CLOSING_EXCEEDED", severity: "ERROR", employeeId: person.id, message: `A referência termina após o fechamento (${storeClosingLabel(input)}). Confira o horário antes de exportar.` });
       for (const date of dates) {
+        if (manualShiftAt(person, date) && manualShiftAt(person, date) !== id) continue;
         try {
           const journey = workJourney({ employeeId: person.id, date, kind: "WORK", shiftId: id }, shift);
           issues.push(...validateJourney(input, journey, undefined, usesMixed42Week(input, person, date)).filter(issue => !calendarCodes.has(issue.code)));

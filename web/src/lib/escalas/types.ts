@@ -14,6 +14,14 @@ export type EscalaShift = {
   /** Offsets from midnight of the journey's reference date; end may exceed 1440. */
   segments: { start: number; end: number; kind: "WORK" | "PAID_BREAK" | "BREAK" }[];
 };
+export type EscalaManualShiftOverride = {
+  catalogCode: number;
+  shiftId: string;
+  markings: readonly [string, string, string, string];
+  effectiveFrom: string;
+  effectiveUntil: string;
+};
+
 export type EscalaEmployee = {
   id: string;
   registration: string;
@@ -32,6 +40,12 @@ export type EscalaEmployee = {
   originalShiftIds?: string[];
   /** Derived during preparation: a compatible imported clock is fixed on unlocked workdays. */
   fixedImportedShiftId?: string;
+  /** Explicit catalog choices; imported provenance remains separate and unchanged. */
+  manualShiftOverrides?: EscalaManualShiftOverride[];
+  /** Ordinary choices outside manual validity, retained through preparation/reimport. */
+  manualShiftBaseIds?: string[];
+  /** Derived transport restriction: applies only when WORK exists on the date. */
+  manualShiftByDate?: Record<string, string>;
   /** Empty means employment dates are unknown; it never represents a new admission. */
   activeFrom: string;
   activeUntil?: string;

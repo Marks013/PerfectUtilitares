@@ -5,6 +5,7 @@ import { isRestPlanningExcludedRole } from "./eligibility";
 import { isHoursReferenceOnly } from "./hours-reference";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaWorkspace } from "./types";
 
+import { employeeReferenceShiftChoices } from "./shift-catalog/reference-choices";
 const ESCALA_LEGEND = "F = Folga | FE = Feriado, loja fechada | T01/T02 = Turno | ENC = Sem horário fixo | NP = Não processado | AF = Afastado | FV = Fora do vínculo | X = Não incluído ou não considerado";
 export type EscalaExportMode = "rest" | "hours" | "both";
 const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -63,7 +64,7 @@ export function buildEscalaSchedule(input: EscalaInput) {
   });
   const assignments = new Map(input.assignments.map((assignment) => [`${assignment.employeeId}\0${assignment.date}`, assignment]));
   const byShift = new Map(input.shifts.map((shift) => [shift.id, shift]));
-  const people = sortEmployees(input.employees.filter((employee) => employee.planningEnabled !== false)).map((employee) => {
+  const allPeople = sortEmployees(input.employees).map((employee) => {
     const cells = dates.map((date) => {
       const assignment = assignments.get(`${employee.id}\0${date}`);
       const label = assignmentPresentation(employee, date, assignment, codes);
@@ -78,17 +79,18 @@ export function buildEscalaSchedule(input: EscalaInput) {
       const entry = variants.get(cell.shiftId) ?? { shiftId: cell.shiftId, code: cell.code, schedule: cell.schedule, interval: cell.interval, daily: cell.daily, dates: [] };
       entry.dates.push(cell.date); variants.set(cell.shiftId, entry);
     }
-    if (referencesOnly && employee.scheduleMode !== "UNTIMED" && employee.scheduleMode !== "MISSING") {
-      const durations = new Set<number>();
-      const references = employee.shiftIds.map(id => byShift.get(id)).filter((shift): shift is EscalaShift => !!shift)
-        .sort((left, right) => compareProposedSchedules(scheduleText(left, false), scheduleText(right, false)) || left.id.localeCompare(right.id));
-      for (const shift of references) {
-        const id = shift.id;
+    const choices = employeeReferenceShiftChoices(input, employee);
+    if (!variants.size) {
+      for (const choice of choices) {
+        const shift = (byShift.get(choice.shiftId) as NonNullable<ReturnType<typeof byShift.get>>);
         const minutes = shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
-        if (durations.has(minutes)) continue; durations.add(minutes);
-        variants.set(id, { shiftId: id, code: codes.get(id) ?? "", schedule: scheduleText(shift, false),
-          interval: scheduleText(shift, true) || "Sem intervalo informado", daily: escalaDuration(minutes), dates: [] });
+        const annotated = employee.manualShiftOverrides?.length || employee.planningEnabled === false || !referencesOnly;
+        const actualDates = choice.source === "WORK" ? input.assignments.filter(day => day.employeeId === employee.id && day.kind === "WORK" && day.shiftId === shift.id && visibleDates(input).includes(day.date) && day.date >= employee.activeFrom && (!employee.activeUntil || day.date <= employee.activeUntil)).map(day => day.date) : [];
+        variants.set(shift.id, { shiftId: shift.id, code: codes.get(shift.id) ?? "", schedule: annotated ? choice.label : scheduleText(shift, false),
+          interval: scheduleText(shift, true) || "Sem intervalo informado", daily: escalaDuration(minutes), dates: actualDates });
       }
+    } else if (employee.manualShiftOverrides?.length) for (const choice of choices) {
+      const variant = variants.get(choice.shiftId); if (variant) variant.schedule = choice.label;
     }
     const proposedVariants = [...variants.values()].sort((left, right) => compareProposedSchedules(left.schedule, right.schedule));
     const proposedSchedule = proposedVariants.length === 1 ? proposedVariants[0].schedule
@@ -98,11 +100,13 @@ export function buildEscalaSchedule(input: EscalaInput) {
       : cells.some((cell) => cell.code === "NP") ? "NP — horário ainda não processado" : "Sem trabalho com horário neste período";
     return { employee, cells, proposedSchedule, proposedVariants };
   });
+  const people = allPeople.filter(person => person.employee.planningEnabled !== false);
   const excluded = sortEmployees(input.employees.filter((employee) => employee.planningEnabled === false))
     .map((employee) => ({ employee, ...exclusionPresentation(employee) }));
-  const byEmployee = new Map(people.map(person => [person.employee.id, person]));
+  const byEmployee = new Map(allPeople.map(person => [person.employee.id, person]));
   const hoursPeople = sortHoursEmployees(input).flatMap(employee => {
-    const person = byEmployee.get(employee.id); return person ? [person] : [];
+    const person = byEmployee.get(employee.id);
+    return person && (employee.planningEnabled !== false || employeeReferenceShiftChoices(input, employee).length) ? [person] : [];
   });
   const restPeople = referencesOnly ? [] : people.filter(person => !isRestPlanningExcludedRole(person.employee.role));
   return { dates, codes, people, hoursPeople, restPeople, excluded, legend: referencesOnly ? "Referências de horários, sem grade diária." : ESCALA_LEGEND, calendarLabel, holidayNotes };

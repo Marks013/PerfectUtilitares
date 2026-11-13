@@ -85,7 +85,7 @@ def _spacing_rank(person, entries, prior, baseline, policy):
 
 def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
                         deadline=None, control=None, mixed_people=frozenset(),
-                        preserve_rest_pattern=False):
+                        preserve_rest_pattern=False, preserve_work_people=frozenset()):
     """Balance opportunities before the bounded optimizer adds optional staffing goals.
 
     These are variable hints only. No target is converted into a staffing constraint,
@@ -137,7 +137,19 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
         for day in available:
             old = baseline.get((pid, day), {})
             allowed = choices[pid, day]
-            selected[day] = old.get("shiftId") if old.get("locked") else min(allowed, key=lambda sid: (abs(metrics[sid][0] - target), sid), default=None)
+            selected[day] = old.get("shiftId") if old.get("locked") else min(allowed, key=lambda sid: (
+                abs(metrics[sid][0] - target), sid != old.get('shiftId'), sid), default=None)
+        saved_work = {day for day in available if pid in preserve_work_people
+                      and baseline.get((pid, day), {}).get('kind') in ('WORK', 'DUTY')}
+
+        def candidate_rank(item):
+            # Saved presence is a soft migration preference, never a lock or
+            # proof of v2 feasibility. Keep useful Sundays ahead of aesthetics.
+            lost = [day for day in saved_work if day in item[1]
+                    and item[1][day]['kind'] not in ('WORK', 'DUTY')]
+            return (sum(weekdays[day] == 6 for day in lost), len(lost),
+                    *_spacing_rank(person, item[1], prior, baseline, policy), item[0])
+
         history_rests = [0] * 7
         for day, entry in prior.items():
             if history_cutoff <= day < dates[0] and entry["kind"] == "OFF":
@@ -219,7 +231,7 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
             if not next_beam:
                 beam = []
                 break
-            next_beam.sort(key=lambda item: (*_spacing_rank(person, item[1], prior, baseline, policy), item[0]))
+            next_beam.sort(key=candidate_rank)
             # Keep two distinct Sunday trajectories, each with two weekday variants.
             # A greedy first week can force the same rest parity on the sector.
             # Repeated clock variants do not consume the weekday-spacing slots.
@@ -248,7 +260,7 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                 break
         if not beam:
             continue  # Incomplete information or a difficult alternative remains CP-SAT's task.
-        _, entries, _ = min(beam, key=lambda item: (*_spacing_rank(person, item[1], prior, baseline, policy), item[0]))
+        _, entries, _ = min(beam, key=candidate_rank)
         result[pid] = entries
         for day, entry in entries.items():
             if entry["kind"] == "OFF":

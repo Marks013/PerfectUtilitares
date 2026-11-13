@@ -4,6 +4,7 @@ import { escalaInputSchema } from "./schema";
 import type { EscalaAssignment, EscalaInput, WeeklyHours } from "./types";
 import { validateEscala } from "./validation";
 
+import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
 function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
   const startDate = "2026-10-26";
   const endDate = addDays(startDate, weeks * 7 - 1);
@@ -37,6 +38,42 @@ function fixture(hours: WeeklyHours = 42, weeks = 1): EscalaInput {
 function codes(input: EscalaInput) { return validateEscala(input).issues.map((issue) => issue.code); }
 
 describe("independent Escalas validation", () => {
+  it("rejects manual work on a different date or clock without treating OFF as work", () => {
+    let value = fixture(); value.demands = [];
+    const person = value.employees[0];
+    person.sourceSchedule = { report: "FPRE136", code: "X", description: "CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    value.employees[0] = withManualShiftOverride(person, { catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-28" });
+    value = materializeManualShiftOverrides(value);
+    expect(codes(value)).toContain("MANUAL_SHIFT_MISMATCH");
+    value.assignments = value.assignments.map(day => day.kind === "WORK" && day.date >= "2026-10-27" && day.date <= "2026-10-28" ? { ...day, shiftId: "catalog-1500" } : day);
+    expect(codes(value)).not.toContain("MANUAL_SHIFT_MISMATCH");
+    value.assignments[0].shiftId = "catalog-1500";
+    expect(codes(value)).toContain("MANUAL_SHIFT_OUTSIDE_RANGE");
+    value.assignments[0] = { employeeId: person.id, date: value.startDate, kind: "OFF" };
+    expect(codes(value)).not.toContain("MANUAL_SHIFT_OUTSIDE_RANGE");
+  });
+  it.each([false, true])("keeps disabled holidays outside staffing with lock=%s", locked => {
+    const input = fixture(40);
+    const baseline = validateEscala(input);
+    input.employees.push({ ...structuredClone(input.employees[0]), id: "excluded", registration: "02", planningEnabled: false, history: [] });
+    input.assignments.push({ employeeId: "excluded", date: input.startDate, kind: "HOLIDAY", locked });
+    const result = validateEscala(input);
+    expect(result.valid).toBe(true);
+    expect(result.issues.filter(i => i.employeeId === "excluded")).toEqual([]);
+    expect(result.minimumCoverageMargin).toBe(baseline.minimumCoverageMargin);
+    expect(result.summaries.find(s => s.employeeId === "excluded")).toMatchObject({ workedMinutes: 0, workDays: 0, offDays: 0 });
+  });
+  it("preserves every disabled clock-only cell without counting work or holiday as coverage", () => {
+    const input = fixture(40); input.generationMode = "HOURS_ONLY";
+    const baseline = validateEscala(input);
+    input.employees.push({ ...structuredClone(input.employees[0]), id: "excluded", registration: "02", planningEnabled: false, history: [] });
+    input.assignments.push({ employeeId: "excluded", date: input.startDate, kind: "WORK", shiftId: "day" },
+      { employeeId: "excluded", date: addDays(input.startDate, 1), kind: "HOLIDAY" },
+      { employeeId: "excluded", date: addDays(input.startDate, 2), kind: "ABSENCE", locked: true });
+    const result = validateEscala(input);
+    expect(result.issues.filter(i => i.employeeId === "excluded")).toEqual([]);
+    expect(result.minimumCoverageMargin).toBe(baseline.minimumCoverageMargin);
+  });
   it("keeps documentary references informative while preserving operational checks", () => {
     const input = fixture();
     input.policy.reviewed = false;

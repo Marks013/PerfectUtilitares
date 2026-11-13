@@ -1,6 +1,9 @@
 """Focused regressions for the shipped Sunday scheduling policy."""
+import ast
+from pathlib import Path
 import time
 import unittest
+from unittest.mock import patch
 from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
@@ -8,6 +11,16 @@ from optimization import ImprovementContext, Snapshot, improve, _movable_people,
 from solver import _feasibility_hints, solve
 from test_solver import fixture
 from weekend_balance import available_weekends, weekend_objectives
+
+
+def production_goal_names():
+    # Read the actual construction order; do not maintain a smaller test-only list.
+    tree = ast.parse(Path(__file__).with_name('solver.py').read_text(encoding='utf-8'))
+    goals = next(node.value for node in ast.walk(tree)
+                 if isinstance(node, ast.Assign) and isinstance(node.value, ast.List)
+                 and any(isinstance(target, ast.Name) and target.id == 'goals'
+                         for target in node.targets))
+    return [entry.elts[0].value for entry in goals.elts]
 
 
 class ProductionSundayTests(unittest.TestCase):
@@ -153,20 +166,86 @@ class ProductionSundayTests(unittest.TestCase):
         self.assertEqual(actual, {first.index: 1, second.index: -2})
         self.assertEqual(len(model.proto.solution_hint.vars), 2)
 
-    def test_secondary_budget_reserves_real_time_for_stability_and_preferences(self):
-        from optimization import _phase_budget
-        names = ['COVERAGE', 'SUNDAY_COVERAGE', 'SUNDAY_BALANCE', 'REST_DISTRIBUTION',
-                 'REST_ROTATION', 'STABILITY', 'PREFERENCES', 'TIE_BREAK']
+    def test_production_untimed_rotation_precedes_sunday_fairness_and_spacing_guards(self):
+        names = production_goal_names()
+        self.assertLess(names.index('COVERAGE'), names.index('UNTIMED_ROTATION'))
+        self.assertLess(names.index('SUNDAY_COVERAGE'), names.index('UNTIMED_ROTATION'))
+        self.assertLess(names.index('CLOSING_COVERAGE'), names.index('UNTIMED_ROTATION'))
+        self.assertLess(names.index('UNTIMED_ROTATION'), names.index('SUNDAY_BALANCE'))
+        self.assertLess(names.index('UNTIMED_ROTATION'), names.index('REST_SPACING'))
+
+    def test_full_production_budget_funds_leadership_and_untimed_with_both_rest_phases(self):
+        from optimization import _phase_budget, MIN_PHASE_BUDGET, MIN_SEARCH_SECONDS
+        names = production_goal_names()
+        for required in ('COVERAGE', 'SUNDAY_COVERAGE', 'REST_SPACING', 'LEADERSHIP', 'UNTIMED_ROTATION'):
+            self.assertIn(required, names)
         remaining, allocations = 10.0, {}
         for index, name in enumerate(names):
             budget = _phase_budget(remaining, names, index)
             allocations[name] = budget
-            self.assertGreater(budget, 0)
+            self.assertGreaterEqual(budget + 1e-9, MIN_PHASE_BUDGET, name)
+            # Full allocation consumption, including up to one search-floor
+            # worth of preparation, must leave a usable CP allowance.
+            self.assertGreaterEqual(budget - MIN_SEARCH_SECONDS + 1e-9, MIN_SEARCH_SECONDS, name)
             remaining -= budget
         self.assertAlmostEqual(allocations['COVERAGE'], 5.5)
-        self.assertAlmostEqual(allocations['SUNDAY_COVERAGE'], 4.5 / 7)
-        self.assertGreater(allocations['PREFERENCES'], .5)
+        self.assertGreater(allocations['SUNDAY_COVERAGE'], allocations['STABILITY'])
+        self.assertGreater(allocations['UNTIMED_ROTATION'], allocations['PREFERENCES'])
+        self.assertLess(allocations['SUNDAY_COVERAGE'] + allocations['REST_SPACING'], 4.5)
         self.assertAlmostEqual(sum(allocations.values()), 10.0)
+        self.assertAlmostEqual(remaining, 0)
+
+    def test_short_production_budget_admits_a_prefix_and_never_subfloor_searches(self):
+        from optimization import _phase_budget, MIN_PHASE_BUDGET
+        names = production_goal_names()
+        for total in (2.0, MIN_PHASE_BUDGET, MIN_PHASE_BUDGET - .01):
+            remaining, attempted = total, []
+            for index, name in enumerate(names):
+                budget = _phase_budget(remaining, names, index)
+                self.assertLessEqual(budget, remaining + 1e-9)
+                if budget:
+                    self.assertGreaterEqual(budget + 1e-9, MIN_PHASE_BUDGET, name)
+                    attempted.append(name)
+                remaining -= budget  # No optimistic early return from a phase.
+            self.assertEqual(attempted, names[:len(attempted)])
+            self.assertGreaterEqual(remaining, -1e-9)
+            if total == 2.0:
+                self.assertIn('LEADERSHIP', attempted)
+                self.assertIn('UNTIMED_ROTATION', attempted)
+                self.assertNotIn('TIE_BREAK', attempted)
+            elif total < MIN_PHASE_BUDGET:
+                self.assertEqual(attempted, [])
+
+    def test_actual_improve_consumes_phase_budgets_without_claiming_unknown_as_optimized(self):
+        names = production_goal_names()
+        for total, expected_count in ((10.0, len(names)), (2.0, 10), (.19, 0)):
+            model = cp_model.CpModel()
+            gap = model.new_bool_var('gap')
+            initial = {gap.index: 1}
+
+            class ConsumeAllowance:
+                now = 0.0
+
+                def checkpoint(self):
+                    pass
+
+                def solve(self, engine, current):
+                    # Consume the entire actual grant; never invoke CP here.
+                    self.now += engine.parameters.max_time_in_seconds
+                    return cp_model.UNKNOWN
+
+            control = ConsumeAllowance()
+            with patch('optimization.time.monotonic', side_effect=lambda: control.now):
+                actual, proven, phases = improve(model, [gap] * len(names), initial,
+                    total + .1, names, context=ImprovementContext(control=control))
+            self.assertFalse(proven)
+            self.assertEqual(actual, initial)
+            self.assertEqual([p['objective'] for p in phases], names[:expected_count])
+            self.assertTrue(all(p['status'] == 'UNKNOWN' and p['budgetSeconds'] >= .1 for p in phases))
+            self.assertLessEqual(control.now, total + 1e-9)
+            if total >= 2:
+                self.assertIn('LEADERSHIP', [p['objective'] for p in phases])
+                self.assertIn('UNTIMED_ROTATION', [p['objective'] for p in phases])
 
     def test_secondary_goals_improve_without_spending_coverage_or_sunday_guards(self):
         model = cp_model.CpModel()

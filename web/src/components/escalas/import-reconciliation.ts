@@ -2,6 +2,7 @@ import type { EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/typ
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import { inferLeadership } from "@/lib/escalas/leadership";
 
+import { materializeManualShiftOverrides } from "@/lib/escalas/shift-catalog/manual-override";
 export type ImportChoices = { updateRegistrations: string[]; scheduleRegistrations?: string[]; branchCode?: string };
 export type ReconciliationEntry = { employee: EscalaEmployee; status: "NEW" | "UNCHANGED" | "CHANGED" | "CONFLICT"; changes: string[]; scheduleChanged: boolean; scheduleBlocked: boolean; message?: string };
 
@@ -61,16 +62,21 @@ export function reconcileImport(input: EscalaInput, employees: EscalaEmployee[],
     const entry = preview.find(item => item.employee.registration === current.registration);
     if (entry?.status !== "CHANGED" || !approved.has(current.registration)) return current;
     const source = entry.employee;
+    if (schedules.has(current.registration) && current.manualShiftOverrides?.length && (source.scheduleMode === "MISSING" || source.scheduleMode === "UNTIMED")) {
+      throw new Error("Há uma seleção manual de turno vigente. Revise essa seleção antes de substituir a referência por ENC ou cadastro sem horário; os dados foram preservados.");
+    }
     const replaceClock = schedules.has(current.registration);
     const next: EscalaEmployee = { ...current, name: source.name, sector: source.sector, role: source.role,
       ...(current.leadership?.source !== "MANUAL" ? { leadership: inferLeadership(source) } : {}),
       ...(replaceClock ? { sourceSchedule: source.sourceSchedule, scheduleMode: source.scheduleMode, shiftIds: [...source.shiftIds],
-        originalShiftIds: undefined, fixedImportedShiftId: undefined, simulationDailyMinutes: undefined } : {}) };
+        originalShiftIds: current.manualShiftOverrides?.length ? current.originalShiftIds : undefined,
+        ...(current.manualShiftOverrides?.length ? { manualShiftBaseIds: [...source.shiftIds], manualShiftByDate: undefined } : {}),
+        fixedImportedShiftId: undefined, simulationDailyMinutes: undefined } : {}) };
     if (JSON.stringify(next) !== JSON.stringify(current)) changed = true;
     return next;
   });
   const usedShifts = new Set([...nextEmployees, ...added].flatMap(person => person.shiftIds));
   for (const shift of shifts) if (!choices || usedShifts.has(shift.id)) byId.set(shift.id, shift);
-  return { ...input, employees: [...nextEmployees, ...added], shifts: [...byId.values()],
-    ...(changed && input.assignments.length ? { needsRegeneration: true } : {}) };
+  return materializeManualShiftOverrides({ ...input, employees: [...nextEmployees, ...added], shifts: [...byId.values()],
+    ...(changed ? { needsRegeneration: true, generationBasis: undefined } : {}) });
 }

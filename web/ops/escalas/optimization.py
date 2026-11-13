@@ -7,6 +7,10 @@ from runtime_settings import (COVERAGE_BUDGET_SHARE, LARGE_MODEL_VARIABLES, MOVA
                               POLISH_PEOPLE_LIMIT, RANDOM_SEED, SearchSettings)
 
 REST_PHASE_WEIGHT = 3
+MIN_SEARCH_SECONDS = 0.10
+# Admission includes preparation headroom; the actual search still has its
+# own floor after setup. An admitted phase is not evidence of optimization.
+MIN_PHASE_BUDGET = 2 * MIN_SEARCH_SECONDS
 
 
 @dataclass
@@ -194,19 +198,28 @@ def _upper_bound_key(terms):
 
 
 def _phase_budget(remaining, names, index):
-    """Keep coverage first, without geometrically starving the last real goals."""
-    if index == len(names) - 1:
+    """Fund one ordered prefix, then share surplus without duplicate reserves.
+
+    Repeated COVERAGE repairs share one allocation. When all active goals fit,
+    each keeps preparation headroom plus the search floor; short budgets fund
+    only an earlier prefix. Later phases stay unattempted, never falsely proven.
+    """
+    pending = list(dict.fromkeys(names[index:]))
+    affordable = max(0, int((remaining + 1e-9) / MIN_PHASE_BUDGET))
+    admitted = pending[:affordable]
+    if not admitted:
+        return 0.0
+    if len(admitted) == 1:
         return remaining
-    if names[index] == 'COVERAGE':
-        reserve = min(3.0, remaining / 2) if 'REST_SPACING' in names[index + 1:] else 0
-        return min(remaining * COVERAGE_BUDGET_SHARE, remaining - reserve)
-    if names[index] == 'REST_SPACING':
-        return min(3.0, remaining)
-    # Reserve usable time for variable rest quality instead of treating these
-    # two operational goals like cosmetic tie-breaking. The global deadline is unchanged.
-    weights = [REST_PHASE_WEIGHT if name in ('REST_SPACING', 'UNTIMED_ROTATION') else 1
-               for name in names[index:]]
-    return remaining * weights[0] / sum(weights)
+    if admitted[0] == 'COVERAGE':
+        reserve = MIN_PHASE_BUDGET * (len(admitted) - 1)
+        return max(MIN_PHASE_BUDGET, min(remaining * COVERAGE_BUDGET_SHARE, remaining - reserve))
+    # Sunday recovery, spacing and untimed rotation share the SAME surplus.
+    # Leadership and every other admitted phase retain their usable base share.
+    weights = [REST_PHASE_WEIGHT if name in ('SUNDAY_COVERAGE', 'REST_SPACING', 'UNTIMED_ROTATION') else 1
+               for name in admitted]
+    surplus = max(0.0, remaining - MIN_PHASE_BUDGET * len(admitted))
+    return MIN_PHASE_BUDGET + surplus * weights[0] / sum(weights)
 
 
 def improve(model, objectives, values, deadline, names=None, *, context=None):
@@ -245,11 +258,12 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
     if repair_count:
         plans = [plans[0]] * repair_count + plans
     names = [name for name, _objective in plans]
-    spacing_index = names.index('REST_SPACING') if 'REST_SPACING' in names else -1
-    # One shared cutoff protects the reserve across all repeated coverage repairs.
-    # This starts only after the verified incumbent and model construction exist.
-    spacing_reserve = min(3.0, max(0, deadline - time.monotonic() - .10) / 2) if spacing_index > 0 else 0
-    coverage_cutoff = deadline - .10 - spacing_reserve
+    # All repeated repairs and the main COVERAGE phase share one allowance,
+    # computed from the full active sequence, including both rest objectives.
+    budget_started = time.monotonic()
+    coverage_cutoff = budget_started + (_phase_budget(
+        max(0, deadline - budget_started - MIN_SEARCH_SECONDS), names, 0)
+        if names and names[0] == 'COVERAGE' else 0)
     polish_attempt = 0
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
@@ -326,8 +340,11 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             # Cheap, independent neighborhoods must not consume the main search
             # or all secondary goals, even when several sectors need attention.
             budget = min(0.85, remaining * .12)
-        if 0 <= index < spacing_index:
+        if name == 'COVERAGE':
             budget = min(budget, max(0, coverage_cutoff - time.monotonic()))
+        if budget < MIN_PHASE_BUDGET - 1e-9:
+            proven = False
+            continue  # No clone/presolve for a phase without a usable allocation.
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
         engine.parameters.num_workers = settings.workers
@@ -391,7 +408,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         # Model setup belongs to this phase's share, not the later objectives.
         # Do not start a presolve with too little time to use the known incumbent.
         budget = min(budget - (time.monotonic() - preparation_started), deadline - time.monotonic() - 0.10)
-        if budget < 0.10:
+        if budget < MIN_SEARCH_SECONDS:
             proven = False
             continue
         engine.parameters.max_time_in_seconds = budget

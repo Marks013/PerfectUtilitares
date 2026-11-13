@@ -48,6 +48,19 @@ async function pdfText(bytes: Uint8Array): Promise<string> {
 }
 
 describe("central coverage analysis in real operational files", () => {
+  it("carries a reference-only manual clock and validity to real PDF and XLSX", async () => {
+    const workspace = fixture(); workspace.input.generationMode = "HOURS_ONLY"; workspace.input.assignments = [];
+    workspace.input.employees = [workspace.input.employees[0]];
+    workspace.input.employees[0].shiftIds = ["day"];
+    workspace.input.employees[0].manualShiftOverrides = [{ catalogCode: 1500, shiftId: "early", markings: ["08:00", "12:00", "13:00", "17:00"], effectiveFrom: "2026-11-02", effectiveUntil: "2026-11-03" }];
+    const before = structuredClone(workspace);
+    const rows = await readSheet(Buffer.from(exportEscalaXlsx(workspace, "hours")), "Horarios");
+    const text = rows.flat().join(" | ");
+    expect(text).toContain("Referência manual"); expect(text).toContain("08:00-12:00"); expect(text).toContain("02/11/2026"); expect(text).toContain("03/11/2026");
+    const rendered = await pdfText(await exportEscalaPdf(workspace, "hours", { separateSectors: false }));
+    expect(rendered).toContain("Referência manual"); expect(rendered).toContain("08:00-12:00"); expect(rendered).toContain("02/11/2026");
+    expect(workspace).toEqual(before); expect(workspace.input.assignments).toEqual([]);
+  });
   it("exports independent numeric rulers with the real role-aware peak occurrence in XLSX and PDF", async () => {
     const workspace = fixture(), before = structuredClone(workspace);
     const central = analyzeCoverage(workspace.input, workspace.input, { details: true, referenceOrigin: "PERSISTED" }).sectors[0];
@@ -56,15 +69,17 @@ describe("central coverage analysis in real operational files", () => {
     expect(rows).toHaveLength(2);
     const confirmed = rows.find(row => row[1] === "Confirmada"), estimated = rows.find(row => row[1] === "Estimada");
     if (!confirmed || !estimated) throw new Error("Independent confirmed and estimated export rows are required");
-    expect(rows.every(row => row.length === 8)).toBe(true);
-    expect(confirmed[2]).toBe(2); expect(confirmed[4]).toBe("09:00-10:00");
-    expect(estimated[2]).toBe(8); expect(estimated[4]).toBe("12:00-13:00");
-    expect(exportedDateISO(confirmed[3])).toBe("2026-11-02");
-    expect(exportedDateISO(estimated[3])).toBe("2026-11-02");
-    expect(confirmed[2]).toBe(central.confirmed?.peakMissing);
+    expect(rows.every(row => row.length === 12)).toBe(true);
+    expect(confirmed.slice(2, 5)).toEqual([2, 3, 2]); expect(confirmed[6]).toBe("09:00-10:00");
+    expect(estimated.slice(2, 5)).toEqual([2, 10, 8]); expect(estimated[6]).toBe("12:00-13:00");
+    expect(exportedDateISO(confirmed[5])).toBe("2026-11-02");
+    expect(exportedDateISO(estimated[5])).toBe("2026-11-02");
+    expect(confirmed[4]).toBe(central.confirmed?.peakMissing);
     expect(central.confirmed?.peakSectorMissing).toBe(1);
-    expect(exportedDurationMinutes(confirmed[5])).toBe(central.confirmed?.deficitPersonMinutes);
-    expect(exportedDurationMinutes(estimated[5])).toBe(central.estimated?.deficitPersonMinutes);
+    expect(exportedDurationMinutes(confirmed[7])).toBe(60);
+    expect(confirmed[11]).toContain("Limite por função");
+    expect(exportedDurationMinutes(confirmed[9])).toBe(central.confirmed?.deficitPersonMinutes);
+    expect(exportedDurationMinutes(estimated[9])).toBe(central.estimated?.deficitPersonMinutes);
     expect(rows.some(row => row[1] === "Total")).toBe(false);
     const capacity = (await readSheet(bytes, "Capacidade"))[4];
     expect(capacity[1]).toBe(2);
@@ -95,13 +110,13 @@ describe("central coverage analysis in real operational files", () => {
     const rows = (await readSheet(bytes, "Desfalques")).slice(4);
     for (const row of rows) {
       expect(row[1]).toContain("parcial");
-      expect(row.slice(2, 6)).toEqual(["—", "—", "—", "—"]);
+      expect(row.slice(2, 11)).toEqual(Array(9).fill("—"));
     }
   });
   it("does not turn an obsolete estimated ruler into a known zero while keeping the confirmed ruler available", async () => {
     const workspace = fixture(); delete workspace.input.coverageBasis;
     const rows = (await readSheet(Buffer.from(exportEscalaXlsx(workspace, "hours")), "Desfalques")).slice(4);
-    expect(rows.find(row => row[1] === "Confirmada")?.[2]).toBe(2);
-    expect(rows.find(row => row[1] === "Estimada · parcial")?.slice(2, 6)).toEqual(["—", "—", "—", "—"]);
+    expect(rows.find(row => row[1] === "Confirmada")?.[4]).toBe(2);
+    expect(rows.find(row => row[1] === "Estimada · parcial")?.slice(2, 11)).toEqual(Array(9).fill("—"));
   });
 });

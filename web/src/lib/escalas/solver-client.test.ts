@@ -11,7 +11,9 @@ afterAll(() => rmSync(secretDirectory, { recursive: true }));
 import { solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
 import * as rosterRefinement from "./roster-refinement";
+import * as rosterQuality from "./roster-quality";
 import type { EscalaInput } from "./types";
+import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
 
 import { escalaInputSchema } from "./schema";
 function fixture(): EscalaInput {
@@ -41,6 +43,96 @@ function completeAssignments(): EscalaInput["assignments"] {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it("preserves established automatic provenance in HOURS_ONLY when Python omits false", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); input.generationMode = "HOURS_ONLY";
+    input.assignments = completeAssignments().map(day => ({ ...day, locked: false }));
+    const payload = completeAssignments();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: payload, message: "Synthetic", wallTimeSeconds: 1 })));
+    expect((await solveEscala(input)).assignments).toStrictEqual(input.assignments);
+    expect(payload.every(day => !("locked" in day))).toBe(true);
+  });
+  it("keeps legacy/manual ambiguity and every disabled protected record exact", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); input.assignments = completeAssignments();
+    const disabled = { ...structuredClone(input.employees[0]), id: "excluded", registration: "02", planningEnabled: false };
+    input.employees.push(disabled);
+    const protectedDays: EscalaInput["assignments"] = [
+      { employeeId: disabled.id, date: "2026-11-02", kind: "ABSENCE" },
+      { employeeId: disabled.id, date: "2026-11-03", kind: "HOLIDAY" },
+      { employeeId: disabled.id, date: "2026-11-04", kind: "WORK", shiftId: "day", locked: true },
+    ];
+    input.assignments.push(...protectedDays);
+    const before = structuredClone(input);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: input.assignments, message: "Synthetic", wallTimeSeconds: 1 })));
+    const refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    try { expect((await solveEscala(input)).assignments).toStrictEqual(input.assignments); expect(input).toStrictEqual(before); }
+    finally { refine.mockRestore(); }
+  });
+  it.each(["inside", "outside", "outside-lock", "selector"] as const)("rejects a manual clock violation at %s", async boundary => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    let value = fixture();
+    value.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    value.employees[0] = withManualShiftOverride(value.employees[0], { catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-11-03", effectiveUntil: "2026-11-04" });
+    value = materializeManualShiftOverrides(value);
+    let assignments = completeAssignments().map(day => day.kind === "WORK" && day.date >= "2026-11-03" && day.date <= "2026-11-04" ? { ...day, shiftId: "catalog-1500" } : day);
+    if (boundary === "inside") assignments = assignments.map(day => day.date === "2026-11-03" ? { ...day, shiftId: "day" } : day);
+    if (boundary === "outside") assignments = assignments.map(day => day.date === "2026-11-05" ? { ...day, shiftId: "catalog-1500" } : day);
+    if (boundary === "outside-lock") assignments = assignments.map(day => day.date === "2026-11-05" ? { ...day, shiftId: "catalog-1500", locked: true } : day);
+    const refinement = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(input => input);
+    const selection = boundary === "selector" ? vi.spyOn(rosterQuality, "selectVerifiedRoster").mockImplementation((_old, proposal) => ({
+      input: { ...proposal, assignments: proposal.assignments.map(day => day.date === "2026-11-03" ? { ...day, shiftId: "day" } : day) }, retainedReference: false,
+    })) : undefined;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments, message: "Synthetic", wallTimeSeconds: 1 })));
+    try { await expect(solveEscala(value)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" }); }
+    finally { selection?.mockRestore(); refinement.mockRestore(); }
+  });
+  it("rechecks disabled holidays after final roster selection", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const data = fixture();
+    data.employees.push({ ...structuredClone(data.employees[0]), id: "excluded", registration: "02", planningEnabled: false });
+    const holiday = { employeeId: "excluded", date: "2026-11-04", kind: "HOLIDAY" as const };
+    data.assignments = [holiday];
+    const response = [...completeAssignments(), holiday];
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: response, message: "Ready", wallTimeSeconds: 1 })));
+    const selection = vi.spyOn(rosterQuality, "selectVerifiedRoster").mockImplementation((_reference, proposal) => ({
+      input: { ...proposal, assignments: proposal.assignments.filter(day => day.employeeId !== "excluded") }, retainedReference: false,
+    }));
+    try { await expect(solveEscala(data)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" }); }
+    finally { selection.mockRestore(); }
+  });
+  it.each(["DAYS_AND_HOURS", "HOURS_ONLY"] as const)("retains disabled protected records in %s and rejects a missing holiday", async mode => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const data = fixture(); data.generationMode = mode;
+    data.employees.push({ ...structuredClone(data.employees[0]), id: "excluded", registration: "02", planningEnabled: false });
+    const retained: EscalaInput["assignments"] = [
+      { employeeId: "excluded", date: "2026-11-02", kind: "ABSENCE" },
+      { employeeId: "excluded", date: "2026-11-03", kind: "ABSENCE", locked: true },
+      { employeeId: "excluded", date: "2026-11-04", kind: "HOLIDAY" },
+      { employeeId: "excluded", date: "2026-11-05", kind: "HOLIDAY", locked: true },
+      { employeeId: "excluded", date: "2026-11-06", kind: "WORK", shiftId: "day", locked: true },
+    ];
+    const ordinary = { employeeId: "excluded", date: "2026-11-07", kind: "WORK" as const, shiftId: "day" };
+    data.assignments = mode === "HOURS_ONLY" ? [...completeAssignments(), ...retained, ordinary] : [...retained, ordinary];
+    const expected = [...completeAssignments(), ...retained, ...(mode === "HOURS_ONLY" ? [ordinary] : [])];
+    const refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    let response = expected;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: response, message: "Ready", wallTimeSeconds: 1 })));
+    try {
+      expect((await solveEscala(data)).assignments).toEqual(mode === "HOURS_ONLY" ? expected : [...completeAssignments().map(day => ({ ...day, locked: false })), ...retained]);
+      response = expected.filter(day => day.employeeId !== "excluded" || day.date !== "2026-11-04");
+      await expect(solveEscala(data)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+      response = expected.map(day => day.employeeId === "excluded" && day.date === "2026-11-04" ? { ...day, kind: "OFF" as const } : day);
+      await expect(solveEscala(data)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+      if (mode === "DAYS_AND_HOURS") {
+        response = [...expected, ordinary];
+        await expect(solveEscala(data)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+      } else {
+        response = expected.map(day => day === ordinary ? { ...day, kind: "OFF" as const, shiftId: undefined } : day);
+        await expect(solveEscala(data)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+      }
+    } finally { refine.mockRestore(); }
+  });
   it.each(["json", "schema", "completeness", "preservation", "validation"] as const)("logs a safe internal %s rejection with the same public failure", async scenario => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const sentinel = "PRIVATE_DIAGNOSTIC_SENTINEL";
@@ -63,7 +155,7 @@ describe("isolated schedule processor client", () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Valid", wallTimeSeconds: 1 })));
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    try { expect((await solveEscala(fixture())).assignments).toEqual(completeAssignments()); expect(log).not.toHaveBeenCalled(); }
+    try { expect((await solveEscala(fixture())).assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false }))); expect(log).not.toHaveBeenCalled(); }
     finally { log.mockRestore(); }
   });
   it("keeps an established draft instead of replacing an unrepaired rest pattern with an unrestricted fallback", async () => {
@@ -240,7 +332,7 @@ describe("isolated schedule processor client", () => {
     if (count === 20) {
       const result = await solveEscala(fixture());
       expect(result.optimization).toEqual(optimization);
-      expect(result.assignments).toEqual(completeAssignments());
+      expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
     } else await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
   });
 
@@ -256,7 +348,7 @@ describe("isolated schedule processor client", () => {
     })));
     const result = await solveEscala(fixture());
     expect(result.optimization).toEqual(optimization);
-    expect(result.assignments).toEqual(completeAssignments());
+    expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
     expect(result.optimization?.phases[1].objective).toBe("SUNDAY_COVERAGE");
   });
 
@@ -341,7 +433,7 @@ describe("isolated schedule processor client", () => {
     data.assignments.push(absence, locked);
     const assignments = [...completeAssignments(), absence, locked];
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments, message: "Pronto", wallTimeSeconds: 1 })));
-    expect((await solveEscala(data)).assignments).toEqual(assignments);
+    expect((await solveEscala(data)).assignments).toEqual([...completeAssignments().map(day => ({ ...day, locked: false })), absence, locked]);
     assignments.push({ employeeId: "learner", date: "2026-11-04", kind: "OFF" });
     await expect(solveEscala(data)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
   });

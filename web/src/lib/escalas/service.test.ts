@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyTurnoSwap, previewTurnoSwap } from "./shift-catalog/swap";
 import type { EscalaInput } from "./types";
 import { createEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala } from "./service";
 import { allowedBranches, branchPermission, escalaActor, requireEscalaPermission } from "./access";
@@ -7,13 +11,15 @@ import { validateEscala } from "./validation";
 import { publishedPlanningContext } from "./continuity";
 import { generationScenarioBasis } from "./hours-reference";
 
+import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
 const mocks = vi.hoisted(() => ({
   workspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   revision: { findUnique: vi.fn(), create: vi.fn() }, grants: { findUnique: vi.fn(), findMany: vi.fn() },
-  audit: { create: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(),
+  audit: { create: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(), catalogEntry: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: mocks.workspace, escalaRevision: mocks.revision, escalaBranchAccess: mocks.grants, auditLog: mocks.audit, $transaction: mocks.transaction } }));
 vi.mock("./solver-client", async (original) => ({ ...await original<typeof import("./solver-client")>(), solveEscala: mocks.solve }));
+vi.mock("./shift-catalog/catalog", () => ({ getTurnoCatalogEntry: mocks.catalogEntry, findTurnoCatalogCode: async () => null }));
 const actor = { tenantId: "company-a", userId: "user-a", admin: true };
 const operator = { ...actor, admin: false };
 
@@ -72,6 +78,95 @@ beforeEach(() => {
 });
 
 describe("canonical scheduling branch service", () => {
+  it("carries real Python-shaped automatic work through client, proposal, save, reload and swap", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "escalas-consumer-")), secret = join(folder, "secret");
+    writeFileSync(secret, "s".repeat(64), { mode: 0o600 });
+    vi.stubEnv("ESCALAS_SOLVER_SECRET_FILE", secret); vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const value = input(); value.assignments = []; value.demands = [];
+    value.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    const pythonDays = generatedInput().assignments;
+    expect(pythonDays.every(day => !("locked" in day))).toBe(true);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: pythonDays, wallTimeSeconds: 1, message: "Synthetic" })));
+    const actual = await vi.importActual<typeof import("./solver-client")>("./solver-client");
+    mocks.solve.mockImplementation(actual.solveEscala); useCurrent(value);
+    try {
+      const generated = await generateEscala(actor, "w1", 1);
+      expect(generated.proposalInput.assignments.filter(day => day.kind === "WORK").every(day => day.locked === false)).toBe(true);
+      expect(pythonDays.every(day => !("locked" in day))).toBe(true);
+      const saved = await saveEscala(actor, "w1", 1, generated.proposalInput);
+      mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 })); mocks.revision.findUnique.mockResolvedValue(version(saved.input, 2));
+      const loaded = await getEscala(actor, "w1");
+      expect(loaded.input.assignments).toEqual(generated.proposalInput.assignments);
+      mocks.catalogEntry.mockResolvedValue({ code: 1500, markings: ["07:00", "11:00", "12:00", "16:24"], name: "Selected" });
+      const preview = await previewTurnoSwap(actor, { workspaceId: "w1", expectedRevision: 2, employeeId: "e1", catalogCode: 1500, effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-27" });
+      expect(preview.canApply).toBe(true); expect(preview.affected.map(day => day.date)).toEqual(["2026-10-27"]);
+      const changed = await applyTurnoSwap(actor, { workspaceId: "w1", expectedRevision: 2, employeeId: "e1", catalogCode: 1500,
+        effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-27", previewId: preview.previewId, confirm: true });
+      expect(changed.revision).toBe(3); expect(changed.input.assignments.find(day => day.date === "2026-10-27")).toMatchObject({ shiftId: preview.affected[0].nextShiftId, locked: false });
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); rmSync(folder, { recursive: true }); }
+  });
+  it("binds a newly saved CSV selection to this actor's catalog before the CAS write", async () => {
+    const value = input(); value.generationMode = "HOURS_ONLY"; value.assignments = []; value.demands = [];
+    value.employees[0].weeklyHoursMode = "BRANCH";
+    value.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    useCurrent(value);
+    const next = materializeManualShiftOverrides({ ...value, employees: [withManualShiftOverride(value.employees[0], {
+      catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-29",
+    })] });
+    mocks.catalogEntry.mockResolvedValue({ code: 1500, markings: ["07:00", "11:00", "12:00", "16:24"], name: "Synthetic" });
+    const saved = await saveEscala(actor, "w1", 1, next);
+    expect(mocks.catalogEntry).toHaveBeenCalledWith(actor, 1500);
+    expect(saved.input.employees[0].manualShiftOverrides).toEqual(next.employees[0].manualShiftOverrides);
+    expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", tenantId: actor.tenantId, revision: 1 } }));
+    mocks.catalogEntry.mockResolvedValue({ code: 1500, markings: ["08:00", "12:00", "13:00", "17:24"], name: "Different tenant/code binding" });
+    await expect(saveEscala(actor, "w1", 1, next)).rejects.toMatchObject({ code: "TURNO_CATALOG_CHANGED" });
+    await expect(createEscala(actor, next)).rejects.toMatchObject({ code: "TURNO_CATALOG_CHANGED" });
+    expect(mocks.workspace.create).not.toHaveBeenCalled();
+    expect(mocks.workspace.updateMany).toHaveBeenCalledTimes(1);
+  });
+  it("honors a partial manual choice on the next CSV generation with a real roster", async () => {
+    let value = generatedInput(); value.generationMode = "HOURS_ONLY"; value.demands = [];
+    value.employees[0].weeklyHoursMode = "BRANCH";
+    value.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    value.employees[0] = withManualShiftOverride(value.employees[0], { catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-28" });
+    value = materializeManualShiftOverrides(value); useCurrent(value);
+    const assignments = value.assignments.map(day => day.kind === "WORK" && day.date >= "2026-10-27" && day.date <= "2026-10-28" ? { ...day, shiftId: "catalog-1500" } : day);
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments, message: "Ready", wallTimeSeconds: 1 });
+    const result = await generateEscala(actor, "w1", 1);
+    expect(result.proposalInput.assignments).toEqual(assignments);
+    expect(result.proposalInput.employees[0].sourceSchedule).toEqual(value.employees[0].sourceSchedule);
+    expect(mocks.solve.mock.calls[0][0].employees[0].manualShiftByDate).toEqual({ "2026-10-27": "catalog-1500", "2026-10-28": "catalog-1500" });
+    expect(mocks.solve.mock.calls[0][0].employees[0].manualShiftBaseIds).toContain("day");
+    expect(result.validation.valid).toBe(true);
+  });
+  it("generates, saves and reloads a dated catalog choice on a CSV reference without a grid", async () => {
+    let value = input(); value.generationMode = "HOURS_ONLY"; value.assignments = []; value.demands = [];
+    value.employees[0].weeklyHoursMode = "BRANCH";
+    value.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "Synthetic CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    value.employees[0] = withManualShiftOverride(value.employees[0], { catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-29" });
+    value = materializeManualShiftOverrides(value); useCurrent(value);
+    const proposal = await generateEscala(actor, "w1", 1);
+    expect(proposal.proposalInput.assignments).toEqual([]);
+    expect(proposal.proposalInput.employees[0].manualShiftByDate).toEqual({ "2026-10-27": "catalog-1500", "2026-10-28": "catalog-1500", "2026-10-29": "catalog-1500" });
+    expect(mocks.solve).not.toHaveBeenCalled();
+    const saved = await saveEscala(actor, "w1", 1, proposal.proposalInput);
+    mocks.revision.findUnique.mockResolvedValue(version(saved.input, 2));
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
+    const loaded = await getEscala(actor, "w1");
+    expect(loaded.input.employees[0].sourceSchedule).toEqual(value.employees[0].sourceSchedule);
+    expect((await generateEscala(actor, "w1", 2)).proposalInput.employees[0].manualShiftByDate).toEqual(proposal.proposalInput.employees[0].manualShiftByDate);
+    expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", tenantId: actor.tenantId, revision: 1 } }));
+  });
+  it("rejects a feasible worker response which ignores an explicit CSV clock", async () => {
+    let value = generatedInput(); value.generationMode = "HOURS_ONLY"; value.demands = [];
+    value.employees[0].weeklyHoursMode = "BRANCH";
+    value.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    value.employees[0] = withManualShiftOverride(value.employees[0], { catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-28" });
+    value = materializeManualShiftOverrides(value); useCurrent(value);
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: value.assignments, message: "Synthetic", wallTimeSeconds: 1 });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
   it.each(["schema", "validation"] as const)("records the service %s boundary without changing its public rejection", async stage => {
     const input = generatedInput(); input.employees[0].name = "PRIVATE_SERVICE_SENTINEL";
     useCurrent(input);

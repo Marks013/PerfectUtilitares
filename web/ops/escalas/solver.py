@@ -10,6 +10,7 @@ from ortools.sat.python import cp_model
 from diagnostics import ConflictRegistry
 from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates, saturday_rest_forbidden
 from leadership import PRIORITY, leadership_objective, leadership_summary, movement_priority
+from model_input import validate_manual_shifts
 from optimization import ImprovementContext, Snapshot, improve, remember
 from rest_quality import build_rest_quality, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
@@ -153,7 +154,7 @@ def retained_disabled_records(data):
     retained = {p['id'] for p in data['employees'] if p.get('planningEnabled') is False}
     preserve_all = data.get('generationMode') == 'HOURS_ONLY'
     return [dict(a) for a in data['assignments'] if a['employeeId'] in retained
-            and (preserve_all or a.get('locked') or a['kind'] == 'ABSENCE')]
+            and (preserve_all or a.get('locked') or a['kind'] in ('ABSENCE', 'HOLIDAY'))]
 
 
 def _saturday_off_forbidden(data, day, old=None):
@@ -170,6 +171,7 @@ def _contract_conflict(started, message):
 def solve(data, control=None):
     """Check preservation contracts before allocating or optimizing any days."""
     started = time.monotonic()
+    validate_manual_shifts(data)
     hours_only = data.get('generationMode') == 'HOURS_ONLY'
     baseline = {(a['employeeId'], a['date']): a for a in data['assignments']}
     if hours_only and len(baseline) != len(data['assignments']):
@@ -295,14 +297,21 @@ def _solve(data, control=None, started=None):
             work[key] = model.new_bool_var(f"w:{pid}:{day}")
             current = {}
             closed = day in closed_dates
-            allowed = reference_shifts
-            if (old and old.get("locked") and old["kind"] == "WORK"
-                    and old.get("shiftId") in person["shiftIds"] and old["shiftId"] not in allowed):
-                # A locked extra is specific to this day, not a new free-day reference.
+            manual = person.get('manualShiftByDate', {}).get(day)
+            # Restrict actual model choices before hours, rest, coverage and hints.
+            # A dated preference does not force WORK or create a lock.
+            allowed = [manual] if manual is not None else reference_shifts
+            if (manual is None and old and old.get("locked") and old["kind"] == "WORK"
+                    and old.get("shiftId") in shifts and old["shiftId"] not in allowed):
+                # An existing explicit lock authorizes only its own local shift/day,
+                # including targets outside the normal base. It never widens other days.
                 allowed = [*allowed, old["shiftId"]]
             for sid in ([] if untimed else allowed):
                 calendar = shift_calendar(sid, day, day in mixed_days)
                 if calendar is None:
+                    # An inadmissible dated target leaves no WORK option. Do not
+                    # substitute a normal shift or reject legitimate non-work;
+                    # mandatory work/coverage will expose a real model conflict.
                     continue
                 occupied, overlaps_closure = calendar
                 current[sid] = model.new_bool_var(f"s:{pid}:{day}:{sid}")
@@ -552,12 +561,16 @@ def _solve(data, control=None, started=None):
     sunday_objective = sum(term for terms in sunday_coverage.values() for term in terms)
     closing_objective = sum(term for terms in closing_coverage.values() for term in terms)
     leader_terms, leader_checks = leadership_objective(model, data, employees, dates, work, values)
-    goals = [("COVERAGE", sum(coverage)), ("REST_SPACING", rest_quality['objective']),
+    goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective),
              ("MOVEMENT_COVERAGE", sum(movement_coverage)),
-             ("SUNDAY_COVERAGE", sunday_objective),
-             ("CLOSING_COVERAGE", closing_objective), ("SUNDAY_BALANCE", sum(sundays)),
-             ("LEADERSHIP", sum(leader_terms)),
+             ("CLOSING_COVERAGE", closing_objective),
+             # Untimed presence/rotation is operational. With unequal Sunday
+             # opportunities, freezing the seed's zero spread can force every
+             # person to stay OFF. Compare fairness only after this recovery.
              ("UNTIMED_ROTATION", sum(untimed_rotation)),
+             ("SUNDAY_BALANCE", sum(sundays)),
+             ("REST_SPACING", rest_quality['objective']),
+             ("LEADERSHIP", sum(leader_terms)),
              ("SATURDAY_BALANCE", sum(saturdays)),
              ("REST_DISTRIBUTION", sum(concentration)), ("REST_ROTATION", sum(rotation)),
              ("PEOPLE_CHANGED", sum(people_changed)), ("STABILITY", sum(stability_terms)),
@@ -596,14 +609,18 @@ def _solve(data, control=None, started=None):
                       for variable in options.values()})
     values, proven, phases = improve(model, [objective for _, objective in goals], values,
                                      started + MAX_SECONDS, [name for name, _ in goals], context=ImprovementContext(control=control,
-                                     protected_groups={goals[0][0]: sundays + saturdays + [sum(terms) for terms in sunday_coverage.values()]
-                                                       + rest_quality['guards']
+                                     # Coverage may leave an equal-but-empty Sunday seed.
+                                     # Fairness guards start only at their own later phase.
+                                     protected_groups={goals[0][0]: [sum(terms) for terms in sunday_coverage.values()]
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
                                                        + [sum(terms) for terms in visible_sector_coverage.values()]
                                                        + [sum(terms) for terms in closing_coverage.values()]
                                                        + [sum(terms) for terms in priority_coverage.values()]
-                                                       + [sum(terms) for terms in daily_coverage.values()]} if goals else {},
+                                                       + [sum(terms) for terms in daily_coverage.values()],
+                                                       'SUNDAY_BALANCE': sundays,
+                                                       'SATURDAY_BALANCE': saturdays,
+                                                       'REST_SPACING': rest_quality['guards']} if goals else {},
                                      employee_groups=list(groups.values()),
                                      untimed_people={person['id'] for person in employees if has_no_clock(person)},
                                      rest_spacing=spacing_people,
@@ -847,7 +864,7 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
-    comparable = {sector for sector, members in sectors.items() if prefer_baseline and sector not in empty_sectors and all(
+    comparable = {sector for sector, members in sectors.items() if prefer_baseline and all(
         (old := source.get((person['id'], day))) is not None
         and (old['kind'] == 'ABSENCE' or (day in holidays or baseline.get((person['id'], day), {}).get('kind') == 'HOLIDAY') == (old['kind'] == 'HOLIDAY'))
         and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])
@@ -878,7 +895,9 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     if remaining and not hours_only:
         proposals.update(balanced_rest_hints(
             remaining, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
-            deadline=deadline, control=control, mixed_people=mixed_people))
+            deadline=deadline, control=control, mixed_people=mixed_people,
+            preserve_work_people={person['id'] for person in remaining
+                                  if person['sector'] not in empty_sectors}))
     for person in employees:
         if person['sector'] in comparable:
             pid = person['id']

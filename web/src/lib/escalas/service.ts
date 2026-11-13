@@ -17,6 +17,7 @@ import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Wee
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
 import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes, workAfterStoreClosing } from "./store-hours";
 
+import { manualAssignmentIssues, manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
   startDate: string; endDate: string; revision: number; status: string; updatedAt: Date;
@@ -33,7 +34,26 @@ function snapshotJson(input: EscalaInput): Prisma.InputJsonValue {
 export function parseEscalaInput(value: unknown): EscalaInput {
   const parsed = escalaInputSchema.safeParse(value);
   if (!parsed.success) throw new EscalaError(400, "ESCALA_INVALID_INPUT", parsed.error.issues.slice(0, 8).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
-  return parsed.data;
+  if (!parsed.data.employees.some(person => person.manualShiftOverrides?.length)) return parsed.data;
+  const materialized = materializeManualShiftOverrides(parsed.data);
+  const checked = escalaInputSchema.safeParse(materialized);
+  if (!checked.success) throw new EscalaError(400, "ESCALA_INVALID_INPUT", checked.error.issues.slice(0, 8).map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
+  return checked.data;
+}
+
+async function assertManualCatalogSelections(actor: EscalaActor, input: EscalaInput, previous?: EscalaInput) {
+  const changed = input.employees.filter(person => JSON.stringify(person.manualShiftOverrides ?? []) !== JSON.stringify(previous?.employees.find(old => old.id === person.id)?.manualShiftOverrides ?? []));
+  if (!changed.some(person => person.manualShiftOverrides?.length)) return;
+  const { getTurnoCatalogEntry } = await import("./shift-catalog/catalog");
+  const checked = new Map<number, readonly string[]>();
+  for (const person of changed) for (const choice of person.manualShiftOverrides ?? []) {
+    let markings = checked.get(choice.catalogCode);
+    if (!markings) {
+      markings = (await getTurnoCatalogEntry(actor, choice.catalogCode)).markings;
+      checked.set(choice.catalogCode, markings);
+    }
+    if (markings.join("|") !== choice.markings.join("|")) throw new EscalaError(422, "TURNO_CATALOG_CHANGED", "As marcações não correspondem ao código no catálogo desta empresa. Atualize a prévia antes de salvar.");
+  }
 }
 
 function view(row: WorkspaceRow, input: EscalaInput, permission: EscalaPermission): EscalaWorkspace {
@@ -84,6 +104,8 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput): Prom
   input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
   const permission = await branchPermission(actor, input.branchCode);
   requireEscalaPermission(permission, "edit");
+  input = materializeManualShiftOverrides(input);
+  await assertManualCatalogSelections(actor, input);
   // Coverage provenance belongs to each row; legacy global review never promotes estimates.
   input = publishedPlanningContext(input, []);
   const row = await prisma.$transaction(async (tx) => {
@@ -226,6 +248,12 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   if (input.branchCode !== current.input.branchCode || input.startDate !== current.input.startDate || input.endDate !== current.input.endDate) {
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
+  input = materializeManualShiftOverrides(input);
+  await assertManualCatalogSelections(actor, input, current.input);
+  const manualReferenceIssue = manualShiftIssues(input)[0];
+  if (manualReferenceIssue) throw new EscalaError(422, manualReferenceIssue.code, manualReferenceIssue.message);
+  const manualAssignmentIssue = manualAssignmentIssues(input)[0];
+  if (manualAssignmentIssue) throw new EscalaError(422, manualAssignmentIssue.code, manualAssignmentIssue.message);
   preserveLockedAssignments(current.input, input, !publish && current.canPublish);
   const scenarioChanged = generationScenarioBasis(current.input) !== generationScenarioBasis(input);
   const preparedProposal = !input.needsRegeneration && input.generationBasis === generationScenarioBasis(input);

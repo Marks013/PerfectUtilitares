@@ -465,11 +465,15 @@ export function Employees({
   disabled,
   onChange,
   review,
+  onSwap,
+  swapDisabled = false,
 }: {
   input: EscalaInput;
   disabled: boolean;
   onChange: (input: EscalaInput) => void;
   review?: EscalaRecoveryRequest;
+  onSwap?: (employee: EscalaEmployee) => void;
+  swapDisabled?: boolean;
 }) {
   const [editing, setEditing] = useState<EscalaEmployee | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -570,6 +574,9 @@ export function Employees({
               <button type="button" className={buttonClass} disabled={disabled} onClick={() => setEditing(employee)}>
                 Editar<span className="sr-only"> {employee.name}</span>
               </button>
+              {onSwap && input.generationMode !== "REST_ONLY" && <button type="button" className={buttonClass} disabled={disabled || swapDisabled} onClick={() => onSwap(employee)}>
+                Trocar turno<span className="sr-only"> de {employee.name}</span>
+              </button>}
               <button
                 type="button"
                 className={buttonClass}

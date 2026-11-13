@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { unzipSync, strFromU8 } from "fflate";
 import { addDays, dateRange, dayOfWeek } from "./dates";
 import { certificateAuthorizes, collectiveExtensionAuthorized, effectiveSundayLimit, effectiveWeeklyHours, legalWeeklyHours, transitionWeeks } from "./labor-rules";
-import { prepareRoster, proposeCoverage } from "./preparation";
+import { prepareRoster, proposeCoverage, refreshProposedWorkBlocks } from "./preparation";
 import { escalaInputSchema } from "./schema";
 import { validateEscala } from "./validation";
 import { exportEscalaXlsx } from "./export";
@@ -32,6 +32,32 @@ const paid = (input: EscalaInput, id: string) => {
   if (!shift) throw new Error("Horário esperado ausente");
   return shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 };
+
+describe("automatic clock repairs", () => {
+  it.each([true, false])("inserts the policy meal at equal duration with block preference %s", blocks => {
+    const value = fixture();
+    const person = value.employees[0];
+    person.sourceSchedule = { report: "FPRE136", code: "X", description: "Synthetic", weekday: "07:00-13:00", saturday: "" };
+    const segments: EscalaInput["shifts"][number]["segments"] = [{ start: 420, end: 924, kind: "WORK" }];
+    let hash = 2166136261;
+    for (const c of JSON.stringify(segments)) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619);
+    const proposal = { id: `prep-${(hash >>> 0).toString(16)}`, name: "Legacy", segments };
+    const original = structuredClone(proposal);
+    const repaired = refreshProposedWorkBlocks(person, proposal, blocks, 1080, 60, 120);
+    expect(repaired.segments.filter(s => s.kind === "BREAK")).toEqual([{ start: 672, end: 732, kind: "BREAK" }]);
+    expect(repaired.segments.at(-1)?.end).toBe(984);
+    expect(refreshProposedWorkBlocks(person, repaired, blocks, 1080, 60, 120)).toEqual(repaired);
+    expect(proposal).toEqual(original);
+    expect(refreshProposedWorkBlocks(person, { ...proposal, id: "manual" }, blocks, 1080, 60, 120)).toEqual({ ...proposal, id: "manual" });
+    expect(refreshProposedWorkBlocks(person, proposal, blocks, 540, 60, 120)).toEqual(proposal);
+  });
+  it("retains an unlocked holiday and absence during explicit roster preparation", () => {
+    const value = fixture();
+    value.assignments = [{ employeeId: "p1", date: value.startDate, kind: "HOLIDAY" },
+      { employeeId: "p1", date: addDays(value.startDate, 1), kind: "ABSENCE" }];
+    expect(prepareRoster(value, 42).assignments).toEqual(value.assignments);
+  });
+});
 
 describe("dated legal limits and one-file planning", () => {
   it.each([["2026-12-15", 44], ["2026-12-16", 42], ["2027-12-15", 42], ["2027-12-16", 40]] as const)("uses the weekly ceiling on %s", (day, hours) => {

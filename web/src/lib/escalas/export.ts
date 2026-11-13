@@ -3,7 +3,10 @@ import { strToU8, zipSync } from "fflate";
 import { holidayLabel } from "./calendar";
 import type { EscalaInput, EscalaWorkspace } from "./types";
 import { compareSectors, sortScheduleEntries } from "./order";
-import { analyzeCoverage, type CoverageAnalysis, type CoverageDemandMetrics, type CoverageSectorAnalysis } from "./coverage-analysis";
+import { analyzeCoverage, type CoverageAnalysis, type CoverageSectorAnalysis } from "./coverage-analysis";
+import { buildCoverageReport } from "./coverage-report";
+import type { CoverageReport } from "./coverage-report-contracts";
+import { coverageObservation, coverageReportRows } from "./operational-report";
 import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
 import { mixedWeeklyApplication } from "./mixed-week-report";
 import { storeClosingLabel } from "./store-hours";
@@ -148,7 +151,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const weekly = hourly.some(row => row.application);
   const analysis = referencesOnly || mode === "rest" ? null : analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", details: true });
   const capacities = analysis?.sectors ?? [];
-  const coverage = coverageReport(analysis);
+  const coverage = coverageReport(analysis ? buildCoverageReport(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", context: { revision: workspace.revision, kind: "SAVED" } }) : null, workspace.input);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const mixedNotice = referencesOnly ? "" : mixed42ExportNotice(workspace.input);
@@ -178,8 +181,8 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     }
     hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, durationCell(row.daily), ...(weekly ? [row.application] : [])]);
   }
-  const gaps = [...metadata("Desfalques de cobertura", "Trabalho com horário. Referências confirmada e estimada independentes."),
-    ["Setor", "Referência", "Maior desfalque (pessoas)", "Dia do maior desfalque", "Horário do maior desfalque", "Falta acumulada (horas da equipe)", "Dias com alerta", "Dias com faixa sem equipe com horário"],
+  const gaps = [...metadata("Desfalques de cobertura", "Trabalho com horário. Origem estimada: base persistida. Referências confirmada e estimada independentes."),
+    ["Setor", "Origem", "Previstas com horário (pessoas)", "Referência (pessoas)", "Maior desfalque (pessoas)", "Dia do maior desfalque", "Horário do maior desfalque", "Duração da faixa", "Dias com falta no período", "Falta acumulada (horas da equipe)", "Tempo com falta no período", "Observado no pico"],
     ...coverage.map(coverageReportCells)];
   const capacity = [...metadata("Capacidade nominal por setor", "Nominal semanal; horas WORK apuradas no período."),
     ["Setor", "Pessoas com origem", "Origem nominal", "Referência (h/sem)", "Cenário 42h (h/sem)", "Cenário 40h (h/sem)", "Atual (h/sem)", "Dif. no cenário escolhido (h/sem)", "Equiv. nominal (adicional)", "WORK conhecido (h no período)", "Crédito WORK e pausa paga (h no período)", "Sem relógio (pessoas)", "Sem relógio (pessoas-dia)"],
@@ -203,7 +206,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [18, 9, 25, 18, 28, ...model.dates.map(() => 5.25)], grid: true, sectors: sectors.main }] : []),
     ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [18, 9, 26, 19, 8, 32, 20, 12, ...(weekly ? [43] : [])], grid: false, sectors: sectors.hours }] : []),
     ...(capacities.length ? [{ name: "Capacidade", frozenColumns: 1, rows: capacity, widths: [22, 12, 27, 16, 16, 16, 18, 20, 23, 20, 22, 14, 16], grid: false, sectors: [] as number[] }] : []),
-    ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 2, rows: gaps, widths: [22, 18, 19, 20, 22, 24, 25, 29], grid: false, sectors: sectors.gaps }] : []),
+    ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 2, rows: gaps, widths: [18, 12, 10, 10, 10, 14, 17, 10, 10, 17, 15, 24], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
   // Excel filters and sorting need contiguous records, not merged sector separator rows.
@@ -248,29 +251,24 @@ function nominalReportText(row: CoverageSectorAnalysis, input: EscalaInput): str
     + `WORK conhecido no período: ${escalaDuration(row.knownWorkPersonMinutes)}. Sem relógio: ${row.withoutClockPeople} pessoa(s).`;
 }
 
-type CoverageReportRow = { sector: string; ruler: "confirmed" | "estimated" | null; metrics: CoverageDemandMetrics | null; data: CoverageSectorAnalysis };
+type CoverageReportRow = CoverageReport["rows"][number];
 
-/** Format the central analysis only. Each independent ruler retains its own peak and person-minutes. */
-function coverageReport(analysis: CoverageAnalysis | null): CoverageReportRow[] {
-  return (analysis?.sectors ?? []).flatMap<CoverageReportRow>(data => {
-    const rulers = (["confirmed", "estimated"] as const).filter(ruler => (data[ruler]?.requiredPersonMinutes ?? 0) > 0);
-    if (rulers.length) return rulers.map(ruler => ({ sector: data.sector, ruler, metrics: data[ruler], data }));
-    return data.details?.some(slice => slice.presentKnown === 0 && slice.unknownPeople === 0 && (slice.confirmed !== null || slice.estimated !== null))
-      ? [{ sector: data.sector, ruler: null, metrics: null, data }] : [];
-  });
+/** Targets and metrics come from F07. Do not create a coverage section for sectors with no target. */
+function coverageReport(report: CoverageReport | null, input: EscalaInput): CoverageReportRow[] {
+  const dates = new Set(report?.context.dates ?? []);
+  const targeted = new Set(input.demands.filter(demand => dates.has(demand.date)).map(demand => demand.sector));
+  return coverageReportRows(report).filter(row => (row.requiredPersonMinutes ?? 0) > 0 || targeted.has(row.sector));
 }
 
 function coverageReportCells(row: CoverageReportRow): SpreadsheetCell[] {
-  const metrics = row.metrics, peak = metrics?.peakWindow;
-  const rulerKey = row.ruler;
-  const alerts = rulerKey ? (row.data.details ?? []).filter(slice => (slice[rulerKey]?.missing ?? 0) > 0).map(slice => slice.date) : [];
-  const noWork = (row.data.details ?? []).filter(slice => slice.presentKnown === 0 && slice.unknownPeople === 0 && (slice.confirmed !== null || slice.estimated !== null)).map(slice => slice.date);
-  const ruler = row.ruler === "confirmed" ? "Confirmada" : row.ruler === "estimated" ? "Estimada" : "Sem referência";
-  return [row.sector || "Não informado", ruler + (metrics?.peakMissing === null ? " · parcial" : ""),
-    metrics?.peakMissing ?? "—", peak ? dateCell(peak.date) : "—",
+  const peak = row.peak;
+  const ruler = row.requiredPersonMinutes === 0 ? "Sem referência" : row.ruler === "CONFIRMED" ? "Confirmada" : "Estimada";
+  const duration = (minutes: number | null): SpreadsheetCell => minutes === null ? "—" : { value: minutes / 1440, format: "duration" };
+  return [row.sector || "Não informado", ruler + (row.status === "UNKNOWN" ? " · parcial" : ""),
+    peak?.presentTimed ?? "—", peak?.required ?? (row.status === "NO_REFERENCE" ? 0 : "—"),
+    peak?.missing ?? (row.status === "COVERED" ? 0 : "—"), peak ? dateCell(peak.date) : "—",
     peak ? `${escalaDuration(peak.start)}-${escalaDuration(peak.end)}` : "—",
-    metrics?.deficitPersonMinutes === null || metrics?.deficitPersonMinutes === undefined ? "—" : { value: metrics.deficitPersonMinutes / 1440, format: "duration" },
-    compactDates(alerts) || "—", compactDates(noWork) || "—"];
+    duration(peak?.durationMinutes ?? null), row.daysWithGap ?? "—", duration(row.deficitPersonMinutes), duration(row.minutesWithGap), coverageObservation(row)];
 }
 
 function safePdfText(text: string, font: PDFFont) {
@@ -297,19 +295,6 @@ function wrapText(text: string, width: number, font: PDFFont, size: number): str
   return result;
 }
 
-/** Group contiguous civil dates without hiding a missing day or crossing an unknown range. */
-function compactDates(dates: string[]): string {
-  const sameMonth = new Set(dates.map(date => date.slice(0, 7))).size === 1;
-  const label = (date: string) => sameMonth ? date.slice(8) : escalaDateLabel(date).split(" ")[0];
-  const groups: string[][] = [];
-  for (const date of [...new Set(dates)].sort()) {
-    const last = groups.at(-1), previous = last?.at(-1);
-    if (last && previous && Date.parse(date + "T00:00:00Z") - Date.parse(previous + "T00:00:00Z") === 86400000) last.push(date);
-    else groups.push([date]);
-  }
-  return groups.map(group => group.length > 1 ? label(group[0]) + "–" + label(group.at(-1) as string) : label(group[0])).join(", ");
-}
-
 type PdfLayout = { separateSectors?: boolean };
 
 export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both", { separateSectors = true }: PdfLayout = {}): Promise<Uint8Array> {
@@ -319,8 +304,8 @@ export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaEx
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
   const model = buildEscalaPresentation(workspace);
   const analysis = referencesOnly || mode === "rest" ? null : analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", details: true });
-  const coverage = coverageReport(analysis);
-  const sectors = [...new Set([...(mode === "rest" ? model.restPeople : model.people).map(({ employee }) => employee.sector),
+  const coverage = coverageReport(analysis ? buildCoverageReport(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", context: { revision: workspace.revision, kind: "SAVED" } }) : null, workspace.input);
+  const sectors = [...new Set([...(mode === "rest" ? model.restPeople : [...model.people, ...model.hoursPeople]).map(({ employee }) => employee.sector),
     ...model.excluded.map(({ employee }) => employee.sector), ...coverage.map(row => row.sector)])].sort(compareSectors);
   if (separateSectors && sectors.length) {
     for (const sector of sectors) {
@@ -469,7 +454,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     });
     y -= rowHeight;
   }
-  if (!grouped && !model.people.length) paragraph("Nenhum colaborador incluído nesta proposta.");
+  if (!grouped && !model.people.length && (mode === "rest" || !model.hoursPeople.length)) paragraph("Nenhum colaborador incluído nesta proposta.");
   if (mode !== "rest" && (!grouped || hourly.length)) {
     reportTitle = referencesOnly ? "Referências de horários" : "Escala de horários";
     if (mode === "both" && !grouped) newPage(false);
@@ -515,20 +500,28 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
   }
   if (coverage.length) {
     reportTitle = "Desfalques de cobertura";
-    const widths = [0.16, 0.10, 0.11, 0.11, 0.13, 0.12, 0.13, 0.14].map(ratio => (width - 2 * margin) * ratio);
-    const headings = ["Setor", "Referência", "Maior desfalque (pessoas)", "Dia do maior desfalque", "Horário do maior desfalque", "Falta acumulada (horas da equipe)", "Dias com alerta", "Dias com faixa sem equipe com horário"];
+    const widths = [0.20, 0.19, 0.10, 0.10, 0.07, 0.10, 0.09, 0.15].map(ratio => (width - 2 * margin) * ratio);
+    const headings = ["Setor / origem", "Dia do maior desfalque / horário", "Previstas com horário", "Referência (pessoas)", "Maior desfalque (pessoas)", "Duração da faixa", "Dias com falta no período", "Falta acumulada (horas da equipe)"];
     const tableHeader = () => tableHeadings(headings, widths);
     const continuation = () => { newPage(false); tableHeader(); };
     const rows = coverage.map(row => {
-      const cells = coverageReportCells(row).map(spreadsheetText);
+      const data = coverageReportCells(row).map(spreadsheetText);
+      const cells = [`${data[0]}\n${data[1]}`, `${data[5]}\n${data[6]}`, data[2], data[3], data[4], data[7], data[8], data[9]];
       return cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8)));
     });
-    const introHeight = sectionHeight(reportTitle) + cellHeight(headerLines(headings, widths));
-    if (!grouped || y - introHeight - firstRowHeight(rows[0]) < 45) newPage(false);
+    const observations = coverage.map(row => `Observado: ${coverageObservation(row)}. Tempo com falta no período: ${spreadsheetText(coverageReportCells(row)[10])}.`);
+    const origin = `Referência estimada da base persistida, revisão ${workspace.revision}. Quantidades previstas; falta pode incluir funções.`;
+    const introHeight = sectionHeight(reportTitle) + textHeight(origin, 8) + cellHeight(headerLines(headings, widths));
+    const firstBlockHeight = firstRowHeight(rows[0]) + textHeight(observations[0], 8) + 8;
+    if (!grouped || y - introHeight - firstBlockHeight < 45) newPage(false);
     section(reportTitle);
+    paragraph(origin, 8);
     tableHeader();
-    for (const lines of rows) {
+    for (const [index, lines] of rows.entries()) {
+      const observation = observations[index];
+      if (y - cellHeight(lines) - textHeight(observation, 8) - 8 < 45) continuation();
       paginatedRow(lines, widths, 8, index => index === 0, continuation);
+      paragraph(observation, 8);
     }
   }
 }

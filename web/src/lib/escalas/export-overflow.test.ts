@@ -51,12 +51,12 @@ describe("large but valid operational reports", () => {
         const hasDataOn = (heading: string, matches: (text: string) => boolean) => {
           const headers = drawn.filter(item => item.text === heading);
           expect(headers.length).toBeGreaterThan(0);
-          expect(headers.every(header => drawn.some(item => item.page === header.page && item.y < header.y && item.y >= 45 && matches(item.text)))).toBe(true);
+          expect(headers.every(header => drawn.some(item => item.page === header.page && item.y < header.y && item.y >= 45 && matches(item.text))), JSON.stringify(headers.map(header => ({ heading, y: header.y, values: drawn.filter(item => item.page === header.page && item.y < header.y).map(item => item.text).filter(text => /^(Estimada|32|Referência|Origem|\\d\\d:\\d\\d)/.test(text)).slice(0,12) })))).toBe(true);
         };
         hasDataOn("Horário proposto", text => text.includes("08:00-12:00 /"));
-        hasDataOn("Maior desfalque", text => text === "Estimada");
-        hasDataOn("Maior desfalque", text => text === "32");
-        hasDataOn("Maior desfalque", text => text === "08:00-12:00");
+        hasDataOn("Setor / origem", text => text === "Estimada");
+        hasDataOn("Setor / origem", text => text === "32");
+        hasDataOn("Setor / origem", text => text === "08:00-12:00");
         expect(drawn.filter(item => item.y < 16)).toEqual([]);
         expect(input).toEqual(before);
       }
@@ -128,18 +128,18 @@ describe("large but valid operational reports", () => {
     const bytes = exportEscalaXlsx(workspace, "hours");
     const rows = await readSheet(Buffer.from(bytes), "Desfalques");
     expect(rows.slice(4).map(row => row[0])).toEqual([...requiredSectors, "Setor"]);
-    expect(rows[3]).toHaveLength(8);
-    expect(rows.slice(4).every(row => row.length === 8 && row[6] === "01–30")).toBe(true);
+    expect(rows[3]).toHaveLength(12);
+    expect(rows.slice(4).every(row => row.length === 12 && row[8] === 30)).toBe(true);
     for (const [index, sector] of requiredSectors.entries()) {
       const row = rows[index + 4], analysis = central.sectors.find(item => item.sector === sector)?.confirmed;
       if (!analysis) throw new Error(`Mandatory analysis missing for ${sector}`);
-      expect(row[1]).toBe("Confirmada"); expect(row[2]).toBe(index + 1);
-      expect(exportedDateISO(row[3])).toBe("2026-11-01"); expect(row[4]).toBe("17:30-18:00");
+      expect(row[1]).toBe("Confirmada"); expect(row[2]).toBe(0); expect(row[3]).toBe(index + 1); expect(row[4]).toBe(index + 1);
+      expect(exportedDateISO(row[5])).toBe("2026-11-01"); expect(row[6]).toBe("17:30-18:00");
       expect(analysis.requiredPersonMinutes).toBe(900 * (index + 1));
       expect(analysis.deficitPersonMinutes).toBe(900 * (index + 1));
     }
-    expect(rows[12][1]).toBe("Estimada"); expect(rows[12][2]).toBe(32);
-    expect(exportedDateISO(rows[12][3])).toBe("2026-11-01"); expect(rows[12][4]).toBe("12:00-12:05");
+    expect(rows[12][1]).toBe("Estimada"); expect(rows[12][2]).toBe(0); expect(rows[12][3]).toBe(32); expect(rows[12][4]).toBe(32);
+    expect(exportedDateISO(rows[12][5])).toBe("2026-11-01"); expect(rows[12][6]).toBe("12:00-12:05");
     expect(central.sectors.find(item => item.sector === "Setor")?.estimated?.deficitPersonMinutes).toBe(28800);
     const files = unzipSync(bytes);
     const summaryId = [...strFromU8(files["xl/workbook.xml"]).matchAll(/<sheet name="([^"]+)" sheetId="(\d+)"/g)].find(match => match[1] === "Desfalques")?.[2];
@@ -156,7 +156,7 @@ describe("large but valid operational reports", () => {
     expect(durationIds.size).toBe(1); expect(durationIds.has(undefined)).toBe(false);
     for (const [index, row] of rows.slice(4).entries()) {
       // Read the numeric Excel duration directly: a Date time-of-day would lose accumulated days.
-      const duration = summaryXml.match(new RegExp(`<c r="F${index + 5}" s="(\\d+)"><v>([\\d.eE+-]+)</v></c>`));
+      const duration = summaryXml.match(new RegExp(`<c r="J${index + 5}" s="(\\d+)"><v>([\\d.eE+-]+)</v></c>`));
       if (!duration) throw new Error(`Numeric shortage duration missing for row ${index + 5}`);
       const style = formats[Number(duration[1])], formatId = style?.match(/\bnumFmtId="(\d+)"/)?.[1];
       if (!style || !formatId) throw new Error(`Cell style missing for row ${index + 5}`);

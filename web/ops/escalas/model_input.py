@@ -59,6 +59,38 @@ def _assignments(entries, path, maximum, employee_ids, shift_ids, scoped=False):
             _require("shiftId" not in entry, prefix + ".shiftId")
 
 
+def validate_manual_shifts(data):
+    """Validate dated local IDs without echoing map keys or employee values."""
+    if not any('manualShiftByDate' in person for person in data['employees']):
+        return
+    shift_ids = {shift['id'] for shift in data['shifts']}
+    locked_work = {}
+    for entry in data['assignments']:
+        if entry.get('locked') and entry['kind'] == 'WORK':
+            locked_work.setdefault((entry['employeeId'], entry['date']), set()).add(entry['shiftId'])
+    for index, person in enumerate(data['employees']):
+        if 'manualShiftByDate' not in person:
+            continue
+        prefix = f'employees[{index}].manualShiftByDate'
+        selection = _object(person['manualShiftByDate'], prefix)
+        _require(len(selection) <= 42, prefix, 'TOO_MANY_ITEMS')
+        _require(not selection or person.get('scheduleMode') not in ('UNTIMED', 'MISSING'),
+                 prefix, 'MANUAL_SHIFT_REQUIRES_TIMED_EMPLOYEE')
+        for offset, (day, sid) in enumerate(selection.items()):
+            place = f'{prefix}[{offset}]'
+            _date(day, place + '.date')
+            _require(data['startDate'] <= day <= data['endDate'], place + '.date', 'OUTSIDE_HORIZON')
+            _require(person['activeFrom'] <= day
+                     and (not person.get('activeUntil') or day <= person['activeUntil']),
+                     place + '.date', 'OUTSIDE_EMPLOYMENT')
+            _identifier(sid, place + '.shiftId')
+            _require(sid in shift_ids, place + '.shiftId', 'UNKNOWN_REFERENCE')
+            # The dated map authorizes this local target only on this day.
+            # shiftIds remains the normal base; never widen it for manual choices.
+            locked = locked_work.get((person['id'], day), set())
+            _require(not locked or locked == {sid}, place + '.shiftId', 'MANUAL_SHIFT_LOCK_CONFLICT')
+
+
 def validate_model_input(data):
     data = _object(data, "input")
     _date(data.get("startDate"), "startDate")
@@ -143,6 +175,7 @@ def validate_model_input(data):
     _assignments(data.get("assignments"), "assignments", 10500, employee_ids, shift_ids)
     if "_initialAssignments" in data:
         _assignments(data["_initialAssignments"], "_initialAssignments", 10500, employee_ids, shift_ids)
+    validate_manual_shifts(data)
     for index, priority in enumerate(_array(data.get("movementPriorities", []), "movementPriorities", 250)):
         prefix = f"movementPriorities[{index}]"
         priority = _object(priority, prefix)
