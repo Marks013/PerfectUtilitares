@@ -108,7 +108,8 @@ class RestSpacingTests(unittest.TestCase):
             if total == 10.0:
                 self.assertAlmostEqual(allocations[0], 5.5)
             elif total == 4.0:
-                self.assertTrue(all(b + 1e-9 >= MIN_PHASE_BUDGET for b in allocations))
+                self.assertTrue(all(b + 1e-9 >= MIN_PHASE_BUDGET for b in allocations[:-4]))
+                self.assertEqual(allocations[-4:], [0, 0, 0, 0])
             else:
                 self.assertGreater(allocations[names.index('UNTIMED_ROTATION')], 0)
                 self.assertGreater(allocations[names.index('LEADERSHIP')], 0)

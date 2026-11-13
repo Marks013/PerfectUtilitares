@@ -185,7 +185,7 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
           .flatMap(day => (day.windows ?? []).map(window => [`${escalaDuration(window.start)}-${escalaDuration(window.end)}`, String(window.counts.presentTimed), String(window.counts.pause), String(window.counts.workWithoutClock + window.counts.duty)])), [1.5, 1, 1, 1.2]);
       }
       if (section === "coverage") {
-        paragraph("Referências independentes. Falta pode ser limitada por funções, além da quantidade de pessoas.");
+        paragraph(`Referência estimada dos horários importados, revisão ${model.revision}.`);
         if (model.coverage) {
           const basis = model.coverage.context.basis;
           const states = { VALID: "válida", MISSING: "ausente", STALE: "desatualizada", NOT_REQUIRED: "sem referência estimada" };
@@ -195,16 +195,16 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
         if (!rows.length) paragraph("Sem referência de cobertura disponível.");
         for (const row of rows) {
           const peak = row.peak;
-          table(["Origem", "Dia / faixa", "Previstas com horário", "Referência", "Falta", "Duração", "Dias com falta", "Falta acumulada"], [[
+          table(["Referência", "Data / faixa do pico", "Escalados na faixa", "Referência na faixa", "Maior falta simultânea", "Duração do pico", "Dias com falta em algum horário", "Horas de equipe em falta no mês"], [[
             row.requiredPersonMinutes === 0 ? "Sem referência positiva" : row.label, peak ? `${escalaDateLabel(peak.date)}\n${escalaDuration(peak.start)}-${escalaDuration(peak.end)}` : "Sem ocorrência apurada",
             peak ? String(peak.presentTimed) : "—", peak ? String(peak.required) : "—", peak ? String(peak.missing) : row.status === "COVERED" ? "0" : "—",
             peak ? duration(peak.durationMinutes) : "—", row.daysWithGap === null ? "Não apurado" : String(row.daysWithGap), duration(row.deficitPersonMinutes),
           ]], [1.7, 1.5, 1, 1, 0.7, 0.9, 1, 1.2]);
-          paragraph("Observado: " + coverageObservation(row) + ". Tempo com falta no período: " + duration(row.minutesWithGap) + ".");
+          paragraph("Na faixa do pico: " + coverageObservation(row).replace("Pausa:", "Intervalo:").replace("OFF:", "Folga:").replace("Sem relógio:", "Sem horário definido:") + ". Duração somada das faixas com falta: " + duration(row.minutesWithGap) + ".");
           if (peak) {
             const scale = Math.max(1, peak.required, peak.presentTimed), barWidth = available - 170;
             if (y - 55 < 45) newPage();
-            text("No pico: previstas", margin, y); page.drawRectangle({ x: margin + 140, y: y - 3, width: peak.presentTimed / scale * barWidth, height: 10, color: rgb(0.14, 0.23, 0.33) }); y -= 20;
+            text("Escalados na faixa", margin, y); page.drawRectangle({ x: margin + 140, y: y - 3, width: peak.presentTimed / scale * barWidth, height: 10, color: rgb(0.14, 0.23, 0.33) }); y -= 20;
             text("Referência", margin, y); page.drawRectangle({ x: margin + 140, y: y - 3, width: peak.required / scale * barWidth, height: 10, color: rgb(0.62, 0.73, 0.86) }); y -= 25;
           }
         }

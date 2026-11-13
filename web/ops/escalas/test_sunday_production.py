@@ -183,6 +183,9 @@ class ProductionSundayTests(unittest.TestCase):
         for index, name in enumerate(names):
             budget = _phase_budget(remaining, names, index)
             allocations[name] = budget
+            if name in ('PEOPLE_CHANGED', 'STABILITY', 'PREFERENCES', 'TIE_BREAK'):
+                self.assertEqual(budget, 0)  # Operational grants were fully consumed.
+                continue
             self.assertGreaterEqual(budget + 1e-9, MIN_PHASE_BUDGET, name)
             # Full allocation consumption, including up to one search-floor
             # worth of preparation, must leave a usable CP allowance.
@@ -218,7 +221,7 @@ class ProductionSundayTests(unittest.TestCase):
 
     def test_actual_improve_consumes_phase_budgets_without_claiming_unknown_as_optimized(self):
         names = production_goal_names()
-        for total, expected_count in ((10.0, len(names)), (2.0, 10), (.19, 0)):
+        for total, expected_count in ((10.0, len(names) - 4), (2.0, 10), (.19, 0)):
             model = cp_model.CpModel()
             gap = model.new_bool_var('gap')
             initial = {gap.index: 1}

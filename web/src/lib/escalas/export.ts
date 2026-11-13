@@ -180,8 +180,8 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     }
     hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, durationCell(row.daily), ...(weekly ? [row.application] : [])]);
   }
-  const gaps = [...metadata("Desfalques de cobertura", "Trabalho com horário. Origem estimada: base persistida. Referências confirmada e estimada independentes."),
-    ["Setor", "Origem", "Previstas com horário (pessoas)", "Referência (pessoas)", "Maior desfalque (pessoas)", "Dia do maior desfalque", "Horário do maior desfalque", "Duração da faixa", "Dias com falta no período", "Falta acumulada (horas da equipe)", "Tempo com falta no período", "Observado no pico"],
+  const gaps = [...metadata("Faltas por faixa de horário", "Comparação estimada com horários importados. Pico e totais do mês são medidas diferentes."),
+    ["Setor", "Origem da referência", "Escalados na faixa (pessoas)", "Referência na faixa (pessoas)", "Maior falta simultânea (pessoas)", "Data do pico", "Faixa do pico", "Duração do pico", "Dias com falta em algum horário", "Horas de equipe em falta no mês", "Duração somada das faixas com falta", "Situação na faixa do pico"],
     ...coverage.map(coverageReportCells)];
   const capacity = [...metadata("Capacidade nominal por setor", "Nominal semanal; horas WORK apuradas no período."),
     ["Setor", "Pessoas com origem", "Origem nominal", "Referência (h/sem)", "Cenário 42h (h/sem)", "Cenário 40h (h/sem)", "Atual (h/sem)", "Dif. no cenário escolhido (h/sem)", "Equiv. nominal (adicional)", "WORK conhecido (h no período)", "Crédito WORK e pausa paga (h no período)", "Sem relógio (pessoas)", "Sem relógio (pessoas-dia)"],
@@ -264,7 +264,7 @@ function coverageReportCells(row: CoverageReportRow): SpreadsheetCell[] {
     peak?.presentTimed ?? "—", peak?.required ?? (row.status === "NO_REFERENCE" ? 0 : "—"),
     peak?.missing ?? (row.status === "COVERED" ? 0 : "—"), peak ? dateCell(peak.date) : "—",
     peak ? `${escalaDuration(peak.start)}-${escalaDuration(peak.end)}` : "—",
-    duration(peak?.durationMinutes ?? null), row.daysWithGap ?? "—", duration(row.deficitPersonMinutes), duration(row.minutesWithGap), coverageObservation(row)];
+    duration(peak?.durationMinutes ?? null), row.daysWithGap ?? "—", duration(row.deficitPersonMinutes), duration(row.minutesWithGap), coverageObservation(row).replace("Pausa:", "Intervalo:").replace("OFF:", "Folga:").replace("Sem relógio:", "Sem horário definido:")];
 }
 
 function safePdfText(text: string, font: PDFFont) {
@@ -497,7 +497,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
   if (coverage.length) {
     reportTitle = "Desfalques de cobertura";
     const widths = [0.20, 0.19, 0.10, 0.10, 0.07, 0.10, 0.09, 0.15].map(ratio => (width - 2 * margin) * ratio);
-    const headings = ["Setor / origem", "Dia do maior desfalque / horário", "Previstas com horário", "Referência (pessoas)", "Maior desfalque (pessoas)", "Duração da faixa", "Dias com falta no período", "Falta acumulada (horas da equipe)"];
+    const headings = ["Setor / referência", "Data / faixa do pico", "Escalados na faixa", "Referência na faixa", "Maior falta simultânea (pessoas)", "Duração do pico", "Dias com falta em algum horário", "Horas de equipe em falta no mês"];
     const tableHeader = () => tableHeadings(headings, widths);
     const continuation = () => { newPage(false); tableHeader(); };
     const rows = coverage.map(row => {
@@ -505,8 +505,8 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
       const cells = [`${data[0]}\n${data[1]}`, `${data[5]}\n${data[6]}`, data[2], data[3], data[4], data[7], data[8], data[9]];
       return cells.map((cell, index) => cell.split("\n").flatMap(part => wrapText(part, widths[index] - 7, index === 0 ? bold : font, 8)));
     });
-    const observations = coverage.map(row => `Observado: ${coverageObservation(row)}. Tempo com falta no período: ${spreadsheetText(coverageReportCells(row)[10])}.`);
-    const origin = `Referência estimada da base persistida, revisão ${workspace.revision}. Quantidades previstas; falta pode incluir funções.`;
+    const observations = coverage.map(row => `Na faixa do pico: ${coverageReportCells(row)[11]}. Duração somada das faixas com falta: ${spreadsheetText(coverageReportCells(row)[10])}.`);
+    const origin = `Referência estimada dos horários importados, revisão ${workspace.revision}.`;
     const introHeight = sectionHeight(reportTitle) + textHeight(origin, 8) + cellHeight(headerLines(headings, widths));
     const firstBlockHeight = firstRowHeight(rows[0]) + textHeight(observations[0], 8) + 8;
     if (!grouped || y - introHeight - firstBlockHeight < 45) newPage(false);

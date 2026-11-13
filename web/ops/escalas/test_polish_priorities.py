@@ -113,14 +113,16 @@ class SingletonRepairTests(unittest.TestCase):
 
 
 class RepairOrderTests(unittest.TestCase):
-    def test_large_sector_keeps_each_operational_priority_above_a_small_union(self):
+    def test_magnitude_precedes_empty_days_with_sunday_and_empty_tiebreaks(self):
         cases = [
-            ('EMPTY_SUNDAY', '2026-11-08', 0, 1, 0, 0, 0, 1000),
-            ('EMPTY_WEEKDAY', '2026-11-04', 0, 1, 0, 100, 0, 1000),
-            ('SUNDAY_DEFICIT', '2026-11-08', 1, 1, 100, 1, 100, 1000),
-            ('TOTAL_DEFICIT', '2026-11-04', 1, 1, 0, 0, 100, 10),
+            ('TOTAL_BEFORE_EMPTY_SUNDAY', '2026-11-08', 0, 1, 0, 0, 0, 1000, False),
+            ('TOTAL_BEFORE_EMPTY_WEEKDAY', '2026-11-04', 0, 1, 0, 100, 0, 1000, False),
+            ('TOTAL_BEFORE_SUNDAY_DEFICIT', '2026-11-08', 1, 1, 100, 1, 100, 1000, False),
+            ('TOTAL_DEFICIT', '2026-11-04', 1, 1, 0, 0, 100, 10, True),
+            ('SUNDAY_TIEBREAK', '2026-11-08', 1, 1, 100, 1, 1000, 1000, True),
+            ('EMPTY_TIEBREAK', '2026-11-08', 0, 1, 0, 0, 1000, 1000, True),
         ]
-        for name, day, large_work, small_work, large_sunday, small_sunday, large_gap, small_gap in cases:
+        for name, day, large_work, small_work, large_sunday, small_sunday, large_gap, small_gap, large_first in cases:
             with self.subTest(priority=name):
                 data = fixture(42, people=11)
                 model = cp_model.CpModel()
@@ -134,8 +136,9 @@ class RepairOrderTests(unittest.TestCase):
                 groups = _rest_repair_groups(data['employees'], [day], work, {}, values, data['policy'], demands,
                     sector_shortages={'Maior': [large_gap], 'Menor': [small_gap]},
                     sunday_shortages={'Maior': [large_sunday], 'Menor': [small_sunday]})
-                self.assertEqual(groups[0], large)
-                self.assertEqual(groups[1], {person['id'] for person in data['employees'][9:]})
+                small = {person['id'] for person in data['employees'][9:]}
+                self.assertEqual(groups[0], large if large_first else small)
+                self.assertEqual(groups[1], small if large_first else large)
 
     def test_four_group_cap_does_not_displace_a_higher_priority_large_sector(self):
         data = fixture(42, people=37)

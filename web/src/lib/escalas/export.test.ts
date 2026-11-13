@@ -145,8 +145,8 @@ describe("Escalas shared monthly presentation and real exports", () => {
     workspace.input.demands = [{ id: "unknown", sector: "Reposição", date: "2026-11-03", start: 480, end: 1044, minimum: 0, estimated: true }];
     workspace.input.coverageBasis = coverageBasis(workspace.input);
     const table = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
-    expect(table[2][0]).toContain("Trabalho com horário");
-    expect(table[3][2]).toBe("Previstas com horário (pessoas)");
+    expect(table[2][0]).toContain("Comparação estimada com horários importados. Pico e totais do mês são medidas diferentes.");
+    expect(table[3][2]).toBe("Escalados na faixa (pessoas)");
     expect(table[4][1]).toBe("Sem referência");
     expect(table[4][2]).toBe("—");
     expect(table[4][3]).toBe(0); expect(table[4][4]).toBe("—");
@@ -424,10 +424,10 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(text).not.toContain("Mensagem antiga incompleta");
     expect(text).not.toContain("situações distintas neste grupo");
     expect(text).not.toContain("Repositor: 1 presente(s)");
-    expect(text).toContain("Maior desfalque (pessoas)"); expect(text).not.toContain("Geral:");
+    expect(text).toContain("Maior falta simultânea (pessoas)"); expect(text).not.toContain("Geral:");
     expect(text).toContain("08:00-09:00"); expect(text).toContain("10:00-11:00");
     const table = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Desfalques");
-    expect(table[3]).toEqual(["Setor", "Origem", "Previstas com horário (pessoas)", "Referência (pessoas)", "Maior desfalque (pessoas)", "Dia do maior desfalque", "Horário do maior desfalque", "Duração da faixa", "Dias com falta no período", "Falta acumulada (horas da equipe)", "Tempo com falta no período", "Observado no pico"]);
+    expect(table[3]).toEqual(["Setor", "Origem da referência", "Escalados na faixa (pessoas)", "Referência na faixa (pessoas)", "Maior falta simultânea (pessoas)", "Data do pico", "Faixa do pico", "Duração do pico", "Dias com falta em algum horário", "Horas de equipe em falta no mês", "Duração somada das faixas com falta", "Situação na faixa do pico"]);
     const rows = table.slice(4);
     expect(rows).toHaveLength(2); expect(rows.every(row => row[0] === "Reposição")).toBe(true);
     const confirmed = rows.find(row => row[1] === "Confirmada"), estimated = rows.find(row => row[1] === "Estimada");
@@ -519,7 +519,7 @@ describe("separate rest and hourly exports", () => {
     const text = (await pdfContent(await exportEscalaPdf(workspace, mode, { separateSectors }))).flat().map((item) => item.str).join(" ");
     expect(text.includes("Desfalques de cobertura")).toBe(mode !== "rest");
     expect(text).not.toMatch(/Um resumo por setor, sem repetir cargos|Até 3 faixas prioritárias|Os picos não se somam|Variantes reais permanecem separadas/);
-    if (mode !== "rest") expect(text).toContain("Maior desfalque (pessoas)");
+    if (mode !== "rest") expect(text).toContain("Maior falta simultânea (pessoas)");
     expect(text.includes("Escala de folgas")).toBe(mode !== "hours");
     expect(text.includes("Escala de horários")).toBe(mode !== "rest");
     if (mode !== "hours") expect(text).toContain("ENC = Sem horário fixo");

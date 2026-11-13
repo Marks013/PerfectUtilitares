@@ -1,7 +1,7 @@
 import { EscalaError } from "./access";
 
 /** Bump when report content or cell semantics change, independently of the saved roster revision. */
-export const ESCALA_EXPORT_CONTENT_VERSION = "escalas-report-20261113-v5";
+export const ESCALA_EXPORT_CONTENT_VERSION = "escalas-report-20261113-v6";
 
 type CacheOptions = { maxBytes: number; maxEntries: number; ttlMs: number; concurrency: number };
 type Entry = { bytes: Uint8Array; expiresAt: number };

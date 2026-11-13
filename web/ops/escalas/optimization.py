@@ -205,6 +205,15 @@ def _phase_budget(remaining, names, index):
     only an earlier prefix. Later phases stay unattempted, never falsely proven.
     """
     pending = list(dict.fromkeys(names[index:]))
+    # Keep the coverage share unchanged. Within its secondary reserve, fund
+    # pending operational goals first; cosmetics receive only actual residual.
+    if names[index] != 'COVERAGE':
+        cosmetic = {'PEOPLE_CHANGED', 'STABILITY', 'PREFERENCES', 'TIE_BREAK'}
+        operational = [name for name in pending if name not in cosmetic]
+        if operational:
+            if names[index] in cosmetic:
+                return 0.0
+            pending = operational
     affordable = max(0, int((remaining + 1e-9) / MIN_PHASE_BUDGET))
     admitted = pending[:affordable]
     if not admitted:
@@ -255,6 +264,13 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                      if plans and plans[0][0] == 'COVERAGE'
                      and dates and deadline - time.monotonic() >= 2 else [])
     repair_count = len(repair_groups)
+    # A cheap upper estimate of neighborhood cost, including clock alternatives.
+    # Count once; no extra model, solve or commercial staffing heuristic.
+    decision_costs = {}
+    for person, _day in decision_variables.values():
+        decision_costs[person] = decision_costs.get(person, 0) + 1
+    repair_costs = [max(1, sum(decision_costs.get(person, 0) for person in group)
+                        or len(group)) for group in repair_groups]
     if repair_count:
         plans = [plans[0]] * repair_count + plans
     names = [name for name, _objective in plans]
@@ -337,9 +353,11 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             continue
         budget = _phase_budget(remaining, names, index)
         if repair_phase:
-            # Cheap, independent neighborhoods must not consume the main search
-            # or all secondary goals, even when several sectors need attention.
-            budget = min(0.85, remaining * .12)
+            # Share the SAME coverage deadline by remaining decision cost.
+            # Early completion releases time to the next repair; global search
+            # gets only a usable residual, never a second reservation.
+            coverage_remaining = max(0, coverage_cutoff - time.monotonic())
+            budget = coverage_remaining * repair_costs[index] / sum(repair_costs[index:])
         if name == 'COVERAGE':
             budget = min(budget, max(0, coverage_cutoff - time.monotonic()))
         if budget < MIN_PHASE_BUDGET - 1e-9:

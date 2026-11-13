@@ -738,7 +738,9 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
         sunday_shortage = snapshot.value(sum((sunday_shortages or {}).get(sector, [])))
         if empty or shortage > 0 or sunday_shortage > 0:
             sunday_count = sum(date.fromisoformat(day).weekday() == 6 for day in empty)
-            ranked.append((-sunday_count, -len(empty), -sunday_shortage, -shortage, len(members), sector,
+            # Recover measured person-minutes first; an almost empty large team
+            # must not rank below every completely empty small department.
+            ranked.append((-shortage, -sunday_shortage, -sunday_count, -len(empty), len(members), sector,
                            {person["id"] for person in members}))
     # Small sectors share one neighborhood. A large team gets its own complete
     # exchange group instead of being silently excluded by the old size limit.
