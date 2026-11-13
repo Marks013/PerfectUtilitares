@@ -128,9 +128,19 @@ class RestQualityTests(unittest.TestCase):
         self.assertEqual(_spacing_rank(person, entries, {}, {}, policy), (0, 2))
 
     def test_coverage_budget_reserves_spacing_time_and_spacing_receives_it(self):
-        names = ['COVERAGE', 'REST_SPACING', 'SUNDAY_BALANCE', 'STABILITY']
-        self.assertLessEqual(_phase_budget(4, names, 0), 2)
-        self.assertEqual(_phase_budget(8, names, 1), 3)
+        from optimization import MIN_PHASE_BUDGET
+        from test_sunday_production import production_goal_names
+        names = production_goal_names()
+        remaining, allocated = 10.0, {}
+        for index, name in enumerate(names):
+            allocated[name] = _phase_budget(remaining, names, index)
+            remaining -= allocated[name]
+        self.assertAlmostEqual(allocated['COVERAGE'], 5.5)
+        self.assertGreaterEqual(allocated['REST_SPACING'], MIN_PHASE_BUDGET)
+        self.assertGreaterEqual(allocated['UNTIMED_ROTATION'], MIN_PHASE_BUDGET)
+        self.assertGreaterEqual(allocated['LEADERSHIP'], MIN_PHASE_BUDGET)
+        self.assertAlmostEqual(sum(allocated.values()), 10.0)
+        self.assertAlmostEqual(remaining, 0.0)
 
     def test_high_leadership_is_protected_without_inventing_hourly_coverage(self):
         data = fixture(40, people=2)

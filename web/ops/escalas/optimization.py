@@ -356,7 +356,9 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         engine.parameters.keep_all_feasible_solutions_in_presolve = True
         engine.parameters.symmetry_level = settings.symmetry
         search_model = model
-        restricted = (repair_phase or name in ('REST_SPACING', 'UNTIMED_ROTATION')
+        # A generic improvement model may have no calendar decisions. Keep it
+        # global instead of constructing an empty rolling-week neighborhood.
+        restricted = bool(dates) and (repair_phase or name in ('REST_SPACING', 'UNTIMED_ROTATION')
                       or (phase_index > 0 and len(variables) > LARGE_MODEL_VARIABLES and len(dates) > 7))
         if restricted:
             # Keep the joint model, including leadership and all cross-week constraints.

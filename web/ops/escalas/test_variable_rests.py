@@ -93,12 +93,26 @@ class VariableRestTests(unittest.TestCase):
 
 class RestSpacingTests(unittest.TestCase):
     def test_rest_goals_reserve_time_without_changing_the_coverage_share(self):
-        names = ['COVERAGE', 'SUNDAY_BALANCE', 'REST_SPACING', 'UNTIMED_ROTATION', 'STABILITY']
-        self.assertAlmostEqual(_phase_budget(10, names, 0), 5.5)
-        self.assertEqual(_phase_budget(8, names, 1), 1)
-        self.assertEqual(_phase_budget(7, names, 2), 3)
-        self.assertEqual(_phase_budget(4, names, 3), 3)
-        self.assertEqual(_phase_budget(1, names, 4), 1)
+        from optimization import MIN_PHASE_BUDGET
+        from test_sunday_production import production_goal_names
+        names = production_goal_names()
+        for total in (2.0, 4.0, 10.0):
+            remaining, allocations = total, []
+            for index, _name in enumerate(names):
+                budget = _phase_budget(remaining, names, index)
+                self.assertLessEqual(budget, remaining + 1e-9)
+                self.assertTrue(budget == 0 or budget + 1e-9 >= MIN_PHASE_BUDGET)
+                allocations.append(budget)
+                remaining -= budget  # Shared balance, never restart it for each goal.
+            self.assertAlmostEqual(sum(allocations) + remaining, total)
+            if total == 10.0:
+                self.assertAlmostEqual(allocations[0], 5.5)
+            elif total == 4.0:
+                self.assertTrue(all(b + 1e-9 >= MIN_PHASE_BUDGET for b in allocations))
+            else:
+                self.assertGreater(allocations[names.index('UNTIMED_ROTATION')], 0)
+                self.assertGreater(allocations[names.index('LEADERSHIP')], 0)
+                self.assertEqual(allocations[-1], 0)
 
     def test_spacing_neighborhood_keeps_untimed_sector_exchange_partners(self):
         model = cp_model.CpModel()

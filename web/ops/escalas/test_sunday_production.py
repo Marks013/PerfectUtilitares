@@ -241,6 +241,7 @@ class ProductionSundayTests(unittest.TestCase):
             self.assertFalse(proven)
             self.assertEqual(actual, initial)
             self.assertEqual([p['objective'] for p in phases], names[:expected_count])
+            self.assertTrue(all(p['searchScope'] == 'GLOBAL' for p in phases))
             self.assertTrue(all(p['status'] == 'UNKNOWN' and p['budgetSeconds'] >= .1 for p in phases))
             self.assertLessEqual(control.now, total + 1e-9)
             if total >= 2:

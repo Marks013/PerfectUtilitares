@@ -1,5 +1,6 @@
 """Independent rest equivalence and bounded-search regression cases."""
 import itertools
+import copy
 import time
 import unittest
 from unittest.mock import patch
@@ -125,11 +126,22 @@ class SearchContinuationTests(unittest.TestCase):
             person['preferredOffDays'] = [4]
         data['demands'] = [{'date': days[0], 'sector': 'Reposição', 'start': 480,
                             'end': 720, 'minimum': 2, 'estimated': True}]
+        before = copy.deepcopy(data)
         result = scheduling.solve(data)
         self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
         phases = result['optimization']['phases']
-        self.assertEqual([phase['objective'] for phase in phases], ['COVERAGE', 'REST_SPACING', 'SUNDAY_BALANCE', 'SATURDAY_BALANCE',
-            'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED', 'STABILITY', 'PREFERENCES', 'TIE_BREAK'])
+        from test_sunday_production import production_goal_names
+        active = {'COVERAGE', 'SUNDAY_BALANCE', 'REST_SPACING', 'SATURDAY_BALANCE',
+                  'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED', 'STABILITY', 'PREFERENCES', 'TIE_BREAK'}
+        self.assertEqual([p['objective'] for p in phases], [name for name in production_goal_names() if name in active])
+        self.assertTrue(all(p['incumbentValue'] <= p['initialValue'] for p in phases))
+        self.assertEqual(data, before)
+        self.assertGreaterEqual(sum(a['kind'] == 'WORK' for a in result['assignments'] if a['date'] == days[0]), 2)
+        shifts = {s['id']: s for s in data['shifts']}
+        for person in data['employees']:
+            paid = sum(scheduling.shift_metrics(shifts[a['shiftId']])[0] for a in result['assignments']
+                       if a['employeeId'] == person['id'] and a['kind'] == 'WORK')
+            self.assertEqual(paid, person['weeklyHours'] * 60)
         self.assertTrue(all(phase['status'] in ('OPTIMAL', 'FEASIBLE') for phase in phases))
         self.assertEqual(len(result['assignments']), 21)
 

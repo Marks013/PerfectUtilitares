@@ -136,7 +136,9 @@ class GenerationContractsTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 data['generationMode'] = mode
                 retained = retained_disabled_records(data)
-                expected = originals if mode == 'HOURS_ONLY' else [a for a in originals if a.get('locked') or a['kind'] == 'ABSENCE']
+                # Excluded people never lose paid holidays, leave or explicit locks.
+                expected = originals if mode == 'HOURS_ONLY' else [a for a in originals
+                    if a.get('locked') or a['kind'] in ('ABSENCE', 'HOLIDAY')]
                 self.assertEqual(retained, expected)
                 self.assertEqual(len(retained), len({(a['employeeId'], a['date']) for a in retained}))
                 self.assertTrue(all(a is not original for a in retained for original in data['assignments']))

@@ -139,25 +139,50 @@ class DailyCoverageTests(unittest.TestCase):
         self.assertEqual(Snapshot(values).value(sum(coverage)), 360)
         self.assertEqual([Snapshot(values).value(sum(terms)) for terms in daily.values()], [120, 240])
 
-    def test_production_protects_saturday_and_daily_groups_from_the_first_phase(self):
+    def test_production_protects_daily_coverage_first_and_saturday_at_its_own_phase(self):
         data = fixture(40, people=3)
         data['demands'] = [{'date': data['startDate'], 'sector': 'Reposição', 'start': 480,
                             'end': 540, 'minimum': 2, 'estimated': True}]
         captured = []
+        saturday, initial, final = [], {}, {}
         native = improve
         def inspect(model, objectives, values, deadline, names=None, *, context=None):
             captured.extend(context.protected_groups['COVERAGE'])
-            return native(model, objectives, values, deadline, names, context=context)
+            saturday.extend(context.protected_groups['SATURDAY_BALANCE'])
+            initial.update({i: Snapshot(values).value(e) for i, e in enumerate(captured)})
+            improved = native(model, objectives, values, deadline, names, context=context)
+            final.update({i: Snapshot(improved[0]).value(e) for i, e in enumerate(captured)})
+            final['saturday'] = sum(Snapshot(improved[0]).value(e) for e in saturday)
+            return improved
         with patch('solver.improve', inspect):
             result = solve(data)
         self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
         names = {variable.name for expression in captured
                  for variable in cp_model.FlatIntExpr(expression).vars}
-        self.assertTrue(any(name.startswith('weekend-spread:5:') for name in names))
+        self.assertFalse(any(name.startswith('weekend-spread:') for name in names))
+        self.assertTrue(any(v.name.startswith('weekend-spread:5:') for e in saturday
+                            for v in cp_model.FlatIntExpr(e).vars))
+        self.assertTrue(all(final[i] <= value for i, value in initial.items()))
+        phase = next(p for p in result['optimization']['phases'] if p['objective'] == 'SATURDAY_BALANCE')
+        self.assertLessEqual(phase['incumbentValue'], phase['initialValue'])
+        self.assertLessEqual(final['saturday'], phase['incumbentValue'])
         # A weekly fixture registers the same shortage under horizon and civil-date scopes.
         gaps = [expression for expression in captured
                 if any(v.name.startswith('coverage-gap:') for v in cp_model.FlatIntExpr(expression).vars)]
         self.assertGreaterEqual(len(gaps), 2)
+
+    def test_deferred_saturday_guard_allows_coverage_recovery_and_prevents_later_rollback(self):
+        model = cp_model.CpModel()
+        gap, saturday = model.new_bool_var('coverage-gap'), model.new_bool_var('saturday-spread')
+        model.add(gap + saturday == 1)
+        initial = {gap.index: 1, saturday.index: 0}
+        actual, _, phases = improve(model, [gap, saturday, -gap], initial,
+            time.monotonic() + 2, ['COVERAGE', 'SATURDAY_BALANCE', 'PREFERENCES'],
+            context=ImprovementContext(protected_groups={'COVERAGE': [gap], 'SATURDAY_BALANCE': [saturday]}))
+        self.assertEqual([actual[gap.index], actual[saturday.index]], [0, 1])
+        phase = next(p for p in phases if p['objective'] == 'SATURDAY_BALANCE')
+        self.assertEqual(phase['initialValue'], 1)  # Bound from recovered incumbent, not zero seed.
+        self.assertEqual(phase['incumbentValue'], 1)
 
     def test_saturday_neighborhood_uses_saturday_rates_not_sunday_rates(self):
         model = cp_model.CpModel()
