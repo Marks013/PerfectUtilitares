@@ -181,7 +181,9 @@ export async function solveEscala(
     if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
       stage = "selection-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const candidate = { ...parsed, assignments: result.assignments };
-      const selected = verifiedCompleteRoster(refined) ? selectVerifiedRoster(refined, candidate)
+      let retentionReason = "REFERENCE_UNVERIFIED";
+      const selected = verifiedCompleteRoster(refined) ? selectVerifiedRoster(refined, candidate,
+        reason => { retentionReason = reason; })
         : { input: candidate, retainedReference: false };
       // A selector without a valid incumbent can return the proposal unchanged. It is never proof of feasibility.
       stage = "assignment-schema"; reason = "SCHEMA_INVALID";
@@ -209,7 +211,7 @@ export async function solveEscala(
       const restQuality = {
         before: restPairSummary(parsed), after: restPairSummary(selected.input),
         search: { attempted: refined.assignments !== parsed.assignments || (result.optimization?.phases.some(phase => phase.objective === "REST_SPACING") ?? false),
-          retainedReference: selected.retainedReference },
+          retainedReference: selected.retainedReference, retentionReason },
         preparationSeconds: Math.round(preparationSeconds * 1000) / 1000,
         requestSeconds: Math.round((performance.now() - started)) / 1000,
       };

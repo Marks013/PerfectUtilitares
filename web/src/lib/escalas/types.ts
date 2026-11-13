@@ -219,7 +219,7 @@ export type EscalaSolveResult = {
   /** Independently derived diagnostics; never accepted as input or persisted as scheduling rules. */
   restQuality?: {
     before: import("./rest-quality").RestPairSummary; after: import("./rest-quality").RestPairSummary;
-    search: { attempted: boolean; retainedReference: boolean };
+    search: { attempted: boolean; retainedReference: boolean; retentionReason?: string };
     preparationSeconds: number; requestSeconds: number;
   };
   /** Numeric diagnostics only; no employee identifiers or personal payload. */

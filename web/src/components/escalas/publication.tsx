@@ -14,9 +14,10 @@ type Format = "pdf" | "xlsx";
 type FileState = { url: string; filename: string; workspaceId: string; revision: number; mode: EscalaExportMode; separateSectors?: boolean };
 const CONTENT = { rest: "Folgas", hours: "Horários", both: "Folgas e horários" };
 
-export function Publication({ workspace, validation, dirty, busy, outdated = false, mode, onModeChange, onPublish, onRegenerate, onPrepare, isCurrent }: {
+export function Publication({ workspace, validation, dirty, busy, outdated = false, mode, onModeChange, onPublish, onRegenerate, onPrepare, isCurrent, candidatePending = false, canUseCandidate = false, onUseCandidate }: {
   workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; outdated?: boolean; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void;
   onPublish: () => void; onRegenerate?: () => void; onPrepare?: () => Promise<EscalaWorkspace | null>; isCurrent?: (workspace: EscalaWorkspace) => boolean;
+  candidatePending?: boolean; canUseCandidate?: boolean; onUseCandidate?: () => void;
 }) {
   const hoursOnly = workspace.input.generationMode === "HOURS_ONLY";
   const referencesOnly = hoursOnly && !workspace.input.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY");
@@ -78,6 +79,11 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
 
   return <section className={panelClass} aria-labelledby="escala-publication-title">
     <div><h2 id="escala-publication-title" className={styles.sectionTitle}>Arquivos do planejamento</h2><p className={styles.subtitle}>Filial {workspace.input.branchCode} · {workspace.input.visibleMonth ?? workspace.input.startDate} · revisão salva {workspace.revision} · {CONTENT[selectedMode]}</p></div>
+    <p role="status" className={styles.muted}>{dirty ? "Grade atual com alterações: o salvamento será confirmado antes de gerar o arquivo, que usará a revisão retornada." : `Exportação da grade atual salva · revisão ${workspace.revision}.`}</p>
+    {candidatePending && <section className={styles.stackSmall} aria-label="Proposta candidata pendente">
+      <p>Há uma proposta candidata ainda não aplicada. PDF e XLSX abaixo usam a grade atual. Para exportar a candidata, use-a na grade e depois gere o arquivo.</p>
+      {onUseCandidate && <button type="button" className={primaryClass} disabled={busy || Boolean(exporting) || !canUseCandidate} onClick={onUseCandidate}>Usar proposta na grade</button>}
+    </section>}
     <Field label="Conteúdo do PDF e XLSX">{id => <select id={id} className={controlClass} disabled={Boolean(exporting) || hoursOnly} value={selectedMode} onChange={event => { const value = event.target.value as EscalaExportMode; if (onModeChange) onModeChange(value); else setLocalMode(value); }}>{!hoursOnly && <option value="rest">Somente escala de folgas</option>}<option value="hours">{referencesOnly ? "Referências de horários" : "Somente escala de horários"}</option>{!hoursOnly && <option value="both">Folgas e horários</option>}</select>}</Field>
     {referencesOnly && <p className={styles.muted}>Arquivo de referências: ainda não há distribuição completa dos dias. Não representa presença diária nem cobertura garantida.</p>}
     <div className={styles.stackSmall}><Check label="Separar setores por página" checked={separateSectors} disabled={exporting === "pdf"} onChange={setSeparateSectors} />

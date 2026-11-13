@@ -53,6 +53,8 @@ describe("guided scheduling workspace", () => {
     expect(navigation).toContain('aria-current="step"');
     expect(html).toMatch(/<section hidden="" inert="" id="escala-area-generate"/);
     expect(html).toContain("Voltar para importar equipe");
+    expect(html).toMatch(/<nav aria-label="Relatórios opcionais"[^>]*><button[^>]*aria-controls="escala-area-reports"[^>]*>Relatórios e gráficos PDF<\/button><\/nav>/);
+    expect(html).not.toContain("Relatórios operacionais (opcional)");
     expect(html).toContain("Ferramentas e ajustes opcionais");
     expect(html).not.toContain("Conteúdo do PDF e XLSX");
     expect(html).toContain("FPRE136 em CSV (recomendado) ou XLSX");

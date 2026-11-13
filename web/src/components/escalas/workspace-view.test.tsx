@@ -316,6 +316,20 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).not.toContain("/api/escalas/export");
   });
 
+  it("identifies the saved export while a candidate waits for explicit application", () => {
+    const { workspace, validation } = sample();
+    const apply = vi.fn();
+    const html = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} candidatePending canUseCandidate onUseCandidate={apply} />);
+    expect(html).toContain("Exportação da grade atual salva · revisão 4");
+    expect(html).toContain("PDF e XLSX abaixo usam a grade atual");
+    expect(html).toContain("Usar proposta na grade");
+    expect(apply).not.toHaveBeenCalled();
+    const invalid = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} candidatePending canUseCandidate={false} onUseCandidate={apply} />);
+    expect(invalid).toMatch(/<button[^>]*disabled=""[^>]*>Usar proposta na grade/);
+    const dirty = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty busy={false} onPublish={vi.fn()} />);
+    expect(dirty).toContain("o salvamento será confirmado antes de gerar o arquivo");
+  });
+
   it("shows full-plan preview changes and never applies an invalid solver result", () => {
     const { input, validation } = sample();
     const proposal = {

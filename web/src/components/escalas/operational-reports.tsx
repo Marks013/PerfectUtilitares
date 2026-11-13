@@ -61,8 +61,9 @@ export function OperationalReports({ workspace, disabled }: { workspace: EscalaW
     finally { if (activeRequest.current === controller) { activeRequest.current = null; inFlight.current = false; } }
   }
   const labels = { ready: "Pronto", processing: "Processando", done: "Concluído", warning: "Aviso", error: "Falha" };
-  return <details className={panelClass}>
-    <summary className={styles.disclosureTrigger}>Relatórios operacionais (opcional)</summary>
+  return <section className={panelClass} aria-labelledby="operational-reports-title">
+    <h2 id="operational-reports-title" className={styles.sectionTitle}>Relatórios e gráficos PDF</h2>
+    <p className={styles.muted}>Escolha um modelo para começar. Para gráficos, use Conferir um dia e informe a data.</p>
     <div className={`${styles.disclosureBody} ${styles.stackSmall}`}>
       <p className={styles.muted}>PDF desta filial: {input.branchCode} · mês {month || "não informado"} · revisão {workspace.revision}. As escolhas são apenas para este relatório.</p>
       {!hasRoster && <p role="status" className={styles.muted}>Sem grade calculada: estão disponíveis apenas jornadas e variantes.</p>}
@@ -79,5 +80,5 @@ export function OperationalReports({ workspace, disabled }: { workspace: EscalaW
       {disabled && <p className={styles.muted}>Aguarde o salvamento e a conclusão da operação atual.</p>}
       <p role={stage === "error" ? "alert" : "status"} className={stage === "error" || stage === "warning" ? styles.errorText : styles.muted}><strong>{labels[stage]}.</strong> {message}</p>
     </div>
-  </details>;
+  </section>;
 }

@@ -87,8 +87,9 @@ for (const mode of ["REST_ONLY", "HOURS_ONLY", "DAYS_AND_HOURS"] as const) {
       expect(workspace.input.assignments).toEqual(input.assignments);
       await page.goto("/escala");
       await selectEscalasWorkspace(page, workspace);
-      const panel = page.locator("details").filter({ has: page.getByText("Relatórios operacionais (opcional)", { exact: true }) });
-      await panel.getByText("Relatórios operacionais (opcional)", { exact: true }).click();
+      await page.getByRole("button", { name: "Relatórios e gráficos PDF", exact: true }).click();
+      const panel = page.getByRole("region", { name: "Área de relatórios e gráficos PDF", exact: true });
+      await expect(panel).toBeVisible();
       await expect(panel.getByText("Sem grade calculada", { exact: false })).toBeVisible();
       await expect(panel.getByLabel("Jornadas e turnos")).toBeChecked();
       await expect(panel.getByLabel("Catálogo de variantes")).toBeChecked();
@@ -139,8 +140,9 @@ test("missing saved references keep their 409 and show the reference guidance", 
   expect(created.status()).toBe(201); const workspace: EscalaWorkspace = await created.json();
   try {
     await page.goto("/escala"); await selectEscalasWorkspace(page, workspace);
-    const panel = page.locator("details").filter({ has: page.getByText("Relatórios operacionais (opcional)", { exact: true }) });
-    await panel.getByText("Relatórios operacionais (opcional)", { exact: true }).click();
+    await page.getByRole("button", { name: "Relatórios e gráficos PDF", exact: true }).click();
+    const panel = page.getByRole("region", { name: "Área de relatórios e gráficos PDF", exact: true });
+    await expect(panel).toBeVisible();
     const pending = page.waitForResponse(response => new URL(response.url()).pathname === "/api/escalas/operational-report");
     await panel.getByRole("button", { name: "Gerar PDF operacional" }).click();
     const response = await pending;
@@ -169,8 +171,9 @@ test("a delayed PDF from the previous workspace never starts a download", async 
       expect(response.status()).toBe(201); workspaces.push(await response.json());
     }
     await page.goto("/escala"); await selectEscalasWorkspace(page, workspaces[0]);
-    const panel = page.locator("details").filter({ has: page.getByText("Relatórios operacionais (opcional)", { exact: true }) });
-    await panel.getByText("Relatórios operacionais (opcional)", { exact: true }).click();
+    await page.getByRole("button", { name: "Relatórios e gráficos PDF", exact: true }).click();
+    const panel = page.getByRole("region", { name: "Área de relatórios e gráficos PDF", exact: true });
+    await expect(panel).toBeVisible();
     let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
     let captured!: (response: APIResponse) => void; const pending = new Promise<APIResponse>(resolve => { captured = resolve; });
     await page.route("**/api/escalas/operational-report?*", async route => {

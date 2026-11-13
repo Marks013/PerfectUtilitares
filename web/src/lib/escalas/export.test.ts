@@ -205,20 +205,24 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(workspace).toEqual(before);
   }, 20000);
 
-  it("freezes useful identity columns and records complete print areas on every workbook sheet", () => {
-    const archive = unzipSync(exportEscalaXlsx(fixture()));
-    expect(strFromU8(archive["xl/worksheets/sheet1.xml"])).toContain('xSplit="5" ySplit="4" topLeftCell="F5"');
+  it.each(["rest", "hours", "both"] as const)("keeps ordinary headers and print areas without frozen panes or repeated print titles in %s", mode => {
+    const archive = unzipSync(exportEscalaXlsx(fixture(), mode));
     const workbook = strFromU8(archive["xl/workbook.xml"]);
     const sheets = new Map([...workbook.matchAll(/<sheet name="([^"]+)" sheetId="(\d+)"/g)].map(match => [match[1], match[2]]));
-    for (const name of ["Horarios", "Excluidos"]) {
-      expect(strFromU8(archive[`xl/worksheets/sheet${sheets.get(name)}.xml`])).toContain('xSplit="4" ySplit="4" topLeftCell="E5"');
+    expect(sheets.size).toBeGreaterThan(0);
+    for (const id of sheets.values()) {
+      const sheet = strFromU8(archive[`xl/worksheets/sheet${id}.xml`]);
+      expect(sheet).not.toMatch(/<pane\b|state="frozen"|xSplit=|ySplit=|selection pane=/);
+      expect(sheet).toContain('<row r="4"');
+      const headerHeight = Number(sheet.match(/<row r="4" ht="([\d.]+)"/)?.[1]);
+      expect(headerHeight).toBeGreaterThanOrEqual(42);
+      expect(sheet).toContain('<autoFilter ref="A4:');
+      expect(sheet).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
     }
-    expect(strFromU8(archive[`xl/worksheets/sheet${sheets.get("Capacidade")}.xml`])).toContain('xSplit="1" ySplit="4" topLeftCell="B5"');
     expect(workbook.match(/name="_xlnm.Print_Area"/g)).toHaveLength(sheets.size);
-    expect(workbook).toContain("'Horarios'!$A:$D");
-    expect(workbook).toContain("'Escala'!$A:$E");
+    expect(workbook).not.toContain('_xlnm.Print_Titles');
   });
-  it("writes an actual monthly XLSX grid with frozen headers, safe text and secondary details", async () => {
+  it("writes an actual monthly XLSX grid with ordinary headers, safe text and secondary details", async () => {
     const workspace = fixture(), original = structuredClone(workspace), bytes = exportEscalaXlsx(workspace);
     const archive = unzipSync(bytes), main = strFromU8(archive["xl/worksheets/sheet1.xml"]);
     const rows = await readSheet(Buffer.from(bytes), "Escala");
@@ -233,15 +237,20 @@ describe("Escalas shared monthly presentation and real exports", () => {
     const excluded = await readSheet(Buffer.from(bytes), "Excluidos");
     expect(excluded.find(row => row[0] === "X")).toContain("=1+1 Nome integral preservado");
     expect(excluded[4][1]).toBe("Reposição");
-    expect(main).toContain('xSplit="5" ySplit="4"');
-    expect(main).toContain('zoomScale="75"');
+    expect(main).not.toContain('<pane');
+    expect(main).toContain('zoomScale="85"');
+    const widths = [...main.matchAll(/<col\b[^>]*\bwidth="([\d.]+)"/g)].map(match => Number(match[1]));
+    expect(widths[2]).toBeGreaterThanOrEqual(28);
+    expect(widths[3]).toBeGreaterThanOrEqual(20);
+    expect(widths.slice(5).every(width => width >= 5 && width <= 5.25)).toBe(true);
+    expect(widths.slice(0, 5).reduce((sum, width) => sum + width, 0) + 31 * Math.max(...widths.slice(5))).toBeLessThanOrEqual(261);
     expect(main).toContain('paperSize="9"');
     expect(main).toContain('r="1" ht="20"');
     expect(strFromU8(archive["xl/styles.xml"])).toContain('<left style="thin">');
     expect(main).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
     expect(main).not.toContain("<f>");
     expect(strFromU8(archive["xl/styles.xml"])).toContain('wrapText="1"');
-    expect(strFromU8(archive["xl/workbook.xml"])).toContain("$1:$4");
+    expect(strFromU8(archive["xl/workbook.xml"])).not.toContain('_xlnm.Print_Titles');
     expect(strFromU8(archive["xl/worksheets/sheet3.xml"])).not.toContain("POLICY_PENDING");
     const hours = await readSheet(Buffer.from(bytes), "Horarios");
     expect(hours.flat()).toContain("T02");

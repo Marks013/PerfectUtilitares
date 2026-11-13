@@ -55,6 +55,8 @@ export function buildCoverageReport(reference: EscalaInput, candidate: EscalaInp
     const slices = (sector.details ?? []).filter(slice => slice[key] !== null);
     const unknownDates = [...new Set(slices.filter(slice => slice[key]?.missing === null).map(slice => slice.date))].sort();
     const positive = slices.filter(slice => (slice[key]?.required ?? 0) > 0);
+    // A pause or empty demand window is not a whole day without timed work.
+    const datesWithTimedWork = new Set((sector.details ?? []).filter(slice => slice.presentKnown > 0).map(slice => slice.date));
     const gaps = positive.filter(slice => (slice[key]?.missing ?? 0) > 0);
     const unknown = metrics.deficitPersonMinutes === null;
     let peak: ReportPeak | null = null;
@@ -79,7 +81,7 @@ export function buildCoverageReport(reference: EscalaInput, candidate: EscalaInp
       deficitRate: unknown || metrics.requiredPersonMinutes <= 0 ? null : (metrics.deficitPersonMinutes as number) / metrics.requiredPersonMinutes,
       minutesWithGap: unknown ? null : gaps.reduce((sum, slice) => sum + slice.end - slice.start, 0),
       daysWithGap: unknown ? null : new Set(gaps.map(slice => slice.date)).size,
-      daysWithoutTimedWork: unknown ? null : new Set(positive.filter(slice => slice[key]?.missing !== null && slice.unknownPeople === 0 && slice.presentKnown === 0).map(slice => slice.date)).size,
+      daysWithoutTimedWork: unknown ? null : new Set(positive.filter(slice => slice[key]?.missing !== null && slice.unknownPeople === 0 && !datesWithTimedWork.has(slice.date)).map(slice => slice.date)).size,
       unknownDates, peak });
   }
   return report;

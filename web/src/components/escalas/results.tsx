@@ -219,7 +219,7 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
   const emptySectors = useMemo(() => generated && active ? sectorPresenceGaps(generated.proposalInput) : [], [generated, active]);
   if (!generated || !diagnostics) return null;
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">A sugestão ainda não foi aplicada. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">Proposta candidata. A sugestão ainda não foi aplicada à grade atual nem aos arquivos. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
     <LeadershipSummary counts={generated.result.optimization?.leadership} />
     <RestDistributionSummary input={generated.proposalInput} previousInput={input} search={generated.result.restQuality?.search} />

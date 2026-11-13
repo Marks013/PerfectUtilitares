@@ -70,21 +70,20 @@ function spreadsheetLines(text: string, width: number): number {
     units + (/\s/u.test(character) ? 0.75 : /[MWmw@%]/u.test(character) ? 2 : /[A-ZÀ-Þ]/u.test(character) ? 1.5 : /[^\u0020-\u00ff]/u.test(character) ? 2 : 1.2), 0) / Math.max(1, width - 1))), 0);
 }
 
-function sheet(rows: SpreadsheetCell[][], widths: number[], grid = false, frozenColumns = grid ? 5 : 0, sectors: number[] = []) {
+function sheet(rows: SpreadsheetCell[][], widths: number[], grid = false, identityColumns = grid ? 5 : 0, sectors: number[] = []) {
   const header = 4, last = `${column(widths.length - 1)}${rows.length}`;
-  const activeCell = `${column(frozenColumns)}${header + 1}`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 75 : 90}" zoomScaleNormal="100"><pane ${frozenColumns ? `xSplit="${frozenColumns}" ySplit="${header}" topLeftCell="${column(frozenColumns)}${header + 1}" activePane="bottomRight"` : 'ySplit="1" topLeftCell="A2" activePane="bottomLeft"'} state="frozen"/><selection pane="${frozenColumns ? "bottomRight" : "bottomLeft"}" activeCell="${activeCell}" sqref="${activeCell}"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 85 : 90}" zoomScaleNormal="100"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
     const title = index < 3 || sectors.includes(index);
     const available = title ? widths.reduce((sum, width) => sum + width, 0) - 2 : 0;
-    const lines = Math.max(1, ...row.map((value, cell) => index === header - 1 && grid && cell >= frozenColumns
+    const lines = Math.max(1, ...row.map((value, cell) => index === header - 1 && grid && cell >= identityColumns
       ? spreadsheetText(value).split("\n").length : spreadsheetLines(spreadsheetText(value), title ? available : widths[cell])));
-    const height = index < 2 ? Math.max(20, lines * 13 + 4) : index === 2 ? Math.max(22, lines * 13 + 4) : index === header - 1 ? Math.max(34, lines * 13 + 6) : sectors.includes(index) ? Math.max(22, lines * 13 + 4) : Math.min(409, Math.max(22, lines * 13 + 6));
+    const height = index < 2 ? Math.max(20, lines * 13 + 4) : index === 2 ? Math.max(22, lines * 13 + 4) : index === header - 1 ? Math.max(42, lines * 14 + 10) : sectors.includes(index) ? Math.max(22, lines * 13 + 4) : Math.min(409, Math.max(22, lines * 13 + 6));
     return `<row r="${index + 1}" ht="${height}" customHeight="1">${row.map((value, cell) => {
       const raw = spreadsheetValue(value);
-      const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 17 : index === header - 1 ? grid && cell >= frozenColumns ? 10 : 1
+      const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 17 : index === header - 1 ? grid && cell >= identityColumns ? 10 : 1
         : typeof value === "object" ? (value.format === "duration" ? 11 : value.format === "decimal" ? 13 : 18) + (index % 2 ? 0 : 1)
           : typeof raw === "number" ? 15 + (index % 2 ? 0 : 1)
-            : grid && cell >= frozenColumns && value === "F" ? 4 : grid && cell >= frozenColumns && value === "NP" ? 5 : grid && cell >= frozenColumns && ["X", "FV", "AF", "ENC", "FE"].includes(String(value)) ? 6 : grid && cell >= frozenColumns ? 7 : index % 2 ? 2 : 3;
+            : grid && cell >= identityColumns && value === "F" ? 4 : grid && cell >= identityColumns && value === "NP" ? 5 : grid && cell >= identityColumns && ["X", "FV", "AF", "ENC", "FE"].includes(String(value)) ? 6 : grid && cell >= identityColumns ? 7 : index % 2 ? 2 : 3;
       const text = `<t xml:space="preserve">${xml(raw)}</t>`;
       return typeof raw === "number" ? `<c r="${column(cell)}${index + 1}" s="${style}"><v>${raw}</v></c>` : `<c r="${column(cell)}${index + 1}" s="${style}" t="inlineStr"><is>${text}</is></c>`;
     }).join("")}</row>`;
@@ -203,21 +202,18 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     excluded.push([code, employee.sector, employee.registration, employee.name, employee.role, reason]);
   }
   const sheets = [
-    ...(mode !== "hours" ? [{ name: "Escala", frozenColumns: 5, rows: main, widths: [18, 9, 25, 18, 28, ...model.dates.map(() => 5.25)], grid: true, sectors: sectors.main }] : []),
-    ...(mode !== "rest" ? [{ name: "Horarios", frozenColumns: 4, rows: hours, widths: [18, 9, 26, 19, 8, 32, 20, 12, ...(weekly ? [43] : [])], grid: false, sectors: sectors.hours }] : []),
-    ...(capacities.length ? [{ name: "Capacidade", frozenColumns: 1, rows: capacity, widths: [22, 12, 27, 16, 16, 16, 18, 20, 23, 20, 22, 14, 16], grid: false, sectors: [] as number[] }] : []),
-    ...(coverage.length ? [{ name: "Desfalques", frozenColumns: 2, rows: gaps, widths: [18, 12, 10, 10, 10, 14, 17, 10, 10, 17, 15, 24], grid: false, sectors: sectors.gaps }] : []),
-    ...(model.excluded.length ? [{ name: "Excluidos", frozenColumns: 4, rows: excluded, widths: [9, 18, 10, 30, 22, 42], grid: false, sectors: sectors.excluded }] : []),
+    ...(mode !== "hours" ? [{ name: "Escala", identityColumns: 5, rows: main, widths: [16, 10, 30, 22, 24, ...model.dates.map(() => 5.1)], grid: true, sectors: sectors.main }] : []),
+    ...(mode !== "rest" ? [{ name: "Horarios", identityColumns: 4, rows: hours, widths: [16, 10, 30, 22, 10, 30, 22, 13, ...(weekly ? [32] : [])], grid: false, sectors: sectors.hours }] : []),
+    ...(capacities.length ? [{ name: "Capacidade", identityColumns: 1, rows: capacity, widths: [22, 12, 27, 16, 16, 16, 18, 20, 23, 20, 22, 14, 16], grid: false, sectors: [] as number[] }] : []),
+    ...(coverage.length ? [{ name: "Desfalques", identityColumns: 2, rows: gaps, widths: [18, 12, 10, 10, 10, 14, 17, 10, 10, 17, 15, 24], grid: false, sectors: sectors.gaps }] : []),
+    ...(model.excluded.length ? [{ name: "Excluidos", identityColumns: 4, rows: excluded, widths: [9, 16, 11, 34, 25, 40], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
   // Excel filters and sorting need contiguous records, not merged sector separator rows.
   // Each record already retains its sector; PDF keeps the visual sector bands.
   const printDefinitions = sheets.map((entry, index) => {
     const name = `'${entry.name}'`;
-    const rows = `${name}!$1:$4`;
-    const columns = `${name}!$A:$${column(entry.frozenColumns - 1)}`;
     const area = `${name}!$A$1:$${column(entry.widths.length - 1)}$${entry.rows.length}`;
-    return '<definedName name="_xlnm.Print_Titles" localSheetId="' + index + '">' + rows + "," + columns + '</definedName>'
-      + '<definedName name="_xlnm.Print_Area" localSheetId="' + index + '">' + area + '</definedName>';
+    return '<definedName name="_xlnm.Print_Area" localSheetId="' + index + '">' + area + '</definedName>';
   }).join("");
   const files: Record<string, Uint8Array> = {
     "[Content_Types].xml": strToU8(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${sheets.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`),
@@ -226,7 +222,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     "xl/_rels/workbook.xml.rels": strToU8(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`),
     "xl/styles.xml": strToU8(XLSX_TYPED_STYLES),
   };
-  for (const [index, entry] of sheets.entries()) files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheet(entry.rows, entry.widths, entry.grid, entry.frozenColumns, entry.sectors));
+  for (const [index, entry] of sheets.entries()) files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheet(entry.rows, entry.widths, entry.grid, entry.identityColumns, entry.sectors));
   return zipSync(files, { level: 6 });
 }
 

@@ -36,7 +36,7 @@ describe("shared coverage report projection", () => {
     const input = fixture(); input.shifts[0].segments = [{ start: 540, end: 541, kind: "WORK" }];
     input.demands = [{ ...input.demands[0], end: 541, minimum: 2 }, { ...input.demands[0], id: "later", start: 600, end: 601, minimum: 1 }];
     const row = buildCoverageReport(input, input).rows[0];
-    expect(row).toMatchObject({ deficitPersonMinutes: 2, deficitHours: 2 / 60, minutesWithGap: 2, daysWithGap: 1, daysWithoutTimedWork: 1, peak: { missing: 1, start: 540, end: 541 } });
+    expect(row).toMatchObject({ deficitPersonMinutes: 2, deficitHours: 2 / 60, minutesWithGap: 2, daysWithGap: 1, daysWithoutTimedWork: 0, peak: { missing: 1, start: 540, end: 541 } });
   });
   it("shows an estimated ruler with its valid basis, separately from nominal capacity", () => {
     const input = fixture(); input.demands[0].estimated = true; input.coverageBasis = coverageBasis(input);

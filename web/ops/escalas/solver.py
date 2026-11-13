@@ -616,8 +616,10 @@ def _solve(data, control=None, started=None):
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
                                                        + [sum(terms) for terms in visible_sector_coverage.values()]
                                                        + [sum(terms) for terms in closing_coverage.values()]
-                                                       + [sum(terms) for terms in priority_coverage.values()]
-                                                       + [sum(terms) for terms in daily_coverage.values()],
+                                                       # Explicit priority-day references stay protected.
+                                                       # Ordinary estimates may redistribute between dates;
+                                                       # sector/month/Sunday/closing totals above cannot worsen.
+                                                       + [sum(terms) for terms in priority_coverage.values()],
                                                        'SUNDAY_BALANCE': sundays,
                                                        'SATURDAY_BALANCE': saturdays,
                                                        'REST_SPACING': rest_quality['guards']} if goals else {},
