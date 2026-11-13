@@ -26,8 +26,11 @@ class GenerationContractsTests(unittest.TestCase):
         self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'), result)
 
     def test_v2_generates_no_saturday_off_and_keeps_history(self):
-        data = fixture(40)
-        data['restRulesVersion'] = 2
+        data = fixture(40, weeks=6, start_date='2026-10-26')
+        data.update(restRulesVersion=2, visibleMonth='2026-11')
+        complete_baseline(data)  # Unlocked OFFs in both padding weeks must be regenerated.
+        data['employees'][0]['planningFuture'] = [
+            {'employeeId': 'p0', 'date': '2026-12-12', 'kind': 'OFF'}]
         before = copy.deepcopy(data)
         result = solve(data)
         self.assert_feasible(result)
@@ -48,26 +51,31 @@ class GenerationContractsTests(unittest.TestCase):
                 self.assertTrue(item['locked'])
 
     def test_fixed_and_locked_saturday_conflict_before_cp(self):
-        for fixed in (True, False):
-            data = fixture(40)
-            data['restRulesVersion'] = 3
+        for fixed, day in ((True, '2026-11-07'), (False, '2026-11-07'),
+                           (False, '2026-10-31'), (False, '2026-12-05')):
+            data = fixture(40, weeks=6, start_date='2026-10-26')
+            data.update(restRulesVersion=3, visibleMonth='2026-11')
             if fixed:
                 data['employees'][0]['fixedOffDays'] = [5]
             else:
-                data['assignments'] = [{'employeeId': 'p0', 'date': '2026-11-07', 'kind': 'OFF', 'locked': True}]
+                # Published overlapping days arrive as locked assignments too.
+                data['assignments'] = [{'employeeId': 'p0', 'date': day, 'kind': 'OFF', 'locked': True}]
+            before = copy.deepcopy(data)
             with patch('solver._solve', side_effect=AssertionError('must reject before CP')):
                 result = solve(data)
             self.assertEqual(result['status'], 'INFEASIBLE')
+            self.assertEqual(result['assignments'], [])
             self.assertIn('sábado', result['solverDiagnostics'][0]['message'])
+            self.assertEqual(data, before)
 
-    def test_legacy_and_known_month_padding_are_not_rewritten_by_v2_rule(self):
+    def test_v2_padding_drafts_never_waive_the_rule_while_v1_is_unchanged(self):
         data = fixture(40)
-        self.assertFalse(_saturday_off_forbidden(data, '2026-11-07'))
-        data.update(restRulesVersion=2, visibleMonth='2026-11')
-        old = {'kind': 'OFF', 'locked': True}
-        self.assertFalse(_saturday_off_forbidden(data, '2026-10-31', old))
-        self.assertTrue(_saturday_off_forbidden(data, '2026-10-31'))
-        self.assertTrue(_saturday_off_forbidden(data, '2026-11-07', old))
+        data['visibleMonth'] = '2026-11'
+        for version in (1, 2):
+            data['restRulesVersion'] = version
+            for day in ('2026-10-31', '2026-11-07', '2026-12-05'):
+                for old in (None, {'kind': 'WORK'}, {'kind': 'OFF'}, {'kind': 'OFF', 'locked': True}):
+                    self.assertEqual(_saturday_off_forbidden(data, day, old), version >= 2)
 
     def test_hours_only_missing_or_duplicate_baseline_rejected_before_cp(self):
         for variant in ('empty', 'missing', 'duplicate'):

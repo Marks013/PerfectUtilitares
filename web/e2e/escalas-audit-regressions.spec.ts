@@ -10,12 +10,14 @@ test.use({ trace: "off", screenshot: "off", video: "off" });
 
 function draft(branch: string): EscalaInput {
   const employee = { id: "audit-active", registration: "QA01", name: "Pessoa de verificação", sector: "Setor de teste", role: "Repositor", weeklyHours: 42 as const, shiftIds: ["day"], activeFrom: "2020-01-01", scheduleMode: "TIMED" as const, offMode: "VARIABLE" as const, fixedOffDays: [], offPattern: "ANY" as const, maxConsecutiveSundays: 2 as const, sundayRestRule: "COMMERCE" as const, preferredOffDays: [], historyKnown: false, history: [] };
+  const support = { ...employee, id: "audit-support", registration: "QA03", name: "Pessoa de apoio" };
   return {
     schemaVersion: 1, branchCode: branch, branchName: "Verificação técnica — não publicar", startDate: "2026-11-02", endDate: "2026-11-08", defaultWeeklyHours: 42, timeZone: "America/Sao_Paulo",
     policy: { source: "Cenário técnico sintético; não publicar", validFrom: "2026-01-01", validUntil: "2026-12-31", reviewed: true, reviewedBy: "Verificação automatizada", normativeProfile: "CUSTOM", weeklyLimit: 44, dailyLimitMinutes: 528, compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false, coverageReview: "CONFIRMED", limitContinuousWorkBlocks: false },
-    employees: [employee, { ...employee, id: "audit-disabled", registration: "QA02", name: "Pessoa excluída de verificação", planningEnabled: false, planningExclusionReason: "Exclusão explícita do cenário técnico" }],
+    employees: [employee, support, { ...employee, id: "audit-disabled", registration: "QA02", name: "Pessoa excluída de verificação", planningEnabled: false, planningExclusionReason: "Exclusão explícita do cenário técnico" }],
     shifts: [{ id: "day", name: "Dia", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
-    assignments: [...Array.from({ length: 7 }, (_, index) => ({ employeeId: employee.id, date: `2026-11-0${index+2}`, kind: index < 5 ? "WORK" as const : "OFF" as const, ...(index < 5 ? { shiftId: "day" } : {}) })), { employeeId: "audit-disabled", date: "2026-11-03", kind: "ABSENCE" }],
+    assignments: [...Array.from({ length: 7 }, (_, index) => ({ employeeId: employee.id, date: `2026-11-0${index+2}`, kind: index < 5 ? "WORK" as const : "OFF" as const, ...(index < 5 ? { shiftId: "day" } : {}) })),
+      ...Array.from({ length: 7 }, (_, index) => ({ employeeId: support.id, date: `2026-11-0${index+2}`, kind: index >= 1 && index <= 5 ? "WORK" as const : "OFF" as const, ...(index >= 1 && index <= 5 ? { shiftId: "day" } : {}) })), { employeeId: "audit-disabled", date: "2026-11-03", kind: "ABSENCE" }],
     demands: Array.from({ length: 7 }, (_, index) => ({ id: `audit-demand-${index}`, date: `2026-11-0${index + 2}`, sector: "Setor de teste", start: 480, end: 720, minimum: index < 5 ? 1 : 0 })),
   };
 }
@@ -84,6 +86,7 @@ test("revision confirmation, inactive panels, canonical identity and excluded-pe
     const proposal = await generated.json();
     expect(["OPTIMAL", "FEASIBLE"]).toContain(proposal.result.status);
     expect(proposal.result.assignments.filter((day: { employeeId: string }) => day.employeeId === "audit-disabled")).toEqual([{ employeeId: "audit-disabled", date: "2026-11-03", kind: "ABSENCE" }]);
+    expect(proposal.result.assignments.some((day: { employeeId: string; date: string; kind: string }) => day.employeeId !== "audit-disabled" && day.date === "2026-11-07" && day.kind === "WORK")).toBe(true);
     const applying = page.waitForResponse(response => response.url().endsWith("/api/escalas") && response.request().method() === "POST" && response.request().postDataJSON()?.action === "SAVE");
     await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
     const applied = await applying; expect(applied.status()).toBe(200);

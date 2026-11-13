@@ -72,6 +72,20 @@ beforeEach(() => {
 });
 
 describe("canonical scheduling branch service", () => {
+  it.each(["schema", "validation"] as const)("records the service %s boundary without changing its public rejection", async stage => {
+    const input = generatedInput(); input.employees[0].name = "PRIVATE_SERVICE_SENTINEL";
+    useCurrent(input);
+    const assignments = stage === "schema" ? [{ employeeId: "e1", date: input.startDate, kind: "OFF", shiftId: "PRIVATE_SERVICE_SENTINEL" }]
+      : input.assignments.map(({ employeeId, date }) => ({ employeeId, date, kind: "OFF" }));
+    mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments, message: "PRIVATE_SERVICE_SENTINEL", wallTimeSeconds: 1 });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE", message: "O cálculo não passou pela conferência. Sua escala salva foi mantida; tente novamente." });
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: "escala_solver_rejected", stage: stage === "schema" ? "service-schema" : "service-validation", code: stage === "schema" ? "SCHEMA_INVALID" : "RULES_INVALID" }));
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE_SERVICE_SENTINEL");
+      expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    } finally { log.mockRestore(); }
+  });
   it("permits internal publication with unconfirmed compensation while preserving the configured flag", async () => {
     const value = input(); value.simulation = false; value.policy.compensationAuthorized = false;
     useCurrent(value);

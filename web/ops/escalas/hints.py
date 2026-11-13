@@ -29,11 +29,9 @@ def holiday_rest_forbidden(policy, day):
 
 
 def saturday_rest_forbidden(policy, day, old=None):
-    """Apply v2 to generated dates while retaining known monthly padding."""
-    month = policy.get('_visibleMonth')
+    """Apply v2 across the generated horizon; an old draft never waives it."""
     return (policy.get('_restRulesVersion', 1) >= 2
-            and date.fromisoformat(day).weekday() == 5
-            and not (old and month and not day.startswith(month + '-')))
+            and date.fromisoformat(day).weekday() == 5)
 
 
 def _mixed_week_variants(entries, choices, metrics, baseline, pid, require_two=True):

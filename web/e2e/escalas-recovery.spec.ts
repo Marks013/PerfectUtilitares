@@ -50,7 +50,7 @@ test("real infeasible coverage explains the budget, opens the correct filters an
     expect(failed.result.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ code: "COVERAGE_WEEKLY_CAPACITY", target: "coverage", sector: "Loja" })]));
     await expect(page.getByText("Proposta não gerada.", { exact: true })).toBeVisible();
     await expect(page.getByText(/os mínimos exigem 56h00.*40h00/)).toBeVisible();
-    const action = page.getByRole("button", { name: "Conferir cobertura", exact: true });
+    const action = page.getByRole("listitem").filter({ hasText: /os mínimos exigem 56h00.*40h00/ }).getByRole("button", { name: "Conferir cobertura", exact: true });
     await action.focus(); await page.keyboard.press("Enter");
     const list = page.locator("#escala-coverage-required");
     await expect(list).toHaveAttribute("open", "");
@@ -94,7 +94,7 @@ test("Conferir equipe e restrições opens the actual employee editor after a ge
     const failed = await generate(page);
     expect(failed.result.status).toBe("INFEASIBLE");
     expect(failed.result.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LOCKED_WORK_ON_FIXED_REST", employeeId: "p1", date: "2026-10-31" })]));
-    await page.getByRole("button", { name: "Conferir equipe e restrições", exact: true }).click();
+    await page.getByRole("listitem").filter({ hasText: "Há trabalho bloqueado em 31/10/2026" }).getByRole("button", { name: "Conferir equipe e restrições", exact: true }).click();
     await expect(page.locator("#escala-team-restrictions")).toHaveAttribute("open", "");
     const editor = page.locator("#escala-employee-editor");
     await expect(editor).toBeVisible();

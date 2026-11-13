@@ -125,20 +125,29 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
 });
 
 test("one journey controls a full FPRE136 simulation, stale outputs and actual PDF/XLSX downloads across screen sizes", async ({ page }) => {
+  const listResponse = await page.request.get("/api/escalas");
+  expect(listResponse.status()).toBe(200);
+  const listed: { workspaces: EscalaWorkspace[] } = await listResponse.json();
+  const used = new Set(listed.workspaces.map(workspace => workspace.input.branchCode));
+  const branch = Array.from({ length: 90 }, (_, index) => String(index + 10)).find(code => !used.has(code));
+  if (!branch) throw new Error("No unused two-digit branch is available for the isolated FPRE136 fixture");
   await page.goto("/escala");
   await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
   if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
-  await page.getByLabel("Código da filial", { exact: true }).fill("02");
+  await page.getByLabel("Código da filial", { exact: true }).fill(branch);
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Supermercado sintético E2E");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
   const creating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "CREATE");
   await page.getByRole("button", { name: "Iniciar planejamento", exact: true }).click();
-  const created: EscalaWorkspace = await (await creating).json();
+  const createResponse = await creating;
+  expect(createResponse.status()).toBe(201);
+  const created: EscalaWorkspace = await createResponse.json();
+  try {
   const journey = page.getByLabel("Jornada semanal", { exact: true });
   await expect(journey).toHaveCount(1);
   await page.locator('button[aria-controls="escala-area-generate"]').click();
   await journey.selectOption("44");
-  const rows: string[][] = [["0001", "-", "Empresa sintética", "Pág.:", "1"], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"], ["02.01 , ICARAIMA, LOJA"], ["Horário:", "0026", "-", "07:00 11:00 13:00 16:20"]];
+  const rows: string[][] = [["0001", "-", "Empresa sintética", "Pág.:", "1"], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"], [`${branch}.01 , ICARAIMA, LOJA`], ["Horário:", "0026", "-", "07:00 11:00 13:00 16:20"]];
   for (const [registration, name, role, zero, short] of [
     ["001", "Ana Sintética", "Repositor", false, false],
     ["002", "Bruno Sintético", "Repositor", false, false],
@@ -168,14 +177,17 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   expect(generated.proposalInput.policy.compensationAuthorized).toBe(false);
   expect(generated.proposalInput.policy.reviewed).toBe(false);
   expect(generated.proposalInput.employees).toHaveLength(5);
-  expect(generated.proposalInput.employees.every((person: { planningEnabled?: boolean }) => person.planningEnabled !== false)).toBe(true);
+  expect(generated.proposalInput.employees.filter((person: { planningEnabled?: boolean }) => person.planningEnabled !== false)).toHaveLength(4);
   const timed = generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "001");
   const shift = generated.proposalInput.shifts.find((item: { id: string }) => item.id === timed.shiftIds[0]);
   expect(timed.weeklyHours).toBe(42);
   expect(timed.sourceSchedule.weekday).toBe("07:00-11:00 / 13:00-16:20");
   expect(shift.segments.reduce((sum: number, segment: { kind: string; start: number; end: number }) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)).toBe(504);
-  expect(generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "004").scheduleMode).toBe("MISSING");
-  expect(generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "005").simulationDailyMinutes).toBe(240);
+  expect(generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "004").scheduleMode).toBe("UNTIMED");
+  const shortPerson = generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "005");
+  expect(shortPerson).toMatchObject({ planningEnabled: false, scheduleMode: "TIMED", sourceSchedule: { weekday: "07:00-11:00 / 00:00-00:00" } });
+  expect(shortPerson.planningExclusionReason).toContain("inferior a 6h");
+  expect(generated.proposalInput.assignments.filter((item: { employeeId: string }) => item.employeeId === shortPerson.id)).toEqual([]);
   await expect(page.getByRole("heading", { name: "Proposta pronta para revisão", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
   const saving = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
@@ -216,4 +228,15 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   await page.getByRole("dialog", { name: "Excluir este planejamento?", exact: true }).getByRole("button", { name: "Confirmar exclusão", exact: true }).click();
   await expect(page.getByText("Planejamento e revisões excluídos. Os demais períodos foram preservados.", { exact: true })).toBeVisible();
   expect((await page.request.get(`/api/escalas?id=${created.id}`)).status()).toBe(404);
+  } finally {
+    const response = await page.request.get(`/api/escalas?id=${created.id}`);
+    if (response.status() !== 404) {
+      expect(response.status()).toBe(200);
+      const current: EscalaWorkspace = await response.json();
+      expect(current.input.branchCode).toBe(branch);
+      expect(current.status).toBe("DRAFT");
+      const removed = await page.request.delete("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { workspaceId: created.id, expectedRevision: current.revision } });
+      expect(removed.status()).toBe(200);
+    }
+  }
 });

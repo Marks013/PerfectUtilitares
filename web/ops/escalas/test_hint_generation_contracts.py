@@ -30,16 +30,18 @@ def context(data):
 
 class HintGenerationContractsTests(unittest.TestCase):
     def test_v2_saved_saturday_off_is_not_fixed_as_comparable_seed(self):
-        data = fixture(40)
+        data = fixture(40, weeks=6, start_date='2026-10-26')
         complete_baseline(data)
-        data['restRulesVersion'] = 2
+        data.update(restRulesVersion=2, visibleMonth='2026-11')
         args = context(data)
         self.assertFalse(_feasibility_hints(*args))
         model, _, _, off, work, choices, *_ = args
         self.assertEqual(_seed_hint_state(model, off, work, choices), 'COMPLETE')
         values = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
-        self.assertEqual(values[off['p0', '2026-11-07'].index], 0)
-        self.assertEqual(values[work['p0', '2026-11-07'].index], 1)
+        for key in off:
+            if date.fromisoformat(key[1]).weekday() == 5:
+                self.assertEqual(values[off[key].index], 0)
+                self.assertEqual(values[work[key].index], 1)
 
     def test_v2_balanced_seed_preserves_saturday_absence_and_holiday(self):
         for kind in ('ABSENCE', 'HOLIDAY'):
@@ -85,14 +87,21 @@ class HintGenerationContractsTests(unittest.TestCase):
         self.assertEqual(values[off['p0', '2026-11-04'].index], 0)
         self.assertEqual(values[work['p0', '2026-11-04'].index], 0)
 
-    def test_v2_rule_leaves_known_padding_and_legacy_hints_admissible(self):
+    def test_v2_padding_hints_are_restricted_and_v1_saved_hints_unchanged(self):
         policy = {'_restRulesVersion': 2, '_visibleMonth': '2026-11'}
-        self.assertFalse(saturday_rest_forbidden(policy, '2026-10-31', {'kind': 'OFF'}))
-        self.assertTrue(saturday_rest_forbidden(policy, '2026-10-31'))
+        for day in ('2026-10-31', '2026-12-05'):
+            for old in (None, {'kind': 'WORK'}, {'kind': 'OFF'}, {'kind': 'OFF', 'locked': True}):
+                self.assertTrue(saturday_rest_forbidden(policy, day, old))
         data = fixture(40)
         complete_baseline(data)
+        before = copy.deepcopy(data)
         args = context(data)
         self.assertTrue(_feasibility_hints(*args))
+        model, _, _, off, *_ = args
+        values = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
+        self.assertEqual({day for (_, day), var in off.items() if values[var.index]},
+                         {a['date'] for a in data['assignments'] if a['kind'] == 'OFF'})
+        self.assertEqual(data, before)
         self.assertTrue(any(a['kind'] == 'OFF' and date.fromisoformat(a['date']).weekday() == 5 for a in data['assignments']))
 
 

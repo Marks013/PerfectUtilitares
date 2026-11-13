@@ -41,6 +41,31 @@ function completeAssignments(): EscalaInput["assignments"] {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it.each(["json", "schema", "completeness", "preservation", "validation"] as const)("logs a safe internal %s rejection with the same public failure", async scenario => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const sentinel = "PRIVATE_DIAGNOSTIC_SENTINEL";
+    const input = fixture(); input.employees[0].name = sentinel; input.employees[0].registration = sentinel;
+    if (scenario === "preservation") input.assignments = [{ employeeId: "p1", date: input.startDate, kind: "ABSENCE" }];
+    const assignments = scenario === "completeness" ? [] : scenario === "validation"
+      ? completeAssignments().map(({ employeeId, date }) => ({ employeeId, date, kind: "OFF" })) : completeAssignments();
+    vi.stubGlobal("fetch", vi.fn(async () => scenario === "json" ? new Response(sentinel)
+      : Response.json({ status: scenario === "schema" ? sentinel : "FEASIBLE", assignments, message: sentinel, wallTimeSeconds: 1 })));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE", message: "O cálculo não passou pela conferência. Sua escala salva foi mantida; tente novamente." });
+      const stages = { json: "transport-json", schema: "result-schema", completeness: "completeness", preservation: "preservation", validation: "independent-validation" };
+      const codes = { json: "JSON_INVALID", schema: "SCHEMA_INVALID", completeness: "MISSING_ACTIVE_DATE", preservation: "ABSENCE_CHANGED", validation: "RULES_INVALID" };
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: "escala_solver_rejected", stage: stages[scenario], code: codes[scenario] }));
+      expect(JSON.stringify(log.mock.calls)).not.toContain(sentinel);
+    } finally { log.mockRestore(); }
+  });
+  it("does not emit rejection diagnostics for an unchanged successful response", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Valid", wallTimeSeconds: 1 })));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try { expect((await solveEscala(fixture())).assignments).toEqual(completeAssignments()); expect(log).not.toHaveBeenCalled(); }
+    finally { log.mockRestore(); }
+  });
   it("keeps an established draft instead of replacing an unrepaired rest pattern with an unrestricted fallback", async () => {
     const input = fixture(); input.restRulesVersion = 1; input.endDate = "2026-11-15";
     input.shifts[0].segments = [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }];
@@ -171,7 +196,7 @@ describe("isolated schedule processor client", () => {
       await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_REFINEMENT_FAILED" });
       expect(input).toEqual(original);
       expect(fetch).not.toHaveBeenCalled();
-      expect(log).toHaveBeenCalledWith({ event: "escala_refinement_failed", errorType: "Error" });
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: "escala_solver_rejected", stage: "refinement", code: "REFINEMENT_FAILED" }));
       expect(JSON.stringify(log.mock.calls)).not.toContain("private payload");
     } finally { failure.mockRestore(); log.mockRestore(); }
   });

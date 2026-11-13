@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import { EscalaSolverError } from "./solver-errors";
+import { logSolverRejection } from "./solver-diagnostics";
 import { storeClosingMinutes } from "./store-hours";
 import type { EscalaAssignment, EscalaInput } from "./types";
 
@@ -47,7 +48,10 @@ function endpoint(path: "/solve" | "/cancel"): URL {
 
 async function boundedJson(response: Response, limit: number): Promise<unknown> {
   const reader = response.body?.getReader();
-  if (!reader) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  if (!reader) {
+    logSolverRejection("transport-body", "BODY_MISSING");
+    throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  }
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
@@ -55,11 +59,14 @@ async function boundedJson(response: Response, limit: number): Promise<unknown> 
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > limit) { await reader.cancel(); throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
+      if (size > limit) { logSolverRejection("transport-body", "BODY_LIMIT", { actual: size, expected: limit }); await reader.cancel(); throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
       chunks.push(value);
     }
     try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
-    catch { throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
+    catch { logSolverRejection("transport-json", "JSON_INVALID"); throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
+  } catch (error) {
+    if (!(error instanceof EscalaSolverError)) logSolverRejection("transport-body", "BODY_READ");
+    throw error;
   } finally { reader.releaseLock(); }
 }
 
@@ -130,6 +137,7 @@ export async function requestSolver(input: EscalaInput, options: SolverOptions =
     }
     throw new EscalaSolverError("SOLVER_UNAVAILABLE");
   }
+  if (!response.ok) logSolverRejection("transport-http", "HTTP_REJECTED", { httpStatus: response.status });
   if ([401, 403].includes(response.status)) throw new EscalaSolverError("SOLVER_AUTH_FAILED");
   if (response.status === 400 || response.status === 422) throw new EscalaSolverError("SOLVER_INVALID_INPUT");
   if (response.status === 500) throw new EscalaSolverError("SOLVER_INTERNAL_ERROR");

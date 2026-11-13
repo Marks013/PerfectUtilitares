@@ -3,13 +3,54 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { validateEscala } from "../../src/lib/escalas/validation.ts";
-import { dateRange, visibleDates } from "../../src/lib/escalas/dates.ts";
+import { dateRange, dayOfWeek, visibleDates } from "../../src/lib/escalas/dates.ts";
+import { prepareGeneration } from "../../src/lib/escalas/generation.ts";
 
 const runtime = process.argv[2];
 const image = process.argv[3];
 const properties = process.argv.includes("--properties");
 if (!runtime || (runtime === "--docker" && !image)) {
   throw new Error("Informe o Python com OR-Tools instalado ou --docker <imagem local>.");
+}
+
+function saturdayParityInput() {
+  const oldShift = { id: "parity-old-42", name: "Synthetic 42h", segments: [
+    { start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" },
+    { start: 780, end: 1044, kind: "WORK" },
+  ] };
+  const preparedShift = structuredClone(oldShift);
+  preparedShift.id = "parity-prepared-40";
+  preparedShift.name = "Synthetic 40h";
+  preparedShift.segments[2].end = 1020;
+  const input = {
+    schemaVersion: 1, branchCode: "PARITY", branchName: "Synthetic parity",
+    startDate: "2026-10-26", endDate: "2026-12-06", visibleMonth: "2026-11",
+    defaultWeeklyHours: 40, generationMode: "DAYS_AND_HOURS", timeZone: "America/Sao_Paulo",
+    policy: { source: "Synthetic reference", validFrom: "2026-01-01", validUntil: "2026-12-31",
+      reviewed: true, reviewedBy: "Synthetic", weeklyLimit: 44, dailyLimitMinutes: 528,
+      compensationAuthorized: true, minInterShiftMinutes: 660, minWeeklyRestMinutes: 2100,
+      minMealMinutes: 60, maxConsecutiveWorkDays: 5, closedDates: [], holidayDates: [],
+      authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+    shifts: [oldShift, preparedShift], demands: [],
+    employees: [{ id: "parity-person", registration: "001", name: "Synthetic person",
+      sector: "Synthetic sector", role: "Repositor", weeklyHours: 40, weeklyHoursMode: "BRANCH",
+      shiftIds: [preparedShift.id], activeFrom: "", planningEnabled: true, offMode: "VARIABLE",
+      fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, sundayRestRule: "PROTECTIVE",
+      preferredOffDays: [], historyKnown: false, history: [] }],
+    assignments: dateRange("2026-10-26", "2026-12-06").map(date => ({
+      employeeId: "parity-person", date,
+      ...(dayOfWeek(date) >= 1 && dayOfWeek(date) <= 5
+        ? { kind: "WORK", shiftId: oldShift.id } : { kind: "OFF" }),
+    })),
+  };
+  const before = structuredClone(input);
+  const prepared = prepareGeneration(input).input;
+  assert.deepEqual(input, before, "Preparation must preserve the saved synthetic draft");
+  assert.equal(prepared.restRulesVersion, 2);
+  assert(prepared.assignments.some(day => day.kind === "WORK" && day.shiftId === oldShift.id));
+  assert(!prepared.employees[0].shiftIds.includes(oldShift.id));
+  assert(prepared.demands.every(demand => demand.estimated === true));
+  return prepared;
 }
 const directory = fileURLToPath(new URL("../../ops/escalas/", import.meta.url));
 const source = `
@@ -150,6 +191,10 @@ person["planningFuture"] = [{"employeeId": "p0", "date": "2026-11-09", "kind": "
 data["assignments"] = [{"employeeId": "p0", "date": data["endDate"], "kind": "WORK", "shiftId": "night", "locked": True}]
 scenarios.append(("current-overnight-cannot-occupy-future-rest", data, {"infeasible": "OFF_OCCUPIED"}))
 
+${properties ? "" : `data = json.loads(${JSON.stringify(JSON.stringify(saturdayParityInput()))})
+scenarios.append(("saturday-v2-full-horizon-42-to-40", data, {"saturdayParity": True}))
+`}
+
 ${properties ? `from property_cases import cases
 scenarios = []  # Base scenarios already run separately; generated checks must not repeat them.
 generated = cases()
@@ -159,7 +204,11 @@ for index, generated_input in enumerate(generated):
 ` : ""}
 
 for name, data, expectations in scenarios:
-    print(json.dumps({"name": name, "input": data, "result": solve(data), "expectations": expectations}))
+    before = copy.deepcopy(data) if expectations.get("saturdayParity") else None
+    solved = solve(data)
+    if before is not None:
+        assert data == before, 'Solver must preserve original assignments and continuity records'
+    print(json.dumps({"name": name, "input": data, "result": solved, "expectations": expectations}))
 `;
 const command = runtime === "--docker" ? "docker" : runtime;
 const args = runtime === "--docker" ? [
@@ -198,6 +247,14 @@ for (const line of result.stdout.trim().split("\n")) {
     }
     const validation = validateEscala({ ...input, assignments: solved.assignments });
     assert(validation.valid, `${name}: ${validation.issues.filter((issue) => issue.severity === "ERROR").map((issue) => issue.code).join(", ")}`);
+    if (expectations.saturdayParity) {
+      const saturdays = dateRange(input.startDate, input.endDate).filter(day => dayOfWeek(day) === 5);
+      assert.deepEqual(saturdays, ["2026-10-31", "2026-11-07", "2026-11-14", "2026-11-21", "2026-11-28", "2026-12-05"]);
+      for (const date of saturdays) {
+        assert.equal(solved.assignments.find(day => day.date === date)?.kind, "WORK", `${name}: Saturday ${date}`);
+      }
+      assert(solved.assignments.every(day => day.kind !== "WORK" || day.shiftId !== "parity-old-42"), name);
+    }
     if (expectations.publishable) assert(validation.readyToPublish, `${name}: ${[...new Set(validation.issues.filter(issue => issue.severity !== "WARNING").map(issue => issue.code))].join(", ")}`);
     if (expectations.missing) {
       assert(!validation.readyToPublish, name);
@@ -228,5 +285,5 @@ for (const line of result.stdout.trim().split("\n")) {
   passed++;
   console.log(JSON.stringify({ scenario: name, verified: true, status: solved.status, seconds: solved.wallTimeSeconds }));
 }
-assert.equal(passed, properties ? 30 : 22, "Todos os cenários devem ter sido executados.");
+assert.equal(passed, properties ? 30 : 23, "Todos os cenários devem ter sido executados.");
 console.log(JSON.stringify({ verified: true, scenarios: passed, processor: "CP-SAT", verifier: "TypeScript independent" }));

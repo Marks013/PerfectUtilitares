@@ -231,7 +231,9 @@ test("the main workspace prepares real files for the exact saved revision and in
     await page.getByRole("button", { name: "Ajustar horários no rascunho", exact: true }).click();
     const solving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
     await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
-    const solution = await (await solving).json(); expect(["FEASIBLE", "OPTIMAL"]).toContain(solution.result.status); expect(solution.validation.valid).toBe(true);
+    const response = await solving;
+    expect(response.status(), "Generation must return a successful proposal").toBe(200);
+    const solution = await response.json(); expect(["FEASIBLE", "OPTIMAL"]).toContain(solution.result.status); expect(solution.validation.valid).toBe(true);
     await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
     const saved = await read(page, workspace.id); expect(saved.input.defaultWeeklyHours).toBe(40); expect(saved.status).toBe("DRAFT");

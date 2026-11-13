@@ -10,6 +10,7 @@ import { restPairSummary } from "./rest-quality";
 import { selectVerifiedRoster } from "./roster-quality";
 import { validateEscala } from "./validation";
 import { matchesHoursOnlyAssignments } from "./hours-reference";
+import { logSolverRejection } from "./solver-diagnostics";
 import { EscalaError } from "./errors";
 
 const objectiveName = z.enum(["COVERAGE", "MOVEMENT_COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
@@ -85,8 +86,8 @@ export async function solveEscala(
     // Clock-only generation must compare against the original days, even if moving rest days could improve their spacing.
     refined = parsed.generationMode === "HOURS_ONLY" ? parsed
       : selectVerifiedRoster(parsed, refineRoster(parsed)).input;
-  } catch (error) {
-    console.error({ event: "escala_refinement_failed", errorType: error instanceof Error ? error.name : "Unknown" });
+  } catch {
+    logSolverRejection("refinement", "REFINEMENT_FAILED");
     throw new EscalaSolverError("SOLVER_REFINEMENT_FAILED");
   }
   // Never discard an established roster merely because a new rest criterion needs local repair.
@@ -102,16 +103,21 @@ export async function solveEscala(
     ...options,
     initialAssignments: refined === parsed || !validateEscala(refined).valid ? undefined : refined.assignments,
   });
+  let stage = "result-schema", reason = "SCHEMA_INVALID";
+  let details: Parameters<typeof logSolverRejection>[2];
   try {
     const result = resultSchema.parse(payload);
     if (["OPTIMAL", "FEASIBLE"].includes(result.status)) {
       // Revalidate references and dates, independently of the processor's contract.
+      stage = "assignment-schema";
       escalaInputSchema.parse({ ...parsed, assignments: result.assignments });
       const assignments = new Map(result.assignments.map((item) => [`${item.employeeId}\0${item.date}`, item]));
       const retained = new Set(parsed.employees.filter(person => person.planningEnabled === false).map(person => person.id));
       let expected = parsed.assignments.filter(item => retained.has(item.employeeId)
         && (parsed.generationMode === "HOURS_ONLY" || item.locked || item.kind === "ABSENCE")).length;
       for (const person of parsed.employees) {
+        stage = "completeness"; reason = "MISSING_ACTIVE_DATE";
+        details = { actual: result.assignments.length };
         if (person.planningEnabled === false) continue;
         for (const day of dateRange(parsed.startDate, parsed.endDate)) {
           if (day < person.activeFrom || (person.activeUntil && day > person.activeUntil)) continue;
@@ -119,32 +125,44 @@ export async function solveEscala(
           if (!assignments.has(`${person.id}\0${day}`)) throw new Error("Incomplete processor result");
         }
       }
+      reason = "ASSIGNMENT_COUNT"; details = { expected, actual: result.assignments.length };
       if (expected !== result.assignments.length) throw new Error("Unexpected processor assignments");
+      stage = "preservation"; details = undefined;
       for (const previous of parsed.assignments) {
         const proposed = assignments.get(`${previous.employeeId}\0${previous.date}`);
+        reason = "ABSENCE_CHANGED";
         if (previous.kind === "ABSENCE" && proposed?.kind !== "ABSENCE") throw new Error("Changed absence");
+        reason = "LOCK_CHANGED";
         if (previous.locked && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || !proposed.locked)) throw new Error("Changed locked day");
       }
     } else if (result.assignments.length) {
+      stage = "completeness"; reason = "UNEXPECTED_ASSIGNMENTS"; details = { actual: result.assignments.length, expected: 0 };
       throw new Error("Unexpected assignments on unsuccessful solve");
     }
     if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
     if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
+      stage = "selection-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const selected = selectVerifiedRoster(refined, { ...parsed, assignments: result.assignments });
       // A selector without a valid incumbent can return the proposal unchanged. It is never proof of feasibility.
+      stage = "assignment-schema"; reason = "SCHEMA_INVALID";
       const finalInput = escalaInputSchema.parse({ ...parsed, assignments: selected.input.assignments });
       const finalDays = new Map(finalInput.assignments.map(day => [`${day.employeeId}\0${day.date}`, day]));
+      stage = "preservation"; reason = "PROTECTED_ASSIGNMENT_CHANGED";
       if (parsed.assignments.some(day => {
         const next = finalDays.get(`${day.employeeId}\0${day.date}`);
         return day.kind === "ABSENCE" && next?.kind !== "ABSENCE"
           || day.locked && (next?.kind !== day.kind || next.shiftId !== day.shiftId || !next.locked);
       })) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
       const finalValidation = validateEscala(finalInput);
+      stage = "independent-validation"; reason = "RULES_INVALID";
+      details = { issues: finalValidation.issues };
       if (!finalValidation.valid || finalValidation.issues.some(issue => issue.code === "DAY_PENDING")
         || !matchesHoursOnlyAssignments(parsed, finalInput)) {
+        if (finalValidation.valid && !finalValidation.issues.some(issue => issue.code === "DAY_PENDING")) reason = "HOURS_ONLY_CHANGED";
         throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
       }
       if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+      stage = "result-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const restQuality = {
         before: restPairSummary(parsed), after: restPairSummary(selected.input),
         search: { attempted: refined.assignments !== parsed.assignments || (result.optimization?.phases.some(phase => phase.objective === "REST_SPACING") ?? false),
@@ -160,6 +178,9 @@ export async function solveEscala(
     }
     return result;
   } catch (error) {
+    if (!(error instanceof EscalaSolverError) || error.code === "SOLVER_INVALID_RESPONSE") {
+      logSolverRejection(stage, reason, { ...details, issues: error instanceof z.ZodError ? error.issues : details?.issues });
+    }
     if (error instanceof EscalaSolverError) throw error;
     throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
   }

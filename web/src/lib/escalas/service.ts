@@ -5,6 +5,7 @@ import { allowedBranches, branchPermission, EscalaError, requireEscalaPermission
 import { escalaInputSchema } from "./schema";
 import { EscalaSolverError, solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
+import { logSolverRejection } from "./solver-diagnostics";
 import { findGenerationConflicts } from "./generation-conflicts";
 import { generationScenarioBasis, isHoursReferenceOnly, matchesHoursOnlyAssignments } from "./hours-reference";
 import { compareBranches } from "./order";
@@ -315,11 +316,14 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const prepared = prepareGeneration(current.input);
   if (isHoursReferenceOnly(prepared.input)) {
     const proposalInput = parseEscalaInput({ ...prepared.input, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared.input) });
-    preserveLockedAssignments(current.input, proposalInput);
-    if (!matchesHoursOnlyAssignments(current.input, proposalInput)) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+    try { preserveLockedAssignments(current.input, proposalInput); }
+    catch (error) { logSolverRejection("service-preservation", "LOCK_CHANGED"); throw error; }
+    if (!matchesHoursOnlyAssignments(current.input, proposalInput)) { logSolverRejection("service-preservation", "HOURS_ONLY_CHANGED"); throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
     const validation = validateEscala(proposalInput);
-    if (!validation.valid) throw new EscalaError(422, "ESCALA_HOURS_REFERENCE_INVALID", "Alguns horários não atendem às regras do cenário. Confira entrada, intervalo, saída e fechamento; nenhum dia de trabalho ou folga foi criado.");
-    const latest = await getEscala(actor, id); assertRevision(latest, expectedRevision);
+    if (!validation.valid) { logSolverRejection("service-validation", "RULES_INVALID", { issues: validation.issues }); throw new EscalaError(422, "ESCALA_HOURS_REFERENCE_INVALID", "Alguns horários não atendem às regras do cenário. Confira entrada, intervalo, saída e fechamento; nenhum dia de trabalho ou folga foi criado."); }
+    const latest = await getEscala(actor, id);
+    try { assertRevision(latest, expectedRevision); }
+    catch (error) { logSolverRejection("service-recheck", "RECHECK_FAILED"); throw error; }
     return { result: { status: "FEASIBLE" as const, assignments: proposalInput.assignments, wallTimeSeconds: 0,
       message: "Referências de horários preparadas. Nenhuma presença diária, folga ou cobertura foi gerada." }, proposalInput, validation, preparation: prepared.preparation };
   }
@@ -342,15 +346,21 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
       proposalInput = parseEscalaInput({ ...contextual, needsRegeneration: false, generationBasis: generationScenarioBasis(contextual), assignments: result.assignments });
     } catch {
       // Context was parsed before invoking the worker. Only its returned assignments are new here.
+      logSolverRejection("service-schema", "SCHEMA_INVALID");
       throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
     }
   }
-  preserveLockedAssignments(current.input, proposalInput);
-  if (!matchesHoursOnlyAssignments(current.input, proposalInput)) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  try { preserveLockedAssignments(current.input, proposalInput); }
+  catch (error) { logSolverRejection("service-preservation", "LOCK_CHANGED"); throw error; }
+  if (!matchesHoursOnlyAssignments(current.input, proposalInput)) { logSolverRejection("service-preservation", "HOURS_ONLY_CHANGED"); throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
   const latest = await getEscala(actor, id);
-  assertRevision(latest, expectedRevision);
+  try { assertRevision(latest, expectedRevision); }
+  catch (error) { logSolverRejection("service-recheck", "RECHECK_FAILED"); throw error; }
   const validation = validateEscala(proposalInput);
-  if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING") || !matchesRestOnlyReferences(contextual, result.assignments))) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING") || !matchesRestOnlyReferences(contextual, result.assignments))) {
+    logSolverRejection("service-validation", !validation.valid || validation.issues.some(issue => issue.code === "DAY_PENDING") ? "RULES_INVALID" : "REST_ONLY_CHANGED", { issues: validation.issues });
+    throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  }
   return { result, proposalInput, validation, preparation: prepared.preparation };
 }
 
