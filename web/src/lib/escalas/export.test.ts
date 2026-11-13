@@ -136,7 +136,8 @@ describe("Escalas shared monthly presentation and real exports", () => {
     expect(rows[3][5]).toBe("01\nDom");
     expect(rows[3].at(-1)).toBe("30\nSeg");
     expect(main).toContain('<autoFilter ref="A4:AI6"/>');
-    expect(main).toContain('xSplit="5" ySplit="4"');
+    expect(main).not.toMatch(/<pane\b|state="frozen"|xSplit=|ySplit=|selection pane=/);
+    expect(main).toContain('<selection activeCell="A1" sqref="A1"/>');
   });
   it("does not describe an ENC duty day as nobody scheduled in PDF or XLSX", async () => {
     const workspace = fixture();

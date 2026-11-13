@@ -71,8 +71,10 @@ describe("verified processor quality delivery", () => {
     expect(result.status).toBe("FEASIBLE"); expect(result.assignments).toEqual(input.assignments);
     expect(result.optimization).toBeUndefined(); expect(result.solverDiagnostics).toBeUndefined();
   });
-  it("retains a successful verified draft and removes optimality metadata from a rejected alternative", async () => {
-    const input = fixture(); expect(validateEscala(input).valid).toBe(true);
+  it("retains a verified draft and removes optimality metadata when the alternative worsens the protected peak", async () => {
+    const input = fixture();
+    input.demands[1].minimum = 5;
+    expect(validateEscala(input).valid).toBe(true);
     vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
     const assignments = input.assignments.map(record => record.employeeId === "a" && record.date === "2026-11-03" ? { ...record, kind: "WORK" as const, shiftId: "day" }
       : record.employeeId === "a" && record.date === "2026-11-04" ? { employeeId: record.employeeId, date: record.date, kind: "OFF" as const } : record);
@@ -80,8 +82,23 @@ describe("verified processor quality delivery", () => {
       optimization: { budgetSeconds: 12, phases: [{ objective: "REST_SPACING", status: "OPTIMAL", budgetSeconds: 1, wallTimeSeconds: 1, incumbentValue: 0 }] } });
     const result = await solveEscala(input);
     expect(result.status).toBe("FEASIBLE"); expect(result.assignments).toEqual(input.assignments);
-    expect(result.optimization).toBeUndefined(); expect(result.restQuality?.search).toEqual({ attempted: true, retainedReference: true });
+    expect(result.optimization).toBeUndefined(); expect(result.restQuality?.search).toEqual({ attempted: true, retainedReference: true, retentionReason: "SECTOR_PEAK" });
     expect(result.restQuality?.after).toEqual(result.restQuality?.before);
+  });
+  it("delivers a feasible sector improvement without inventing optimality or retaining the old draft", async () => {
+    const input = fixture(), original = structuredClone(input);
+    vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
+    const assignments = input.assignments.map(record => record.employeeId === "a" && record.date === "2026-11-03" ? { ...record, kind: "WORK" as const, shiftId: "day" }
+      : record.employeeId === "a" && record.date === "2026-11-04" ? { employeeId: record.employeeId, date: record.date, kind: "OFF" as const } : record);
+    const optimization = { budgetSeconds: 12, phases: [{ objective: "REST_SPACING" as const, status: "FEASIBLE" as const, budgetSeconds: 1, wallTimeSeconds: 1, incumbentValue: 0 }] };
+    vi.mocked(requestSolver).mockResolvedValue({ status: "FEASIBLE", message: "Verified improvement", assignments, wallTimeSeconds: 1, optimization });
+    const result = await solveEscala(input);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.assignments).toEqual(assignments);
+    expect(validateEscala({ ...input, assignments: result.assignments }).valid).toBe(true);
+    expect(result.optimization).toEqual(optimization);
+    expect(result.restQuality?.search).toEqual({ attempted: true, retainedReference: false, retentionReason: "OPERATIONAL_IMPROVEMENT" });
+    expect(input).toEqual(original);
   });
   it("delivers successful unchanged quality with independently derived counts and elapsed preparation", async () => {
     const input = fixture(); vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);

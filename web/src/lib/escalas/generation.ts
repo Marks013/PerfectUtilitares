@@ -129,7 +129,10 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       throw new EscalaError(422, "ESCALA_CLOSING_LOCK_CONFLICT", `Há um dia bloqueado com saída após ${storeClosingLabel(input)}. Ajuste esse horário ou desbloqueie o dia antes de gerar. O registro foi preservado.`);
     }
     // Five matching workdays prove compatibility with this scenario, not the original employment contract.
-    if (imported && compatibleImport && !mixedWeeks && mealMinutes(imported) > maximumMealMinutes(input.policy, input.startDate)
+    const usesBaseReference = !person.manualShiftOverrides?.length || dateRange(input.startDate, input.endDate).some(date =>
+      date >= person.activeFrom && (!person.activeUntil || date <= person.activeUntil) && !manualShiftAt(person, date));
+    if (imported && compatibleImport && !mixedWeeks && usesBaseReference
+      && mealMinutes(imported) > maximumMealMinutes(input.policy, input.startDate)
       && allowed.some(shift => preparedShiftSignature(shift) === preparedShiftSignature(imported) || isAutomaticPreparedShift(shift))) {
       throw new EscalaError(422, "ESCALA_IMPORTED_MEAL_CONFLICT", "O horário importado já corresponde à jornada escolhida, mas o intervalo excede o máximo configurado. Ele não foi alterado. Confira o horário individual ou a configuração documentada do intervalo antes de gerar.");
     }

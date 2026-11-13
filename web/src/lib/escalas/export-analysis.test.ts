@@ -89,7 +89,7 @@ describe("central coverage analysis in real operational files", () => {
     expect((await readSheet(bytes, "Horarios")).slice(4)).toHaveLength(3);
     const text = await pdfText(await exportEscalaPdf(workspace, "hours"));
     expect(text).toContain("Confirmada"); expect(text).toContain("Estimada");
-    expect(text).toContain("Maior desfalque (pessoas)");
+    expect(text).toContain("Maior falta simultânea (pessoas)");
     expect(text).not.toMatch(/Pico geral|Geral:|Com funções:/);
     expect(text).toContain("09:00-10:00"); expect(text).toContain("12:00-13:00");
     expect(text).not.toContain("Reveja entradas, intervalos e folgas");

@@ -3,12 +3,14 @@ import { strFromU8, unzipSync } from "fflate";
 import { exportEscalaXlsx } from "./export";
 import { newEmployee, newInput } from "../../components/escalas/workspace-model";
 import { effectiveScheduleMode } from "./fpre136-schedule";
-import { prepareGeneration } from "./generation";
+import { dateRange } from "./dates";
+import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { generationScenarioBasis, validateHoursReferences } from "./hours-reference";
 import { automaticShiftAlternatives, prepareRoster, preparedShiftSignature, refreshProposedWorkBlocks } from "./preparation";
 import { assignmentPresentation, buildEscalaSchedule } from "./presentation";
 import { adaptCompatibleSchedules } from "./schedule-adaptation";
 import type { EscalaEmployee, EscalaShift } from "./types";
+import { manualShiftAt, manualShiftIssues, materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
 
 function setWeekday(person: EscalaEmployee, weekday: string) {
   if (!person.sourceSchedule) throw new Error("Synthetic source missing");
@@ -38,6 +40,73 @@ function fixture(meal = 180, daily = 440) {
     sourceSchedule: { report: "FPRE136", code: "S", description: "Synthetic", weekday: `07:40-11:30 / ${clock(690 + meal)}-${clock(460 + daily + meal)}`, saturday: "07:00-11:00" } }];
   return input;
 }
+
+function datedManualFixture(mode: "REST_ONLY" | "HOURS_ONLY" | "DAYS_AND_HOURS", from = "2026-12-07", until = "2026-12-13") {
+  const input = fixture(180, 504);
+  input.generationMode = mode; input.policy.compensationAuthorized = true;
+  input.employees[0] = withManualShiftOverride(input.employees[0], {
+    catalogCode: 1500, shiftId: "manual-1500", markings: ["07:40", "11:30", "13:30", "18:04"], effectiveFrom: from, effectiveUntil: until,
+  });
+  return materializeManualShiftOverrides(input);
+}
+
+describe("dated manual meal precedence through real override helpers", () => {
+  it.each(["REST_ONLY", "HOURS_ONLY", "DAYS_AND_HOURS"] as const)("accepts a valid full-horizon override over an excessive imported base in %s", mode => {
+    const input = datedManualFixture(mode);
+    input.assignments = [{ employeeId: "one", date: "2026-12-07", kind: "ABSENCE", locked: true },
+      { employeeId: "one", date: "2026-12-08", kind: "HOLIDAY", locked: true },
+      { employeeId: "one", date: "2026-12-09", kind: "OFF", locked: true }];
+    const before = structuredClone(input);
+    expect(input.employees[0].manualShiftBaseIds).toEqual(["original"]);
+    expect(manualShiftIssues(input, true)).toEqual([]);
+    const result = prepareGeneration(input).input, person = result.employees[0];
+    expect(dateRange(input.startDate, input.endDate).every(date => manualShiftAt(person, date) === "manual-1500" && person.manualShiftByDate?.[date] === "manual-1500")).toBe(true);
+    expect(result.shifts.find(shift => shift.id === "original")).toEqual(input.shifts[0]);
+    expect(person.manualShiftBaseIds).toEqual(["original"]);
+    expect(person.sourceSchedule).toEqual(input.employees[0].sourceSchedule);
+    expect(result.assignments).toEqual(input.assignments); expect(result.policy.mealIntervalAgreement).toBeUndefined();
+    expect(matchesRestOnlyReferences(result, [{ employeeId: "one", date: "2026-12-10", kind: "WORK", shiftId: "manual-1500" }])).toBe(true);
+    expect(matchesRestOnlyReferences(result, [{ employeeId: "one", date: "2026-12-10", kind: "WORK", shiftId: "original" }])).toBe(false);
+    expect(input).toEqual(before);
+  });
+  it.each(["REST_ONLY", "HOURS_ONLY", "DAYS_AND_HOURS"] as const)("keeps the imported-base conflict for an uncovered active date in %s", mode => {
+    const input = datedManualFixture(mode, "2026-12-08"), before = structuredClone(input);
+    expect(manualShiftAt(input.employees[0], "2026-12-07")).toBeUndefined();
+    expect(() => prepareGeneration(input)).toThrow(expect.objectContaining({ code: "ESCALA_IMPORTED_MEAL_CONFLICT" }));
+    expect(input).toEqual(before);
+  });
+  it("considers employment boundaries instead of requiring manual clocks outside the active period", () => {
+    const input = datedManualFixture("HOURS_ONLY", "2026-12-08", "2026-12-11");
+    input.employees[0].activeFrom = "2026-12-08"; input.employees[0].activeUntil = "2026-12-11";
+    const before = structuredClone(input), result = prepareGeneration(input).input;
+    expect(Object.keys(result.employees[0].manualShiftByDate ?? {})).toEqual(dateRange("2026-12-08", "2026-12-11"));
+    expect(result.employees[0].sourceSchedule).toEqual(input.employees[0].sourceSchedule); expect(input).toEqual(before);
+  });
+  it("accepts the union of two real manual periods but rejects a gap between them", () => {
+    const input = datedManualFixture("HOURS_ONLY", "2026-12-07", "2026-12-09");
+    input.employees[0] = withManualShiftOverride(input.employees[0], {
+      catalogCode: 1501, shiftId: "manual-1501", markings: ["07:40", "11:30", "13:30", "18:04"], effectiveFrom: "2026-12-10", effectiveUntil: input.endDate,
+    });
+    const materialized = materializeManualShiftOverrides(input), before = structuredClone(materialized);
+    const result = prepareGeneration(materialized).input;
+    expect(result.employees[0].manualShiftByDate?.["2026-12-09"]).toBe("manual-1500");
+    expect(result.employees[0].manualShiftByDate?.["2026-12-10"]).toBe("manual-1501");
+    expect(materialized).toEqual(before);
+    const gap = datedManualFixture("HOURS_ONLY", "2026-12-07", "2026-12-08");
+    gap.employees[0] = withManualShiftOverride(gap.employees[0], {
+      catalogCode: 1501, shiftId: "manual-1501", markings: ["07:40", "11:30", "13:30", "18:04"], effectiveFrom: "2026-12-10", effectiveUntil: gap.endDate,
+    });
+    expect(() => prepareGeneration(materializeManualShiftOverrides(gap))).toThrow(expect.objectContaining({ code: "ESCALA_IMPORTED_MEAL_CONFLICT" }));
+  });
+  it("does not bypass a conflicting locked WORK covered by the manual period", () => {
+    const input = datedManualFixture("HOURS_ONLY");
+    input.assignments = [{ employeeId: "one", date: "2026-12-07", kind: "WORK", shiftId: "original", locked: true }];
+    const before = structuredClone(input);
+    expect(() => prepareGeneration(input)).toThrow(expect.objectContaining({ code: "MANUAL_SHIFT_LOCK_CONFLICT" }));
+    expect(input).toEqual(before);
+  });
+});
+
 describe("automatic meal bounds without changing imported evidence", () => {
   it.each([180, 135])("adapts a %s minute source meal to a bounded exact 42h proposal", meal => {
     const input = fixture(meal), before = structuredClone(input);

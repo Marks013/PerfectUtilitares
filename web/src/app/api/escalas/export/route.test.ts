@@ -146,7 +146,10 @@ describe("/api/escalas/export", () => {
     const detail = details.find(row => row[2] === "Ána Silva");
     expect(detail?.[4]).toBe("T01");
     expect(exportedDurationMinutes(detail?.[7])).toBe(504);
-    expect(strFromU8(zip["xl/workbook.xml"])).toContain("$1:$4");
+    const workbook = strFromU8(zip["xl/workbook.xml"]);
+    expect(workbook).not.toContain("_xlnm.Print_Titles");
+    expect(workbook).toContain('<definedName name="_xlnm.Print_Area" localSheetId="0">\'Escala\'!$A$1:$L$6</definedName>');
+    expect(content).not.toMatch(/<pane\b|state="frozen"|xSplit=|ySplit=|selection pane=/);
   });
   it("exports a readable compact draft PDF without the removed load summary", async () => {
     const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&mode=rest&separateSectors=false"));

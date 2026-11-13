@@ -101,17 +101,19 @@ describe("lean operational files", () => {
     } finally { await task.destroy(); }
   });
 
-  it("keeps Excel filtering over records only and selects the usable frozen pane", () => {
+  it("keeps Excel filtering over records only without frozen panes or repeated print titles", () => {
     const archive = unzipSync(exportEscalaXlsx(scenario()));
+    expect(strFromU8(archive["xl/workbook.xml"])).not.toContain("_xlnm.Print_Titles");
     for (const [path, data] of Object.entries(archive)) if (/worksheets\/sheet\d+\.xml$/.test(path)) {
       const xml = strFromU8(data);
       expect(xml).not.toContain("Setor:");
       expect([...xml.matchAll(/<mergeCell ref="[^"]+"/g)]).toHaveLength(3);
-      expect(xml).toContain('<selection pane="bottomRight"');
-      const editable = xml.match(/topLeftCell="([A-Z]+5)"/)?.[1];
-      expect(editable).toBeTruthy();
-      expect(xml).toContain('activeCell="' + editable + '"');
-      expect(xml).toContain('sqref="' + editable + '"');
+      expect(xml).not.toMatch(/<pane\b|state="frozen"|xSplit=|ySplit=|selection pane=/);
+      expect(xml).toContain('<selection activeCell="A1" sqref="A1"/>');
+      const last = xml.match(/<dimension ref="A1:([A-Z]+\d+)"\/>/)?.[1];
+      expect(last).toBeTruthy();
+      expect(xml).toContain('<autoFilter ref="A4:' + last + '"/>');
+      expect(xml).toContain('<row r="4"');
     }
   });
 
@@ -201,8 +203,8 @@ describe("lean operational files", () => {
     expect(rows[4][6]).toBe("12:00-13:00");
     const text = await pdfText(await exportEscalaPdf(source));
     expect(text).not.toContain("Faixa analisada:");
-    expect(text).toContain("Dia do maior desfalque");
-    expect(text).toContain("Previstas com horário");
+    expect(text).toContain("Data / faixa do pico");
+    expect(text).toContain("Escalados na faixa");
     expect(text).toContain("12:00-13:00");
     expect(text).toContain("Estimada");
   }, 20000);

@@ -30,13 +30,36 @@ describe("independent incumbent quality acceptance", () => {
     expect(coverageQuality(input).present.size).toBe(5);
     expect(selectVerifiedRoster(input, swap(input)).retainedReference).toBe(true);
   });
-  it("preserves a valid draft when monthly gains spend another civil day's coverage", () => {
+  it("accepts lower sector shortage and peak while preserving daily presence", () => {
     const input = fixture();
     input.demands = [{ id: "tue", date: "2026-11-03", sector: "Loja", start: 480, end: 720, minimum: 3, estimated: true },
       { id: "wed", date: "2026-11-04", sector: "Loja", start: 480, end: 540, minimum: 2, estimated: true }];
     expect(validateEscala(input).valid).toBe(true);
-    const result = selectVerifiedRoster(input, swap(input));
-    expect(result.input).toBe(input); expect(result.retainedReference).toBe(true);
+    const proposal = swap(input), original = structuredClone(input);
+    const before = coverageQuality(input), after = coverageQuality(proposal);
+    const total = (daily: Map<string, number>) => [...daily.values()].reduce((sum, value) => sum + value, 0);
+    expect(validateEscala(proposal).valid).toBe(true);
+    expect([total(before.daily), total(after.daily)]).toEqual([480, 300]);
+    expect([before.daily.get("Loja\0" + "2026-11-04") ?? 0, after.daily.get("Loja\0" + "2026-11-04")]).toEqual([0, 60]);
+    expect([before.peaks.get("Loja"), after.peaks.get("Loja")]).toEqual([2, 1]);
+    expect([...after.present].sort()).toEqual([...before.present].sort());
+    const decisions: string[] = [];
+    expect(selectVerifiedRoster(input, proposal, reason => decisions.push(reason))).toEqual({ input: proposal, retainedReference: false });
+    expect(decisions).toEqual(["OPERATIONAL_IMPROVEMENT"]);
+    expect(input).toEqual(original);
+  });
+  it("rejects a worse sector peak even when the total estimated shortage improves", () => {
+    const input = fixture();
+    input.demands = [{ id: "tue", date: "2026-11-03", sector: "Loja", start: 480, end: 720, minimum: 3, estimated: true },
+      { id: "wed", date: "2026-11-04", sector: "Loja", start: 480, end: 540, minimum: 5, estimated: true }];
+    const proposal = swap(input), before = coverageQuality(input), after = coverageQuality(proposal);
+    expect(validateEscala(proposal).valid).toBe(true);
+    expect([...before.daily.values()].reduce((sum, value) => sum + value, 0)).toBe(660);
+    expect([...after.daily.values()].reduce((sum, value) => sum + value, 0)).toBe(480);
+    expect([before.peaks.get("Loja"), after.peaks.get("Loja")]).toEqual([3, 4]);
+    const decisions: string[] = [];
+    expect(selectVerifiedRoster(input, proposal, reason => decisions.push(reason))).toEqual({ input, retainedReference: true });
+    expect(decisions).toEqual(["SECTOR_PEAK"]);
   });
   it("accepts a real gain with no sacrificed day and leaves both inputs untouched", () => {
     const input = fixture(); input.demands = [{ id: "tue", date: "2026-11-03", sector: "Loja", start: 480, end: 720, minimum: 2, estimated: true }];

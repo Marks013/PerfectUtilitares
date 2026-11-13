@@ -54,9 +54,9 @@ describe("large but valid operational reports", () => {
           expect(headers.every(header => drawn.some(item => item.page === header.page && item.y < header.y && item.y >= 45 && matches(item.text))), JSON.stringify(headers.map(header => ({ heading, y: header.y, values: drawn.filter(item => item.page === header.page && item.y < header.y).map(item => item.text).filter(text => /^(Estimada|32|Referência|Origem|\\d\\d:\\d\\d)/.test(text)).slice(0,12) })))).toBe(true);
         };
         hasDataOn("Horário proposto", text => text.includes("08:00-12:00 /"));
-        hasDataOn("Setor / origem", text => text === "Estimada");
-        hasDataOn("Setor / origem", text => text === "32");
-        hasDataOn("Setor / origem", text => text === "08:00-12:00");
+        hasDataOn("Setor / referência", text => text === "Estimada");
+        hasDataOn("Setor / referência", text => text === "32");
+        hasDataOn("Setor / referência", text => text === "08:00-12:00");
         expect(drawn.filter(item => item.y < 16)).toEqual([]);
         expect(input).toEqual(before);
       }

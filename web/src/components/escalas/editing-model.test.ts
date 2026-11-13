@@ -103,7 +103,7 @@ describe("monthly roster editing and operational feedback", () => {
     input.demands = [{ id: "estimated", date: "2026-11-02", sector: "Padaria", start: 480, end: 600, minimum: 1, estimated: true }];
     const next = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "OFF" }]);
     const impact = inspectRosterChanges(input, next);
-    expect(impact.coverageIssues[0]).toMatchObject({ code: "ESTIMATED_COVERAGE_GAP", severity: "PENDING" });
+    expect(impact.coverageIssues[0]).toMatchObject({ code: "ESTIMATED_COVERAGE_GAP", severity: "WARNING" });
     expect(impact.newErrors.some((issue) => issue.code === "ESTIMATED_COVERAGE_GAP")).toBe(false);
   });
   it("keeps undo valid when the workspace only stamps regeneration metadata", () => {
