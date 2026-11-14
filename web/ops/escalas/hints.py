@@ -84,15 +84,27 @@ def _spacing_rank(person, entries, prior, baseline, policy):
     return max(0, pairs - 2) - max(0, imposed - 2), pairs - imposed
 
 
+def _protected_calendar_slots(pid, days, baseline, closed_holidays):
+    """Recipient-owned protected types, shared by week construction and masks."""
+    slots = []
+    for day in days:
+        kind = baseline.get((pid, day), {}).get('kind')
+        if kind == 'ABSENCE':
+            slots.append((day, 'ABSENCE'))
+        elif kind == 'HOLIDAY' or day in closed_holidays:
+            slots.append((day, 'HOLIDAY'))
+    return tuple(slots)
+
+
 def _week_candidates(person, group, baseline, choices, metrics, policy, selected,
                      weekdays, closed_holidays, preserve_rest_pattern=False,
                      mixed=False, known_rests=None):
     """Build or validate a weekly mask using the same recipient rules."""
     pid = person['id']
     fixed = set(person['fixedOffDays'])
-    absent = {day for day in group if baseline.get((pid, day), {}).get('kind') == 'ABSENCE'}
-    holidays = ((set(group) & closed_holidays)
-                | {day for day in group if baseline.get((pid, day), {}).get('kind') == 'HOLIDAY'}) - absent
+    protected = dict(_protected_calendar_slots(pid, group, baseline, closed_holidays))
+    absent = {day for day, kind in protected.items() if kind == 'ABSENCE'}
+    holidays = {day for day, kind in protected.items() if kind == 'HOLIDAY'}
     closed_weekdays = sum(weekdays[day] != 6 for day in holidays)
     closed_sundays = sum(weekdays[day] == 6 for day in holidays)
     forced = {day for day in group if day not in absent | holidays and (
@@ -146,15 +158,22 @@ def _week_candidates(person, group, baseline, choices, metrics, policy, selected
 
 def _rematerialize_calendar(person, dates, active_days, mask, baseline, choices, metrics,
                             policy, selected, prior, instant, sunday_limit, *,
-                            preserve_rest_pattern=False, deadline=None, control=None):
-    """An untrusted WORK/OFF mask must pass recipient construction and full rules."""
+                            preserve_rest_pattern=False, deadline=None, control=None,
+                            protected_slots=()):
+    """Rebuild ordinary bits and explicit protected slots from recipient rules."""
     active_set = set(active_days)
     ordered = tuple(day for day in dates if day in active_set)
-    if len(mask) != len(ordered) or any(type(bit) is not bool for bit in mask):
+    closed = paid_holiday_dates(policy)
+    actual_slots = _protected_calendar_slots(person['id'], ordered, baseline, closed)
+    if protected_slots != actual_slots:
+        return None
+    protected = dict(actual_slots)
+    if len(mask) != len(ordered) or any(
+            bit is not None if day in protected else type(bit) is not bool
+            for day, bit in zip(ordered, mask)):
         return None
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
-    rests = {day for day, bit in zip(ordered, mask) if bit}
-    closed = paid_holiday_dates(policy)
+    rests = {day for day, bit in zip(ordered, mask) if bit is True}
     entries = {}
     for week in range(0, len(dates), 7):
         if control is not None:
@@ -169,9 +188,11 @@ def _rematerialize_calendar(person, dates, active_days, mask, baseline, choices,
                          known_rests=rests.intersection(group)), None)
         if candidate is None:
             return None
-        # Masks contain only WORK/OFF. Protected recipient dates cannot be
-        # silently relabelled to fit a donor's binary calendar; use the real beam.
-        if any(entry['kind'] not in ('WORK', 'DUTY', 'OFF') for entry in candidate[1].values()):
+        # A protected marker is never interpreted as WORK or regular OFF.
+        # Types come from the recipient's shared weekly constructor only.
+        if any(entry['kind'] != protected[day] if day in protected
+               else entry['kind'] not in ('WORK', 'DUTY', 'OFF')
+               for day, entry in candidate[1].items()):
             return None
         entries.update(candidate[1])
     if set(entries) != set(active_days) or not entries:
@@ -294,7 +315,9 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                 total -= 0.1
             return total, combined, new_weekdays
 
-        bucket = (tuple(dates), tuple(day for day in dates if day in available))
+        ordered_active = tuple(day for day in dates if day in available)
+        protected_slots = _protected_calendar_slots(pid, ordered_active, baseline, closed_holidays)
+        bucket = (tuple(dates), ordered_active, protected_slots)
         beam = []
         signatures = {frozenset(day for day, bit in zip(saved_bucket[1], mask)
                                 if bit and weekdays[day] == 6)
@@ -316,7 +339,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                 entries = _rematerialize_calendar(
                     person, dates, available, mask, baseline, choices, metrics, policy,
                     selected, prior, instant, sunday_limit,
-                    preserve_rest_pattern=preserve_rest_pattern, deadline=deadline, control=control)
+                    preserve_rest_pattern=preserve_rest_pattern, deadline=deadline, control=control,
+                    protected_slots=bucket[2])
                 if entries is None:
                     continue
                 count('candidatesValid')
@@ -394,10 +418,14 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
             masks = []
             for candidate in beam:
                 entries = candidate[1]
-                if set(entries) != available or any(e['kind'] not in ('WORK', 'DUTY', 'OFF')
-                                                    for e in entries.values()):
+                protected = dict(bucket[2])
+                if set(entries) != available or any(
+                        entry['kind'] != protected[day] if day in protected
+                        else entry['kind'] not in ('WORK', 'DUTY', 'OFF')
+                        for day, entry in entries.items()):
                     continue
-                mask = tuple(entries[day]['kind'] == 'OFF' for day in bucket[1])
+                mask = tuple(None if day in protected else entries[day]['kind'] == 'OFF'
+                             for day in bucket[1])
                 signature = tuple(day for day, bit in zip(bucket[1], mask) if bit and weekdays[day] == 6)
                 masks.append((signature, mask))
             pool = list(portfolio)
