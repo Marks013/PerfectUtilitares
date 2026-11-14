@@ -1,6 +1,8 @@
 """Bounded lexicographic improvement from a complete, known-feasible incumbent."""
 import time
 import re
+from types import MappingProxyType
+from control import SolveCancelled, SolveTimedOut
 from dataclasses import dataclass
 from ortools.sat.python import cp_model
 from runtime_settings import (COVERAGE_BUDGET_SHARE, LARGE_MODEL_VARIABLES, MOVABLE_PEOPLE_LIMIT,
@@ -23,6 +25,7 @@ class ImprovementContext:
     sunday_coverage: dict | None = None
     sector_coverage: dict | None = None
     initial_decision_hints: dict | None = None
+    coverage_hint_builder: object = None
     initial_repair_people: set | None = None
     initial_repair_groups: list | None = None
     repair_clock_fixes: dict | None = None
@@ -490,6 +493,45 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                     domain.clear()
                     value = repair_clock_fixes[variable_index] if narrowed_clock else values[variable_index]
                     domain.extend([value, value])
+        hint_status = None
+        if name == 'COVERAGE' and phase_index == 0 and context.coverage_hint_builder:
+            # Reuse this global call and its preparation allowance. Never replace
+            # the incumbent or its bounds with an unverified suggested calendar.
+            hint_deadline = min(time.monotonic() + 0.6,
+                                preparation_started + budget - MIN_SEARCH_SECONDS,
+                                coverage_cutoff - MIN_SEARCH_SECONDS,
+                                deadline - MIN_SEARCH_SECONDS - _future_refinement_reserve(
+                                    names, index + 1, context.refinement_reserve_seconds,
+                                    preparation_allowance))
+            hint_status = 'NO_TIME'
+            if hint_deadline > time.monotonic():
+                try:
+                    proposed = context.coverage_hint_builder(
+                        MappingProxyType(values), hint_deadline, control)
+                    if control is not None:
+                        control.checkpoint()
+                    if time.monotonic() >= hint_deadline:
+                        hint_status = 'DEADLINE'
+                    elif proposed is None:
+                        hint_status = 'INCOMPLETE'
+                    elif not proposed:
+                        hint_status = 'EMPTY'
+                    elif (not isinstance(proposed, dict)
+                          or proposed.keys() != decision_variables.keys()
+                          or any(type(value) is not int or value not in (0, 1)
+                                 for value in proposed.values())):
+                        hint_status = 'INVALID'
+                    else:
+                        # Changed decisions invalidate auxiliary hint values.
+                        _replace_hints(search_model, proposed)
+                        hint_status = 'COMPLETE_DECISIONS'
+                except (SolveCancelled, SolveTimedOut):
+                    raise
+                except Exception:
+                    # Optional construction failures cannot discard a legal seed.
+                    # Do not expose exception text or personal input in telemetry.
+                    _replace_hints(search_model, values)
+                    hint_status = 'FAILED'
         # Charge all preparation, including guard registration and cloning.
         # Recheck the absolute deadline AFTER setup. Earlier phases cannot spend
         # a later Sunday's net search reserve through either setup or solving.
@@ -507,6 +549,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             budget = max(budget, context.refinement_reserve_seconds)
         budget = min(budget, available)
         if budget < MIN_SEARCH_SECONDS:
+            if hint_status == 'COMPLETE_DECISIONS':
+                _replace_hints(model, values)
             proven = False
             continue
         engine.parameters.max_time_in_seconds = budget
@@ -520,6 +564,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                  'wallTimeSeconds': round(time.monotonic() - started, 3),
                  'budgetSeconds': round(budget, 3), 'initialValue': incumbent,
                  'incumbentValue': incumbent, 'searchScope': 'GLOBAL'}
+        if hint_status is not None:
+            phase['decisionHintStatus'] = hint_status
         if restricted:
             phase['searchScope'] = 'SELECTED_PEOPLE' if movable_people else 'ROLLING_WEEKS'
             if movable_people:
@@ -527,6 +573,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             else:
                 phase['movableWeeks'] = len(movable_weeks)
         phases.append(phase)
+        if hint_status == 'COMPLETE_DECISIONS' and status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            _replace_hints(model, values)
         if status == cp_model.UNKNOWN:
             # The incumbent and its bound remain valid. Use remaining time below it.
             proven = False

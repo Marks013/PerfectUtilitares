@@ -622,30 +622,15 @@ def _solve(data, control=None, started=None):
     # This seed does not lock a staffing objective or relax a mandatory condition.
     # Explicit metadata avoids parsing employee/shift IDs, which may contain colons.
     decisions = {variable.index: key for key, variable in off.items()}
-    warm_decisions = {}
     repair_groups = _rest_repair_groups(employees, dates, work, baseline, values, policy,
                                        data["demands"], data.get("visibleMonth"),
                                        sector_coverage, sunday_coverage)
-    repair_people = set().union(*repair_groups) if repair_groups else set()
-    # A synchronized baseline stays the comparison incumbent. Supply a
-    # staggered alternative only as a nonbinding CP-SAT hint, within this budget.
-    if (data.get('generationMode') != 'HOURS_ONLY' and (repair_people or mixed_people)
-            and started + MAX_SECONDS - time.monotonic() > 0.8):
-        proposals = balanced_rest_hints(
-            [person for person in employees
-             if (person["id"] in repair_people if repair_people
-                 else person["sector"] in mixed_sectors)],
-            dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
-            deadline=min(started + MAX_SECONDS - 0.2, time.monotonic() + 0.6),
-            control=control, mixed_people=mixed_people)
-        for pid, entries in proposals.items():
-            for day, entry in entries.items():
-                key = pid, day
-                warm_decisions[off[key].index] = int(entry["kind"] == "OFF")
-                warm_decisions[work[key].index] = int(entry["kind"] in ("WORK", "DUTY"))
-                for sid, variable in choices[key].items():
-                    warm_decisions[variable.index] = int(
-                        entry["kind"] == "WORK" and sid == entry.get("shiftId"))
+    # Move the existing bounded alternative construction to the global coverage
+    # call, where it can use the accepted incumbent after local repairs.
+    def coverage_hint_builder(current_values, hint_deadline, hint_control):
+        return _composed_decision_hints(
+            employees, dates, active, baseline, off, work, choices, metrics,
+            policy, current_values, hint_deadline, hint_control, mixed_people)
     decisions.update({variable.index: key for key, variable in work.items()})
     decisions.update({variable.index: key for key, options in choices.items()
                       for variable in options.values()})
@@ -679,7 +664,8 @@ def _solve(data, control=None, started=None):
                                      closing_coverage=closing_coverage,
                                      movement_coverage=movement_groups,
                                      decision_variables=decisions,
-                                     initial_decision_hints=warm_decisions,
+                                     coverage_hint_builder=coverage_hint_builder
+                                     if data.get('generationMode') != 'HOURS_ONLY' else None,
                                      initial_repair_groups=repair_groups,
                                      repair_clock_fixes=_repair_clock_fixes(choices, metrics, values)))
     # Existing protected disabled records are retained, never allocated or counted as workforce.
@@ -735,6 +721,73 @@ def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, dem
             control.checkpoint()
         if any(values[index] for index in variables):
             model.add(sum(variables.values()) >= 1)
+
+
+def _composed_decision_hints(employees, dates, active, baseline, off, work, choices,
+                             metrics, policy, values, deadline, control=None,
+                             mixed_people=frozenset()):
+    """Suggest complete decisions from the current seed; never certify feasibility."""
+    def checkpoint():
+        if control is not None:
+            control.checkpoint()
+        return time.monotonic() < deadline
+
+    if not checkpoint():
+        return None
+    current = {(entry['employeeId'], entry['date']): entry for entry in
+               _read_assignments(Snapshot(values), employees, active, baseline, work, choices,
+                                 paid_holiday_dates(policy))}
+    if not checkpoint():
+        return None
+    # A reference per duration is insufficient: the heuristic may prefer a
+    # different duration. Keep the actual current WORK reference on each day.
+    # OFF -> WORK needs one unambiguous reference from this person's incumbent;
+    # mixed or missing references decline the whole optional batch.
+    hint_choices = {}
+    for person in employees:
+        if not checkpoint():
+            return None
+        pid = person['id']
+        references = {current[pid, day]['shiftId'] for day in active[pid]
+                      if current[pid, day]['kind'] == 'WORK'}
+        for day in active[pid]:
+            key = pid, day
+            entry, allowed = current[key], choices[key]
+            if has_no_clock(person) or entry['kind'] in ('ABSENCE', 'HOLIDAY'):
+                hint_choices[key] = {}
+                continue
+            if entry['kind'] == 'WORK':
+                reference = entry['shiftId']
+            elif entry['kind'] == 'OFF' and len(references) == 1:
+                reference = next(iter(references))
+            else:
+                return None
+            if reference not in allowed:
+                return None
+            hint_choices[key] = {reference: allowed[reference]}
+    if not checkpoint():
+        return None
+    proposals = balanced_rest_hints(
+        employees, dates, active, current, hint_choices, metrics, policy, instant, sunday_limit,
+        deadline=deadline, control=control, mixed_people=mixed_people, calendar_portfolio=True)
+    # A deadline may return complete people but an incomplete cohort. Offer only
+    # a complete global batch; partial opportunities retain the original hints.
+    if not checkpoint() or any(set(proposals.get(person['id'], {})) != set(active[person['id']])
+                               for person in employees):
+        return None
+    decisions = {}
+    for person in employees:
+        pid = person['id']
+        if not checkpoint():
+            return None
+        for day in active[pid]:
+            key, entry = (pid, day), proposals[pid][day]
+            decisions[off[key].index] = int(entry['kind'] == 'OFF')
+            decisions[work[key].index] = int(entry['kind'] in ('WORK', 'DUTY'))
+            for sid, variable in choices[key].items():
+                decisions[variable.index] = int(entry['kind'] == 'WORK'
+                                                and sid == entry.get('shiftId'))
+    return decisions
 
 
 def _repair_clock_fixes(choices, metrics, values):

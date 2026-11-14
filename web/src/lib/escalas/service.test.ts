@@ -845,7 +845,11 @@ describe("Escalas revision service", () => {
   });
   it("generates a preview and revalidates it without persisting", async () => {
     useCurrent(generatedInput());
+    const optimization = { budgetSeconds: 12, phases: [{ objective: "COVERAGE", status: "FEASIBLE", wallTimeSeconds: 0.8, budgetSeconds: 1,
+      incumbentValue: 0, decisionHintStatus: "COMPLETE_DECISIONS" }] };
+    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: generatedInput().assignments, wallTimeSeconds: 1, message: "Synthetic candidate", optimization });
     const result = await generateEscala(actor, "w1", 1);
+    expect(result.result.optimization).toEqual(optimization);
     expect(result.validation.valid).toBe(true);
     expect(result.validation.readyToPublish).toBe(true);
     expect(result.validation.issues.every(issue => issue.severity === "WARNING")).toBe(true);
@@ -875,7 +879,9 @@ describe("Escalas revision service", () => {
       if (day.date === "2026-10-28") return day.employeeId === "b" ? { ...day, kind: "WORK", shiftId: "day" } : { employeeId: day.employeeId, date: day.date, kind: "OFF" };
       return day;
     });
-    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: changed, wallTimeSeconds: 1, message: "Lower total", optimization: { budgetSeconds: 12, phases: [] } });
+    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: changed, wallTimeSeconds: 1, message: "Lower total", optimization: { budgetSeconds: 12, phases: [
+      { objective: "COVERAGE", status: "FEASIBLE", wallTimeSeconds: 0.8, budgetSeconds: 1, incumbentValue: 300, decisionHintStatus: "COMPLETE_DECISIONS" },
+    ] } });
     const second = await generateEscala(actor, "w1", 1, { comparisonReference: { input: first.proposalInput, receipt: first.candidateReceipt } });
     expect(second.comparison).toMatchObject({ admission: "ADMITTED", selection: "REFERENCE_RETAINED", reason: "ROLE_TIME_COVERAGE" });
     expect(second.proposalInput).toEqual(first.proposalInput);

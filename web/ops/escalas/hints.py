@@ -1,6 +1,7 @@
 """Deterministic warm-start proposals. CP-SAT still verifies every mandatory rule."""
 import hashlib
 import time
+from functools import lru_cache
 from datetime import date, timedelta
 from itertools import combinations
 from rest_quality import visible_month
@@ -83,9 +84,106 @@ def _spacing_rank(person, entries, prior, baseline, policy):
     return max(0, pairs - 2) - max(0, imposed - 2), pairs - imposed
 
 
+def _week_candidates(person, group, baseline, choices, metrics, policy, selected,
+                     weekdays, closed_holidays, preserve_rest_pattern=False,
+                     mixed=False, known_rests=None):
+    """Build or validate a weekly mask using the same recipient rules."""
+    pid = person['id']
+    fixed = set(person['fixedOffDays'])
+    absent = {day for day in group if baseline.get((pid, day), {}).get('kind') == 'ABSENCE'}
+    holidays = ((set(group) & closed_holidays)
+                | {day for day in group if baseline.get((pid, day), {}).get('kind') == 'HOLIDAY'}) - absent
+    closed_weekdays = sum(weekdays[day] != 6 for day in holidays)
+    closed_sundays = sum(weekdays[day] == 6 for day in holidays)
+    forced = {day for day in group if day not in absent | holidays and (
+        weekdays[day] in fixed or day in policy['closedDates']
+        or baseline.get((pid, day), {}).get('locked') and baseline[pid, day]['kind'] == 'OFF')}
+    forbidden = {day for day in group if day in absent | holidays
+        or baseline.get((pid, day), {}).get('locked') and baseline[pid, day]['kind'] in ('WORK', 'DUTY')
+        or holiday_rest_forbidden(policy, day)
+        or saturday_rest_forbidden(policy, day, baseline.get((pid, day)))}
+    if preserve_rest_pattern:
+        saved_rests = {day for day in group if baseline.get((pid, day), {}).get('kind') == 'OFF'}
+        forced.update(saved_rests)
+        forbidden.update(set(group) - saved_rests)
+    complete = len(group) == 7 and not absent
+    rest_target = max(0, 2 - closed_sundays)
+    sizes = (rest_target,) if complete else range(min(rest_target, len(group)), -1, -1)
+    masks = (known_rests,) if known_rests is not None else (
+        pair for size in sizes for pair in combinations([d for d in group if d not in forbidden], size))
+    for mask in masks:
+        rests = set(mask)
+        work_days = len(group) - len(absent) - len(holidays) - len(rests)
+        if (not rests <= set(group) or len(rests) not in sizes or not forced <= rests
+                or rests & forbidden or work_days > 5
+                or complete and work_days != max(0, 5 - closed_weekdays)):
+            continue
+        entries = {day: {'kind': 'ABSENCE' if day in absent else 'HOLIDAY' if day in holidays
+                    else 'OFF' if day in rests else 'DUTY'
+                    if person.get('scheduleMode') in ('UNTIMED', 'MISSING') else 'WORK'} for day in group}
+        valid = True
+        for day, entry in entries.items():
+            old = baseline.get((pid, day), {})
+            if entry['kind'] == 'WORK':
+                sid = selected[day]
+                if sid not in choices[pid, day]:
+                    valid = False
+                    break
+                entry['shiftId'] = sid
+            if old.get('locked') and (entry['kind'] != old['kind']
+                    or entry['kind'] == 'WORK' and entry['shiftId'] != old.get('shiftId')):
+                valid = False
+                break
+        if not valid:
+            continue
+        if mixed:
+            for variant in _mixed_week_variants(entries, choices, metrics, baseline, pid,
+                                                 require_two=complete and not closed_weekdays):
+                yield rests, variant
+        else:
+            yield rests, entries
+
+
+def _rematerialize_calendar(person, dates, active_days, mask, baseline, choices, metrics,
+                            policy, selected, prior, instant, sunday_limit, *,
+                            preserve_rest_pattern=False, deadline=None, control=None):
+    """An untrusted WORK/OFF mask must pass recipient construction and full rules."""
+    active_set = set(active_days)
+    ordered = tuple(day for day in dates if day in active_set)
+    if len(mask) != len(ordered) or any(type(bit) is not bool for bit in mask):
+        return None
+    weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
+    rests = {day for day, bit in zip(ordered, mask) if bit}
+    closed = paid_holiday_dates(policy)
+    entries = {}
+    for week in range(0, len(dates), 7):
+        if control is not None:
+            control.checkpoint()
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
+        group = [day for day in dates[week:week + 7] if day in active_days]
+        if not group:
+            continue
+        candidate = next(_week_candidates(person, group, baseline, choices, metrics, policy,
+                         selected, weekdays, closed, preserve_rest_pattern,
+                         known_rests=rests.intersection(group)), None)
+        if candidate is None:
+            return None
+        # Masks contain only WORK/OFF. Protected recipient dates cannot be
+        # silently relabelled to fit a donor's binary calendar; use the real beam.
+        if any(entry['kind'] not in ('WORK', 'DUTY', 'OFF') for entry in candidate[1].values()):
+            return None
+        entries.update(candidate[1])
+    if set(entries) != set(active_days) or not entries:
+        return None
+    return entries if _compatible(person, entries, prior, metrics, policy, instant,
+                                   sunday_limit, True, baseline=baseline) else None
+
+
 def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, policy, instant, sunday_limit,
                         deadline=None, control=None, mixed_people=frozenset(),
-                        preserve_rest_pattern=False, preserve_work_people=frozenset()):
+                        preserve_rest_pattern=False, preserve_work_people=frozenset(),
+                        calendar_portfolio=False, portfolio_stats=None):
     """Balance opportunities before the bounded optimizer adds optional staffing goals.
 
     These are variable hints only. No target is converted into a staffing constraint,
@@ -93,6 +191,13 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     """
     if policy.get('_generationMode') == 'HOURS_ONLY':
         return {}  # Day redistribution is not an hours-only seed operation.
+    # Cache pure civil instants only, never recipient results, scores or beams.
+    if calendar_portfolio:
+        instant = lru_cache(maxsize=4096)(instant)
+    portfolio = []  # At most four (bucket, binary mask) pairs, local to this call.
+    def count(name, amount=1):
+        if portfolio_stats is not None:
+            portfolio_stats[name] = portfolio_stats.get(name, 0) + amount
     closed_holidays = paid_holiday_dates(policy)
     groups = {}
     leadership = []
@@ -162,112 +267,157 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
         for day, entry in prior.items():
             if history_cutoff <= day < dates[0] and entry["kind"] == "OFF":
                 history_rests[date.fromisoformat(day).weekday()] += 1
-        # Check each selected week against preceding work and Sunday rotation.
-        beam = [(0.0, {}, history_rests)]
-        for week in range(0, len(dates), 7):
-            if control is not None:
-                control.checkpoint()
-            if deadline is not None and time.monotonic() >= deadline:
-                return result
-            group = [day for day in dates[week:week + 7] if day in available]
-            if not group:
-                continue
-            absent = {day for day in group if baseline.get((pid, day), {}).get("kind") == "ABSENCE"}
-            holidays = ((set(group) & closed_holidays)
-                        | {day for day in group if baseline.get((pid, day), {}).get('kind') == 'HOLIDAY'}) - absent
-            closed_weekdays = sum(weekdays[day] != 6 for day in holidays)
-            closed_sundays = sum(weekdays[day] == 6 for day in holidays)
-            forced = {day for day in group if day not in absent | holidays and (weekdays[day] in fixed or day in policy["closedDates"] or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] == "OFF")}
-            forbidden = {day for day in group if day in absent | holidays or baseline.get((pid, day), {}).get("locked") and baseline[pid, day]["kind"] in ("WORK", "DUTY") or holiday_rest_forbidden(policy, day)}
-            forbidden.update(day for day in group
-                             if saturday_rest_forbidden(policy, day, baseline.get((pid, day))))
-            if preserve_rest_pattern:
-                # Rebuild clocks around saved OFFs for this candidate only.
-                # Conflicting mandatory rules reject it; no model lock is added.
-                saved_rests = {day for day in group
-                               if baseline.get((pid, day), {}).get('kind') == 'OFF'}
-                forced.update(saved_rests)
-                forbidden.update(set(group) - saved_rests)
-            candidates = []
-            complete = len(group) == 7 and not absent
-            rest_target = max(0, 2 - closed_sundays)
-            sizes = (rest_target,) if complete else range(min(rest_target, len(group)), -1, -1)
-            for size in sizes:
-                for pair in combinations([day for day in group if day not in forbidden], size):
-                    rests = set(pair)
-                    work_days = len(group) - len(absent) - len(holidays) - len(rests)
-                    if not forced <= rests or work_days > 5 or complete and work_days != max(0, 5 - closed_weekdays):
-                        continue
-                    entries = {day: {"kind": "ABSENCE" if day in absent else "HOLIDAY" if day in holidays else "OFF" if day in rests else "DUTY" if person.get("scheduleMode") in ("UNTIMED", "MISSING") else "WORK"} for day in group}
-                    for day, entry in entries.items():
-                        if entry["kind"] == "WORK":
-                            entry["shiftId"] = selected[day]
-                    if pid in mixed_people:
-                        candidates.extend((rests, variant) for variant in
-                                          _mixed_week_variants(entries, choices, metrics, baseline, pid, require_two=complete and not closed_weekdays))
-                    else:
-                        candidates.append((rests, entries))
-            next_beam = []
-            final_week = week + 7 >= len(dates)
-            for score, previous, weekday_rests in beam:
-                for rests, entries in candidates:
-                    combined = {**previous, **entries}
-                    total = score
-                    new_weekdays = weekday_rests.copy()
-                    for day in rests:
-                        weekday = weekdays[day]
-                        # Sunday rotation can synchronize otherwise identical teams.
-                        # Prefer staggered sector rests; this remains only a hint.
-                        importance = 3 if weekday == 6 else 1
-                        for index in memberships[pid]:
-                            capacity, resting = group_sizes[index, day], counts.get((index, day), 0)
-                            total += importance * (2 * resting + 1) / max(1, capacity)
-                            # A stronger soft cost for the last available rest prevents
-                            # moving an avoidable empty sector from Sunday to a weekday.
-                            if capacity >= 2 and resting + 1 >= capacity:
-                                total += 7
-                        total += 0.15 * (2 * new_weekdays[weekday] + 1)
-                        new_weekdays[weekday] += 1
-                        if weekday in person["preferredOffDays"]:
-                            total -= 0.1
-                        if day not in tie_scores:
-                            tie_scores[day] = (int(hashlib.sha256(f"{pid}:{day}".encode()).hexdigest()[:6], 16) % 97) / 9700
-                        total += tie_scores[day]
-                    if person["offPattern"] == "PREFER_CONSECUTIVE" and any((date.fromisoformat(day) + timedelta(days=1)).isoformat() in rests for day in rests):
-                        total -= 0.1
-                    next_beam.append((total, combined, new_weekdays))
-            if not next_beam:
-                beam = []
-                break
-            next_beam.sort(key=candidate_rank)
-            # Keep two distinct Sunday trajectories, each with two weekday variants.
-            # A greedy first week can force the same rest parity on the sector.
-            # Repeated clock variants do not consume the weekday-spacing slots.
-            beam = []
-            signatures = {}
-            for candidate in next_beam:
+        def extend_candidate(score, previous, weekday_rests, rests, entries):
+            combined = {**previous, **entries}
+            total = score
+            new_weekdays = weekday_rests.copy()
+            for day in rests:
+                weekday = weekdays[day]
+                # Sunday rotation can synchronize otherwise identical teams.
+                # Prefer staggered sector rests; this remains only a hint.
+                importance = 3 if weekday == 6 else 1
+                for index in memberships[pid]:
+                    capacity, resting = group_sizes[index, day], counts.get((index, day), 0)
+                    total += importance * (2 * resting + 1) / max(1, capacity)
+                    # A stronger soft cost for the last available rest prevents
+                    # moving an avoidable empty sector from Sunday to a weekday.
+                    if capacity >= 2 and resting + 1 >= capacity:
+                        total += 7
+                total += 0.15 * (2 * new_weekdays[weekday] + 1)
+                new_weekdays[weekday] += 1
+                if weekday in person["preferredOffDays"]:
+                    total -= 0.1
+                if day not in tie_scores:
+                    tie_scores[day] = (int(hashlib.sha256(f"{pid}:{day}".encode()).hexdigest()[:6], 16) % 97) / 9700
+                total += tie_scores[day]
+            if person["offPattern"] == "PREFER_CONSECUTIVE" and any((date.fromisoformat(day) + timedelta(days=1)).isoformat() in rests for day in rests):
+                total -= 0.1
+            return total, combined, new_weekdays
+
+        bucket = (tuple(dates), tuple(day for day in dates if day in available))
+        beam = []
+        signatures = {frozenset(day for day, bit in zip(saved_bucket[1], mask)
+                                if bit and weekdays[day] == 6)
+                      for saved_bucket, mask in portfolio if saved_bucket == bucket}
+        independent = {signature for signature in signatures
+                       if not any(other < signature for other in signatures)}
+        # Two nested signatures provide no real Sunday choice: positive rest
+        # costs always prefer their subset. Obtain another real beam trajectory
+        # under current counts before reusing such a synchronized portfolio.
+        if calendar_portfolio and pid not in mixed_people and len(independent) >= 2:
+            for saved_bucket, mask in portfolio:
+                if saved_bucket != bucket:
+                    continue
                 if control is not None:
                     control.checkpoint()
                 if deadline is not None and time.monotonic() >= deadline:
                     return result
-                signature = tuple(day for day, entry in candidate[1].items()
-                                  if weekdays[day] == 6 and entry['kind'] == 'OFF')
-                rests = tuple(day for day, entry in candidate[1].items() if entry['kind'] == 'OFF')
-                variants = signatures.get(signature, set())
-                if (signature not in signatures and len(signatures) >= 2
-                        or len(variants) >= 2 or rests in variants):
+                count('candidateValidations')
+                entries = _rematerialize_calendar(
+                    person, dates, available, mask, baseline, choices, metrics, policy,
+                    selected, prior, instant, sunday_limit,
+                    preserve_rest_pattern=preserve_rest_pattern, deadline=deadline, control=control)
+                if entries is None:
                     continue
-                if _compatible(person, candidate[1], prior, metrics, policy, instant, sunday_limit, final_week,
-                               baseline=baseline):
-                    beam.append(candidate)
-                    variants.add(rests)
-                    signatures[signature] = variants
-                    if len(beam) == 4:
-                        break
-            if not beam:
-                break
+                count('candidatesValid')
+                item = (0.0, {}, history_rests)
+                for week in range(0, len(dates), 7):
+                    group = {day: entries[day] for day in dates[week:week + 7] if day in entries}
+                    rests = {day for day, entry in group.items() if entry['kind'] == 'OFF'}
+                    item = extend_candidate(*item, rests, group)
+                beam.append(item)
+            if beam:
+                count('portfolioPeople')
+        reused_portfolio = bool(beam)
         if not beam:
-            continue  # Incomplete information or a difficult alternative remains CP-SAT's task.
+            count('beamPeople')
+            # Check each selected week against preceding work and Sunday rotation.
+            beam = [(0.0, {}, history_rests)]
+            for week in range(0, len(dates), 7):
+                if control is not None:
+                    control.checkpoint()
+                if deadline is not None and time.monotonic() >= deadline:
+                    return result
+                group = [day for day in dates[week:week + 7] if day in available]
+                if not group:
+                    continue
+                candidates = list(_week_candidates(
+                    person, group, baseline, choices, metrics, policy, selected, weekdays,
+                    closed_holidays, preserve_rest_pattern, pid in mixed_people))
+                next_beam = []
+                final_week = week + 7 >= len(dates)
+                for score, previous, weekday_rests in beam:
+                    for rests, entries in candidates:
+                        next_beam.append(extend_candidate(score, previous, weekday_rests, rests, entries))
+                if not next_beam:
+                    beam = []
+                    break
+                next_beam.sort(key=candidate_rank)
+                # Keep two distinct Sunday trajectories, each with two weekday variants.
+                # A greedy first week can force the same rest parity on the sector.
+                # Repeated clock variants do not consume the weekday-spacing slots.
+                beam = []
+                signatures = {}
+                for candidate in next_beam:
+                    if control is not None:
+                        control.checkpoint()
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return result
+                    signature = tuple(day for day, entry in candidate[1].items()
+                                      if weekdays[day] == 6 and entry['kind'] == 'OFF')
+                    rests = tuple(day for day, entry in candidate[1].items() if entry['kind'] == 'OFF')
+                    variants = signatures.get(signature, set())
+                    if (signature not in signatures and len(signatures) >= 2
+                            or len(variants) >= 2 or rests in variants):
+                        continue
+                    if _compatible(person, candidate[1], prior, metrics, policy, instant, sunday_limit, final_week,
+                                   baseline=baseline):
+                        beam.append(candidate)
+                        variants.add(rests)
+                        signatures[signature] = variants
+                        if len(beam) == 4:
+                            break
+                if not beam:
+                    break
+            if not beam:
+                continue  # Incomplete information or a difficult alternative remains CP-SAT's task.
+        if calendar_portfolio and not reused_portfolio:
+            # A partial active horizon can end before the last calendar week.
+            # Always validate completed beam calendars with final=True as well.
+            beam = [item for item in beam if _compatible(
+                person, item[1], prior, metrics, policy, instant, sunday_limit, True,
+                baseline=baseline)]
+            if not beam:
+                continue
+        if calendar_portfolio:
+            # Keep distinct Sunday trajectories ahead of duplicate weekday variants.
+            masks = []
+            for candidate in beam:
+                entries = candidate[1]
+                if set(entries) != available or any(e['kind'] not in ('WORK', 'DUTY', 'OFF')
+                                                    for e in entries.values()):
+                    continue
+                mask = tuple(entries[day]['kind'] == 'OFF' for day in bucket[1])
+                signature = tuple(day for day, bit in zip(bucket[1], mask) if bit and weekdays[day] == 6)
+                masks.append((signature, mask))
+            pool = list(portfolio)
+            pool.extend((bucket, mask) for _, mask in masks if (bucket, mask) not in pool)
+            by_signature = {}
+            for saved_bucket, mask in pool:
+                signature = frozenset(day for day, bit in zip(saved_bucket[1], mask)
+                                      if bit and weekdays[day] == 6)
+                by_signature.setdefault((saved_bucket, signature), []).append((saved_bucket, mask))
+            all_keys = tuple(by_signature)
+            keys = sorted(all_keys, key=lambda key: any(other[0] == key[0] and other[1] < key[1]
+                                                       for other in all_keys))
+            portfolio = []
+            # One mask per non-nested Sunday trajectory before weekday variants.
+            for rank in range(4):
+                for key in keys:
+                    if rank < len(by_signature[key]) and len(portfolio) < 4:
+                        portfolio.append(by_signature[key][rank])
+            if portfolio_stats is not None:
+                portfolio_stats['masksMax'] = max(portfolio_stats.get('masksMax', 0), len(portfolio))
         _, entries, _ = min(beam, key=candidate_rank)
         result[pid] = entries
         for day, entry in entries.items():

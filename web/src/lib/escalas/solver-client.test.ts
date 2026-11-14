@@ -570,6 +570,70 @@ describe("isolated schedule processor client", () => {
     expect(fetch).toHaveBeenCalledWith(new URL("http://escalas-solver:8080/solve"), expect.objectContaining({ method: "POST" }));
     expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).toEqual({ input: { ...fixture(), storeClosingMinutes: 1200 } });
   });
+  it.each(["NO_TIME", "DEADLINE", "INCOMPLETE", "EMPTY", "INVALID", "COMPLETE_DECISIONS", "FAILED", undefined]
+    .flatMap(decisionHintStatus => ["FEASIBLE", "UNKNOWN"].map(status => ({ decisionHintStatus, status }))))("accepts decision hint status=$decisionHintStatus with phase $status through the real parser", async ({ decisionHintStatus, status }) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); expectViableWorkerResult(input);
+    const phase = { objective: "COVERAGE", status, wallTimeSeconds: 0.8, budgetSeconds: 1,
+      initialValue: 1200, incumbentValue: 1200,
+      ...(decisionHintStatus === undefined ? {} : { decisionHintStatus }) };
+    const optimization = { budgetSeconds: 12, phases: [phase] };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Synthetic candidate", wallTimeSeconds: 1, optimization })));
+    const result = await solveEscala(input);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
+    expect(result.optimization).toEqual(optimization);
+    if (decisionHintStatus === undefined) expect(result.optimization?.phases[0]).not.toHaveProperty("decisionHintStatus");
+    else expect(result.optimization?.phases[0].decisionHintStatus).toBe(decisionHintStatus);
+  });
+  it.each(["UNSUPPORTED", "failed", null, 42, true, [], {}].map(decisionHintStatus => ({ decisionHintStatus })))("rejects invalid decision hint status=$decisionHintStatus through the real parser", async ({ decisionHintStatus }) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Synthetic candidate", wallTimeSeconds: 1, optimization: { budgetSeconds: 12, phases: [
+        { objective: "COVERAGE", status: "UNKNOWN", wallTimeSeconds: 0.8, budgetSeconds: 1, incumbentValue: 1200, decisionHintStatus },
+      ] } })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+  it("rejects another unknown property alongside a valid decision hint status", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Synthetic candidate", wallTimeSeconds: 1, optimization: { budgetSeconds: 12, phases: [
+        { objective: "COVERAGE", status: "UNKNOWN", wallTimeSeconds: 0.8, budgetSeconds: 1, incumbentValue: 1200,
+          decisionHintStatus: "COMPLETE_DECISIONS", unknownHintMetric: 1 },
+      ] } })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+  it("omits decision hint telemetry when the real client retains another verified roster", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.employees = ["a", "b"].map(id => ({ ...input.employees[0], id, registration: id, name: "Synthetic", role: id === "a" ? "Fiscal" : "Zelador" }));
+    input.assignments = input.employees.flatMap(person => Array.from({ length: 7 }, (_, day) => {
+      const off = (person.id === "a" ? [1, 6] : [2, 6]).includes(day);
+      return { employeeId: person.id, date: `2026-11-0${day + 2}`, kind: off ? "OFF" as const : "WORK" as const, ...(!off ? { shiftId: "day" } : {}) };
+    }));
+    input.demands = [{ id: "fiscal", date: "2026-11-03", sector: "Loja", role: "Fiscal", start: 480, end: 720, minimum: 2, estimated: true },
+      { id: "zelador", date: "2026-11-03", sector: "Loja", role: "Zelador", start: 480, end: 540, minimum: 1, estimated: true }];
+    const changed = input.assignments.map((day): EscalaInput["assignments"][number] => {
+      if (day.date === "2026-11-03") return day.employeeId === "a" ? { ...day, kind: "WORK", shiftId: "day" } : { employeeId: day.employeeId, date: day.date, kind: "OFF" };
+      if (day.date === "2026-11-04") return day.employeeId === "b" ? { ...day, kind: "WORK", shiftId: "day" } : { employeeId: day.employeeId, date: day.date, kind: "OFF" };
+      return day;
+    });
+    expect(validateEscala(input).valid).toBe(true);
+    expect(validateEscala({ ...input, assignments: changed }).valid).toBe(true);
+    const refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: changed,
+      message: "Discarded candidate", wallTimeSeconds: 1, optimization: { budgetSeconds: 12, phases: [
+        { objective: "COVERAGE", status: "FEASIBLE", wallTimeSeconds: 0.8, budgetSeconds: 1,
+          incumbentValue: 300, decisionHintStatus: "COMPLETE_DECISIONS" },
+      ] } })));
+    try {
+      const result = await solveEscala(input);
+      expect(result.assignments).toEqual(input.assignments);
+      expect(result.restQuality?.search).toMatchObject({ retainedReference: true, retentionReason: "ROLE_TIME_COVERAGE" });
+      expect(result).not.toHaveProperty("optimization");
+    } finally { refine.mockRestore(); }
+  });
   it.each(["FEASIBLE", "UNKNOWN"].flatMap(status => [undefined, 0, 0.24, 60].map(preparationSeconds => ({ status, preparationSeconds }))))("accepts optional phase preparationSeconds=$preparationSeconds with $status through the real result parser", async ({ status, preparationSeconds }) => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const input = fixture();
