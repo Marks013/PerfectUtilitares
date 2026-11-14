@@ -862,6 +862,36 @@ describe("Escalas revision service", () => {
     expect(unfinished.proposalInput.assignments).toEqual(generatedInput().assignments);
     expect(unfinished.proposalInput.demands.filter(demand => demand.estimated !== true)).toEqual(generatedInput().demands);
   });
+  it("passes skipped GLOBAL COVERAGE telemetry for the returned candidate without persisting", async () => {
+    const value = generatedInput(); useCurrent(value);
+    const optimization = { budgetSeconds: 12, phases: [{ objective: "COVERAGE", searchScope: "GLOBAL", status: "UNKNOWN",
+      wallTimeSeconds: 0, budgetSeconds: 0, preparationSeconds: 0.27, incumbentValue: 0,
+      searchSkippedReason: "PREPARATION_EXHAUSTED", decisionHintStatus: "COMPLETE_DECISIONS" }] };
+    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: value.assignments, wallTimeSeconds: 1, message: "Synthetic candidate", optimization });
+    const result = await generateEscala(actor, "w1", 1);
+    expect(result.result.optimization).toEqual(optimization);
+    expect(result.proposalInput.assignments).toEqual(value.assignments);
+    expect(result.validation.valid).toBe(true);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+  it("omits discarded skipped GLOBAL COVERAGE telemetry when an authenticated reference is retained", async () => {
+    const value = generatedInput(); value.policy.calendarMode = "MANUAL";
+    value.demands = value.demands.map(demand => ({ ...demand, estimated: true }));
+    useCurrent(value);
+    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: value.assignments, wallTimeSeconds: 1, message: "First candidate" });
+    const first = await generateEscala(actor, "w1", 1);
+    const changed = value.assignments.map((day): EscalaInput["assignments"][number] => day.date === "2026-10-28"
+      ? { employeeId: day.employeeId, date: day.date, kind: "OFF" }
+      : day.date === "2026-10-29" ? { ...day, kind: "WORK", shiftId: "day" } : day);
+    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: changed, wallTimeSeconds: 1, message: "Discarded candidate",
+      optimization: { budgetSeconds: 12, phases: [{ objective: "COVERAGE", searchScope: "GLOBAL", status: "UNKNOWN", wallTimeSeconds: 0, budgetSeconds: 0,
+        preparationSeconds: 0.27, incumbentValue: 0, searchSkippedReason: "DEADLINE", decisionHintStatus: "NO_TIME" }] } });
+    const second = await generateEscala(actor, "w1", 1, { comparisonReference: { input: first.proposalInput, receipt: first.candidateReceipt } });
+    expect(second.comparison).toMatchObject({ admission: "ADMITTED", selection: "REFERENCE_RETAINED" });
+    expect(second.proposalInput).toEqual(first.proposalInput);
+    expect(second.result).not.toHaveProperty("optimization");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
   it("retains the full unsaved candidate at the service boundary when a lower total hides role loss", async () => {
     const value = input(); value.policy.calendarMode = "MANUAL";
     value.employees = ["a", "b"].map(id => ({ ...value.employees[0], id, registration: id, name: "Synthetic", sector: "Store", role: id === "a" ? "Fiscal" : "Zelador" }));

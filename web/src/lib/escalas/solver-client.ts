@@ -46,6 +46,7 @@ const resultSchema = z.strictObject({
       budgetSeconds: z.number().finite().min(0).max(60),
       preparationSeconds: z.number().finite().min(0).max(60).optional(),
       decisionHintStatus: z.enum(["NO_TIME", "DEADLINE", "INCOMPLETE", "EMPTY", "INVALID", "COMPLETE_DECISIONS", "FAILED"]).optional(),
+      searchSkippedReason: z.enum(["DEADLINE", "INSUFFICIENT_ALLOCATION", "PREPARATION_EXHAUSTED"]).optional(),
       incumbentValue: z.number().finite().int(),
       bestBound: z.number().finite().optional(),
       searchScope: z.enum(["GLOBAL", "SELECTED_PEOPLE", "ROLLING_WEEKS", "ROLLING_WEEK"]).optional(),
@@ -61,6 +62,13 @@ const resultSchema = z.strictObject({
         incumbentValue: z.number().finite().int(),
       }).refine(member => member.incumbentValue <= member.initialValue, "O polimento não pode piorar um objetivo protegido")).min(1).max(10).optional(),
     }).superRefine((phase, context) => {
+      if (phase.searchSkippedReason !== undefined) {
+        if (phase.objective !== "COVERAGE") context.addIssue({ code: "custom", path: ["objective"], message: "A busca pulada deve pertencer à cobertura global" });
+        if (phase.status !== "UNKNOWN") context.addIssue({ code: "custom", path: ["status"], message: "Uma busca pulada não possui resultado do processador" });
+        if (phase.searchScope !== "GLOBAL") context.addIssue({ code: "custom", path: ["searchScope"], message: "A busca pulada deve ter escopo global" });
+        if (phase.budgetSeconds !== 0) context.addIssue({ code: "custom", path: ["budgetSeconds"], message: "Uma busca pulada não possui orçamento de busca" });
+        if (phase.wallTimeSeconds !== 0) context.addIssue({ code: "custom", path: ["wallTimeSeconds"], message: "Uma busca pulada não possui tempo de busca" });
+      }
       if ((phase.objective === "SECONDARY_POLISH") !== Boolean(phase.members)) {
         context.addIssue({ code: "custom", path: ["members"], message: "Informe os objetivos somente para a fase conjunta" });
       }

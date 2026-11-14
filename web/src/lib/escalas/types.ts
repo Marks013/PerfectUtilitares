@@ -200,6 +200,7 @@ type EscalaOptimizationPhase = {
   budgetSeconds: number;
   preparationSeconds?: number;
   decisionHintStatus?: "NO_TIME" | "DEADLINE" | "INCOMPLETE" | "EMPTY" | "INVALID" | "COMPLETE_DECISIONS" | "FAILED";
+  searchSkippedReason?: "DEADLINE" | "INSUFFICIENT_ALLOCATION" | "PREPARATION_EXHAUSTED";
   incumbentValue: number;
   bestBound?: number;
   searchScope?: "GLOBAL" | "SELECTED_PEOPLE" | "ROLLING_WEEKS" | "ROLLING_WEEK";

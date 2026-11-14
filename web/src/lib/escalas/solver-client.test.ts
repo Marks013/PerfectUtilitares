@@ -51,6 +51,52 @@ function expectViableWorkerResult(input: EscalaInput) {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it.each(["DEADLINE", "INSUFFICIENT_ALLOCATION", "PREPARATION_EXHAUSTED"])("preserves skipped GLOBAL COVERAGE reason=%s and actual preparation through the real parser", async searchSkippedReason => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); expectViableWorkerResult(input);
+    const optimization = { budgetSeconds: 12, phases: [{ objective: "COVERAGE", searchScope: "GLOBAL", status: "UNKNOWN",
+      wallTimeSeconds: 0, budgetSeconds: 0, preparationSeconds: 0.27, incumbentValue: 1200, searchSkippedReason,
+      decisionHintStatus: searchSkippedReason === "PREPARATION_EXHAUSTED" ? "COMPLETE_DECISIONS" : "NO_TIME" }] };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Synthetic candidate", wallTimeSeconds: 1, optimization })));
+    const result = await solveEscala(input);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.optimization).toEqual(optimization);
+    expect(result.optimization?.phases[0].preparationSeconds).toBe(0.27);
+    expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
+  });
+  it("accepts legacy omission of skipped GLOBAL COVERAGE reason without inferring a skip", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const optimization = { budgetSeconds: 12, phases: [{ objective: "COVERAGE", status: "FEASIBLE",
+      wallTimeSeconds: 0.8, budgetSeconds: 1, preparationSeconds: 0.2, incumbentValue: 1200 }] };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Legacy candidate", wallTimeSeconds: 1, optimization })));
+    const result = await solveEscala(fixture());
+    expect(result.optimization).toEqual(optimization);
+    expect(result.optimization?.phases[0]).not.toHaveProperty("searchSkippedReason");
+  });
+  it.each(["UNSUPPORTED", null, [], {}, 42, true].map(searchSkippedReason => ({ searchSkippedReason })))("rejects invalid skipped GLOBAL COVERAGE reason=$searchSkippedReason", async ({ searchSkippedReason }) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Synthetic candidate", wallTimeSeconds: 1, optimization: { budgetSeconds: 12, phases: [{ objective: "COVERAGE", searchScope: "GLOBAL", status: "UNKNOWN",
+        wallTimeSeconds: 0, budgetSeconds: 0, preparationSeconds: 0.27, incumbentValue: 1200, searchSkippedReason }] } })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+  it.each([
+    { label: "successful status", override: { status: "FEASIBLE" } },
+    { label: "different objective", override: { objective: "SUNDAY_COVERAGE" } },
+    { label: "selected people scope", override: { searchScope: "SELECTED_PEOPLE" } },
+    { label: "rolling scope", override: { searchScope: "ROLLING_WEEKS" } },
+    { label: "omitted global scope", override: { searchScope: undefined } },
+    { label: "positive search allocation", override: { budgetSeconds: 0.1 } },
+    { label: "positive solve time despite separate preparation", override: { wallTimeSeconds: 0.01 } },
+  ])("rejects incoherent skipped GLOBAL COVERAGE: $label", async ({ override }) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Synthetic candidate", wallTimeSeconds: 1, optimization: { budgetSeconds: 12, phases: [{ objective: "COVERAGE", searchScope: "GLOBAL", status: "UNKNOWN",
+        wallTimeSeconds: 0, budgetSeconds: 0, preparationSeconds: 0.27, incumbentValue: 1200, searchSkippedReason: "DEADLINE", ...override }] } })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
   it("still compares a complete valid incumbent through the real quality selector", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const input = fixture(); input.assignments = completeAssignments();

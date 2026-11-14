@@ -13,6 +13,7 @@ MIN_SEARCH_SECONDS = 0.10
 # Admission includes preparation headroom; the actual search still has its
 # own floor after setup. An admitted phase is not evidence of optimization.
 MIN_PHASE_BUDGET = 2 * MIN_SEARCH_SECONDS
+MAX_COVERAGE_HINT_SECONDS = 0.6
 
 
 @dataclass
@@ -280,6 +281,17 @@ def _refinement_phase_budget(remaining, names, index, reserve,
     return min(budget, max(0.0, remaining - future))
 
 
+def _global_coverage_reserve(context, preparation):
+    """Keep one usable global consumer inside the existing coverage allowance.
+
+    Use the existing operational net-search reserve, plus measured setup and
+    the existing hint cap. No percentage, extra phase or later reserve is taken.
+    """
+    search = max(MIN_SEARCH_SECONDS, context.refinement_reserve_seconds)
+    hint = MAX_COVERAGE_HINT_SECONDS if context.coverage_hint_builder else 0.0
+    return preparation + hint + search
+
+
 def improve(model, objectives, values, deadline, names=None, *, context=None):
     if names is not None and len(names) != len(objectives):
         raise ValueError('objective/name count mismatch')
@@ -360,6 +372,19 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         model.proto.solution_hint.values.extend(
             initial_decision_hints.get(variable_index, values[variable_index])
             for variable_index in decision_variables)
+    def record_global_skip(reason, preparation=0.0, hint_status=None):
+        if (not objectives or not names or names[0] != 'COVERAGE'
+                or any(phase['objective'] == 'COVERAGE' and phase.get('searchScope') == 'GLOBAL'
+                       for phase in phases)):
+            return
+        current = Snapshot(values).value(objectives[0])
+        phases.append({'objective': 'COVERAGE', 'status': 'UNKNOWN',
+                       'wallTimeSeconds': 0, 'budgetSeconds': 0,
+                       'preparationSeconds': round(preparation, 3),
+                       'initialValue': current, 'incumbentValue': current,
+                       'searchScope': 'GLOBAL', 'searchSkippedReason': reason,
+                       'decisionHintStatus': hint_status or 'NO_TIME'})
+
     for index, (name, objective) in enumerate(plans):
         repair_phase = index < repair_count
         phase_index = index - repair_count
@@ -369,6 +394,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             control.checkpoint()
         remaining = deadline - time.monotonic() - 0.10
         if remaining < 0.1:
+            record_global_skip('DEADLINE')
             proven = False
             break
         preparation_started = time.monotonic()
@@ -420,14 +446,17 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                                           context.refinement_reserve_seconds,
                                           preparation_allowance)
         if repair_phase:
-            # Share the SAME coverage deadline by remaining decision cost.
-            # Early completion releases time to the next repair; global search
-            # gets only a usable residual, never a second reservation.
+            # Local repairs share only the remainder AFTER a global consumer's
+            # setup, hint and net search have been reserved in this same cutoff.
             coverage_remaining = max(0, coverage_cutoff - time.monotonic())
-            budget = coverage_remaining * repair_costs[index] / sum(repair_costs[index:])
+            global_reserve = _global_coverage_reserve(context, preparation_allowance)
+            repair_remaining = max(0.0, coverage_remaining - global_reserve)
+            budget = repair_remaining * repair_costs[index] / sum(repair_costs[index:])
         if name == 'COVERAGE':
             budget = min(budget, max(0, coverage_cutoff - time.monotonic()))
         if budget < preparation_allowance + MIN_SEARCH_SECONDS - 1e-9:
+            if name == 'COVERAGE' and phase_index == 0:
+                record_global_skip('INSUFFICIENT_ALLOCATION', time.monotonic() - preparation_started)
             proven = False
             continue  # No clone/presolve for a phase without a usable allocation.
         engine = cp_model.CpSolver()
@@ -497,7 +526,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         if name == 'COVERAGE' and phase_index == 0 and context.coverage_hint_builder:
             # Reuse this global call and its preparation allowance. Never replace
             # the incumbent or its bounds with an unverified suggested calendar.
-            hint_deadline = min(time.monotonic() + 0.6,
+            hint_deadline = min(time.monotonic() + MAX_COVERAGE_HINT_SECONDS,
                                 preparation_started + budget - MIN_SEARCH_SECONDS,
                                 coverage_cutoff - MIN_SEARCH_SECONDS,
                                 deadline - MIN_SEARCH_SECONDS - _future_refinement_reserve(
@@ -549,6 +578,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             budget = max(budget, context.refinement_reserve_seconds)
         budget = min(budget, available)
         if budget < MIN_SEARCH_SECONDS:
+            if name == 'COVERAGE' and phase_index == 0:
+                record_global_skip('PREPARATION_EXHAUSTED', preparation_seconds, hint_status)
             if hint_status == 'COMPLETE_DECISIONS':
                 _replace_hints(model, values)
             proven = False
