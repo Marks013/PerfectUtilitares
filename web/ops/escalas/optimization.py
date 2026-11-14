@@ -236,20 +236,34 @@ def _phase_budget(remaining, names, index):
     return MIN_PHASE_BUDGET + surplus * weights[0] / sum(weights)
 
 
-def _refinement_phase_budget(remaining, names, index, reserve):
-    """Leave one useful rest search inside the existing deadline, never add time.
+def _reserved_refinement_names(names):
+    # Both Sunday searches need their own net time. Spacing retains the former
+    # fallback when this model has no Sunday objective at all.
+    sunday = {'SUNDAY_COVERAGE', 'SUNDAY_BALANCE'} & set(names)
+    return sunday or {'REST_SPACING'}
 
-    Earlier operational objectives remain bounded by their incumbent even when
-    their search is skipped. The first pending rest phase consumes the reserve;
-    a later spacing phase can use only the time actually left at that point.
+
+def _future_refinement_reserve(names, index, reserve, preparation):
+    pending = set(names[index:]) & _reserved_refinement_names(names)
+    return len(pending) * (reserve + preparation) if reserve > 0 else 0.0
+
+
+def _refinement_phase_budget(remaining, names, index, reserve,
+                             preparation=MIN_PHASE_BUDGET):
+    """Allocate net Sunday search plus charged setup inside the same deadline.
+
+    The existing reserve is per Sunday objective, not a gross share consumed by
+    cloning. Earlier phases, including coverage retries, leave both allocations.
+    Preparation headroom starts at the existing admission floor and grows to the
+    largest setup actually observed in this run; it is never extra wall time.
     """
     budget = _phase_budget(remaining, names, index)
-    pending = [name for name in names[index:] if name in ('SUNDAY_BALANCE', 'REST_SPACING')]
-    if reserve <= 0 or not pending:
+    if reserve <= 0:
         return budget
-    if names[index] == pending[0]:
-        return min(remaining, max(budget, reserve))
-    return min(budget, max(0.0, remaining - reserve))
+    future = _future_refinement_reserve(names, index + 1, reserve, preparation)
+    if names[index] in _reserved_refinement_names(names):
+        budget = max(budget, reserve + preparation)
+    return min(budget, max(0.0, remaining - future))
 
 
 def improve(model, objectives, values, deadline, names=None, *, context=None):
@@ -305,6 +319,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         context.refinement_reserve_seconds)
         if names and names[0] == 'COVERAGE' else 0)
     polish_attempt = 0
+    preparation_allowance = MIN_PHASE_BUDGET
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
     active_group_count, upper_bounds = 0, {}
@@ -386,7 +401,9 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
             continue
-        budget = _refinement_phase_budget(remaining, names, index, context.refinement_reserve_seconds)
+        budget = _refinement_phase_budget(remaining, names, index,
+                                          context.refinement_reserve_seconds,
+                                          preparation_allowance)
         if repair_phase:
             # Share the SAME coverage deadline by remaining decision cost.
             # Early completion releases time to the next repair; global search
@@ -395,7 +412,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             budget = coverage_remaining * repair_costs[index] / sum(repair_costs[index:])
         if name == 'COVERAGE':
             budget = min(budget, max(0, coverage_cutoff - time.monotonic()))
-        if budget < MIN_PHASE_BUDGET - 1e-9:
+        if budget < preparation_allowance + MIN_SEARCH_SECONDS - 1e-9:
             proven = False
             continue  # No clone/presolve for a phase without a usable allocation.
         engine = cp_model.CpSolver()
@@ -460,9 +477,22 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                     domain.clear()
                     value = repair_clock_fixes[variable_index] if narrowed_clock else values[variable_index]
                     domain.extend([value, value])
-        # Model setup belongs to this phase's share, not the later objectives.
-        # Do not start a presolve with too little time to use the known incumbent.
-        budget = min(budget - (time.monotonic() - preparation_started), deadline - time.monotonic() - 0.10)
+        # Charge all preparation, including guard registration and cloning.
+        # Recheck the absolute deadline AFTER setup. Earlier phases cannot spend
+        # a later Sunday's net search reserve through either setup or solving.
+        prepared = time.monotonic()
+        preparation_seconds = prepared - preparation_started
+        preparation_allowance = max(preparation_allowance, preparation_seconds)
+        future_reserve = _future_refinement_reserve(
+            names, index + 1, context.refinement_reserve_seconds, preparation_allowance)
+        available = max(0.0, deadline - prepared - MIN_SEARCH_SECONDS - future_reserve)
+        budget -= preparation_seconds
+        if (context.refinement_reserve_seconds > 0
+                and name in _reserved_refinement_names(names)):
+            # Recover the setup cost from unspent shared time, never by extending
+            # the deadline or taking the next Sunday's reserved allocation.
+            budget = max(budget, context.refinement_reserve_seconds)
+        budget = min(budget, available)
         if budget < MIN_SEARCH_SECONDS:
             proven = False
             continue
@@ -473,6 +503,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                  'workers': settings.workers,
                  'linearizationLevel': settings.linearization,
                  'symmetryLevel': settings.symmetry,
+                 'preparationSeconds': round(preparation_seconds, 3),
                  'wallTimeSeconds': round(time.monotonic() - started, 3),
                  'budgetSeconds': round(budget, 3), 'initialValue': incumbent,
                  'incumbentValue': incumbent, 'searchScope': 'GLOBAL'}

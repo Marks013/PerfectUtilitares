@@ -187,7 +187,7 @@ describe("branch-wide proposal preparation", () => {
     expect(prepared.shifts[0].segments[0].start).toBe(420);
     expect(prepared.shifts[0].segments.at(-1)?.end).toBe(1044);
     expect(prepared.employees[0].sourceSchedule).toEqual(input.employees[0].sourceSchedule);
-    expect(prepared.assignments).toEqual([]);
+    expect(prepared.assignments).toEqual(input.assignments.filter(assignment => assignment.kind === "OFF"));
     expect(prepared.shifts.filter((shift) => shift.id.startsWith("prep-")).every((shift) => shift.segments[1].end - shift.segments[1].start === 120)).toBe(true);
     expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
     expect(input).toEqual(original);
@@ -234,7 +234,7 @@ describe("branch-wide proposal preparation", () => {
     const input = fixture(); input.assignments[0].locked = true;
     expect(() => prepareRoster(input, 40)).toThrow(/bloqueados/);
     input.assignments[0] = { employeeId: "p1", date: input.startDate, kind: "ABSENCE" };
-    expect(prepareRoster(input, 40).assignments).toEqual([input.assignments[0]]);
+    expect(prepareRoster(input, 40).assignments).toEqual([input.assignments[0], ...input.assignments.filter(assignment => assignment.kind === "OFF")]);
   });
   it("preserves explicit exclusions and Sunday classifications when adapting hours", () => {
     const input = fixture();

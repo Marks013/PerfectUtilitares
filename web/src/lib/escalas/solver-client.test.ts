@@ -570,6 +570,57 @@ describe("isolated schedule processor client", () => {
     expect(fetch).toHaveBeenCalledWith(new URL("http://escalas-solver:8080/solve"), expect.objectContaining({ method: "POST" }));
     expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).toEqual({ input: { ...fixture(), storeClosingMinutes: 1200 } });
   });
+  it.each(["FEASIBLE", "UNKNOWN"].flatMap(status => [undefined, 0, 0.24, 60].map(preparationSeconds => ({ status, preparationSeconds }))))("accepts optional phase preparationSeconds=$preparationSeconds with $status through the real result parser", async ({ status, preparationSeconds }) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    expectViableWorkerResult(input);
+    const optimization = { budgetSeconds: 12, phases: [
+      { objective: "SUNDAY_COVERAGE", status, wallTimeSeconds: 0.8, budgetSeconds: 0.8,
+        initialValue: 1200, incumbentValue: 1200, searchScope: "SELECTED_PEOPLE", movablePeople: 2,
+        workers: 1, linearizationLevel: 0, symmetryLevel: 0,
+        ...(preparationSeconds === undefined ? {} : { preparationSeconds }) },
+      { objective: "SUNDAY_BALANCE", status: "OPTIMAL", wallTimeSeconds: 0, budgetSeconds: 0,
+        initialValue: 0, incumbentValue: 0, bestBound: 0 },
+    ] };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Proposta", wallTimeSeconds: 1.5, optimization })));
+    const result = await solveEscala(input);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
+    expect(result.optimization).toEqual(optimization);
+    expect(result.optimization?.phases[0].preparationSeconds).toBe(preparationSeconds);
+    expect(result.optimization?.phases[0]).not.toHaveProperty("bestBound");
+    expect(result.optimization?.phases[1]).not.toHaveProperty("preparationSeconds");
+  });
+  it.each([-0.001, 60.001, null, "0.24"])("rejects invalid phase preparationSeconds=%s through the real result parser", async preparationSeconds => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Proposta", wallTimeSeconds: 1.5, optimization: { budgetSeconds: 12, phases: [
+        { objective: "SUNDAY_COVERAGE", status: "UNKNOWN", wallTimeSeconds: 0.8, budgetSeconds: 0.8,
+          incumbentValue: 1200, preparationSeconds },
+      ] } })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+  it.each(["1e400", "-1e400"])("rejects non-finite phase preparationSeconds encoded as %s in JSON", async numericToken => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const body = JSON.stringify({ status: "FEASIBLE", assignments: completeAssignments(), message: "Proposta",
+      wallTimeSeconds: 1.5, optimization: { budgetSeconds: 12, phases: [
+        { objective: "SUNDAY_COVERAGE", status: "UNKNOWN", wallTimeSeconds: 0.8, budgetSeconds: 0.8,
+          incumbentValue: 1200, preparationSeconds: "NON_FINITE" },
+      ] } }).replace('"NON_FINITE"', numericToken);
+    expect(Number.isFinite(JSON.parse(body).optimization.phases[0].preparationSeconds)).toBe(false);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { headers: { "content-type": "application/json" } })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+  it("keeps rejecting unknown phase properties alongside valid preparation telemetry", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Proposta", wallTimeSeconds: 1.5, optimization: { budgetSeconds: 12, phases: [
+        { objective: "SUNDAY_COVERAGE", status: "UNKNOWN", wallTimeSeconds: 0.8, budgetSeconds: 0.8,
+          incumbentValue: 1200, preparationSeconds: 0.24, unexpectedTelemetry: true },
+      ] } })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
   it("preserves bounded numeric phase diagnostics on a real-shaped success response", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     expectViableWorkerResult(fixture());

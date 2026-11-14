@@ -44,6 +44,7 @@ const resultSchema = z.strictObject({
       status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
       wallTimeSeconds: z.number().finite().min(0).max(60),
       budgetSeconds: z.number().finite().min(0).max(60),
+      preparationSeconds: z.number().finite().min(0).max(60).optional(),
       incumbentValue: z.number().finite().int(),
       bestBound: z.number().finite().optional(),
       searchScope: z.enum(["GLOBAL", "SELECTED_PEOPLE", "ROLLING_WEEKS", "ROLLING_WEEK"]).optional(),

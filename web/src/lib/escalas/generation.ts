@@ -8,6 +8,7 @@ import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, maximu
 import { automaticShiftAlternatives, civilNightWorkMinutes, importedShiftReference, isAutomaticPreparedShift, isGeneratedMixed42Shift, planningWeeklyHours, preparedShiftSignature, prepareRoster, proposeCoverage, refreshProposedWorkBlocks, stableShiftReferences } from "./preparation";
 import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes } from "./store-hours";
 import type { EscalaEmployee, EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
+import { selectMonthlyClockReferences, type MonthlyClockChoice } from "./monthly-clock-selection";
 
 import { manualAssignmentIssues, manualShiftAt, manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
 function paidMinutes(shift: EscalaShift): number {
@@ -94,7 +95,18 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const adjustedEmployeeIds: string[] = [];
   const excludedEmployeeIds: string[] = [];
   const adaptedOptions = new Map<string, Set<string>>();
-  const adjustedEmployees = input.employees.map((original) => {
+  const monthlyChoices: MonthlyClockChoice[] = [];
+  const rememberChoice = (choice: MonthlyClockChoice) => {
+    for (const shift of choice.candidates) {
+      const existing = shifts.get(shift.id);
+      if (existing && preparedShiftSignature(existing) !== preparedShiftSignature(shift)) {
+        throw new EscalaError(422, "ESCALA_SHIFT_CONFLICT", "Dois horários têm o mesmo identificador e períodos diferentes. Confira os horários da filial antes de gerar.");
+      }
+      if (!existing) shifts.set(shift.id, shift);
+    }
+    monthlyChoices.push(choice);
+  };
+  let adjustedEmployees = input.employees.map((original) => {
     const person: EscalaEmployee = { ...applyRestEligibility(original), fixedImportedShiftId: undefined,
       shiftIds: original.manualShiftBaseIds ?? original.shiftIds };
     if (isRestPlanningExcludedRole(person.role) || isShortFpre136Schedule(person)) excludedEmployeeIds.push(person.id);
@@ -172,7 +184,11 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       const lockedIds = input.assignments.filter(day => day.employeeId === person.id && day.locked && day.kind === "WORK").flatMap(day => day.shiftId ? [day.shiftId] : []);
       const compatible = allowed.filter(shift => targets.has(paidMinutes(shift)) || mixedWeeks && isMixed42LongShift(shift));
       const normal = compatible.filter(shift => !lockedIds.includes(shift.id));
-      const stable = stableShiftReferences(source, normal.length ? normal : compatible);
+      const saved = compatible.find(shift => shift.id === original.fixedImportedShiftId);
+      const candidates = saved ? [saved] : normal.length ? normal : compatible;
+      const stable = stableShiftReferences(source, candidates);
+      if (stable.every(isAutomaticPreparedShift)) rememberChoice({ employeeId: person.id, baseline: stable,
+        candidates: candidates.filter(isAutomaticPreparedShift) });
       const stableIds = stable.map(shift => shift.id);
       adaptedOptions.set(person.id, new Set(stableIds));
       return { ...person, ...reference, shiftIds: [...new Set([...stableIds, ...explicitReferences, ...(person.manualShiftOverrides?.length ? [] : lockedIds)])],
@@ -180,19 +196,18 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
           ? [...person.shiftIds] : undefined),
         fixedImportedShiftId: !mixedWeeks && stableIds.length === 1 ? stableIds[0] : undefined };
     }
-    // Start from the existing arrival; a narrower search also produces more stable previews.
-    // Keep an explicitly selected set of shifts above, and try departure only when arrival is unsafe.
+    // Keep both bounded anchors until the collective monthly selection; no daily alternatives reach the processor.
     const rosterReference = { ...input, employees: [person], assignments: [] };
-    const strategy = input.generationMode === "REST_ONLY" ? "PRESERVE_START" : "BOTH";
+    const strategy = "BOTH";
     let prepared = needsBlockBalance && !needsHoursAdjustment
       ? { ...rosterReference, shifts: refreshed, employees: [{ ...person, shiftIds: refreshed.map(shift => shift.id) }] }
-      : mixedWeeks ? prepareRoster(rosterReference, hours, "EXCLUDE", "BOTH")
-        : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", strategy);
-    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_END");
+      : mixedWeeks ? prepareRoster(rosterReference, hours, "EXCLUDE", "BOTH", true)
+        : prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", strategy, true);
+    if (!mixedWeeks && prepared.employees[0].planningEnabled === false) prepared = prepareRoster({ ...rosterReference, simulation: false }, hours, "EXCLUDE", "PRESERVE_END", true);
     // Prefer a daytime adaptation. Retain short/night references as a bounded civil-minute simulation when needed.
     if (!mixedWeeks && prepared.employees[0].planningEnabled === false) {
-      const arrival = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_START");
-      const departure = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_END");
+      const arrival = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_START", true);
+      const departure = prepareRoster(rosterReference, hours, "EXCLUDE", "PRESERVE_END", true);
       prepared = nightWorkMinutes(departure, targets) < nightWorkMinutes(arrival, targets) ? departure : arrival;
     }
     const preparedPerson = prepared.employees[0].manualShiftOverrides?.length
@@ -200,6 +215,8 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       : prepared.employees[0];
     const candidateShifts = prepared.shifts.filter(shift => preparedPerson.shiftIds.includes(shift.id));
     const stableCandidates = imported ? stableShiftReferences(imported, candidateShifts) : candidateShifts;
+    if (imported && stableCandidates.every(isAutomaticPreparedShift)) rememberChoice({ employeeId: person.id,
+      baseline: stableCandidates, candidates: candidateShifts.filter(isAutomaticPreparedShift) });
     const candidate = imported && candidateShifts.length ? { ...preparedPerson,
       shiftIds: stableCandidates.map(shift => shift.id),
       fixedImportedShiftId: !mixedWeeks && stableCandidates.length === 1
@@ -233,6 +250,20 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const shiftIds = [...new Set([...candidate.shiftIds, ...explicitReferences, ...(person.manualShiftOverrides?.length ? [] : lockedShiftIds)])];
     if (shiftIds.length > 12) throw new EscalaError(422, "ESCALA_SHIFT_OPTIONS_LIMIT", "Os horários propostos e os dias bloqueados excedem 12 alternativas por pessoa. Confira os bloqueios antes de gerar.");
     return { ...person, ...reference, planningEnabled: true, simulationDailyMinutes: candidate.simulationDailyMinutes, originalShiftIds: candidate.originalShiftIds, fixedImportedShiftId: candidate.fixedImportedShiftId, shiftIds };
+  });
+  const selected = selectMonthlyClockReferences({ ...input, employees: adjustedEmployees }, monthlyChoices).references;
+  adjustedEmployees = adjustedEmployees.map(person => {
+    const references = selected.get(person.id), choice = monthlyChoices.find(item => item.employeeId === person.id);
+    if (!references || !choice) return person;
+    const baseline = new Set(choice.baseline.map(shift => shift.id));
+    const shiftIds = [...new Set([...references.map(shift => shift.id), ...person.shiftIds.filter(id => !baseline.has(id))])];
+    const adapted = adaptedOptions.get(person.id);
+    if (adapted) {
+      for (const id of baseline) adapted.delete(id);
+      for (const shift of references) adapted.add(shift.id);
+    }
+    return { ...person, shiftIds, fixedImportedShiftId: person.fixedImportedShiftId && baseline.has(person.fixedImportedShiftId)
+      ? references[0]?.id : person.fixedImportedShiftId };
   });
   const excluded = new Set([...excludedEmployeeIds, ...adjustedEmployees.filter(person => person.planningEnabled === false).map(person => person.id)]);
   // Existing work also reserves space until the final allowed clocks are known.

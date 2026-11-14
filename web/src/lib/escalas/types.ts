@@ -198,6 +198,7 @@ type EscalaOptimizationPhase = {
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";
   wallTimeSeconds: number;
   budgetSeconds: number;
+  preparationSeconds?: number;
   incumbentValue: number;
   bestBound?: number;
   searchScope?: "GLOBAL" | "SELECTED_PEOPLE" | "ROLLING_WEEKS" | "ROLLING_WEEK";

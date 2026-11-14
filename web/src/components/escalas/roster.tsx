@@ -4,7 +4,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import { dayOfWeek, visibleDates } from "@/lib/escalas/dates";
 import { holidayLabel } from "@/lib/escalas/calendar";
-import { sortEmployees, sortHoursEmployees } from "@/lib/escalas/order";
+import { sortHoursEmployees, sortScheduleEntries } from "@/lib/escalas/order";
 import { assignmentPresentation, buildEscalaSchedule, escalaShiftCodes, type EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, EscalaValidation } from "@/lib/escalas/types";
 import { buttonClass, controlClass, Field, panelClass } from "./controls";
@@ -45,7 +45,8 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   }, [input, dates, sector, active]);
   const matches = (person: EscalaInput["employees"][number]) => (!sector || person.sector === sector)
     && [person.name, person.registration, person.role].join(" ").toLocaleLowerCase("pt-BR").includes(filter.toLocaleLowerCase("pt-BR"));
-  const restEmployees = sortEmployees(presentation.restPeople.map(person => person.employee)).filter(matches);
+  const restEmployees = sortScheduleEntries(presentation.restPeople.map(person => ({ employee: person.employee, schedule: person.proposedSchedule })))
+    .map(person => person.employee).filter(matches);
   const hoursEmployees = sortHoursEmployees(input).filter(person => person.planningEnabled !== false).filter(matches);
   const employees = view === "hours" ? hoursEmployees : restEmployees;
   const pages = Math.max(1, Math.ceil((view === "both" ? Math.max(restEmployees.length, hoursEmployees.length) : employees.length) / 20));
@@ -82,7 +83,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
         onChange(undo.previous); setUndo(null); setSelected(null); setNotice("Última alteração desfeita. A proposta anterior foi restaurada.");
       }}>Desfazer última alteração</button>
     </div>
-    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Setores de A–Z. Nas folgas: cargo e nome. Nos horários: entrada crescente, cargo e nome. Selecione um dia para revisar.</p>
+    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Setores de A–Z. Nas folgas e nos horários: cargo, horário completo crescente e nome. Selecione um dia para revisar.</p>
     <div className={styles.formGrid}>
       <Field label="Visualização da escala">{(id) => <select id={id} className={controlClass} value={view} onChange={(event) => { const next = event.target.value as EscalaExportMode; setLocalMode(next); onModeChange?.(next); }}>
         {!hoursOnly && <option value="rest">Somente folgas</option>}<option value="hours">Somente horários</option>{!hoursOnly && <option value="both">Folgas e horários</option>}
@@ -103,7 +104,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
       // biome-ignore lint/a11y/noNoninteractiveTabindex: The monthly table must remain keyboard-scrollable in read-only mode.
       tabIndex={0} aria-label="Grade mensal da equipe, com rolagem horizontal e vertical">
       <table className={styles.rosterTable}>
-        <caption className="sr-only">Filial {input.branchCode}. Mês completo. Colaboradores por setor, cargo e nome. Legenda e alertas de cobertura ao lado da grade.</caption>
+        <caption className="sr-only">Filial {input.branchCode}. Mês completo. Colaboradores por setor, cargo, horário completo crescente e nome. Legenda e alertas de cobertura ao lado da grade.</caption>
         <thead className={styles.tableHead}>
           <tr className={styles.headerRow}>
             <th scope="col" className={styles.nameHeading}>Colaborador</th>
@@ -160,7 +161,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
       <h3 id="escala-hours-title" className={styles.sectionTitle}>Escala de horários</h3>
       <Field label="Dia dos horários propostos">{(id) => <select id={id} className={controlClass} value={currentDate} onChange={(event) => { setHoursDate(event.target.value); setSelected(null); }}>{dates.map((date) => <option key={date} value={date}>{displayDate(date)}</option>)}</select>}</Field>
       <p className={styles.muted}>Horários exatos da proposta neste dia. Pausas, folgas, afastamentos e pessoas sem horário fixo não entram na contagem por hora.</p>
-      <div className="overflow-x-auto"><table className={styles.hoursTable}><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Mesmos colaboradores e filtros da escala de folgas.</caption>
+      <div className="overflow-x-auto"><table className={styles.hoursTable}><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Colaboradores por setor, cargo, horário completo crescente e nome. Mesmos colaboradores e filtros da escala de folgas.</caption>
         <thead><tr><th scope="col" className="p-2">Colaborador / função</th><th scope="col" className="p-2">Horário proposto</th><th scope="col" className="p-2">Intervalo</th><th scope="col" className="p-2">Total / situação</th></tr></thead>
         <tbody>{displayedHours.flatMap((employee) => {
           const heading = employee.sector !== lastHoursSector; lastHoursSector = employee.sector;
