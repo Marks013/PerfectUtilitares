@@ -1,8 +1,10 @@
 import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
+import { closedHolidayDates } from "./calendar";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import { storeClosingMinutes } from "./store-hours";
 import { validateEscala } from "./validation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
+import { manualShiftAt } from "./shift-catalog/manual-override";
 
 type Demand = EscalaInput["demands"][number];
 type Contribution = { date: string; shift: EscalaShift; weight: number };
@@ -67,6 +69,11 @@ function roundedTargets(expected: number[], group: Group, monday: string, days: 
 
 /** Browser-safe invalidation only: this fingerprint does not certify or authenticate demand. */
 export function coverageBasis(input: EscalaInput): string {
+  return coverageFingerprint(input, 2);
+}
+
+/** The old fingerprint can retain an old ruler, never identify newly calculated estimates. */
+function coverageFingerprint(input: EscalaInput, version: 1 | 2): string {
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const clock = (shift?: EscalaShift) => shift?.segments.map(segment => [segment.kind, segment.start, segment.end]) ?? null;
   const sorted = <T>(items: T[]) => items.sort((a, b) => {
@@ -87,15 +94,19 @@ export function coverageBasis(input: EscalaInput): string {
     return [person.id, person.sector, person.role, person.weeklyHours, person.weeklyHoursMode ?? "INDIVIDUAL", person.simulationDailyMinutes ?? null,
       person.planningEnabled !== false, person.scheduleMode ?? "TIMED", person.activeFrom, person.activeUntil ?? "", person.offMode,
       [...person.fixedOffDays].sort(), person.offPattern, effectiveSundayLimit(person), [...person.preferredOffDays].sort(),
-      sorted([...references.values()]), context(person.history), context(person.planningHistory ?? []), context(person.planningFuture ?? [])];
+      sorted([...references.values()]),
+      ...(version === 2 ? [sorted((person.manualShiftOverrides ?? []).map(choice => [choice.effectiveFrom, choice.effectiveUntil,
+        choice.markings, clock(shifts.get(choice.shiftId))]))] : []),
+      context(person.history), context(person.planningHistory ?? []), context(person.planningFuture ?? [])];
   });
   const policy = input.policy;
   const data = [input.startDate, input.endDate, input.defaultWeeklyHours, input.timeZone, storeClosingMinutes(input), [...(input.mixed42Sectors ?? [])].sort(),
     [policy.weeklyLimit, policy.dailyLimitMinutes, policy.minInterShiftMinutes, policy.minWeeklyRestMinutes, policy.minMealMinutes,
       policy.maxConsecutiveWorkDays, policy.allowShortMealSimulation === true, policy.limitContinuousWorkBlocks === true,
       [...policy.closedDates].sort(), [...policy.holidayDates].sort(), [...policy.authorizedHolidayDates].sort(), policy.holidayRestAllowed,
+      ...(version === 2 ? [[...(policy.paidHolidayDates ?? [])].sort()] : []),
       policy.normativeProfile ?? "CUSTOM"], sorted(people),
-    sorted(input.assignments.filter(record => record.kind === "ABSENCE" || record.locked).map(record => [record.employeeId, record.date, record.kind,
+    sorted(input.assignments.filter(record => record.kind === "ABSENCE" || version === 2 && record.kind === "HOLIDAY" || record.locked).map(record => [record.employeeId, record.date, record.kind,
       record.kind === "WORK" ? clock(shifts.get(record.shiftId ?? "")) : null])),
     sorted(input.demands.filter(demand => demand.estimated !== true).map(demand => [demand.date, demand.sector, demand.role ?? "", demand.start, demand.end, demand.minimum]))];
   let first = 2166136261, second = 2246822519;
@@ -104,7 +115,7 @@ export function coverageBasis(input: EscalaInput): string {
     first = Math.imul(first ^ point, 16777619) >>> 0;
     second = Math.imul(second ^ point, 3266489917) >>> 0;
   }
-  return `coverage-v1:${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
+  return `coverage-v${version}:${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
 }
 
 function completeRoster(input: EscalaInput): boolean {
@@ -122,15 +133,18 @@ function completeRoster(input: EscalaInput): boolean {
 
 /**
  * Keep the ruler fixed while optimizing an unchanged, complete, independently valid roster.
- * Legacy bootstrap is explicit and generation-only: it stamps the existing saved estimates
- * when their inputs remain compatible, rather than migrating targets during a solver upgrade.
- * A real input change or needsRegeneration recalculates estimates; all manual minima survive.
+ * Stable legacy targets retain a legacy fingerprint, including explicit generation-only bootstrap.
+ * New estimates always use v2; a legacy ruler is never relabeled as a newly calculated one.
+ * Both fingerprint versions must observe real input changes before targets can be retained.
  */
 export function retainCoverageReference(previous: EscalaInput, prepared: EscalaInput, allowLegacy = false): EscalaInput | undefined {
   if (previous.needsRegeneration || prepared.needsRegeneration || !previous.demands.some(demand => demand.estimated === true)
     || !completeRoster(previous) || !completeRoster(prepared)) return undefined;
-  const basis = coverageBasis(prepared);
-  if (previous.coverageBasis ? previous.coverageBasis !== basis : !allowLegacy || coverageBasis(previous) !== basis) return undefined;
+  const current = coverageBasis(prepared);
+  const basis = previous.coverageBasis?.startsWith("coverage-v2:") ? current
+    : previous.coverageBasis?.startsWith("coverage-v1:") || allowLegacy ? coverageFingerprint(prepared, 1) : undefined;
+  if (!basis || coverageBasis(previous) !== current) return undefined;
+  if (previous.coverageBasis ? previous.coverageBasis !== basis : coverageFingerprint(previous, 1) !== basis) return undefined;
   // Repairing rest placement, including the v2 Saturday upgrade, must not move the coverage ruler.
   // These scheduling conflicts remain errors in the independent result validator.
   const validation = validateEscala(previous);
@@ -158,6 +172,7 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
   }
   const historyByEmployee = new Map<string, Map<string, EscalaAssignment>>();
   const closed = new Set(input.policy.closedDates);
+  const closedHolidays = closedHolidayDates(input);
   const weeks = new Map<string, string[]>();
   for (const day of dateRange(input.startDate, input.endDate)) {
     const monday = addDays(day, -dayOfWeek(day));
@@ -175,12 +190,24 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
       const mixed = usesMixed42Week(input, person, monday);
       const shift = referenceShift(person, shifts, mixed ? 480 : effectiveWeeklyMinutes(person, monday) / 5);
       const longShift = mixed ? referenceShift(person, shifts, 540, isMixed42LongShift) : undefined;
-      if (!shift) continue;
+      const active = days.filter(day => day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil));
+      const limitedAvailability = active.length < 7 || active.some(day => assignments.get(JSON.stringify([person.id, day]))?.kind === "ABSENCE");
+      const closedWeekdays = active.filter(day => dayOfWeek(day) !== 6 && closedHolidays.has(day)
+        && (input.generationMode !== "HOURS_ONLY" || assignments.get(JSON.stringify([person.id, day]))?.kind === "HOLIDAY")).length;
+      const weeklyOpportunities = limitedAvailability ? 5 : Math.max(0, 5 - closedWeekdays);
+      const referencesByDate = new Map(days.map(day => {
+        const item = assignments.get(JSON.stringify([person.id, day]));
+        const manual = manualShiftAt(person, day);
+        const reference = item?.locked && item.kind === "WORK" ? shifts.get(item.shiftId ?? "")
+          : manual ? shifts.get(manual) : shift;
+        return [day, reference] as const;
+      }));
       const available = days.filter((day) => {
         if (person.activeFrom > day || (person.activeUntil && person.activeUntil < day)
           || closed.has(day) || (person.offMode !== "VARIABLE" && person.fixedOffDays.includes(dayOfWeek(day)))) return false;
         const assignment = assignments.get(JSON.stringify([person.id, day]));
-        return assignment?.kind !== "ABSENCE" && !(assignment?.kind === "OFF" && assignment.locked);
+        return Boolean(referencesByDate.get(day)) && assignment?.kind !== "ABSENCE"
+          && assignment?.kind !== "HOLIDAY" && !(assignment?.kind === "OFF" && assignment.locked);
       });
       const forced = available.filter((day) => {
         const item = assignments.get(JSON.stringify([person.id, day]));
@@ -189,7 +216,7 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
       const free = available.filter(day => !forced.includes(day));
       const freeWeekdays = free.filter(day => dayOfWeek(day) !== 6);
       const sunday = free.find(day => dayOfWeek(day) === 6);
-      const remaining = Math.max(0, 5 - forced.length);
+      const remaining = Math.max(0, weeklyOpportunities - forced.length);
       const forcedLong = longShift ? forced.filter(day => {
         const lockedShift = shifts.get(assignments.get(JSON.stringify([person.id, day]))?.shiftId ?? "");
         return lockedShift && isMixed42LongShift(lockedShift);
@@ -215,10 +242,13 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
         const item = assignments.get(JSON.stringify([person.id, day]));
         const locked = item?.locked && item.kind === "WORK";
         const weight = locked ? 1 : dayOfWeek(day) === 6 ? sundayWeight : weekdayWeight;
-        const shortShare = locked ? 1 : 1 - longShare;
-        group.contributions.push({ date: day, shift: locked && item.shiftId ? shifts.get(item.shiftId) ?? shift : shift, weight: weight * shortShare });
+        const reference = referencesByDate.get(day);
+        if (!reference) continue;
+        const manual = manualShiftAt(person, day);
+        const shortShare = locked || manual ? 1 : 1 - longShare;
+        group.contributions.push({ date: day, shift: reference, weight: weight * shortShare });
         // Mix alternatives within one person's presence share, never count two people.
-        if (!locked && longShift && longShare > 0) group.contributions.push({ date: day, shift: longShift, weight: weight * longShare });
+        if (!locked && !manual && longShift && longShare > 0) group.contributions.push({ date: day, shift: longShift, weight: weight * longShare });
       }
       groups.set(groupKey, group);
     }

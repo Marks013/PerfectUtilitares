@@ -41,6 +41,7 @@ describe("persisted staffing comparison basis", () => {
     raw.assignments = raw.assignments.map(day => day.date === "2026-11-05" ? { employeeId: day.employeeId, date: day.date, kind: "OFF" as const }
       : day.date === "2026-11-07" ? { ...day, kind: "WORK" as const, shiftId: "day" } : day);
     const input = prepareGeneration(raw).input, changed = structuredClone(input);
+    expect(input.coverageBasis).toMatch(/^coverage-v1:[a-f0-9]{16}$/);
     changed.shifts.push({ id: "alternative", name: "Alternativa", segments: [{ start: 540, end: 780, kind: "WORK" }, { start: 780, end: 840, kind: "BREAK" }, { start: 840, end: 1080, kind: "WORK" }] });
     changed.employees[0].shiftIds.push("alternative");
     changed.shifts[0].segments = changed.shifts[0].segments.map(({ start, end, kind }) => ({ end, kind, start }));
@@ -51,6 +52,8 @@ describe("persisted staffing comparison basis", () => {
     expect(regenerated.coverageBasis).toBe(input.coverageBasis);
     expect(regenerated.demands).toEqual(input.demands);
     expect(proposeAutomaticCoverage(changed).demands).toEqual(input.demands);
+    expect(proposeAutomaticCoverage(changed).coverageBasis).toBe(input.coverageBasis);
+    expect(changed.demands).toEqual([{ id: "saved-estimate", date: "2026-11-03", sector: "Loja", role: "Repositor", start: 480, end: 720, minimum: 9, estimated: true }]);
   });
   it.each(["hours", "team", "absence", "clock", "fixed-off", "closed", "manual"])("refreshes estimates when a real input changes: %s", reason => {
     const input = prepareGeneration(fixture()).input, changed = structuredClone(input);
@@ -81,7 +84,7 @@ describe("persisted staffing comparison basis", () => {
   it("marks newly calculated estimates and preserves them through the next complete generation", () => {
     const input = fixture(); input.demands = [];
     const calculated = proposeAutomaticCoverage(input);
-    expect(calculated.coverageBasis).toMatch(/^coverage-v1:[a-f0-9]{16}$/);
+    expect(calculated.coverageBasis).toMatch(/^coverage-v2:[a-f0-9]{16}$/);
     expect(prepareGeneration(calculated).input.demands).toBe(calculated.demands);
   });
 });

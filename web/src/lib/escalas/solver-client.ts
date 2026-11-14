@@ -7,9 +7,10 @@ import { dateRange } from "./dates";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
 import { restPairSummary } from "./rest-quality";
-import { selectVerifiedRoster } from "./roster-quality";
+import { compareRosterCoverage, isOperationallyReusable, isReusableRoster, selectVerifiedRoster } from "./roster-quality";
 import { validateEscala } from "./validation";
 import { matchesHoursOnlyAssignments } from "./hours-reference";
+import { matchesRestOnlyReferences } from "./generation";
 import { logSolverRejection } from "./solver-diagnostics";
 import { EscalaError } from "./errors";
 
@@ -81,23 +82,25 @@ function verifiedCompleteRoster(input: EscalaInput): boolean {
   const dates = dateRange(input.startDate, input.endDate);
   if (!input.employees.every(person => person.planningEnabled === false || dates.every(date =>
     date < person.activeFrom || Boolean(person.activeUntil && date > person.activeUntil) || assigned.has(`${person.id}\0${date}`)))) return false;
-  const validation = validateEscala(input);
-  return validation.valid && !validation.issues.some(issue => issue.code === "DAY_PENDING");
+  return isReusableRoster(input) && matchesRestOnlyReferences(input, input.assignments);
 }
 
 export async function solveEscala(
   input: EscalaInput,
-  options?: SolverOptions,
+  options?: SolverOptions & { qualityReference?: EscalaInput },
 ): Promise<EscalaSolveResult> {
   const started = performance.now();
   const parsed = escalaInputSchema.parse(input);
+  // This private snapshot is never sent to the processor or written into the prepared demands.
+  const { qualityReference: rawQualityReference, ...transportOptions } = options ?? {};
+  const qualityReference = rawQualityReference ? escalaInputSchema.parse(rawQualityReference) : parsed;
   // Cheap verified day exchanges seed the bounded optimizer without changing its staffing target.
   if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   let refined: EscalaInput;
   try {
     // Clock-only generation must compare against the original days, even if moving rest days could improve their spacing.
     refined = parsed.generationMode === "HOURS_ONLY" ? parsed : verifiedCompleteRoster(parsed)
-      ? selectVerifiedRoster(parsed, refineRoster(parsed)).input : refineRoster(parsed);
+      ? selectVerifiedRoster(parsed, refineRoster(parsed), undefined, qualityReference).input : refineRoster(parsed);
   } catch {
     logSolverRejection("refinement", "REFINEMENT_FAILED");
     throw new EscalaSolverError("SOLVER_REFINEMENT_FAILED");
@@ -112,7 +115,7 @@ export async function solveEscala(
   }
   const preparationSeconds = (performance.now() - started) / 1000;
   const payload = await requestSolver(parsed, {
-    ...options,
+    ...transportOptions,
     initialAssignments: refined === parsed || !verifiedCompleteRoster(refined) ? undefined : refined.assignments,
   });
   let stage = "result-schema", reason = "SCHEMA_INVALID";
@@ -182,9 +185,29 @@ export async function solveEscala(
       stage = "selection-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const candidate = { ...parsed, assignments: result.assignments };
       let retentionReason = "REFERENCE_UNVERIFIED";
-      const selected = verifiedCompleteRoster(refined) ? selectVerifiedRoster(refined, candidate,
-        reason => { retentionReason = reason; })
+      let selected = verifiedCompleteRoster(refined) ? selectVerifiedRoster(refined, candidate,
+        reason => { retentionReason = reason; }, qualityReference)
         : { input: candidate, retainedReference: false };
+      const merit = compareRosterCoverage(qualityReference, selected.input);
+      if (merit.comparable && merit.regressed) {
+        // Reuse the old assignments only if their effective clocks and every protected record are still usable here.
+        const oldShifts = new Map(qualityReference.shifts.map(shift => [shift.id, shift.segments]));
+        const currentShifts = new Map(parsed.shifts.map(shift => [shift.id, shift.segments]));
+        const oldDays = new Map(qualityReference.assignments.map(day => [day.employeeId + "\0" + day.date, day]));
+        const sameClocks = qualityReference.assignments.filter(day => day.kind === "WORK").every(day =>
+          JSON.stringify(oldShifts.get(day.shiftId ?? "")) === JSON.stringify(currentShifts.get(day.shiftId ?? "")));
+        const protectedDays = parsed.assignments.filter(day => day.locked || day.kind === "ABSENCE" || day.kind === "HOLIDAY" || preserveExcluded(day));
+        const preservesDays = protectedDays.every(day => {
+          const old = oldDays.get(day.employeeId + "\0" + day.date);
+          return old?.kind === day.kind && old.shiftId === day.shiftId && old.locked === day.locked;
+        });
+        const reusable = { ...parsed, assignments: qualityReference.assignments };
+        if (sameClocks && preservesDays && verifiedCompleteRoster(reusable)
+          && !manualAssignmentIssues(reusable, parsed.assignments).length && matchesHoursOnlyAssignments(parsed, reusable)
+          && matchesRestOnlyReferences(parsed, reusable.assignments)) {
+          selected = selectVerifiedRoster(reusable, selected.input, reason => { retentionReason = reason; }, qualityReference);
+        }
+      }
       // A selector without a valid incumbent can return the proposal unchanged. It is never proof of feasibility.
       stage = "assignment-schema"; reason = "SCHEMA_INVALID";
       const finalInput = escalaInputSchema.parse({ ...parsed, assignments: selected.input.assignments });
@@ -199,25 +222,43 @@ export async function solveEscala(
           || day.locked && (next?.kind !== day.kind || next.shiftId !== day.shiftId || !next.locked);
       })) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
       const finalValidation = validateEscala(finalInput);
+      const operationallyReusable = isOperationallyReusable(finalValidation);
+      const hoursOnlyMatches = matchesHoursOnlyAssignments(parsed, finalInput);
+      const fixedReferencesMatch = matchesRestOnlyReferences(parsed, finalInput.assignments);
       stage = "independent-validation"; reason = "RULES_INVALID";
       details = { issues: finalValidation.issues };
-      if (!finalValidation.valid || finalValidation.issues.some(issue => issue.code === "DAY_PENDING")
-        || !matchesHoursOnlyAssignments(parsed, finalInput)) {
-        if (finalValidation.valid && !finalValidation.issues.some(issue => issue.code === "DAY_PENDING")) reason = "HOURS_ONLY_CHANGED";
+      if (!operationallyReusable || !hoursOnlyMatches || !fixedReferencesMatch) {
+        if (operationallyReusable) reason = !hoursOnlyMatches ? "HOURS_ONLY_CHANGED" : "REST_ONLY_CHANGED";
         throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
       }
       if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
       stage = "result-recheck"; reason = "RECHECK_FAILED"; details = undefined;
+      const finalMerit = compareRosterCoverage(qualityReference, finalInput);
+      const originalReferenceReusable = verifiedCompleteRoster(qualityReference);
+      const comparisonNotice = !finalMerit.comparable
+        ? "A proposta é válida, mas a referência anterior não é comparável por período, equipe ou jornada. Não foi afirmada melhoria operacional global."
+        : finalMerit.regressed
+          ? "A candidata válida foi preservada, mas há perda operacional na referência original congelada. A validade da grade não comprova melhoria global; confira o tradeoff antes de aplicar."
+          : undefined;
+      if (comparisonNotice) retentionReason = finalMerit.comparable
+        ? `${originalReferenceReusable ? "COMPARISON_TRADEOFF" : "REPAIR_TRADEOFF"}:${finalMerit.reason}` : "REFERENCE_NOT_COMPARABLE";
+      if (!comparisonNotice && finalMerit.comparable && !originalReferenceReusable) retentionReason = `REPAIR_COMPARABLE:${finalMerit.reason}`;
       const restQuality = {
-        before: restPairSummary(parsed), after: restPairSummary(selected.input),
+        before: restPairSummary(finalMerit.comparable ? qualityReference : parsed), after: restPairSummary(selected.input),
         search: { attempted: refined.assignments !== parsed.assignments || (result.optimization?.phases.some(phase => phase.objective === "REST_SPACING") ?? false),
           retainedReference: selected.retainedReference, retentionReason },
         preparationSeconds: Math.round(preparationSeconds * 1000) / 1000,
         requestSeconds: Math.round((performance.now() - started)) / 1000,
       };
+      // Diagnostics describe the returned processor candidate, never a different retained incumbent.
       if (selected.retainedReference) return {
-        status: "FEASIBLE", assignments: selected.input.assignments, wallTimeSeconds: result.wallTimeSeconds, restQuality,
-        message: "A alternativa calculada piorou uma condição protegida. Mantivemos a melhor grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos.",
+        status: "FEASIBLE", assignments: finalInput.assignments, wallTimeSeconds: result.wallTimeSeconds, restQuality,
+        message: "A alternativa calculada piorou uma condição protegida. Mantivemos a melhor grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos." + (comparisonNotice ? " " + comparisonNotice : ""),
+      };
+      if (comparisonNotice) return {
+        ...result, status: finalMerit.comparable && finalMerit.regressed ? "FEASIBLE" : result.status,
+        assignments: finalInput.assignments, restQuality,
+        message: result.message + " " + comparisonNotice,
       };
       return { ...result, assignments: finalInput.assignments, restQuality };
     }

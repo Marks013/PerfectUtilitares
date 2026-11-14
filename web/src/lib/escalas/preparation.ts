@@ -86,39 +86,37 @@ export function civilNightWorkMinutes(shift: EscalaShift): number {
   }, 0);
 }
 
-/** A small automatic search, with the saved reference first and no added night work. */
-export function automaticShiftAlternatives(person: EscalaEmployee, reference: EscalaShift, limitWorkBlocks: boolean, closing = 1320, maximumMeal = Infinity): EscalaShift[] {
-  if (!reference.id.startsWith("prep-") || reference.id !== shiftId(reference)) return [reference];
-  const source = originalShift(person);
-  if (!source) return [reference];
-  const target = minutes(reference), night = civilNightWorkMinutes(reference);
-  const referenceMeal = Math.max(0, ...reference.segments.filter(segment => segment.kind === "BREAK").map(segment => segment.end - segment.start));
-  const candidates = [reference, ...adjustedShifts(source, target, "BOTH", true, limitWorkBlocks, closing, referenceMeal, maximumMeal)];
-  const [first, meal, last] = reference.segments;
-  if (reference.segments.length === 3 && first.kind === "WORK" && meal.kind === "BREAK" && last.kind === "WORK"
-    && first.end === meal.start && meal.end === last.start) {
-    for (const offset of [-30, 30]) {
-      const copy = structuredClone(reference);
-      copy.segments[0].end += offset;
-      copy.segments[1].start += offset;
-      copy.segments[1].end += offset;
-      copy.segments[2].start += offset;
-      if (copy.segments.some(segment => segment.end <= segment.start) || limitWorkBlocks && requiresWorkBlockBalance(copy)) continue;
-      copy.id = shiftId(copy).replace("prep-", "flex-");
-      copy.name = `Proposta ${Math.floor(target / 60)}h${String(target % 60).padStart(2, "0")} · intervalo ${offset < 0 ? "antecipado" : "posterior"}`;
-      candidates.push(copy);
-    }
-  }
-  const unique = new Map<string, EscalaShift>();
+/** One automatic clock per paid duration, chosen by actual boundary displacement from its source. */
+export function stableShiftReferences(source: EscalaShift, candidates: readonly EscalaShift[]): EscalaShift[] {
+  const meals = source.segments.filter(segment => segment.kind === "BREAK");
+  const score = (shift: EscalaShift) => {
+    const arrival = Math.abs(shift.segments[0].start - source.segments[0].start);
+    const departure = Math.abs((shift.segments.at(-1)?.end ?? 0) - (source.segments.at(-1)?.end ?? 0));
+    const intervals = shift.segments.filter(segment => segment.kind === "BREAK");
+    const meal = meals.reduce((sum, interval, index) => {
+      const candidate = intervals[index];
+      return sum + (candidate ? Math.abs(candidate.start - interval.start) + Math.abs(candidate.end - interval.end) : 0);
+    }, 0);
+    return [Math.max(0, civilNightWorkMinutes(shift) - civilNightWorkMinutes(source)), arrival + departure + meal, arrival, departure];
+  };
+  const compare = (left: EscalaShift, right: EscalaShift) => {
+    const a = score(left), b = score(right);
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
+    return preparedShiftSignature(left).localeCompare(preparedShiftSignature(right));
+  };
+  const durations = new Map<number, EscalaShift>();
   for (const candidate of candidates) {
-    if (candidate.segments.some(segment => segment.kind === "BREAK" && segment.end - segment.start > maximumMeal)) continue;
-    if (!fitsStoreClosing(candidate, closing)) continue;
-    if (civilNightWorkMinutes(candidate) > night || candidate.segments.some(segment => segment.start < 0 || segment.end > 2880)) continue;
-    const signature = preparedShiftSignature(candidate);
-    if (!unique.has(signature)) unique.set(signature, candidate);
-    if (unique.size === 4) break;
+    const paid = minutes(candidate), previous = durations.get(paid);
+    if (!previous || compare(candidate, previous) < 0) durations.set(paid, candidate);
   }
-  return [...unique.values()];
+  return [...durations.values()];
+}
+
+/** Compatibility entry point: capacity optimization does not authorize clock or meal rotation. */
+export function automaticShiftAlternatives(_person: EscalaEmployee, reference: EscalaShift, _limitWorkBlocks: boolean, closing = 1320, maximumMeal = Infinity): EscalaShift[] {
+  return fitsStoreClosing(reference, closing)
+    && !reference.segments.some(segment => segment.kind === "BREAK" && segment.end - segment.start > maximumMeal)
+    ? [reference] : [];
 }
 
 /** Rebuild identified automatic proposals when a meal is outside the configured bounds. */
@@ -143,8 +141,12 @@ export function refreshProposedWorkBlocks(person: EscalaEmployee, proposal: Esca
   const source = originalShift(person);
   if (!source) return proposal;
   const referenceMeal = Math.max(0, ...proposal.segments.filter(segment => segment.kind === "BREAK").map(segment => segment.end - segment.start));
-  return adjustedShifts(source, minutes(proposal), "BOTH", true, enabled, closing, referenceMeal, maximumMeal)
-    .find(candidate => candidate.segments[0].start === proposal.segments[0].start
+  const candidates = (["PRESERVE_START", "PRESERVE_END"] as const)
+    .flatMap(strategy => adjustedShifts(source, minutes(proposal), strategy, true, enabled, closing, referenceMeal, maximumMeal));
+  // Closing can give both anchors equal endpoints but different meals. Preserve an unchanged complete geometry first.
+  if (candidates.some(candidate => preparedShiftSignature(candidate) === preparedShiftSignature(proposal))) return proposal;
+  // A changed block preference may require another geometry with the same saved arrival and departure.
+  return candidates.find(candidate => candidate.segments[0].start === proposal.segments[0].start
       && candidate.segments.at(-1)?.end === proposal.segments.at(-1)?.end) ?? proposal;
 }
 
@@ -211,7 +213,7 @@ function adjustedShifts(source: EscalaShift, target: number, strategy: "BOTH" | 
     copy.name = `Proposta ${Math.floor(target / 60)}h${String(target % 60).padStart(2, "0")} · ${shiftedForClosing ? "ajustada ao fechamento" : anchor === "arrival" ? "entrada mantida" : "saída mantida"}`;
     if (!results.some((item) => preparedShiftSignature(item) === preparedShiftSignature(copy))) results.push(copy);
   }
-  return results;
+  return stableShiftReferences(source, results);
 }
 
 /** Distinguish the temporary 9h option from a manually registered shift. */
@@ -274,12 +276,18 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
       else targets.add(Math.min(effective * 12, simulationDailyMinutes ?? Infinity));
     }
     // An exact saved manual option needs no reconstruction or new identifier.
-    const ordinary = sources.flatMap((source) => [...targets].flatMap((target) =>
-      !needsLong && originalShiftIds?.includes(source.id) && minutes(source) === target
+    const ordinary = sources.flatMap((source) => [...targets].flatMap((target) => {
+      const meal = Math.max(0, ...source.segments.filter(segment => segment.kind === "BREAK").map(segment => segment.end - segment.start));
+      if (!needsLong && person.sourceSchedule && minutes(source) === target && fitsStoreClosing(source, closing)
+        && meal >= minimumMealMinutes(input.policy, target, input.simulation) && meal <= maximumMealMinutes(input.policy, input.startDate)) {
+        return [[...shifts.values()].find(known => preparedShiftSignature(known) === preparedShiftSignature(source)) ?? { ...source, id: shiftId(source) }];
+      }
+      return !needsLong && originalShiftIds?.includes(source.id) && minutes(source) === target
         && fitsStoreClosing(source, closing)
         && !(input.policy.limitContinuousWorkBlocks === true && requiresWorkBlockBalance(source))
         ? [source] : adjustedShifts(source, target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true, closing,
-          minimumMealMinutes(input.policy, target, input.simulation), maximumMealMinutes(input.policy, input.startDate))));
+          minimumMealMinutes(input.policy, target, input.simulation), maximumMealMinutes(input.policy, input.startDate));
+    }));
     // Old drafts lacking provenance cannot recover discarded manual references.
     const retainedOriginalIds = person.manualShiftOverrides?.length ? person.originalShiftIds ?? [...person.shiftIds] : needsLong && !person.sourceSchedule
       ? originalShiftIds ?? (!person.shiftIds.some(isGeneratedMixed42Shift) ? [...person.shiftIds] : undefined)
@@ -288,12 +296,13 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     let candidates = needsLong ? (long.length && ordinary.length ? [...long, ...ordinary] : []) : ordinary;
     if (!candidates.length && !needsLong && missingSchedule === "BRANCH_DEFAULT") candidates = [...targets].flatMap((target) => adjustedShifts(defaultShift(), target, strategy, input.simulation, input.policy.limitContinuousWorkBlocks === true, closing,
       minimumMealMinutes(input.policy, target, input.simulation), maximumMealMinutes(input.policy, input.startDate)));
+    if (person.sourceSchedule || sources.every(isAutomaticPreparedShift)) candidates = stableShiftReferences(sources[0], candidates);
     candidates.forEach(register);
-    const longIds = [...new Set(long.map(shift => shift.id))];
+    const longIds = [...new Set(candidates.filter(shift => isGeneratedMixed42Shift(shift.id)).map(shift => shift.id))];
     const ordinaryIds = [...new Set(candidates.filter(shift => !isGeneratedMixed42Shift(shift.id)).map(shift => shift.id))];
     // Reserve room for both durations even with many manual references.
     const shiftIds = candidates.length && needsLong ? [...longIds.slice(0, 6), ...ordinaryIds.slice(0, 6)] : ordinaryIds.slice(0, 12);
-    return { ...person, ...reference, simulationDailyMinutes, shiftIds, originalShiftIds: retainedOriginalIds, fixedImportedShiftId: undefined,
+    return { ...person, ...reference, simulationDailyMinutes, shiftIds, originalShiftIds: retainedOriginalIds, fixedImportedShiftId: person.sourceSchedule && shiftIds.length === 1 ? shiftIds[0] : undefined,
       ...(person.manualShiftOverrides?.length ? { manualShiftBaseIds: [...shiftIds] } : {}), planningEnabled: shiftIds.length > 0,
       planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });

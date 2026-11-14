@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EscalaInput } from "../types";
 import { escalaInputSchema } from "../schema";
-import { prepareGeneration } from "../generation";
+import { matchesRestOnlyReferences, prepareGeneration } from "../generation";
 import { prepareRoster } from "../preparation";
 import { generationScenarioBasis } from "../hours-reference";
 import { manualAssignmentIssues, manualShiftIssues, materializeManualShiftOverrides, withManualShiftOverride } from "./manual-override";
@@ -45,7 +45,10 @@ describe("dated catalog selection on real-shaped CSV references", () => {
     const prepared = prepareGeneration(value).input;
     expect(prepared.employees[0].manualShiftByDate).toEqual({ "2026-11-03": "catalog-1500", "2026-11-04": "catalog-1500", "2026-11-05": "catalog-1500" });
     expect(prepared.employees[0].shiftIds).not.toContain("catalog-1500");
-    if (hours === 44) expect(prepared.employees[0].fixedImportedShiftId).toBeUndefined();
+    expect(prepared.employees[0].fixedImportedShiftId).toBe(prepared.employees[0].shiftIds[0]);
+    expect(prepared.employees[0].fixedImportedShiftId).not.toBe("catalog-1500");
+    expect(matchesRestOnlyReferences(prepared, [{ employeeId: "e", date: "2026-11-04", kind: "WORK", shiftId: "catalog-1500" }])).toBe(true);
+    expect(matchesRestOnlyReferences(prepared, [{ employeeId: "e", date: "2026-11-06", kind: "WORK", shiftId: "catalog-1500" }])).toBe(false);
     expect(prepared.employees[0].sourceSchedule).toEqual(value.employees[0].sourceSchedule);
     expect(prepared.shifts.find(s => s.id === "source")).toEqual(value.shifts.find(s => s.id === "source"));
     expect(prepared.shifts.find(s => s.id === "catalog-1500")).toEqual(value.shifts.find(s => s.id === "catalog-1500"));

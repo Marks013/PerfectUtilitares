@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { newInput } from "../../components/escalas/workspace-model";
-import { proposeAutomaticCoverage } from "./automatic-coverage";
+import { coverageBasis, proposeAutomaticCoverage, retainCoverageReference } from "./automatic-coverage";
+import { dateRange } from "./dates";
+import { validateEscala } from "./validation";
+import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
 import type { EscalaEmployee, EscalaInput } from "./types";
 
 function fixture(people = 1): EscalaInput {
@@ -17,6 +20,136 @@ function fixture(people = 1): EscalaInput {
   input.demands = [];
   return input;
 }
+
+const estimatedMinutes = (input: EscalaInput) => input.demands.filter(demand => demand.estimated === true)
+  .reduce((sum, demand) => sum + demand.minimum * (demand.end - demand.start), 0);
+
+function christmasFixture(people = 14) {
+  const input = fixture(people);
+  input.startDate = "2026-12-21"; input.endDate = "2026-12-27"; delete input.visibleMonth;
+  input.restRulesVersion = 2;
+  input.policy.closedDates = ["2026-12-25"];
+  input.policy.holidayDates = ["2026-12-25"];
+  input.policy.paidHolidayDates = ["2026-12-25"];
+  return input;
+}
+
+function manualFixture(from = "2026-11-02", until = "2026-11-08") {
+  const input = fixture(14); delete input.visibleMonth;
+  input.employees = input.employees.map(person => withManualShiftOverride(person, {
+    catalogCode: 1500, shiftId: "manual", markings: ["09:00", "13:00", "14:00", "18:00"], effectiveFrom: from, effectiveUntil: until,
+  }));
+  return materializeManualShiftOverrides(input);
+}
+
+describe("versioned calendar and effective manual coverage references", () => {
+  it("uses the existing Christmas regime: four WORK, two OFF and one closed HOLIDAY", () => {
+    const input = christmasFixture(), before = structuredClone(input);
+    const proposal = proposeAutomaticCoverage(input);
+    expect(estimatedMinutes(proposal)).toBe(14 * 4 * 480);
+    expect(proposal.demands.some(demand => demand.date === "2026-12-25")).toBe(false);
+    expect(proposal.demands.find(demand => demand.date === "2026-12-26" && demand.start === 480)?.minimum).toBeGreaterThan(0);
+    const roster = structuredClone(input); roster.employees = [roster.employees[0]];
+    roster.assignments = dateRange(input.startDate, input.endDate).map(date => ({ employeeId: "e0", date,
+      kind: date === "2026-12-25" ? "HOLIDAY" as const : ["2026-12-21", "2026-12-27"].includes(date) ? "OFF" as const : "WORK" as const,
+      ...(!["2026-12-21", "2026-12-25", "2026-12-27"].includes(date) ? { shiftId: "day" } : {}),
+    }));
+    expect(roster.assignments.filter(day => day.kind === "WORK")).toHaveLength(4);
+    expect(roster.assignments.filter(day => day.kind === "OFF")).toHaveLength(2);
+    expect(validateEscala(roster).issues.some(issue => ["FIVE_BY_TWO", "WEEKLY_MINUTES"].includes(issue.code))).toBe(false);
+    expect(input).toEqual(before);
+  });
+  it("does not treat an ordinary closure as a paid weekday holiday", () => {
+    const input = christmasFixture(); input.policy.paidHolidayDates = [];
+    expect(estimatedMinutes(proposeAutomaticCoverage(input))).toBe(14 * 5 * 480);
+    input.policy.paidHolidayDates = ["2026-12-25"]; input.policy.holidayDates = [];
+    expect(estimatedMinutes(proposeAutomaticCoverage(input))).toBe(14 * 5 * 480);
+  });
+  it("keeps partial employment and AF bounded by actual availability, without imposing full-week equality", () => {
+    const input = christmasFixture(1); input.employees[0].activeFrom = "2026-12-23"; input.employees[0].activeUntil = "2026-12-26";
+    const proposal = proposeAutomaticCoverage(input);
+    expect(estimatedMinutes(proposal)).toBe(3 * 480);
+    expect(proposal.demands.filter(d => d.minimum > 0).every(d => d.date >= "2026-12-23" && d.date <= "2026-12-26" && d.date !== "2026-12-25")).toBe(true);
+    const absent = christmasFixture(1);
+    absent.assignments = [{ employeeId: "e0", date: "2026-12-21", kind: "ABSENCE", locked: true }];
+    const before = structuredClone(absent), result = proposeAutomaticCoverage(absent);
+    expect(estimatedMinutes(result)).toBeLessThanOrEqual(5 * 480);
+    expect(result.demands.filter(d => d.date === "2026-12-21").every(d => d.minimum === 0)).toBe(true);
+    expect(result.assignments).toEqual(absent.assignments); expect(absent).toEqual(before);
+  });
+  it("reserves locked WORK at full weight before distributing the reduced Christmas budget", () => {
+    const input = christmasFixture(1);
+    input.assignments = [{ employeeId: "e0", date: "2026-12-27", kind: "WORK", shiftId: "day", locked: true }];
+    input.demands = [{ id: "explicit", date: "2026-12-21", sector: "Loja", role: "Repositor", start: 480, end: 600, minimum: 0, estimated: false }];
+    const before = structuredClone(input), proposal = proposeAutomaticCoverage(input);
+    expect(proposal.demands.filter(d => d.date === "2026-12-27").every(d => d.minimum === 1)).toBe(true);
+    expect(proposal.demands).toContainEqual(input.demands[0]); expect(proposal.assignments).toEqual(input.assignments);
+    expect(input).toEqual(before);
+  });
+  it("uses one fully manual clock rather than simultaneous base, manual and alternative clocks", () => {
+    const input = manualFixture(), before = structuredClone(input), proposal = proposeAutomaticCoverage(input);
+    expect(proposal.demands.filter(d => d.minimum > 0).every(d => d.start >= 540 && d.end <= 1080)).toBe(true);
+    expect(proposal.demands.filter(d => d.minimum > 0).every(d => !(d.start < 840 && d.end > 780))).toBe(true);
+    expect(estimatedMinutes(proposal)).toBe(14 * 5 * 480);
+    expect(proposal.employees).toEqual(input.employees); expect(input).toEqual(before);
+    const alternative = structuredClone(input);
+    alternative.shifts.push({ id: "unused", name: "Unused", segments: [{ start: 840, end: 1320, kind: "WORK" }] });
+    alternative.employees.forEach(person => { person.shiftIds.push("unused", "unused"); });
+    expect(proposeAutomaticCoverage(alternative).demands).toEqual(proposal.demands);
+    expect(coverageBasis(alternative)).toBe(coverageBasis(input));
+  });
+  it("uses each partial manual interval and returns to the base clock in an uncovered gap", () => {
+    const input = manualFixture("2026-11-02", "2026-11-03");
+    input.employees = input.employees.map(person => withManualShiftOverride(person, {
+      catalogCode: 1500, shiftId: "manual", markings: ["09:00", "13:00", "14:00", "18:00"], effectiveFrom: "2026-11-05", effectiveUntil: "2026-11-08",
+    }));
+    const materialized = materializeManualShiftOverrides(input), proposal = proposeAutomaticCoverage(materialized);
+    expect(proposal.demands.find(d => d.date === "2026-11-02" && d.start <= 480 && d.end > 480)?.minimum ?? 0).toBe(0);
+    expect(proposal.demands.find(d => d.date === "2026-11-04" && d.start <= 480 && d.end > 480)?.minimum).toBeGreaterThan(0);
+    expect(proposal.demands.find(d => d.date === "2026-11-05" && d.start <= 480 && d.end > 480)?.minimum ?? 0).toBe(0);
+    expect(proposal.demands.find(d => d.date === "2026-11-04" && d.start <= 1050 && d.end > 1050)?.minimum ?? 0).toBe(0);
+    expect(proposal.demands.find(d => d.date === "2026-11-05" && d.start <= 1050 && d.end > 1050)?.minimum).toBeGreaterThan(0);
+    expect(estimatedMinutes(proposal)).toBeLessThanOrEqual(14 * 5 * 480);
+  });
+  it("does not replace a missing manual target with an unselected base clock or assign hours to ENC", () => {
+    const input = manualFixture(); input.shifts = input.shifts.filter(shift => shift.id !== "manual");
+    expect(proposeAutomaticCoverage(input).demands).toEqual([]);
+    const untimed = manualFixture(); untimed.employees.forEach(person => { person.scheduleMode = "UNTIMED"; });
+    expect(proposeAutomaticCoverage(untimed).demands).toEqual([]);
+  });
+  it("fingerprints actual manual clocks, their dates, protected holidays and the calendar version", () => {
+    const base = fixture(), manual = manualFixture();
+    expect(coverageBasis(base)).toMatch(/^coverage-v2:[a-f0-9]{16}$/);
+    expect(coverageBasis(manual)).not.toBe(coverageBasis(fixture(14)));
+    const partial = manualFixture("2026-11-03"); expect(coverageBasis(partial)).not.toBe(coverageBasis(manual));
+    const changed = structuredClone(manual); changed.shifts.find(shift => shift.id === "manual")?.segments.forEach(s => { s.start += 15; s.end += 15; });
+    expect(coverageBasis(changed)).not.toBe(coverageBasis(manual));
+    const differentCalendar = christmasFixture(); differentCalendar.policy.paidHolidayDates = [];
+    expect(coverageBasis(differentCalendar)).not.toBe(coverageBasis(christmasFixture()));
+    const recordedHoliday = fixture(); recordedHoliday.assignments = [{ employeeId: "e0", date: recordedHoliday.startDate, kind: "HOLIDAY" }];
+    expect(coverageBasis(recordedHoliday)).not.toBe(coverageBasis(base));
+  });
+  it("does not stamp unversioned or v1 saved estimates with the v2 algorithm identity", () => {
+    const source = fixture(); delete source.visibleMonth; delete source.policy.calendarMode;
+    source.demands = [{ id: "legacy-estimate", date: "2026-11-03", sector: "Loja", role: "Repositor", start: 480, end: 720, minimum: 1, estimated: true }];
+    source.assignments = dateRange(source.startDate, source.endDate).map((date, index) => ({ employeeId: "e0", date,
+      kind: [2, 6].includes(index) ? "OFF" as const : "WORK" as const, ...([2, 6].includes(index) ? {} : { shiftId: "day" }),
+    }));
+    const historical = structuredClone(source); delete historical.coverageBasis;
+    const old = structuredClone(historical), retained = retainCoverageReference(historical, historical, true);
+    expect(validateEscala(historical).valid).toBe(true);
+    expect(retained?.demands).toBe(historical.demands);
+    expect(retained?.coverageBasis).toMatch(/^coverage-v1:[a-f0-9]{16}$/);
+    if (!retained) throw new Error("Expected the unchanged legacy ruler");
+    expect(retainCoverageReference(retained, retained)?.demands).toBe(retained.demands);
+    expect(retainCoverageReference({ ...retained, coverageBasis: "coverage-v1:0000000000000000" }, retained)).toBeUndefined();
+    expect(coverageBasis(retained)).toMatch(/^coverage-v2:[a-f0-9]{16}$/);
+    expect(coverageBasis(retained)).not.toBe(retained.coverageBasis);
+    expect(proposeAutomaticCoverage({ ...retained, needsRegeneration: true }).coverageBasis).toMatch(/^coverage-v2:[a-f0-9]{16}$/);
+    expect(proposeAutomaticCoverage(historical).coverageBasis).toMatch(/^coverage-v2:[a-f0-9]{16}$/);
+    expect(historical).toEqual(old);
+  });
+});
 
 describe("automatic provisional coverage", () => {
   it("keeps rounding dates stable when only the sector or role label changes", () => {

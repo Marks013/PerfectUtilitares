@@ -176,14 +176,16 @@ describe("automatic split-shift work-block preference", () => {
 });
 
 describe("branch-wide proposal preparation", () => {
-  it("adapts 7h20 reference to exact 8h24, preserving meals, source and either endpoint", () => {
+  it("adapts 7h20 to one nearest 8h24 reference, preserving the meal, arrival and source", () => {
     const input = fixture();
     input.shifts[0].segments[2].end = 980;
     input.employees[0].sourceSchedule = { report: "FPRE136", code: "0026", description: "Referência", weekday: "07:00-11:00 / 13:00-16:20", saturday: "07:00-11:00 / 13:00-16:20" };
     const original = structuredClone(input);
     const prepared = prepareRoster(input, 42);
-    expect(prepared.employees[0].shiftIds).toHaveLength(2);
-    expect(prepared.employees[0].shiftIds.map((id) => paid(prepared, id))).toEqual([504, 504]);
+    expect(prepared.employees[0].shiftIds).toHaveLength(1);
+    expect(prepared.employees[0].shiftIds.map((id) => paid(prepared, id))).toEqual([504]);
+    expect(prepared.shifts[0].segments[0].start).toBe(420);
+    expect(prepared.shifts[0].segments.at(-1)?.end).toBe(1044);
     expect(prepared.employees[0].sourceSchedule).toEqual(input.employees[0].sourceSchedule);
     expect(prepared.assignments).toEqual([]);
     expect(prepared.shifts.filter((shift) => shift.id.startsWith("prep-")).every((shift) => shift.segments[1].end - shift.segments[1].start === 120)).toBe(true);

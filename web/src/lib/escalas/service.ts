@@ -341,6 +341,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
         && (!person.activeUntil || date <= person.activeUntil) && !existing.has(`${person.id}\0${date}`)));
     if (incomplete) throw new EscalaError(422, "ESCALA_HOURS_BASELINE_INCOMPLETE", "A grade está incompleta. Complete os dias ou gere folgas e horários antes de ajustar somente os horários; nenhum dia foi inventado.");
   }
+  const qualityReference = structuredClone(current.input);
   const prepared = prepareGeneration(current.input);
   if (isHoursReferenceOnly(prepared.input)) {
     const proposalInput = parseEscalaInput({ ...prepared.input, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared.input) });
@@ -359,7 +360,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
   if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
-  const calculation = options ? await solveEscala(contextual, options) : await solveEscala(contextual);
+  const calculation = await solveEscala(contextual, { ...options, qualityReference });
   const result = calculation.status === "INFEASIBLE" ? {
     ...calculation, conflicts: [...findGenerationConflicts(contextual), ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
       code: `SOLVER_${diagnostic.family}`, message: diagnostic.message,

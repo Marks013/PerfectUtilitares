@@ -29,7 +29,7 @@ function fixture(imported: WeeklyHours = 42, requested: WeeklyHours = imported):
 
 describe("imported clocks already compatible with the chosen 5x2 journey", () => {
   it.each([40, 42, 44] as const)("keeps the exact imported %ih reference in both generation modes", hours => {
-    for (const generationMode of ["REST_ONLY", "DAYS_AND_HOURS"] as const) {
+    for (const generationMode of ["REST_ONLY", "HOURS_ONLY", "DAYS_AND_HOURS"] as const) {
       const input = { ...fixture(hours), generationMode }, before = structuredClone(input);
       const first = prepareGeneration(input).input, person = first.employees[0];
       expect(person.fixedImportedShiftId).toEqual(expect.any(String));
@@ -48,10 +48,10 @@ describe("imported clocks already compatible with the chosen 5x2 journey", () =>
   it.each([[44, 42], [44, 40], [42, 40]] as const)("still adapts %ih references to a requested %ih journey", (imported, requested) => {
     const input = fixture(imported, requested), before = structuredClone(input);
     const result = prepareGeneration(input).input, person = result.employees[0];
-    expect(person.fixedImportedShiftId).toBeUndefined();
+    expect(person.fixedImportedShiftId).toEqual(expect.any(String));
     expect(person.weeklyHours).toBe(requested);
     const options = person.shiftIds.map(id => result.shifts.find(shift => shift.id === id) as EscalaShift);
-    expect(options.length).toBeGreaterThan(1);
+    expect(options).toHaveLength(1);
     expect(options.every(shift => paid(shift) === requested * 12)).toBe(true);
     expect(person.sourceSchedule).toEqual(input.employees[0].sourceSchedule);
     expect(input).toEqual(before);
@@ -64,7 +64,7 @@ describe("imported clocks already compatible with the chosen 5x2 journey", () =>
     input.employees[0].sourceSchedule.weekday = "08:00-12:00 / 13:00-16:20";
     const result = prepareGeneration(input).input, person = result.employees[0];
     expect(person.weeklyHours).toBe(42);
-    expect(person.fixedImportedShiftId).toBeUndefined();
+    expect(person.fixedImportedShiftId).toEqual(expect.any(String));
     expect(person.shiftIds.every(id => paid(result.shifts.find(shift => shift.id === id) as EscalaShift) === 504)).toBe(true);
   });
 
@@ -130,7 +130,7 @@ describe("imported clocks already compatible with the chosen 5x2 journey", () =>
     manual.segments = manual.segments.map(part => ({ ...part, start: part.start + 15, end: part.end + 15 }));
     input.employees[0].shiftIds = [manual.id];
     const before = structuredClone(input), result = prepareGeneration(input).input;
-    expect(result.employees[0].fixedImportedShiftId).toBeUndefined();
+    expect(result.employees[0].fixedImportedShiftId).toBe("manual-selected");
     expect(result.shifts).toEqual(before.shifts);
     expect(input).toEqual(before);
   });
@@ -139,7 +139,8 @@ describe("imported clocks already compatible with the chosen 5x2 journey", () =>
     const input = fixture(44, 42);
     input.employees[0].fixedImportedShiftId = "imported";
     const result = prepareGeneration(input).input, person = result.employees[0];
-    expect(person.fixedImportedShiftId).toBeUndefined();
+    expect(person.fixedImportedShiftId).toEqual(expect.any(String));
+    expect(person.fixedImportedShiftId).not.toBe("imported");
     expect(person.shiftIds.every(id => paid(result.shifts.find(shift => shift.id === id) as EscalaShift) === 504)).toBe(true);
   });
 

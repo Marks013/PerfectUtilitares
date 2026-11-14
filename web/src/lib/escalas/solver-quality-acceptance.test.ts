@@ -4,6 +4,8 @@ import { solveEscala } from "./solver-client";
 import { requestSolver } from "./solver-transport";
 import * as refinement from "./roster-refinement";
 import { validateEscala } from "./validation";
+import { compareRosterCoverage, isReusableRoster } from "./roster-quality";
+import { matchesRestOnlyReferences } from "./generation";
 import { restPairSummary } from "./rest-quality";
 vi.mock("./solver-transport", () => ({ requestSolver: vi.fn() }));
 afterEach(() => vi.restoreAllMocks());
@@ -100,6 +102,118 @@ describe("verified processor quality delivery", () => {
     expect(result.restQuality?.search).toEqual({ attempted: true, retainedReference: false, retentionReason: "OPERATIONAL_IMPROVEMENT" });
     expect(input).toEqual(original);
   });
+  it("compares against frozen original demand without sending or rewriting that ruler", async () => {
+    const input = fixture(), qualityReference = structuredClone(input);
+    qualityReference.demands[1].minimum = 5;
+    input.demands = input.demands.map(demand => ({ ...demand, minimum: 0 }));
+    vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
+    const assignments = input.assignments.map(day => day.employeeId === "a" && day.date === "2026-11-03" ? { ...day, kind: "WORK" as const, shiftId: "day" }
+      : day.employeeId === "a" && day.date === "2026-11-04" ? { employeeId: day.employeeId, date: day.date, kind: "OFF" as const } : day);
+    vi.mocked(requestSolver).mockResolvedValue({ status: "OPTIMAL", message: "Different ruler", assignments, wallTimeSeconds: 1 });
+    const before = structuredClone(qualityReference), result = await solveEscala(input, { qualityReference });
+    expect(result.assignments).toEqual(input.assignments);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.restQuality?.search.retentionReason).toBe("SECTOR_PEAK");
+    expect(requestSolver).toHaveBeenCalledWith(expect.objectContaining({ demands: input.demands }), expect.not.objectContaining({ qualityReference: expect.anything() }));
+    expect(qualityReference).toEqual(before);
+  });
+  it("keeps a valid repair and exposes the original-ruler tradeoff instead of restoring invalid pauses", async () => {
+    const input = fixture(), qualityReference = structuredClone(input);
+    input.demands = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"].map(date =>
+      ({ id: date, date, sector: "Loja", start: 1080, end: 1140, minimum: 1, estimated: true }));
+    qualityReference.demands = structuredClone(input.demands);
+    qualityReference.shifts[0].segments[1].end = 900;
+    qualityReference.shifts[0].segments[2].start = 900;
+    qualityReference.shifts[0].segments[2].end = 1164;
+    const originalValidation = validateEscala(qualityReference);
+    expect(originalValidation.valid).toBe(true);
+    expect(originalValidation.readyToPublish).toBe(false);
+    expect(originalValidation.issues).toContainEqual(expect.objectContaining({ code: "MEAL_INTERVAL_EXCESSIVE", severity: "PENDING" }));
+    expect(isReusableRoster(qualityReference)).toBe(false);
+    expect(validateEscala(input).valid).toBe(true);
+    vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
+    vi.mocked(requestSolver).mockResolvedValue({ status: "OPTIMAL", message: "Repaired", assignments: input.assignments, wallTimeSeconds: 1,
+      optimization: { budgetSeconds: 1, phases: [] } });
+    const original = structuredClone(qualityReference), result = await solveEscala(input, { qualityReference });
+    expect(validateEscala({ ...input, assignments: result.assignments }).valid).toBe(true);
+    expect(result.assignments).toEqual(input.assignments);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.optimization).toEqual({ budgetSeconds: 1, phases: [] });
+    expect(result.restQuality?.search.retentionReason).toBe("REPAIR_TRADEOFF:SECTOR_COVERAGE");
+    expect(result.restQuality?.search.retainedReference).toBe(false);
+    expect(result.message).toContain("referência original congelada");
+    expect(qualityReference).toEqual(original);
+  });
+  it("labels a changed workload non-comparable without restoring the old contract", async () => {
+    const input = fixture(), qualityReference = structuredClone(input);
+    input.defaultWeeklyHours = 40; input.employees.forEach(person => { person.weeklyHours = 40; });
+    input.shifts[0].segments[2].end = 1020;
+    expect(validateEscala(input).valid).toBe(true);
+    const optimization = { budgetSeconds: 1, phases: [{ objective: "REST_SPACING" as const, status: "OPTIMAL" as const, budgetSeconds: 1, wallTimeSeconds: 1, incumbentValue: 0, bestBound: 0 }] };
+    vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
+    vi.mocked(requestSolver).mockResolvedValue({ status: "OPTIMAL", message: "New workload", assignments: input.assignments, wallTimeSeconds: 1, optimization });
+    const result = await solveEscala(input, { qualityReference });
+    expect(result.status).toBe("OPTIMAL");
+    expect(result.optimization).toEqual(optimization);
+    expect(result.restQuality?.search.retainedReference).toBe(false);
+    expect(result.restQuality?.search.retentionReason).toBe("REFERENCE_NOT_COMPARABLE");
+    expect(result.message).toContain("não é comparável");
+    expect(validateEscala({ ...input, assignments: result.assignments }).valid).toBe(true);
+  });
+
+  it("retains the valid current 40h leader while keeping the old 42h ruler explicitly non-comparable", async () => {
+    const input = fixture();
+    input.employees[0].role = "Encarregado";
+    input.movementPriorities = [{ startDate: "2026-11-04", endDate: "2026-11-04", sector: "Loja", level: "HIGH" }];
+    const qualityReference = structuredClone(input), original = structuredClone(qualityReference);
+    input.defaultWeeklyHours = 40; input.employees.forEach(person => { person.weeklyHours = 40; });
+    input.shifts[0].segments[2].end = 1020;
+    const assignments = input.assignments.map(day => day.employeeId === "a" && day.date === "2026-11-03"
+      ? { ...day, kind: "WORK" as const, shiftId: "day" }
+      : day.employeeId === "a" && day.date === "2026-11-04" ? { employeeId: day.employeeId, date: day.date, kind: "OFF" as const } : day);
+    expect(validateEscala(input).valid).toBe(true);
+    expect(validateEscala({ ...input, assignments }).valid).toBe(true);
+    vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
+    vi.mocked(requestSolver).mockResolvedValue({ status: "OPTIMAL", message: "Lost current leader", assignments, wallTimeSeconds: 1, optimization: { budgetSeconds: 1, phases: [] }, solverDiagnostics: [{ family: "REST", message: "Rejected alternative" }] });
+    const result = await solveEscala(input, { qualityReference });
+    expect(result.assignments).toEqual(input.assignments);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.restQuality?.search).toMatchObject({ retainedReference: true, retentionReason: "REFERENCE_NOT_COMPARABLE" });
+    expect(result.message).toContain("não é comparável");
+    expect(result.optimization).toBeUndefined();
+    expect(result.solverDiagnostics).toBeUndefined();
+    expect(validateEscala({ ...input, assignments: result.assignments }).valid).toBe(true);
+    expect(input.employees.every(person => person.weeklyHours === 40)).toBe(true);
+    expect(qualityReference).toEqual(original);
+  });
+
+  it.each(["DAYS_AND_HOURS", "REST_ONLY"] as const)("does not retain a late baseline over the current fixed early clock for coverage in %s", async mode => {
+    const input = fixture(); input.generationMode = mode;
+    input.shifts = [{ ...input.shifts[0], id: "early" }, { id: "late", name: "Tarde", segments: [
+      { start: 600, end: 840, kind: "WORK" }, { start: 840, end: 900, kind: "BREAK" }, { start: 900, end: 1164, kind: "WORK" },
+    ] }];
+    input.employees.forEach(person => { person.shiftIds = ["early", "late"]; person.fixedImportedShiftId = "early"; });
+    input.assignments = input.assignments.map(day => day.kind === "WORK" ? { ...day, shiftId: "late" } : day);
+    input.demands = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"].map(date =>
+      ({ id: date, date, sector: "Loja", start: 1080, end: 1140, minimum: 1, estimated: true }));
+    const assignments = input.assignments.map(day => day.kind === "WORK" ? { ...day, shiftId: "early" } : day);
+    const original = structuredClone(input), optimization = { budgetSeconds: 1, phases: [] };
+    expect(validateEscala(input).valid).toBe(true);
+    expect(validateEscala({ ...input, assignments }).valid).toBe(true);
+    expect(matchesRestOnlyReferences(input, input.assignments)).toBe(false);
+    expect(matchesRestOnlyReferences(input, assignments)).toBe(true);
+    expect(compareRosterCoverage(input, { ...input, assignments })).toMatchObject({ comparable: true, regressed: true, reason: "SECTOR_COVERAGE" });
+    vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
+    vi.mocked(requestSolver).mockResolvedValue({ status: "FEASIBLE", message: "Current fixed clock", assignments, wallTimeSeconds: 1, optimization });
+    const result = await solveEscala(input, { qualityReference: original });
+    expect(result.assignments).toEqual(assignments);
+    expect(result.assignments.filter(day => day.kind === "WORK").every(day => day.shiftId === "early")).toBe(true);
+    expect(result.restQuality?.search.retainedReference).toBe(false);
+    expect(result.message).toContain("referência original congelada");
+    expect(result.optimization).toEqual(optimization);
+    expect(input).toEqual(original);
+  });
+
   it("delivers successful unchanged quality with independently derived counts and elapsed preparation", async () => {
     const input = fixture(); vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
     vi.mocked(requestSolver).mockResolvedValue({ status: "FEASIBLE", message: "Valid", assignments: input.assignments, wallTimeSeconds: 1,

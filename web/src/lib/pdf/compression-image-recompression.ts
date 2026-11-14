@@ -4,7 +4,8 @@ import {
   compressionToolTimeoutMs,
   runCompressionTool as runTool,
 } from "./compression-process";
-import { rm, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
+import { PDFDocument, PDFName } from "pdf-lib";
 import type { PdfCompressionProfile } from "./compression-analyzer";
 import type {
   PdfCompressionColorMode,
@@ -203,10 +204,15 @@ async function ghostscriptCandidate(
   options: PdfCompressionEffectiveOptions,
   profile: PdfCompressionProfile,
 ) {
-  await runTool(
-    "gs",
-    buildGhostscriptImageArgs({ inputPath, outputPath, options, profile }),
-  );
+  throwIfPdfExecutionAborted();
+  const hasSourceXmp = (await PDFDocument.load(
+    await readFile(inputPath), { updateMetadata: false },
+  )).catalog.has(PDFName.of("Metadata"));
+  throwIfPdfExecutionAborted();
+  const args = buildGhostscriptImageArgs({ inputPath, outputPath, options, profile });
+  // Preserve the original catalog shape; never discard XMP already in the source.
+  if (!hasSourceXmp) args.unshift("-dOmitXMP=true");
+  await runTool("gs", args);
   // This can also feed the OCRmyPDF optimizer. A larger intermediate may still
   // produce a smaller final candidate; do not prune the pipeline at this stage.
   await validateSemanticCandidate(inputPath, outputPath);

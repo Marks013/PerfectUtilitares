@@ -149,9 +149,6 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const model = buildEscalaPresentation(workspace);
   const hourly = hourEntries(model, workspace.input);
   const weekly = hourly.some(row => row.application);
-  const analysis = referencesOnly || mode === "rest" ? null : analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", details: true });
-  const capacities = analysis?.sectors ?? [];
-  const coverage = coverageReport(analysis ? buildCoverageReport(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", context: { revision: workspace.revision, kind: "SAVED" } }) : null, workspace.input);
   const simulation = workspace.input.simulation && workspace.input.policy.allowShortMealSimulation
     ? " | Simulação: pausa de 15 min dispensada entre mais de 4h e até 6h" : "";
   const mixedNotice = referencesOnly ? "" : mixed42ExportNotice(workspace.input);
@@ -159,7 +156,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const metadata = (title: string, description = ""): SpreadsheetCell[][] => [[model.branch],
     [title + ". " + reportPeriod(model.period) + ". Jornada escolhida: " + workspace.input.defaultWeeklyHours + "h. Revisão " + workspace.revision + ". " + model.state + simulation],
     [[`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, model.calendarLabel, model.holidayNotes.length ? "* Feriados: " + model.holidayNotes.join("; ") : "", mixedNotice, description].filter(Boolean).join(" | ")]];
-  const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[], gaps: [] as number[] };
+  const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[] };
   const main = [...metadata("Escala de folgas", legend),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(date => date.slice(8) + (holidayLabel(workspace.input, date) ? "*" : "") + "\n" + escalaDateLabel(date).split(" ")[1])]];
   const hours = [...metadata(referencesOnly ? "Referências de horários" : "Escala de horários", referencesOnly ? legend : "Horários propostos por colaborador."),
@@ -181,20 +178,6 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     }
     hours.push([employee.sector, employee.registration, employee.name, employee.role, row.code, row.schedule, row.interval, durationCell(row.daily), ...(weekly ? [row.application] : [])]);
   }
-  const gaps = [...metadata("Faltas por faixa de horário", "Comparação estimada com horários importados. Pico e totais do mês são medidas diferentes."),
-    ["Setor", "Origem da referência", "Escalados na faixa (pessoas)", "Referência na faixa (pessoas)", "Maior falta simultânea (pessoas)", "Data do pico", "Faixa do pico", "Duração do pico", "Dias com falta em algum horário", "Horas de equipe em falta no mês", "Duração somada das faixas com falta", "Situação na faixa do pico"],
-    ...coverage.map(coverageReportCells)];
-  const capacity = [...metadata("Capacidade nominal por setor", "Nominal semanal; horas WORK apuradas no período."),
-    ["Setor", "Pessoas com origem", "Origem nominal", "Referência (h/sem)", "Cenário 42h (h/sem)", "Cenário 40h (h/sem)", "Atual (h/sem)", "Dif. no cenário escolhido (h/sem)", "Equiv. nominal (adicional)", "WORK conhecido (h no período)", "Crédito WORK e pausa paga (h no período)", "Sem relógio (pessoas)", "Sem relógio (pessoas-dia)"],
-    ...capacities.map(row => {
-      const nominal = row.nominal, chosen = nominal.scenarios.find(item => item.weeklyHours === workspace.input.defaultWeeklyHours);
-      return [row.sector || "Não informado", nominal.referencePeople, nominalOrigin(nominal), nullableDecimal(nominal.referenceCapacityHours),
-        nullableDecimal(nominal.scenarios.find(item => item.weeklyHours === 42)?.capacityHours ?? null),
-        nullableDecimal(nominal.scenarios.find(item => item.weeklyHours === 40)?.capacityHours ?? null),
-        nominalRange(nominal.candidateWeeklyHoursMin, nominal.candidateWeeklyHoursMax), nullableDecimal(chosen?.lostHours ?? null),
-        chosen?.equivalentPeople === null || chosen?.equivalentPeople === undefined ? "—" : `${decimal(chosen.equivalentPeople)} (+${chosen.additionalEquivalentPeople === null ? "—" : decimal(chosen.additionalEquivalentPeople)})`,
-        decimalCell(row.knownWorkPersonMinutes / 60), nullableDecimal(row.creditedPersonMinutes === null ? null : row.creditedPersonMinutes / 60), row.withoutClockPeople, row.withoutClockPersonDays];
-    })];
   const excluded = [...metadata("Colaboradores não incluídos", "Relação separada: não entram na grade nem na cobertura."),
     ["Situação", "Setor", "Matrícula", "Colaborador", "Cargo", "Motivo da não inclusão"]];
   sector = undefined;
@@ -205,8 +188,6 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
   const sheets = [
     ...(mode !== "hours" ? [{ name: "Escala", identityColumns: 5, rows: main, widths: [16, 10, 30, 22, 24, ...model.dates.map(() => 5.1)], grid: true, sectors: sectors.main }] : []),
     ...(mode !== "rest" ? [{ name: "Horarios", identityColumns: 4, rows: hours, widths: [16, 10, 30, 22, 10, 30, 22, 13, ...(weekly ? [32] : [])], grid: false, sectors: sectors.hours }] : []),
-    ...(capacities.length ? [{ name: "Capacidade", identityColumns: 1, rows: capacity, widths: [22, 12, 27, 16, 16, 16, 18, 20, 23, 20, 22, 14, 16], grid: false, sectors: [] as number[] }] : []),
-    ...(coverage.length ? [{ name: "Desfalques", identityColumns: 2, rows: gaps, widths: [18, 12, 10, 10, 10, 14, 17, 10, 10, 17, 15, 24], grid: false, sectors: sectors.gaps }] : []),
     ...(model.excluded.length ? [{ name: "Excluidos", identityColumns: 4, rows: excluded, widths: [9, 16, 11, 34, 25, 40], grid: false, sectors: sectors.excluded }] : []),
   ].map(entry => ({ ...entry, rows: entry.rows.filter((_, index) => !entry.sectors.includes(index)), sectors: [] as number[] }));
   // Excel filters and sorting need contiguous records, not merged sector separator rows.
@@ -228,7 +209,6 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
 }
 
 const decimal = (value: number) => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
-const nullableDecimal = (value: number | null): SpreadsheetCell => value === null ? "—" : decimalCell(value);
 const nominalRange = (minimum: number | null, maximum: number | null): SpreadsheetCell => minimum === null || maximum === null ? "—"
   : minimum === maximum ? decimalCell(minimum) : `${decimal(minimum)}–${decimal(maximum)}`;
 

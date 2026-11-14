@@ -13,7 +13,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
   test.setTimeout(150_000);
   await loginAsAdmin(page);
   const branch = "9" + Date.now().toString().slice(-7);
-  const input = newInput(branch, "Catálogo sintético", "2026-11", 42);
+  const input = newInput(branch, "Catálogo sintético", "2026-12", 42);
   input.generationMode = "HOURS_ONLY";
   input.shifts = [
     { id: "first", name: "Referência A", segments: [{ kind: "WORK", start: 437, end: 677 }, { kind: "BREAK", start: 677, end: 737 }, { kind: "WORK", start: 737, end: 1001 }] },
@@ -22,7 +22,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
   ];
   input.employees = [{ ...newEmployee(42, ["first", "second"]), id: "person", registration: "0001", name: "Pessoa de teste", sector: "Loja", role: "Repositor", activeFrom: "2020-01-01" },
     { ...newEmployee(42, ["first"]), id: "excluded", registration: "0002", name: "Pessoa excluída da geração", sector: "Loja", role: "Aprendiz", activeFrom: "2020-01-01", planningEnabled: false, scheduleMode: "TIMED" }];
-  input.assignments = [{ employeeId: "person", date: "2026-11-05", kind: "ABSENCE", locked: true }];
+  input.assignments = [{ employeeId: "person", date: "2026-12-05", kind: "ABSENCE", locked: true }];
   const origin = new URL(page.url()).origin;
   const headers = { origin };
   const create = await page.request.post("/api/escalas", { headers, data: { action: "CREATE", input } });
@@ -32,7 +32,11 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     const sync = await page.request.post("/api/escalas/turnos", { headers, data: { action: "SYNC", confirm: true, sources: [
       { workspaceId: workspace.id, expectedRevision: workspace.revision, localShiftIds: ["first", "second", "manual"] },
     ] } });
-    expect(sync.status()).toBe(201);
+    const syncBody: unknown = await sync.json().catch(() => null);
+    const syncError = syncBody !== null && typeof syncBody === "object" && "error" in syncBody ? syncBody.error : null;
+    const errorCode = syncError !== null && typeof syncError === "object" && "code" in syncError
+      && typeof syncError.code === "string" && /^[A-Z][A-Z0-9_]{0,79}$/.test(syncError.code) ? syncError.code : "UNAVAILABLE";
+    expect(sync.status(), "Initial catalog SYNC: " + JSON.stringify({ status: sync.status(), errorCode })).toBe(201);
     async function findCode(search: string, markings: string[]) {
       const response = await page.request.get("/api/escalas/turnos?search=" + encodeURIComponent(search));
       expect(response.status()).toBe(200);
@@ -50,7 +54,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     await selectEscalasWorkspace(page, workspace);
     const exportPanel = page.locator("details").filter({ has: page.getByText("Exportar turnos TXT da empresa", { exact: true }) });
     await exportPanel.getByText("Exportar turnos TXT da empresa", { exact: true }).click();
-    await exportPanel.getByLabel("Mês dos arquivos TXT", { exact: true }).fill("2026-11");
+    await exportPanel.getByLabel("Mês dos arquivos TXT", { exact: true }).fill("2026-12");
     const branchChoice = exportPanel.getByRole("checkbox", { name: new RegExp("^Filial " + branch + " ·") });
     await expect(branchChoice).toBeChecked();
     for (const choice of await exportPanel.getByRole("checkbox").all()) {
@@ -100,7 +104,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
       expect((await searching).status()).toBe(200);
       await swap.getByRole("radio", { name: new RegExp("^" + code + " ·") }).check();
       const previewing = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "PREVIEW_SWAP");
-      if (partial) { await swap.getByLabel("Vigência inicial").fill("2026-11-10"); await swap.getByLabel("Vigência final").fill("2026-11-20"); }
+      if (partial) { await swap.getByLabel("Vigência inicial").fill("2026-12-10"); await swap.getByLabel("Vigência final").fill("2026-12-20"); }
       await swap.getByRole("button", { name: "Conferir troca", exact: true }).click();
       expect((await previewing).status()).toBe(200);
       await expect(swap.getByText(/Sem grade: a troca altera a referência/)).toBeVisible();

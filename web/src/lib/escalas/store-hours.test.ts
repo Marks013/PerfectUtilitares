@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { prepareGeneration } from "./generation";
-import { prepareRoster } from "./preparation";
+import { prepareRoster, refreshProposedWorkBlocks } from "./preparation";
 import { escalaInputSchema } from "./schema";
 import { storeClosingLabel, storeClosingMinutes } from "./store-hours";
 import type { EscalaInput } from "./types";
@@ -42,6 +42,22 @@ describe("store closing for automatic proposals", () => {
     expect(prepared.employees[0].sourceSchedule).toEqual(input.employees[0].sourceSchedule);
     expect(input).toEqual(before);
     expect(prepareGeneration(prepared).input).toEqual(prepared);
+  });
+  it.each([["08", 1200], ["18", 1320]] as const)("retains either complete saved geometry when closing makes anchor endpoints coincide in branch %s", (branch, closing) => {
+    const input = fixture(branch), before = structuredClone(input);
+    const references = (["PRESERVE_START", "PRESERVE_END"] as const).map(strategy => options(prepareRoster(input, 42, "EXCLUDE", strategy))[0]);
+    const [arrival, departure] = references;
+    expect(arrival.segments[0].start).toBe(departure.segments[0].start);
+    expect(arrival.segments.at(-1)?.end).toBe(departure.segments.at(-1)?.end);
+    expect(arrival.segments[1]).not.toEqual(departure.segments[1]);
+    for (const reference of references) {
+      const saved = structuredClone(reference);
+      expect(paid(reference)).toBe(504);
+      expect(reference.segments[1].end - reference.segments[1].start).toBe(120);
+      expect(refreshProposedWorkBlocks(input.employees[0], reference, true, closing, 60, 120)).toEqual(saved);
+      expect(reference).toEqual(saved);
+    }
+    expect(input).toEqual(before);
   });
   it("fits mixed 8h/9h proposals and preserves the fixed three-hour meal", () => {
     const input = fixture(); input.mixed42Sectors = ["Caixa"];

@@ -39,10 +39,15 @@ describe("REST_ONLY generation references", () => {
     const rest = prepareGeneration(input).input;
     expect(rest.employees[0].shiftIds).toEqual(["early", "late"]);
     expect(rest.shifts).toEqual(input.shifts);
+    expect(rest.employees[0].fixedImportedShiftId).toBe("early");
+    expect(matchesRestOnlyReferences(rest, [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: "early" }])).toBe(true);
+    expect(matchesRestOnlyReferences(rest, [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: "late" }])).toBe(false);
     const saved = escalaInputSchema.parse(JSON.parse(JSON.stringify(rest)));
     const complete = prepareGeneration({ ...saved, generationMode: "DAYS_AND_HOURS" }).input;
     expect(new Set(complete.employees[0].shiftIds)).toEqual(new Set(input.employees[0].shiftIds));
     expect(complete.shifts).toEqual(input.shifts);
+    expect(complete.employees[0].fixedImportedShiftId).toBe("early");
+    expect(matchesRestOnlyReferences(complete, [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: "late" }])).toBe(false);
     expect(input).toEqual(before);
   });
 

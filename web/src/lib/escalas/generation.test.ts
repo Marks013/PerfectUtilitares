@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addDays, dateRange } from "./dates";
-import { prepareGeneration } from "./generation";
+import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { prepareRoster } from "./preparation";
 import { escalaInputSchema } from "./schema";
 import { isMixed42LongShift } from "./labor-rules";
@@ -344,6 +344,7 @@ describe("whole-branch generation preparation", () => {
     value.policy.limitContinuousWorkBlocks = false;
     const original = prepareRoster(value, 42, "EXCLUDE", "PRESERVE_START");
     const oldShift = original.shifts[0];
+    expect(Math.max(...oldShift.segments.filter(segment => segment.kind === "WORK").map(segment => segment.end - segment.start))).toBeGreaterThan(270);
     original.policy.limitContinuousWorkBlocks = true;
     original.assignments = [{ employeeId: "p1", date: original.startDate, kind: "WORK", shiftId: oldShift.id, locked: true },
       { employeeId: "p1", date: "2026-10-27", kind: "ABSENCE" }, { employeeId: "p1", date: "2026-10-28", kind: "OFF" }];
@@ -352,6 +353,10 @@ describe("whole-branch generation preparation", () => {
     expect(prepared.input.shifts.find(shift => shift.id === oldShift.id)).toEqual(oldShift);
     expect(prepared.input.employees[0].shiftIds).toContain(oldShift.id);
     expect(prepared.input.employees[0].shiftIds.some(id => id !== oldShift.id)).toBe(true);
+    const normalShift = prepared.input.shifts.find(shift => shift.id === prepared.input.employees[0].fixedImportedShiftId);
+    if (!normalShift) throw new Error("Referência normal equilibrada ausente");
+    expect(normalShift?.id).not.toBe(oldShift.id);
+    expect(Math.max(...(normalShift?.segments ?? []).filter(segment => segment.kind === "WORK").map(segment => segment.end - segment.start))).toBeLessThanOrEqual(270);
   });
 
   it("excludes company-confirmed apprentices without deleting protected absence or locked records", () => {
@@ -382,7 +387,8 @@ describe("whole-branch generation preparation", () => {
     const prepared = prepareGeneration(value);
     expect(prepared.preparation).toMatchObject({ adjustedEmployeeIds: ["p1"], excludedEmployeeIds: [], includedEmployees: 1, untimedEmployees: 0 });
     expect(prepared.preparation.generatedCoverageSlots).toBeGreaterThan(0);
-    expect(prepared.input.employees[0].shiftIds.length).toBeGreaterThan(1);
+    expect(prepared.input.employees[0].shiftIds).toHaveLength(1);
+    expect(prepared.input.employees[0].fixedImportedShiftId).toBe(prepared.input.employees[0].shiftIds[0]);
     expect(prepared.input.employees[0].shiftIds.every((id) => minutes(prepared.input, id) === 504)).toBe(true);
     expect(prepared.input.shifts[0].segments[0].start).toBe(420);
     expect(prepared.input.policy).toEqual({ ...value.policy, coverageReview: "SUGGESTED" });
@@ -482,7 +488,7 @@ describe("whole-branch generation preparation", () => {
     expect(escalaInputSchema.safeParse(prepared).success).toBe(true);
   });
 
-  it("does not reconsider manually selected night alternatives within an explicit closing", () => {
+  it("preserves manual night geometries while selecting one stable reference without adding night work", () => {
     const value = input();
     value.storeClosingMinutes = 1410;
     const source = value.employees[0].sourceSchedule;
@@ -493,10 +499,15 @@ describe("whole-branch generation preparation", () => {
       { id: "manual-early", name: "Alternativa manual", segments: [{ start: 706, end: 990, kind: "WORK" }, { start: 990, end: 1110, kind: "BREAK" }, { start: 1110, end: 1330, kind: "WORK" }] },
     ];
     value.employees[0].shiftIds = value.shifts.map(shift => shift.id);
+    const original = structuredClone(value);
     const prepared = prepareGeneration(value);
     expect(prepared.preparation.adjustedEmployeeIds).toEqual([]);
     expect(prepared.input.shifts).toEqual(value.shifts);
-    expect(prepared.input.employees[0].shiftIds).toEqual(value.employees[0].shiftIds);
+    expect(prepared.input.employees[0].shiftIds).toEqual(["manual-early", "manual-late"]);
+    expect(prepared.input.employees[0].fixedImportedShiftId).toBe("manual-early");
+    expect(prepared.input.employees[0].originalShiftIds).toEqual(value.employees[0].shiftIds);
+    expect(matchesRestOnlyReferences(prepared.input, [{ employeeId: "p1", date: value.startDate, kind: "WORK", shiftId: "manual-late" }])).toBe(false);
+    expect(value).toEqual(original);
   });
 
   it("does not reinclude excluded people, invent manager hours or alter custom distributions", () => {

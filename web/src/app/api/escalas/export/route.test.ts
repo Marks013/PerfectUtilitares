@@ -117,6 +117,9 @@ describe("/api/escalas/export references without a roster", () => {
 
 describe("/api/escalas/export", () => {
   it("exports a real XLSX from the authorized exact revision with grouping and literal formula-like names", async () => {
+    const current = workspace();
+    current.input.demands = [{ id: "confirmed", date: "2026-10-26", sector: "Reposição", start: 480, end: 540, minimum: 3, estimated: false }];
+    mocks.get.mockResolvedValue(current);
     const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=xlsx&revision=3"));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("spreadsheetml");
@@ -147,6 +150,8 @@ describe("/api/escalas/export", () => {
     expect(detail?.[4]).toBe("T01");
     expect(exportedDurationMinutes(detail?.[7])).toBe(504);
     const workbook = strFromU8(zip["xl/workbook.xml"]);
+    expect([...workbook.matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1])).toEqual(["Escala", "Horarios"]);
+    expect(workbook).not.toMatch(/Capacidade|Desfalques/);
     expect(workbook).not.toContain("_xlnm.Print_Titles");
     expect(workbook).toContain('<definedName name="_xlnm.Print_Area" localSheetId="0">\'Escala\'!$A$1:$L$6</definedName>');
     expect(content).not.toMatch(/<pane\b|state="frozen"|xSplit=|ySplit=|selection pane=/);
@@ -173,6 +178,27 @@ describe("/api/escalas/export", () => {
       expect(text).not.toContain("Resumo de carga e turnos");
     } finally { await loading.destroy(); }
   });
+  it.each(["hours", "both"] as const)("keeps capacity and shortages in a real 200 PDF response for %s", async mode => {
+    const current = workspace();
+    current.input.demands = [{ id: "confirmed", date: "2026-10-26", sector: "Reposição", start: 480, end: 540, minimum: 3, estimated: false }];
+    mocks.get.mockResolvedValue(current);
+    const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=pdf&mode=${mode}&revision=3&separateSectors=false`));
+    expect(response.status).toBe(200); expect(response.headers.get("content-type")).toBe("application/pdf");
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const loading = pdfjs.getDocument(pdfJsServerDocumentOptions(new Uint8Array(await response.arrayBuffer())));
+    const document = await loading.promise;
+    try {
+      const pages: string[] = [];
+      for (let index = 1; index <= document.numPages; index++) {
+        const page = await document.getPage(index), content = await page.getTextContent();
+        pages.push(content.items.filter(item => "str" in item).map(item => item.str).join(" "));
+      }
+      const text = pages.join(" ");
+      expect(text).toContain("Nominal semanal:"); expect(text).toContain("Desfalques de cobertura");
+      expect(text).toContain("26/10/2026"); expect(text).toContain("08:00-09:00");
+      expect(text).toContain("Ána Silva"); expect(text).toContain("=FORMULA");
+    } finally { await loading.destroy(); }
+  }, 20000);
   it("fails closed for missing access and rejects invalid formats/versions", async () => {
     mocks.get.mockRejectedValue(new EscalaError(404, "ESCALA_NOT_FOUND", "Escala não encontrada."));
     expect((await GET(new Request("http://localhost/api/escalas/export?id=foreign&format=pdf"))).status).toBe(404);

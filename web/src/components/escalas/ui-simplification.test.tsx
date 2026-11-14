@@ -8,7 +8,7 @@ import { Roster } from "./roster";
 import { visibleDates } from "@/lib/escalas/dates";
 
 describe("guided draft defaults", () => {
-  it("renders sector names alphabetically and groups hours before role or employee name", () => {
+  it("renders sectors and roles alphabetically before complete clocks and employee names", () => {
     const input = newInput("02", "Centro", "2026-11", 42);
     input.shifts = [
       { id: "early", name: "Manhã", segments: [{start:450,end:690,kind:"WORK"},{start:690,end:810,kind:"BREAK"},{start:810,end:1074,kind:"WORK"}] },
@@ -25,8 +25,10 @@ describe("guided draft defaults", () => {
     input.assignments=input.employees.map(person=>({employeeId:person.id,date,kind:"WORK",shiftId:person.shiftIds[0]}));
     const before=JSON.stringify(input);
     const hours=renderToStaticMarkup(<Roster mode="hours" input={input} validation={null} disabled={false} canUnlock onChange={vi.fn()} />);
+    for (const name of ["Ana da Tarde", "Alice da Manhã", "Bia da Manhã", "Zélia da Padaria"]) expect(hours.indexOf(name)).toBeGreaterThanOrEqual(0);
+    expect(hours.indexOf("Ana da Tarde")).toBeLessThan(hours.indexOf("Alice da Manhã"));
     expect(hours.indexOf("Alice da Manhã")).toBeLessThan(hours.indexOf("Bia da Manhã"));
-    expect(hours.indexOf("Bia da Manhã")).toBeLessThan(hours.indexOf("Ana da Tarde"));
+    expect(hours.indexOf("Bia da Manhã")).toBeLessThan(hours.indexOf("Zélia da Padaria"));
     expect(hours.indexOf("Ana da Tarde")).toBeLessThan(hours.indexOf("Zélia da Padaria"));
     const rest=renderToStaticMarkup(<Roster mode="rest" input={input} validation={null} disabled={false} canUnlock onChange={vi.fn()} />);
     const body=rest.slice(rest.indexOf("<tbody>"),rest.indexOf("</tbody>"));

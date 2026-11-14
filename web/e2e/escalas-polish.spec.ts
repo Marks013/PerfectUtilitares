@@ -18,7 +18,8 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
     id, name, registration: id, sector, role, weeklyHours: 42, weeklyHoursMode: "BRANCH", shiftIds: [shiftId], activeFrom: "", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 1, sundayRestRule: "PROTECTIVE", preferredOffDays: [], historyKnown: false, history: [],
   });
   input.employees = [make("3", "Zoe Horário", "Açougue", "Auxiliar", "late"), make("2", "Bia Horário", "Açougue", "Operador", "early"), make("1", "Ana Horário", "Açougue", "Operador", "early"),
-    make("4", "Lia Setor", "Zeladoria", "Auxiliar", "early"), make("5", "Aprendiz Teste", "Açougue", "AUX. DE SERVIÇOS EM SUPER", "early")];
+    make("4", "Lia Setor", "Zeladoria", "Auxiliar", "early"), make("5", "Aprendiz Teste", "Açougue", "AUX. DE SERVIÇOS EM SUPER", "early"),
+    make("7", "Aline Horário Tarde", "Açougue", "Operador", "late")];
   const manager = make("6", "Encarregado Teste", "Zeladoria", "ENC. SETOR", "early");
   manager.shiftIds = []; manager.scheduleMode = "MISSING";
   manager.sourceSchedule = { report: "FPRE136", code: "0000", description: "Sem horário fixo", weekday: "00:00-00:00 / 00:00-00:00", saturday: "00:00-00:00 / 00:00-00:00" };
@@ -52,8 +53,45 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
     await expect(roster.getByRole("row").filter({ hasText: "Encarregado Teste" })).toHaveCount(1);
     await page.getByLabel("Visualização da escala", { exact: true }).selectOption("hours");
     const names = await roster.locator('tbody th[scope="row"]').allTextContents();
+    const savedResponse = await page.request.get("/api/escalas?id=" + created.id);
+    expect(savedResponse.status()).toBe(200);
+    const saved: EscalaWorkspace = await savedResponse.json();
+    const month = saved.input.visibleMonth;
+    if (!month) throw new Error("The saved ordering scenario must identify its visible month");
+    // Independent oracle: explicit fixture sectors/roles and complete saved WORK geometries, not the production comparator.
+    // Aline sorts after Ana/Bia despite her earlier name, while Zoe's earlier role wins over her later clock.
+    const early = [450, 680, 800, 1074], late = [480, 720, 840, 1104];
+    const expectedOrder = [
+      { id: "3", name: "Zoe Horário", sector: "Açougue", role: "Auxiliar", clock: late },
+      { id: "1", name: "Ana Horário", sector: "Açougue", role: "Operador", clock: early },
+      { id: "2", name: "Bia Horário", sector: "Açougue", role: "Operador", clock: early },
+      { id: "7", name: "Aline Horário Tarde", sector: "Açougue", role: "Operador", clock: late },
+      { id: "4", name: "Lia Setor", sector: "Zeladoria", role: "Auxiliar", clock: early },
+      { id: "6", name: "Encarregado Teste", sector: "Zeladoria", role: "ENC. SETOR", clock: null },
+    ];
+    expect(names).toHaveLength(expectedOrder.length);
+    expect(saved.input.employees.filter(person => person.planningEnabled !== false).map(person => person.id).sort())
+      .toEqual(expectedOrder.map(person => person.id).sort());
+    for (const [index, expected] of expectedOrder.entries()) {
+      const person = saved.input.employees.find(person => person.id === expected.id);
+      expect(person).toMatchObject({ name: expected.name, sector: expected.sector, role: expected.role });
+      expect(names[index]).toContain(expected.name);
+      const work = saved.input.assignments.filter(day => day.employeeId === expected.id && day.kind === "WORK" && day.date.startsWith(month + "-"));
+      if (expected.clock === null) {
+        expect(work).toEqual([]);
+      } else {
+        expect(work.length).toBeGreaterThan(0);
+        const signatures = new Set(work.map(day => {
+          const shift = saved.input.shifts.find(shift => shift.id === day.shiftId);
+          if (!shift) throw new Error("Saved WORK has no shift in the ordering scenario");
+          return JSON.stringify(shift.segments.filter(segment => segment.kind === "WORK").flatMap(segment => [segment.start, segment.end]));
+        }));
+        expect([...signatures]).toEqual([JSON.stringify(expected.clock)]);
+      }
+    }
+    expect(names.findIndex(text => text.includes("Zoe Horário"))).toBeLessThan(names.findIndex(text => text.includes("Ana Horário")));
     expect(names.findIndex(text => text.includes("Ana Horário"))).toBeLessThan(names.findIndex(text => text.includes("Bia Horário")));
-    expect(names.findIndex(text => text.includes("Bia Horário"))).toBeLessThan(names.findIndex(text => text.includes("Zoe Horário")));
+    expect(names.findIndex(text => text.includes("Bia Horário"))).toBeLessThan(names.findIndex(text => text.includes("Aline Horário Tarde")));
     await page.getByLabel("Visualização da escala", { exact: true }).selectOption("rest");
     const managerRow = roster.getByRole("row").filter({ hasText: "Encarregado Teste" });
     expect(await managerRow.getByText("ENC", { exact: true }).count()).toBeGreaterThan(0);

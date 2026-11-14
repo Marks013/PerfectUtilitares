@@ -39,10 +39,13 @@ export function matchesHoursOnlyAssignments(previous: EscalaInput, next: EscalaI
   if (previous.generationMode !== "HOURS_ONLY") return true;
   if (previous.assignments.length !== next.assignments.length) return false;
   const records = new Map(next.assignments.map(day => [`${day.employeeId}\0${day.date}`, day]));
+  const people = new Map(next.employees.map(person => [person.id, person]));
   return previous.assignments.every(day => {
     const proposed = records.get(`${day.employeeId}\0${day.date}`);
+    const person = people.get(day.employeeId);
+    const stable = person && (manualShiftAt(person, day.date) ?? (person.fixedImportedShiftId && person.shiftIds.includes(person.fixedImportedShiftId) ? person.fixedImportedShiftId : undefined));
     return proposed?.kind === day.kind && proposed.locked === day.locked
-      && (day.kind === "WORK" && !day.locked || proposed.shiftId === day.shiftId);
+      && (day.kind === "WORK" && !day.locked ? !stable || proposed.shiftId === stable : proposed.shiftId === day.shiftId);
   });
 }
 

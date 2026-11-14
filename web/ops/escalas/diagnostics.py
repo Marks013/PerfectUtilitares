@@ -41,6 +41,11 @@ class ConflictRegistry:
                 diagnostic.proto.constraints[index].enforcement_literal.append(literal.index)
             diagnostic.add_assumption(literal)
             by_literal[literal.index] = family
+        # Cloning and registering assumptions consume the same deadline.
+        # Do not allocate an engine if preparation exhausted its usable share.
+        remaining = deadline - time.monotonic() - 0.10
+        if remaining < 0.05:
+            return []
         engine = cp_model.CpSolver()
         # Assumptions are unsupported by the parallel search; diagnosis always uses one worker.
         engine.parameters.num_workers = 1

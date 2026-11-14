@@ -35,6 +35,7 @@ vi.mock("node:fs/promises", () => ({
 
 vi.mock("pdf-lib", () => ({
   degrees: (angle: number) => ({ angle }),
+  PDFName: { of: (name: string) => name },
   PDFDocument: {
     create: mocks.pdfCreate,
     load: mocks.pdfLoad,
@@ -129,6 +130,7 @@ function pdfPage(width = 595, height = 842) {
 
 function pdfDocument(pages: ReturnType<typeof pdfPage>[]) {
   return {
+    catalog: { has: vi.fn().mockReturnValue(false) },
     getPage: (index: number) => pages[index],
     getPageCount: () => pages.length,
   };
@@ -208,6 +210,7 @@ beforeEach(() => {
   mocks.rm.mockResolvedValue(undefined);
   mocks.writeFile.mockResolvedValue(undefined);
   mocks.pdfCreate.mockResolvedValue({});
+  mocks.pdfLoad.mockResolvedValue(pdfDocument([]));
 });
 
 afterEach(() => {

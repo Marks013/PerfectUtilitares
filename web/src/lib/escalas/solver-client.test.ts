@@ -10,6 +10,7 @@ beforeEach(() => vi.stubEnv("ESCALAS_SOLVER_SECRET_FILE", secretPath));
 afterAll(() => rmSync(secretDirectory, { recursive: true }));
 import { solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
+import { matchesRestOnlyReferences } from "./generation";
 import * as rosterRefinement from "./roster-refinement";
 import * as rosterQuality from "./roster-quality";
 import type { EscalaInput } from "./types";
@@ -38,6 +39,13 @@ function completeAssignments(): EscalaInput["assignments"] {
   // Monday rest also separates the scoped Sunday history from five actual workdays.
   return Array.from({ length: 7 }, (_, day) => ({ employeeId: "p1", date: `2026-11-0${day + 2}`,
     ...(day === 0 || day === 6 ? { kind: "OFF" as const } : { kind: "WORK" as const, shiftId: "day" }) }));
+}
+
+function expectViableWorkerResult(input: EscalaInput) {
+  const validation = validateEscala({ ...input, assignments: completeAssignments() });
+  expect(validation.valid).toBe(true);
+  expect(validation.issues.filter(issue => issue.code === "DAY_PENDING" || issue.code === "MEAL_INTERVAL_EXCESSIVE")).toEqual([]);
+  expect(validation.summaries[0]).toMatchObject({ workDays: 5, workedMinutes: 2520 });
 }
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
@@ -256,6 +264,7 @@ describe("isolated schedule processor client", () => {
   ])("sends effective closing for $branchCode and accepts a closing coverage phase", async ({ branchCode, storeClosingMinutes, expected }) => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const input = { ...fixture(), branchCode, storeClosingMinutes };
+    expectViableWorkerResult(input);
     const optimization = {
       budgetSeconds: 12,
       phases: [{
@@ -308,6 +317,7 @@ describe("isolated schedule processor client", () => {
 
   it("accepts one joint secondary phase with separate protected objective values", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    expectViableWorkerResult(fixture());
     const optimization = { budgetSeconds: 12, phases: [{ objective: "SECONDARY_POLISH", status: "FEASIBLE", wallTimeSeconds: 1.2, budgetSeconds: 1.5, initialValue: 1200, incumbentValue: 900, searchScope: "SELECTED_PEOPLE", members: [
       { objective: "STABILITY", initialValue: 20, incumbentValue: 18 },
       { objective: "REST_ROTATION", initialValue: -2, incumbentValue: -3 },
@@ -377,6 +387,7 @@ describe("isolated schedule processor client", () => {
 
   it.each([20, 21])("validates the bounded diagnostic contract with %i phases", async count => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    expectViableWorkerResult(fixture());
     const names = ["COVERAGE", "MOVEMENT_COVERAGE", "COVERAGE", "COVERAGE", "COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "TIE_BREAK", "TIE_BREAK", "TIE_BREAK"];
     const optimization = { budgetSeconds: 12, phases: names.slice(0, count).map(objective => ({ objective, status: "FEASIBLE", wallTimeSeconds: 0.1, budgetSeconds: 0.2, initialValue: 500, incumbentValue: 400 })) };
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Pronto", wallTimeSeconds: 2, optimization })));
@@ -389,6 +400,7 @@ describe("isolated schedule processor client", () => {
 
   it("accepts all eleven active objectives including Sunday and closing coverage without losing assignments", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    expectViableWorkerResult(fixture());
     const objectives = ["COVERAGE", "SUNDAY_COVERAGE", "CLOSING_COVERAGE", "SUNDAY_BALANCE", "SATURDAY_BALANCE", "REST_DISTRIBUTION", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK"];
     const optimization = { budgetSeconds: 12, unattemptedObjectives: [], phases: objectives.map(objective => ({
       objective, status: "FEASIBLE", wallTimeSeconds: 0.1, budgetSeconds: 0.2,
@@ -456,8 +468,102 @@ describe("isolated schedule processor client", () => {
     await expect(solveEscala(fixture(), { signal: controller.signal })).rejects.toMatchObject({ code: "SOLVER_CANCELLED" });
     expect(fetch).not.toHaveBeenCalled();
   });
+  it("rejects a pending excessive meal interval instead of reusing it as a successful calculated roster", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); input.simulation = true; input.assignments = completeAssignments();
+    input.shifts[0].segments[1].end = 900;
+    input.shifts[0].segments[2].start = 900;
+    input.shifts[0].segments[2].end = 1164;
+    const validation = validateEscala(input);
+    expect(validation.valid).toBe(true);
+    expect(validation.readyToPublish).toBe(false);
+    expect(validation.issues).toContainEqual(expect.objectContaining({ code: "MEAL_INTERVAL_EXCESSIVE", severity: "PENDING" }));
+    const refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "OPTIMAL", assignments: input.assignments, message: "Unresolved meal", wallTimeSeconds: 1 })));
+    try { await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" }); }
+    finally { refine.mockRestore(); }
+  });
+
+  function fixedClockFixture(mode: "DAYS_AND_HOURS" | "REST_ONLY") {
+    const input = fixture(); input.generationMode = mode;
+    input.shifts = [{ ...input.shifts[0], id: "early" }, { id: "late", name: "Tarde", segments: [
+      { start: 600, end: 840, kind: "WORK" }, { start: 840, end: 900, kind: "BREAK" }, { start: 900, end: 1164, kind: "WORK" },
+    ] }];
+    input.employees[0].shiftIds = ["early", "late"];
+    input.employees[0].fixedImportedShiftId = "early";
+    return input;
+  }
+  it.each(["DAYS_AND_HOURS", "REST_ONLY"] as const)("rejects a final non-fixed clock with both options registered in %s", async mode => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixedClockFixture(mode);
+    const assignments = completeAssignments().map(day => day.kind === "WORK" ? { ...day, shiftId: "late" } : day);
+    expect(validateEscala({ ...input, assignments }).valid).toBe(true);
+    expect(matchesRestOnlyReferences(input, assignments)).toBe(false);
+    const refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "OPTIMAL", assignments, message: "Wrong current clock", wallTimeSeconds: 1 })));
+    try { await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" }); }
+    finally { refine.mockRestore(); }
+  });
+  it.each(["DAYS_AND_HOURS", "REST_ONLY"] as const)("preserves a dated manual clock and an existing locked exception in %s", async mode => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    let input = fixedClockFixture(mode);
+    input.shifts.push({ ...structuredClone(input.shifts[1]), id: "locked-clock" });
+    input.employees[0].shiftIds.push("locked-clock");
+    input.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "Original", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    input.employees[0] = withManualShiftOverride(input.employees[0], { catalogCode: 1500, shiftId: "late", markings: ["10:00", "14:00", "15:00", "19:24"], effectiveFrom: "2026-11-03", effectiveUntil: "2026-11-03" });
+    input = materializeManualShiftOverrides(input);
+    input.employees[0].fixedImportedShiftId = "early";
+    input.assignments = completeAssignments().map(day => day.kind !== "WORK" ? day
+      : { ...day, shiftId: day.date === "2026-11-03" ? "late" : day.date === "2026-11-05" ? "locked-clock" : "early", ...(day.date === "2026-11-05" ? { locked: true } : {}) });
+    expect(validateEscala(input).valid).toBe(true);
+    expect(matchesRestOnlyReferences(input, input.assignments)).toBe(true);
+    const before = structuredClone(input), refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: input.assignments, message: "Explicit exceptions", wallTimeSeconds: 1 })));
+    try {
+      const result = await solveEscala(input);
+      expect(result.assignments).toEqual(input.assignments);
+      expect(result.assignments.find(day => day.date === "2026-11-05")).toMatchObject({ kind: "WORK", shiftId: "locked-clock", locked: true });
+      expect(input).toEqual(before);
+    } finally { refine.mockRestore(); }
+  });
+  it.each(["DAYS_AND_HOURS", "REST_ONLY"] as const)("preserves explicit mixed 42h clocks and their authorized long interval in %s", async mode => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); input.generationMode = mode; input.simulation = true; input.mixed42Sectors = ["Loja"];
+    input.shifts = [{ id: "short", name: "8h", segments: [
+      { start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1020, kind: "WORK" },
+    ] }, { id: "long", name: "9h misto", segments: [
+      { start: 420, end: 690, kind: "WORK" }, { start: 690, end: 870, kind: "BREAK" }, { start: 870, end: 1140, kind: "WORK" },
+    ] }];
+    input.employees[0].shiftIds = ["short", "long"];
+    input.assignments = completeAssignments().map(day => day.kind === "WORK"
+      ? { ...day, shiftId: ["2026-11-03", "2026-11-06"].includes(day.date) ? "long" : "short" } : day);
+    const validation = validateEscala(input);
+    expect(validation.valid).toBe(true);
+    expect(validation.summaries[0].workedMinutes).toBe(2520);
+    expect(validation.issues.some(issue => issue.code === "MEAL_INTERVAL_EXCESSIVE")).toBe(false);
+    expect(matchesRestOnlyReferences(input, input.assignments)).toBe(true);
+    const refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: input.assignments, message: "Explicit mixed", wallTimeSeconds: 1 })));
+    try { expect((await solveEscala(input)).assignments).toEqual(input.assignments); }
+    finally { refine.mockRestore(); }
+  });
+
+  it("honors the shared precomputed operational verdict at the independent final boundary", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); expectViableWorkerResult(input);
+    const refine = vi.spyOn(rosterRefinement, "refineRoster").mockImplementation(value => value);
+    const verdict = vi.spyOn(rosterQuality, "isOperationallyReusable").mockReturnValue(false);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Candidate", wallTimeSeconds: 1 })));
+    try {
+      await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+      expect(verdict).toHaveBeenCalledTimes(1);
+      expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ valid: true, summaries: [expect.objectContaining({ workedMinutes: 2520 })] }));
+    } finally { verdict.mockRestore(); refine.mockRestore(); }
+  });
+
   it("accepts a successful response and sends only validated inputs", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    expectViableWorkerResult(fixture());
     const fetch = vi.fn(async (_url: URL, _init?: RequestInit) => Response.json({ status: "OPTIMAL", assignments: completeAssignments(), message: "Concluído", wallTimeSeconds: 0.1 }));
     vi.stubGlobal("fetch", fetch);
     expect((await solveEscala(fixture())).status).toBe("OPTIMAL");
@@ -466,6 +572,7 @@ describe("isolated schedule processor client", () => {
   });
   it("preserves bounded numeric phase diagnostics on a real-shaped success response", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    expectViableWorkerResult(fixture());
     const optimization = { budgetSeconds: 12, phases: [
       { objective: "COVERAGE", status: "UNKNOWN", wallTimeSeconds: 6, budgetSeconds: 6, incumbentValue: 1200 },
       { objective: "PREFERENCES", status: "OPTIMAL", wallTimeSeconds: 0.1, budgetSeconds: 0.2, incumbentValue: -2, bestBound: -2 },

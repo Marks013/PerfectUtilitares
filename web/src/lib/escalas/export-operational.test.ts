@@ -6,7 +6,7 @@ import { newInput, newEmployee } from "@/components/escalas/workspace-model";
 import type { EscalaWorkspace } from "./types";
 import { exportEscalaPdf, exportEscalaXlsx } from "./export";
 import { coverageBasis } from "./automatic-coverage";
-import { exportedDateISO } from "./export-test-utils";
+import { exportedPdfRowPattern } from "./export-test-utils";
 
 function scenario(): EscalaWorkspace {
   const input = newInput("08", "Loja sintética", "2026-11", 42);
@@ -120,7 +120,8 @@ describe("lean operational files", () => {
   it("exports only selected operational views, retaining data without support worksheets", async () => {
     const source = scenario(), before = structuredClone(source);
     const archive = unzipSync(exportEscalaXlsx(source)), workbook = strFromU8(archive["xl/workbook.xml"]);
-    expect([...workbook.matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1])).toEqual(["Escala", "Horarios", "Capacidade", "Desfalques"]);
+    expect([...workbook.matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1])).toEqual(["Escala", "Horarios"]);
+    expect(workbook).not.toMatch(/Capacidade|Desfalques/);
     expect(workbook).not.toMatch(/Conferencia|Jornadas|Turnos/);
     expect(source).toEqual(before);
   });
@@ -136,7 +137,7 @@ describe("lean operational files", () => {
     const before = structuredClone(source);
     const expected = "SIMULAÇÃO / NEGOCIAÇÃO: 3 × 8h + 2 × 9h nos setores selecionados; intervalo de 3h nos dias de 9h. Não é autorização operacional.";
     const workbook = Buffer.from(exportEscalaXlsx(source));
-    for (const sheet of ["Escala", "Horarios", "Desfalques"]) {
+    for (const sheet of ["Escala", "Horarios"]) {
       expect((await readSheet(workbook, sheet))[2][0]).toContain(expected);
     }
     const pdf = await pdfText(await exportEscalaPdf(source));
@@ -153,23 +154,23 @@ describe("lean operational files", () => {
     expect(await pdfText(await exportEscalaPdf(source))).not.toContain("NEGOCIAÇÃO");
   }, 20000);
 
-  it("separates sectors and groups exact schedules before names and roles without day lists", async () => {
+  it("separates sectors and roles before exact schedules and names without day lists", async () => {
     const bytes = exportEscalaXlsx(scenario(), "hours"), rows = await readSheet(Buffer.from(bytes), "Horarios");
     expect(rows.slice(4).map(row => row[0])).toEqual(["Açougue", "Padaria", "Padaria", "Padaria"]);
     expect(rows.slice(4).every(row => row[1] && row[2])).toBe(true);
     const people = rows.filter(row => ["01", "02", "03"].includes(String(row[1])));
-    expect(people.map(row => row[1])).toEqual(["03", "02", "01", "01"]);
+    expect(people.map(row => row[1])).toEqual(["03", "01", "01", "02"]);
     expect(people.filter(row => row[1] === "01").map(row => row[5])).toEqual(["08:00-12:00 / 13:00-17:24", "09:00-13:00 / 14:00-18:24"]);
     expect(rows.flat().join(" ")).not.toMatch(/2026-11-02|02\/11|Dia\(s\)|Dias com/);
   });
-  it("uses the same sector, proposed-clock and name order in rest PDF and Excel without duplicating people", async () => {
+  it("uses the same sector, role, proposed-clock and name order in rest PDF and Excel without duplicating people", async () => {
     const source = scenario(), before = structuredClone(source);
     const rows = (await readSheet(Buffer.from(exportEscalaXlsx(source, "rest")), "Escala")).slice(4);
-    expect(rows.map(row => row[1])).toEqual(["03", "02", "01"]);
-    expect(rows.map(row => row[2])).toEqual(["Bia", "Ana", "Zélia"]);
+    expect(rows.map(row => row[1])).toEqual(["03", "01", "02"]);
+    expect(rows.map(row => row[2])).toEqual(["Bia", "Zélia", "Ana"]);
     const text = await pdfText(await exportEscalaPdf(source, "rest"));
-    expect(text.indexOf("03 - Bia")).toBeLessThan(text.indexOf("02 - Ana"));
-    expect(text.indexOf("02 - Ana")).toBeLessThan(text.indexOf("01 - Zélia"));
+    expect(text.indexOf("03 - Bia")).toBeLessThan(text.indexOf("01 - Zélia"));
+    expect(text.indexOf("01 - Zélia")).toBeLessThan(text.indexOf("02 - Ana"));
     expect(text.match(/01 - Zélia/g)).toHaveLength(1);
     expect(source).toEqual(before);
   }, 20000);
@@ -192,16 +193,12 @@ describe("lean operational files", () => {
     expect(schedule).not.toMatch(/02\/11|03\/11|Dia\(s\)|Folga/);
     expect(text).not.toMatch(/Conferência da proposta|Informação administrativa|certifica conformidade|Histórico anterior/);
   }, 20000);
-  it("keeps a compact sector summary with the central peak occurrence in both files", async () => {
-    const source = scenario(), rows = await readSheet(Buffer.from(exportEscalaXlsx(source)), "Desfalques");
-    expect(rows.slice(4)).toHaveLength(1);
-    expect(rows[4][0]).toBe("Padaria");
-    expect(rows[4][1]).toBe("Estimada");
-    expect(rows[4][4]).toBe(1);
-    expect(rows[4]).toHaveLength(12);
-    expect(exportedDateISO(rows[4][5])).toBe("2026-11-02");
-    expect(rows[4][6]).toBe("12:00-13:00");
+  it("keeps the compact sector peak in PDF while omitting analysis worksheets", async () => {
+    const source = scenario(), archive = unzipSync(exportEscalaXlsx(source));
+    expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/Capacidade|Desfalques/);
     const text = await pdfText(await exportEscalaPdf(source));
+    expect(text.match(/Desfalques de cobertura/g)).toHaveLength(1);
+    expect(text).toMatch(exportedPdfRowPattern(["Padaria", "Estimada", "02/11/2026", "12:00-13:00", 0, 1, 1, "01:00", 1, "01:36"]));
     expect(text).not.toContain("Faixa analisada:");
     expect(text).toContain("Data / faixa do pico");
     expect(text).toContain("Escalados na faixa");
@@ -223,13 +220,11 @@ describe("lean operational files", () => {
     ];
     source.input.coverageBasis = coverageBasis(source.input);
     const before = structuredClone(source);
-    const rows = (await readSheet(Buffer.from(exportEscalaXlsx(source)), "Desfalques")).slice(4);
-    expect(rows.map(row => row[0])).toEqual(["Açougue", "Hortifrúti"]);
-    expect(rows[0][1]).toBe("Estimada · parcial");
-    expect(rows[0].slice(2, 11)).toEqual(Array(9).fill("—"));
-    expect(rows[1].slice(2, 11)).toEqual(Array(9).fill("—"));
-    expect(rows.flat().join(" ")).not.toMatch(/Auxiliar:|Zelador:/);
     const text = await pdfText(await exportEscalaPdf(source, "hours"));
+    for (const sector of ["Açougue", "Hortifrúti"]) {
+      expect(text).toMatch(exportedPdfRowPattern([sector, "Estimada · parcial", ...Array(8).fill("—")]));
+    }
+    expect(text.match(/Duração somada das faixas com falta: —/g)).toHaveLength(2);
     expect(text.indexOf("Açougue")).toBeLessThan(text.indexOf("Hortifrúti"));
     expect(text).not.toMatch(/Auxiliar:|Zelador:/);
     expect(text).toContain("Estimada · parcial");

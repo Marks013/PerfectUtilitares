@@ -19,17 +19,17 @@ function fixture(): EscalaInput {
 const paid = (shift: EscalaShift) => shift.segments.reduce((sum, part) => sum + (part.kind === "BREAK" ? 0 : part.end - part.start), 0);
 const options = (value: EscalaInput) => value.employees[0].shiftIds.map(id => value.shifts.find(shift => shift.id === id) as EscalaShift);
 
-describe("bounded automatic clock alternatives", () => {
-  it("offers real arrival, departure and meal alternatives with one stable reference and unchanged weekly hours", () => {
+describe("stable automatic clock reference boundaries", () => {
+  it("selects one nearby geometry without rotating arrival, departure or meal at the same weekly hours", () => {
     const raw = fixture(), original = structuredClone(raw);
     const reference = prepareRoster({ ...raw, simulation: true }, 42, "EXCLUDE", "PRESERVE_START");
     const prepared = prepareGeneration(raw).input, shifts = options(prepared);
-    expect(shifts.length).toBeGreaterThan(1);
-    expect(shifts.length).toBeLessThanOrEqual(4);
+    expect(shifts).toHaveLength(1);
+    expect(prepared.employees[0].fixedImportedShiftId).toBe(shifts[0].id);
     expect(shifts[0]).toEqual(options(reference)[0]);
     expect(shifts.every(shift => paid(shift) === 504)).toBe(true);
-    expect(new Set(shifts.map(shift => shift.segments[0].start)).size).toBeGreaterThan(1);
-    expect(new Set(shifts.map(shift => shift.segments.find(part => part.kind === "BREAK")?.start)).size).toBeGreaterThan(1);
+    expect(shifts[0].segments[0].start).toBe(raw.shifts[0].segments[0].start);
+    expect(shifts[0].segments.find(part => part.kind === "BREAK")?.start).toBe(raw.shifts[0].segments.find(part => part.kind === "BREAK")?.start);
     expect(shifts.every(shift => shift.segments.find(part => part.kind === "BREAK")?.end
       === (shift.segments.find(part => part.kind === "BREAK")?.start ?? 0) + 120)).toBe(true);
     expect(prepared.employees[0].sourceSchedule).toEqual(raw.employees[0].sourceSchedule);
@@ -37,13 +37,13 @@ describe("bounded automatic clock alternatives", () => {
     expect(raw).toEqual(original);
   });
 
-  it("expands saved automatic references once without discarding an existing valid roster", () => {
+  it("keeps the saved stable automatic reference without discarding its unchanged work or protected absence", () => {
     const saved = prepareRoster({ ...fixture(), simulation: true }, 42, "EXCLUDE", "PRESERVE_START");
     const shiftId = saved.employees[0].shiftIds[0];
     saved.assignments = [{ employeeId: "p1", date: saved.startDate, kind: "WORK", shiftId },
       { employeeId: "p1", date: "2026-11-02", kind: "ABSENCE", locked: true }];
     const first = prepareGeneration(saved), second = prepareGeneration(first.input);
-    expect(first.input.employees[0].shiftIds.length).toBeGreaterThan(1);
+    expect(first.input.employees[0].shiftIds).toEqual([shiftId]);
     expect(first.preparation.adjustedEmployeeIds).toEqual([]);
     expect(first.input.assignments).toEqual(saved.assignments);
     expect(second.input.employees[0].shiftIds).toEqual(first.input.employees[0].shiftIds);
@@ -79,14 +79,14 @@ describe("bounded automatic clock alternatives", () => {
     expect(raw).toEqual(original);
   });
 
-  it("does not delete work using an unchanged clock when another unused alternative is rebalanced", () => {
+  it("does not rebalance an already compatible stable clock when the work-block preference is enabled", () => {
     const saved = prepareGeneration(fixture()).input, canonical = options(saved)[0];
     expect(canonical.segments.filter(part => part.kind === "WORK").every(part => part.end - part.start <= 270)).toBe(true);
     saved.assignments = [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: canonical.id },
       { employeeId: "p1", date: "2026-11-03", kind: "ABSENCE", locked: true }];
     saved.policy.limitContinuousWorkBlocks = true;
     const result = prepareGeneration(saved);
-    expect(result.preparation.adjustedEmployeeIds).toEqual(["p1"]);
+    expect(result.preparation.adjustedEmployeeIds).toEqual([]);
     expect(result.input.assignments).toEqual(saved.assignments);
     expect(result.input.employees[0].shiftIds).toContain(canonical.id);
     expect(result.input.shifts.find(shift => shift.id === canonical.id)).toEqual(canonical);
@@ -103,19 +103,22 @@ describe("bounded automatic clock alternatives", () => {
     expect(prepareGeneration(saved).input.shifts).toEqual(saved.shifts);
   });
 
-  it("keeps REST_ONLY free days on one reference per duration and preserves manual alternatives", () => {
+  it("keeps REST_ONLY free days on its stable clock and rejects another real unselected clock", () => {
     const complete = prepareGeneration(fixture()).input;
     const rest = prepareGeneration({ ...complete, generationMode: "REST_ONLY" }).input;
     expect(rest.employees[0].shiftIds).toEqual(complete.employees[0].shiftIds);
+    const other = { ...structuredClone(options(rest)[0]), id: "unselected" };
+    other.segments = other.segments.map(part => ({ ...part, start: part.start + 30, end: part.end + 30 }));
+    rest.shifts.push(other);
     expect(matchesRestOnlyReferences(rest, [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: rest.employees[0].shiftIds[0] }])).toBe(true);
-    expect(matchesRestOnlyReferences(rest, [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: rest.employees[0].shiftIds[1] }])).toBe(false);
+    expect(matchesRestOnlyReferences(rest, [{ employeeId: "p1", date: "2026-11-02", kind: "WORK", shiftId: other.id }])).toBe(false);
     expect(prepareGeneration({ ...fixture(), generationMode: "REST_ONLY" }).input.employees[0].shiftIds).toHaveLength(1);
   });
 
   it("excludes short references and keeps every included optional continuous work block within 4h30", () => {
     const raw = fixture(); raw.policy.limitContinuousWorkBlocks = true;
     const balanced = options(prepareGeneration(raw).input);
-    expect(balanced.length).toBeGreaterThan(1);
+    expect(balanced).toHaveLength(1);
     expect(balanced.every(shift => shift.segments.filter(part => part.kind === "WORK").every(part => part.end - part.start <= 270))).toBe(true);
     const source = raw.employees[0].sourceSchedule;
     if (!source) throw new Error("Fixture reference missing");
@@ -126,7 +129,7 @@ describe("bounded automatic clock alternatives", () => {
     expect(short.shifts).toEqual(raw.shifts);
   });
 
-  it.each([119, 120])("fits optional alternatives around %i required manual, original, historical and locked references", required => {
+  it.each([119, 120])("retains %i required references without filling spare slots with automatic alternatives", required => {
     const saved = prepareRoster({ ...fixture(), simulation: true }, 42, "EXCLUDE", "PRESERVE_START");
     const reference = options(saved)[0], canonical = reference.id;
     const addReference = (id: string, offset: number) => {
@@ -151,9 +154,9 @@ describe("bounded automatic clock alternatives", () => {
     expect(saved.shifts).toHaveLength(required);
     expect(escalaInputSchema.safeParse(saved).success).toBe(true);
     const prepared = prepareGeneration(saved).input;
-    expect(prepared.shifts).toHaveLength(120);
+    expect(prepared.shifts).toHaveLength(required);
     expect(prepared.employees[0].shiftIds[0]).toBe(canonical);
-    expect(prepared.employees[0].shiftIds).toHaveLength(2 + 120 - required);
+    expect(prepared.employees[0].shiftIds).toHaveLength(2); // Stable base plus its existing locked exception.
     for (const shift of before.shifts) expect(prepared.shifts).toContainEqual(shift);
     expect(prepared.employees.slice(1)).toEqual(before.employees.slice(1));
     expect(prepared.employees[0].history).toEqual(before.employees[0].history);
@@ -172,7 +175,7 @@ describe("bounded automatic clock alternatives", () => {
       { employeeId: "p1", date: "2026-11-02", kind: "ABSENCE" }];
     const prepared = prepareGeneration(raw).input;
     const unlocked = options(prepared).filter(shift => shift.id !== "source");
-    expect(unlocked.length).toBeGreaterThan(1);
+    expect(unlocked).toHaveLength(1);
     expect(unlocked.every(shift => shift.segments.at(-1)?.end === 1330)).toBe(true);
     expect(prepared.assignments).toEqual(raw.assignments);
     expect(prepared.shifts.find(shift => shift.id === "source")).toEqual(raw.shifts[0]);

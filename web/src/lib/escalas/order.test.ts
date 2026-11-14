@@ -27,7 +27,7 @@ describe("operational display order", () => {
     expect(sortHoursEmployees(source).map(item => item.id)).toEqual(["b", "a", "c"]);
     expect(source).toEqual(before);
   });
-  it("groups complete schedules within each sector, then names before roles, not shift identifiers", () => {
+  it("groups roles within sectors before complete clocks and names, not shift identifiers", () => {
     const rows = [
       { employee: employee("1", "Ana"), schedule: "12:30-16:20 / 18:20-22:54" },
       { employee: employee("2", "Zélia"), schedule: "07:30-11:20 / 13:20-17:54" },
@@ -36,10 +36,10 @@ describe("operational display order", () => {
       { employee: employee("5", "Diogo", "Açougue"), schedule: "15:30-19:20 / 21:20-25:54" },
       { employee: employee("6", "Eva"), schedule: "ENC — Sem horário fixo" },
     ];
-    expect(sortScheduleEntries(rows).map(item => item.employee.id)).toEqual(["5", "3", "2", "4", "1", "6"]);
+    expect(sortScheduleEntries(rows).map(item => item.employee.id)).toEqual(["5", "2", "4", "1", "6", "3"]);
     expect(rows[0].employee.id).toBe("1");
   });
-  it("keeps role, natural registration and exact identity tie-breaks after equal names", () => {
+  it("preserves the original name-first contract for non-schedule consumers", () => {
     const source = [
       employee("z", "Zélia", "Padaria", "Auxiliar"),
       { ...employee("b", "Ana", "Padaria", "Padeiro"), registration: "10" },
@@ -49,5 +49,23 @@ describe("operational display order", () => {
     ];
     expect(sortEmployees(source).map(person => person.id)).toEqual(["d", "a", "c", "b", "z"]);
     expect(source.map(person => person.id)).toEqual(["z", "b", "c", "a", "d"]);
+  });
+  it("uses role collation, full clock geometry and stable identity ties without inventing ENC clocks", () => {
+    const rows = [
+      { employee: employee("late-role", "Ana", "Padaria", "Zelador"), schedule: "05:00-09:00 / 10:00-14:00" },
+      { employee: employee("late-clock", "Ana", "Padaria", "Áuxiliar"), schedule: "09:00-13:00 / 14:00-18:00" },
+      { employee: employee("geometry", "Zélia", "Padaria", "Áuxiliar"), schedule: "07:00-10:30 / 12:30-16:00" },
+      { employee: employee("accent", "Álvaro", "Padaria", "Áuxiliar"), schedule: "07:00-11:00 / 12:00-16:00" },
+      { employee: { ...employee("b", "Bia", "Padaria", "Áuxiliar"), registration: "2" }, schedule: "07:00-11:00 / 12:00-16:00" },
+      { employee: { ...employee("a", "Bia", "Padaria", "Áuxiliar"), registration: "2" }, schedule: "07:00-11:00 / 12:00-16:00" },
+      { employee: employee("manual", "Zélia", "Padaria", "Áuxiliar"), schedule: "Referência manual: 06:00-10:00 / 11:00-15:00, vigente 02/11/2026" },
+      { employee: employee("enc", "Aline", "Padaria", "Áuxiliar"), schedule: "ENC — Sem horário fixo" },
+      { employee: employee("first-role", "Zélia", "Padaria", "Ajudante"), schedule: "12:00-16:00 / 17:00-21:00" },
+    ];
+    const before = structuredClone(rows);
+    expect(sortScheduleEntries(rows).map(row => row.employee.id)).toEqual([
+      "first-role", "manual", "geometry", "accent", "a", "b", "late-clock", "enc", "late-role",
+    ]);
+    expect(rows).toEqual(before);
   });
 });

@@ -7,7 +7,8 @@ export function exportedDurationMinutes(value: unknown): number | null {
   return null;
 }
 
-export function exportedDateISO(value: unknown): string | null {
-  const date = typeof value === "number" ? new Date((value - 25569) * 86400000) : value;
-  return date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
+/** Match an ordered rendered PDF row while allowing line wrapping between words and cells. */
+export function exportedPdfRowPattern(values: readonly (string | number)[]): RegExp {
+  return new RegExp(values.map(value => String(value).trim().split(/\s+/)
+    .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")).join("\\s+"));
 }

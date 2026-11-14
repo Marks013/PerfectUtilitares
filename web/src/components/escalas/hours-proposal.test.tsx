@@ -44,7 +44,12 @@ describe("explicit branch hours selection before mass days off", () => {
     expect(shift?.segments[2].end).toBe(980);
     expect(departure.employees[1].shiftIds).toEqual([]);
     expect(departure.employees[1].scheduleMode).toBe("UNTIMED");
-    expect(prepareHoursProposal(input, "both").employees[0].shiftIds).toHaveLength(2);
+    const both = prepareHoursProposal(input, "both");
+    expect(both.employees[0].shiftIds).toHaveLength(1);
+    expect(both.shifts.find(item => item.id === both.employees[0].shiftIds[0])?.segments).toEqual([
+      { start: 420, end: 660, kind: "WORK" }, { start: 660, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" },
+    ]);
+    expect(both.employees[1].shiftIds).toEqual([]);
   });
 
   it("preserves an explicitly individual 44-hour reference when the branch simulation selects 42 hours", () => {
@@ -81,7 +86,7 @@ describe("explicit branch hours selection before mass days off", () => {
     const groups = hoursProposalGroups(input, prepareHoursProposal(input, "both"));
     expect(groups).toHaveLength(1);
     expect(groups[0].people).toEqual(["Ana · 1", "Beatriz · 2"]);
-    expect(groups[0].proposal).toHaveLength(2);
+    expect(groups[0].proposal).toEqual(["07:00–11:00 · intervalo 11:00–13:00 · 13:00–17:24 (08:24 trabalhadas)"]);
     expect(groups[0].proposal.every((value) => value.includes("08:24 trabalhadas"))).toBe(true);
     expect(groups[0].original).toBe("07:00-11:00 13:00-16:20");
   });

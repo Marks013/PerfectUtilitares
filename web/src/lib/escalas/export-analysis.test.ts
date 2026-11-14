@@ -1,11 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readSheet } from "read-excel-file/node";
+import { strFromU8, unzipSync } from "fflate";
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
 import { pdfJsServerDocumentOptions } from "@/lib/pdf/pdfjs-server";
 import { coverageBasis } from "./automatic-coverage";
 import { analyzeCoverage } from "./coverage-analysis";
+import * as coverageAnalysis from "./coverage-analysis";
+import * as coverageReport from "./coverage-report";
 import { exportEscalaPdf, exportEscalaXlsx } from "./export";
-import { exportedDateISO, exportedDurationMinutes } from "./export-test-utils";
+import { exportedPdfRowPattern } from "./export-test-utils";
+import { escalaDuration } from "./presentation";
 import type { EscalaWorkspace } from "./types";
 
 function fixture(): EscalaWorkspace {
@@ -48,6 +52,18 @@ async function pdfText(bytes: Uint8Array): Promise<string> {
 }
 
 describe("central coverage analysis in real operational files", () => {
+  it.each(["rest", "hours", "both"] as const)("omits analysis sheets and their calculations from the %s XLSX", mode => {
+    const workspace = fixture(), before = structuredClone(workspace);
+    const analysisSpy = vi.spyOn(coverageAnalysis, "analyzeCoverage"), reportSpy = vi.spyOn(coverageReport, "buildCoverageReport");
+    try {
+      const files = unzipSync(exportEscalaXlsx(workspace, mode));
+      const workbook = strFromU8(files["xl/workbook.xml"]);
+      expect([...workbook.matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1]))
+        .toEqual(mode === "rest" ? ["Escala"] : mode === "hours" ? ["Horarios"] : ["Escala", "Horarios"]);
+      expect(analysisSpy).not.toHaveBeenCalled(); expect(reportSpy).not.toHaveBeenCalled();
+      expect(workspace).toEqual(before);
+    } finally { analysisSpy.mockRestore(); reportSpy.mockRestore(); }
+  });
   it("carries a reference-only manual clock and validity to real PDF and XLSX", async () => {
     const workspace = fixture(); workspace.input.generationMode = "HOURS_ONLY"; workspace.input.assignments = [];
     workspace.input.employees = [workspace.input.employees[0]];
@@ -61,34 +77,27 @@ describe("central coverage analysis in real operational files", () => {
     expect(rendered).toContain("Referência manual"); expect(rendered).toContain("08:00-12:00"); expect(rendered).toContain("02/11/2026");
     expect(workspace).toEqual(before); expect(workspace.input.assignments).toEqual([]);
   });
-  it("exports independent numeric rulers with the real role-aware peak occurrence in XLSX and PDF", async () => {
+  it("keeps independent numeric rulers and the role-aware peak in PDF while XLSX retains the hours", async () => {
     const workspace = fixture(), before = structuredClone(workspace);
     const central = analyzeCoverage(workspace.input, workspace.input, { details: true, referenceOrigin: "PERSISTED" }).sectors[0];
+    const { confirmed, estimated } = central;
+    if (!confirmed || !estimated) throw new Error("Confirmed and estimated coverage rulers are required");
+    const confirmedDeficit = confirmed.deficitPersonMinutes, estimatedDeficit = estimated.deficitPersonMinutes;
+    if (confirmedDeficit === null || confirmedDeficit === undefined || estimatedDeficit === null || estimatedDeficit === undefined) {
+      throw new Error("Confirmed and estimated deficit minutes must be available");
+    }
     const bytes = Buffer.from(exportEscalaXlsx(workspace, "hours"));
-    const rows = (await readSheet(bytes, "Desfalques")).slice(4);
-    expect(rows).toHaveLength(2);
-    const confirmed = rows.find(row => row[1] === "Confirmada"), estimated = rows.find(row => row[1] === "Estimada");
-    if (!confirmed || !estimated) throw new Error("Independent confirmed and estimated export rows are required");
-    expect(rows.every(row => row.length === 12)).toBe(true);
-    expect(confirmed.slice(2, 5)).toEqual([2, 3, 2]); expect(confirmed[6]).toBe("09:00-10:00");
-    expect(estimated.slice(2, 5)).toEqual([2, 10, 8]); expect(estimated[6]).toBe("12:00-13:00");
-    expect(exportedDateISO(confirmed[5])).toBe("2026-11-02");
-    expect(exportedDateISO(estimated[5])).toBe("2026-11-02");
-    expect(confirmed[4]).toBe(central.confirmed?.peakMissing);
     expect(central.confirmed?.peakSectorMissing).toBe(1);
-    expect(exportedDurationMinutes(confirmed[7])).toBe(60);
-    expect(confirmed[11]).toContain("Limite por função");
-    expect(exportedDurationMinutes(confirmed[9])).toBe(central.confirmed?.deficitPersonMinutes);
-    expect(exportedDurationMinutes(estimated[9])).toBe(central.estimated?.deficitPersonMinutes);
-    expect(rows.some(row => row[1] === "Total")).toBe(false);
-    const capacity = (await readSheet(bytes, "Capacidade"))[4];
-    expect(capacity[1]).toBe(2);
-    expect(capacity[3]).toBe(88); expect(capacity[4]).toBe(84); expect(capacity[5]).toBe(80);
-    expect(capacity[9]).toBe(central.knownWorkPersonMinutes / 60);
-    expect(capacity[9]).toBe(32);
+    expect(central.knownWorkPersonMinutes / 60).toBe(32);
     expect((await readSheet(bytes, "Horarios")).slice(4)).toHaveLength(3);
     const text = await pdfText(await exportEscalaPdf(workspace, "hours"));
     expect(text).toContain("Confirmada"); expect(text).toContain("Estimada");
+    expect(text).toMatch(exportedPdfRowPattern(["Setor A", "Confirmada", "02/11/2026", "09:00-10:00", 2, 3, 2, "01:00", 1, escalaDuration(confirmedDeficit)]));
+    expect(text).toMatch(exportedPdfRowPattern(["Setor A", "Estimada", "02/11/2026", "12:00-13:00", 2, 10, 8, "01:00", 1, escalaDuration(estimatedDeficit)]));
+    expect(text).toContain("Limite por função");
+    expect(text).toContain("Nominal semanal: 88h; 2 com origem. FPRE136: 44h (2). 42h: 84h; 40h: 80h.");
+    expect(text).toContain("WORK conhecido no período: 32:00");
+    expect(text).not.toMatch(/Setor A\s+Total/);
     expect(text).toContain("Maior falta simultânea (pessoas)");
     expect(text).not.toMatch(/Pico geral|Geral:|Com funções:/);
     expect(text).toContain("09:00-10:00"); expect(text).toContain("12:00-13:00");
@@ -103,20 +112,19 @@ describe("central coverage analysis in real operational files", () => {
     if (!unknownDay) throw new Error("WORK assignment missing from the unknown-clock fixture");
     unknownDay.shiftId = "not-known";
     workspace.input.coverageBasis = coverageBasis(workspace.input);
-    const bytes = Buffer.from(exportEscalaXlsx(workspace, "hours"));
-    const capacity = (await readSheet(bytes, "Capacidade"))[4];
-    expect(capacity[1]).toBe(1); expect(capacity[2]).toContain("Sem origem: 1");
-    expect(capacity[3]).toBe(44);
-    const rows = (await readSheet(bytes, "Desfalques")).slice(4);
-    for (const row of rows) {
-      expect(row[1]).toContain("parcial");
-      expect(row.slice(2, 11)).toEqual(Array(9).fill("—"));
+    const text = await pdfText(await exportEscalaPdf(workspace, "hours"));
+    expect(text).toContain("Nominal semanal: 44h; 1 com origem.");
+    expect(text).toContain("Sem origem: 1");
+    for (const ruler of ["Confirmada", "Estimada"]) {
+      expect(text).toMatch(exportedPdfRowPattern(["Setor A", ruler + " · parcial", ...Array(8).fill("—")]));
     }
+    expect(text.match(/Duração somada das faixas com falta: —/g)).toHaveLength(2);
   });
   it("does not turn an obsolete estimated ruler into a known zero while keeping the confirmed ruler available", async () => {
     const workspace = fixture(); delete workspace.input.coverageBasis;
-    const rows = (await readSheet(Buffer.from(exportEscalaXlsx(workspace, "hours")), "Desfalques")).slice(4);
-    expect(rows.find(row => row[1] === "Confirmada")?.[4]).toBe(2);
-    expect(rows.find(row => row[1] === "Estimada · parcial")?.slice(2, 11)).toEqual(Array(9).fill("—"));
+    const text = await pdfText(await exportEscalaPdf(workspace, "hours"));
+    expect(text).toMatch(exportedPdfRowPattern(["Setor A", "Confirmada", "02/11/2026", "09:00-10:00", 2, 3, 2]));
+    expect(text).toMatch(exportedPdfRowPattern(["Setor A", "Estimada · parcial", ...Array(8).fill("—")]));
+    expect(text).toContain("Duração somada das faixas com falta: —");
   });
 });

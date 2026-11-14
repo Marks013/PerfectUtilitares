@@ -854,6 +854,29 @@ describe("Escalas revision service", () => {
     expect(unfinished.proposalInput.assignments).toEqual(generatedInput().assignments);
     expect(unfinished.proposalInput.demands.filter(demand => demand.estimated !== true)).toEqual(generatedInput().demands);
   });
+  it("freezes the original input before preparation and carries operation controls separately", async () => {
+    const value = generatedInput();
+    value.needsRegeneration = true;
+    value.employees[0].sourceSchedule = { report: "FPRE136", code: "X", description: "CSV", weekday: "08:00-12:00 / 13:00-17:24", saturday: "08:00-12:00" };
+    const original = structuredClone(value), controller = new AbortController();
+    useCurrent(value);
+    mocks.solve.mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 1, message: "Snapshot check" });
+    const result = await generateEscala(actor, "w1", 1, { signal: controller.signal });
+    const [prepared, options] = mocks.solve.mock.calls[0];
+    expect(options.signal).toBe(controller.signal);
+    expect(options.qualityReference.demands).toEqual(original.demands);
+    expect(options.qualityReference.shifts).toEqual(original.shifts);
+    expect(options.qualityReference.assignments).toEqual(original.assignments);
+    expect(options.qualityReference.needsRegeneration).toBe(true);
+    expect(options.qualityReference.employees[0].sourceSchedule).toEqual(original.employees[0].sourceSchedule);
+    expect(options.qualityReference).not.toBe(prepared);
+    expect(options.qualityReference.demands).not.toBe(prepared.demands);
+    expect(options.qualityReference.shifts).not.toBe(prepared.shifts);
+    expect(value).toEqual(original);
+    expect(result.result.status).toBe("UNKNOWN");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it("rejects a generated response when another editor changed the revision", async () => {
     mocks.revision.findUnique.mockResolvedValueOnce(version()).mockResolvedValueOnce(version(input(), 2));
     await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
@@ -869,7 +892,8 @@ describe("Escalas revision service", () => {
     useCurrent(value);
     const result = await generateEscala(actor, "w1", 1);
     expect(mocks.solve).toHaveBeenCalledTimes(1);
-    expect(mocks.solve.mock.calls[0]).toHaveLength(1);
+    expect(mocks.solve.mock.calls[0]).toHaveLength(2);
+    expect(mocks.solve.mock.calls[0][1]).toMatchObject({ qualityReference: { demands: value.demands, assignments: value.assignments } });
     expect(result.preparation).toMatchObject({ includedEmployees: 1, untimedEmployees: 0 });
     expect(result.preparation.generatedCoverageSlots).toBeGreaterThan(0);
     expect(result.proposalInput.policy).toMatchObject({ reviewed: false, source: "", reviewedBy: "", coverageReview: "SUGGESTED" });

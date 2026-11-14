@@ -9,7 +9,8 @@ import { validateEscala } from "./validation";
 import { exportEscalaPdf, exportEscalaXlsx } from "./export";
 import { coverageBasis } from "./automatic-coverage";
 import { analyzeCoverage } from "./coverage-analysis";
-import { exportedDateISO } from "./export-test-utils";
+import { exportedPdfRowPattern } from "./export-test-utils";
+import { escalaDuration } from "./presentation";
 import type { EscalaWorkspace } from "./types";
 
 function crowded(): EscalaWorkspace {
@@ -85,7 +86,7 @@ describe("large but valid operational reports", () => {
     } finally { spy.mockRestore(); }
   });
 
-  it("keeps 6,000 monthly demands compact without dropping sectors or mandatory minima", async () => {
+  it("keeps 6,000 demands compact in PDF while XLSX contains only the retained hourly view", async () => {
     const workspace = crowded();
     const days = dateRange("2026-11-01", "2026-11-30");
     const requiredSectors = Array.from({ length: 8 }, (_, index) => "Obrigatório " + index);
@@ -125,50 +126,22 @@ describe("large but valid operational reports", () => {
       for (const sector of requiredSectors) expect(reportText.filter(item => item.text === sector)).toHaveLength(1);
       expect(reportText.map(item => item.text).join(" ")).not.toMatch(/Cargo \d\d/);
     } finally { spy.mockRestore(); }
-    const bytes = exportEscalaXlsx(workspace, "hours");
-    const rows = await readSheet(Buffer.from(bytes), "Desfalques");
-    expect(rows.slice(4).map(row => row[0])).toEqual([...requiredSectors, "Setor"]);
-    expect(rows[3]).toHaveLength(12);
-    expect(rows.slice(4).every(row => row.length === 12 && row[8] === 30)).toBe(true);
+    const reportText = drawn.map(item => item.text).join(" ");
     for (const [index, sector] of requiredSectors.entries()) {
-      const row = rows[index + 4], analysis = central.sectors.find(item => item.sector === sector)?.confirmed;
+      const analysis = central.sectors.find(item => item.sector === sector)?.confirmed;
       if (!analysis) throw new Error(`Mandatory analysis missing for ${sector}`);
-      expect(row[1]).toBe("Confirmada"); expect(row[2]).toBe(0); expect(row[3]).toBe(index + 1); expect(row[4]).toBe(index + 1);
-      expect(exportedDateISO(row[5])).toBe("2026-11-01"); expect(row[6]).toBe("17:30-18:00");
       expect(analysis.requiredPersonMinutes).toBe(900 * (index + 1));
       expect(analysis.deficitPersonMinutes).toBe(900 * (index + 1));
+      expect(reportText).toMatch(exportedPdfRowPattern([sector, "Confirmada", "01/11/2026", "17:30-18:00", 0, index + 1, index + 1, "00:30", 30, escalaDuration(900 * (index + 1))]));
     }
-    expect(rows[12][1]).toBe("Estimada"); expect(rows[12][2]).toBe(0); expect(rows[12][3]).toBe(32); expect(rows[12][4]).toBe(32);
-    expect(exportedDateISO(rows[12][5])).toBe("2026-11-01"); expect(rows[12][6]).toBe("12:00-12:05");
     expect(central.sectors.find(item => item.sector === "Setor")?.estimated?.deficitPersonMinutes).toBe(28800);
-    const files = unzipSync(bytes);
-    const summaryId = [...strFromU8(files["xl/workbook.xml"]).matchAll(/<sheet name="([^"]+)" sheetId="(\d+)"/g)].find(match => match[1] === "Desfalques")?.[2];
-    if (!summaryId) throw new Error("Shortage worksheet missing");
-    const summaryXml = strFromU8(files[`xl/worksheets/sheet${summaryId}.xml`]);
-    const stylesXml = strFromU8(files["xl/styles.xml"]);
-    const cellFormats = stylesXml.match(/<cellXfs count="(\d+)">([\s\S]*?)<\/cellXfs>/);
-    if (!cellFormats) throw new Error("Workbook cell formats missing");
-    const formats = cellFormats[2].match(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g) ?? [];
-    expect(formats).toHaveLength(Number(cellFormats[1]));
-    const durationIds = new Set([...stylesXml.matchAll(/<numFmt\b[^>]*>/g)]
-      .filter(match => /\bformatCode="\[h\]:mm"/.test(match[0]))
-      .map(match => match[0].match(/\bnumFmtId="(\d+)"/)?.[1]));
-    expect(durationIds.size).toBe(1); expect(durationIds.has(undefined)).toBe(false);
-    for (const [index, row] of rows.slice(4).entries()) {
-      // Read the numeric Excel duration directly: a Date time-of-day would lose accumulated days.
-      const duration = summaryXml.match(new RegExp(`<c r="J${index + 5}" s="(\\d+)"><v>([\\d.eE+-]+)</v></c>`));
-      if (!duration) throw new Error(`Numeric shortage duration missing for row ${index + 5}`);
-      const style = formats[Number(duration[1])], formatId = style?.match(/\bnumFmtId="(\d+)"/)?.[1];
-      if (!style || !formatId) throw new Error(`Cell style missing for row ${index + 5}`);
-      expect(durationIds.has(formatId)).toBe(true);
-      expect(style).toContain('horizontal="right"'); expect(style).toContain('wrapText="1"');
-      const sector = central.sectors.find(item => item.sector === row[0]);
-      const expected = row[1] === "Confirmada" ? sector?.confirmed : sector?.estimated;
-      if (expected?.deficitPersonMinutes === null || expected?.deficitPersonMinutes === undefined) throw new Error("Known shortage minutes required");
-      expect(Number.isFinite(Number(duration[2]))).toBe(true);
-      expect(Math.round(Number(duration[2]) * 1440)).toBe(expected?.deficitPersonMinutes);
-      if (row[0] === "Setor") expect(Number(duration[2])).toBeGreaterThan(1);
-    }
+    expect(reportText).toMatch(exportedPdfRowPattern(["Setor", "Estimada", "01/11/2026", "12:00-12:05", 0, 32, 32, "00:05", 30, "480:00"]));
+    const bytes = exportEscalaXlsx(workspace, "hours"), files = unzipSync(bytes);
+    const workbook = strFromU8(files["xl/workbook.xml"]);
+    expect([...workbook.matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1])).toEqual(["Horarios"]);
+    const hours = await readSheet(Buffer.from(bytes), "Horarios");
+    expect(hours[3]).toHaveLength(8);
+    expect(hours.slice(4)).toHaveLength(40);
     for (const [path, value] of Object.entries(files)) if (/worksheets\/sheet\d+\.xml$/.test(path)) {
       for (const match of strFromU8(value).matchAll(/<row[^>]* ht="([\d.]+)"/g)) expect(Number(match[1])).toBeLessThanOrEqual(409);
     }

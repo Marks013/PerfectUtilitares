@@ -37,10 +37,12 @@ export function compareProposedSchedules(left: string, right: string): number {
   return a.length - b.length || portuguese.compare(left, right);
 }
 
-/** Group equal schedules within each sector, then names A–Z before job and identity ties. */
+/** Presentation only: sector, role, complete clock sequence, then name and stable identity ties. */
 export function sortScheduleEntries<T extends { employee: DisplayEmployee; schedule: string }>(entries: readonly T[]): T[] {
   return [...entries].sort((left, right) => portuguese.compare(left.employee.sector, right.employee.sector)
     || exact.compare(left.employee.sector, right.employee.sector)
+    || portuguese.compare(left.employee.role, right.employee.role)
+    || exact.compare(left.employee.role, right.employee.role)
     || compareProposedSchedules(left.schedule, right.schedule)
     || compareEmployeeIdentity(left.employee, right.employee));
 }

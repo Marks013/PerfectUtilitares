@@ -32,6 +32,7 @@ class ImprovementContext:
     untimed_people: set | None = None
     rest_spacing: dict | None = None
     rest_spacing_groups: dict | None = None
+    refinement_reserve_seconds: float = 0.0
 
 
 class Snapshot:
@@ -235,7 +236,25 @@ def _phase_budget(remaining, names, index):
     return MIN_PHASE_BUDGET + surplus * weights[0] / sum(weights)
 
 
+def _refinement_phase_budget(remaining, names, index, reserve):
+    """Leave one useful rest search inside the existing deadline, never add time.
+
+    Earlier operational objectives remain bounded by their incumbent even when
+    their search is skipped. The first pending rest phase consumes the reserve;
+    a later spacing phase can use only the time actually left at that point.
+    """
+    budget = _phase_budget(remaining, names, index)
+    pending = [name for name in names[index:] if name in ('SUNDAY_BALANCE', 'REST_SPACING')]
+    if reserve <= 0 or not pending:
+        return budget
+    if names[index] == pending[0]:
+        return min(remaining, max(budget, reserve))
+    return min(budget, max(0.0, remaining - reserve))
+
+
 def improve(model, objectives, values, deadline, names=None, *, context=None):
+    if names is not None and len(names) != len(objectives):
+        raise ValueError('objective/name count mismatch')
     context = context or ImprovementContext()
     control, protected_groups = context.control, context.protected_groups
     employee_groups, decision_variables = context.employee_groups, context.decision_variables
@@ -256,7 +275,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             if match:
                 decision_variables[variable.index] = match.group(1), match.group(2)
     dates = sorted({day for _pid, day in decision_variables.values()})
-    names = names or [f'OBJECTIVE_{i + 1}' for i in range(len(objectives))]
+    names = [f'OBJECTIVE_{i + 1}' for i in range(len(objectives))] if names is None else names
     secondary = {'SATURDAY_BALANCE', 'REST_DISTRIBUTION', 'REST_ROTATION', 'PEOPLE_CHANGED',
                  'STABILITY', 'PREFERENCES', 'TIE_BREAK'}
     # Lower-priority stability and tie-breaking must be allowed to yield to better
@@ -281,8 +300,9 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
     # All repeated repairs and the main COVERAGE phase share one allowance,
     # computed from the full active sequence, including both rest objectives.
     budget_started = time.monotonic()
-    coverage_cutoff = budget_started + (_phase_budget(
-        max(0, deadline - budget_started - MIN_SEARCH_SECONDS), names, 0)
+    coverage_cutoff = budget_started + (_refinement_phase_budget(
+        max(0, deadline - budget_started - MIN_SEARCH_SECONDS), names, 0,
+        context.refinement_reserve_seconds)
         if names and names[0] == 'COVERAGE' else 0)
     polish_attempt = 0
     protected_groups, active_groups = protected_groups or {}, {}
@@ -366,7 +386,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
             continue
-        budget = _phase_budget(remaining, names, index)
+        budget = _refinement_phase_budget(remaining, names, index, context.refinement_reserve_seconds)
         if repair_phase:
             # Share the SAME coverage deadline by remaining decision cost.
             # Early completion releases time to the next repair; global search

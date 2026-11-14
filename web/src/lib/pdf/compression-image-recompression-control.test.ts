@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PDFDocument } from "pdf-lib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PdfCompressionProfile } from "./compression-analyzer";
 import {
@@ -126,6 +127,13 @@ function profile(
 
 let directory = "";
 
+async function inputPdf() {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([400, 500]);
+  const bytes = Buffer.from(await pdf.save());
+  return Buffer.concat([bytes, Buffer.alloc(Math.max(0, 1_000 - bytes.length), 32)]);
+}
+
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "pdf-image-control-"));
   processMock.jpegBytes = 0;
@@ -153,7 +161,7 @@ describe("PDF image recompression process control", () => {
     "stops after a validated JPEG XObject candidate in $mode mode",
     async ({ colorMode, sourceDpi, mode }) => {
       const inputPath = join(directory, "input.pdf");
-      await writeFile(inputPath, Buffer.alloc(1_000));
+      await writeFile(inputPath, await inputPdf());
       processMock.jpegBytes = 850;
 
       const candidates = await buildPreservingImageCandidates({
@@ -201,7 +209,7 @@ describe("PDF image recompression process control", () => {
     "keeps the existing candidates after JPEG XObject %s",
     async (reason) => {
       const inputPath = join(directory, "input.pdf");
-      await writeFile(inputPath, Buffer.alloc(1_000));
+      await writeFile(inputPath, await inputPdf());
       processMock.jpegBytes = reason === "integrity failure" ? 800 : 980;
       if (reason === "integrity failure") {
         vi.mocked(validateSemanticCandidate).mockRejectedValueOnce(
@@ -228,7 +236,7 @@ describe("PDF image recompression process control", () => {
 
   it("bounds optional optimizer time and keeps the validated fallback", async () => {
     const inputPath = join(directory, "input.pdf");
-    await writeFile(inputPath, Buffer.alloc(1_000));
+    await writeFile(inputPath, await inputPdf());
     processMock.gsBytes = 950;
     processMock.mode = "hangOptimizer";
     const started = new Promise<void>((resolve) => { processMock.optimizerStarted = resolve; });
@@ -250,7 +258,7 @@ describe("PDF image recompression process control", () => {
 
   it("retains a growing GS intermediate when the final optimizer makes it smaller", async () => {
     const inputPath = join(directory, "input.pdf");
-    await writeFile(inputPath, Buffer.alloc(1_000));
+    await writeFile(inputPath, await inputPdf());
     processMock.gsBytes = 1_200;
     processMock.optimizerBytes = 500;
     const candidates = await buildPreservingImageCandidates({
@@ -267,7 +275,7 @@ describe("PDF image recompression process control", () => {
 
   it("does not repeat lossy optimization after a validated strong GS result", async () => {
     const inputPath = join(directory, "input.pdf");
-    await writeFile(inputPath, Buffer.alloc(1_000));
+    await writeFile(inputPath, await inputPdf());
     processMock.gsBytes = 500;
     const candidates = await buildPreservingImageCandidates({
       inputPath, baseOutputPath: join(directory, "candidate"), options: options(),
@@ -291,7 +299,7 @@ describe("PDF image recompression process control", () => {
 
   it("reports visual integrity rejection instead of treating it as optimized input", async () => {
     const inputPath = join(directory, "input.pdf");
-    await writeFile(inputPath, Buffer.alloc(1_000));
+    await writeFile(inputPath, await inputPdf());
     const { PdfToolError } = await import("./compression-types");
     vi.mocked(validateSemanticCandidate).mockRejectedValueOnce(
       new PdfToolError("PDF_VISUAL_INTEGRITY_FAILED", "Visual content missing"),
