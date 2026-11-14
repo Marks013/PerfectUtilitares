@@ -17,6 +17,10 @@ const mocks = vi.hoisted(() => ({
   revision: { findUnique: vi.fn(), create: vi.fn() }, grants: { findUnique: vi.fn(), findMany: vi.fn() },
   audit: { create: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(), catalogEntry: vi.fn(),
 }));
+vi.mock("./solver-transport", async original => {
+  const crypto = await import("node:crypto");
+  return { ...await original<typeof import("./solver-transport")>(), candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "synthetic-receipt-key").update(payload).digest("hex") };
+});
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: mocks.workspace, escalaRevision: mocks.revision, escalaBranchAccess: mocks.grants, auditLog: mocks.audit, $transaction: mocks.transaction } }));
 vi.mock("./solver-client", async (original) => ({ ...await original<typeof import("./solver-client")>(), solveEscala: mocks.solve }));
 vi.mock("./shift-catalog/catalog", () => ({ getTurnoCatalogEntry: mocks.catalogEntry, findTurnoCatalogCode: async () => null }));
@@ -853,6 +857,67 @@ describe("Escalas revision service", () => {
     expect(unfinished.proposalInput.simulation).toBe(true);
     expect(unfinished.proposalInput.assignments).toEqual(generatedInput().assignments);
     expect(unfinished.proposalInput.demands.filter(demand => demand.estimated !== true)).toEqual(generatedInput().demands);
+  });
+  it("retains the full unsaved candidate at the service boundary when a lower total hides role loss", async () => {
+    const value = input(); value.policy.calendarMode = "MANUAL";
+    value.employees = ["a", "b"].map(id => ({ ...value.employees[0], id, registration: id, name: "Synthetic", sector: "Store", role: id === "a" ? "Fiscal" : "Zelador" }));
+    value.assignments = value.employees.flatMap(person => Array.from({ length: 7 }, (_, day) => {
+      const off = (person.id === "a" ? [1, 6] : [2, 6]).includes(day);
+      return { employeeId: person.id, date: addDays(value.startDate, day), kind: off ? "OFF" as const : "WORK" as const, ...(!off ? { shiftId: "day" } : {}) };
+    }));
+    value.demands = [{ id: "fiscal", date: "2026-10-27", sector: "Store", role: "Fiscal", start: 480, end: 720, minimum: 2, estimated: true },
+      { id: "zelador", date: "2026-10-27", sector: "Store", role: "Zelador", start: 480, end: 540, minimum: 1, estimated: true }];
+    useCurrent(value);
+    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: value.assignments, wallTimeSeconds: 1, message: "First candidate" });
+    const first = await generateEscala(actor, "w1", 1);
+    const changed = value.assignments.map((day): EscalaInput["assignments"][number] => {
+      if (day.date === "2026-10-27") return day.employeeId === "a" ? { ...day, kind: "WORK", shiftId: "day" } : { employeeId: day.employeeId, date: day.date, kind: "OFF" };
+      if (day.date === "2026-10-28") return day.employeeId === "b" ? { ...day, kind: "WORK", shiftId: "day" } : { employeeId: day.employeeId, date: day.date, kind: "OFF" };
+      return day;
+    });
+    mocks.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: changed, wallTimeSeconds: 1, message: "Lower total", optimization: { budgetSeconds: 12, phases: [] } });
+    const second = await generateEscala(actor, "w1", 1, { comparisonReference: { input: first.proposalInput, receipt: first.candidateReceipt } });
+    expect(second.comparison).toMatchObject({ admission: "ADMITTED", selection: "REFERENCE_RETAINED", reason: "ROLE_TIME_COVERAGE" });
+    expect(second.proposalInput).toEqual(first.proposalInput);
+    expect(second.result.assignments).toEqual(first.proposalInput.assignments);
+    expect(second.result.optimization).toBeUndefined();
+    expect(second.preparation).toEqual(first.preparation);
+    expect(second.preparation.generatedCoverageSlots).toBe(second.proposalInput.demands.filter(demand => demand.estimated).length);
+    expect(second.preparation.includedEmployees).toBe(second.proposalInput.employees.filter(person => person.planningEnabled !== false).length);
+    expect(second.preparation.untimedEmployees).toBe(0);
+    expect(second.validation.valid).toBe(true);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+  it("round-trips an authenticated unsaved candidate through the real service without another saved revision", async () => {
+    const value = generatedInput(); useCurrent(value);
+    const first = await generateEscala(actor, "w1", 1);
+    expect(first.candidateReceipt).toMatchObject({ workspaceId: "w1", revision: 1, version: 1 });
+    const second = await generateEscala(actor, "w1", 1, { comparisonReference: { input: first.proposalInput, receipt: first.candidateReceipt } });
+    expect(second.comparison).toMatchObject({ admission: "ADMITTED" });
+    expect(second.proposalInput.shifts).toEqual(first.proposalInput.shifts);
+    expect(second.candidateReceipt?.inputHash).toBe(first.candidateReceipt?.inputHash);
+    expect(mocks.solve.mock.calls[1][1]).not.toHaveProperty("comparisonReference");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+  it("rejects an altered prior snapshot before invoking the processor", async () => {
+    useCurrent(generatedInput());
+    const first = await generateEscala(actor, "w1", 1);
+    const changed = structuredClone(first.proposalInput); changed.shifts[0].segments[0].start++;
+    mocks.solve.mockClear();
+    await expect(generateEscala(actor, "w1", 1, { comparisonReference: { input: changed, receipt: first.candidateReceipt } })).rejects.toMatchObject({ code: "ESCALA_COMPARISON_REFERENCE_INVALID" });
+    expect(mocks.solve).not.toHaveBeenCalled();
+  });
+  it("continues generation with an objective notice when an authenticated receipt has expired", async () => {
+    useCurrent(generatedInput());
+    const first = await generateEscala(actor, "w1", 1);
+    if (!first.candidateReceipt) throw new Error("Expected a server-issued candidate receipt");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(first.candidateReceipt.expiresAt + 1);
+    try {
+      const second = await generateEscala(actor, "w1", 1, { comparisonReference: { input: first.proposalInput, receipt: first.candidateReceipt } });
+      expect(second.result.status).toBe("FEASIBLE");
+      expect(second.comparison).toMatchObject({ admission: "EXPIRED", selection: "NOT_USED" });
+    } finally { clock.mockRestore(); }
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
   it("freezes the original input before preparation and carries operation controls separately", async () => {
     const value = generatedInput();

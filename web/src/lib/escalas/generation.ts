@@ -3,6 +3,7 @@ import { applyLocalHolidayCalendar, assertHolidayLocks } from "./calendar";
 import { isHoursReferenceOnly } from "./hours-reference";
 import { retainCoverageReference } from "./automatic-coverage";
 import { applyRestEligibility, isRestPlanningExcludedRole, isShortFpre136Schedule } from "./eligibility";
+import { effectiveScheduleMode } from "./fpre136-schedule";
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, maximumMealMinutes, minimumMealMinutes, usesMixed42 } from "./labor-rules";
 import { automaticShiftAlternatives, civilNightWorkMinutes, importedShiftReference, isAutomaticPreparedShift, isGeneratedMixed42Shift, planningWeeklyHours, preparedShiftSignature, prepareRoster, proposeCoverage, refreshProposedWorkBlocks, stableShiftReferences } from "./preparation";
@@ -107,7 +108,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     monthlyChoices.push(choice);
   };
   let adjustedEmployees = input.employees.map((original) => {
-    const person: EscalaEmployee = { ...applyRestEligibility(original), fixedImportedShiftId: undefined,
+    const person: EscalaEmployee = { ...applyRestEligibility(original), scheduleMode: effectiveScheduleMode(original), fixedImportedShiftId: undefined,
       shiftIds: original.manualShiftBaseIds ?? original.shiftIds };
     if (isRestPlanningExcludedRole(person.role) || isShortFpre136Schedule(person)) excludedEmployeeIds.push(person.id);
     if (person.planningEnabled === false || person.activeFrom > input.endDate || (person.activeUntil && person.activeUntil < input.startDate)

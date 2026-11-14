@@ -1,6 +1,7 @@
 import { absoluteMinute, addDays, visibleDates } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 import { compareSectors } from "./order";
+import { effectiveScheduleMode } from "./fpre136-schedule";
 
 type PresenceInterval = { start: number; end: number; employee: EscalaEmployee };
 export type CoveragePresence = Map<string, PresenceInterval[]>;
@@ -36,7 +37,8 @@ export function buildCoveragePresence(input: EscalaInput): CoveragePresence {
   const midnights = new Map<string, number>();
   for (const record of records.values()) {
     const person = people.get(record.employeeId), shift = shifts.get(record.shiftId ?? "");
-    if (!person || !shift || record.kind !== "WORK" || person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || !active(person, record.date)) continue;
+    const mode = person ? effectiveScheduleMode(person) : undefined;
+    if (!person || !shift || record.kind !== "WORK" || person.planningEnabled === false || mode === "MISSING" || mode === "UNTIMED" || !active(person, record.date)) continue;
     try {
       const shiftDate = key(record.date, shift.id);
       let coverage = coverageByShiftDate.get(shiftDate);
@@ -78,7 +80,8 @@ export function sectorPresenceGaps(input: EscalaInput, index = buildCoveragePres
     .map(demand => key(demand.date, demand.sector)));
   const groups = new Map<string, EscalaEmployee[]>();
   for (const person of input.employees) {
-    if (person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || !person.sector) continue;
+    const mode = effectiveScheduleMode(person);
+    if (person.planningEnabled === false || mode === "MISSING" || mode === "UNTIMED" || !person.sector) continue;
     const members = groups.get(person.sector) ?? [];
     members.push(person);
     groups.set(person.sector, members);

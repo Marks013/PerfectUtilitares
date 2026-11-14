@@ -51,6 +51,14 @@ beforeEach(() => {
 });
 
 describe("generation operation ownership and atomic lifecycle", () => {
+  it("carries the prior candidate to the service without saving a snapshot in operation state", async () => {
+    const reference = { input: { synthetic: true }, receipt: { synthetic: true } };
+    const signal = new AbortController().signal;
+    await runGenerationOperation(actor, "owner", operationId, "w1", 1, signal, reference);
+    expect(mocks.generate).toHaveBeenCalledWith(actor, "w1", 1, expect.objectContaining({ signal, comparisonReference: reference }));
+    expect(mocks.updateMany.mock.calls.every(([args]) => !JSON.stringify(args.data).includes("synthetic"))).toBe(true);
+    expect(row.state).toBe("COMPLETED");
+  });
   it("hashes stable authenticated identity with tenant independently of cookie renewal", () => {
     const request = (cookie: string) => new Request("http://localhost", { headers: { cookie } });
     expect(solveOwner(request(""), actor)).not.toBe(solveOwner(request(""), { ...actor, moduleSessionId: "s2" }));

@@ -31,6 +31,11 @@ function secret(): string {
   }
 }
 
+/** Domain-separated authentication for ephemeral complete-proposal receipts, never solver capabilities. */
+export function candidateReferenceSignature(payload: string): string {
+  return createHmac("sha256", secret()).update("escalas-candidate-v1\0").update(payload).digest("hex");
+}
+
 /** Capability is derived only on the server; never stored in browser or operation rows. */
 export function solverCapability(operationId: string, ownerKey: string): string {
   return createHmac("sha256", secret()).update("escalas-solve\0" + operationId + "\0" + ownerKey).digest("hex");

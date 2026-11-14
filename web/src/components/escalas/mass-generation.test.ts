@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
 import { newInput } from "./workspace-model";
+import type { EscalaCandidateReceipt } from "@/lib/escalas/candidate-reference";
 
 function fixture() {
   const input = newInput("08", "Filial", "2026-11", 42);
@@ -98,5 +99,44 @@ describe("branch-wide generation request sequence", () => {
     const post = vi.fn();
     expect(await requestMassGeneration({ ...value, dirty: true, post, signal: controller.signal })).toBeNull();
     expect(post).not.toHaveBeenCalled();
+  });
+  it("sends the complete matching candidate snapshot and opaque receipt without proposal validation", async () => {
+    const value = fixture();
+    const receipt: EscalaCandidateReceipt = { version: 1, workspaceId: value.workspace.id, revision: 2, issuedAt: 1, expiresAt: 2, baseHash: "base", contextHash: "context", inputHash: "input", signature: "opaque" };
+    const candidate = structuredClone(value.input);
+    candidate.assignments = [{ employeeId: "synthetic", date: "2026-11-01", kind: "OFF" }];
+    const comparisonReference = { input: candidate, receipt, validation: value.proposal.validation };
+    const before = structuredClone(comparisonReference);
+    const post = vi.fn().mockResolvedValueOnce(operation).mockResolvedValueOnce(value.proposal);
+    await requestMassGeneration({ ...value, dirty: false, comparisonReference, post });
+    const sent = post.mock.calls[1][0].comparisonReference;
+    expect(sent).toEqual({ input: candidate, receipt });
+    expect(sent.input).not.toBe(candidate);
+    expect(sent).not.toHaveProperty("validation");
+    expect(comparisonReference).toEqual(before);
+  });
+  it.each(["saved", "revision", "workspace", "hours-only"])("does not carry a candidate reference across %s", async reason => {
+    const value = fixture();
+    if (reason === "hours-only") value.input.generationMode = "HOURS_ONLY";
+    const receipt: EscalaCandidateReceipt = { version: 1, workspaceId: reason === "workspace" ? "another" : value.workspace.id, revision: reason === "revision" ? 1 : 2, issuedAt: 1, expiresAt: 2, baseHash: "base", contextHash: "context", inputHash: "input", signature: "opaque" };
+    const post = vi.fn().mockResolvedValueOnce(reason === "saved" ? value.saved : operation);
+    if (reason === "saved") post.mockResolvedValueOnce(operation);
+    post.mockResolvedValueOnce(value.proposal);
+    await requestMassGeneration({ ...value, dirty: reason === "saved", comparisonReference: { input: value.proposal.proposalInput, receipt }, post });
+    const sent = post.mock.calls.find(([body]) => body.action === "GENERATE")?.[0];
+    expect(sent).toBeDefined();
+    expect(sent).not.toHaveProperty("comparisonReference");
+  });
+  it("freezes the reference before awaiting operation registration", async () => {
+    const value = fixture();
+    const receipt: EscalaCandidateReceipt = { version: 1, workspaceId: value.workspace.id, revision: 2, issuedAt: 1, expiresAt: 2, baseHash: "base", contextHash: "context", inputHash: "input", signature: "opaque" };
+    const comparisonReference = { input: structuredClone(value.input), receipt };
+    const before = structuredClone(comparisonReference);
+    const post = vi.fn().mockImplementation(async body => {
+      if (body.action === "START_GENERATION") { comparisonReference.input.branchCode = "99"; comparisonReference.receipt.signature = "changed"; return operation; }
+      return value.proposal;
+    });
+    await requestMassGeneration({ ...value, dirty: false, comparisonReference, post });
+    expect(post.mock.calls[1][0].comparisonReference).toEqual(before);
   });
 });

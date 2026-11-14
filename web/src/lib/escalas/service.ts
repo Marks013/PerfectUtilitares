@@ -16,6 +16,9 @@ import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
 import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes, workAfterStoreClosing } from "./store-hours";
+import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
+import { isOperationallyReusable } from "./roster-quality";
+import type { EscalaCandidateResponse } from "./candidate-reference";
 
 import { manualAssignmentIssues, manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
 type WorkspaceRow = {
@@ -330,7 +333,8 @@ function requireSolverSetup(input: EscalaInput) {
   // Administrative compensation evidence is classified by referenceNotices; operational ceilings above remain mandatory.
 }
 
-export async function generateEscala(actor: EscalaActor, id: string, expectedRevision: number, options?: import("./solver-transport").SolverOptions) {
+export async function generateEscala(actor: EscalaActor, id: string, expectedRevision: number, options?: import("./solver-transport").SolverOptions & { comparisonReference?: unknown }) {
+  const { comparisonReference, ...solverOptions } = options ?? {};
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, "edit");
   assertRevision(current, expectedRevision);
@@ -342,6 +346,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
     if (incomplete) throw new EscalaError(422, "ESCALA_HOURS_BASELINE_INCOMPLETE", "A grade está incompleta. Complete os dias ou gere folgas e horários antes de ajustar somente os horários; nenhum dia foi inventado.");
   }
   const qualityReference = structuredClone(current.input);
+  const scope = { tenantId: actor.tenantId, owner: JSON.stringify([actor.userId, actor.moduleSessionId, actor.accountSessionId]), workspaceId: id, revision: expectedRevision };
   const prepared = prepareGeneration(current.input);
   if (isHoursReferenceOnly(prepared.input)) {
     const proposalInput = parseEscalaInput({ ...prepared.input, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared.input) });
@@ -353,15 +358,17 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
     const latest = await getEscala(actor, id);
     try { assertRevision(latest, expectedRevision); }
     catch (error) { logSolverRejection("service-recheck", "RECHECK_FAILED"); throw error; }
+    const admission = admitCandidateReference(comparisonReference, scope, qualityReference, prepared.input);
     return { result: { status: "FEASIBLE" as const, assignments: proposalInput.assignments, wallTimeSeconds: 0,
-      message: "Referências de horários preparadas. Nenhuma presença diária, folga ou cobertura foi gerada." }, proposalInput, validation, preparation: prepared.preparation };
+      message: "Referências de horários preparadas. Nenhuma presença diária, folga ou cobertura foi gerada." }, proposalInput, validation, preparation: prepared.preparation, comparison: admission.comparison, candidateReceipt: undefined };
   }
   requireSolverSetup(prepared.input);
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
   if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
-  const calculation = await solveEscala(contextual, { ...options, qualityReference });
-  const result = calculation.status === "INFEASIBLE" ? {
+  const admission = admitCandidateReference(comparisonReference, scope, qualityReference, contextual);
+  const calculation = await solveEscala(contextual, { ...solverOptions, qualityReference });
+  let result = calculation.status === "INFEASIBLE" ? {
     ...calculation, conflicts: [...findGenerationConflicts(contextual), ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
       code: `SOLVER_${diagnostic.family}`, message: diagnostic.message,
       target: diagnostic.family === "COVERAGE" ? "coverage" as const : "team" as const,
@@ -385,12 +392,33 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const latest = await getEscala(actor, id);
   try { assertRevision(latest, expectedRevision); }
   catch (error) { logSolverRejection("service-recheck", "RECHECK_FAILED"); throw error; }
-  const validation = validateEscala(proposalInput);
+  let validation = validateEscala(proposalInput);
   if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING") || !matchesRestOnlyReferences(contextual, result.assignments))) {
     logSolverRejection("service-validation", !validation.valid || validation.issues.some(issue => issue.code === "DAY_PENDING") ? "RULES_INVALID" : "REST_ONLY_CHANGED", { issues: validation.issues });
     throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
   }
-  return { result, proposalInput, validation, preparation: prepared.preparation };
+  let comparison = admission.comparison;
+  if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
+    const selected = selectCandidateReference(admission, proposalInput, qualityReference);
+    comparison = selected.comparison;
+    if (comparison.selection === "REFERENCE_RETAINED") {
+      proposalInput = parseEscalaInput(selected.input);
+      preserveLockedAssignments(current.input, proposalInput);
+      validation = validateEscala(proposalInput);
+      if (!isOperationallyReusable(validation) || !matchesHoursOnlyAssignments(current.input, proposalInput)
+        || !matchesRestOnlyReferences(contextual, proposalInput.assignments)
+        || manualAssignmentIssues(proposalInput, contextual.assignments).length) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+      // Processor phase telemetry belongs to C, not to the complete retained reference V.
+      result = { status: "FEASIBLE", assignments: proposalInput.assignments, wallTimeSeconds: result.wallTimeSeconds,
+        message: "A nova alternativa perderia uma condição protegida. A proposta anterior verificada foi mantida integralmente. Confira a qualidade operacional antes de aplicar." };
+    }
+  }
+  const extra: EscalaCandidateResponse = { comparison };
+  // Preparation describes the shared signed S -> contextual transition, never the discarded processor candidate.
+  if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && isOperationallyReusable(validation)) {
+    extra.candidateReceipt = issueCandidateReceipt(scope, qualityReference, contextual, proposalInput);
+  }
+  return { result, proposalInput, validation, preparation: prepared.preparation, ...extra };
 }
 
 /** Explicit deletion; FK Restrict requires removing the exact revisions in the same transaction. */

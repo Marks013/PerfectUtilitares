@@ -15,7 +15,9 @@ Scope: this repository and all subdirectories.
 
 - Add a real success-path test for every changed API route. Auth/origin/method-only tests are insufficient.
 - Run targeted Vitest files while editing.
-- Before release, run `npm run quality` once, then `npm run build` once.
+- Before release, run `npm run quality` once, then build once. For container releases, use one `npm run docker:deploy` (it includes build); do not prepend `docker:build`. For standalone build validation, use `npm run build`.
+- Quality must complete both quality:code and the unfiltered isolated E2E suite. Its local Git-state receipt is valid for 24 hours and binds source content and runtime, including uncommitted source; commit identical content before deployment. The production wrapper consumes this receipt and requires a clean, unchanged checkout. It never reruns quality inside the release lock.
+- A failed, filtered, changed-source or expired quality run cannot authorize release. The local receipt prevents procedural mistakes; it is not a signature against an operating-system user who can rewrite scripts and state. Native conditional fixture skips remain explicit limitations.
 - Validate Compose with access to protected env files before deployment.
 - Run browser E2E smoke tests after the production build/deploy.
 - Do not repeatedly rebuild containers during implementation.

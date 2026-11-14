@@ -4,6 +4,14 @@ import { EscalaError } from "@/lib/escalas/access";
 import { EscalaSolverError } from "@/lib/escalas/solver-client";
 import { DELETE, GET, PATCH, POST } from "./route";
 
+import { newEmployee, newInput } from "@/components/escalas/workspace-model";
+const candidateDb = vi.hoisted(() => ({ row: vi.fn(), revision: vi.fn(), peers: vi.fn(), solver: vi.fn() }));
+vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: { findFirst: candidateDb.row, findMany: candidateDb.peers }, escalaRevision: { findUnique: candidateDb.revision } } }));
+vi.mock("@/lib/escalas/solver-client", async original => ({ ...await original<typeof import("@/lib/escalas/solver-client")>(), solveEscala: candidateDb.solver }));
+vi.mock("@/lib/escalas/solver-transport", async original => {
+  const crypto = await import("node:crypto");
+  return { ...await original<typeof import("@/lib/escalas/solver-transport")>(), candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "route-synthetic-receipt-key").update(payload).digest("hex") };
+});
 const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
 vi.mock("@/lib/escalas/solve-operations", () => ({ solveOwner: () => "session-owner", startGenerationOperation: mocks.startOperation, runGenerationOperation: mocks.runOperation, cancelGenerationOperation: mocks.cancelOperation, generationOperationStatus: mocks.operationStatus }));
@@ -23,6 +31,34 @@ beforeEach(() => {
 });
 
 describe("/api/escalas", () => {
+  it("successfully round-trips a real service-produced receipt through GENERATE and rejects tampering before the solver", async () => {
+    const value = newInput("02", "Synthetic", "2026-11", 42);
+    value.startDate = "2026-11-02"; value.endDate = "2026-11-08"; delete value.visibleMonth;
+    value.simulation = true; value.restRulesVersion = 2; value.policy.calendarMode = "MANUAL";
+    value.shifts = [{ id: "day", name: "Day", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }];
+    value.employees = [{ ...newEmployee(42, "day"), id: "a", registration: "a", name: "Synthetic", sector: "Store", role: "Operator", activeFrom: "2020-01-01" }];
+    value.assignments = Array.from({ length: 7 }, (_, day) => ({ employeeId: "a", date: `2026-11-0${day + 2}`,
+      ...([3, 6].includes(day) ? { kind: "OFF" as const } : { kind: "WORK" as const, shiftId: "day" }) }));
+    value.demands = [];
+    candidateDb.row.mockResolvedValue({ id: "w1", tenantId: "t1", branchCode: "02", branchName: "Synthetic", startDate: value.startDate, endDate: value.endDate, revision: 1, status: "DRAFT", updatedAt: new Date("2026-11-01") });
+    candidateDb.revision.mockResolvedValue({ input: value, revision: 1, status: "DRAFT", createdAt: new Date("2026-11-01") }); candidateDb.peers.mockResolvedValue([]);
+    candidateDb.solver.mockImplementation(async context => ({ status: "FEASIBLE", assignments: context.assignments, wallTimeSeconds: 1, message: "Synthetic processor" }));
+    const real = await vi.importActual<typeof import("@/lib/escalas/service")>("@/lib/escalas/service");
+    mocks.generate.mockImplementation(real.generateEscala);
+    const first = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
+    expect(first.status).toBe(200);
+    const initial = await first.json();
+    expect(initial.validation.valid).toBe(true); expect(initial.candidateReceipt.signature).toMatch(/^[a-f0-9]{64}$/);
+    const second = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1, comparisonReference: { input: initial.proposalInput, receipt: initial.candidateReceipt } }));
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ comparison: { admission: "ADMITTED" }, validation: { valid: true } });
+    const altered = structuredClone(initial.proposalInput); altered.shifts[0].segments[0].start++;
+    candidateDb.solver.mockClear();
+    const rejected = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1, comparisonReference: { input: altered, receipt: initial.candidateReceipt } }));
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({ error: { code: "ESCALA_COMPARISON_REFERENCE_INVALID" } });
+    expect(candidateDb.solver).not.toHaveBeenCalled();
+  });
   it("returns a saved REST_ONLY scenario and generates that persisted mode without hiding it in exports", async () => {
     const restInput = { ...input, generationMode: "REST_ONLY" };
     mocks.save.mockResolvedValue({ ...workspace, revision: 2, input: restInput });

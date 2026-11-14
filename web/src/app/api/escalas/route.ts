@@ -15,7 +15,7 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("CREATE"), input: z.unknown() }).strict(),
   z.object({ action: z.literal("SAVE"), ...version, input: z.unknown() }).strict(),
   z.object({ action: z.literal("VALIDATE"), input: z.unknown() }).strict(),
-  z.object({ action: z.literal("GENERATE"), ...version, operationId: z.uuid().optional() }).strict(),
+  z.object({ action: z.literal("GENERATE"), ...version, operationId: z.uuid().optional(), comparisonReference: z.unknown().optional() }).strict(),
   z.object({ action: z.literal("START_GENERATION"), ...version }).strict(),
   z.object({ action: z.literal("CANCEL_GENERATION"), operationId: z.uuid() }).strict(),
   z.object({ action: z.literal("GENERATION_STATUS"), operationId: z.uuid() }).strict(),
@@ -66,8 +66,8 @@ export async function POST(request: Request) {
       case "CANCEL_GENERATION": return escalaJson(await cancelGenerationOperation(actor, solveOwner(request, actor), data.operationId));
       case "GENERATION_STATUS": return escalaJson(await generationOperationStatus(actor, solveOwner(request, actor), data.operationId));
       case "GENERATE": return escalaJson(data.operationId
-        ? await runGenerationOperation(actor, solveOwner(request, actor), data.operationId, data.id, data.expectedRevision, request.signal)
-        : await generateEscala(actor, data.id, data.expectedRevision, { signal: request.signal }));
+        ? await runGenerationOperation(actor, solveOwner(request, actor), data.operationId, data.id, data.expectedRevision, request.signal, ...(data.comparisonReference === undefined ? [] as [] : [data.comparisonReference] as [unknown]))
+        : await generateEscala(actor, data.id, data.expectedRevision, { signal: request.signal, ...(data.comparisonReference === undefined ? {} : { comparisonReference: data.comparisonReference }) }));
       case "PUBLISH": {
         const current = await getEscala(actor, data.id);
         return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, current.input, true));

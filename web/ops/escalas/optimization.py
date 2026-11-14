@@ -87,7 +87,7 @@ def _objective_floor(model, terms, domain_bounds=None):
     return lower
 
 
-def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT, weekday=6):
+def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT, weekday=6, *, preferred=None):
     """Release comparable groups across the month, including tied extremes.
 
     A single high/low pair cannot improve a max-minus-min objective when peers
@@ -107,6 +107,17 @@ def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT, weekd
                          date_spreads.get(index, 0))
             if spread:
                 ranked.append((spread, tuple(eligible)))
+    if weekday == 6 and preferred and len(preferred) <= limit:
+        # Keep the successful operational block, including exchange partners.
+        # Recheck whole cohorts and imbalance against the CURRENT incumbent;
+        # never union it with the fallback or trim it to fit.
+        preferred = set(preferred)
+        known = set().union(*groups)
+        complete = all(not preferred.intersection(members) or preferred.issuperset(members)
+                       for members in groups)
+        relevant = any(preferred.issuperset(members) for _score, members in ranked)
+        if preferred <= known and complete and relevant:
+            return preferred
     selected = set()
     for _, members in sorted(ranked, reverse=True):
         if not selected and len(members) > limit:
@@ -319,6 +330,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         context.refinement_reserve_seconds)
         if names and names[0] == 'COVERAGE' else 0)
     polish_attempt = 0
+    sunday_repair_people = None
     preparation_allowance = MIN_PHASE_BUDGET
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
@@ -433,7 +445,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         if restricted:
             # Keep the joint model, including leadership and all cross-week constraints.
             search_model = model.clone()
-            movable_people = (_movable_people(variables, values, employee_groups or [])
+            movable_people = (_movable_people(variables, values, employee_groups or [],
+                                               preferred=sunday_repair_people)
                               if names[index] == 'SUNDAY_BALANCE' else set())
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
@@ -525,6 +538,10 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             break
         values = {variable.index: engine.value(variable) for variable in variables}
         best = engine.value(objective)
+        if name == 'SUNDAY_COVERAGE' and restricted and movable_people and best < incumbent:
+            # Only a strictly improving, accepted solve creates continuity.
+            # Store identities only; hints, guards and values remain current.
+            sunday_repair_people = frozenset(movable_people)
         # Later goals may incidentally improve earlier ones. Keep that gain too.
         for previous, previous_terms, key in visited:
             add_upper_bound(previous, previous_terms, key, _linear_value(previous_terms, values))

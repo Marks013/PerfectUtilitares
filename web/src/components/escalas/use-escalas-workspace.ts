@@ -47,11 +47,13 @@ export function useEscalasWorkspace() {
   const [problem, setProblem] = useState<EscalaProblem | null>(null);
   const [notice, setNotice] = useState("");
   const [generated, setGenerated] = useState<GeneratedProposal | null>(null);
+  const generatedReference = useRef<{ proposal: GeneratedProposal; workspaceId: string; revision: number; input: EscalaInput } | null>(null);
   const [pendingOpen, setPendingOpen] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState(0);
   const working = useRef(false);
   const mounted = useRef(true);
   const requestVersion = useRef(0);
+  const selectionEpoch = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const generationOperation = useRef<GenerationOperation | null>(null);
   const cancellationRunning = useRef(false);
@@ -73,6 +75,7 @@ export function useEscalasWorkspace() {
     onState: state => { if (mounted.current) setSaveState(state); },
     onSaved: (saved, draft, pending) => {
       if (!mounted.current) return;
+      generatedReference.current = null; setGenerated(null);
       latestWorkspace.current = saved; latestInput.current = draft; latestDirty.current = pending;
       setWorkspace(saved); setInput(draft); setDirty(pending);
       if (!pending) { setValidation(saved.validation); clearRecovery(saved.id); }
@@ -140,6 +143,7 @@ export function useEscalasWorkspace() {
 
   const acceptWorkspace = useCallback((value: EscalaWorkspace, preserveOutdated = false) => {
     const next = parseSavedWorkspace(value);
+    selectionEpoch.current += 1;
     setConflict(null);
     setProblem(null);
     setError("");
@@ -153,6 +157,7 @@ export function useEscalasWorkspace() {
     setOutdated((previous) => (preserveOutdated && previous) || hasOutdatedResults(next.input, next.validation));
     setDirty(false);
     setResetKey((previous) => previous + 1);
+    generatedReference.current = null;
     setGenerated(null);
     setWorkspaces((previous) => [next, ...previous.filter((item) => item.id !== next.id)]);
   }, [saveQueue]);
@@ -212,6 +217,7 @@ export function useEscalasWorkspace() {
     if (changed) setOutdated(true);
     setDirty(true);
     setValidation(null);
+    generatedReference.current = null;
     setGenerated(null);
     setNotice(changed ? "Cenário alterado. Gere novamente para atualizar horários, folgas e cobertura." : "Alteração aplicada ao rascunho. O salvamento automático atualizará a revisão.");
     setError("");
@@ -248,9 +254,11 @@ export function useEscalasWorkspace() {
 
   function rebaseDraft() {
     if (!conflict?.canEdit || !latestInput.current || working.current) return;
+    selectionEpoch.current += 1;
     const draft = latestInput.current;
     saveQueue.select(conflict); saveQueue.edit(draft);
     latestWorkspace.current = conflict; latestDirty.current = true;
+    generatedReference.current = null; setGenerated(null);
     setWorkspace(conflict); setDirty(true); setConflict(null); setProblem(null); setError("");
     setNotice("Sua edição foi escolhida como conteúdo da próxima revisão. O servidor ainda verificará permissões e dias bloqueados.");
   }
@@ -271,6 +279,11 @@ export function useEscalasWorkspace() {
       body: JSON.stringify(body),
       keepalive: body.action === "CANCEL_GENERATION",
       signal,
+    }).catch(cause => {
+      if (body.action === "GENERATE" && cause instanceof EscalaRequestError && cause.status === 413) {
+        throw new EscalaRequestError("SOLVER_INPUT_TOO_LARGE", 413, cause.message);
+      }
+      throw cause;
     });
   }
 
@@ -294,6 +307,7 @@ export function useEscalasWorkspace() {
     if (!latestWorkspace.current?.canEdit) return;
     saveQueue.retry();
     void run("Conferindo e salvando o rascunho…", async () => {
+      generatedReference.current = null; setGenerated(null);
       await flushDraft();
       setNotice("Rascunho salvo e confirmado no servidor. Nenhuma publicação foi realizada.");
     });
@@ -305,6 +319,7 @@ export function useEscalasWorkspace() {
     const draft = recovery.input;
     saveQueue.edit(draft);
     latestInput.current = draft; latestDirty.current = true;
+    generatedReference.current = null;
     setInput(draft); setDirty(true); setValidation(null); setGenerated(null);
     setOutdated(hasOutdatedResults(draft, null)); setRecovery(null);
     setResetKey(previous => previous + 1);
@@ -326,25 +341,58 @@ export function useEscalasWorkspace() {
 
   function generate() {
     if (!workspace?.canEdit || !input || working.current) return;
+    const intent = { workspaceId: workspace.id, epoch: selectionEpoch.current };
+    const previous = generatedReference.current;
+    const sameContext = (value: { workspaceId: string; revision: number; input: EscalaInput }) => latestWorkspace.current?.id === value.workspaceId
+      && latestWorkspace.current.revision === value.revision && !latestDirty.current
+      && Boolean(latestInput.current && sameDraft(latestInput.current, value.input));
+    const usablePrevious = previous?.proposal.validation.valid && sameContext(previous) ? previous : null;
+    const restorePrevious = () => {
+      if (!usablePrevious || !sameContext(usablePrevious)) return;
+      generatedReference.current = usablePrevious;
+      setGenerated(usablePrevious.proposal);
+    };
     const operation = new GenerationOperation(post);
     generationOperation.current = operation;
+    generatedReference.current = null;
     setGenerated(null);
     void run(
-      dirty ? "Salvando a equipe antes da análise…" : "Sugerindo folgas para toda a filial…",
+      dirty ? "Salvando a equipe antes da análise…" : input.generationMode === "HOURS_ONLY" ? "Preparando horários para toda a filial…" : "Sugerindo folgas para toda a filial…",
       async (signal, isCurrent) => {
-        const saved = await flushDraft();
-        if (!saved || !isCurrent()) return;
-        setBusy("Preparando o cálculo da filial…"); setCancellable(true);
-        const result = await requestMassGeneration({ workspace: saved, input: saved.input, dirty: false, signal, isCurrent, post, operation,
-          onSaved: (saved) => acceptWorkspace(saved, true),
-          onSolving: () => { setBusy("Sugerindo folgas para toda a filial e conferindo a cobertura…"); setCancellable(true); },
-        });
-        if (result && isCurrent()) {
-          if (["OPTIMAL", "FEASIBLE"].includes(result.result.status)) {
-            setGenerated(result);
-            setNotice(result.validation.issues.length ? "Proposta concluída com avisos. Confira e aplique à escala." : "Proposta concluída. Confira e aplique à escala.");
+        const currentIntent = () => isCurrent() && selectionEpoch.current === intent.epoch
+          && latestWorkspace.current?.id === intent.workspaceId;
+        let context: { workspaceId: string; revision: number; input: EscalaInput } | null = null;
+        try {
+          const saved = await flushDraft();
+          if (!saved || !currentIntent()) return;
+          const savedContext = { workspaceId: saved.id, revision: saved.revision, input: structuredClone(saved.input) };
+          context = savedContext;
+          const currentGeneration = () => currentIntent() && sameContext(savedContext);
+          const reference = usablePrevious && sameContext(usablePrevious) && usablePrevious.proposal.candidateReceipt
+            ? { input: usablePrevious.proposal.proposalInput, receipt: usablePrevious.proposal.candidateReceipt } : undefined;
+          setBusy("Preparando o cálculo da filial…"); setCancellable(true);
+          const result = await requestMassGeneration({ workspace: saved, input: saved.input, dirty: false, comparisonReference: reference, signal, isCurrent: currentGeneration, post, operation,
+            onSaved: (saved) => acceptWorkspace(saved, true),
+            onSolving: () => { setBusy(saved.input.generationMode === "HOURS_ONLY" ? "Conferindo os horários da filial…" : "Sugerindo folgas para toda a filial e conferindo a cobertura…"); setCancellable(true); },
+          });
+          if (result && currentGeneration()) {
+            if (["OPTIMAL", "FEASIBLE"].includes(result.result.status)) {
+              generatedReference.current = { ...savedContext, proposal: result };
+              setGenerated(result);
+              const comparisonNotice = result.comparison?.selection === "REFERENCE_RETAINED"
+                ? "A proposta anterior foi mantida para preservar a cobertura. Confira antes de aplicar."
+                : result.comparison?.admission === "EXPIRED"
+                  ? "A comparação anterior expirou. Uma nova proposta foi calculada; confira antes de aplicar."
+                  : result.comparison && ["SCENARIO_CHANGED", "INCOMPATIBLE"].includes(result.comparison.admission)
+                    ? "A comparação anterior não pôde ser usada neste cenário. Confira a nova proposta antes de aplicar." : "";
+              setNotice(comparisonNotice || (result.validation.issues.length ? "Proposta concluída com avisos. Confira e aplique à escala." : "Proposta concluída. Confira e aplique à escala."));
+            }
+            else { restorePrevious(); setProblem(solverProblem(result.result.status, result.result.message, result.result.conflicts)); setNotice(result.result.message); }
           }
-          else { setProblem(solverProblem(result.result.status, result.result.message, result.result.conflicts)); setNotice(result.result.message); }
+        } catch (cause) {
+          if (!currentIntent() || (context && !sameContext(context))) return;
+          restorePrevious();
+          throw cause;
         }
       },
       false,
@@ -377,7 +425,7 @@ export function useEscalasWorkspace() {
         return day.locked && !original?.locked ? { ...day, locked: false } : day;
       });
       const needsUnlock = unlocked.some((day, index) => day !== saved.input.assignments[index]);
-      const stage = (draft: EscalaInput) => { latestInput.current = draft; latestDirty.current = true; setInput(draft); setDirty(true); saveQueue.edit(draft); setLocalBackup(saveRecovery(latestWorkspace.current ?? saved, draft)); };
+      const stage = (draft: EscalaInput) => { generatedReference.current = null; setGenerated(null); latestInput.current = draft; latestDirty.current = true; setInput(draft); setDirty(true); saveQueue.edit(draft); setLocalBackup(saveRecovery(latestWorkspace.current ?? saved, draft)); };
       if (needsUnlock) {
         if (!saved.canPublish) throw new EscalaRequestError("ESCALA_UNDO_LOCKED", 403, "Esta edição já foi salva como decisão preservada. Um aprovador precisa desbloqueá-la para desfazer; nenhuma restrição foi removida.");
         // The explicit Undo action follows the existing separate-unlock-and-save contract.
@@ -422,6 +470,7 @@ export function useEscalasWorkspace() {
       if (isCurrent()) {
         setWorkspaces((previous) => previous.filter((item) => item.id !== result.deletedId));
         setWorkspace(null); setInput(null); setValidation(null); setDirty(false); setOutdated(false);
+        generatedReference.current = null;
         setGenerated(null); setPendingOpen(null); setResetKey((previous) => previous + 1);
         setNotice("Planejamento e revisões excluídos. Os demais períodos foram preservados.");
       }
@@ -447,6 +496,7 @@ export function useEscalasWorkspace() {
     setBusy("Cancelando o cálculo. Sua escala salva será mantida…");
     setCancellable(false);
     setGenerated(null); setProblem(null); setError(""); setNotice("");
+    generatedReference.current = null;
     void cancelling.then(status => {
       if (!mounted.current) return;
       generationOperation.current = null; controller.current = null; working.current = false;
@@ -515,6 +565,7 @@ export function useEscalasWorkspace() {
     cancelLabel,
     cancelAnalysis,
     dismissProposals: () => {
+      generatedReference.current = null;
       setGenerated(null);
     },
     canEdit: Boolean(workspace?.canEdit && !busy && !recovery),

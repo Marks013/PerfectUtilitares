@@ -111,14 +111,14 @@ export async function generationOperationStatus(actor: EscalaActor, ownerKey: st
   return publicState(operation);
 }
 
-export async function runGenerationOperation(actor: EscalaActor, ownerKey: string, operationId: string, workspaceId: string, expectedRevision: number, signal: AbortSignal) {
+export async function runGenerationOperation(actor: EscalaActor, ownerKey: string, operationId: string, workspaceId: string, expectedRevision: number, signal: AbortSignal, comparisonReference?: unknown) {
   const operation = await owned(actor, ownerKey, operationId);
   if (operation.workspaceId !== workspaceId || operation.expectedRevision !== expectedRevision) throw new EscalaError(409, "ESCALA_OPERATION_CHANGED", "Este cálculo pertence a outra versão da escala. Gere uma nova proposta.");
   if (signal.aborted) { await cancelGenerationOperation(actor, ownerKey, operationId); throw new EscalaSolverError("SOLVER_CANCELLED"); }
   const claimed = await prisma.escalaSolveOperation.updateMany({ where: { id: operationId, state: "CREATED", expiresAt: { gt: new Date() } }, data: { state: "RUNNING", startedAt: new Date() } });
   if (!claimed.count) throw new EscalaSolverError(operation.state === "CANCELLED" || operation.state === "CANCEL_REQUESTED" ? "SOLVER_CANCELLED" : "SOLVER_TIMED_OUT");
   try {
-    const proposal = await generateEscala(actor, workspaceId, expectedRevision, { ...capability(operation), signal });
+    const proposal = await generateEscala(actor, workspaceId, expectedRevision, { ...capability(operation), signal, ...(comparisonReference === undefined ? {} : { comparisonReference }) });
     if (signal.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
     const completed = await prisma.escalaSolveOperation.updateMany({ where: { id: operationId, state: "RUNNING", expiresAt: { gt: new Date() } }, data: { state: "COMPLETED", finishedAt: new Date() } });
     if (!completed.count) throw new EscalaSolverError("SOLVER_CANCELLED");
