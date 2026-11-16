@@ -43,7 +43,7 @@ function fixture() {
   return input;
 }
 
-function render(input: EscalaInput, mode: "rest" | "both" = "rest") {
+function render(input: EscalaInput, mode: "rest" | "hours" | "both" = "rest") {
   state.textState = 0;
   const html = renderToStaticMarkup(<Roster input={input} validation={null} disabled={false} canUnlock onChange={vi.fn()} mode={mode} />);
   const monthly = html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>"));
@@ -54,6 +54,41 @@ function render(input: EscalaInput, mode: "rest" | "both" = "rest") {
 beforeEach(() => { state.filter = ""; state.sector = ""; state.page = 0; state.textState = 0; });
 
 describe("monthly roster presentation order", () => {
+  it.each(["rest", "hours", "both"] as const)("keeps enabled original six-hour AM/PM employees out of active %s tables", (mode) => {
+    const input = fixture();
+    const reference = input.employees.find(person => person.id === "4")!;
+    const originalSixHour = (id: string, name: string, weekday: string) => ({
+      ...reference, id, registration: id, name, planningEnabled: true,
+      scheduleMode: "TIMED" as const, weeklyHoursMode: "BRANCH" as const,
+      sourceSchedule: { report: "FPRE136" as const, code: id, description: "Original de seis horas", weekday, saturday: weekday },
+    });
+    const short = [
+      originalSixHour("six-am", "Pessoa Sintética AM", "06:00-12:00"),
+      originalSixHour("six-pm", "Pessoa Sintética PM", "12:00-18:00"),
+    ];
+    input.employees = [reference, ...short, input.employees.find(person => person.id === "1")!];
+    input.assignments = [{ employeeId: reference.id, date: "2026-12-01", kind: "WORK", shiftId: "early" }];
+    const before = structuredClone(input);
+    const { html } = render(input, mode);
+    const activeHtml = html.split("Turnos utilizados na escala")[0];
+    const activeTables = [...activeHtml.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)].map(match => match[1]);
+    expect(activeTables).toHaveLength(mode === "both" ? 2 : 1);
+    for (const table of activeTables) {
+      expect(table).toContain(reference.name);
+      expect(table).not.toContain("Aprendiz Excluído");
+      for (const person of short) expect(table).not.toContain(person.name);
+    }
+    const excluded = html.slice(html.indexOf("colaborador(es) não incluído(s) — relação separada"));
+    expect(excluded).toContain("colaborador(es) não incluído(s) — relação separada");
+    for (const person of short) {
+      const row = [...excluded.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].find(match => match[1].includes(person.name))?.[1];
+      expect(row).toBeDefined();
+      expect(row).toContain(`X · ${person.registration} · ${person.name}`);
+      expect(row).toMatch(/Motivo: [^<\s][^<]+/);
+    }
+    expect(input).toEqual(before);
+  });
+
   it("orders sectors, roles and the full proposed clock before names without changing the monthly population or days", () => {
     const input = fixture(), before = structuredClone(input);
     const { html, monthly, names } = render(input, "both");

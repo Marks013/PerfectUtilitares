@@ -48,7 +48,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
     && [person.name, person.registration, person.role].join(" ").toLocaleLowerCase("pt-BR").includes(filter.toLocaleLowerCase("pt-BR"));
   const restEmployees = sortScheduleEntries(presentation.restPeople.map(person => ({ employee: person.employee, schedule: person.proposedSchedule })))
     .map(person => person.employee).filter(matches);
-  const hoursEmployees = sortHoursEmployees(input).filter(person => person.planningEnabled !== false).filter(matches);
+  const hoursEmployees = sortHoursEmployees(input).filter(person => person.planningEnabled !== false && scheduleByEmployee.has(person.id)).filter(matches);
   const employees = view === "hours" ? hoursEmployees : restEmployees;
   const pages = Math.max(1, Math.ceil((view === "both" ? Math.max(restEmployees.length, hoursEmployees.length) : employees.length) / 20));
   const currentPage = Math.min(page, pages - 1);

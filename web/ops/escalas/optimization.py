@@ -348,6 +348,10 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
     polish_attempt = 0
     sunday_repair_people = None
     preparation_allowance = MIN_PHASE_BUDGET
+    # The allocation floor already includes one setup floor and one search
+    # floor. Keep conservative reserves separate from admission: charging the
+    # entire allocation floor as setup would reject valid 0.2-second phases.
+    admission_preparation = MIN_SEARCH_SECONDS
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
     active_group_count, upper_bounds = 0, {}
@@ -455,7 +459,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             budget = repair_remaining * repair_costs[index] / sum(repair_costs[index:])
         if name == 'COVERAGE':
             budget = min(budget, max(0, coverage_cutoff - time.monotonic()))
-        if budget < preparation_allowance + MIN_SEARCH_SECONDS - 1e-9:
+        if budget < admission_preparation + MIN_SEARCH_SECONDS - 1e-9:
             if name == 'COVERAGE' and phase_index == 0:
                 record_global_skip('INSUFFICIENT_ALLOCATION', time.monotonic() - preparation_started)
             proven = False
@@ -579,6 +583,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         prepared = time.monotonic()
         preparation_seconds = prepared - preparation_started
         preparation_allowance = max(preparation_allowance, preparation_seconds)
+        admission_preparation = max(admission_preparation, preparation_seconds)
         future_reserve = _future_refinement_reserve(
             names, index + 1, context.refinement_reserve_seconds, preparation_allowance)
         available = max(0.0, deadline - prepared - MIN_SEARCH_SECONDS - future_reserve)

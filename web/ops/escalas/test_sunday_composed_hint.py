@@ -59,7 +59,7 @@ class ComposedSundayHintTests(unittest.TestCase):
 
         def build(*args, **kwargs):
             result = actual_builder(*args, **kwargs)
-            generation.append((args, result))
+            generation.append((args, kwargs, result))
             return result
 
         def improve(model, goals, values, deadline, names, *, context):
@@ -74,9 +74,11 @@ class ComposedSundayHintTests(unittest.TestCase):
                 # Observe real input and delegate every result to the real engine.
                 hint = dict(zip(model.proto.solution_hint.vars, model.proto.solution_hint.values))
                 domains = [tuple(v.domain) for v in model.proto.variables]
+                scope = ('GLOBAL' if captures and model is captures[0][0]
+                         else 'SELECTED_PEOPLE' if captures else 'SEED')
                 status = engine.solve(model)
                 searches.append((hint, domains, status, engine.parameters.max_time_in_seconds,
-                                 engine.parameters.num_workers))
+                                 engine.parameters.num_workers, scope))
                 return status
 
         started = time.monotonic()
@@ -87,32 +89,47 @@ class ComposedSundayHintTests(unittest.TestCase):
             result = solver.solve(data, Observe())
         self.assertIn(result['status'], ('FEASIBLE', 'OPTIMAL'))
         self.assertEqual(data, before)
-        self.assertEqual(len(generation), 1)
-        args, proposed = generation[0]
+        global_generation = [(args, proposed) for args, kwargs, proposed in generation
+                             if kwargs.get('movable_people') is None]
+        local_generation = [(args, kwargs, proposed) for args, kwargs, proposed in generation
+                            if kwargs.get('movable_people') is not None]
+        self.assertEqual(len(global_generation), 1)
+        self.assertEqual(len(local_generation), 1)
+        local_args, local_kwargs, local_proposed = local_generation[0]
+        self.assertEqual(local_kwargs['movable_people'], frozenset({'p0', 'p1'}))
+        args, proposed = global_generation[0]
         self.assertIsInstance(proposed, dict)
         employees, dates, active, baseline, off, work, choices, metrics, policy, current, *_ = args
         model, goals, initial, names, context, deadline = captures[0]
         self.assertLess(Snapshot(current).value(goals[names.index('COVERAGE')]),
                         Snapshot(initial).value(goals[names.index('COVERAGE')]))
         self.assertEqual(set(proposed), set(context.decision_variables))
+        self.assertEqual(set(local_proposed), set(context.decision_variables))
+        for index, (pid, _day) in context.decision_variables.items():
+            if pid in ('p2', 'p3'):
+                self.assertEqual(local_proposed[index], local_args[9][index])
         # Two catalog clocks are admissible; REST_ONLY freezes the first real
         # reference in the production model before any hint is constructed.
         self.assertEqual(len(data['shifts']), 2)
         self.assertTrue(all(set(options) <= {'day'} for options in choices.values()))
         self.assertTrue(all(len(options) <= 1 for options in clock_choices[-1].values()))
-        delivered = [(hint, domains) for hint, domains, status, budget, workers in searches
-                     if hint == proposed]
+        delivered = [(hint, domains) for hint, domains, status, budget, workers, scope in searches
+                     if hint == proposed and scope == 'GLOBAL']
         self.assertEqual(len(delivered), 1)
         hint, domains = delivered[0]
         for index, (pid, day) in context.decision_variables.items():
             if pid in ('p2', 'p3'):
                 self.assertEqual(domains[index], (0, 1))
                 self.assertIn(index, hint)
-        self.assertTrue(all(workers == 1 and budget <= 12 for _, _, _, budget, workers in searches))
+        self.assertTrue(any(hint == local_proposed and scope == 'SELECTED_PEOPLE'
+                            for hint, _, _, _, _, scope in searches))
+        self.assertTrue(all(workers == 1 and budget <= 12 for _, _, _, budget, workers, _ in searches))
         self.assertLessEqual(deadline - started, 12.01)
         phases = result['optimization']['phases']
-        self.assertEqual(sum(p.get('decisionHintStatus') == 'COMPLETE_DECISIONS' for p in phases), 1)
-        self.assertTrue(all(p.get('searchScope') == 'GLOBAL' for p in phases if 'decisionHintStatus' in p))
+        for scope in ('GLOBAL', 'SELECTED_PEOPLE'):
+            hinted_phases = [p for p in phases if 'decisionHintStatus' in p and p['searchScope'] == scope]
+            self.assertEqual(len(hinted_phases), 1)
+            self.assertEqual(hinted_phases[0]['decisionHintStatus'], 'COMPLETE_DECISIONS')
         # Reject the isolated first/third-week exchange using the real validator.
         pid = 'p0'
         old = {day: baseline[pid, day] for day in dates}

@@ -228,6 +228,7 @@ class ProductionSundayTests(unittest.TestCase):
 
             class ConsumeAllowance:
                 now = 0.0
+                calls = 0
 
                 def checkpoint(self):
                     pass
@@ -235,6 +236,7 @@ class ProductionSundayTests(unittest.TestCase):
                 def solve(self, engine, current):
                     # Consume the entire actual grant; never invoke CP here.
                     self.now += engine.parameters.max_time_in_seconds
+                    self.calls += 1
                     return cp_model.UNKNOWN
 
             control = ConsumeAllowance()
@@ -243,9 +245,22 @@ class ProductionSundayTests(unittest.TestCase):
                     total + .1, names, context=ImprovementContext(control=control))
             self.assertFalse(proven)
             self.assertEqual(actual, initial)
-            self.assertEqual([p['objective'] for p in phases], names[:expected_count])
+            attempted = [p for p in phases if 'searchSkippedReason' not in p]
+            skipped = [p for p in phases if 'searchSkippedReason' in p]
+            self.assertEqual([p['objective'] for p in attempted], names[:expected_count])
+            self.assertEqual(control.calls, expected_count)
             self.assertTrue(all(p['searchScope'] == 'GLOBAL' for p in phases))
-            self.assertTrue(all(p['status'] == 'UNKNOWN' and p['budgetSeconds'] >= .1 for p in phases))
+            self.assertTrue(all(p['status'] == 'UNKNOWN' and p['budgetSeconds'] >= .1 for p in attempted))
+            if total < .2:
+                # A skipped global call is telemetry, not an attempted search.
+                self.assertEqual(len(skipped), 1)
+                self.assertEqual(skipped[0]['objective'], 'COVERAGE')
+                self.assertEqual(skipped[0]['searchSkippedReason'], 'INSUFFICIENT_ALLOCATION')
+                self.assertEqual(skipped[0]['status'], 'UNKNOWN')
+                self.assertEqual(skipped[0]['budgetSeconds'], 0)
+                self.assertEqual(skipped[0]['wallTimeSeconds'], 0)
+            else:
+                self.assertEqual(skipped, [])
             self.assertLessEqual(control.now, total + 1e-9)
             if total >= 2:
                 self.assertIn('LEADERSHIP', [p['objective'] for p in phases])
