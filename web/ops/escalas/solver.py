@@ -631,6 +631,13 @@ def _solve(data, control=None, started=None):
         return _composed_decision_hints(
             employees, dates, active, baseline, off, work, choices, metrics,
             policy, current_values, hint_deadline, hint_control, mixed_people)
+    def coverage_repair_hint_builder(current_values, hint_deadline, hint_control, movable_people):
+        # A sector repair needs its own cross-week calendar before search, not
+        # a later all-branch proposal. Keep every nonparticipant at the incumbent.
+        return _composed_decision_hints(
+            employees, dates, active, baseline, off, work, choices, metrics,
+            policy, current_values, hint_deadline, hint_control, mixed_people,
+            movable_people=movable_people)
     decisions.update({variable.index: key for key, variable in work.items()})
     decisions.update({variable.index: key for key, options in choices.items()
                       for variable in options.values()})
@@ -665,6 +672,8 @@ def _solve(data, control=None, started=None):
                                      movement_coverage=movement_groups,
                                      decision_variables=decisions,
                                      coverage_hint_builder=coverage_hint_builder
+                                     if data.get('generationMode') != 'HOURS_ONLY' else None,
+                                     coverage_repair_hint_builder=coverage_repair_hint_builder
                                      if data.get('generationMode') != 'HOURS_ONLY' else None,
                                      initial_repair_groups=repair_groups,
                                      repair_clock_fixes=_repair_clock_fixes(choices, metrics, values)))
@@ -725,7 +734,7 @@ def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, dem
 
 def _composed_decision_hints(employees, dates, active, baseline, off, work, choices,
                              metrics, policy, values, deadline, control=None,
-                             mixed_people=frozenset()):
+                             mixed_people=frozenset(), *, movable_people=None):
     """Suggest complete decisions from the current seed; never certify feasibility."""
     def checkpoint():
         if control is not None:
@@ -734,6 +743,10 @@ def _composed_decision_hints(employees, dates, active, baseline, off, work, choi
 
     if not checkpoint():
         return None
+    if movable_people is not None:
+        employees = [person for person in employees if person['id'] in movable_people]
+        if not employees or {person['id'] for person in employees} != set(movable_people):
+            return None
     current = {(entry['employeeId'], entry['date']): entry for entry in
                _read_assignments(Snapshot(values), employees, active, baseline, work, choices,
                                  paid_holiday_dates(policy))}
@@ -775,7 +788,12 @@ def _composed_decision_hints(employees, dates, active, baseline, off, work, choi
     if not checkpoint() or any(set(proposals.get(person['id'], {})) != set(active[person['id']])
                                for person in employees):
         return None
-    decisions = {}
+    # Include only decisions, never stale auxiliary hints from changed rests.
+    # Frozen nonparticipants remain exactly at their current feasible values.
+    decisions = {variable.index: values[variable.index]
+                 for mapping in (off, work) for variable in mapping.values()}
+    decisions.update({variable.index: values[variable.index]
+                      for options in choices.values() for variable in options.values()})
     for person in employees:
         pid = person['id']
         if not checkpoint():

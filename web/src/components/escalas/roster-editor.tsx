@@ -52,6 +52,7 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
     } catch (cause) { setError(errorMessage(cause)); }
   }}>
     <h3 className="font-semibold">{employee.name} · {displayDate(date)}</h3>
+    <p className={styles.muted}>Cargo: {employee.role}. A situação escolhida vale para este dia; ENC indica presença sem horário fixo, não o cargo.</p>
     {employee.sourceSchedule && <p className={styles.muted}>Horário importado: {employee.sourceSchedule.weekday}. Referência {employee.sourceSchedule.code} · {employee.sourceSchedule.description}.</p>}
     {employee.scheduleMode === "MISSING" && <p className="text-sm">Essa pessoa participa normalmente das folgas. Sem horário fixo informado, ela não entra na contagem por hora.</p>}
     {wasLocked && <p className="text-sm">Esta decisão está bloqueada. Um aprovador pode desmarcar o bloqueio e salvar a revisão. Só depois poderá alterar a jornada.</p>}

@@ -7,13 +7,105 @@ from unittest.mock import patch
 from ortools.sat.python import cp_model
 import optimization
 from optimization import ImprovementContext, Snapshot, _movable_people, improve
-from solver import _coverage, days_between, instant, shift_metrics, sunday_limit
+from solver import (_composed_decision_hints, _coverage, days_between, instant,
+                    shift_metrics, sunday_limit)
 from hints import balanced_rest_hints
 from test_solver import fixture
 from weekend_balance import sunday_distribution, weekend_objectives
 
 
 class SundayDistributionTests(unittest.TestCase):
+    def test_sector_calendar_is_built_before_its_coverage_search(self):
+        # Captured shape: most peers work only the third Sunday. Recovery must
+        # exchange complete Sunday trajectories, retaining all mandatory rules.
+        model = cp_model.CpModel()
+        days = ['2026-12-06', '2026-12-13', '2026-12-20', '2026-12-27']
+        work = {(str(i), day): model.new_bool_var(f'w:{i}:{day}')
+                for i in range(12) for day in days}
+        outside = model.new_bool_var('w:outside:2026-12-06')
+        model.add(outside == 1)
+        values = {v.index: int(day == days[2] or (int(pid), day) in (
+            (0, days[0]), (1, days[1]), (2, days[3]))) for (pid, day), v in work.items()}
+        # The three extra presences cannot also work the adjacent third Sunday.
+        for pid in ('1', '2'):
+            values[work[pid, days[2]].index] = 0
+        values[outside.index] = 1
+        for pid in map(str, range(12)):
+            for first, second in zip(days, days[1:]):
+                model.add(work[pid, first] + work[pid, second] <= 1)
+        for pid, day in (('0', days[0]), ('1', days[1]), ('2', days[3])):
+            model.add(work[pid, day] == 1)
+        deficits = []
+        for day in days:
+            gap = model.new_int_var(0, 6, 'gap:' + day)
+            model.add(gap >= 6 - sum(work[str(i), day] for i in range(12)))
+            values[gap.index] = max(0, 6 - sum(values[work[str(i), day].index] for i in range(12)))
+            deficits.append(gap)
+        decisions = {v.index: key for key, v in work.items()}
+        decisions[outside.index] = ('outside', days[0])
+        proposal = {v.index: int(days.index(day) % 2 == (
+            int(pid) % 2 if pid not in ('2', '3') else 1 - int(pid) % 2))
+                    for (pid, day), v in work.items()}
+        proposal[outside.index] = 1
+        observed = []
+        def build(current, deadline, control, people):
+            self.assertEqual(people, frozenset(map(str, range(12))))
+            self.assertEqual(dict(current), values)
+            self.assertGreater(deadline, time.monotonic())
+            observed.append('built')
+            return proposal
+        class InspectControl:
+            def checkpoint(self):
+                pass
+            def solve(inner, engine, search_model):
+                self.assertEqual(observed, ['built'])
+                hint = dict(zip(search_model.proto.solution_hint.vars,
+                                search_model.proto.solution_hint.values))
+                self.assertEqual(hint, proposal)
+                self.assertEqual(tuple(search_model.proto.variables[outside.index].domain), (1, 1))
+                observed.append('searched')
+                return engine.solve(search_model)
+        result, _, phases = improve(model, [sum(deficits)], values, time.monotonic() + 8,
+            ['COVERAGE'], context=ImprovementContext(control=InspectControl(),
+                decision_variables=decisions,
+                initial_repair_groups=[set(map(str, range(12)))],
+                coverage_repair_hint_builder=build))
+        self.assertEqual(observed, ['built', 'searched'])
+        self.assertEqual(Snapshot(result).value(sum(deficits)), 0)
+        self.assertEqual(result[outside.index], 1)
+        self.assertEqual(phases[0]['searchScope'], 'SELECTED_PEOPLE')
+        self.assertEqual(phases[0]['decisionHintStatus'], 'COMPLETE_DECISIONS')
+
+    def test_scoped_calendar_keeps_nonparticipants_without_reading_their_references(self):
+        data = fixture(people=2)
+        days = days_between(data['startDate'], data['endDate'])
+        model = cp_model.CpModel()
+        people = data['employees']
+        active = {p['id']: days for p in people}
+        off = {(p['id'], day): model.new_bool_var(f'o:{p["id"]}:{day}') for p in people for day in days}
+        work = {(p['id'], day): model.new_bool_var(f'w:{p["id"]}:{day}') for p in people for day in days}
+        choices = {key: {'day': model.new_bool_var('s:' + ':'.join(key))} for key in work}
+        values = {v.index: 0 for v in off.values()}
+        values.update({v.index: 1 for v in work.values()})
+        values.update({v.index: 1 for options in choices.values() for v in options.values()})
+        proposed = {'p0': {day: {'kind': 'OFF'} for day in days}}
+        # A nonparticipant's ambiguous clocks must not reject a sector calendar.
+        choices['p1', days[0]] = {'other': choices['p1', days[0]]['day']}
+        with patch('solver.balanced_rest_hints', return_value=proposed) as builder:
+            result = _composed_decision_hints(people, days, active, {}, off, work, choices,
+                {'day': shift_metrics(data['shifts'][0])}, data['policy'], values,
+                time.monotonic() + 5, movable_people={'p0'})
+        self.assertEqual([p['id'] for p in builder.call_args.args[0]], ['p0'])
+        self.assertEqual(set(result), set(values))
+        for day in days:
+            self.assertEqual(result[off['p0', day].index], 1)
+            self.assertEqual(result[work['p0', day].index], 0)
+            self.assertEqual(result[choices['p0', day]['day'].index], 0)
+            self.assertEqual(result[off['p1', day].index], 0)
+            self.assertEqual(result[work['p1', day].index], 1)
+            for variable in choices['p1', day].values():
+                self.assertEqual(result[variable.index], 1)
+
     def make_group(self, mode='UNTIMED'):
         model = cp_model.CpModel()
         days = ['2026-12-06', '2026-12-13', '2026-12-20', '2026-12-27']

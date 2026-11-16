@@ -14,6 +14,7 @@ import { storeClosingLabel } from "./store-hours";
 import { visibleDates, weekStart } from "./dates";
 import { usesMixed42Week } from "./labor-rules";
 import { isHoursReferenceOnly } from "./hours-reference";
+import { ROSTER_COLOR_LEGEND, ROSTER_STATE_COLORS, rosterStateIndex, rosterPdfColor } from "./roster-colors";
 
 function reportPeriod(value: string): string {
   return value.replace(/(\d{4})-(\d{2})-(\d{2})/g, "$3/$2/$1");
@@ -71,6 +72,12 @@ function spreadsheetLines(text: string, width: number): number {
     units + (/\s/u.test(character) ? 0.75 : /[MWmw@%]/u.test(character) ? 2 : /[A-ZÀ-Þ]/u.test(character) ? 1.5 : /[^\u0020-\u00ff]/u.test(character) ? 2 : 1.2), 0) / Math.max(1, width - 1))), 0);
 }
 
+// Append state styles: existing numeric formats and metadata style indices remain stable.
+const XLSX_ROSTER_STYLES = XLSX_TYPED_STYLES.replace('<fills count="7">', '<fills count="14">')
+  .replace('</fills>', ROSTER_STATE_COLORS.map(color => `<fill><patternFill patternType="solid"><fgColor rgb="FF${color.slice(1)}"/><bgColor indexed="64"/></patternFill></fill>`).join("") + '</fills>')
+  .replace('<cellXfs count="20">', '<cellXfs count="27">')
+  .replace('</cellXfs>', ROSTER_STATE_COLORS.map((_, index) => `<xf numFmtId="0" fontId="0" fillId="${7 + index}" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>`).join("") + '</cellXfs>');
+
 function sheet(rows: SpreadsheetCell[][], widths: number[], grid = false, identityColumns = grid ? 5 : 0, sectors: number[] = []) {
   const header = 4, last = `${column(widths.length - 1)}${rows.length}`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="${grid ? 85 : 90}" zoomScaleNormal="100"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map((row, index) => {
@@ -84,7 +91,7 @@ function sheet(rows: SpreadsheetCell[][], widths: number[], grid = false, identi
       const style = sectors.includes(index) ? 9 : index < 3 ? index === 0 ? 8 : 17 : index === header - 1 ? grid && cell >= identityColumns ? 10 : 1
         : typeof value === "object" ? (value.format === "duration" ? 11 : value.format === "decimal" ? 13 : 18) + (index % 2 ? 0 : 1)
           : typeof raw === "number" ? 15 + (index % 2 ? 0 : 1)
-            : grid && cell >= identityColumns && value === "F" ? 4 : grid && cell >= identityColumns && value === "NP" ? 5 : grid && cell >= identityColumns && ["X", "FV", "AF", "ENC", "FE"].includes(String(value)) ? 6 : grid && cell >= identityColumns ? 7 : index % 2 ? 2 : 3;
+            : grid && cell >= identityColumns ? 20 + rosterStateIndex(String(value)) : index % 2 ? 2 : 3;
       const text = `<t xml:space="preserve">${xml(raw)}</t>`;
       return typeof raw === "number" ? `<c r="${column(cell)}${index + 1}" s="${style}"><v>${raw}</v></c>` : `<c r="${column(cell)}${index + 1}" s="${style}" t="inlineStr"><is>${text}</is></c>`;
     }).join("")}</row>`;
@@ -99,7 +106,7 @@ function reportLegend(model: ReturnType<typeof buildEscalaPresentation>): string
   const entries = [["F", "Folga"], ["FE", "Feriado, fechado"], ["ENC", "Sem horário fixo"], ["NP", "Não processado"], ["AF", "Afastado"], ["FV", "Fora do vínculo"]];
   return [codes.size && [...codes].some(code => /^T\d+$/.test(code)) ? "Txx = Turno" : "",
     ...entries.filter(([code]) => codes.has(code)).map(([code, meaning]) => `${code} = ${meaning}`),
-    model.excluded.length ? "X = Não incluído" : ""].filter(Boolean).join(". ");
+    model.excluded.length ? "X = Não incluído" : "", ROSTER_COLOR_LEGEND].filter(Boolean).join(". ");
 }
 
 /** Keep distinct schedules; mixed journeys also retain their actual weekly application. */
@@ -202,7 +209,7 @@ export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportM
     "_rels/.rels": strToU8('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
     "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((entry, index) => `<sheet name="${entry.name}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets><definedNames>${printDefinitions}</definedNames></workbook>`),
     "xl/_rels/workbook.xml.rels": strToU8(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`),
-    "xl/styles.xml": strToU8(XLSX_TYPED_STYLES),
+    "xl/styles.xml": strToU8(XLSX_ROSTER_STYLES),
   };
   for (const [index, entry] of sheets.entries()) files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheet(entry.rows, entry.widths, entry.grid, entry.identityColumns, entry.sectors));
   return zipSync(files, { level: 6 });
@@ -342,7 +349,8 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
       model.dates.forEach((date, index) => {
         const x = margin + labelWidth + index * cellWidth;
         const sunday = new Date(date + "T00:00:00Z").getUTCDay() === 0;
-        page.drawRectangle({ x, y: y - 20, width: cellWidth, height: 33, color: sunday ? rgb(0.82, 0.87, 0.94) : rgb(0.94, 0.96, 0.98), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
+        page.drawRectangle({ x, y: y - 20, width: cellWidth, height: 33, color: rgb(0.94, 0.96, 0.98), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
+        if (sunday) page.drawRectangle({ x, y: y + 11, width: cellWidth, height: 2, color: rgb(0.14, 0.23, 0.33) });
         write(date.slice(8) + (holidayLabel(workspace.input, date) ? "*" : ""), x + 2, y, 8, true);
         write(escalaDateLabel(date).split(" ")[1], x + 2, y - 12, 7);
       });
@@ -422,8 +430,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     proposed.forEach((line, index) => { write(line, margin, y - names.length * 12 - roles.length * 10 - index * 9, 7); });
     cells.forEach((cell, index) => {
       const x = margin + labelWidth + index * cellWidth;
-      const fill = cell.code === "F" ? rgb(0.89, 0.91, 0.97) : cell.code === "NP" ? rgb(0.98, 0.91, 0.91)
-        : ["AF", "ENC", "FV", "FE"].includes(cell.code) ? rgb(0.91, 0.94, 0.97) : new Date(model.dates[index] + "T00:00:00Z").getUTCDay() === 0 ? rgb(0.96, 0.97, 0.99) : rgb(1, 1, 1);
+      const fill = rgb(...rosterPdfColor(cell.code));
       page.drawRectangle({ x, y: y - rowHeight + 12, width: cellWidth, height: rowHeight, color: fill, borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
       const codeSize = cell.code.length > 2 ? 7 : 7.5;
       const codeFont = cell.code === "F" ? bold : font;

@@ -7,6 +7,7 @@ import { dayOfWeek, weekStart } from "./dates";
 import { escalaDateLabel, escalaDuration } from "./presentation";
 import { coverageObservation, coverageReportRows, type OperationalReportModel, type OperationalPresenceRow } from "./operational-report";
 import { OPERATIONAL_REPORT_SECTION_LABELS } from "./operational-report-contracts";
+import { ROSTER_COLOR_LEGEND, rosterPdfColor } from "./roster-colors";
 
 /** Vector-only report of an immutable saved revision. No scheduling or persistence occurs here. */
 export async function exportOperationalReportPdf(model: OperationalReportModel): Promise<Uint8Array> {
@@ -68,17 +69,19 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
     for (const line of wrap(value, available, size)) { if (y < 50) newPage(); text(line, margin, y, size); y -= size + 4; }
     y -= 4;
   };
-  const table = (headings: string[], rows: string[][], weights: number[], padding = 4) => {
+  const table = (headings: string[], rows: string[][], weights: number[], padding = 4, calendar = false) => {
     if (!rows.length) { paragraph("Sem registros para esta seção."); return; }
     const sum = weights.reduce((a, b) => a + b, 0), widths = weights.map(value => value / sum * available);
-    const headerLines = headings.map((value, i) => wrap(value, widths[i] - padding * 2, 8.5, true));
+    const headerSize = calendar ? 7 : 8.5;
+    const headerLines = headings.map((value, i) => wrap(value, widths[i] - padding * 2, headerSize, true));
     const headerHeight = Math.max(...headerLines.map(lines => lines.length)) * 12 + 8;
     const header = () => {
       if (y - headerHeight - 20 < 45) newPage();
       let x = margin;
       headerLines.forEach((lines, i) => {
         page.drawRectangle({ x, y: y - headerHeight + 9, width: widths[i], height: headerHeight, color: rgb(0.89, 0.92, 0.96), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
-        lines.forEach((line, j) => { text(line, x + padding, y - j * 12, 8.5, true); }); x += widths[i];
+        if (calendar && headings[i].endsWith("\nDom")) page.drawRectangle({ x, y: y + 7, width: widths[i], height: 2, color: rgb(0.14, 0.23, 0.33) });
+        lines.forEach((line, j) => { text(line, x + padding, y - j * 12, headerSize, true); }); x += widths[i];
       }); y -= headerHeight;
     };
     header();
@@ -93,7 +96,7 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
         lines.forEach((part, i) => {
           const values = part.slice(offset, offset + length);
           if (!values.length && offset && part.length <= length) values.push(...part);
-          page.drawRectangle({ x, y: y - rowHeight + 9, width: widths[i], height: rowHeight, color: rgb(0.98, 0.99, 1), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
+          page.drawRectangle({ x, y: y - rowHeight + 9, width: widths[i], height: rowHeight, color: calendar && i > 0 ? rgb(...rosterPdfColor(row[i] ?? "NP")) : rgb(0.98, 0.99, 1), borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
           values.forEach((line, j) => { text(line, x + padding, y - j * 12, 8.5); }); x += widths[i];
         }); y -= rowHeight; offset += length;
         if (offset < count) { newPage(); header(); }
@@ -127,6 +130,7 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
       if (section === "calendar") {
         const calendarPeople = people.filter(person => person.employee.planningEnabled !== false);
         paragraph("F = OFF; AF = afastamento; FE = feriado fechado; ENC = sem horário fixo; NP = não processado; FV = fora do vínculo. Não são registros de ponto.");
+        paragraph(ROSTER_COLOR_LEGEND, 8);
         const weeks = [...new Set(model.dates.map(weekStart))];
         const largestCode = Math.max(0, ...calendarPeople.flatMap(person => person.cells.map(cell => font.widthOfTextAtSize(clean(cell.code), 8.5))));
         const fullMonthFits = largestCode <= available / (8 + model.dates.length) - 2;
@@ -138,7 +142,7 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
           table(["Matrícula / nome / cargo", ...dates.map(date => date.slice(8) + "\n" + escalaDateLabel(date).split(" ")[1])], calendarPeople.map(person => [
             `${person.employee.registration} - ${person.employee.name}\n${person.employee.role}\nFolga: ${person.employee.offMode === "VARIABLE" ? "Variável" : !person.employee.fixedOffDays.length ? "Sem dia fixo informado" : (person.employee.offMode === "MIXED" ? "Variável e fixa: " : "Fixa: ") + [...new Set(model.dates.filter(date => person.employee.fixedOffDays.includes(dayOfWeek(date))).map(date => escalaDateLabel(date).split(" ")[1]))].join(", ")}`,
             ...dates.map(date => person.cells.find(cell => cell.date === date)?.code ?? "NP"),
-          ]), [8, ...dates.map(() => 1)], 1);
+          ]), [8, ...dates.map(() => 1)], 1, true);
         }
       }
       if (section === "journeys") {

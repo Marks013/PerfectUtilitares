@@ -23,10 +23,14 @@ function report(weekday: string[]) {
 }
 
 describe("short principal imported journeys stay outside generation", () => {
-  it.each(["07:00-10:00 / 12:00-14:50", "07:00-11:00 / 00:00-00:00"])("excludes %s without extending clocks or deleting protected records", weekday => {
-    const input = fixture(weekday), original = structuredClone(input), result = prepareGeneration(input);
+  it.each(["07:00-10:00 / 12:00-14:50", "07:00-11:00 / 00:00-00:00", "07:00-10:00 / 11:00-14:00", "07:00-13:00 / 00:00-00:00"])("excludes %s without extending clocks or deleting protected records", weekday => {
+    const input = fixture(weekday);
+    input.employees[0].history = [{ employeeId: "person", date: "2026-10-25", kind: "WORK", shiftId: input.shifts[0].id, locked: true }];
+    const original = structuredClone(input), result = prepareGeneration(input);
     expect(result.input.employees[0]).toMatchObject({ planningEnabled: false, weeklyHours: 42, sourceSchedule: input.employees[0].sourceSchedule });
-    expect(result.input.employees[0].planningExclusionReason).toContain("principal");
+    expect(result.input.employees[0].planningExclusionReason).toContain("até 6h, inclusive");
+    expect(result.input.employees[0].shiftIds).toEqual(original.employees[0].shiftIds);
+    expect(result.input.employees[0].history).toEqual(original.employees[0].history);
     expect(result.preparation.excludedEmployeeIds).toEqual(["person"]);
     expect(result.preparation.includedEmployees).toBe(0);
     expect(result.input.assignments).toEqual(input.assignments);
@@ -58,14 +62,23 @@ describe("short principal imported journeys stay outside generation", () => {
     person.planningEnabled = false; person.planningExclusionReason = "Exclusão manual";
     expect(applyRestEligibility(person)).toEqual(person);
   });
-  it("excludes the short reference in preview and explicit bulk setup too", () => {
-    const preview = previewEscalaRows(report(["07:00", "11:00", "00:00", "00:00"]), { branchCode: "02", startDate: "2026-11-02", defaultWeeklyHours: 42 });
+  it.each([
+    { markings: ["07:00", "11:00", "00:00", "00:00"], weekday: "07:00-11:00" },
+    { markings: ["07:00", "10:00", "12:00", "14:50"], weekday: "07:00-10:00 / 12:00-14:50" },
+    { markings: ["07:00", "10:00", "11:00", "14:00"], weekday: "07:00-10:00 / 11:00-14:00" },
+  ])("excludes principal $weekday in preview and explicit bulk setup too", ({ markings, weekday }) => {
+    const preview = previewEscalaRows(report(markings), { branchCode: "02", startDate: "2026-11-02", defaultWeeklyHours: 42 });
     expect(preview.employees[0].planningEnabled).toBe(false);
-    const input = fixture("07:00-11:00"); input.assignments = [];
-    expect(prepareRoster(input, 42, "BRANCH_DEFAULT").employees[0].planningEnabled).toBe(false);
+    const input = fixture(weekday); input.assignments = [];
+    const before = structuredClone(input), prepared = prepareRoster(input, 42, "BRANCH_DEFAULT");
+    expect(prepared.employees[0].planningEnabled).toBe(false);
+    expect(prepared.employees[0].sourceSchedule).toEqual(before.employees[0].sourceSchedule);
+    expect(prepared.employees[0].shiftIds).toEqual(before.employees[0].shiftIds);
+    expect(prepared.shifts).toEqual(before.shifts);
+    expect(input).toEqual(before);
   });
-  it("does not exclude an exactly six-hour principal reference or a compatible 42h clock", () => {
-    for (const weekday of ["07:00-10:00 / 11:00-14:00", "08:00-12:00 / 13:00-17:24"]) {
+  it("does not exclude a six-hour-and-one-minute principal reference or a compatible 42h clock", () => {
+    for (const weekday of ["07:00-10:00 / 11:00-14:01", "08:00-12:00 / 13:00-17:24"]) {
       expect(applyRestEligibility(fixture(weekday).employees[0]).planningEnabled).not.toBe(false);
     }
   });

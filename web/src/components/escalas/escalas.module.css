@@ -63,7 +63,7 @@
 .checkInput { inline-size: 1.25rem; block-size: 1.25rem; flex: 0 0 auto; accent-color: var(--app-action-blue); }
 .errorText { color: var(--app-danger-text); font-size: .875rem; line-height: 1.5; }
 .emptyState { padding-block: 2.5rem; text-align: center; }
-.roster { min-inline-size: 0; --escala-rest-border: #7c83b5; --escala-rest-surface: color-mix(in srgb, #818cf8 22%, var(--app-surface)); --escala-work-surface: color-mix(in srgb, #7183a0 6%, var(--app-surface)); }
+.roster { min-inline-size: 0; }
 .rosterScroll { max-inline-size: 100%; max-block-size: 70vh; max-block-size: min(70dvh, 44rem); overflow: auto; border: 1px solid var(--app-border); border-radius: .75rem; scroll-padding: 4rem 1rem 1rem 14.5rem; overscroll-behavior-inline: contain; }
 .rosterTable { inline-size: 100%; border-collapse: separate; border-spacing: 0; text-align: left; font-size: .875rem; }
 .tableHead { position: sticky; inset-block-start: 0; z-index: 20; }
@@ -75,10 +75,12 @@
 .sectorName { position: sticky; inset-inline-start: .75rem; }
 .dayCell { border-inline-end: 1px solid var(--app-border); border-block-end: 1px solid var(--app-border); padding: .1875rem; vertical-align: top; }
 .cellButton { font-variant-numeric: tabular-nums; min-inline-size: 2.75rem; min-block-size: 2.75rem; inline-size: 100%; border: 1px solid var(--app-border); border-radius: .5rem; padding: .625rem .25rem; background: var(--app-surface); color: var(--app-fg); font-size: .8125rem; line-height: 1.4; text-align: center; cursor: pointer; touch-action: manipulation; }
-.cellButton:hover:not(:disabled) { border-color: var(--app-action-blue); background: var(--app-input); }
+.cellButton:hover:not(:disabled) { border-color: var(--app-action-blue); outline: 1px solid var(--app-action-blue); }
 .gapCell { border-color: var(--app-danger-border); }
-.offCell { background: var(--escala-rest-surface); color: var(--app-fg); font-weight: 700; }
-.inactiveCell { display: block; padding: .75rem .25rem; color: var(--app-muted); font-size: .8125rem; text-align: center; }
+.offCell { font-weight: 700; }
+.inactiveCell { display: block; min-block-size: 2.75rem; padding: .75rem .25rem; border: 1px solid var(--app-border); border-radius: .5rem; font-size: .8125rem; text-align: center; }
+.personRole { font-weight: 700; }
+.dayHeading[data-sunday="true"] { border-block-start: 3px solid var(--app-action-blue); }
 .coverageLink { min-block-size: 2.75rem; display: flex; align-items: center; justify-content: center; border-block-end: 2px solid var(--app-danger-border); color: var(--app-fg); font-weight: 700; }
 .editor { min-inline-size: 0; display: grid; gap: 1rem; border: 1px solid var(--app-action-blue); border-radius: .75rem; padding: 1rem; }
 .editorImpact { display: grid; gap: .75rem; border-block-start: 1px solid var(--app-border); padding-block-start: 1rem; }
@@ -181,12 +183,8 @@
 .saveStatus[data-state="error"], .saveStatus[data-state="conflict"], .saveStatus[data-state="invalid"] { color: var(--app-coral); }
 
 .workspace [hidden] { display: none !important; }
-.cellButton[data-kind="WORK"], .cellButton[data-kind="DUTY"] { background: var(--escala-work-surface); color: var(--app-fg); }
-.cellButton[data-kind="OFF"] { background: var(--escala-rest-surface); color: var(--app-fg); border-color: var(--escala-rest-border); font-weight: 750; }
-.cellButton[data-kind="ABSENCE"] { background: var(--app-input); border-style: dashed; color: var(--app-fg); }
-.cellButton[data-kind="PENDING"] { background: var(--app-danger-soft); border-style: dashed; color: var(--app-danger-text); }
-.cellButton[data-code="NP"] { border-style: dashed; color: var(--app-muted); }
-.cellButton[data-code="ENC"] { background: var(--app-input); border-color: var(--app-border-strong); color: var(--app-fg); }
+.cellButton[data-kind="OFF"] { font-weight: 750; }
+.cellButton[data-kind="ABSENCE"], .cellButton[data-kind="PENDING"], .cellButton[data-code="NP"] { border-style: dashed; }
 .reviewTabs .button[aria-pressed="true"] { border-color: var(--app-action-blue); background: var(--app-input); box-shadow: inset 0 -2px 0 var(--app-action-blue); }
 .reviewNotice .disclosureTrigger { min-block-size: 2.25rem; padding-block: .375rem; }
 .reviewNotice > details { inline-size: 100%; }

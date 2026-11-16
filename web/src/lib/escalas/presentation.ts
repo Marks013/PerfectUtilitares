@@ -2,7 +2,7 @@ import { visibleDates } from "./dates";
 import { effectiveScheduleMode } from "./fpre136-schedule";
 import { holidayCalendarFor, holidayLabel } from "./calendar";
 import { compareProposedSchedules, sortEmployees, sortHoursEmployees } from "./order";
-import { isRestPlanningExcludedRole } from "./eligibility";
+import { applyRestEligibility, isRestPlanningExcludedRole, isShortFpre136Schedule } from "./eligibility";
 import { isHoursReferenceOnly } from "./hours-reference";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaWorkspace } from "./types";
 
@@ -63,7 +63,8 @@ export function buildEscalaSchedule(input: EscalaInput) {
   });
   const assignments = new Map(input.assignments.map((assignment) => [`${assignment.employeeId}\0${assignment.date}`, assignment]));
   const byShift = new Map(input.shifts.map((shift) => [shift.id, shift]));
-  const allPeople = sortEmployees(input.employees).map((employee) => {
+  const employees = input.employees.map(employee => isShortFpre136Schedule(employee) ? applyRestEligibility(employee) : employee);
+  const allPeople = sortEmployees(employees).map((employee) => {
     const cells = dates.map((date) => {
       const assignment = assignments.get(`${employee.id}\0${date}`);
       const label = assignmentPresentation(employee, date, assignment, codes);
@@ -78,7 +79,7 @@ export function buildEscalaSchedule(input: EscalaInput) {
       const entry = variants.get(cell.shiftId) ?? { shiftId: cell.shiftId, code: cell.code, schedule: cell.schedule, interval: cell.interval, daily: cell.daily, dates: [] };
       entry.dates.push(cell.date); variants.set(cell.shiftId, entry);
     }
-    const choices = effectiveScheduleMode(employee) === "UNTIMED" ? [] : employeeReferenceShiftChoices(input, employee);
+    const choices = isShortFpre136Schedule(employee) || effectiveScheduleMode(employee) === "UNTIMED" ? [] : employeeReferenceShiftChoices(input, employee);
     if (!variants.size) {
       for (const choice of choices) {
         const shift = (byShift.get(choice.shiftId) as NonNullable<ReturnType<typeof byShift.get>>);
@@ -100,10 +101,11 @@ export function buildEscalaSchedule(input: EscalaInput) {
     return { employee, cells, proposedSchedule, proposedVariants };
   });
   const people = allPeople.filter(person => person.employee.planningEnabled !== false);
-  const excluded = sortEmployees(input.employees.filter((employee) => employee.planningEnabled === false))
+  const excluded = sortEmployees(employees.filter((employee) => employee.planningEnabled === false))
     .map((employee) => ({ employee, ...exclusionPresentation(employee) }));
   const byEmployee = new Map(allPeople.map(person => [person.employee.id, person]));
   const hoursPeople = sortHoursEmployees(input).flatMap(employee => {
+    if (isShortFpre136Schedule(employee)) return [];
     const person = byEmployee.get(employee.id);
     return person && (employee.planningEnabled !== false || employeeReferenceShiftChoices(input, employee).length) ? [person] : [];
   });

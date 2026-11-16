@@ -27,6 +27,7 @@ class ImprovementContext:
     sector_coverage: dict | None = None
     initial_decision_hints: dict | None = None
     coverage_hint_builder: object = None
+    coverage_repair_hint_builder: object = None
     initial_repair_people: set | None = None
     initial_repair_groups: list | None = None
     repair_clock_fixes: dict | None = None
@@ -523,20 +524,27 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                     value = repair_clock_fixes[variable_index] if narrowed_clock else values[variable_index]
                     domain.extend([value, value])
         hint_status = None
-        if name == 'COVERAGE' and phase_index == 0 and context.coverage_hint_builder:
+        hint_builder = (context.coverage_repair_hint_builder if repair_phase
+                        else context.coverage_hint_builder if phase_index == 0 else None)
+        if name == 'COVERAGE' and hint_builder:
             # Reuse this global call and its preparation allowance. Never replace
             # the incumbent or its bounds with an unverified suggested calendar.
             hint_deadline = min(time.monotonic() + MAX_COVERAGE_HINT_SECONDS,
                                 preparation_started + budget - MIN_SEARCH_SECONDS,
-                                coverage_cutoff - MIN_SEARCH_SECONDS,
+                                coverage_cutoff - MIN_SEARCH_SECONDS - (
+                                    _global_coverage_reserve(context, preparation_allowance)
+                                    if repair_phase else 0),
                                 deadline - MIN_SEARCH_SECONDS - _future_refinement_reserve(
                                     names, index + 1, context.refinement_reserve_seconds,
                                     preparation_allowance))
             hint_status = 'NO_TIME'
             if hint_deadline > time.monotonic():
                 try:
-                    proposed = context.coverage_hint_builder(
-                        MappingProxyType(values), hint_deadline, control)
+                    if repair_phase:
+                        proposed = hint_builder(MappingProxyType(values), hint_deadline,
+                                                control, frozenset(movable_people))
+                    else:
+                        proposed = hint_builder(MappingProxyType(values), hint_deadline, control)
                     if control is not None:
                         control.checkpoint()
                     if time.monotonic() >= hint_deadline:
@@ -548,7 +556,11 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                     elif (not isinstance(proposed, dict)
                           or proposed.keys() != decision_variables.keys()
                           or any(type(value) is not int or value not in (0, 1)
-                                 for value in proposed.values())):
+                                 for value in proposed.values())
+                          or any(not any(lower <= value <= upper for lower, upper in zip(
+                              tuple(search_model.proto.variables[variable_index].domain)[::2],
+                              tuple(search_model.proto.variables[variable_index].domain)[1::2]))
+                              for variable_index, value in proposed.items())):
                         hint_status = 'INVALID'
                     else:
                         # Changed decisions invalidate auxiliary hint values.

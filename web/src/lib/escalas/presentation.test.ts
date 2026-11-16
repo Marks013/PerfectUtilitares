@@ -70,4 +70,47 @@ describe("exact schedule and separate exclusions", () => {
     source.employees[0].scheduleMode = "UNTIMED";
     expect(buildEscalaSchedule(source).people[0].cells.every((cell) => cell.code === "ENC")).toBe(true);
   });
+  it.each(["DAYS_AND_HOURS", "REST_ONLY", "HOURS_ONLY"] as const)("removes an inherited 8h24 proposal for an original 6h journey in %s without changing records", generationMode => {
+    const source = input(); source.generationMode = generationMode;
+    source.employees[0] = { ...source.employees[0], scheduleMode: "TIMED", planningEnabled: false,
+      planningExclusionReason: "Jornada principal importada de até 6h, inclusive", sourceSchedule: { report: "FPRE136", code: "six", description: "Original", weekday: "07:00-10:00 / 11:00-14:00", saturday: "08:00-12:00 / 00:00-00:00" },
+      manualShiftBaseIds: ["b"], manualShiftOverrides: [{ catalogCode: 1500, shiftId: "b", markings: ["09:36", "14:00", "16:00", "20:00"], effectiveFrom: source.startDate, effectiveUntil: source.endDate }],
+      history: [{ employeeId: "a", date: "2026-11-01", kind: "WORK", shiftId: "b", locked: true }] };
+    source.assignments[0].locked = true;
+    source.assignments[1] = { employeeId: "a", date: "2026-11-03", kind: "ABSENCE", locked: true };
+    const before = structuredClone(source), model = buildEscalaSchedule(source);
+    expect(model.people.some(row => row.employee.id === "a")).toBe(false);
+    expect(model.restPeople.some(row => row.employee.id === "a")).toBe(false);
+    expect(model.hoursPeople.some(row => row.employee.id === "a")).toBe(false);
+    expect(model.excluded.find(row => row.employee.id === "a")).toMatchObject({ code: "X", reason: before.employees[0].planningExclusionReason, employee: before.employees[0] });
+    expect(source).toEqual(before);
+    expect(model.hoursPeople.some(row => row.employee.id === "excluded")).toBe(true);
+  });
+  it("classifies a legacy enabled six-hour import only in the presentation and retains its base reference", () => {
+    const source = input(); source.assignments = [];
+    source.employees[0] = { ...source.employees[0], scheduleMode: "TIMED", planningEnabled: true,
+      sourceSchedule: { report: "FPRE136", code: "six", description: "Original", weekday: "07:00-13:00 / 00:00-00:00", saturday: "08:00-12:00 / 00:00-00:00" } };
+    const before = structuredClone(source), model = buildEscalaSchedule(source);
+    expect(model.people.some(row => row.employee.id === "a")).toBe(false);
+    expect(model.hoursPeople.some(row => row.employee.id === "a")).toBe(false);
+    expect(model.excluded.find(row => row.employee.id === "a")).toMatchObject({ code: "X", reason: expect.stringContaining("até 6h, inclusive"), employee: { sourceSchedule: before.employees[0].sourceSchedule, shiftIds: ["b"] } });
+    expect(source).toEqual(before);
+  });
+  it.each(["07:00-10:00 / 11:00-14:01", "08:00-12:00 / 13:00-17:00"])("preserves active original %s with a four-hour Saturday", weekday => {
+    const source = input(); source.employees[0] = { ...source.employees[0], scheduleMode: "TIMED",
+      sourceSchedule: { report: "FPRE136", code: "long", description: "Original", weekday, saturday: "08:00-12:00 / 00:00-00:00" } };
+    const before = structuredClone(source), model = buildEscalaSchedule(source);
+    expect(model.people.some(row => row.employee.id === "a")).toBe(true);
+    expect(model.hoursPeople.find(row => row.employee.id === "a")?.proposedVariants).toHaveLength(2);
+    expect(source).toEqual(before);
+  });
+  it("keeps an original zero-clock ENC active without exposing an inherited timed proposal", () => {
+    const source = input(); source.employees[0] = { ...source.employees[0], scheduleMode: "UNTIMED",
+      sourceSchedule: { report: "FPRE136", code: "zero", description: "Sem horário", weekday: "00:00-00:00 / 00:00-00:00", saturday: "00:00-00:00 / 00:00-00:00" } };
+    const before = structuredClone(source), model = buildEscalaSchedule(source);
+    expect(model.people.find(row => row.employee.id === "a")?.cells.every(cell => cell.code === "ENC")).toBe(true);
+    expect(model.hoursPeople.find(row => row.employee.id === "a")?.proposedVariants).toEqual([]);
+    expect(model.excluded.some(row => row.employee.id === "a")).toBe(false);
+    expect(source).toEqual(before);
+  });
 });
