@@ -51,6 +51,23 @@ function expectViableWorkerResult(input: EscalaInput) {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it.each(["FEASIBLE", "UNKNOWN"])("preserves a valid Python SUNDAY_PEAK phase with status %s after SUNDAY_COVERAGE", async status => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture(); expectViableWorkerResult(input);
+    const optimization = { budgetSeconds: 12, phases: [
+      { objective: "COVERAGE", status: "FEASIBLE", wallTimeSeconds: 0.8, budgetSeconds: 1, incumbentValue: 1200 },
+      { objective: "SUNDAY_COVERAGE", status: "FEASIBLE", wallTimeSeconds: 0.6, budgetSeconds: 0.8, incumbentValue: 300 },
+      { objective: "SUNDAY_PEAK", status, wallTimeSeconds: 0.2, budgetSeconds: 0.3, preparationSeconds: 0.02,
+        initialValue: 5, incumbentValue: status === "FEASIBLE" ? 4 : 5, searchScope: "GLOBAL", workers: 1 },
+    ] };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(),
+      message: "Synthetic Python response", wallTimeSeconds: 1.7, optimization })));
+    const result = await solveEscala(input);
+    expect(result.status).toBe("FEASIBLE");
+    expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
+    expect(result.optimization).toEqual(optimization);
+    expect(result.optimization?.phases.map(phase => phase.objective)).toEqual(["COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_PEAK"]);
+  });
   it.each(["DEADLINE", "INSUFFICIENT_ALLOCATION", "PREPARATION_EXHAUSTED"])("preserves skipped GLOBAL COVERAGE reason=%s and actual preparation through the real parser", async searchSkippedReason => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const input = fixture(); expectViableWorkerResult(input);

@@ -24,6 +24,7 @@ class ImprovementContext:
     decision_variables: dict | None = None
     coverage_groups: dict | None = None
     sunday_coverage: dict | None = None
+    sunday_peaks: dict | None = None
     sector_coverage: dict | None = None
     initial_decision_hints: dict | None = None
     coverage_hint_builder: object = None
@@ -246,7 +247,7 @@ def _phase_budget(remaining, names, index):
         return max(MIN_PHASE_BUDGET, min(remaining * COVERAGE_BUDGET_SHARE, remaining - reserve))
     # Sunday recovery, spacing and untimed rotation share the SAME surplus.
     # Leadership and every other admitted phase retain their usable base share.
-    weights = [REST_PHASE_WEIGHT if name in ('SUNDAY_COVERAGE', 'REST_SPACING', 'UNTIMED_ROTATION') else 1
+    weights = [REST_PHASE_WEIGHT if name in ('SUNDAY_COVERAGE', 'SUNDAY_PEAK', 'REST_SPACING', 'UNTIMED_ROTATION') else 1
                for name in admitted]
     surplus = max(0.0, remaining - MIN_PHASE_BUDGET * len(admitted))
     return MIN_PHASE_BUDGET + surplus * weights[0] / sum(weights)
@@ -255,13 +256,22 @@ def _phase_budget(remaining, names, index):
 def _reserved_refinement_names(names):
     # Both Sunday searches need their own net time. Spacing retains the former
     # fallback when this model has no Sunday objective at all.
-    sunday = {'SUNDAY_COVERAGE', 'SUNDAY_BALANCE'} & set(names)
+    sunday = {'SUNDAY_COVERAGE', 'SUNDAY_PEAK', 'SUNDAY_BALANCE'} & set(names)
     return sunday or {'REST_SPACING'}
+
+
+def _refinement_reserve(name, names, reserve):
+    # Total coverage and its peak refinement share the former coverage reserve.
+    # Sunday fairness keeps its own existing net allocation. Setup is charged
+    # separately for each actual phase, inside the same absolute deadline.
+    coverage = {'SUNDAY_COVERAGE', 'SUNDAY_PEAK'} & set(names)
+    return reserve / len(coverage) if name in coverage else reserve
 
 
 def _future_refinement_reserve(names, index, reserve, preparation):
     pending = set(names[index:]) & _reserved_refinement_names(names)
-    return len(pending) * (reserve + preparation) if reserve > 0 else 0.0
+    return sum(_refinement_reserve(name, names, reserve) + preparation
+               for name in pending) if reserve > 0 else 0.0
 
 
 def _refinement_phase_budget(remaining, names, index, reserve,
@@ -278,7 +288,7 @@ def _refinement_phase_budget(remaining, names, index, reserve,
         return budget
     future = _future_refinement_reserve(names, index + 1, reserve, preparation)
     if names[index] in _reserved_refinement_names(names):
-        budget = max(budget, reserve + preparation)
+        budget = max(budget, _refinement_reserve(names[index], names, reserve) + preparation)
     return min(budget, max(0.0, remaining - future))
 
 
@@ -477,7 +487,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         search_model = model
         # A generic improvement model may have no calendar decisions. Keep it
         # global instead of constructing an empty rolling-week neighborhood.
-        restricted = bool(dates) and (repair_phase or name in ('REST_SPACING', 'UNTIMED_ROTATION')
+        restricted = bool(dates) and (repair_phase or name in ('SUNDAY_PEAK', 'REST_SPACING', 'UNTIMED_ROTATION')
                       or (phase_index > 0 and len(variables) > LARGE_MODEL_VARIABLES and len(dates) > 7))
         if restricted:
             # Keep the joint model, including leadership and all cross-week constraints.
@@ -487,6 +497,12 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                               if names[index] == 'SUNDAY_BALANCE' else set())
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
+            if names[index] == 'SUNDAY_PEAK':
+                movable_people = _coverage_people(coverage_groups or {}, context.sunday_peaks or {}, values)
+                if not movable_people:
+                    # Generic callers without sector metadata must not freeze
+                    # a critical third Sunday outside two rolling weeks.
+                    movable_people = {person for person, _day in decision_variables.values()}
             if names[index] == 'CLOSING_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, closing_coverage or {}, values)
             if names[index] == 'UNTIMED_ROTATION':
@@ -592,7 +608,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                 and name in _reserved_refinement_names(names)):
             # Recover the setup cost from unspent shared time, never by extending
             # the deadline or taking the next Sunday's reserved allocation.
-            budget = max(budget, context.refinement_reserve_seconds)
+            budget = max(budget, _refinement_reserve(name, names, context.refinement_reserve_seconds))
         budget = min(budget, available)
         if budget < MIN_SEARCH_SECONDS:
             if name == 'COVERAGE' and phase_index == 0:
@@ -634,7 +650,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             break
         values = {variable.index: engine.value(variable) for variable in variables}
         best = engine.value(objective)
-        if name == 'SUNDAY_COVERAGE' and restricted and movable_people and best < incumbent:
+        if name in ('SUNDAY_COVERAGE', 'SUNDAY_PEAK') and restricted and movable_people and best < incumbent:
             # Only a strictly improving, accepted solve creates continuity.
             # Store identities only; hints, guards and values remain current.
             sunday_repair_people = frozenset(movable_people)

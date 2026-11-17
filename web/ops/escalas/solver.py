@@ -15,6 +15,7 @@ from optimization import ImprovementContext, Snapshot, improve, remember
 from rest_quality import build_rest_quality, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
 from runtime_settings import MAX_SECONDS, RANDOM_SEED
+from sunday_peak import build_sunday_peaks
 from weekend_balance import available_weekends, preserve_sunday_presence, sunday_distribution, weekend_objectives
 
 ZONE = ZoneInfo("America/Sao_Paulo")
@@ -575,6 +576,8 @@ def _solve(data, control=None, started=None):
             'stopReason': 'TIME_BUDGET' if coverage is False else 'BOUNDED_REFINEMENT',
         }
         return response
+    peak_plan = build_sunday_peaks(model, daily_coverage, policy, values,
+                                   visible_month=_coverage_month(data), control=control)
     groups = {}
     clock_profiles = _clock_profiles(choices, shifts)
     preserve_sunday_presence(model, employees, dates, work, values, control)
@@ -604,6 +607,7 @@ def _solve(data, control=None, started=None):
     closing_objective = sum(term for terms in closing_coverage.values() for term in terms)
     leader_terms, leader_checks = leadership_objective(model, data, employees, dates, work, values)
     goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective),
+             ("SUNDAY_PEAK", peak_plan.objective),
              ("MOVEMENT_COVERAGE", sum(movement_coverage)),
              ("CLOSING_COVERAGE", closing_objective),
              # Untimed presence/rotation is operational. With unequal Sunday
@@ -655,6 +659,9 @@ def _solve(data, control=None, started=None):
                                                        # sector/month/Sunday/closing totals above cannot worsen.
                                                        + [sum(terms) for terms in priority_coverage.values()]
                                                        + [sum(terms) for terms in role_coverage.values()],
+                                                       # Peak guards start after higher-priority totals,
+                                                       # from their accepted incumbent, never the seed.
+                                                       'SUNDAY_PEAK': [sum(terms) for terms in peak_plan.peaks.values()],
                                                        'UNTIMED_ROTATION': sunday_presence,
                                                        'SUNDAY_BALANCE': sundays + sunday_presence,
                                                        'SATURDAY_BALANCE': saturdays,
@@ -667,6 +674,7 @@ def _solve(data, control=None, started=None):
                                                           for sector in {p['sector'] for p in employees}},
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
                                                       for sector in sector_coverage}, sunday_coverage=sunday_coverage,
+                                     sunday_peaks=peak_plan.neighborhoods,
                                      sector_coverage=sector_coverage,
                                      closing_coverage=closing_coverage,
                                      movement_coverage=movement_groups,
@@ -691,6 +699,8 @@ def _solve(data, control=None, started=None):
                                 'stopReason': 'OBJECTIVES_PROVEN' if proven else 'TIME_BUDGET'
                                 if time.monotonic() >= started + MAX_SECONDS - 0.2 else 'BOUNDED_REFINEMENT'}
     leader_metrics = leadership_summary(leader_checks, Snapshot(values))
+    if not peak_plan.ready:
+        response['optimization']['unattemptedObjectives'].append('SUNDAY_PEAK')
     if leader_metrics is not None:
         response['optimization']['leadership'] = leader_metrics
     return response
