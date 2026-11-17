@@ -1,4 +1,4 @@
-"""Daily deficit and Saturday fairness must not migrate to another day or group."""
+"""Daily measurements, explicit daily guards and production aggregate safeguards."""
 import copy
 import time
 import unittest
@@ -139,10 +139,11 @@ class DailyCoverageTests(unittest.TestCase):
         self.assertEqual(Snapshot(values).value(sum(coverage)), 360)
         self.assertEqual([Snapshot(values).value(sum(terms)) for terms in daily.values()], [120, 240])
 
-    def test_production_protects_daily_coverage_first_and_saturday_at_its_own_phase(self):
+    def test_production_protects_sector_totals_and_defers_saturday_fairness(self):
         data = fixture(40, people=3)
-        data['demands'] = [{'date': data['startDate'], 'sector': 'Reposição', 'start': 480,
-                            'end': 540, 'minimum': 2, 'estimated': True}]
+        data['demands'] = [{'date': day, 'sector': 'Reposição', 'start': 480,
+                            'end': 540, 'minimum': 2, 'estimated': True}
+                           for day in ('2026-11-02', '2026-11-03')]
         captured = []
         saturday, initial, final = [], {}, {}
         native = improve
@@ -166,10 +167,14 @@ class DailyCoverageTests(unittest.TestCase):
         phase = next(p for p in result['optimization']['phases'] if p['objective'] == 'SATURDAY_BALANCE')
         self.assertLessEqual(phase['incumbentValue'], phase['initialValue'])
         self.assertLessEqual(final['saturday'], phase['incumbentValue'])
-        # A weekly fixture registers the same shortage under horizon and civil-date scopes.
-        gaps = [expression for expression in captured
+        # Ordinary daily estimates may exchange deficits. Their two distinct
+        # dates share one sector-total guard, not two independent frozen caps.
+        gaps = [cp_model.FlatIntExpr(expression) for expression in captured
                 if any(v.name.startswith('coverage-gap:') for v in cp_model.FlatIntExpr(expression).vars)]
-        self.assertGreaterEqual(len(gaps), 2)
+        self.assertEqual(len(gaps), 1)
+        self.assertEqual(len(gaps[0].vars), 2)
+        self.assertEqual(list(gaps[0].coeffs), [60, 60])
+        self.assertEqual(gaps[0].offset, 0)
 
     def test_deferred_saturday_guard_allows_coverage_recovery_and_prevents_later_rollback(self):
         model = cp_model.CpModel()

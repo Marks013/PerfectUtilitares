@@ -43,6 +43,77 @@ test('mismatched, incomplete and oversized horizons fail instead of changing anc
   }
 });
 
+test('malformed metadata never silently selects the legacy calendar', () => {
+  for (const input of [null, false, 0, '', 'SUNDAY', [], new Date(), new Map(),
+    Object.create({ planningWeekStartsOn: 'SUNDAY' })]) {
+    assert.throws(() => planningWeekStartsOn(input));
+    assert.throws(() => planningWeekStart('2026-12-13', input));
+    assert.throws(() => planningWeekEnd('2026-12-13', input));
+    assert.throws(() => planningMonthPeriod('2026-12', input));
+  }
+  assert.equal(planningWeekStartsOn(Object.create(null)), 'MONDAY');
+});
+
+test('missing period data and direct horizons outside the planning domain are rejected', () => {
+  for (const input of [null, false, [], {}, sunday, { startDate: '2026-12-06' },
+    { endDate: '2026-12-12' }, { startDate: 20261206, endDate: '2026-12-12' }]) {
+    assert.throws(() => planningWeeks(input));
+  }
+  for (const [startDate, endDate] of [['1999-12-26', '2000-01-01'], ['2099-12-27', '2100-01-02']]) {
+    assert.throws(() => planningWeeks({ startDate, endDate, ...sunday }));
+  }
+  assert.equal(planningWeeks({ startDate: '2000-01-02', endDate: '2000-01-08', ...sunday }).length, 1);
+  assert.equal(planningWeeks({ startDate: '2099-12-21', endDate: '2099-12-27' }).length, 1);
+});
+
+test('civil week ends calculate from the input even when intermediate bounds cross 1900 or 2100', () => {
+  assert.equal(planningWeekStart('1900-01-01', sunday), '1899-12-31');
+  assert.equal(planningWeekEnd('1900-01-01', sunday), '1900-01-06');
+  assert.equal(planningWeekStart('2099-12-31', sunday), '2099-12-27');
+  assert.equal(planningWeekEnd('2099-12-31', sunday), '2100-01-02');
+});
+
+test('immutable inputs and fresh calendar arrays do not alias each other', () => {
+  const input = Object.freeze({ ...planningMonthPeriod('2026-12', sunday), ...sunday,
+    employees: Object.freeze([]) });
+  const before = JSON.stringify(input), first = planningWeeks(input);
+  first[0].dates[0] = 'changed';
+  const second = planningWeeks(input);
+  assert.equal(JSON.stringify(input), before);
+  assert.equal(second[0].dates[0], input.startDate);
+  assert.deepEqual(first[1], second[1]);
+});
+
+test('leap days, all six horizon lengths and strict month strings', () => {
+  for (const planningWeekStartsOn of ['MONDAY', 'SUNDAY']) {
+    const calendar = { planningWeekStartsOn };
+    const startDate = planningWeekStart('2028-02-29', calendar);
+    for (let weeks = 1; weeks <= 6; weeks++) {
+      const endDate = new Date(Date.parse(startDate + 'T00:00:00Z') + (7 * weeks - 1) * 86400000).toISOString().slice(0, 10);
+      const result = planningWeeks({ startDate, endDate, ...calendar });
+      assert.equal(result.length, weeks);
+      assert.equal(result.flatMap(week => week.dates).filter(day => day === '2028-02-29').length, 1);
+    }
+  }
+  for (const month of ['2000-00', '2000-13', '1999-12', '2100-01', '2026-2', '2026-12\n', null, 202612]) {
+    assert.throws(() => planningMonthPeriod(month, sunday));
+  }
+});
+
+test('calendar arithmetic is independent of the host timezone', () => {
+  const moduleUrl = new URL('../../src/lib/escalas/planning-calendar.ts', import.meta.url).href;
+  const script = `import { planningMonthPeriod } from ${JSON.stringify(moduleUrl)};
+console.log(JSON.stringify(['2026-12', '2027-01', '2028-02'].map(month =>
+  planningMonthPeriod(month, { planningWeekStartsOn: 'SUNDAY' }))));`;
+  const expected = ['2026-12', '2027-01', '2028-02'].map(month => planningMonthPeriod(month, sunday));
+  for (const TZ of ['UTC', 'America/Sao_Paulo', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
+    const actual = execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {
+      encoding: 'utf8', timeout: 10000, maxBuffer: 16384, env: { ...process.env, TZ, NODE_NO_WARNINGS: '1' },
+    });
+    assert.deepEqual(JSON.parse(actual), expected);
+  }
+});
+
 test('Python and TypeScript agree on every month in 2000..2099 in both conventions', () => {
   const inputs = [];
   const expected = [];
@@ -57,6 +128,11 @@ test('Python and TypeScript agree on every month in 2000..2099 in both conventio
       const days = weeks.flatMap(week => week.dates);
       assert.equal(days.length, new Set(days).size);
       assert.ok([28, 35, 42].includes(days.length));
+      const weekday = planningWeekStartsOn === 'SUNDAY' ? 0 : 1;
+      assert.equal(new Date(period.startDate + 'T00:00:00Z').getUTCDay(), weekday);
+      assert.equal(new Date(period.endDate + 'T00:00:00Z').getUTCDay(), (weekday + 6) % 7);
+      const lastCivil = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+      assert.ok(period.startDate <= input.month + '-01' && period.endDate >= lastCivil);
       for (const week of weeks) for (const day of week.dates) {
         assert.equal(planningWeekStart(day, input), week.startDate);
         assert.equal(planningWeekEnd(day, input), week.endDate);

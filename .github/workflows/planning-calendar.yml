@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: planning-calendar-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   calendar:
     runs-on: ubuntu-24.04-arm
@@ -25,20 +29,12 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24.19.0
-      - name: Check independent calendar implementations
+      - name: Check Python calendar
         working-directory: web
-        run: |
-          python3 -m unittest discover -s ops/escalas -p 'test_planning_calendar.py' -v
-          node --experimental-strip-types --test scripts/escalas/planning-calendar.test.mjs
-      - name: Prepare bounded source review snapshot
-        if: always()
-        run: |
-          git archive --format=tar.gz --output=calendar-review-source.tar.gz HEAD AGENTS.md web/src/lib/escalas web/src/components/escalas web/ops/escalas web/scripts/escalas web/package.json web/package-lock.json web/prisma web/src/app/api/escalas
-      - name: Keep source review snapshot
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: calendar-review-source
-          path: calendar-review-source.tar.gz
-          retention-days: 1
-          if-no-files-found: error
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest discover -s ops/escalas -p 'test_planning_calendar.py' -v
+      - name: Check TypeScript calendar and cross-language parity
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node --experimental-strip-types --test scripts/escalas/planning-calendar.test.mjs

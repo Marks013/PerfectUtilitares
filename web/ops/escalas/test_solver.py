@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from ortools.sat.python import cp_model
 
 from solver import _feasibility_hints, admissible, certificate_authorizes, days_between, effective_weekly_hours, legal_weekly_hours, occupied_dates, shift_metrics, solve, sunday_limit
+from weekend_balance import weekend_objectives
 
 
 def fixture(hours=42, people=1, weeks=1, start_date="2026-11-02", shift_hours=None):
@@ -813,11 +814,26 @@ class SolverTests(unittest.TestCase):
                 entry.pop("shiftId", None)
         data["demands"] = [{"id": f"s{i}", "date": day, "sector": "Reposição", "start": 480, "end": 720, "minimum": 1}
                            for i, day in enumerate(("2026-11-08", "2026-11-15"))]
-        result = solve(data)
+        before = copy.deepcopy(data)
+        observed = {}
+
+        def inspect(model, groups, totals, seed, values, control=None):
+            observed.update({pid: (int(cp_model.FlatIntExpr(total).offset), opportunities)
+                             for pid, (total, opportunities) in totals[6].items()})
+            return weekend_objectives(model, groups, totals, seed, values, control)
+
+        with patch("solver.weekend_objectives", side_effect=inspect):
+            result = solve(data)
         self.assert_feasible(result)
-        counts = {pid: sum(a["employeeId"] == pid and a["kind"] == "WORK" and date.fromisoformat(a["date"]).weekday() == 6
-                           for a in result["assignments"]) for pid in ("p0", "p1")}
-        self.assertEqual(counts, {"p0": 1, "p1": 1})
+        # Two historical worked Sundays among three known dates plus two future
+        # opportunities. The other person's absent dates are NOT opportunities
+        # or rest credits. Verify the production fairness algebra, not a single
+        # incidental roster which later presence safeguards may legitimately keep.
+        self.assertEqual(observed, {"p0": (2, 5), "p1": (0, 2)})
+        for day in ("2026-11-08", "2026-11-15"):
+            self.assertGreaterEqual(sum(a["date"] == day and a["kind"] == "WORK"
+                                        for a in result["assignments"]), 1)
+        self.assertEqual(data, before)
 
     def test_fair_sunday_distribution_counts_previous_saturday_overnight_work(self):
         data = fixture(40, people=2, weeks=2)

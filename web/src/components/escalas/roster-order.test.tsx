@@ -56,7 +56,9 @@ beforeEach(() => { state.filter = ""; state.sector = ""; state.page = 0; state.t
 describe("monthly roster presentation order", () => {
   it.each(["rest", "hours", "both"] as const)("keeps enabled original six-hour AM/PM employees out of active %s tables", (mode) => {
     const input = fixture();
-    const reference = input.employees.find(person => person.id === "4")!;
+    const reference = input.employees.find(person => person.id === "4");
+    const excludedReference = input.employees.find(person => person.id === "1");
+    if (!reference || !excludedReference) throw new Error("Missing required synthetic roster fixtures");
     const originalSixHour = (id: string, name: string, weekday: string) => ({
       ...reference, id, registration: id, name, planningEnabled: true,
       scheduleMode: "TIMED" as const, weeklyHoursMode: "BRANCH" as const,
@@ -66,7 +68,7 @@ describe("monthly roster presentation order", () => {
       originalSixHour("six-am", "Pessoa Sintética AM", "06:00-12:00"),
       originalSixHour("six-pm", "Pessoa Sintética PM", "12:00-18:00"),
     ];
-    input.employees = [reference, ...short, input.employees.find(person => person.id === "1")!];
+    input.employees = [reference, ...short, excludedReference];
     input.assignments = [{ employeeId: reference.id, date: "2026-12-01", kind: "WORK", shiftId: "early" }];
     const before = structuredClone(input);
     const { html } = render(input, mode);

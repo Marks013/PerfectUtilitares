@@ -1,5 +1,6 @@
 """Calendar arithmetic only; no solver dependency or production state."""
 from datetime import date, timedelta
+import copy
 import unittest
 
 from planning_calendar import (planning_month_period, planning_week_end,
@@ -44,6 +45,66 @@ class PlanningCalendarTests(unittest.TestCase):
                             ('2026-12-06', '2027-01-23'), ('2026-12-13', '2026-12-06')]:
             with self.subTest(first=first, last=last), self.assertRaises(ValueError):
                 planning_weeks({'startDate': first, 'endDate': last, **SUNDAY})
+
+    def test_nonobject_metadata_never_defaults_to_monday(self):
+        for value in (None, False, 0, '', 'SUNDAY', [], ['SUNDAY']):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                planning_week_starts_on(value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                planning_week_start('2026-12-13', value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                planning_week_end('2026-12-13', value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                planning_month_period('2026-12', value)
+
+    def test_missing_period_fields_and_wrong_period_types_have_domain_errors(self):
+        for value in (None, False, [], {}, SUNDAY, {'startDate': '2026-12-06'},
+                      {'endDate': '2026-12-12'}, {'startDate': 20261206, 'endDate': '2026-12-12'}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                planning_weeks(value)
+
+    def test_direct_horizons_have_the_same_bounds_as_monthly_horizons(self):
+        for first, last in [('1999-12-26', '2000-01-01'), ('2099-12-27', '2100-01-02')]:
+            with self.subTest(first=first), self.assertRaises(ValueError):
+                planning_weeks({'startDate': first, 'endDate': last, **SUNDAY})
+        for convention, first, last in [('SUNDAY', '2000-01-02', '2000-01-08'),
+                                         ('MONDAY', '2099-12-21', '2099-12-27')]:
+            data = {'startDate': first, 'endDate': last, 'planningWeekStartsOn': convention}
+            self.assertEqual(len(planning_weeks(data)), 1)
+
+    def test_civil_week_bounds_do_not_reparse_outside_intermediate_dates(self):
+        # Civil utilities support history from 1900; planning horizons remain 2000..2099.
+        self.assertEqual(planning_week_start('1900-01-01', SUNDAY), '1899-12-31')
+        self.assertEqual(planning_week_end('1900-01-01', SUNDAY), '1900-01-06')
+        self.assertEqual(planning_week_start('2099-12-31', SUNDAY), '2099-12-27')
+        self.assertEqual(planning_week_end('2099-12-31', SUNDAY), '2100-01-02')
+
+    def test_calendar_outputs_do_not_alias_inputs_or_other_calls(self):
+        data = {**planning_month_period('2026-12', SUNDAY), **SUNDAY, 'employees': []}
+        before = copy.deepcopy(data)
+        first = planning_weeks(data)
+        first[0]['dates'][0] = 'changed'
+        second = planning_weeks(data)
+        self.assertEqual(data, before)
+        self.assertEqual(second[0]['dates'][0], data['startDate'])
+        self.assertEqual(first[1], second[1])
+        self.assertEqual(planning_month_period('2027-01', data),
+                         {'startDate': '2026-12-27', 'endDate': '2027-02-06'})
+
+    def test_leap_days_and_all_six_horizon_lengths(self):
+        for convention in ('MONDAY', 'SUNDAY'):
+            calendar = {'planningWeekStartsOn': convention}
+            first = planning_week_start('2028-02-29', calendar)
+            for weeks in range(1, 7):
+                last = (date.fromisoformat(first) + timedelta(days=7 * weeks - 1)).isoformat()
+                result = planning_weeks({'startDate': first, 'endDate': last, **calendar})
+                days = [day for week in result for day in week['dates']]
+                self.assertEqual(len(result), weeks)
+                self.assertEqual(days.count('2028-02-29'), 1)
+        for value in ('2000-00', '2000-13', '1999-12', '2100-01', '2026-2',
+                      '2026-12\n', None, 202612):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                planning_month_period(value, SUNDAY)
 
     def test_century_partition_has_no_missing_or_duplicate_days(self):
         checked = 0

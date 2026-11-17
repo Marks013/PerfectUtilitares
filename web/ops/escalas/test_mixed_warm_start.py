@@ -112,24 +112,32 @@ class MixedWarmStartTests(unittest.TestCase):
                           for phase in phases], [(2, 1), (1, 0)])
         self.assertEqual(values, {small.index: 0, other.index: 0})
 
-    def test_solver_keeps_synchronized_baseline_as_values_but_hints_an_alternative(self):
+    def test_solver_defers_hints_and_declines_ambiguous_mixed_clock_substitution(self):
         data, _dates = mixed_data()
+        before = copy.deepcopy(data)
         captured = {}
 
         def inspect(model, objectives, values, deadline, names, **kwargs):
-            overrides = kwargs["context"].initial_decision_hints
-            captured["changed"] = sum(values[index] != value
-                                      for index, value in overrides.items())
-            captured["initial"] = copy.deepcopy(values)
-            captured["guards"] = kwargs["context"].protected_groups
+            context = kwargs["context"]
+            self.assertIsNone(context.initial_decision_hints)
+            self.assertTrue(callable(context.coverage_hint_builder))
+            self.assertTrue(callable(context.coverage_repair_hint_builder))
+            initial = dict(values)
+            # OFF -> WORK has two paid-duration references in this mixed roster.
+            # The deferred optional builder must decline, never invent a clock.
+            captured["hint"] = context.coverage_hint_builder(
+                values, time.monotonic() + 2, None)
+            self.assertIsNone(captured["hint"])
+            self.assertEqual(values, initial)
+            self.assertTrue(context.protected_groups)
             return values, False, []
 
         with patch("solver.improve", side_effect=inspect):
             result = solver.solve(data)
+        self.assertIn("hint", captured)
         self.assertEqual(result["status"], "FEASIBLE")
-        self.assertGreater(captured["changed"], 0)
-        self.assertTrue(captured["guards"])
         self.assertEqual(result["assignments"], data["assignments"])
+        self.assertEqual(data, before)
 
 
 if __name__ == "__main__":

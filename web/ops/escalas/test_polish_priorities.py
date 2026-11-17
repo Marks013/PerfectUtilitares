@@ -43,13 +43,26 @@ class PolishPriorityTests(unittest.TestCase):
         self.assertEqual(values[moved.index], 0)
         self.assertEqual(values[coverage.index], 0)
 
-    def test_remaining_goals_receive_equal_not_geometric_shares(self):
+    def test_operational_shares_do_not_reserve_time_for_cosmetic_goals(self):
         names = ['COVERAGE', 'SUNDAY_COVERAGE', 'SUNDAY_BALANCE',
                  'REST_DISTRIBUTION', 'REST_ROTATION', 'STABILITY', 'TIE_BREAK']
-        self.assertEqual(_phase_budget(8, names, 3), 2)
-        self.assertEqual(_phase_budget(6, names, 4), 2)
+        # Two equally weighted operational goals share the remaining eight
+        # seconds. Cosmetic goals receive only real residual time afterward.
+        first = _phase_budget(8, names, 3)
+        self.assertEqual(first, 4)
+        self.assertEqual(_phase_budget(8 - first, names, 4), 4)
         self.assertEqual(_phase_budget(4, names, 5), 2)
         self.assertEqual(_phase_budget(2, names, 6), 2)
+        self.assertEqual(_phase_budget(8, ['STABILITY', 'REST_ROTATION'], 0), 0)
+
+    def test_equal_operational_goals_share_actual_remaining_time(self):
+        names = ['SATURDAY_BALANCE', 'REST_DISTRIBUTION', 'REST_ROTATION', 'LEADERSHIP']
+        remaining = 8
+        for index in range(len(names)):
+            allocation = _phase_budget(remaining, names, index)
+            self.assertEqual(allocation, 2)
+            remaining -= allocation
+        self.assertEqual(remaining, 0)
 
     def test_sector_choice_uses_deficit_before_number_of_changed_people(self):
         model = cp_model.CpModel()
