@@ -32,7 +32,6 @@ function legacyContinuousReference(hours: 40 | 42, blocks: boolean): EscalaInput
   value.policy.normativeProfile = "CUSTOM";
   value.policy.limitContinuousWorkBlocks = blocks; value.policy.allowShortMealSimulation = false;
   value.employees[0].weeklyHours = hours; value.employees[0].weeklyHoursMode = "BRANCH";
-  (value.employees[0].sourceSchedule as NonNullable<typeof value.employees[0]['sourceSchedule']>).weekday = "07:00-13:00 / 00:00-00:00";
   const segments: EscalaInput["shifts"][number]["segments"] = [{ start: 420, end: 420 + hours * 12, kind: "WORK" }];
   let hash = 2166136261;
   for (const character of JSON.stringify(segments)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
@@ -43,6 +42,25 @@ function legacyContinuousReference(hours: 40 | 42, blocks: boolean): EscalaInput
 }
 
 describe("legacy automatic meal repair and excluded-record retention", () => {
+  it.each(["DAYS_AND_HOURS", "HOURS_ONLY"] as const)("preserves a legacy automatic clock when its six-hour import is excluded in %s", mode => {
+    const value = legacyContinuousReference(42, false);
+    value.generationMode = mode; value.policy.minMealMinutes = 90;
+    (value.employees[0].sourceSchedule as NonNullable<typeof value.employees[0]['sourceSchedule']>).weekday = "07:00-13:00 / 00:00-00:00";
+    value.assignments = [
+      { employeeId: "p1", date: value.startDate, kind: "WORK", shiftId: value.shifts[1].id, locked: true },
+      { employeeId: "p1", date: addDays(value.startDate, 1), kind: "ABSENCE" },
+      { employeeId: "p1", date: addDays(value.startDate, 2), kind: "HOLIDAY", locked: true },
+    ];
+    const original = structuredClone(value), result = prepareGeneration(value), prepared = result.input;
+    expect(prepared.employees[0]).toMatchObject({ planningEnabled: false, sourceSchedule: original.employees[0].sourceSchedule,
+      shiftIds: original.employees[0].shiftIds, originalShiftIds: original.employees[0].originalShiftIds });
+    expect(prepared.employees[0].planningExclusionReason).toContain("até 6h, inclusive");
+    expect(result.preparation.excludedEmployeeIds).toEqual(["p1"]);
+    expect(result.preparation.includedEmployees).toBe(0);
+    expect(prepared.shifts).toEqual(original.shifts);
+    expect(prepared.assignments).toEqual(original.assignments);
+    expect(value).toEqual(original);
+  });
   it("uses the configured meal instead of a hidden default", () => {
     const value = legacyContinuousReference(42, false);
     value.policy.minMealMinutes = 90;

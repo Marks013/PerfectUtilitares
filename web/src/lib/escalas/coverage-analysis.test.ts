@@ -181,20 +181,34 @@ describe("derived coverage analysis", () => {
     input.employees[0].sourceSchedule = { report: "FPRE136", code: "a", description: "Importado",
       weekday: "08:00-12:00 / 13:00-17:00", saturday: "08:00-12:00" };
     input.employees[1].sourceSchedule = { report: "FPRE136", code: "b", description: "Importado",
-      weekday: "06:00-12:00", saturday: "08:00-12:00" };
+      weekday: "06:00-13:00", saturday: "08:00-12:00" };
     const result = analyzeCoverage(input, input).nominal;
-    expect(result).toMatchObject({ origin: "MIXED", referenceWeeklyHours: null, referenceCapacityHours: 78,
+    expect(result).toMatchObject({ origin: "MIXED", referenceWeeklyHours: null, referenceCapacityHours: 83,
       referencePeople: 2, withoutReferencePeople: 1, preparedWeeklyHoursMin: 84 });
-    expect(result.sourceGroups.map(group => [group.weeklyHours, group.people])).toEqual([[34, 1], [44, 1]]);
-    expect(result.scenarios.map(row => [row.capacityHours, row.lostHours])).toEqual([[76, 2], [74, 4]]);
+    expect(result.sourceGroups.map(group => [group.weeklyHours, group.people])).toEqual([[39, 1], [44, 1]]);
+    expect(result.scenarios.map(row => [row.capacityHours, row.lostHours])).toEqual([[81, 2], [79, 4]]);
+  });
+  it("excludes a six-hour principal import from nominal capacity without changing its source", () => {
+    const input = fixture(3);
+    input.employees[0].sourceSchedule = { report: "FPRE136", code: "a", description: "Importado",
+      weekday: "08:00-12:00 / 13:00-17:00", saturday: "08:00-12:00" };
+    input.employees[1].sourceSchedule = { report: "FPRE136", code: "b", description: "Importado",
+      weekday: "06:00-12:00", saturday: "08:00-12:00" };
+    const original = structuredClone(input), result = analyzeCoverage(input, input);
+    expect(result.cohort).toMatchObject({ comparablePeople: 2, excludedByReason: { PLANNING_EXCLUDED: 1 } });
+    expect(result.nominal).toMatchObject({ origin: "FPRE136_INFERRED", referenceWeeklyHours: 44,
+      referenceCapacityHours: 44, referencePeople: 1, withoutReferencePeople: 1, preparedWeeklyHoursMin: 42 });
+    expect(result.nominal.sourceGroups.map(group => [group.weeklyHours, group.people])).toEqual([[44, 1]]);
+    expect(result.nominal.scenarios.map(row => [row.capacityHours, row.lostHours])).toEqual([[42, 2], [40, 4]]);
+    expect(input).toEqual(original);
   });
   it("does not assume Saturday or a 44h origin when imported information is absent", () => {
     const input = fixture();
     expect(analyzeCoverage(input, input).nominal).toMatchObject({ origin: "UNAVAILABLE", referenceCapacityHours: null, referencePeople: 0, withoutReferencePeople: 1 });
     input.employees[0].sourceSchedule = { report: "FPRE136", code: "a", description: "Importado", weekday: "08:00-12:00 / 13:00-17:00", saturday: "" };
     expect(analyzeCoverage(input, input).nominal.referenceCapacityHours).toBeNull();
-    input.employees[0].sourceSchedule = { ...input.employees[0].sourceSchedule, weekday: "06:00-12:00", saturday: "00:00-00:00 / 00:00-00:00" };
-    expect(analyzeCoverage(input, input).nominal).toMatchObject({ origin: "FPRE136_INFERRED", referenceCapacityHours: 30 });
+    input.employees[0].sourceSchedule = { ...input.employees[0].sourceSchedule, weekday: "06:00-13:00", saturday: "00:00-00:00 / 00:00-00:00" };
+    expect(analyzeCoverage(input, input).nominal).toMatchObject({ origin: "FPRE136_INFERRED", referenceCapacityHours: 35 });
   });
   it("preserves an explicit individual 44h setting in branch 42/40 scenarios", () => {
     const input = fixture(); input.employees[0].weeklyHours = 44; input.employees[0].weeklyHoursMode = "INDIVIDUAL";

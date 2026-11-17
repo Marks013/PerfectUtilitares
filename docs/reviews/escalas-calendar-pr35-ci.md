@@ -25,7 +25,7 @@ Identificadores dos jobs da execução geral: qualidade `134100003912`, imagens
 `134100004332`, solver/verificador `134100004391`. Os resultados acima pertencem
 à revisão de código 73c80ce, não a uma futura versão nem a uma implantação.
 
-## Pendência de diagnóstico das falhas TypeScript
+## Histórico do diagnóstico inicial
 
 O log recuperado do job de qualidade reporta seis falhas TypeScript. Não foi
 possível correlacionar com segurança todos os caminhos e casos reportados com
@@ -43,19 +43,40 @@ alterar esses contratos. Não foram criados arquivos substitutos, desativados
 casos ou enfraquecidas regras de elegibilidade, preservação ou cobertura para
 contornar um diagnóstico ainda não confirmado.
 
-## Estado de liberação
+## Diagnóstico reconciliado e reparos aceitos em 17/11/2026
 
-O PR permanece em rascunho e não está aprovado para implantação. Não houve merge
-na main, deploy ou verificação do processo/banco do servidor de produção.
-Construção de imagem em CI não é evidência de implantação nem de saúde do
-ambiente em execução.
+O diagnóstico inicial acima é histórico e foi superado pela reprodução no
+checkout do servidor. Foram identificadas 18 falhas em fixtures de testes que
+ainda pressupunham jornadas de 6 horas, já excluídas pelo contrato vigente.
+Os reparos ajustaram apenas essas fixtures e suas expectativas, sem relaxar
+regras de produção. A validação focada registrou 85 testes aprovados em três
+arquivos, incluindo cinco novas regressões, sem skips. Esse resultado não
+substitui o quality completo nem altera retroativamente a execução remota citada.
+
+Os ajustes de cores e invalidação de cache de exportação também foram aceitos
+para integração. As evidências correspondentes pertencem às revisões de cada
+frente; não certificam uma nova grade ou justiça final na distribuição de
+oportunidades.
+
+## Escopo autorizado e gates pendentes de execução
+
+O usuário autorizou integrar a fundação da PR #35 e os reparos aceitos à main,
+fazer push e implantar somente após os gates canônicos. No momento desta
+atualização, o quality completo integrado e a implantação dessa revisão ainda
+não foram executados nem aprovados. A execução final deve registrar revisão,
+hashes, resultados, limitações e saúde real da produção em relatório próprio.
+Construção de imagem em CI não é evidência de implantação ou de saúde do runtime.
 
 A regra domingo-sábado continua somente na fundação de calendário: a integração
 com contratos de entrada, jornada, solver/sugestões, verificador, migração,
 interface e exportações ainda não foi concluída. Os testes aprovados não
 certificam uma funcionalidade que ainda não está conectada.
 
-A liberação continua condicionada à integração restante, à resolução da CI
-completa, ao procedimento de qualidade/release de AGENTS.md e à conferência dos
-fluxos reais depois de uma implantação autorizada. O conteúdo de produção não
-foi modificado nesta revisão.
+A implantação autorizada abrange a fundação dormente e os reparos aceitos; não
+depende de ativar a funcionalidade domingo-sábado completa. Sua ativação exige
+outro escopo, integração e validação dos contratos restantes. Nesta liberação,
+não gerar, recalcular, salvar, aplicar, publicar ou migrar grades; manter horários,
+regras de 4h30/9h e opções manuais intactos. O procedimento de AGENTS.md exige
+uma rodada real de quality completo sem filtros e, se aprovada, um único
+docker:deploy com build, seguido de conferência dos fluxos públicos/autenticados.
+Nenhum resultado futuro está antecipado por este documento.

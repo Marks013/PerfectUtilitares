@@ -1,5 +1,5 @@
 /** Day states only: neither Sunday nor a person's role overrides a saved cell code. */
-export const ROSTER_STATE_COLORS = ["#FFFFFF", "#DCFCE7", "#DBEAFE", "#FEF3C7", "#F3E8FF", "#FEE2E2", "#F1F5F9"] as const;
+export const ROSTER_STATE_COLORS = ["#FFFFFF", "#86EFAC", "#DBEAFE", "#FCD34D", "#F3E8FF", "#FEE2E2", "#F1F5F9"] as const;
 export const ROSTER_STATE_TEXT = "#1E293B";
 export const ROSTER_COLOR_LEGEND = "Cores: F verde; ENC azul; FE amarelo; AF lilás; NP rosa. Domingo só no cabeçalho; cargo na identificação.";
 
