@@ -189,7 +189,7 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   expect(generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "004").scheduleMode).toBe("UNTIMED");
   const shortPerson = generated.proposalInput.employees.find((person: { registration: string }) => person.registration === "005");
   expect(shortPerson).toMatchObject({ planningEnabled: false, scheduleMode: "TIMED", sourceSchedule: { weekday: "07:00-11:00 / 00:00-00:00" } });
-  expect(shortPerson.planningExclusionReason).toContain("inferior a 6h");
+  expect(shortPerson.planningExclusionReason).toContain("até 6h, inclusive");
   expect(generated.proposalInput.assignments.filter((item: { employeeId: string }) => item.employeeId === shortPerson.id)).toEqual([]);
   await expect(page.getByRole("heading", { name: "Proposta pronta para revisão", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
