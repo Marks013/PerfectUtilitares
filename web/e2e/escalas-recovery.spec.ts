@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "./fixtures";
 import { selectEscalasWorkspace } from "./escalas-selection";
 import { newInput } from "../src/components/escalas/workspace-model";
+import { newLegacyInput } from "../src/lib/escalas/legacy-calendar-test-fixture";
 import { dateRange } from "../src/lib/escalas/dates";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
@@ -13,7 +14,9 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function fixture(page: Page, locked = false) {
-  const input = newInput("REC-" + Date.now().toString(36) + (locked ? "-L" : "-C"), "Recuperação sintética", "2026-11", 40);
+  // The locked padding scenario intentionally preserves its historical Monday calendar.
+  const createInput = locked ? newLegacyInput : newInput;
+  const input = createInput("REC-" + Date.now().toString(36) + (locked ? "-L" : "-C"), "Recuperação sintética", "2026-11", 40);
   input.employees = [{ id: "p1", registration: "001", name: "Pessoa sintética", sector: "Loja", role: "Repositor", weeklyHours: 40, shiftIds: [input.shifts[0].id], activeFrom: "", offMode: locked ? "FIXED" : "VARIABLE", fixedOffDays: locked ? [5, 6] : [], offPattern: "ANY", maxConsecutiveSundays: 2, preferredOffDays: [], historyKnown: false, history: [] }];
   if (locked) input.assignments = [{ employeeId: "p1", date: "2026-10-31", kind: "WORK", shiftId: input.shifts[0].id, locked: true }];
   else input.demands = dateRange(input.startDate, input.endDate).flatMap(date => input.shifts[0].segments.filter(segment => segment.kind === "WORK").map((segment, index) => ({ id: date + "-" + index, date, sector: "Loja", role: "Repositor", start: segment.start, end: segment.end, minimum: 1, estimated: false })));
@@ -44,6 +47,7 @@ async function generate(page: Page) {
 
 test("real infeasible coverage explains the budget, opens the correct filters and recovers only after explicit confirmation", async ({ page }) => {
   const workspace = await fixture(page);
+  expect(workspace.input).toMatchObject({ planningWeekStartsOn: "SUNDAY", startDate: "2026-11-01", endDate: "2026-12-05" });
   try {
     const failed = await generate(page);
     expect(failed.result.status).toBe("INFEASIBLE");
@@ -55,7 +59,7 @@ test("real infeasible coverage explains the budget, opens the correct filters an
     const list = page.locator("#escala-coverage-required");
     await expect(list).toHaveAttribute("open", "");
     await expect(page.getByLabel("Filtrar setor da cobertura", { exact: true })).toHaveValue("Loja");
-    await expect(page.getByLabel("Filtrar dia da cobertura", { exact: true })).toHaveValue("2026-11-02");
+    await expect(page.getByLabel("Filtrar dia da cobertura", { exact: true })).toHaveValue(workspace.input.startDate);
     expect(await list.locator("summary").evaluate(element => element === document.activeElement)).toBe(true);
     await list.locator("summary").click();
     await page.locator('button[aria-controls="escala-area-team"]').click();
@@ -84,12 +88,15 @@ test("real infeasible coverage explains the budget, opens the correct filters an
     expect((await saving).status()).toBe(200);
     const saved: EscalaWorkspace = await page.request.get("/api/escalas?id=" + workspace.id).then(response => response.json());
     expect(saved.input.demands.every(demand => demand.estimated === true)).toBe(true);
-    expect(saved.input.assignments).toHaveLength(42);
+    expect(saved.input.assignments).toHaveLength(35);
   } finally { await removeFixture(page, workspace.id); }
 });
 
 test("Conferir equipe e restrições opens the actual employee editor after a genuine locked-rest conflict", async ({ page }) => {
   const workspace = await fixture(page, true);
+  expect(workspace.input.startDate).toBe("2026-10-26");
+  expect(workspace.input.endDate).toBe("2026-12-06");
+  expect(workspace.input.planningWeekStartsOn).toBeUndefined();
   try {
     const failed = await generate(page);
     expect(failed.result.status).toBe("INFEASIBLE");
