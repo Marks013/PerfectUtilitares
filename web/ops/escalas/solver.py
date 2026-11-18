@@ -997,7 +997,10 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
-    comparable = {sector for sector, members in sectors.items() if prefer_baseline and all(
+    # Completeness alone must not preserve an entirely resting estimated sector.
+    # Rebuild hints only; keep locks, HOURS_ONLY and mandatory rules unchanged.
+    comparable = {sector for sector, members in sectors.items()
+                  if prefer_baseline and sector not in empty_sectors and all(
         (old := source.get((person['id'], day))) is not None
         and (old['kind'] == 'ABSENCE' or (day in holidays or baseline.get((person['id'], day), {}).get('kind') == 'HOLIDAY') == (old['kind'] == 'HOLIDAY'))
         and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])
