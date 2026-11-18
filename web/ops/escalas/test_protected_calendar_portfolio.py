@@ -331,7 +331,10 @@ class ProtectedCalendarPortfolioTests(unittest.TestCase):
                 if built and built[-1]['values'] is not None and hinted == built[-1]['values']:
                     deliveries.append(time.monotonic())
                 return engine.solve(model)
-        with patch('solver._rest_repair_groups', return_value=[]), \
+        # Exercise refinement from this deliberately poor incumbent. Initial
+        # seed recovery has separate unmocked production regressions.
+        with patch('solver._empty_estimated_seed_sectors', return_value=set()), \
+                patch('solver._rest_repair_groups', return_value=[]), \
                 patch('solver._composed_decision_hints', side_effect=build), \
                 patch('solver.improve', side_effect=improve):
             result = solver.solve(data, Observe())
