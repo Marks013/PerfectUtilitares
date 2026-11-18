@@ -12,12 +12,12 @@ vi.mock("@/lib/escalas/solver-transport", async original => {
   const crypto = await import("node:crypto");
   return { ...await original<typeof import("@/lib/escalas/solver-transport")>(), candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "route-synthetic-receipt-key").update(payload).digest("hex") };
 });
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
 vi.mock("@/lib/escalas/solve-operations", () => ({ solveOwner: () => "session-owner", startGenerationOperation: mocks.startOperation, runGenerationOperation: mocks.runOperation, cancelGenerationOperation: mocks.cancelOperation, generationOperationStatus: mocks.operationStatus }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
-vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, saveEscala: mocks.save, generateEscala: mocks.generate, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
+vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, upgradeEscalaCalendar: mocks.upgrade, saveEscala: mocks.save, generateEscala: mocks.generate, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
 const workspace = { id: "w1", revision: 1, status: "DRAFT", input, canEdit: true, canPublish: true };
@@ -34,6 +34,7 @@ describe("/api/escalas", () => {
   it("successfully round-trips a real service-produced receipt through GENERATE and rejects tampering before the solver", async () => {
     const value = newInput("02", "Synthetic", "2026-11", 42);
     value.startDate = "2026-11-02"; value.endDate = "2026-11-08"; delete value.visibleMonth;
+    value.planningWeekStartsOn = "MONDAY"; // Existing receipt contract uses this exact legacy week.
     value.simulation = true; value.restRulesVersion = 2; value.policy.calendarMode = "MANUAL";
     value.shifts = [{ id: "day", name: "Day", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }];
     value.employees = [{ ...newEmployee(42, "day"), id: "a", registration: "a", name: "Synthetic", sector: "Store", role: "Operator", activeFrom: "2020-01-01" }];
@@ -118,6 +119,17 @@ describe("/api/escalas", () => {
     expect(mocks.list).toHaveBeenCalledWith({ userId: "u1", tenantId: "t1", admin: true });
     expect((await GET(new Request("http://localhost/api/escalas?id=w1"))).status).toBe(200);
     expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1");
+  });
+  it("creates a Sunday draft through the explicit upgrade action without saving the legacy source", async () => {
+    const upgraded = { ...workspace, id: "sunday-draft", input: { ...input, planningWeekStartsOn: "SUNDAY", planningCalendarSource: { workspaceId: "w1", revision: 1 } } };
+    mocks.upgrade.mockResolvedValue(upgraded);
+    const response = await POST(command({ action: "UPGRADE_CALENDAR", id: "w1", expectedRevision: 1 }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual(upgraded);
+    expect(mocks.upgrade).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1", userId: "u1" }), "w1", 1);
+    expect(mocks.save).not.toHaveBeenCalled();
+    mocks.upgrade.mockRejectedValue(new EscalaError(409, "ESCALA_STALE_REVISION", "A versão mudou."));
+    expect((await POST(command({ action: "UPGRADE_CALENDAR", id: "w1", expectedRevision: 1 }))).status).toBe(409);
   });
   it("creates, saves and publishes through versioned services", async () => {
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(201);

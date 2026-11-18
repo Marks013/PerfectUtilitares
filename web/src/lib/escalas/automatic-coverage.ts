@@ -80,14 +80,14 @@ function coverageFingerprint(input: EscalaInput, version: 1 | 2): string {
     const left = JSON.stringify(a), right = JSON.stringify(b);
     return left < right ? -1 : left > right ? 1 : 0;
   });
-  const weeks = [...new Set(dateRange(input.startDate, input.endDate).map(weekStart))];
+  const weeks = [...new Set(dateRange(input.startDate, input.endDate).map(day => weekStart(day, input)))];
   const context = (records: EscalaAssignment[]) => sorted(records.map(record => [record.date, record.kind,
     record.kind === "WORK" ? clock(shifts.get(record.shiftId ?? "")) : null]));
   const people = input.employees.map(person => {
     const references = new Map<string, unknown>();
     for (const week of weeks) {
       const mixed = usesMixed42Week(input, person, week);
-      const target = mixed ? 480 : effectiveWeeklyMinutes(person, week) / 5;
+      const target = mixed ? 480 : effectiveWeeklyMinutes(person, week, input) / 5;
       references.set(`${target}:${mixed}`, [target, mixed,
         clock(referenceShift(person, shifts, target)), mixed ? clock(referenceShift(person, shifts, 540, isMixed42LongShift)) : null]);
     }
@@ -100,7 +100,7 @@ function coverageFingerprint(input: EscalaInput, version: 1 | 2): string {
       context(person.history), context(person.planningHistory ?? []), context(person.planningFuture ?? [])];
   });
   const policy = input.policy;
-  const data = [input.startDate, input.endDate, input.defaultWeeklyHours, input.timeZone, storeClosingMinutes(input), [...(input.mixed42Sectors ?? [])].sort(),
+  const data = [input.startDate, input.endDate, ...(input.planningWeekStartsOn ? [input.planningWeekStartsOn] : []), input.defaultWeeklyHours, input.timeZone, storeClosingMinutes(input), [...(input.mixed42Sectors ?? [])].sort(),
     [policy.weeklyLimit, policy.dailyLimitMinutes, policy.minInterShiftMinutes, policy.minWeeklyRestMinutes, policy.minMealMinutes,
       policy.maxConsecutiveWorkDays, policy.allowShortMealSimulation === true, policy.limitContinuousWorkBlocks === true,
       [...policy.closedDates].sort(), [...policy.holidayDates].sort(), [...policy.authorizedHolidayDates].sort(), policy.holidayRestAllowed,
@@ -175,7 +175,7 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
   const closedHolidays = closedHolidayDates(input);
   const weeks = new Map<string, string[]>();
   for (const day of dateRange(input.startDate, input.endDate)) {
-    const monday = addDays(day, -dayOfWeek(day));
+    const monday = weekStart(day, input);
     const group = weeks.get(monday) ?? [];
     group.push(day);
     weeks.set(monday, group);
@@ -188,7 +188,7 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
     for (const person of input.employees) {
       if (person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || !person.sector) continue;
       const mixed = usesMixed42Week(input, person, monday);
-      const shift = referenceShift(person, shifts, mixed ? 480 : effectiveWeeklyMinutes(person, monday) / 5);
+      const shift = referenceShift(person, shifts, mixed ? 480 : effectiveWeeklyMinutes(person, monday, input) / 5);
       const longShift = mixed ? referenceShift(person, shifts, 540, isMixed42LongShift) : undefined;
       const active = days.filter(day => day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil));
       const limitedAvailability = active.length < 7 || active.some(day => assignments.get(JSON.stringify([person.id, day]))?.kind === "ABSENCE");

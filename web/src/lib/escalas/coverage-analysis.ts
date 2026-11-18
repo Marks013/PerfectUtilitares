@@ -314,8 +314,8 @@ function nominalComparison(reference: EscalaInput, candidate: EscalaInput, dates
     // An individual setting is an explicit constraint. A branch scenario cannot enlarge a shorter imported reference.
     return sum + (planned.weeklyHoursMode === "INDIVIDUAL" ? planned.weeklyHours : Math.min(entry.hours, planned.weeklyHours));
   }, 0);
-  const totals = (input: EscalaInput, side: "reference" | "candidate") => [...new Set(dates.map(weekStart))].map(week =>
-    knownCohort.people.reduce((sum, person) => sum + effectiveWeeklyMinutes(planningWeeklyHours(person[side], input.defaultWeeklyHours, input.defaultWeeklyHours), week) / 60, 0));
+  const totals = (input: EscalaInput, side: "reference" | "candidate") => [...new Set(dates.map(date => weekStart(date, input)))].map(week =>
+    knownCohort.people.reduce((sum, person) => sum + effectiveWeeklyMinutes(planningWeeklyHours(person[side], input.defaultWeeklyHours, input.defaultWeeklyHours), week, input) / 60, 0));
   const prepared = totals(reference, "reference"), proposed = totals(candidate, "candidate");
   const weekly = new Set(known.map(entry => entry.hours));
   return { origin: !sourceGroups.length ? "UNAVAILABLE" : sourceGroups.length > 1 ? "MIXED" : sourceGroups[0].origin,

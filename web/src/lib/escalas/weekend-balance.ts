@@ -29,7 +29,7 @@ export function weekendBalance(input: EscalaInput, weekday: 5 | 6, assignments =
     if (person.planningEnabled === false) continue;
     const noClock = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
     const group = JSON.stringify([noClock, person.sector, effectiveSundayLimit(person),
-      noClock ? [] : days.filter((_, index) => index % 7 === 0).map(day => effectiveWeeklyHours(person, day))]);
+      noClock ? [] : days.filter((_, index) => index % 7 === 0).map(day => effectiveWeeklyHours(person, day, input))]);
     const rates = groups.get(group) ?? []; groups.set(group, rates);
     const available = days.filter(day => dayOfWeek(day) === weekday && day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil))
       .filter(day => {

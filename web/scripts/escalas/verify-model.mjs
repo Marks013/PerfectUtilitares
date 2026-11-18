@@ -203,6 +203,8 @@ for index, generated_input in enumerate(generated):
     scenarios.append((f"generated-property-{index}", generated_input, {}))
 ` : ""}
 
+${properties ? "" : "from test_sunday_week_integration import locked_roster\ndata = fixture(40, weeks=2, start_date=\"2026-11-01\")\ndata[\"planningWeekStartsOn\"] = \"SUNDAY\"\nlocked_roster(data, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-timed-no-previous-week-credit\", data, {\"sundayWeeks\": True}))\nuntimed = copy.deepcopy(data)\nmake_untimed(untimed[\"employees\"][0])\nlocked_roster(untimed, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-untimed-no-fictitious-hours\", untimed, {\"sundayWeeks\": True}))\ninvalid = copy.deepcopy(data)\nlocked_roster(invalid, {\"2026-11-01\", \"2026-11-02\", \"2026-11-05\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-rejects-borrowed-sunday\", invalid, {\"infeasible\": \"FIVE_BY_TWO\"}))\n\n"}
+
 for name, data, expectations in scenarios:
     before = copy.deepcopy(data) if expectations.get("saturdayParity") else None
     solved = solve(data)
@@ -247,6 +249,18 @@ for (const line of result.stdout.trim().split("\n")) {
     }
     const validation = validateEscala({ ...input, assignments: solved.assignments });
     assert(validation.valid, `${name}: ${validation.issues.filter((issue) => issue.severity === "ERROR").map((issue) => issue.code).join(", ")}`);
+    if (expectations.sundayWeeks) {
+      const dates = dateRange(input.startDate, input.endDate);
+      assert.equal(dayOfWeek(dates[0]), 6, name);
+      for (let offset = 0; offset < dates.length; offset += 7) {
+        const week = new Set(dates.slice(offset, offset + 7));
+        for (const person of input.employees) {
+          const records = solved.assignments.filter(day => day.employeeId === person.id && week.has(day.date));
+          assert.equal(records.filter(day => day.kind === "OFF").length, 2, name);
+          assert.equal(records.filter(day => day.kind === "WORK" || day.kind === "DUTY").length, 5, name);
+        }
+      }
+    }
     if (expectations.saturdayParity) {
       const saturdays = dateRange(input.startDate, input.endDate).filter(day => dayOfWeek(day) === 5);
       assert.deepEqual(saturdays, ["2026-10-31", "2026-11-07", "2026-11-14", "2026-11-21", "2026-11-28", "2026-12-05"]);
@@ -285,5 +299,5 @@ for (const line of result.stdout.trim().split("\n")) {
   passed++;
   console.log(JSON.stringify({ scenario: name, verified: true, status: solved.status, seconds: solved.wallTimeSeconds }));
 }
-assert.equal(passed, properties ? 30 : 23, "Todos os cenários devem ter sido executados.");
+assert.equal(passed, properties ? 30 : 26, "Todos os cenários devem ter sido executados.");
 console.log(JSON.stringify({ verified: true, scenarios: passed, processor: "CP-SAT", verifier: "TypeScript independent" }));

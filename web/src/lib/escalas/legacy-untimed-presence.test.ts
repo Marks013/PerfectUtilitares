@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newInput } from "@/components/escalas/workspace-model";
+import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
 import { buildCoveragePresence, coverageAt, sectorPresenceGaps } from "./coverage-presence";
 import { prepareGeneration } from "./generation";
 import { assignmentPresentation } from "./presentation";

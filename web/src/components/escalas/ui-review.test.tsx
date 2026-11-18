@@ -48,9 +48,15 @@ describe("Escalas readable operational review", () => {
   it("does not present old technical-day or missing-clock assignments as users of a visible timed shift", () => {
     const {input} = sample();
     input.employees[0].scheduleMode = "MISSING";
+    input.planningWeekStartsOn = "MONDAY";
+    input.startDate = "2026-10-26"; input.endDate = "2026-12-06";
+    input.policy.validFrom = input.startDate; input.policy.validUntil = input.endDate;
+    expect(visibleDates(input)).not.toContain(input.startDate);
     input.assignments[1].date = input.startDate;
+    const before = structuredClone(input);
     const html = renderToStaticMarkup(<ShiftSummary input={input} usedOnly />);
     expect(html).toContain("Nenhum turno com horário foi aplicado");
+    expect(input).toEqual(before);
   });
 
   it("preserves excluded records in a separate actionable relation and exposes the recorded reason", () => {

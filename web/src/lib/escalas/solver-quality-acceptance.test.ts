@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { newEmployee, newInput } from "../../components/escalas/workspace-model";
+import { newEmployee } from "../../components/escalas/workspace-model";
+import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
 import { solveEscala } from "./solver-client";
 import { requestSolver } from "./solver-transport";
 import * as refinement from "./roster-refinement";

@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { newEmployee, newInput } from "@/components/escalas/workspace-model";
+import { newEmployee } from "@/components/escalas/workspace-model";
+import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
 import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
 import { validateEscala } from "./validation";
 import { coverageQuality } from "./roster-quality";

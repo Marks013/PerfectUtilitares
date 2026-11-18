@@ -52,10 +52,10 @@ describe("actual mixed weekly journeys in operational reports", () => {
     expect(rows[2][0]).toContain("Fechamento da loja: 20:00");
     expect(rows[3]).toContain("Aplicação nas semanas");
     const short = rows.find(row => exportedDurationMinutes(row[7]) === 480), long = rows.find(row => exportedDurationMinutes(row[7]) === 540);
-    expect(short?.[8]).toContain("02/11–08/11: 3 dias · Seg 02, Qua 04, Qui 05");
-    expect(short?.[8]).toContain("09/11–15/11: 2 dias · Seg 09, Qua 11");
-    expect(long?.[8]).toContain("02/11–08/11: 2 dias · Ter 03, Sex 06");
-    expect(long?.[8]).toContain("09/11–15/11: 2 dias · Ter 10, Sex 13");
+    expect(short?.[8]).toContain("01/11–07/11: 3 dias · Seg 02, Qua 04, Qui 05");
+    expect(short?.[8]).toContain("08/11–14/11: 2 dias · Seg 09, Qua 11");
+    expect(long?.[8]).toContain("01/11–07/11: 2 dias · Ter 03, Sex 06");
+    expect(long?.[8]).toContain("08/11–14/11: 2 dias · Ter 10, Sex 13");
     expect(long?.[6]).toBe("12:30-15:30 (03:00)");
     expect(short?.[8]).not.toContain("Qui 12");
     expect(source).toEqual(before);
@@ -68,7 +68,7 @@ describe("actual mixed weekly journeys in operational reports", () => {
     ];
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(source, "hours")), "Horarios");
     const actual = rows.find(row => exportedDurationMinutes(row[7]) === 480);
-    expect(actual?.[8]).toBe("26/10–01/11: 1 dia · Dom 01");
+    expect(actual?.[8]).toBe("01/11–07/11: 1 dia · Dom 01");
     expect(rows.some(row => exportedDurationMinutes(row[7]) === 540)).toBe(false);
     expect(rows.flat().join(" ")).not.toContain("Sáb 31");
   });
@@ -91,8 +91,8 @@ describe("actual mixed weekly journeys in operational reports", () => {
     ];
     const rows = await readSheet(Buffer.from(exportEscalaXlsx(source, "hours")), "Horarios");
     const actual = rows.find(row => exportedDurationMinutes(row[7]) === 480);
-    expect(actual?.[8]).toContain("06/12–12/12: 1 dia · Seg 06");
-    expect(actual?.[8]).toContain("20/12–26/12: 1 dia · Seg 20");
+    expect(actual?.[8]).toContain("05/12–11/12: 1 dia · Seg 06");
+    expect(actual?.[8]).toContain("19/12–25/12: 1 dia · Seg 20");
     expect(rows.some(row => exportedDurationMinutes(row[7]) === 540)).toBe(false);
   });
   it("prints the same weekly dates and 3h meal in bounded A4 PDF cells", async () => {
@@ -100,8 +100,8 @@ describe("actual mixed weekly journeys in operational reports", () => {
     const result = await text(await exportEscalaPdf(source, "hours"));
     expect(result).toContain("Fechamento da loja: 21:00");
     expect(result).toContain("Aplicação nas semanas");
-    expect(result).toContain("02/11–08/11: 3 dias");
-    expect(result).toContain("09/11–15/11: 2 dias");
+    expect(result).toContain("01/11–07/11: 3 dias");
+    expect(result).toContain("08/11–14/11: 2 dias");
     expect(result).toContain("12:30-15:30 (03:00)");
     expect(result).not.toContain("Qui 12");
   });

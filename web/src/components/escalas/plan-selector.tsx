@@ -3,12 +3,14 @@
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import { visibleDates } from "@/lib/escalas/dates";
 import { compareBranches } from "@/lib/escalas/order";
+import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
 import { controlClass, Field } from "./controls";
 import styles from "./escalas.module.css";
 import type { WorkspaceSummary } from "./use-escalas-workspace";
 
 const MONTHS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 const displayDate = (value: string) => value.split("-").reverse().join("/");
+const weekLabel = (plan: WorkspaceSummary) => planningWeekStartsOn(plan.input) === "SUNDAY" ? "domingo a sábado" : "segunda a domingo";
 
 /** Reuse the same legacy-month interpretation as the roster; never change a saved period. */
 export function planPeriod(plan: WorkspaceSummary) {
@@ -83,9 +85,9 @@ export function PlanSelector({ plans, selectedId, disabled, onSelect }: {
         {months.map(month => <option key={month} value={month}>{MONTHS[Number(month) - 1]}</option>)}
       </select>}</Field>
       {matching.length > 1 && <Field label="Planejamento">{id => <select id={id} className={controlClass} value={selectedId} onChange={event => { if (matching.some(plan => plan.id === event.target.value) && event.target.value !== selectedId) onSelect(event.target.value); }}>
-        {matching.map((plan, index) => <option key={plan.id} value={plan.id}>{index + 1}. {planPeriod(plan).label} · {plan.status === "PUBLISHED" ? "Publicada" : "Rascunho"} · revisão {plan.revision}</option>)}
+        {matching.map((plan, index) => <option key={plan.id} value={plan.id}>{index + 1}. {planPeriod(plan).label} · {weekLabel(plan)} · {plan.status === "PUBLISHED" ? "Publicada" : "Rascunho"} · revisão {plan.revision}</option>)}
       </select>}</Field>}
     </fieldset>
-    {active && period && <p className={styles.muted}><strong>Planejamento aberto:</strong> Filial {period.branch} · {period.label} · {active.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</p>}
+    {active && period && <p className={styles.muted}><strong>Planejamento aberto:</strong> Filial {period.branch} · {period.label} · {weekLabel(active)} · {active.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</p>}
   </div>;
 }

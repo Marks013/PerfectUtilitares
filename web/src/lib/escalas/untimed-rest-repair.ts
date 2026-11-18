@@ -10,7 +10,7 @@ import type { EscalaAssignment, EscalaInput, EscalaShift, EscalaValidation } fro
 export function repairUntimedRests(input: EscalaInput, validation: EscalaValidation, deadline: number): EscalaInput {
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const days = dateRange(input.startDate, input.endDate), visible = new Set(visibleDates(input));
-  const weekByDate = new Map(days.map(day => [day, weekStart(day)]));
+  const weekByDate = new Map(days.map(day => [day, weekStart(day, input)]));
   for (const person of input.employees) {
     if (performance.now() >= deadline) break;
     if (person.planningEnabled === false || person.offMode !== "VARIABLE"
@@ -24,7 +24,7 @@ export function repairUntimedRests(input: EscalaInput, validation: EscalaValidat
       && !input.policy.closedDates.includes(record.date) && !person.fixedOffDays.includes(dayOfWeek(record.date)));
     const candidates: { work: EscalaAssignment; off: EscalaAssignment; longGain: number; pairGain: number }[] = [];
     for (const off of editable.filter(record => record.kind === "OFF" && problemDays.has(record.date))) {
-      for (const work of editable.filter(record => record.kind === "DUTY" && weekStart(record.date) === weekStart(off.date))) {
+      for (const work of editable.filter(record => record.kind === "DUTY" && weekStart(record.date, input) === weekStart(off.date, input))) {
         if (!keepsPriorityLeader(input, person, work.date)) continue;
         const current = records.map(record => record === work ? { ...record, kind: "OFF" as const }
           : record === off ? { ...record, kind: "DUTY" as const } : record);

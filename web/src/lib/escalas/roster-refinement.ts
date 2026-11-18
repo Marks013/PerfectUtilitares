@@ -52,7 +52,7 @@ function refinePass(input: EscalaInput, deadline: number, state: { checked: numb
   const presence = buildCoveragePresence(input);
   const visible = new Set(visibleDates(input));
   const days = dateRange(input.startDate, input.endDate);
-  const weekByDate = new Map(days.map(date => [date, weekStart(date)]));
+  const weekByDate = new Map(days.map(date => [date, weekStart(date, input)]));
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const closed = new Set(input.policy.closedDates);
   const assignments = new Map<string, EscalaAssignment[]>();

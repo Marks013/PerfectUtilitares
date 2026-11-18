@@ -1,5 +1,6 @@
 import { addDays, isDate, weekStart } from "./dates";
 import type { EscalaEmployee, EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "./types";
+import type { PlanningCalendar } from "./planning-calendar";
 import reference from "../../../ops/escalas/policy-reference.json" with { type: "json" };
 
 /** Operational invariant of this project's 5x2 planning model, not a general legal conclusion. */
@@ -39,8 +40,8 @@ export function legalWeeklyHours(day: string): WeeklyHours {
 }
 
 /** Conservative whole-week proposal; transition weeks require explicit acceptance. */
-export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">, start: string): WeeklyHours {
-  return Math.min(person.weeklyHours, legalWeeklyHours(addDays(weekStart(start), 6))) as WeeklyHours;
+export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">, start: string, calendar: PlanningCalendar = {}): WeeklyHours {
+  return Math.min(person.weeklyHours, legalWeeklyHours(addDays(weekStart(start, calendar), 6))) as WeeklyHours;
 }
 
 /** The optional distribution is scoped to timed 42h references; no saved authorization is inferred. */
@@ -52,7 +53,7 @@ export function usesMixed42(input: EscalaInput, person: EscalaEmployee): boolean
 }
 
 export function usesMixed42Week(input: EscalaInput, person: EscalaEmployee, day: string): boolean {
-  return usesMixed42(input, person) && effectiveWeeklyHours(person, day) === 42;
+  return usesMixed42(input, person) && effectiveWeeklyHours(person, day, input) === 42;
 }
 
 /** Exactly 9h of work, with one uninterrupted, unpaid 3h interval. */
@@ -66,14 +67,14 @@ export function isMixed42LongShift(shift: EscalaShift): boolean {
 }
 
 /** Civil-minute target for a support scenario; a short reference is not a verified contract. */
-export function effectiveWeeklyMinutes(person: Pick<EscalaEmployee, "weeklyHours" | "simulationDailyMinutes">, start: string): number {
-  return Math.min(effectiveWeeklyHours(person, start) * 60, person.simulationDailyMinutes === undefined ? Infinity : person.simulationDailyMinutes * 5);
+export function effectiveWeeklyMinutes(person: Pick<EscalaEmployee, "weeklyHours" | "simulationDailyMinutes">, start: string, calendar: PlanningCalendar = {}): number {
+  return Math.min(effectiveWeeklyHours(person, start, calendar) * 60, person.simulationDailyMinutes === undefined ? Infinity : person.simulationDailyMinutes * 5);
 }
 
-export function transitionWeeks(input: Pick<EscalaInput, "startDate" | "endDate">): string[] {
+export function transitionWeeks(input: Pick<EscalaInput, "startDate" | "endDate"> & PlanningCalendar): string[] {
   return [TRANSITION_42_DATE, TRANSITION_40_DATE]
-    .filter((day) => day >= input.startDate && day <= input.endDate && weekStart(day) !== day)
-    .map(weekStart);
+    .filter((day) => day >= input.startDate && day <= input.endDate && weekStart(day, input) !== day)
+    .map(day => weekStart(day, input));
 }
 
 export function effectiveSundayLimit(person: EscalaEmployee): 1 | 2 {

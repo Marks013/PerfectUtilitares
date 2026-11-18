@@ -62,6 +62,7 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
     page = document.addPage([width, height]); y = height - margin - 12;
     for (const line of wrap(model.branch, available, 12, true)) { text(line, margin, y, 12, true); y -= 16; }
     text(`${model.options.month} | Revisão ${model.revision} | ${model.status} | Previsto na grade`, margin, y); y -= 16;
+    text(`Semana: ${model.planningWeekStartsOn === "SUNDAY" ? "domingo a sábado" : "segunda a domingo"}`, margin, y, 8); y -= 13;
     for (const line of wrap(`Setor: ${sector || "Não informado"} | ${title}`, available, 10, true)) { text(line, margin, y, 10, true); y -= 15; }
     y -= 8;
   };
@@ -131,14 +132,14 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
         const calendarPeople = people.filter(person => person.employee.planningEnabled !== false);
         paragraph("F = OFF; AF = afastamento; FE = feriado fechado; ENC = sem horário fixo; NP = não processado; FV = fora do vínculo. Não são registros de ponto.");
         paragraph(ROSTER_COLOR_LEGEND, 8);
-        const weeks = [...new Set(model.dates.map(weekStart))];
+        const weeks = [...new Set(model.dates.map(date => weekStart(date, model)))];
         const largestCode = Math.max(0, ...calendarPeople.flatMap(person => person.cells.map(cell => font.widthOfTextAtSize(clean(cell.code), 8.5))));
         const fullMonthFits = largestCode <= available / (8 + model.dates.length) - 2;
         const blocks = fullMonthFits ? [model.dates] : Array.from({ length: Math.ceil(weeks.length / 3) }, (_, i) =>
-          model.dates.filter(date => weeks.slice(i * 3, i * 3 + 3).includes(weekStart(date))));
+          model.dates.filter(date => weeks.slice(i * 3, i * 3 + 3).includes(weekStart(date, model))));
         for (const [i, dates] of blocks.entries()) {
           if (i) newPage();
-          paragraph("Semanas civis: " + [...new Set(dates.map(weekStart))].map(date => date.slice(8) + "/" + date.slice(5, 7)).join(", "));
+          paragraph("Semanas civis: " + [...new Set(dates.map(date => weekStart(date, model)))].map(date => date.slice(8) + "/" + date.slice(5, 7)).join(", "));
           table(["Matrícula / nome / cargo", ...dates.map(date => date.slice(8) + "\n" + escalaDateLabel(date).split(" ")[1])], calendarPeople.map(person => [
             `${person.employee.registration} - ${person.employee.name}\n${person.employee.role}\nFolga: ${person.employee.offMode === "VARIABLE" ? "Variável" : !person.employee.fixedOffDays.length ? "Sem dia fixo informado" : (person.employee.offMode === "MIXED" ? "Variável e fixa: " : "Fixa: ") + [...new Set(model.dates.filter(date => person.employee.fixedOffDays.includes(dayOfWeek(date))).map(date => escalaDateLabel(date).split(" ")[1]))].join(", ")}`,
             ...dates.map(date => person.cells.find(cell => cell.date === date)?.code ?? "NP"),

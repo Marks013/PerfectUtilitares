@@ -1,3 +1,5 @@
+import { planningWeekStart, planningWeekEnd, type PlanningCalendar } from "./planning-calendar";
+
 const DAY_MS = 86_400_000;
 const branchFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
@@ -21,8 +23,8 @@ export function dayOfWeek(value: string): number {
   return (new Date(`${value}T00:00:00Z`).getUTCDay() + 6) % 7;
 }
 
-export function weekStart(value: string): string {
-  return addDays(value, -dayOfWeek(value));
+export function weekStart(value: string, calendar: PlanningCalendar = {}): string {
+  return planningWeekStart(value, calendar);
 }
 
 export function dateRange(start: string, end: string): string[] {
@@ -53,7 +55,7 @@ export function monthBounds(month: string): { startDate: string; endDate: string
   return { startDate: month + "-01", endDate: new Date(Date.UTC(year, number, 0)).toISOString().slice(0, 10) };
 }
 
-type PresentationPeriod = { startDate: string; endDate: string; visibleMonth?: string };
+type PresentationPeriod = { startDate: string; endDate: string; visibleMonth?: string } & PlanningCalendar;
 
 export function visibleDates(input: PresentationPeriod): string[] {
   if (input.visibleMonth) {
@@ -67,7 +69,7 @@ export function visibleDates(input: PresentationPeriod): string[] {
   if (!technical.length) return [];
   const middle = technical[Math.floor(technical.length / 2)].slice(0, 7);
   const month = monthBounds(middle);
-  if (weekStart(month.startDate) === input.startDate && addDays(month.endDate, 6 - dayOfWeek(month.endDate)) === input.endDate)
+  if (weekStart(month.startDate, input) === input.startDate && planningWeekEnd(month.endDate, input) === input.endDate)
     return dateRange(month.startDate, month.endDate);
   return technical;
 }

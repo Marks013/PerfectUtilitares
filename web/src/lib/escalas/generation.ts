@@ -117,7 +117,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     const hours = reference.weeklyHours;
     const weekHours = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0
       && person.activeFrom <= addDays(input.startDate, index + 6) && (!person.activeUntil || person.activeUntil >= addDays(input.startDate, index)))
-      .map(date => effectiveWeeklyHours({ weeklyHours: hours }, date));
+      .map(date => effectiveWeeklyHours({ weeklyHours: hours }, date, input));
     const imported = importedShiftReference(person);
     const compatibleImport = Boolean(imported && weekHours.length && weekHours.every(week => paidMinutes(imported) === week * 12));
     // A legacy short-clock marker must not activate mixed hours only after the clock choice is frozen.

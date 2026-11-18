@@ -157,7 +157,7 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     if (!active.length) continue;
     const entries = active.map((day) => byDate.get(day));
     const minutes = minutesByWeek.get(start) ?? 0;
-    const target = effectiveWeeklyMinutes(person, start) / 60;
+    const target = effectiveWeeklyMinutes(person, start, input) / 60;
     if (!untimed && target > input.policy.weeklyLimit) issue("CONTRACT_LIMIT", "Carga contratual efetiva superior ao limite normativo cadastrado.", start);
     if (!untimed && (minutes > target * 60 || minutes > input.policy.weeklyLimit * 60)) issue("WEEKLY_LIMIT", `Semana com ${minutes} minutos excede a carga efetiva ou normativa; alvo de ${target * 60} minutos.`, start);
     if (entries.some((entry) => !entry)) continue;

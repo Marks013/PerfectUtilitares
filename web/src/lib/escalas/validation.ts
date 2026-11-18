@@ -1,6 +1,6 @@
 import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
 import { isHoursReferenceOnly, validateHoursReferences } from "./hours-reference";
-import { absoluteMinute, dateRange, visibleDates } from "./dates";
+import { absoluteMinute, dateRange, visibleDates, weekStart } from "./dates";
 import { escalaInputSchema } from "./schema";
 import { sortEmployees } from "./order";
 import { fixedBoundaryReservations } from "./boundary";
@@ -94,7 +94,7 @@ export function validateEscala(rawInput: EscalaInput, options: { publishedSnapsh
   for (const reservation of boundaryReservations) addEmployeeEntry(reservationsByEmployee, reservation.employeeId, reservation);
   const days = dateRange(input.startDate, input.endDate);
   const visible = new Set(visibleDates(input));
-  const weekByDate = new Map(days.map((day, index) => [day, days[index - index % 7]]));
+  const weekByDate = new Map(days.map(day => [day, weekStart(day, input)]));
   const results = sortEmployees(input.employees).map((person) => validateEmployee(input, person, {
     current: assignmentsByEmployee.get(person.id) ?? [],
     journeys: journeysByEmployee.get(person.id) ?? [],

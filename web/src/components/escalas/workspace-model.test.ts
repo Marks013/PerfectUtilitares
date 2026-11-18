@@ -128,16 +128,22 @@ describe("Escalas workspace model", () => {
     expect(escalaInputSchema.safeParse(input).success).toBe(true);
   });
 
-  it("expands the month to full Monday–Sunday weeks, including both boundaries", () => {
+  it("creates explicit Sunday–Saturday weeks, including both month boundaries", () => {
     expect(monthPeriod("2026-10")).toEqual({
-      startDate: "2026-09-28",
-      endDate: "2026-11-01",
+      startDate: "2026-09-27",
+      endDate: "2026-10-31",
     });
     expect(monthPeriod("2026-08")).toEqual({
-      startDate: "2026-07-27",
-      endDate: "2026-09-06",
+      startDate: "2026-07-26",
+      endDate: "2026-09-05",
     });
-    expect(datesBetween("2026-07-27", "2026-09-06")).toHaveLength(42);
+    expect(datesBetween("2026-07-26", "2026-09-05")).toHaveLength(42);
+    const input = newInput("06", "Loja sintética", "2026-12", 42);
+    expect(input.planningWeekStartsOn).toBe("SUNDAY");
+    expect([input.startDate, input.endDate]).toEqual(["2026-11-29", "2027-01-02"]);
+    const legacy = { ...input, planningWeekStartsOn: "MONDAY" as const };
+    expect(scenarioDefinitionChanged(legacy, input)).toBe(true);
+    expect(coverageDefinitionChanged(legacy, input)).toBe(true);
   });
 
   it("does date arithmetic across years without the workstation timezone", () => {

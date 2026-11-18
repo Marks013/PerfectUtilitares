@@ -9,7 +9,8 @@ import { logSolverRejection } from "./solver-diagnostics";
 import { findGenerationConflicts } from "./generation-conflicts";
 import { generationScenarioBasis, isHoursReferenceOnly, matchesHoursOnlyAssignments } from "./hours-reference";
 import { compareBranches } from "./order";
-import { addDays, dateRange, monthBounds, visibleDates } from "./dates";
+import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./dates";
+import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
@@ -81,12 +82,13 @@ export async function listEscalas(actor: EscalaActor) {
     orderBy: [{ branchCode: "asc" }, { startDate: "desc" }, { id: "asc" }],
   });
   return rows.sort((a, b) => compareBranches(a, b) || b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).map((row) => {
-    const visible = visibleDates(row);
+    const calendar = dayOfWeek(row.startDate) === 6 ? { planningWeekStartsOn: "SUNDAY" as const } : {};
+    const visible = visibleDates({ ...row, ...calendar });
     const month = visible[0]?.slice(0, 7);
     const visibleMonth = month && visible[0] === monthBounds(month).startDate && visible.at(-1) === monthBounds(month).endDate ? month : undefined;
     return ({
     id: row.id, revision: row.revision, status: row.status,
-    input: { branchCode: canonicalBranchCode(row.branchCode), branchName: row.branchName, startDate: row.startDate, endDate: row.endDate, ...(visibleMonth ? { visibleMonth } : {}) },
+    input: { branchCode: canonicalBranchCode(row.branchCode), branchName: row.branchName, startDate: row.startDate, endDate: row.endDate, ...calendar, ...(visibleMonth ? { visibleMonth } : {}) },
     updatedAt: row.updatedAt.toISOString(),
   }); });
 }
@@ -103,15 +105,22 @@ export async function getEscala(actor: EscalaActor, id: string, revision?: numbe
   return view({ ...row, revision: version.revision, status: version.status, updatedAt: version.createdAt }, input, permission);
 }
 
-export async function createEscala(actor: EscalaActor, input: EscalaInput): Promise<EscalaWorkspace> {
+export async function createEscala(actor: EscalaActor, input: EscalaInput, origin?: EscalaWorkspace): Promise<EscalaWorkspace> {
+  if (input.planningCalendarSource && (!origin || input.planningCalendarSource.workspaceId !== origin.id
+    || input.planningCalendarSource.revision !== origin.revision))
+    throw new EscalaError(400, "ESCALA_CALENDAR_SOURCE_INVALID", "Use a ação de atualização da semana para criar uma proposta com origem conferida.");
   input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
   const permission = await branchPermission(actor, input.branchCode);
   requireEscalaPermission(permission, "edit");
   input = materializeManualShiftOverrides(input);
   await assertManualCatalogSelections(actor, input);
   // Coverage provenance belongs to each row; legacy global review never promotes estimates.
-  input = publishedPlanningContext(input, []);
+  input = preserveCalendarSourceContext(input, publishedPlanningContext(input, []));
   const row = await prisma.$transaction(async (tx) => {
+    if (origin) {
+      const latest = await tx.escalaWorkspace.findFirst({ where: { id: origin.id, tenantId: actor.tenantId, revision: origin.revision } });
+      if (!latest || latest.revision !== origin.revision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento original mudou. Recarregue antes de atualizar a semana.");
+    }
     const created = await tx.escalaWorkspace.create({ data: {
       tenantId: actor.tenantId, branchCode: input.branchCode, branchName: input.branchName,
       startDate: input.startDate, endDate: input.endDate,
@@ -132,6 +141,15 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput): Prom
     throw error;
   });
   return view(row, input, permission);
+}
+
+/** Explicit upgrade creates another revision history; the source is never overwritten. */
+export async function upgradeEscalaCalendar(actor: EscalaActor, id: string, expectedRevision: number): Promise<EscalaWorkspace> {
+  const current = await getEscala(actor, id);
+  requireEscalaPermission(current, "edit");
+  assertRevision(current, expectedRevision);
+  const draft = parseEscalaInput(sundayCalendarDraft(current.input, { workspaceId: id, revision: expectedRevision }));
+  return createEscala(actor, draft, current);
 }
 
 function assignmentKey(item: EscalaAssignment) { return `${item.employeeId}\0${item.date}`; }
@@ -193,7 +211,7 @@ async function preservePublishedContinuity(tx: Prisma.TransactionClient, actor: 
       }
     }
   }
-  const contextual = publishedPlanningContext(input, published);
+  const contextual = preserveCalendarSourceContext(input, publishedPlanningContext(input, published));
   assertPublishedBoundary(contextual, input);
   for (const peer of published) {
     if (peer.startDate > input.startDate) {
@@ -227,7 +245,7 @@ async function planningContext(actor: EscalaActor, id: string, input: EscalaInpu
     if (!parsed.success) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Uma proposta publicada da filial não pôde ser conferida.");
     published.push(parsed.data);
   }
-  return preservePublishedDays(publishedPlanningContext(input, published), published);
+  return preserveCalendarSourceContext(input, preservePublishedDays(publishedPlanningContext(input, published), published));
 }
 
 export function preserveLockedAssignments(previous: EscalaInput, next: EscalaInput, canUnlock = false) {
@@ -248,6 +266,8 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, publish ? "publish" : "edit");
   assertRevision(current, expectedRevision);
+  if (JSON.stringify(input.planningCalendarSource) !== JSON.stringify(current.input.planningCalendarSource))
+    throw new EscalaError(409, "ESCALA_CALENDAR_SOURCE_CHANGED", "A origem da atualização da semana não pode ser alterada. Recarregue o rascunho atual.");
   if (input.branchCode !== current.input.branchCode || input.startDate !== current.input.startDate || input.endDate !== current.input.endDate) {
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
@@ -268,7 +288,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     input = { ...input, needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
       demands: input.demands.filter(demand => demand.estimated !== true) };
   }
-  input = publishedPlanningContext(input, []);
+  input = preserveCalendarSourceContext(current.input, publishedPlanningContext(input, []));
   const lateWork = workAfterStoreClosing(input);
   if (lateWork.length && !publish) {
     const previous = new Map(current.input.assignments.map(day => [assignmentKey(day), day]));

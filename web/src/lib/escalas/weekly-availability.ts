@@ -49,7 +49,7 @@ export function weeklySectorAvailability(input: EscalaInput): Map<string, Availa
         }));
         return [longest];
       }).sort((a, b) => b - a).slice(0, 5);
-      group.weekly[index] += Math.min(effectiveWeeklyMinutes(reference, week),
+      group.weekly[index] += Math.min(effectiveWeeklyMinutes(reference, week, input),
         input.policy.weeklyLimit * 60, capacities.reduce((sum, value) => sum + value, 0)) / 60;
     });
   }

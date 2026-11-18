@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { newInput, newEmployee } from "../../components/escalas/workspace-model";
+import { newEmployee } from "../../components/escalas/workspace-model";
+import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
 import { selectVerifiedRoster, coverageQuality, compareRosterCoverage, isOperationallyReusable, isReusableRoster } from "./roster-quality";
 import { validateEscala } from "./validation";
 import type { EscalaAssignment, EscalaInput } from "./types";

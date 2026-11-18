@@ -9,6 +9,7 @@ import type { EscalaInput, EscalaValidation } from "./types";
 import { validateEscala } from "./validation";
 import { weekendBalance } from "./weekend-balance";
 import { effectiveWeeklyMinutes } from "./labor-rules";
+import { planningWeekStartsOn } from "./planning-calendar";
 
 function missing(gap: SectorCoverageGap): number {
   const roles = new Map<string, number>();
@@ -66,7 +67,7 @@ function comparableRoster(reference: EscalaInput, proposal: EscalaInput, require
   const cohort = (input: EscalaInput) => input.employees.filter(person => person.planningEnabled !== false).map(person =>
     JSON.stringify([person.id, person.sector, person.role, person.scheduleMode ?? "TIMED", person.activeFrom, person.activeUntil,
       person.weeklyHours, person.weeklyHoursMode, person.simulationDailyMinutes,
-      dates.map(date => effectiveWeeklyMinutes(person, date))])).sort();
+      dates.map(date => effectiveWeeklyMinutes(person, date, input))])).sort();
   const complete = (input: EscalaInput) => {
     const assigned = new Set(input.assignments.map(day => `${day.employeeId}\0${day.date}`));
     if (requireKnownClocks && input.employees.some(person => person.planningEnabled !== false && person.scheduleMode === "MISSING")) return false;
@@ -76,6 +77,7 @@ function comparableRoster(reference: EscalaInput, proposal: EscalaInput, require
       date < person.activeFrom || Boolean(person.activeUntil && date > person.activeUntil) || assigned.has(`${person.id}\0${date}`)));
   };
   return reference.branchCode === proposal.branchCode && reference.timeZone === proposal.timeZone
+    && planningWeekStartsOn(reference) === planningWeekStartsOn(proposal)
     && reference.startDate === proposal.startDate && reference.endDate === proposal.endDate
     && reference.defaultWeeklyHours === proposal.defaultWeeklyHours
     && storeClosingMinutes(reference) === storeClosingMinutes(proposal)

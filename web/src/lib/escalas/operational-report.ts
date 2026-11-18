@@ -10,6 +10,7 @@ import { compareSectors, sortScheduleEntries } from "./order";
 import { buildEscalaPresentation } from "./presentation";
 import { operationalReportOptionsSchema, validateOperationalReportSelection, type OperationalReportContext, type OperationalReportOptions } from "./operational-report-contracts";
 import type { EscalaShift, EscalaWorkspace } from "./types";
+import { planningWeekStartsOn } from "./planning-calendar";
 
 export function operationalReportContext(workspace: EscalaWorkspace): OperationalReportContext {
   const input = workspace.input, months = [...new Set(visibleDates(input).map(date => date.slice(0, 7)))];
@@ -102,6 +103,7 @@ export function buildOperationalReport(workspace: EscalaWorkspace, rawOptions: O
     }
   }
   return { options, referencesOnly, branch: presentation.branch, revision: workspace.revision, status: presentation.state,
+    planningWeekStartsOn: planningWeekStartsOn(input),
     dates: referencesOnly ? [] : presentation.dates, sectors: context.sectors.filter(sector => selected.has(sector)), people,
     excluded: presentation.excluded.filter(row => selected.has(row.employee.sector)),
     operations: { ...operations, days: operations.days.filter(day => selected.has(day.sector)) },

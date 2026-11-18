@@ -1,5 +1,6 @@
 """Structural private-service boundary errors, without echoing submitted values."""
 from datetime import date
+from planning_calendar import planning_week_starts_on, planning_weeks
 
 
 class ModelInputError(ValueError):
@@ -91,12 +92,23 @@ def validate_manual_shifts(data):
             _require(not locked or locked == {sid}, place + '.shiftId', 'MANUAL_SHIFT_LOCK_CONFLICT')
 
 
+def validate_planning_horizon(data):
+    """The transport and direct solver share the same versioned week boundary."""
+    try:
+        planning_week_starts_on(data)
+    except (ValueError, TypeError):
+        raise ModelInputError('planningWeekStartsOn', 'INVALID_VALUE') from None
+    try:
+        planning_weeks(data)
+    except (ValueError, TypeError):
+        raise ModelInputError('endDate', 'INVALID_HORIZON') from None
+
+
 def validate_model_input(data):
     data = _object(data, "input")
     _date(data.get("startDate"), "startDate")
     _date(data.get("endDate"), "endDate")
-    horizon = (date.fromisoformat(data["endDate"]) - date.fromisoformat(data["startDate"])).days + 1
-    _require(7 <= horizon <= 42 and horizon % 7 == 0, "endDate", "INVALID_HORIZON")
+    validate_planning_horizon(data)
     _require(data.get("defaultWeeklyHours") in (40, 42, 44), "defaultWeeklyHours")
     if 'restRulesVersion' in data:
         _integer(data['restRulesVersion'], 'restRulesVersion', 1, 2147483647)

@@ -20,6 +20,18 @@ function reference() {
 }
 
 describe("explicit branch hours selection before mass days off", () => {
+  it("checks prepared hours against the selected week convention across the December transition", () => {
+    const input = newInput("06", "Loja sintética", "2026-12", 44);
+    delete input.visibleMonth;
+    input.startDate = "2026-12-13"; input.endDate = "2026-12-19";
+    input.shifts = [input.shifts[0]];
+    input.employees = [{ ...newEmployee(44, "turno-inicial"), id: "person", registration: "1", name: "Pessoa sintética" }];
+    expect(hoursArePrepared(input)).toBe(false);
+    const legacy = { ...input, planningWeekStartsOn: "MONDAY" as const, startDate: "2026-12-07", endDate: "2026-12-13" };
+    expect(hoursArePrepared(legacy)).toBe(true);
+    expect(input.shifts[0].segments[2].end).toBe(1068);
+  });
+
   it("proposes 42h in five days from the original 44h reference, preserves meal and applies only the selected arrival anchor", () => {
     const input = reference();
     expect(hoursArePrepared(input)).toBe(false);

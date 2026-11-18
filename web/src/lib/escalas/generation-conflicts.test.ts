@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newInput } from "@/components/escalas/workspace-model";
+import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
 import { addDays, dateRange } from "./dates";
 import { findGenerationConflicts } from "./generation-conflicts";
 import type { EscalaInput } from "./types";

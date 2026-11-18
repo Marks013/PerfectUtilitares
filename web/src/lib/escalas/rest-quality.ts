@@ -37,7 +37,7 @@ export function restPairSummary(input: EscalaInput): RestPairSummary {
     const pairs = personPairs(input, person).filter(pair => visible.has(pair.after));
     const totalPairs = pairs.length, imposedPairs = pairs.filter(pair => !pair.adjustable).length;
     const adjustablePairs = totalPairs - imposedPairs;
-    const weeks = new Set(pairs.filter(pair => pair.adjustable).map(pair => weekStart(pair.after)));
+    const weeks = new Set(pairs.filter(pair => pair.adjustable).map(pair => weekStart(pair.after, input)));
     return { employeeId: person.id, totalPairs, imposedPairs, adjustablePairs,
       correctableExcess: Math.max(0, totalPairs - 2) - Math.max(0, imposedPairs - 2),
       weeklyRepetitions: [...weeks].filter(week => weeks.has(addDays(week, -7))).length };
@@ -63,7 +63,7 @@ function groups(input: EscalaInput, summary: RestPairSummary) {
     if (person.planningEnabled === false) continue;
     const noClock = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
     const key = JSON.stringify([noClock, person.sector, effectiveSundayLimit(person),
-      noClock ? [] : days.filter((_, index) => index % 7 === 0).map(day => effectiveWeeklyHours(person, day))]);
+      noClock ? [] : days.filter((_, index) => index % 7 === 0).map(day => effectiveWeeklyHours(person, day, input))]);
     result.set(key, (result.get(key) ?? 0) + (byPerson.get(person.id)?.adjustablePairs ?? 0));
   }
   return result;

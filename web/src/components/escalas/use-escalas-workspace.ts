@@ -13,9 +13,10 @@ import { coverageDefinitionChanged, hasOutdatedResults, isCurrentResponse, respo
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
 import { GenerationOperation, generationCancellationNotice } from "./generation-operation";
 import { EscalaRequestError, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
+import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
 
 export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status" | "updatedAt"> & {
-  input: Pick<EscalaInput, "branchCode" | "branchName" | "startDate" | "endDate" | "visibleMonth">;
+  input: Pick<EscalaInput, "branchCode" | "branchName" | "startDate" | "endDate" | "visibleMonth" | "planningWeekStartsOn">;
 };
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
@@ -303,6 +304,17 @@ export function useEscalasWorkspace() {
     });
   }
 
+  function upgradeCalendar() {
+    const selected = latestWorkspace.current;
+    if (!selected?.canEdit || !canCreate || working.current || !latestInput.current || planningWeekStartsOn(latestInput.current) === "SUNDAY") return;
+    void run("Criando rascunho com semanas de domingo a sábado…", async (signal, isCurrent) => {
+      const saved = await flushDraft();
+      if (!isCurrent() || latestWorkspace.current?.id !== selected.id || !saved) return;
+      const result = await post<EscalaWorkspace>({ action: "UPGRADE_CALENDAR", id: saved.id, expectedRevision: saved.revision }, signal);
+      if (isCurrent()) { acceptWorkspace(result); setNotice("Novo rascunho de domingo a sábado criado. O planejamento original foi preservado. Gere uma proposta para redistribuir as folgas."); }
+    });
+  }
+
   function save() {
     if (!latestWorkspace.current?.canEdit) return;
     saveQueue.retry();
@@ -552,6 +564,7 @@ export function useEscalasWorkspace() {
     update,
     open,
     create,
+    upgradeCalendar,
     save,
     validate,
     generate,

@@ -10,7 +10,8 @@ from ortools.sat.python import cp_model
 from diagnostics import ConflictRegistry
 from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates, saturday_rest_forbidden
 from leadership import PRIORITY, leadership_objective, leadership_summary, movement_priority
-from model_input import validate_manual_shifts
+from model_input import validate_manual_shifts, validate_planning_horizon
+from planning_calendar import planning_week_starts_on
 from optimization import ImprovementContext, Snapshot, improve, remember
 from rest_quality import build_rest_quality, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
@@ -198,6 +199,7 @@ def _contract_conflict(started, message):
 def solve(data, control=None):
     """Check preservation contracts before allocating or optimizing any days."""
     started = time.monotonic()
+    validate_planning_horizon(data)
     validate_manual_shifts(data)
     hours_only = data.get('generationMode') == 'HOURS_ONLY'
     baseline = {(a['employeeId'], a['date']): a for a in data['assignments']}
@@ -251,6 +253,7 @@ def _solve(data, control=None, started=None):
         raise ValueError("model bounds")
     policy = {**data["policy"], "_simulation": data.get("simulation") is True,
               "_visibleMonth": _coverage_month(data),
+              "_planningWeekStartsOn": planning_week_starts_on(data),
               "_restRulesVersion": data.get('restRulesVersion', 1),
               "_generationMode": data.get('generationMode')}
     mixed_sectors = set(data.get("mixed42Sectors", [])) if data["defaultWeeklyHours"] == 42 else set()
@@ -423,9 +426,9 @@ def _solve(data, control=None, started=None):
                 neighbors = []
                 for delta in (-1, 1):
                     adjacent = (date.fromisoformat(day) + timedelta(days=delta)).isoformat()
-                    fixed_boundary = (day == dates[-1] and delta == 1 and date.fromisoformat(day).weekday() == 6
+                    fixed_boundary = (day == dates[-1] and delta == 1
                                       and person["offMode"] in ("FIXED", "MIXED")
-                                      and 0 in person["fixedOffDays"]
+                                      and date.fromisoformat(adjacent).weekday() in person["fixedOffDays"]
                                       and adjacent not in boundary
                                       and adjacent not in paid_holidays
                                       and (not person.get("activeUntil") or adjacent <= person["activeUntil"])
@@ -1073,6 +1076,7 @@ def _rest_spacing(model, employees, dates, off, baseline, history, policy, value
                      for day, entry in history.get(person['id'], {}).items()]}
                     for person in employees]
     data = {'startDate': dates[0], 'endDate': dates[-1], 'policy': policy,
+            'planningWeekStartsOn': policy.get('_planningWeekStartsOn', 'MONDAY'),
             'employees': participants, 'assignments': [{'employeeId': pid, 'date': day, **entry}
                 for (pid, day), entry in baseline.items()]}
     quality = build_rest_quality(model, data, participants, off, values,

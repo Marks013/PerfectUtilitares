@@ -16,7 +16,7 @@ function state(workspace: EscalaWorkspace | null = null) {
     flushDraft: vi.fn(async () => workspace), workspaces: workspace ? [workspace] : [],
     canCreate: true, workspace, input: workspace?.input ?? null, validation: workspace?.validation ?? null,
     dirty: false, outdated: false, busy: "", error: "", problem: null, notice: "", generated: null,
-    pendingOpen: null, setPendingOpen: action, update: action, open: action, create: action, save: action,
+    pendingOpen: null, setPendingOpen: action, update: action, open: action, create: action, upgradeCalendar: action, save: action,
     validate: action, generate: action, applyGenerated: action, undoRoster: action, publish: action,
     discard: action, deleteWorkspace: action, resetKey: 0, cancellable: false, cancelLabel: "Cancelar análise",
     cancelAnalysis: action, dismissProposals: action, canEdit: Boolean(workspace?.canEdit),
@@ -31,6 +31,24 @@ function plan() {
 }
 
 describe("guided scheduling workspace", () => {
+  it("explains the active convention and offers an explicit copy only for editable legacy plans", () => {
+    const workspace = plan();
+    vi.mocked(useEscalasWorkspace).mockReturnValue(state(workspace));
+    let html = renderToStaticMarkup(<EscalasWorkspace />);
+    expect(html).toContain("domingo a sábado. O domingo inicia uma nova semana.");
+    expect(html).not.toContain("Usar semana de domingo a sábado");
+    workspace.input.planningWeekStartsOn = "MONDAY";
+    workspace.input.startDate = "2026-10-26"; workspace.input.endDate = "2026-12-06";
+    vi.mocked(useEscalasWorkspace).mockReturnValue(state(workspace));
+    html = renderToStaticMarkup(<EscalasWorkspace />);
+    expect(html).toContain("segunda a domingo (planejamento anterior).");
+    expect(html).toContain("Usar semana de domingo a sábado");
+    expect(html).toContain("crie um novo rascunho a partir deste");
+    workspace.canEdit = false;
+    vi.mocked(useEscalasWorkspace).mockReturnValue(state(workspace));
+    expect(renderToStaticMarkup(<EscalasWorkspace />)).not.toContain("Usar semana de domingo a sábado");
+  });
+
   beforeEach(() => vi.mocked(useEscalasWorkspace).mockReturnValue(state()));
 
   it("starts with an open creation form and does not ask for advanced rules", () => {

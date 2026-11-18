@@ -5,6 +5,7 @@ import styles from "./escalas.module.css";
 import { useEffect, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
 import { planningMonth } from "@/lib/escalas/planning-month";
+import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
 import type { EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
@@ -185,10 +186,15 @@ export function EscalasWorkspace() {
         <div className={styles.header}>
           <div className="min-w-0"><h2 id="escala-scenario-title" className={styles.sectionTitle}>Filial {input.branchCode} · {input.branchName}</h2>
             <p className={styles.subtitle}>{displayDate(visibleDates(input)[0])} a {displayDate(visibleDates(input).at(-1) ?? input.endDate)} · {included} na equipe · revisão {workspace.revision}</p>
+            <p className={styles.muted}>Semana: {planningWeekStartsOn(input) === "SUNDAY" ? "domingo a sábado. O domingo inicia uma nova semana." : "segunda a domingo (planejamento anterior)."}</p>
           </div>
           <span role="status" className={styles.saveStatus} data-state={model.saveState}>{SAVE_LABEL[model.saveState]} · {workspace.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</span>
         </div>
       </section>
+      {planningWeekStartsOn(input) !== "SUNDAY" && workspace.canEdit && model.canCreate && <section className={panelClass} aria-label="Atualizar semana do planejamento">
+        <p className={styles.muted}>Para usar domingo como primeiro dia da semana, crie um novo rascunho a partir deste. O original, seus afastamentos e bloqueios serão preservados.</p>
+        <button type="button" className={buttonClass} disabled={!model.canEdit || model.saveState === "saving"} onClick={model.upgradeCalendar}>Usar semana de domingo a sábado</button>
+      </section>}
       <nav aria-label="Etapas do planejamento" className={styles.guidedNavigation}>
         {AREAS.map((item, index) => <button key={item.id} type="button" aria-current={area === item.id ? "step" : undefined} aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={styles.guidedStep} onClick={() => setArea(item.id)}><span className={styles.stepNumber} aria-hidden="true">{index + 1}</span><span><strong>{item.label}</strong><small>{item.id === "team" ? included ? `${included} colaboradores incluídos` : "Use o relatório da sua equipe" : item.id === "generate" ? `${input.defaultWeeklyHours} horas por semana · modelo 5×2` : hasRoster ? "Escala disponível para conferir" : "Confira antes de baixar os arquivos"}</small></span></button>)}
       </nav>

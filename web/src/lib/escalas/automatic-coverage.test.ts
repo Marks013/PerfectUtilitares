@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newInput } from "../../components/escalas/workspace-model";
+import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
 import { coverageBasis, proposeAutomaticCoverage, retainCoverageReference } from "./automatic-coverage";
 import { dateRange } from "./dates";
 import { validateEscala } from "./validation";

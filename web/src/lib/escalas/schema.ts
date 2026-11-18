@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { isPlanningClosedHoliday } from "./calendar";
-import { addDays, dateRange, dayOfWeek, isDate, monthBounds } from "./dates";
+import { addDays, dateRange, isDate, monthBounds } from "./dates";
 import { canonicalBranchCode } from "./branch-code";
+import { planningWeeks } from "./planning-calendar";
 
 import { manualCatalogShift } from "./shift-catalog/manual-override";
 const identifier = z.string().trim().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u, "Identificador inválido");
@@ -128,6 +129,8 @@ const policy = z.strictObject({
 });
 
 export const escalaInputSchema = z.strictObject({
+  planningWeekStartsOn: z.enum(["MONDAY", "SUNDAY"]).optional(),
+  planningCalendarSource: z.strictObject({ workspaceId: identifier, revision: z.number().int().min(1).max(2_000_000_000) }).optional(),
   simulation: z.boolean().optional(),
   generationMode: z.enum(["REST_ONLY", "DAYS_AND_HOURS", "HOURS_ONLY"]).optional(),
   needsRegeneration: z.boolean().optional(),
@@ -152,10 +155,15 @@ export const escalaInputSchema = z.strictObject({
   })).max(12000), assignments: z.array(assignment).max(10500),
 }).superRefine((value, context) => {
   if (!isDate(value.startDate) || !isDate(value.endDate)) return;
-  const dates = value.endDate >= value.startDate && value.endDate <= addDays(value.startDate, 41) ? dateRange(value.startDate, value.endDate) : [];
-  if (!dates.length || dates.length % 7 !== 0 || dayOfWeek(value.startDate) !== 0 || dayOfWeek(value.endDate) !== 6) {
-    context.addIssue({ code: "custom", path: ["endDate"], message: "Selecione de 1 a 6 semanas completas, de segunda a domingo" });
+  try {
+    planningWeeks(value);
+  } catch {
+    context.addIssue({ code: "custom", path: ["endDate"], message: value.planningWeekStartsOn === "SUNDAY"
+      ? "Selecione de 1 a 6 semanas completas, de domingo a sábado"
+      : "Selecione de 1 a 6 semanas completas, de segunda a domingo" });
   }
+  if (value.planningCalendarSource && value.planningWeekStartsOn !== "SUNDAY")
+    context.addIssue({ code: "custom", path: ["planningCalendarSource"], message: "A origem de atualização exige semana de domingo a sábado" });
   if (value.visibleMonth && /^20\d{2}-(0[1-9]|1[0-2])$/.test(value.visibleMonth)) {
     const month = monthBounds(value.visibleMonth);
     if (month.startDate < value.startDate || month.endDate > value.endDate)

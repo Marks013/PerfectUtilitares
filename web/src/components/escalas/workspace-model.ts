@@ -4,6 +4,7 @@ import { planningWeeklyHours } from "@/lib/escalas/preparation";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import { storeClosingMinutes } from "@/lib/escalas/store-hours";
 import { reconcileImport, type ImportChoices } from "./import-reconciliation";
+import { planningMonthPeriod, planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const HOURS: WeeklyHours[] = [40, 42, 44];
@@ -21,20 +22,7 @@ export function datesBetween(start: string, end: string) {
 }
 
 export function monthPeriod(month: string) {
-  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("Informe o mês da escala.");
-  const [year, number] = month.split("-").map(Number);
-  if (number < 1 || number > 12 || year < 2000 || year > 2099) throw new Error("Mês inválido.");
-  const first = `${month}-01`;
-  const last = new Date(Date.UTC(year, number, 0, 12)).toISOString().slice(0, 10);
-  const mondayOffset = (new Date(`${first}T12:00:00Z`).getUTCDay() + 6) % 7;
-  const sundayOffset = 6 - ((new Date(`${last}T12:00:00Z`).getUTCDay() + 6) % 7);
-  const result = {
-    startDate: addDate(first, -mondayOffset),
-    endDate: addDate(last, sundayOffset),
-  };
-  if (result.startDate < "2000-01-01" || result.endDate > "2099-12-31")
-    throw new Error("Selecione um mês cujas semanas completas estejam entre 2000 e 2099.");
-  return result;
+  return planningMonthPeriod(month, { planningWeekStartsOn: "SUNDAY" });
 }
 
 export function displayDate(date: string) {
@@ -65,6 +53,7 @@ export function newInput(branchCode: string, branchName: string, month: string, 
   ];
   return {
     schemaVersion: 1,
+    planningWeekStartsOn: "SUNDAY",
     branchCode: canonicalBranchCode(branchCode),
     branchName: branchName.trim(),
     ...period,
@@ -209,6 +198,7 @@ function absenceDays(input: EscalaInput): string {
 }
 
 export function scenarioDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
+  if (planningWeekStartsOn(previous) !== planningWeekStartsOn(next)) return true;
   if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
   if (storeClosingMinutes(previous) !== storeClosingMinutes(next)) return true;
   if (previous.defaultWeeklyHours !== next.defaultWeeklyHours || previous.startDate !== next.startDate || previous.endDate !== next.endDate) return true;
@@ -227,11 +217,12 @@ export function hasOutdatedResults(input: EscalaInput, validation: EscalaValidat
       if (!shift) return false;
       const minutes = shift.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
       if (usesMixed42Week(input, person, assignment.date)) return minutes !== 480 && !isMixed42LongShift(shift);
-      return minutes !== effectiveWeeklyMinutes(person, assignment.date) / 5;
+      return minutes !== effectiveWeeklyMinutes(person, assignment.date, input) / 5;
     }));
 }
 
 export function coverageDefinitionChanged(previous: EscalaInput, next: EscalaInput): boolean {
+  if (planningWeekStartsOn(previous) !== planningWeekStartsOn(next)) return true;
   if (mixed42Key(previous) !== mixed42Key(next) || absenceDays(previous) !== absenceDays(next)) return true;
   if (storeClosingMinutes(previous) !== storeClosingMinutes(next)) return true;
   if ((previous.policy.limitContinuousWorkBlocks === true) !== (next.policy.limitContinuousWorkBlocks === true)) return true;

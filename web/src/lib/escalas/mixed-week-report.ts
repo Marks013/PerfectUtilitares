@@ -10,7 +10,7 @@ export function mixedWeeklyApplication(input: EscalaInput, employee: EscalaEmplo
   if (!visibleDates(input).some(date => usesMixed42Week(input, employee, date))) return "";
   const weeks = new Map<string, string[]>();
   for (const date of [...new Set(dates)].sort()) {
-    const monday = weekStart(date);
+    const monday = weekStart(date, input);
     const actual = weeks.get(monday) ?? [];
     actual.push(date); weeks.set(monday, actual);
   }

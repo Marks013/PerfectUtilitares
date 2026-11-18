@@ -116,7 +116,7 @@ beforeEach(async () => {
     } else {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       calls.push(body);
-      if (body.action === "GENERATE") reply = await generation(body, ++count);
+      if (body.action === "GENERATE" || body.action === "UPGRADE_CALENDAR") reply = await generation(body, ++count);
       else if (body.action === "SAVE") {
         const previous = sources.get(String(body.id));
         if (!previous) throw new Error("Unknown synthetic workspace");
@@ -137,6 +137,59 @@ afterEach(() => {
 });
 
 describe("trusted candidate lifecycle in the real workspace hook", () => {
+  describe("explicit weekly calendar upgrade", () => {
+    async function legacy() {
+      const source = workspace();
+      delete source.input.planningWeekStartsOn;
+      source.input.startDate = "2026-11-30"; source.input.endDate = "2027-01-03";
+      sources.set(source.id, source); await open(source.id);
+      return source;
+    }
+    it("uses the saved revision, prevents duplicate clicks and selects only the returned new draft", async () => {
+      const source = await legacy(), previous = structuredClone(source);
+      const pending = deferred<Reply>();
+      generation = async () => pending.promise;
+      current.upgradeCalendar(); current.upgradeCalendar(); await settle();
+      const requests = calls.filter(body => body.action === "UPGRADE_CALENDAR");
+      expect(requests).toEqual([{ action: "UPGRADE_CALENDAR", id: source.id, expectedRevision: 2 }]);
+      expect(current.busy).toContain("domingo a sábado");
+      const upgraded = workspace("sunday-copy");
+      upgraded.input.planningCalendarSource = { workspaceId: source.id, revision: 2 };
+      pending.resolve({ status: 200, body: upgraded }); await settle();
+      expect(current.workspace?.id).toBe("sunday-copy");
+      expect(current.input?.planningWeekStartsOn).toBe("SUNDAY");
+      expect(current.notice).toContain("O planejamento original foi preservado");
+      expect(current.generated).toBeNull();
+      expect(generations()).toEqual([]);
+      expect(calls.some(body => ["SAVE", "PUBLISH"].includes(String(body.action)))).toBe(false);
+      expect(sources.get(source.id)).toEqual(previous);
+    });
+    it("preserves the selected plan and provides the server error when an upgrade fails", async () => {
+      const source = await legacy(), before = structuredClone(current.input), original = structuredClone(source);
+      generation = async () => ({ status: 409, body: { code: "ESCALA_STALE_REVISION", error: "O planejamento mudou. Recarregue a revisão atual." } });
+      current.upgradeCalendar(); await settle();
+      expect(current.workspace?.id).toBe(source.id);
+      expect(current.input).toEqual(before);
+      expect(sources.get(source.id)).toEqual(original);
+      expect(current.error).not.toBe("");
+      expect(current.notice).toBe("");
+      expect(current.busy).toBe("");
+      expect(generations()).toEqual([]);
+    });
+    it("flushes local edits before requesting the explicit upgrade", async () => {
+      await legacy();
+      const draft = structuredClone(current.input);
+      if (!draft) throw new Error("Legacy plan missing");
+      draft.branchName = "Edição preservada";
+      current.update(draft); await settle();
+      generation = async () => ({ status: 200, body: workspace("new-copy") });
+      current.upgradeCalendar(); await settle();
+      expect(calls.map(body => body.action)).toEqual(["SAVE", "UPGRADE_CALENDAR"]);
+      expect(calls[1].expectedRevision).toBe(3);
+      expect(sources.get("plan-08")?.input.branchName).toBe("Edição preservada");
+    });
+  });
+
   describe("generation intent epoch", () => {
     async function pendingDraftWithConflict() {
       await generate();

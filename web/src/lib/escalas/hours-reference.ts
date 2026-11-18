@@ -13,6 +13,7 @@ export function generationScenarioBasis(input: EscalaInput): string {
   const scenario = {
     mode: input.generationMode ?? "DAYS_AND_HOURS", hours: input.defaultWeeklyHours,
     restRulesVersion: input.restRulesVersion, startDate: input.startDate, endDate: input.endDate,
+    ...(input.planningWeekStartsOn === "SUNDAY" ? { planningWeekStartsOn: "SUNDAY" } : {}),
     closing: storeClosingMinutes(input), policy,
     mixed42Sectors: input.defaultWeeklyHours === 42 ? [...(input.mixed42Sectors ?? [])].sort() : [],
     movementPriorities: input.movementPriorities,

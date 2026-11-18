@@ -34,7 +34,7 @@ export function exchangeRestRepair(input: EscalaInput, validation: EscalaValidat
   const eligible = input.employees.filter(person => person.planningEnabled !== false && person.offMode === "VARIABLE"
     && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING");
   const days = dateRange(input.startDate, input.endDate), visible = new Set(visibleDates(input));
-  const weekByDate = new Map(days.map(day => [day, weekStart(day)]));
+  const weekByDate = new Map(days.map(day => [day, weekStart(day, input)]));
   const editable = (person: EscalaEmployee, record: EscalaAssignment) => !record.locked && dayOfWeek(record.date) !== 6
     && record.date >= person.activeFrom && (!person.activeUntil || record.date <= person.activeUntil)
     && !input.policy.closedDates.includes(record.date) && !person.fixedOffDays.includes(dayOfWeek(record.date));
@@ -142,7 +142,7 @@ export function exchangeRestImprovement(input: EscalaInput, validation: EscalaVa
     if (!pairedDays.size) own.filter(record => record.kind === "OFF").forEach(record => { pairedDays.add(record.date); });
     const kind = noClock(person) ? "DUTY" : "WORK";
     for (const off of own.filter(record => record.kind === "OFF" && pairedDays.has(record.date) && editable(person, record))) {
-      for (const work of own.filter(record => record.kind === kind && editable(person, record) && weekStart(record.date) === weekStart(off.date))) {
+      for (const work of own.filter(record => record.kind === kind && editable(person, record) && weekStart(record.date, input) === weekStart(off.date, input))) {
         if (performance.now() >= deadline || state.checked >= 32) return input;
         const shift = shifts.get(work.shiftId ?? "");
         if (kind === "WORK" && (!shift || shift.segments.some(segment => segment.start < 0 || segment.end > 1440))) continue;

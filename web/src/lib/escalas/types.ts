@@ -127,6 +127,10 @@ export type EscalaPolicy = {
 };
 export type EscalaInput = {
   schemaVersion: 1;
+  /** Missing metadata preserves Monday-based saved revisions. New proposals use Sunday. */
+  planningWeekStartsOn?: "MONDAY" | "SUNDAY";
+  /** Immutable origin of an explicitly created calendar-upgrade draft. */
+  planningCalendarSource?: { workspaceId: string; revision: number };
   restRulesVersion?: 1 | 2;
   /** Missing preserves the full search; REST_ONLY fixes one reference per daily duration. */
   generationMode?: "REST_ONLY" | "DAYS_AND_HOURS" | "HOURS_ONLY";

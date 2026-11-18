@@ -245,7 +245,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     if not dates or not employees:
         return {}
     if '_visibleMonth' not in policy:
-        policy = {**policy, '_visibleMonth': visible_month({'startDate': dates[0], 'endDate': dates[-1]})}
+        policy = {**policy, '_visibleMonth': visible_month({'startDate': dates[0], 'endDate': dates[-1],
+                  'planningWeekStartsOn': policy.get('_planningWeekStartsOn', 'MONDAY')})}
     history_cutoff = (date.fromisoformat(dates[0]) - timedelta(days=21)).isoformat()
     for person in sorted(employees, key=lambda item: hashlib.sha256(item["id"].encode()).digest()):
         if control is not None:

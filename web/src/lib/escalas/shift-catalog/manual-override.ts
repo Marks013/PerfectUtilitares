@@ -109,7 +109,7 @@ export function manualShiftIssues(input: EscalaInput, flexibleDays = false): Esc
         if (input.generationMode !== "HOURS_ONLY" && (!old || flexibleDays && !old.locked)) continue;
         if (!fitsStoreClosing(shift, storeClosingMinutes(input))) issue("STORE_CLOSING_EXCEEDED", "O turno manual termina após o fechamento configurado.", date);
         const hours = person.weeklyHoursMode === "BRANCH" ? input.defaultWeeklyHours : person.weeklyHours;
-        const expected = effectiveWeeklyHours({ weeklyHours: hours }, addDays(weekStart(date), 6)) * 12;
+        const expected = effectiveWeeklyHours({ weeklyHours: hours }, addDays(weekStart(date, input), 6), input) * 12;
         if (usesMixed42Week(input, person, date) ? paid !== 480 && paid !== 540 : paid !== Math.min(expected, person.simulationDailyMinutes ?? Infinity)) {
           issue("MANUAL_SHIFT_WEEKLY_HOURS", "O turno escolhido não corresponde à distribuição semanal vigente. Escolha um código compatível; a referência não será ajustada automaticamente.", date);
         }

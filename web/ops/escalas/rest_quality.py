@@ -1,6 +1,7 @@
 """Monthly rest quality; reported facts remain distinct from adjustable decisions."""
 from datetime import date, timedelta
 from optimization import remember
+from planning_calendar import planning_month_period, planning_week_start
 
 TARGET_MONTHLY_PAIRS = 2
 
@@ -17,10 +18,13 @@ def visible_month(data):
     if last < first:
         return None
     middle = first + timedelta(days=((last - first).days + 1) // 2)
-    start = middle.replace(day=1)
-    end = (start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-    if (first, last) == (start - timedelta(days=start.weekday()), end + timedelta(days=6-end.weekday())):
-        return start.strftime('%Y-%m')
+    month = middle.strftime('%Y-%m')
+    try:
+        period = planning_month_period(month, data)
+    except ValueError:
+        return None
+    if data['startDate'] == period['startDate'] and data['endDate'] == period['endDate']:
+        return month
     return None
 
 def in_visible(data, day):
@@ -69,8 +73,7 @@ def rest_pair_summary(data, assignments=None):
             if not any(mutable_rest(person, day, data, records) for day in (before, after)):
                 imposed += 1
             else:
-                parsed = date.fromisoformat(after)
-                weeks.add(parsed - timedelta(days=parsed.weekday()))
+                weeks.add(date.fromisoformat(planning_week_start(after, data)))
         adjustable = total - imposed
         excess = max(0, total - TARGET_MONTHLY_PAIRS) - max(0, imposed - TARGET_MONTHLY_PAIRS)
         repetitions = sum(week + timedelta(days=7) in weeks for week in weeks)

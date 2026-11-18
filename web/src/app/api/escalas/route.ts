@@ -2,7 +2,7 @@ import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
 import { branchPermission, requireEscalaPermission } from "@/lib/escalas/access";
-import { createEscala, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala } from "@/lib/escalas/service";
+import { createEscala, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
 import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGenerationOperation, generationOperationStatus } from "@/lib/escalas/solve-operations";
 import { escalaFailure, escalaJson } from "./http";
@@ -13,6 +13,7 @@ const id = z.string().trim().min(1).max(100);
 const version = { id, expectedRevision: z.number().int().min(1).max(2_000_000_000) };
 const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("CREATE"), input: z.unknown() }).strict(),
+  z.object({ action: z.literal("UPGRADE_CALENDAR"), ...version }).strict(),
   z.object({ action: z.literal("SAVE"), ...version, input: z.unknown() }).strict(),
   z.object({ action: z.literal("VALIDATE"), input: z.unknown() }).strict(),
   z.object({ action: z.literal("GENERATE"), ...version, operationId: z.uuid().optional(), comparisonReference: z.unknown().optional() }).strict(),
@@ -56,6 +57,7 @@ export async function POST(request: Request) {
     if (limited) return limited;
     switch (data.action) {
       case "CREATE": return escalaJson(await createEscala(actor, parseEscalaInput(data.input)), 201);
+      case "UPGRADE_CALENDAR": return escalaJson(await upgradeEscalaCalendar(actor, data.id, data.expectedRevision), 201);
       case "SAVE": return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, parseEscalaInput(data.input)));
       case "VALIDATE": {
         const input = parseEscalaInput(data.input);

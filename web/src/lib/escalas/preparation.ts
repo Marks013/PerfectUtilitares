@@ -273,7 +273,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     const mixed = usesMixed42({ ...input, defaultWeeklyHours: hours }, { ...person, ...reference, simulationDailyMinutes });
     let needsLong = false;
     for (let start = input.startDate; start <= input.endDate; start = addDays(start, 7)) {
-      const effective = effectiveWeeklyHours({ weeklyHours }, start);
+      const effective = effectiveWeeklyHours({ weeklyHours }, start, input);
       if (mixed && effective === 42) { needsLong = true; targets.add(480); }
       else targets.add(Math.min(effective * 12, simulationDailyMinutes ?? Infinity));
     }

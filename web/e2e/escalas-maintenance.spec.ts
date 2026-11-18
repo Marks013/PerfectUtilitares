@@ -2,6 +2,7 @@ import { expect, test } from "./fixtures";
 import { selectEscalasWorkspace } from "./escalas-selection";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
+import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
 
 test.beforeEach(async ({ page }) => {
   test.skip(process.env.E2E_MUTATION !== "1", "Scheduling writes require the disposable isolated E2E database");
@@ -25,6 +26,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   expect(created.status()).toBe(201);
   const original: EscalaWorkspace = await created.json();
   expect(original.input.visibleMonth).toBe("2026-11");
+  expect(original.input.planningWeekStartsOn).toBe("SUNDAY");
   await expect(page.getByRole("heading", { name: `Filial ${branch} · Filial sintética E2E`, exact: true })).toBeVisible();
 
   const csv = [
@@ -240,6 +242,64 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
       expect(current.status).toBe("DRAFT");
       const removed = await page.request.delete("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { workspaceId: created.id, expectedRevision: current.revision } });
       expect(removed.status()).toBe(200);
+    }
+  }
+});
+
+test("explicit Sunday upgrade preserves its legacy source and protected outer absence through real persistence", async ({ page }) => {
+  const branch = `E2E-WEEK-${Date.now().toString(36)}`;
+  await page.goto("/escala");
+  const origin = new URL(page.url()).origin;
+  const source = newInput(branch, "Calendário sintético E2E", "2026-12", 42);
+  source.planningWeekStartsOn = "MONDAY";
+  source.startDate = "2026-11-30"; source.endDate = "2027-01-03";
+  source.employees = [{ ...newEmployee(42), id: "synthetic-calendar-person", registration: "SYNTHETIC-1", name: "Pessoa sintética", activeFrom: "2020-01-01", scheduleMode: "UNTIMED" }];
+  source.assignments = [
+    { employeeId: "synthetic-calendar-person", date: "2026-12-06", kind: "OFF", locked: true },
+    { employeeId: "synthetic-calendar-person", date: "2027-01-03", kind: "ABSENCE" },
+  ];
+  const createdResponse = await page.request.post("/api/escalas", { headers: { origin }, data: { action: "CREATE", input: source } });
+  expect(createdResponse.status()).toBe(201);
+  const original: EscalaWorkspace = await createdResponse.json();
+  let upgraded: EscalaWorkspace | undefined;
+  try {
+    await page.reload();
+    await selectEscalasWorkspace(page, original);
+    const action = page.getByRole("button", { name: "Usar semana de domingo a sábado", exact: true });
+    await expect(action).toBeEnabled();
+    const responsePromise = page.waitForResponse(response => response.request().method() === "POST"
+      && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "UPGRADE_CALENDAR");
+    await action.click();
+    const response = await responsePromise;
+    expect(response.status()).toBe(201);
+    upgraded = await response.json();
+    if (!upgraded) throw new Error("The explicit calendar upgrade did not return a workspace");
+    expect(upgraded.id).not.toBe(original.id);
+    expect(upgraded.input).toMatchObject({ planningWeekStartsOn: "SUNDAY", planningCalendarSource: { workspaceId: original.id, revision: original.revision }, startDate: "2026-11-29", endDate: "2027-01-02" });
+    expect(upgraded.input.assignments).toEqual([original.input.assignments[0]]);
+    const boundary = { employeeId: "synthetic-calendar-person", date: "2027-01-03", kind: "ABSENCE", locked: true };
+    expect(upgraded.input.employees[0].planningFuture).toEqual([boundary]);
+    await expect(page.getByText("Semana: domingo a sábado. O domingo inicia uma nova semana.", { exact: true })).toBeVisible();
+    const unchangedResponse = await page.request.get(`/api/escalas?id=${original.id}`);
+    expect(unchangedResponse.status()).toBe(200);
+    const unchanged: EscalaWorkspace = await unchangedResponse.json();
+    expect(unchanged.revision).toBe(original.revision);
+    expect(unchanged.input).toEqual(original.input);
+    const client = structuredClone(upgraded.input); client.employees[0].planningFuture = [];
+    const savedResponse = await page.request.post("/api/escalas", { headers: { origin }, data: { action: "SAVE", id: upgraded.id, expectedRevision: upgraded.revision, input: client } });
+    expect(savedResponse.status()).toBe(200);
+    const saved: EscalaWorkspace = await savedResponse.json();
+    expect(saved.revision).toBe(upgraded.revision + 1);
+    expect(saved.input.employees[0].planningFuture).toEqual([boundary]);
+    const reloaded: EscalaWorkspace = await (await page.request.get(`/api/escalas?id=${saved.id}`)).json();
+    expect(reloaded.input).toEqual(saved.input);
+  } finally {
+    for (const id of [upgraded?.id, original.id].filter((id): id is string => Boolean(id))) {
+      const response = await page.request.get(`/api/escalas?id=${id}`);
+      if (response.status() === 404) continue;
+      expect(response.status()).toBe(200);
+      const current: EscalaWorkspace = await response.json();
+      expect((await page.request.delete("/api/escalas", { headers: { origin }, data: { workspaceId: id, expectedRevision: current.revision } })).status()).toBe(200);
     }
   }
 });

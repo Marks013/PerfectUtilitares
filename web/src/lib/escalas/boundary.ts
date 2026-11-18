@@ -1,4 +1,4 @@
-import { addDays, dayOfWeek, isDate } from "./dates";
+import { addDays, dayOfWeek, isDate, weekStart } from "./dates";
 import { sortEmployees } from "./order";
 import type { EscalaAssignment, EscalaInput } from "./types";
 import { SUPERMARKET_CCT } from "./labor-rules";
@@ -8,15 +8,15 @@ import { SUPERMARKET_CCT } from "./labor-rules";
  * Preserve these reservations when the following period is published.
  */
 export function fixedBoundaryReservations(input: EscalaInput): EscalaAssignment[] {
-  if (!isDate(input.endDate) || dayOfWeek(input.endDate) !== 6) return [];
+  if (!isDate(input.endDate) || addDays(weekStart(input.endDate, input), 6) !== input.endDate) return [];
   const monday = addDays(input.endDate, 1);
-  if ((!input.policy.holidayRestAllowed || input.policy.normativeProfile === SUPERMARKET_CCT) && input.policy.holidayDates.includes(monday)) return [];
+  if ((!input.policy.holidayRestAllowed || input.policy.normativeProfile === SUPERMARKET_CCT) && input.policy.holidayDates.includes(monday) && dayOfWeek(monday) !== 6) return [];
   const sundayOffs = new Set(input.assignments
     .filter((item) => item.date === input.endDate && item.kind === "OFF")
     .map((item) => item.employeeId));
   return sortEmployees(input.employees).filter((person) => person.planningEnabled !== false && person.offPattern === "CONSECUTIVE"
     && (person.offMode === "FIXED" || person.offMode === "MIXED")
-    && person.fixedOffDays.includes(0)
+    && person.fixedOffDays.includes(dayOfWeek(monday))
     && person.activeFrom <= input.endDate
     && (!person.activeUntil || person.activeUntil >= monday)
     && sundayOffs.has(person.id)

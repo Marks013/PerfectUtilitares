@@ -11,6 +11,18 @@ const plans = () => [plan("08-dec", "08", "2026-12"), plan("11-nov", "11", "2026
   plan("02-nov", "02", "2026-11"), plan("08-nov", "08", "2026-11"), plan("08-jan", "08", "2026-01"), plan("02-dec", "02", "2026-12")];
 
 describe("hierarchical planning selection", () => {
+  it("distinguishes a Sunday copy from its legacy original in the same month", () => {
+    const sunday = plan("sunday", "06", "2026-12"), legacy = plan("legacy", "06", "2026-12");
+    delete legacy.input.planningWeekStartsOn;
+    legacy.input.startDate = "2026-11-30"; legacy.input.endDate = "2027-01-03";
+    const before = structuredClone([sunday, legacy]);
+    const html = renderToStaticMarkup(<PlanSelector plans={[sunday, legacy]} selectedId="sunday" disabled={false} onSelect={vi.fn()} />);
+    expect(html).toContain('value="sunday" selected=""');
+    expect(html).toContain("domingo a sábado");
+    expect(html).toContain("segunda a domingo");
+    expect([sunday, legacy]).toEqual(before);
+  });
+
   it("groups canonical stores, years descending and only existing months in calendar order", () => {
     const input = plans(), before = structuredClone(input), selection = planSelection(input, "08-nov");
     expect(selection.branches.map(branch => branch.branchCode)).toEqual(["02", "08", "11"]);

@@ -48,7 +48,7 @@ export function findGenerationConflicts(input: EscalaInput): EscalaGenerationCon
   const groups = new Map<string, Budget>();
   for (const demand of input.demands) {
     if (demand.estimated === true || demand.minimum <= 0 || demand.date < input.startDate || demand.date > input.endDate) continue;
-    const week = weekStart(demand.date), key = JSON.stringify([demand.sector, demand.role ?? "", week]);
+    const week = weekStart(demand.date, input), key = JSON.stringify([demand.sector, demand.role ?? "", week]);
     const group = groups.get(key) ?? { sector: demand.sector, ...(demand.role ? { role: demand.role } : {}), week, demands: [] };
     group.demands.push(demand);
     groups.set(key, group);
@@ -77,7 +77,7 @@ export function findGenerationConflicts(input: EscalaInput): EscalaGenerationCon
         const assignment = assignments.get(JSON.stringify([person.id, date]));
         return assignment?.kind !== "ABSENCE" && !(assignment?.kind === "OFF" && assignment.locked);
       }).length;
-      capacity += Math.min(effectiveWeeklyMinutes(person, group.week), Math.min(5, available) * maximumWork);
+      capacity += Math.min(effectiveWeeklyMinutes(person, group.week, input), Math.min(5, available) * maximumWork);
       // Civil coverage can arrive from the previous Sunday's journey. Overestimate uncertain carry rather than invent an impossibility.
       if ((timed || previous?.kind === "WORK") && (!previous || previous.kind === "WORK") && person.activeFrom <= previousDate) {
         const previousShift = previous?.shiftId ? shifts.get(previous.shiftId) : undefined;

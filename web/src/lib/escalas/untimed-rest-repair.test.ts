@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { newEmployee, newInput } from "../../components/escalas/workspace-model";
+import { newEmployee } from "../../components/escalas/workspace-model";
+import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
 import { repairUntimedRests } from "./untimed-rest-repair";
 import { refineRoster } from "./roster-refinement";
 import { regularRestQuality } from "./rest-spacing";

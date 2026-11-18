@@ -19,12 +19,17 @@ function sample() {
 describe("monthly roster editing and operational feedback", () => {
   it("keeps the civil month visible and technical boundary days intact", () => {
     const input = sample();
+    input.assignments.push({ employeeId: "1", date: "2026-12-05", kind: "OFF", locked: true });
+    const before = structuredClone(input);
     expect(input.visibleMonth).toBe("2026-11");
     expect(visibleDates(input)).toHaveLength(30);
     expect(visibleDates(input).at(0)).toBe("2026-11-01");
     expect(visibleDates(input).at(-1)).toBe("2026-11-30");
-    expect(input.startDate).toBe("2026-10-26");
-    expect(input.endDate).toBe("2026-12-06");
+    expect(input.planningWeekStartsOn).toBe("SUNDAY");
+    expect(input.startDate).toBe("2026-11-01");
+    expect(input.endDate).toBe("2026-12-05");
+    expect(visibleDates(input)).not.toContain("2026-12-05");
+    expect(input).toEqual(before);
   });
 
   it("propagates a new branch target while preserving shorter and individual references", () => {

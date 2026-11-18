@@ -35,7 +35,7 @@ export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[]
   const weeks = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
   if (!weeks.length) return [];
   const availability = weeklySectorAvailability(input);
-  const scenarioWeeklyHours = Math.min(...weeks.map(week => effectiveWeeklyHours({ weeklyHours: input.defaultWeeklyHours }, week))) as WeeklyHours;
+  const scenarioWeeklyHours = Math.min(...weeks.map(week => effectiveWeeklyHours({ weeklyHours: input.defaultWeeklyHours }, week, input))) as WeeklyHours;
   const shifts = new Set(input.shifts.map(shift => shift.id));
   const sectors = new Map<string, { row: WeeklySectorCapacity; current: number[] }>();
   for (const person of input.employees) {
@@ -65,7 +65,7 @@ export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[]
     row.hours42 += hypothetical(42);
     row.hours40 += hypothetical(40);
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
-    weeks.forEach((week, index) => { current[index] += effectiveWeeklyHours(reference, week); });
+    weeks.forEach((week, index) => { current[index] += effectiveWeeklyHours(reference, week, input); });
   }
   return [...sectors.values()].map(({ row, current }) => {
     Object.assign(row, availability.get(row.sector));

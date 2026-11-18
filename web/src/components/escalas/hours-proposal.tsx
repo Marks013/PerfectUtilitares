@@ -38,7 +38,7 @@ export function hoursArePrepared(input: EscalaInput) {
   return input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")
     .every((person) => weeks.every((start) => {
       const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
-      const target = effectiveWeeklyMinutes({ ...person, ...reference }, start) / 5;
+      const target = effectiveWeeklyMinutes({ ...person, ...reference }, start, input) / 5;
       return person.shiftIds.some((id) => { const shift = shifts.get(id); return shift && duration(shift) === target; });
     }));
 }
