@@ -23,7 +23,7 @@ function state(workspace: EscalaWorkspace | null = null) {
   } satisfies ReturnType<typeof useEscalasWorkspace>;
 }
 
-function plan() {
+function plan(): EscalaWorkspace {
   return {
     id: "guided", revision: 1, status: "DRAFT", input: newInput("07", "Hiper", "2026-11", 42),
     validation: { valid: true, readyToPublish: false, minimumCoverageMargin: 0, summaries: [], issues: [] }, canEdit: true, canPublish: true, updatedAt: "2026-10-30T00:00:00Z",
