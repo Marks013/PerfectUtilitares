@@ -71,8 +71,12 @@ def variable_rest_groups(person, dates, baseline, policy):
         start = (civil - timedelta(days=(civil.weekday() - start_weekday) % 7)).isoformat()
         weeks.setdefault(start, []).append(day)
     comparable = {}
+    month = policy.get('_visibleMonth')
     for days in weeks.values():
         days = sorted(days)
+        # Technical padding cannot be the only source of apparent monthly rotation.
+        if month and any(not day.startswith(month + '-') for day in days):
+            continue
         if len(days) != 7 or any(day in holidays or baseline.get((person['id'], day), {}).get('locked')
                                or baseline.get((person['id'], day), {}).get('kind') in ('ABSENCE', 'HOLIDAY')
                                for day in days):

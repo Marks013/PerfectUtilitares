@@ -1,5 +1,5 @@
 import { canonicalBranchCode } from "./branch-code";
-import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
+import { addDays, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaIssue } from "./types";
 
 /** Operational instruction for branch 02, independent of holiday or employee settings. */
@@ -32,8 +32,11 @@ export function variableRestGroups(input: EscalaInput, person: EscalaEmployee,
     days.push(day); weeks.set(start, days);
   }
   const comparable = new Map<string, string[][]>();
+  const visible = new Set(visibleDates(input));
   for (const days of weeks.values()) {
-    if (days.length !== 7 || days.some(day => holidays.has(day) || records.get(day)?.locked
+    // Padding dates retain weekly rules but cannot disguise a fixed visible month.
+    if (days.length !== 7 || days.some(day => !visible.has(day))) continue;
+    if (days.some(day => holidays.has(day) || records.get(day)?.locked
       || records.get(day)?.kind === "ABSENCE" || records.get(day)?.kind === "HOLIDAY")) continue;
     const imposed = [...new Set([...person.fixedOffDays, ...days.filter(day => closed.has(day)).map(dayOfWeek)])].sort();
     if (imposed.length >= 2) continue;
