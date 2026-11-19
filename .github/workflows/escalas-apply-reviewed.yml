@@ -1,0 +1,65 @@
+name: Apply reviewed scheduling patch
+
+on:
+  push:
+    branches: [feat/escalas-folgas-explicitas-2026-11-19]
+    paths:
+      - '.github/workflows/escalas-apply-reviewed.yml'
+      - 'tools/maintenance/rest-patch/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-reviewed-rest-configuration
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.repository == 'Marks013/PerfectUtilitares' && github.ref == 'refs/heads/feat/escalas-folgas-explicitas-2026-11-19'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 10
+      - name: Verify exact reviewed bytes and apply to the scoped branch
+        run: |
+          python3 - <<'PY'
+          import ast, base64, hashlib, lzma, os, pathlib, subprocess
+          expected = 'afa11fcad2462d4269dc28c52fa0e7a97eef228941549c61554d62193214e4e7'
+          folder = pathlib.Path('tools/maintenance/rest-patch')
+          parts = sorted(folder.glob('*.b64'))
+          if [p.name for p in parts] != [f'{i:02}.b64' for i in range(8)]:
+              raise SystemExit('Unexpected patch parts')
+          packed = base64.b64decode(''.join(p.read_text().strip() for p in parts), validate=True)
+          patch = lzma.decompress(packed, memlimit=128 * 1024 * 1024)
+          if len(patch) != 134219 or hashlib.sha256(patch).hexdigest() != expected:
+              raise SystemExit('Reviewed patch integrity mismatch')
+          destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'reviewed-rest.patch'
+          destination.write_bytes(patch)
+          subprocess.run(['git', 'apply', '--check', '--whitespace=error-all', str(destination)], check=True)
+          subprocess.run(['git', 'apply', '--index', '--whitespace=error-all', str(destination)], check=True)
+          paths = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '-z']).decode().strip('\0').split('\0')
+          allowed = ('web/ops/escalas/', 'web/src/lib/escalas/', 'web/src/components/escalas/', 'web/e2e/', 'tools/agent-toolkit/', 'docs/design/', 'docs/reviews/')
+          if len(paths) != 37 or any(not name.startswith(allowed) or '..' in pathlib.PurePosixPath(name).parts or pathlib.PurePosixPath(name).name.startswith('.env') for name in paths):
+              raise SystemExit('Unexpected patch surface')
+          for name in paths:
+              if name.endswith('.py'):
+                  ast.parse(pathlib.Path(name).read_text(), filename=name)
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          PY
+      - name: Verify pure contracts before committing
+        run: |
+          python3 -m unittest discover -s web/ops/escalas -p 'test_rest_configuration.py' -v
+          python3 -m unittest discover -s tools/agent-toolkit -p 'test_kit.py' -v
+      - name: Commit reviewed implementation without force or production deployment
+        run: |
+          test "$GITHUB_REF" = 'refs/heads/feat/escalas-folgas-explicitas-2026-11-19'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(escalas): separa folgas fixas, fechamento dominical e rodízio explícito' -m 'Aplica o patch revisado com integridade SHA-256 conferida. Contratos puros e testes do instalador aprovados; a CI completa do PR deve validar solver, TypeScript e navegador. Sem deploy ou alteração de escalas salvas.'
+          git push origin HEAD:refs/heads/feat/escalas-folgas-explicitas-2026-11-19
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
