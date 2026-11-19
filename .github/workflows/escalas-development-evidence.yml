@@ -1,0 +1,50 @@
+name: Escalas development evidence
+
+on:
+  push:
+    branches: [feat/escalas-folgas-explicitas-2026-11-19]
+    paths: [.github/workflows/escalas-development-evidence.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Package only versioned development sources
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess, zipfile
+          root = pathlib.Path.cwd()
+          names = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          extensions = {'.py', '.ts', '.tsx', '.js', '.mjs', '.json', '.md', '.css', '.yml', '.yaml', '.toml', '.txt'}
+          entries = {}
+          with zipfile.ZipFile('escalas-development-source.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+              for name in names:
+                  if not name:
+                      continue
+                  path = pathlib.PurePosixPath(name)
+                  if any(part.startswith('.env') or part in ('storage', 'uploads', 'data', 'node_modules', '.git') for part in path.parts):
+                      continue
+                  if path.suffix not in extensions and path.name != 'Dockerfile':
+                      continue
+                  file = root / name
+                  if file.is_symlink() or not file.is_file():
+                      continue
+                  content = file.read_bytes()
+                  archive.writestr(name, content)
+                  entries[name] = hashlib.sha256(content).hexdigest()
+              archive.writestr('SOURCE-REVISION.json', json.dumps({'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip(), 'sha256': entries}, indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: escalas-development-source
+          path: escalas-development-source.zip
+          retention-days: 1
+          if-no-files-found: error
