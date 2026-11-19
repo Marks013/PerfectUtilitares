@@ -66,8 +66,48 @@ jobs:
           npm run security:python
       - name: Deploy database migrations
         run: npm run prisma:generate && npm run db:deploy
+      - name: Record exact source identity for quality diagnostics
+        working-directory: .
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'quality-evidence'
+          output.mkdir()
+          tracked = set(subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0'))
+          tests = {}
+          for path in sorted((root / 'web/src').rglob('*')):
+              if not path.is_file() or path.is_symlink() or not path.name.endswith(('.test.ts', '.test.tsx')):
+                  continue
+              name = path.relative_to(root).as_posix()
+              tests[name] = {'tracked': name in tracked, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+          source = {'checkout': subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip(),
+                    'tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}']).decode().strip(),
+                    'requestedSha': os.environ['GITHUB_SHA'], 'run': os.environ['GITHUB_RUN_ID'],
+                    'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'tests': tests}
+          (output / 'source.json').write_text(json.dumps(source, indent=2) + '\n')
+          print(json.dumps({key: value for key, value in source.items() if key != 'tests'}))
+          print('Test source files:', len(tests))
+          PYTHON
       - name: Run checks without a browser
-        run: npm run quality:code
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          npm run quality:code 2>&1 | tee "$RUNNER_TEMP/quality-evidence/quality.log"
+          statuses=("${PIPESTATUS[@]}")
+          result=${statuses[0]}
+          if [ "$result" -eq 0 ] && [ "${statuses[1]}" -ne 0 ]; then result=${statuses[1]}; fi
+          printf '%s\n' "$result" > "$RUNNER_TEMP/quality-evidence/exit-code.txt"
+          exit "$result"
+      - name: Keep source-bound synthetic quality evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-source-evidence
+          path: ${{ runner.temp }}/quality-evidence/
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Smoke Prisma runtime
         run: npm run prisma:smoke
       - name: Ensure checks did not modify tracked files
