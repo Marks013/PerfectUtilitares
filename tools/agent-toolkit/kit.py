@@ -20,6 +20,8 @@ import urllib.request
 import urllib.parse
 import uuid
 
+from source_licenses import preserve_licenses
+
 HERE = Path(__file__).resolve().parent
 AGENTS = {'codex': '.agents/skills', 'claude': '.claude/skills', 'cursor': '.cursor/skills'}
 HEX = re.compile(r'^[a-f0-9]{40}$')
@@ -143,18 +145,7 @@ def fetch_skill(item: dict, destination: Path) -> None:
         skill = destination / 'SKILL.md'
         if not skill.is_file() or git_blob(skill.read_bytes()) != item['skill_blob']:
             raise KitError('SKILL.md integrity verification failed')
-        # Carry the repository's license/notice in addition to any per-skill license.
-        names = git(checkout, 'ls-tree', '--name-only', item['commit']).decode().splitlines()
-        notices = [n for n in names if re.fullmatch(r'(LICENSE|COPYING|NOTICE)(\.[A-Za-z]+)?', n, re.I)]
-        for name in notices:
-            content = git(checkout, 'show', item['commit'] + ':' + name)
-            if len(content) > 128 * 1024:
-                raise KitError('Unexpected license size')
-            folder = destination / 'UPSTREAM-NOTICES'
-            folder.mkdir(exist_ok=True)
-            (folder / name).write_bytes(content)
-        if not notices and not any('LICENSE' in p.name.upper() for p in destination.rglob('*')):
-            raise KitError('No upstream license found; manual review required')
+        preserve_licenses(item, destination, checkout, git)
 
 
 class ReleaseRedirect(urllib.request.HTTPRedirectHandler):

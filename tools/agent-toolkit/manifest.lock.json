@@ -47,7 +47,8 @@
       "path": "skills/react-best-practices",
       "commit": "1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62",
       "skill_blob": "237988de4a66dd8a71d30a2c24ebe1a86b58d04e",
-      "tree": "343db72180d05814949fef7d46be96b5c6ee86b3"
+      "tree": "343db72180d05814949fef7d46be96b5c6ee86b3",
+      "licenseDeclaration": "MIT"
     },
     {
       "id": "frontend-design",

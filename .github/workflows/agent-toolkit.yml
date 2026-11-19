@@ -28,7 +28,7 @@ jobs:
       - name: Test installer with synthetic fixtures
         env:
           PYTHONDONTWRITEBYTECODE: '1'
-        run: python3 -m unittest discover -s tools/agent-toolkit -p 'test_kit.py' -v
+        run: python3 -m unittest discover -s tools/agent-toolkit -p 'test_*.py' -v
       - name: Install verified sources into an isolated project
         run: |
           target="$RUNNER_TEMP/pu-agent-kit"

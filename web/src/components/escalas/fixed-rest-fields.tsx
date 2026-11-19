@@ -6,6 +6,7 @@ import { branchClosesOnSunday } from "@/lib/escalas/rest-configuration";
 import type { EscalaEmployee, EscalaInput } from "@/lib/escalas/types";
 import { Check, controlClass } from "./controls";
 
+const SLOTS = [{ id: "first", index: 0 }, { id: "second", index: 1 }] as const;
 const DAYS = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"];
 
 /** The only writer for personal fixed slots; closing rules never enable these controls. */
@@ -24,10 +25,11 @@ export function FixedRestFields({ employee, input, onChange }: {
     </p>
     {sundayClosed && <p className="text-sm">Filial 02: domingo fechado. O domingo já ocupa uma folga semanal; a outra permanece variável, salvo escolha explícita compatível.</p>}
     <div className="grid gap-4 sm:grid-cols-2">
-      {slots.map((slot, index) => {
+      {SLOTS.map(({ id: slotId, index }) => {
+        const slot = slots[index];
         const other = slots[1 - index];
         const duplicate = other.enabled && other.weekday === slot.weekday;
-        return <div key={index} className="space-y-2">
+        return <div key={slotId} className="space-y-2">
           <label htmlFor={`${id}-${index}`} className="block text-sm font-semibold">Dia da folga fixa {index + 1}</label>
           <select id={`${id}-${index}`} className={controlClass} disabled={hoursOnly}
             aria-describedby={`${id}-help ${id}-${index}-status`} value={slot.weekday ?? ""}
