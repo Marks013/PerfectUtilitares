@@ -1,4 +1,5 @@
 import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
+import { applyBranchRestCalendar, variableRestIssues } from "./rest-configuration";
 import { isHoursReferenceOnly, validateHoursReferences } from "./hours-reference";
 import { absoluteMinute, dateRange, visibleDates, weekStart } from "./dates";
 import { escalaInputSchema } from "./schema";
@@ -23,9 +24,9 @@ export function validateEscala(rawInput: EscalaInput, options: { publishedSnapsh
     valid: false, readyToPublish: false, summaries: [], minimumCoverageMargin: null,
     issues: parsed.error.issues.slice(0, 50).map((entry) => ({ code: "INPUT_INVALID", severity: "ERROR", message: `${entry.path.join(".")}: ${entry.message}` })),
   };
-  const input = parsed.data;
+  const input = options.publishedSnapshot ? parsed.data : applyBranchRestCalendar(parsed.data);
   if (isHoursReferenceOnly(input)) return validateHoursReferences(input);
-  const issues: EscalaIssue[] = [];
+  const issues: EscalaIssue[] = options.publishedSnapshot ? [] : variableRestIssues(input);
   if (!options.publishedSnapshot) for (const day of workAfterStoreClosing(input)) issues.push({
     code: "STORE_CLOSING_EXCEEDED", severity: "ERROR", employeeId: day.employeeId, date: day.date,
     message: `Este dia termina após o fechamento da loja (${storeClosingLabel(input)}). Ajuste a saída ou gere uma nova proposta; se o dia estiver bloqueado, desbloqueie-o antes. O horário importado foi preservado.`,

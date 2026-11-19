@@ -8,6 +8,8 @@ import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from 
 import { sortEmployees } from "@/lib/escalas/order";
 import { currentLeadership } from "@/lib/escalas/leadership";
 import { BulkControls } from "./bulk-controls";
+import { FixedRestFields } from "./fixed-rest-fields";
+import { fixedRestConfigurationError } from "@/lib/escalas/fixed-rest";
 import { ExcludedEmployees } from "./excluded-employees";
 import { LeadershipFields } from "./leadership-fields";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
@@ -170,6 +172,8 @@ export function EmployeeEditor({
         throw new Error("Preencha matrícula, nome, setor, cargo e, para incluir quem tem horário fixo, ao menos um turno autorizado.");
       if (input.employees.some((item) => item.id !== draft.id && item.registration === draft.registration.trim()))
         throw new Error("Essa matrícula já está cadastrada nesta filial.");
+      const configurationError = fixedRestConfigurationError(draft);
+      if (configurationError) throw new Error(configurationError);
       const expected = draft.offMode === "FIXED" ? 2 : draft.offMode === "MIXED" ? 1 : 0;
       if (draft.fixedOffDays.length !== expected) throw new Error(`Esta modalidade exige ${expected} dia(s) fixo(s).`);
       onSave({
@@ -290,33 +294,7 @@ export function EmployeeEditor({
           <p className="text-sm">Organização registrada: {draft.offMode === "VARIABLE" ? "variável" : draft.offMode === "MIXED" ? "uma folga fixa" : "duas folgas fixas"}. Dias fixos: {draft.fixedOffDays.map(day => ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"][day]).join(", ") || "nenhum"}. Limite de domingos seguidos: {draft.maxConsecutiveSundays}.</p>
         </details>}
         {input.generationMode !== "HOURS_ONLY" && <>
-        <div className="space-y-2">
-          <Check label="Fixar dias de folga (opcional)" checked={draft.offMode !== "VARIABLE"}
-            onChange={checked => setDraft(previous => ({ ...previous,
-              offMode: checked ? "MIXED" : "VARIABLE", fixedOffDays: [],
-            }))} />
-          <p className="text-sm text-[color:var(--app-muted)]">
-            {draft.offMode === "VARIABLE"
-              ? "O algoritmo varia os dias e prioriza folgas separadas. Duas seguidas ficam para quando a cobertura ou os descansos exigirem."
-              : "Escolha abaixo quais dias devem permanecer fixos. O algoritmo preservará essa escolha."}
-          </p>
-        </div>
-        {draft.offMode !== "VARIABLE" && <Field label="Quantas folgas fixas?">
-          {(id) => (
-            <select
-              id={id}
-              value={draft.offMode}
-              onChange={(event) => {
-                change("offMode", event.target.value as EscalaEmployee["offMode"]);
-                change("fixedOffDays", []);
-              }}
-              className={controlClass}
-            >
-              <option value="MIXED">Uma fixa e uma variável</option>
-              <option value="FIXED">Duas fixas aprovadas</option>
-            </select>
-          )}
-        </Field>}
+        <FixedRestFields employee={draft} input={input} onChange={setDraft} />
         <Field label="Organização das folgas">
           {(id) => (
             <select
@@ -414,13 +392,6 @@ export function EmployeeEditor({
           ))}
         </div>
       </fieldset>}
-      {input.generationMode !== "HOURS_ONLY" && draft.offMode !== "VARIABLE" && (
-        <DayChoices
-          label="Dias fixos aprovados"
-          values={draft.fixedOffDays}
-          change={(values) => change("fixedOffDays", values)}
-        />
-      )}
       {input.generationMode !== "HOURS_ONLY" && <DayChoices
         label="Preferências de folga (não são bloqueios)"
         values={draft.preferredOffDays}

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fixedRestConfigurationError } from "./fixed-rest";
 import { isPlanningClosedHoliday } from "./calendar";
 import { addDays, dateRange, isDate, monthBounds } from "./dates";
 import { canonicalBranchCode } from "./branch-code";
@@ -74,6 +75,10 @@ const employee = z.strictObject({
   sourceSchedule: z.strictObject({ report: z.literal("FPRE136"), code: z.string().trim().max(40),
     description: z.string().trim().max(180), weekday: z.string().trim().max(180), saturday: z.string().trim().max(180) }).optional(),
   offMode: z.enum(["VARIABLE", "MIXED", "FIXED"]), fixedOffDays: days,
+  fixedRestSlots: z.tuple([
+    z.strictObject({ enabled: z.boolean(), weekday: z.number().int().min(0).max(6).nullable() }),
+    z.strictObject({ enabled: z.boolean(), weekday: z.number().int().min(0).max(6).nullable() }),
+  ]).optional(),
   offPattern: z.enum(["ANY", "CONSECUTIVE", "PREFER_CONSECUTIVE"]),
   maxConsecutiveSundays: z.union([z.literal(1), z.literal(2)]), preferredOffDays: days,
   sundayRestRule: z.enum(["PROTECTIVE", "UNREVIEWED", "CLT_386", "COMMERCE"]).optional(),
@@ -81,6 +86,8 @@ const employee = z.strictObject({
   planningHistory: z.array(assignment).max(56).optional(),
   planningFuture: z.array(assignment).max(21).optional(),
 }).superRefine((value, context) => {
+  const configurationError = fixedRestConfigurationError(value);
+  if (configurationError) context.addIssue({ code: "custom", path: ["fixedRestSlots"], message: configurationError });
   const expected = { VARIABLE: 0, MIXED: 1, FIXED: 2 }[value.offMode];
   if (value.fixedOffDays.length !== expected) context.addIssue({ code: "custom", path: ["fixedOffDays"], message: `Este modo exige ${expected} dia(s) fixo(s)` });
   if (value.activeUntil && value.activeUntil < value.activeFrom) context.addIssue({ code: "custom", path: ["activeUntil"], message: "Desligamento anterior à admissão" });
@@ -138,7 +145,7 @@ export const escalaInputSchema = z.strictObject({
   coverageBasis: z.string().regex(/^coverage-v\d+:[a-f0-9]{16}$/).max(48).optional(),
   storeClosingMinutes: z.number().int().min(1).max(1440).optional(),
   schemaVersion: z.literal(1), branchCode: label.transform(canonicalBranchCode), branchName: label, startDate: planningDate, endDate: planningDate,
-  restRulesVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+  restRulesVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
   visibleMonth: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).optional(),
   defaultWeeklyHours: weeklyHours, timeZone: z.literal("America/Sao_Paulo"), policy,
   mixed42Sectors: z.array(label).max(250)
