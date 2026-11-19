@@ -128,7 +128,10 @@ class GlobalCoverageReservationTests(unittest.TestCase):
                               engine.parameters.num_workers))
                 return engine.solve(model)
         started = time.monotonic()
-        with patch('solver._rest_repair_groups', return_value=[{'p0'}, {'p2'}, {'p4'}, {'p6'}]), \
+        # Exercise refinement from this deliberately poor incumbent. Initial
+        # seed recovery has separate unmocked production regressions.
+        with patch('solver._empty_estimated_seed_sectors', return_value=set()), \
+                patch('solver._rest_repair_groups', return_value=[{'p0'}, {'p2'}, {'p4'}, {'p6'}]), \
                 patch('solver.improve', side_effect=observe), \
                 patch('solver._coverage', wraps=solver._coverage) as coverage_builder:
             result = solver.solve(data, Observe())

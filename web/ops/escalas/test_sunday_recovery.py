@@ -42,7 +42,10 @@ class SundayRecoveryTests(unittest.TestCase):
             observed.append(sum(Snapshot(result[0]).value(v) for v in sunday))
             return result
 
-        with patch('solver.improve', side_effect=recover):
+        # Exercise refinement from this deliberately poor incumbent. Initial
+        # seed recovery has separate unmocked production regressions.
+        with patch('solver._empty_estimated_seed_sectors', return_value=set()), \
+                patch('solver.improve', side_effect=recover):
             result = solver.solve(data)
         self.assertIn(result['status'], ('FEASIBLE', 'OPTIMAL'))
         self.assertEqual(observed, [1])

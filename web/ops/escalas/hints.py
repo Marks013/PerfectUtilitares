@@ -210,8 +210,12 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     These are variable hints only. No target is converted into a staffing constraint,
     and no missing history is fabricated. Unsupported alternatives are left to CP-SAT.
     """
-    if policy.get('_generationMode') == 'HOURS_ONLY':
+    if not employees or not dates or policy.get('_generationMode') == 'HOURS_ONLY':
         return {}  # Day redistribution is not an hours-only seed operation.
+    if control is not None:
+        control.checkpoint()
+    if deadline is not None and time.monotonic() >= deadline:
+        return {}  # Do not spend an expired search allocation on preparation.
     # Cache pure civil instants only, never recipient results, scores or beams.
     if calendar_portfolio:
         instant = lru_cache(maxsize=4096)(instant)
@@ -232,18 +236,26 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
     if len(leadership) > 1:
         groups[("leadership",)] = leadership
     unique = list(dict.fromkeys(tuple(sorted(members)) for members in groups.values()))
-    memberships = {person["id"]: [index for index, members in enumerate(unique) if person["id"] in members and len(members) > 1]
-                   for person in employees}
+    memberships = {person["id"]: [] for person in employees}
+    for index, members in enumerate(unique):
+        if len(members) > 1:
+            for pid in members:
+                memberships[pid].append(index)
     # A person on leave is not an available alternative to the remaining team.
     # Score rest concentration against actual daily exposure, not nominal staff.
-    active_sets = {pid: set(days) for pid, days in active.items()}
-    group_sizes = {(index, day): sum(day in active_sets.get(pid, set())
-                   and baseline.get((pid, day), {}).get("kind") != "ABSENCE" for pid in members)
-                   for index, members in enumerate(unique) for day in dates}
+    active_sets = {person["id"]: set(active.get(person["id"], ())) for person in employees}
+    group_sizes = {}
+    for index, members in enumerate(unique):
+        if control is not None:
+            control.checkpoint()
+        if deadline is not None and time.monotonic() >= deadline:
+            return {}
+        if len(members) > 1:
+            for day in dates:
+                group_sizes[index, day] = sum(day in active_sets[pid]
+                    and baseline.get((pid, day), {}).get("kind") != "ABSENCE" for pid in members)
     counts, result = {}, {}
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
-    if not dates or not employees:
-        return {}
     if '_visibleMonth' not in policy:
         policy = {**policy, '_visibleMonth': visible_month({'startDate': dates[0], 'endDate': dates[-1],
                   'planningWeekStartsOn': policy.get('_planningWeekStartsOn', 'MONDAY')})}
@@ -254,7 +266,9 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
         if deadline is not None and time.monotonic() >= deadline:
             return result
         pid = person["id"]
-        available = set(active[pid])
+        available = active_sets[pid]
+        if not available:
+            continue  # No decision calendar for a person outside this horizon.
         prior = {entry["date"]: entry for entry in person.get("planningHistory", []) + person["history"] + person.get("planningFuture", [])}
         fixed = set(person["fixedOffDays"])
         # Select one coherent reference; the model can choose another admissible shift.
@@ -328,7 +342,18 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
         # Two nested signatures provide no real Sunday choice: positive rest
         # costs always prefer their subset. Obtain another real beam trajectory
         # under current counts before reusing such a synchronized portfolio.
-        if calendar_portfolio and pid not in mixed_people and len(independent) >= 2:
+        matching_masks = [mask for saved_bucket, mask in portfolio if saved_bucket == bucket]
+        # Different Sundays alone do not make a useful portfolio: all masks may
+        # still put the whole sector OFF on the same weekday. Rebuild under the
+        # current rest counts until every shared optional rest has an alternative.
+        shared_optional_rest = any(
+            all(mask[index] is True for mask in matching_masks)
+            and not (preserve_rest_pattern or weekdays[day] in fixed
+                     or day in policy['closedDates']
+                     or baseline.get((pid, day), {}).get('locked'))
+            for index, day in enumerate(ordered_active)) if matching_masks else True
+        if (calendar_portfolio and pid not in mixed_people and len(independent) >= 2
+                and not shared_optional_rest):
             for saved_bucket, mask in portfolio:
                 if saved_bucket != bucket:
                     continue
@@ -353,7 +378,6 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                 beam.append(item)
             if beam:
                 count('portfolioPeople')
-        reused_portfolio = bool(beam)
         if not beam:
             count('beamPeople')
             # Check each selected week against preceding work and Sunday rotation.
@@ -370,7 +394,9 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                     person, group, baseline, choices, metrics, policy, selected, weekdays,
                     closed_holidays, preserve_rest_pattern, pid in mixed_people))
                 next_beam = []
-                final_week = week + 7 >= len(dates)
+                # Final means this recipient's last active week, not the store's
+                # last calendar week. Do not borrow an unknown future rest.
+                final_week = group[-1] == ordered_active[-1]
                 for score, previous, weekday_rests in beam:
                     for rests, entries in candidates:
                         next_beam.append(extend_candidate(score, previous, weekday_rests, rests, entries))
@@ -406,14 +432,12 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                     break
             if not beam:
                 continue  # Incomplete information or a difficult alternative remains CP-SAT's task.
-        if calendar_portfolio and not reused_portfolio:
-            # A partial active horizon can end before the last calendar week.
-            # Always validate completed beam calendars with final=True as well.
-            beam = [item for item in beam if _compatible(
-                person, item[1], prior, metrics, policy, instant, sunday_limit, True,
-                baseline=baseline)]
-            if not beam:
-                continue
+        # Every final candidate has already passed _compatible(final=True) in
+        # its own final active week, or during recipient rematerialization.
+        # Keep the completeness check without repeating the expensive timeline.
+        beam = [item for item in beam if set(item[1]) == available]
+        if not beam:
+            continue
         if calendar_portfolio:
             # Keep distinct Sunday trajectories ahead of duplicate weekday variants.
             masks = []
@@ -439,15 +463,27 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
             all_keys = tuple(by_signature)
             keys = sorted(all_keys, key=lambda key: any(other[0] == key[0] and other[1] < key[1]
                                                        for other in all_keys))
-            portfolio = []
-            # One mask per non-nested Sunday trajectory before weekday variants.
-            for rank in range(4):
+            portfolio, exposed = [], set()
+            # Keep Sunday alternatives, then maximize WORK/OFF alternatives on
+            # every date. Appending new masks behind old variants would retain
+            # their common weekday rests forever, defeating the refresh above.
+            for _ in range(4):
                 for key in keys:
-                    if rank < len(by_signature[key]) and len(portfolio) < 4:
-                        portfolio.append(by_signature[key][rank])
+                    candidates = [item for item in by_signature[key] if item not in portfolio]
+                    if candidates and len(portfolio) < 4:
+                        selected_mask = max(candidates, key=lambda item: sum(
+                            (item[0], index, bit) not in exposed
+                            for index, bit in enumerate(item[1]) if bit is not None))
+                        portfolio.append(selected_mask)
+                        exposed.update((selected_mask[0], index, bit)
+                            for index, bit in enumerate(selected_mask[1]) if bit is not None)
             if portfolio_stats is not None:
                 portfolio_stats['masksMax'] = max(portfolio_stats.get('masksMax', 0), len(portfolio))
         _, entries, _ = min(beam, key=candidate_rank)
+        if control is not None:
+            control.checkpoint()
+        if deadline is not None and time.monotonic() >= deadline:
+            return result  # Never publish a partial or late person calendar.
         result[pid] = entries
         for day, entry in entries.items():
             if entry["kind"] == "OFF":
@@ -457,6 +493,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
 
 
 def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit, final, baseline=None):
+    if not proposed:
+        return False
     known = {**prior, **proposed}
     first, last = min(proposed), max(proposed)
     lower = (date.fromisoformat(first) - timedelta(days=21)).isoformat()

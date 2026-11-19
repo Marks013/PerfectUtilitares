@@ -82,7 +82,10 @@ class ComposedSundayHintTests(unittest.TestCase):
                 return status
 
         started = time.monotonic()
-        with patch('solver._rest_repair_groups', return_value=[{'p0', 'p1'}]), \
+        # Exercise refinement from this deliberately poor incumbent. Initial
+        # seed recovery has separate unmocked production regressions.
+        with patch('solver._empty_estimated_seed_sectors', return_value=set()), \
+                patch('solver._rest_repair_groups', return_value=[{'p0', 'p1'}]), \
                 patch('solver._composed_decision_hints', side_effect=build), \
                 patch('solver.balanced_rest_hints', side_effect=generate), \
                 patch('solver.improve', side_effect=improve):
