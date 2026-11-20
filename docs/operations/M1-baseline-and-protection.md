@@ -24,6 +24,23 @@ Antes de marcar A01 concluído, configurar regras efetivas para main, exigir rev
 A verificação Planning calendar parity é condicional à lista de caminhos. Não torná-la um check obrigatório universal sem primeiro ampliar seu gatilho, senão PRs não relacionados podem ficar permanentemente pendentes.
 Demonstrar com PR sintético: pending/failure impedem merge e success permite merge autorizado; restringir bypass e force-push. Testar com responsável antes de alterar uma branch em uso.
 
+## Verificação de integridade do PR (defesa complementar A01)
+
+A etapa `Audit PR tree and deletion intent` do job **Code, dependencies and PostgreSQL** confere o diff real entre a base e o commit sintético de merge do PR, não apenas a descrição declarada do autor.
+
+- PR com título convencional `test:` ou `test(escopo):` somente pode modificar arquivos de teste, E2E, snapshots e fixtures. Mudança de runtime/documentação requer tipo de PR condizente e revisão completa.
+- Qualquer exclusão ou renomeação precisa indicar **cada caminho antigo literal** no corpo do PR, em um único bloco HTML como o exemplo abaixo. Autorizações genéricas ou caminhos inexistentes falham.
+- Se o commit esperado não for um merge sintético válido, a checagem falha de modo fechado. O checkout do job usa o histórico completo e credenciais Git não persistidas.
+- Regressões simuladas são testadas pelo `node --test scripts/verify-pr-change-scope.test.mjs`, incluído em `test:ops`. Esse teste não usa dados de RH, tokens ou serviços externos.
+
+```text
+<!-- intentional-deletions:
+docs/arquivo-obsoleto.md
+-->
+```
+
+A autorização explícita no corpo do PR **não prova** que a remoção é correta. Continue revisando todo o diff, especialmente arquivos modificados, validações, políticas e acessos. O gate só impede classes específicas de alterações acidentais e **não configura o Ruleset da main**: A01 continua exigindo administrador, checks obrigatórios e teste de bloqueio de merge.
+
 ## A12 | Como desenvolver
 
 Na raiz web/:
