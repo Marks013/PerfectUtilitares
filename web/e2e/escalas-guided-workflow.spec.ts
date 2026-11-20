@@ -258,9 +258,21 @@ test("shared operational access is independent, scoped, revocable and restores a
   try {
     await page.goto("/escalas"); await expect(page).toHaveURL(/\/escala$/);
     await expect(page.getByRole("heading", { name: "Acesso ao planejamento de escalas", exact: true })).toBeVisible();
+    const operationalPassword = page.getByLabel("Senha operacional", { exact: true });
+    await expect(operationalPassword).toBeFocused();
+    await expect(operationalPassword).toHaveAttribute("aria-describedby", "escala-access-description");
+    await expect(operationalPassword).toHaveAttribute("aria-invalid", "false");
+    await page.getByRole("button", { name: "Mostrar senha", exact: true }).click();
+    await expect(operationalPassword).toHaveAttribute("type", "text");
+    await expect(page.getByRole("button", { name: "Ocultar senha", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Ocultar senha", exact: true }).click();
+    await expect(operationalPassword).toHaveAttribute("type", "password");
     expect((await page.request.get("/api/escalas")).status()).toBe(401);
-    await page.getByLabel("Senha operacional", { exact: true }).fill("wrong-isolated-password");
-    await page.getByRole("button", { name: "Liberar planejamento", exact: true }).click(); await expect(page.locator("#escala-access-error")).toContainText("Senha operacional incorreta");
+    await operationalPassword.fill("wrong-isolated-password");
+    await page.getByRole("button", { name: "Liberar planejamento", exact: true }).click();
+    await expect(page.locator("#escala-access-error")).toContainText("Senha operacional incorreta");
+    await expect(operationalPassword).toHaveAttribute("aria-invalid", "true");
+    await expect(operationalPassword).toHaveAttribute("aria-describedby", "escala-access-description escala-access-error");
     const unlock = async () => { await page.getByLabel("Senha operacional", { exact: true }).fill(password); await page.getByRole("button", { name: "Liberar planejamento", exact: true }).click(); await expect(page.getByRole("button", { name: "Bloquear Escalas", exact: true })).toBeVisible(); };
     await unlock();
     expect((await page.request.get("/api/admin/users")).status()).toBe(401);
