@@ -1,0 +1,89 @@
+name: Escalas dependency correction
+on:
+  push:
+    branches: [audit/escalas-integracao-2026-11-19]
+    paths: [.github/workflows/escalas-audit-dependencies.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    if: github.repository == 'Marks013/PerfectUtilitares' && github.ref == 'refs/heads/audit/escalas-integracao-2026-11-19'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/perfectutilitares_ci?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-in-production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+      - name: Resolve only the reviewed fixed dependency
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          for directory in ['web','web/ops/migrator']:
+              manifest=pathlib.Path(directory)/'package.json'
+              data=json.loads(manifest.read_text())
+              assert 'effect' not in data['overrides']
+              data['overrides']['effect']='3.22.1'
+              manifest.write_text(json.dumps(data,indent=2)+'\n')
+              subprocess.run(['npm','install','--package-lock-only','--ignore-scripts','--no-audit','--no-fund'],cwd=directory,check=True)
+              lock=pathlib.Path(directory)/'package-lock.json'
+              before=json.loads(subprocess.check_output(['git','show',f'HEAD:{lock}']))
+              after=json.loads(lock.read_text())
+              old,new=before['packages'],after['packages']
+              assert old.keys()==new.keys(), 'Dependency graph changed beyond the reviewed package'
+              changed=[name for name in old if old[name]!=new[name]]
+              assert changed==['node_modules/effect'], changed
+              assert new['node_modules/effect']['version']=='3.22.1'
+              assert new['node_modules/effect']['resolved']=='https://registry.npmjs.org/effect/-/effect-3.22.1.tgz'
+              assert new['node_modules/effect']['integrity'].startswith('sha512-')
+              print(directory, 'only effect changed:', old['node_modules/effect']['version'], '->', new['node_modules/effect']['version'])
+          PY
+      - name: Install from regenerated locks and audit all npm environments
+        shell: bash
+        run: |
+          npm --prefix web ci
+          npm --prefix web/ops/migrator ci
+          npm --prefix web ls --all > "$RUNNER_TEMP/npm-tree-web.log"
+          npm --prefix web/ops/migrator ls --all > "$RUNNER_TEMP/npm-tree-migrator.log"
+          npm --prefix web audit --audit-level=moderate --json > "$RUNNER_TEMP/audit-web.json"
+          npm --prefix web/ops/migrator audit --audit-level=moderate --json > "$RUNNER_TEMP/audit-migrator.json"
+          npm --prefix web/ops/pdf-worker audit --audit-level=moderate --json > "$RUNNER_TEMP/audit-pdf-worker.json"
+      - name: Verify Prisma configuration and existing runtime contracts
+        working-directory: web
+        run: |
+          npm run prisma:validate
+          npm run typecheck
+          npx vitest run src/lib/system/runtime-dependencies.test.ts src/lib/prisma-adapter.test.ts src/lib/escalas/access.test.ts src/app/api/escalas/route.test.ts
+      - name: Commit only the four reviewed manifest and lock files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git diff --check
+          git diff -- web/package.json web/package-lock.json web/ops/migrator/package.json web/ops/migrator/package-lock.json > "$RUNNER_TEMP/dependency-correction.patch"
+          git add -- web/package.json web/package-lock.json web/ops/migrator/package.json web/ops/migrator/package-lock.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(deps): corrige GHSA-7589-6fvf-x4pw sem downgrade do Prisma'
+          authorization=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" push origin "HEAD:$GITHUB_REF"
+          git rev-parse HEAD > "$RUNNER_TEMP/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/tree.txt"
+      - name: Retain exact dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: escalas-dependency-evidence
+          path: |
+            ${{ runner.temp }}/audit-*.json
+            ${{ runner.temp }}/npm-tree-*.log
+            ${{ runner.temp }}/dependency-correction.patch
+            ${{ runner.temp }}/commit.txt
+            ${{ runner.temp }}/tree.txt
+          retention-days: 3
+          if-no-files-found: ignore
