@@ -44,7 +44,7 @@ test("two personal fixed-rest controls save independently and retain disabled we
     await page.getByRole("button", { name: "Aplicar cadastro à proposta", exact: true }).click();
     await expect(admission).toHaveAttribute("aria-invalid", "true");
     await expect(admission).toBeFocused();
-    await expect(page.getByRole("alert")).toContainText("cadastro ainda não foi aplicado");
+    await expect(page.getByRole("form", { name: "Editar colaborador", exact: true }).getByRole("alert")).toContainText("cadastro ainda não foi aplicado");
     const beforeCorrection: EscalaWorkspace = await (await page.request.get(`/api/escalas?id=${workspace.id}`)).json();
     expect(beforeCorrection.revision).toBe(workspace.revision);
     expect(beforeCorrection.input.employees[0].activeFrom).toBe("2020-01-01");
