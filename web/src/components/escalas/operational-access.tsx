@@ -71,11 +71,11 @@ export function EscalaAccessBoundary({ children, initialAccess, initialExpiresAt
     {locked && <section className={styles.card} aria-labelledby="escala-access-title">
       <LockKeyhole className={styles.icon} aria-hidden="true" />
       <h1 id="escala-access-title" className={styles.title}>Acesso ao planejamento de escalas</h1>
-      <p className={styles.description}>{mounted ? "O acesso foi bloqueado ou expirou. Informe a senha para continuar; seu rascunho foi mantido nesta tela." : "Use a senha operacional padrão do Unimed para planejar as filiais da empresa padrão. Não é necessário entrar na conta administrativa."}</p>
+      <p id="escala-access-description" className={styles.description}>{mounted ? "O acesso foi bloqueado ou expirou. Informe a senha operacional de Escalas para continuar; seu rascunho foi mantido nesta tela." : "Informe a senha operacional válida para Escalas. Quando não houver senha própria configurada, a senha operacional padrão do Unimed continua válida. Não é necessário acessar uma conta administrativa."}</p>
       <form onSubmit={unlock} className={styles.form} aria-busy={busy}>
         <label className={styles.label} htmlFor="escala-access-password">Senha operacional</label>
-        <input ref={passwordField} id="escala-access-password" type={showPassword ? "text" : "password"} autoComplete="current-password" required maxLength={72} disabled={busy} value={password} onChange={event => setPassword(event.target.value)} className={controlClass} aria-describedby={error ? "escala-access-error" : undefined} />
-        <button type="button" className={buttonClass} aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>{showPassword ? "Ocultar senha" : "Mostrar senha"}</button>
+        <input ref={passwordField} id="escala-access-password" type={showPassword ? "text" : "password"} autoComplete="current-password" required maxLength={72} disabled={busy} value={password} onChange={event => setPassword(event.target.value)} className={controlClass} aria-invalid={Boolean(error)} aria-describedby={error ? "escala-access-description escala-access-error" : "escala-access-description"} />
+        <button type="button" className={buttonClass} disabled={busy} aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>{showPassword ? "Ocultar senha" : "Mostrar senha"}</button>
         {error && <p id="escala-access-error" role="alert" className={styles.error}>{error}</p>}
         <button type="submit" className={primaryClass} disabled={busy}>{busy ? "Verificando acesso…" : "Liberar planejamento"}</button>
       </form>
