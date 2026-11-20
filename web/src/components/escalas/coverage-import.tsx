@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { EscalaImportPreview } from "@/lib/escalas/import";
 import { ProcessingBar } from "./workspace-feedback";
-import type { EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/types";
+import type { EscalaInput } from "@/lib/escalas/types";
 import { compareSectors, sortEmployees } from "@/lib/escalas/order";
 import { ImportChanges } from "./import-changes";
 import { previewImportReconciliation, type ImportChoices } from "./import-reconciliation";
@@ -20,20 +21,11 @@ import {
   WEEKDAYS,
 } from "./workspace-model";
 
-type ImportPreview = {
-  employees: EscalaEmployee[];
-  shifts: EscalaShift[];
-  issues: { line: number; message: string }[];
-  totalRows: number;
-  report?: {
-    format: "FPRE136";
-    branchCode: string;
-    branchName: string;
-    sourceEmployees: number;
-    otherBranchesExcluded: number;
-    missingSchedule: number;
-  };
-};
+/** Bind both parsing context and the registrations/references the user reviewed. */
+export function employeeImportScenarioKey(input: EscalaInput) {
+  return JSON.stringify([input.branchCode, input.startDate, input.endDate, input.visibleMonth,
+    input.planningWeekStartsOn, input.defaultWeeklyHours, input.employees, input.shifts]);
+}
 
 export function ImportEmployees({
   input,
@@ -44,52 +36,89 @@ export function ImportEmployees({
   disabled: boolean;
   onChange: (input: EscalaInput) => void;
 }) {
-  const [previewResult, setPreview] = useState<{ scenario: string; value: ImportPreview } | null>(null);
+  const [previewResult, setPreview] = useState<{ scenario: string; requestId: number; value: EscalaImportPreview } | null>(null);
   const [choices, setChoices] = useState<ImportChoices>({ updateRegistrations: [], scheduleRegistrations: [] });
-  const scenario = JSON.stringify([input.branchCode, input.startDate, input.defaultWeeklyHours]);
-  const currentScenario = useRef(scenario);
-  currentScenario.current = scenario;
-  const inFlight = useRef(false);
-  const preview = previewResult?.scenario === scenario ? previewResult.value : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState("Selecione o arquivo para conferir a equipe.");
+  const scenario = employeeImportScenarioKey(input);
+  const current = useRef({ input, disabled, scenario, file, choices, previewResult, onChange });
+  current.current = { input, disabled, scenario, file, choices, previewResult, onChange };
+  const request = useRef(0);
+  const controller = useRef<AbortController | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const inFlight = useRef(false);
+  const previousContext = useRef({ scenario, disabled });
+  const preview = !disabled && previewResult?.scenario === scenario && previewResult.requestId === request.current ? previewResult.value : null;
+  const cancelRequest = useCallback(() => {
+    request.current += 1;
+    controller.current?.abort();
+    clearTimeout(timer.current);
+    inFlight.current = false;
+  }, []);
+  useEffect(() => {
+    if (previousContext.current.scenario === scenario && previousContext.current.disabled === disabled) return;
+    previousContext.current = { scenario, disabled };
+    cancelRequest();
+    setBusy(false);
+    setPreview(null);
+    setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
+    setError("");
+    setStatus(disabled ? "Conferência interrompida. Aguarde a liberação do acesso ou o fim da operação."
+      : "O planejamento ou o acesso mudou. Confira o arquivo novamente antes de aplicar.");
+  }, [scenario, disabled, cancelRequest]);
+  useEffect(() => () => { cancelRequest(); }, [cancelRequest]);
   async function analyze() {
-    if (!file || inFlight.current || disabled) return;
+    const snapshot = current.current;
+    if (!snapshot.file || inFlight.current || snapshot.disabled) return;
+    setPreview(null);
+    setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
+    if (!/\.(csv|xlsx)$/i.test(snapshot.file.name) || snapshot.file.size < 1 || snapshot.file.size > 512 * 1024) {
+      setError("Selecione um arquivo CSV ou XLSX de até 512 KB.");
+      setStatus("Arquivo não enviado. Confira o formato e o tamanho.");
+      return;
+    }
+    const id = ++request.current;
+    const operation = new AbortController();
+    controller.current = operation;
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; operation.abort(); }, 60_000);
+    timer.current = timeout;
     inFlight.current = true;
-    const snapshot = scenario;
     setBusy(true);
     setStatus("Conferindo arquivo e selecionando a equipe da filial…");
     setError("");
-    setPreview(null);
-    setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
+    const active = () => id === request.current && snapshot.scenario === current.current.scenario && !current.current.disabled;
     try {
       const form = new FormData();
-      form.set("file", file);
-      form.set("branchCode", input.branchCode);
-      form.set("startDate", input.startDate);
-      form.set("defaultWeeklyHours", String(input.defaultWeeklyHours));
-      const response = await fetch("/api/escalas/import", {
-        method: "POST",
-        body: form,
-        signal: AbortSignal.timeout(60_000),
-      });
-      const body = await response.json();
-      if (currentScenario.current !== snapshot) {
-        setStatus("O cenário mudou durante a conferência. Confira o arquivo novamente para usar a filial e a jornada atuais.");
-        return;
+      form.set("file", snapshot.file);
+      form.set("branchCode", snapshot.input.branchCode);
+      form.set("startDate", snapshot.input.startDate);
+      form.set("defaultWeeklyHours", String(snapshot.input.defaultWeeklyHours));
+      const response = await fetch("/api/escalas/import", { method: "POST", body: form, signal: operation.signal });
+      if (!active()) return;
+      // Authentication is conveyed by the status, even when an intermediary sends HTML or an empty body.
+      if (response.status === 401) {
+        window.dispatchEvent(new Event("escalas:unlock-required"));
+        throw new Error("O acesso expirou. Desbloqueie o módulo e confira o arquivo novamente.");
       }
-      if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
+      const body = await response.json().catch(() => { throw new Error("O servidor não conseguiu responder à conferência."); });
+      if (!active()) return;
       if (!response.ok) throw new Error(responseMessage(body));
-      setPreview({ scenario: snapshot, value: body.preview });
-      setStatus(body.preview.issues.length ? "Arquivo pronto com avisos. Confira os registros aceitos antes de aplicar." : "Arquivo pronto. Equipe conferida e disponível para aplicar.");
+      if (operation.signal.aborted) throw new Error("A conferência foi interrompida.");
+      const data: EscalaImportPreview = body?.preview;
+      if (!data || !Array.isArray(data.employees) || !Array.isArray(data.shifts) || !Array.isArray(data.issues))
+        throw new Error("A resposta não contém uma prévia de equipe válida.");
+      setPreview({ scenario: snapshot.scenario, requestId: id, value: data });
+      setStatus(data.issues.length ? "Arquivo pronto com avisos. Confira os registros aceitos antes de aplicar." : "Arquivo pronto. Equipe conferida e disponível para aplicar.");
     } catch (cause) {
-      setStatus("Não foi possível conferir o arquivo.");
-      setError(cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError") ? "A conferência demorou além do esperado. Seus dados foram preservados; confira a conexão e tente novamente." : errorMessage(cause));
+      if (!active()) return;
+      setStatus("Não foi possível conferir o arquivo. Nenhum registro foi aplicado.");
+      setError(timedOut ? "A conferência demorou além do esperado. Seus dados foram preservados; confira a conexão e tente novamente." : errorMessage(cause));
     } finally {
-      inFlight.current = false;
-      setBusy(false);
+      clearTimeout(timeout);
+      if (id === request.current) { inFlight.current = false; setBusy(false); }
     }
   }
   return (
@@ -113,6 +142,9 @@ export function ImportEmployees({
             disabled={disabled || busy}
             className={controlClass}
             onChange={(event) => {
+              cancelRequest();
+              setBusy(false);
+              setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
               setFile(event.target.files?.[0] ?? null);
               setStatus(event.target.files?.[0] ? "Arquivo selecionado. Clique em Conferir arquivo." : "Selecione o arquivo para conferir a equipe.");
               setPreview(null);
@@ -126,7 +158,7 @@ export function ImportEmployees({
       </button>
       <p role="status" aria-live="polite" aria-atomic="true" className="text-sm text-[color:var(--app-muted)]">{status}</p>
       {busy && <ProcessingBar label="Conferindo equipe do arquivo" />}
-      {previewResult && !preview && <p role="status" className="text-sm">A filial ou a jornada mudou. Confira o arquivo novamente antes de aplicar.</p>}
+      {previewResult && !preview && <p role="status" className="text-sm">O planejamento ou o acesso mudou. Confira o arquivo novamente antes de aplicar.</p>}
       {error && (
         <p role="alert" className="text-sm text-[color:var(--app-coral)]">
           {error}
@@ -202,10 +234,15 @@ export function ImportEmployees({
             disabled={disabled || busy || preview.employees.length === 0 || previewImportReconciliation(input, preview.employees, preview.shifts).some(entry => entry.status === "CONFLICT")}
             className={primaryClass}
             onClick={() => {
+              if (current.current.disabled || inFlight.current || previewResult !== current.current.previewResult
+                  || previewResult?.requestId !== request.current || scenario !== current.current.scenario) return;
               try {
-                const added = previewImportReconciliation(input, preview.employees, preview.shifts).filter(entry => entry.status === "NEW").length;
-                onChange(mergeImport(input, preview.employees, preview.shifts, { ...choices, branchCode: preview.report?.branchCode }));
-                setStatus(`Importação aplicada: ${added} novos; ${choices.updateRegistrations.length} atualizações confirmadas. Demais registros e decisões preservados.${preview.issues.length ? ` Avisos do arquivo: ${preview.issues.length}.` : " Equipe pronta para gerar a proposta."}`);
+                const latest = current.current.input;
+                const approved = current.current.choices;
+                const added = previewImportReconciliation(latest, preview.employees, preview.shifts).filter(entry => entry.status === "NEW").length;
+                current.current.onChange(mergeImport(latest, preview.employees, preview.shifts, { ...approved, branchCode: preview.report?.branchCode }));
+                cancelRequest();
+                setStatus(`Importação aplicada: ${added} novos; ${approved.updateRegistrations.length} atualizações confirmadas. Demais registros e decisões preservados.${preview.issues.length ? ` Avisos do arquivo: ${preview.issues.length}.` : " Equipe pronta para gerar a proposta."}`);
                 setPreview(null);
                 setFile(null);
               } catch (cause) {

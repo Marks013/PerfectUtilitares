@@ -11,7 +11,7 @@ import { displayDate, errorMessage, responseMessage } from "./workspace-model";
 
 /** Only context that determines the interpretation of this file belongs in the preview identity. */
 export function absenceScenarioKey(input: EscalaInput) {
-  return JSON.stringify([input.branchCode, input.startDate, input.endDate, input.visibleMonth, input.defaultWeeklyHours,
+  return JSON.stringify([input.branchCode, input.startDate, input.endDate, input.visibleMonth, input.planningWeekStartsOn, input.defaultWeeklyHours,
     input.employees.map((person) => [person.id, person.registration, person.activeFrom, person.activeUntil, person.planningEnabled])]);
 }
 
@@ -63,16 +63,17 @@ export function AbsenceImport({ input, disabled, onChange }: {
   input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<{ data: AbsenceImportPreview; key: string } | null>(null);
+  const [preview, setPreview] = useState<{ data: AbsenceImportPreview; key: string; requestId: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Pronto. Se houver afastamentos ou férias, selecione o FPHI105. A importação é opcional.");
   const hintId = useId();
   const key = absenceScenarioKey(input);
-  const current = useRef({ input, disabled, key });
-  current.current = { input, disabled, key };
+  const current = useRef({ input, disabled, key, file, preview, onChange });
+  current.current = { input, disabled, key, file, preview, onChange };
   const request = useRef(0);
   const controller = useRef<AbortController | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const processing = useRef(false);
   const previousKey = useRef(key);
   useEffect(() => {
@@ -80,6 +81,7 @@ export function AbsenceImport({ input, disabled, onChange }: {
     previousKey.current = key;
     request.current += 1;
     controller.current?.abort();
+    clearTimeout(timer.current);
     processing.current = false;
     setBusy(false);
     setPreview(null);
@@ -87,26 +89,31 @@ export function AbsenceImport({ input, disabled, onChange }: {
     setStatus("Planejamento alterado. Confira o arquivo novamente antes de aplicar os afastamentos.");
   }, [key]);
   useEffect(() => {
-    if (!disabled || !processing.current) return;
+    if (!disabled) return;
     request.current += 1;
     controller.current?.abort();
+    clearTimeout(timer.current);
     processing.current = false;
     setBusy(false);
+    setPreview(null);
+    setError("");
     setStatus("Conferência interrompida durante outra operação. Confira o arquivo novamente quando terminar.");
   }, [disabled]);
-  useEffect(() => () => { request.current += 1; controller.current?.abort(); }, []);
+  useEffect(() => () => { request.current += 1; controller.current?.abort(); clearTimeout(timer.current); }, []);
   async function analyze() {
-    if (!file || processing.current || current.current.disabled) return;
-    if (!file.name.toLowerCase().endsWith(".csv") || file.size < 1 || file.size > 512 * 1024) {
+    const snapshot = current.current;
+    const selectedFile = snapshot.file;
+    if (!selectedFile || processing.current || snapshot.disabled) return;
+    if (!selectedFile.name.toLowerCase().endsWith(".csv") || selectedFile.size < 1 || selectedFile.size > 512 * 1024) {
       setError("Selecione um CSV FPHI105 de até 512 KB e confira novamente.");
       return;
     }
     const id = ++request.current;
-    const snapshot = current.current;
     const operationController = new AbortController();
     controller.current = operationController;
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; operationController.abort(); }, 30_000);
+    timer.current = timeout;
     processing.current = true;
     setBusy(true);
     setError("");
@@ -116,19 +123,26 @@ export function AbsenceImport({ input, disabled, onChange }: {
     try {
       const form = new FormData();
       form.set("purpose", "ABSENCES");
-      form.set("file", file);
+      form.set("file", selectedFile);
       form.set("branchCode", snapshot.input.branchCode);
       form.set("startDate", snapshot.input.startDate);
       form.set("endDate", snapshot.input.endDate);
       if (snapshot.input.visibleMonth) form.set("visibleMonth", snapshot.input.visibleMonth);
       form.set("employees", JSON.stringify(snapshot.input.employees.map(({ id: employeeId, registration }) => ({ id: employeeId, registration }))));
       const response = await fetch("/api/escalas/import", { method: "POST", body: form, signal: operationController.signal });
+      if (!active()) return;
+      if (response.status === 401) {
+        window.dispatchEvent(new Event("escalas:unlock-required"));
+        throw new Error("O acesso expirou. Desbloqueie o módulo e confira o arquivo novamente.");
+      }
       const body = await response.json().catch(() => { throw new Error("O servidor não conseguiu responder à conferência."); });
       if (!active()) return;
-      if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
       if (!response.ok) throw new Error(responseMessage(body));
-      const data: AbsenceImportPreview = body.preview;
-      setPreview({ data, key: snapshot.key });
+      if (operationController.signal.aborted) throw new Error("A conferência foi interrompida.");
+      const data: AbsenceImportPreview = body?.preview;
+      if (!data || !Array.isArray(data.assignments) || !Array.isArray(data.issues) || !data.counts)
+        throw new Error("A resposta não contém uma prévia de afastamentos válida.");
+      setPreview({ data, key: snapshot.key, requestId: id });
       setStatus(data.issues.length ? "Concluído com avisos. Confira a prévia antes de aplicar." : "Concluído. Confira os períodos antes de aplicar.");
     } catch (cause) {
       if (!active()) return;
@@ -141,12 +155,14 @@ export function AbsenceImport({ input, disabled, onChange }: {
     }
   }
   function applyPreview() {
-    if (!preview || preview.key !== current.current.key || current.current.disabled || processing.current) return;
+    if (!preview || preview !== current.current.preview || preview.requestId !== request.current
+        || preview.key !== current.current.key || current.current.disabled || processing.current) return;
     const latest = current.current.input;
     const merged = mergeAbsenceAssignments(latest.assignments, preview.data.assignments);
     const existing = new Set(latest.assignments.filter((item) => item.kind === "ABSENCE").map((item) => `${item.employeeId}:${item.date}`));
     const added = merged.assignments.filter((item) => item.kind === "ABSENCE" && !existing.has(`${item.employeeId}:${item.date}`)).length;
-    if (added > 0) onChange({ ...latest, assignments: merged.assignments });
+    if (added > 0) current.current.onChange({ ...latest, assignments: merged.assignments });
+    request.current += 1;
     setPreview(null);
     setStatus(`${(merged.conflicts.length ? "Concluído com avisos. " : "Concluído. ") + added} dias de afastamento aplicados à proposta. ${merged.conflicts.length ? `${merged.conflicts.length} dias bloqueados foram preservados; confira os bloqueios na escala. ` : ""}${added ? "Gere novamente e salve a revisão." : "Nenhum registro novo; os afastamentos existentes foram preservados."}`);
   }
@@ -157,6 +173,7 @@ export function AbsenceImport({ input, disabled, onChange }: {
     <Field label="Arquivo de afastamentos CSV">{(id) => <input id={id} aria-describedby={hintId} className={controlClass} type="file" accept=".csv" disabled={disabled || busy} onChange={(event) => {
       request.current += 1;
       controller.current?.abort();
+      clearTimeout(timer.current);
       processing.current = false;
       setBusy(false);
       setFile(event.target.files?.[0] ?? null);
@@ -168,6 +185,6 @@ export function AbsenceImport({ input, disabled, onChange }: {
     <p role="status" aria-live="polite" aria-atomic="true" className={styles.muted}>{status}</p>
     {busy && <ProcessingBar label="Conferindo afastamentos" />}
     {error && <p role="alert" className={styles.errorText}>{error}</p>}
-    {preview && preview.key === key && <AbsenceImportReview preview={preview.data} input={input} disabled={disabled || busy} onApply={applyPreview} />}
+    {preview && !disabled && preview.key === key && preview.requestId === request.current && <AbsenceImportReview preview={preview.data} input={input} disabled={disabled || busy} onApply={applyPreview} />}
   </details>;
 }
