@@ -31,3 +31,16 @@ describe("compact estimated coverage warning", () => {
     expect(html).toBe("");
   });
 });
+
+
+describe("visible estimated zero-presence summary", () => {
+  it("highlights zero hourly coverage without inventing a required minimum", () => {
+    const result = validation("ESTIMATED_COVERAGE_GAP");
+    result.issues.push({ code: "ESTIMATED_SECTOR_EMPTY", severity: "WARNING", date: "2026-11-04",
+      message: "Setor A sem presença horária conhecida." });
+    const html = renderToStaticMarkup(<EstimatedCoverageNotice validation={result} hasRoster onReview={vi.fn()} />);
+    expect(html).toContain("Há desfalques estimados.");
+    expect(html).toContain("zero presença horária conhecida");
+    expect(html).toContain("Confira antes de publicar");
+  });
+});
