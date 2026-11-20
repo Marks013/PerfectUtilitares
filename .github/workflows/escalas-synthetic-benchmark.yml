@@ -1,0 +1,105 @@
+name: Escalas synthetic benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Synthetic-only workload; no private schedules
+        type: choice
+        options:
+          - team-10-week
+          - branch-50-four-weeks
+          - branch-115-six-weeks
+        default: team-10-week
+  pull_request:
+    paths:
+      - .github/workflows/escalas-synthetic-benchmark.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-synthetic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Measured solver baseline (synthetic)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web
+    env:
+      SCENARIO: ${{ inputs.scenario || 'team-10-week' }}
+      CI: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout entire history for pinned old baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build isolated solver only
+        run: docker build --target runtime -t web-escalas-solver:latest ops/escalas
+      - name: Log hardware and source identity
+        run: |
+          printf 'revision=%s\n' "$GITHUB_SHA"
+          node --version
+          npm --version
+          uname -m
+          nproc
+          grep MemTotal /proc/meminfo
+          docker image inspect web-escalas-solver:latest --format '{{.Id}}'
+      - name: Run bounded synthetic comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":5}\n' "$SCENARIO" \
+            | npm run benchmark:escalas | tee "$RUNNER_TEMP/escalas-benchmark.jsonl"
+      - name: Require independent validation and complete measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, math
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "escalas-benchmark.jsonl"
+          data = []
+          for line in path.read_text().splitlines():
+              if line.startswith("{") and '"kind"' in line:
+                  data.append(json.loads(line))
+          scenario = os.environ["SCENARIO"]
+          measured = [x for x in data if x.get("kind") == "measurement"]
+          summary = [x for x in data if x.get("kind") == "summary"]
+          for variant in ("baseline", "corrected"):
+              rows = [x for x in measured if x.get("variant") == variant and x.get("scenario") == scenario]
+              reports = [x for x in summary if x.get("variant") == variant and x.get("scenario") == scenario]
+              assert len(rows) == 5 and len(reports) == 1, "Incomplete benchmark samples"
+              assert reports[0].get("samples") == 5, "Missing repetitions"
+              for row in rows:
+                  assert row.get("status") in ("FEASIBLE", "OPTIMAL"), "Unsolved scenario"
+                  assert row.get("errors") == [], "Independent validation rejected output"
+                  assert isinstance(row.get("seconds"), (int, float)) and math.isfinite(row["seconds"]), "Invalid duration"
+                  assert isinstance(row.get("maxRssKiB"), (int, float)) and row["maxRssKiB"] > 0, "Invalid memory"
+                  assert row.get("shortagePersonMinutes") is not None, "Missing coverage metric"
+              for key in ("medianSeconds", "p95Seconds", "peakRssKiB", "medianShortage"):
+                  assert reports[0].get(key) is not None, "Missing " + key
+              print(json.dumps(reports[0], sort_keys=True))
+          print("Benchmark: 5 synthetic repetitions per variant, independent rules checked.")
+          PY
+      - name: Keep metrics, never private rosters
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: escalas-synthetic-metrics
+          path: ${{ runner.temp }}/escalas-benchmark.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
