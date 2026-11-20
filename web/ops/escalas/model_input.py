@@ -151,7 +151,7 @@ def validate_model_input(data):
             segment = _object(segment, place)
             _integer(segment.get("start"), place + ".start", 0, 2879)
             _integer(segment.get("end"), place + ".end", 1, 2880)
-            _require(segment["end"] > segment["start"] >= previous, place, "OVERLAPPING_SEGMENTS")
+            _require(segment["end"] > segment["start"] and (offset == 0 or segment["start"] == previous), place, "OVERLAPPING_SEGMENTS")
             _require(segment.get("kind") in ("WORK", "PAID_BREAK", "BREAK"), place + ".kind")
             previous = segment["end"]
             paid += segment["end"] - segment["start"] if segment["kind"] != "BREAK" else 0

@@ -1,9 +1,9 @@
-import { dateRange } from "./dates";
+import { dateRange, dayOfWeek } from "./dates";
 import { effectiveScheduleMode } from "./fpre136-schedule";
-import { usesMixed42Week } from "./labor-rules";
+import { effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import { referenceNotices } from "./reference-notices";
 import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes } from "./store-hours";
-import type { EscalaInput, EscalaIssue, EscalaValidation } from "./types";
+import type { EscalaEmployee, EscalaInput, EscalaIssue, EscalaShift, EscalaValidation } from "./types";
 import { validateJourney, workJourney } from "./validation-time";
 
 import { manualShiftAt, manualShiftIssues } from "./shift-catalog/manual-override";
@@ -57,6 +57,42 @@ export function isHoursReferenceOnly(input: EscalaInput): boolean {
   return !input.assignments.some(day => included.has(day.employeeId) && ["WORK", "DUTY", "OFF"].includes(day.kind));
 }
 
+/** Necessary weekly capacity check, not a promise of a feasible roster or daily presence.
+ * Uses only complete active planning weeks without holidays/absences; the final solver
+ * still checks intershift rest, coverage, individual restrictions and actual dates.
+ */
+function referenceCanMeetWeek(input: EscalaInput, person: EscalaEmployee, days: string[], shifts: Map<string, EscalaShift>): boolean {
+  const target = effectiveWeeklyMinutes(person, days[0], input);
+  const fixed = new Set(person.fixedOffDays);
+  const closed = new Set(input.policy.closedDates);
+  const mixed = usesMixed42Week(input, person, days[0]);
+  let reachable = new Map<number, Set<number>>([[0, new Set([0])]]);
+  for (const day of days) {
+    const assigned = manualShiftAt(person, day);
+    const options = assigned ? [assigned] : person.shiftIds;
+    const minutes = [...new Set(options.flatMap(id => {
+      const shift = shifts.get(id);
+      if (!shift) return [];
+      const duration = shift.segments.reduce((total, part) => total + (part.kind === "BREAK" ? 0 : part.end - part.start), 0);
+      if (mixed && duration !== 480 && !(duration === 540 && isMixed42LongShift(shift))) return [];
+      return [duration];
+    }))];
+    const next = new Map<number, Set<number>>();
+    const add = (count: number, total: number) => {
+      if (count > 5 || total > target) return;
+      const totals = next.get(count) ?? new Set<number>();
+      totals.add(total);
+      next.set(count, totals);
+    };
+    for (const [count, totals] of reachable) for (const total of totals) {
+      if (!closed.has(day) && !fixed.has(dayOfWeek(day))) for (const duration of minutes) add(count + 1, total + duration);
+      add(count, total);
+    }
+    reachable = next;
+  }
+  return reachable.get(5)?.has(target) === true;
+}
+
 /** Validate permitted clocks, without claiming daily presence or a published monthly roster. */
 export function validateHoursReferences(input: EscalaInput): EscalaValidation {
   const issues: EscalaIssue[] = manualShiftIssues(input), shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
@@ -73,6 +109,18 @@ export function validateHoursReferences(input: EscalaInput): EscalaValidation {
     if (mode === "MISSING") issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "WARNING", employeeId: person.id, message: "Este colaborador está sem horário informado e não tem referência para exportar. As referências reais dos demais permanecem disponíveis." });
     if (mode === "UNTIMED" || mode === "MISSING") continue;
     if (!person.shiftIds.length) issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "ERROR", employeeId: person.id, message: "Informe um horário de referência para este colaborador." });
+    // Incomplete employment and holiday weeks cannot be inferred from references alone.
+    const calendarDays = dateRange(input.startDate, input.endDate);
+    for (let index = 0; index + 7 <= calendarDays.length; index += 7) {
+      const week = calendarDays.slice(index, index + 7);
+      if (week.some(day => day < person.activeFrom || person.activeUntil && day > person.activeUntil
+        || input.policy.holidayDates.includes(day))) continue;
+      if (!referenceCanMeetWeek(input, person, week, shifts)) {
+        issues.push({ code: "HOURS_WEEKLY_REFERENCE_INCOMPATIBLE", severity: "ERROR", employeeId: person.id,
+          message: `As referências disponíveis não permitem completar ${effectiveWeeklyMinutes(person, week[0], input)} minutos semanais em cinco dias na semana de ${week[0]}. Revise turnos, folgas fixas ou regime; nenhum dia foi criado.` });
+        break;
+      }
+    }
     for (const id of person.shiftIds) {
       if (person.manualShiftOverrides?.some(choice => choice.shiftId === id) && !person.manualShiftBaseIds?.includes(id)) continue;
       const shift = shifts.get(id);

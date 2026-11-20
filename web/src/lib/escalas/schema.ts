@@ -33,8 +33,8 @@ const shift = z.strictObject({
   let previousEnd = -1;
   let paid = 0;
   for (const [index, segment] of value.segments.entries()) {
-    if (segment.end <= segment.start || segment.start < previousEnd) {
-      context.addIssue({ code: "custom", path: ["segments", index], message: "Períodos devem ser positivos, ordenados e sem sobreposição" });
+    if (segment.end <= segment.start || (index > 0 && segment.start !== previousEnd)) {
+      context.addIssue({ code: "custom", path: ["segments", index], message: "Períodos devem ser positivos, consecutivos e sem lacunas ou sobreposição" });
     }
     if (segment.kind !== "BREAK") paid += segment.end - segment.start;
     previousEnd = segment.end;
