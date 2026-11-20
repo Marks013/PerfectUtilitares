@@ -4,10 +4,18 @@ Suite web para validação manual de jornadas e edição de fotos 3x4, recriada 
 
 ## Módulos
 
-- Autenticação com administração de usuários, empresas e permissões por módulo.
-- Dashboard operacional.
-- Jornada com validação manual, regras, histórico e importação do banco de horários por XLSX, CSV ou JSON.
-- Fotos 3x4 com edição individual, lote, detecção facial, corte, redimensionamento, borda, ajustes e exportação.
+- **Acesso e administração:** autenticação, empresas, usuários, convites e permissões (a gestão individual de concessões de Escalas por filial ainda não possui um cadastro administrativo completo).
+- **Dashboard e Jornada:** validação de jornadas, regras, histórico, códigos e importações.
+- **Escalas:** equipe, turnos, folgas 5×2, calendários, geração pelo solver, verificação independente, revisões, cobertura e exportação PDF/XLSX.
+- **Férias:** análise, conciliação e exportação administrativa.
+- **Reajuste salarial:** análise de eventos e geração de arquivos.
+- **Unimed:** importação, beneficiários, configurações, documentos e processamento isolado.
+- **PDF:** união, divisão, compressão, páginas, anotações, conversões e processamento assíncrono.
+- **Fotos 3×4:** edição individual/em lote, detecção facial, corte e exportação.
+- **Presenças e presentes:** gestão de eventos, convidados, confirmações e presentes.
+- **Administração de visibilidade:** métricas de indexação e Core Web Vitals.
+
+Leia [mapa de módulos e responsabilidades](./docs/architecture/MODULES.md) para identificar fronteiras de cada subsistema e fluxos críticos.
 
 ## Aplicação Web
 
@@ -23,6 +31,15 @@ Stack principal:
 - Auth.js / NextAuth
 - Sentry
 - Docker e Docker Compose
+
+## Desenvolvimento, qualidade e operação
+
+- **Pré-requisitos:** Node.js >=24.19.0 <25 e npm >=11 <13, conforme `web/package.json`. Na pasta `web`, use `nvm use` e `npm ci`. Não rode instaladores com privilégios administrativos.
+- **Verificação:** `npm run quality` executa a qualidade integral e os testes E2E isolados. A CI de pull request não substitui o recibo de release local.
+- **Operação:** consulte [runbook de release, incidente e recuperação](./docs/operations/RELEASE_AND_RECOVERY.md). Não aplique `npm run docker:deploy` sem as condições de `AGENTS.md`.
+- **Regras e decisões pendentes:** [registro de acessos, calendários e cobertura](./docs/decisions/ESCALAS_DECISIONS.md).
+- **Medição de otimização:** [protocolo de benchmark e assets](./docs/performance/MEASUREMENT_PROTOCOL.md).
+- **Execução do plano de auditoria:** [status A01–A12](./docs/implementation/AUDIT_PROGRAM_STATUS.md).
 
 ## Deploy
 

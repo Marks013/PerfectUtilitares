@@ -28,6 +28,8 @@ RUN apk add --no-cache vips 'libexpat>=2.10.0-r0'
 
 FROM base AS deps
 COPY package*.json ./
+# npm ci invokes preinstall before the full application source is copied.
+COPY scripts/check-toolchain.mjs ./scripts/check-toolchain.mjs
 RUN --mount=type=cache,target=/root/.npm npm ci
 
 FROM base AS migrator-deps
