@@ -11,8 +11,8 @@
 | Unimed | `web/src/app/(app)/unimed`, `web/src/app/api/unimed` | `web/src/lib/unimed` e worker | Segregação, documentos, idempotência |
 | Reajuste salarial | `web/src/app/(app)/reajuste-salarial` | `web/src/lib/reajuste-salarial` | Regras de cálculo e autenticação |
 | PDF | `web/src/app/(app)/pdf`, `web/src/app/api/pdf` | `web/src/lib/pdf`, `web/src/workers/pdf-worker.ts` | Uploads, execução isolada, recuperação de jobs |
-| Fotos | `web/src/app/(app)/fotos` | `web/src/lib/fotos`, `web/public/mediapipe` | Processamento local, compatibilidade dos assets |
-| Presença e presentes | `web/src/app/(app)/admin/presencas` e rotas públicas | `web/src/lib/presencas` | Link/convite, reserva concorrente, privacidade |
+| Fotos | `web/src/app/(app)/fotos` | `web/src/lib/photos`, `web/public/mediapipe` | Processamento local, compatibilidade dos assets |
+| Presença e presentes | `web/src/app/(app)/admin/presencas` e rotas públicas | `web/src/lib/presence` | Link/convite, reserva concorrente, privacidade |
 
 ## Fluxo crítico de Escalas
 
