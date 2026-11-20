@@ -36,6 +36,6 @@ test("Docker dependency stage copies the preflight script before npm ci", () => 
   const deps = dockerfile.split("FROM base AS deps")[1]?.split("FROM base AS migrator-deps")[0];
   assert.ok(deps, "Docker deps stage is missing");
   const copied = deps.indexOf("COPY scripts/check-toolchain.mjs ./scripts/check-toolchain.mjs");
-  const installed = deps.indexOf("npm ci");
+  const installed = deps.indexOf("RUN --mount=type=cache,target=/root/.npm npm ci");
   assert.ok(copied >= 0 && installed > copied, "preinstall must be available when npm ci runs");
 });
