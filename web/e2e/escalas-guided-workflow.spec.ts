@@ -260,7 +260,7 @@ test("shared operational access is independent, scoped, revocable and restores a
     await expect(page.getByRole("heading", { name: "Acesso ao planejamento de escalas", exact: true })).toBeVisible();
     expect((await page.request.get("/api/escalas")).status()).toBe(401);
     await page.getByLabel("Senha operacional", { exact: true }).fill("wrong-isolated-password");
-    await page.getByRole("button", { name: "Liberar planejamento", exact: true }).click(); await expect(page.locator("#escala-access-error")).toContainText("Senha incorreta");
+    await page.getByRole("button", { name: "Liberar planejamento", exact: true }).click(); await expect(page.locator("#escala-access-error")).toContainText("Senha operacional incorreta");
     const unlock = async () => { await page.getByLabel("Senha operacional", { exact: true }).fill(password); await page.getByRole("button", { name: "Liberar planejamento", exact: true }).click(); await expect(page.getByRole("button", { name: "Bloquear Escalas", exact: true })).toBeVisible(); };
     await unlock();
     expect((await page.request.get("/api/admin/users")).status()).toBe(401);
