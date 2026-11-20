@@ -47,12 +47,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: Audit PR tree and deletion intent
+        if: github.event_name == 'pull_request'
+        working-directory: .
+        run: node web/scripts/verify-pr-change-scope.mjs
       - name: Install dependencies
         run: npm ci
       - name: Install PDF rendering tools for code regressions
