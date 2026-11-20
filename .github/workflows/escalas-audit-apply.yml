@@ -1,0 +1,104 @@
+name: Escalas integration audit validation
+on:
+  push:
+    branches: [audit/escalas-integracao-2026-11-19]
+    paths: [.github/workflows/escalas-audit-apply.yml]
+permissions:
+  contents: write
+jobs:
+  validate:
+    if: github.repository == 'Marks013/PerfectUtilitares' && github.ref == 'refs/heads/audit/escalas-integracao-2026-11-19'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/perfectutilitares_ci?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-in-production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+      - name: Verify exact reviewed patch and paths
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, lzma, os, pathlib, subprocess
+          content = ''.join(pathlib.Path(f'.audit/escalas-integration-{i}.b64').read_text().strip() for i in (1,2,3))
+          patch = lzma.decompress(base64.b64decode(content, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '40a7556e67e6d5e38f256e4612f0589dd709b0c20c3e0e47b6b854f81e43f802'
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'audit.patch'
+          path.write_bytes(patch)
+          subprocess.run(['git','apply','--check','--unidiff-zero',str(path)],check=True)
+          print('Reviewed patch integrity and baseline applicability: passed')
+          PY
+      - name: Install exact application dependencies and renderer
+        run: |
+          npm --prefix web ci
+          sudo apt-get update && sudo apt-get install --no-install-recommends -y poppler-utils
+          npm --prefix web run prisma:generate
+      - name: Demonstrate access regressions against unchanged production source
+        run: |
+          git apply --unidiff-zero --include=web/src/components/escalas/use-escalas-workspace-candidate.test.tsx "$RUNNER_TEMP/audit.patch"
+          cd web
+          set +e
+          npx vitest run src/components/escalas/use-escalas-workspace-candidate.test.tsx -t 'workspace access recovery|locked proposal protection' --reporter=json --outputFile="$RUNNER_TEMP/baseline.json" > "$RUNNER_TEMP/baseline-console.log" 2>&1
+          status=$?
+          set -e
+          echo "$status" > "$RUNNER_TEMP/baseline-exit.txt"
+          cd ..
+          git apply --reverse --unidiff-zero --include=web/src/components/escalas/use-escalas-workspace-candidate.test.tsx "$RUNNER_TEMP/audit.patch"
+          python3 - <<'PY'
+          import json, os, pathlib
+          report=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'baseline.json').read_text())
+          assert report['numFailedTests'] > 0, 'Expected a behavioral counterexample before applying fixes'
+          print('Baseline behavioral failures:', report['numFailedTests'])
+          PY
+      - name: Apply audited changes
+        run: git apply --unidiff-zero "$RUNNER_TEMP/audit.patch"
+      - name: Run affected behavior and API success paths
+        working-directory: web
+        run: |
+          npx vitest run src/components/escalas/ src/lib/escalas/access.test.ts src/lib/escalas/service.test.ts src/lib/escalas/schema.test.ts src/app/api/escalas/ src/components/app-shell.test.tsx src/components/app-nav-link.test.tsx 'src/app/(app)/escala/page.test.tsx' --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/focused.json" 2>&1 | tee "$RUNNER_TEMP/focused.log"
+      - name: Check types lint and source structure
+        working-directory: web
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run quality:module-size
+          npm run quality:route-tests
+          git diff --check
+      - name: Save only validated application changes to this audit branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/audit/escalas-integracao-2026-11-19
+          git add -- web/src web/e2e/escalas-fixed-rest.spec.ts docs/reviews/escalas-integration-audit-2026-11-19.md
+          python3 - <<'PY'
+          import subprocess
+          paths=subprocess.check_output(['git','diff','--cached','--name-only','-z']).decode().split('\0')
+          assert all(not p or p.startswith('web/src/') or p in ('web/e2e/escalas-fixed-rest.spec.ts','docs/reviews/escalas-integration-audit-2026-11-19.md') for p in paths)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(escalas): alinha permissões, formulários, recuperação de acesso e navegação'
+          authorization=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" push origin "HEAD:$GITHUB_REF"
+          git rev-parse HEAD > "$RUNNER_TEMP/audit-commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/audit-tree.txt"
+      - name: Retain synthetic audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: escalas-integration-focused-evidence
+          path: |
+            ${{ runner.temp }}/baseline.json
+            ${{ runner.temp }}/baseline-console.log
+            ${{ runner.temp }}/baseline-exit.txt
+            ${{ runner.temp }}/focused.json
+            ${{ runner.temp }}/focused.log
+            ${{ runner.temp }}/audit-commit.txt
+            ${{ runner.temp }}/audit-tree.txt
+          retention-days: 3
+          if-no-files-found: ignore
