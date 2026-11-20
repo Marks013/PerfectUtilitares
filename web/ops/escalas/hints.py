@@ -5,6 +5,7 @@ from functools import lru_cache
 from datetime import date, timedelta
 from itertools import combinations
 from rest_quality import visible_month
+from rest_configuration import repeated_variable_pattern
 
 
 def paid_holiday_dates(policy):
@@ -494,6 +495,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
 
 def _compatible(person, proposed, prior, metrics, policy, instant, sunday_limit, final, baseline=None):
     if not proposed:
+        return False
+    if final and repeated_variable_pattern(person, list(proposed), proposed, baseline or {}, policy):
         return False
     known = {**prior, **proposed}
     first, last = min(proposed), max(proposed)

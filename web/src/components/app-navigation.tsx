@@ -45,7 +45,7 @@ export function AppNavigation({
         className="app-nav-link app-menu-toggle"
         aria-expanded={open}
         aria-controls={id}
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen(previous => !previous)}
       >
         Menu
       </button>

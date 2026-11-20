@@ -8,7 +8,7 @@ MESSAGES = {
     "DAYS_WORKED": "Não é possível distribuir os cinco dias de trabalho com as folgas e os bloqueios atuais.",
     "WEEKLY_MINUTES": "Os horários permitidos não conseguem completar a jornada semanal escolhida.",
     "COVERAGE": "A cobertura mínima obrigatória não pode ser atendida com a equipe disponível.",
-    "REST": "As condições atuais não permitem preservar os descansos entre jornadas e semanas.",
+    "REST": "As condições atuais não permitem preservar os descansos e, na regra variável, evitar dois dias repetidos em todas as semanas comparáveis. Confira bloqueios e folgas fixas explícitas; nenhuma regra foi relaxada.",
 }
 
 

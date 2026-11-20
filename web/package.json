@@ -145,7 +145,8 @@
     },
     "vite": {
       "lightningcss": "1.32.0"
-    }
+    },
+    "effect": "3.22.1"
   },
   "allowScripts": {
     "@sentry/cli@2.58.6": true,

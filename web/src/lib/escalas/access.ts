@@ -39,6 +39,16 @@ export async function allowedBranches(actor: EscalaActor): Promise<string[] | nu
   return [...new Set(grants.map((grant) => canonicalBranchCode(grant.branchCode)))];
 }
 
+/** Capability discovery only; CREATE still checks the requested branch independently. */
+export async function canCreateEscala(actor: EscalaActor): Promise<boolean> {
+  if (actor.moduleSessionId || actor.admin) return true;
+  if (!actor.userId) return false;
+  return Boolean(await prisma.escalaBranchAccess.findFirst({
+    where: { tenantId: actor.tenantId, userId: actor.userId, role: { in: ["PLANNER", "APPROVER"] } },
+    select: { branchCode: true },
+  }));
+}
+
 export function requireEscalaPermission(permission: EscalaPermission, action: "edit" | "publish") {
   if (!(action === "publish" ? permission.canPublish : permission.canEdit)) {
     throw new EscalaError(403, "ESCALA_ACTION_FORBIDDEN", action === "publish"

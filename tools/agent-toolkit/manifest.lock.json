@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "reviewed_at": "2026-11-19",
+  "selection_count": 10,
+  "selection_note": "Seleção para este repositório, não classificação universal. Revisões fixadas e entradas SKILL.md inspecionadas; não constituem auditoria integral dos autores.",
+  "skills": [
+    {
+      "id": "caveman",
+      "area": "Comunicação concisa",
+      "repo": "JuliusBrussee/caveman",
+      "path": "plugins/caveman/skills/caveman",
+      "commit": "9b68f7ed12b05e7efaff18e65c5a3fc2849fd0a4",
+      "skill_blob": "9a94044529e5ee1576361c891b4a271504518e6f",
+      "tree": "36bdc0d1744381851db120ce4577699f73d10fd0"
+    },
+    {
+      "id": "typescript",
+      "area": "TypeScript e contratos",
+      "repo": "Mindrally/skills",
+      "path": "typescript",
+      "commit": "7682ca77710e0971eab4e0ae5dddfa281aea0ba5",
+      "skill_blob": "a61099a0809bc744e29fa62611bad08612d6e789",
+      "tree": "5d0e453e752d96793bd2574ae1bf6c1ce0060d7f"
+    },
+    {
+      "id": "modern-python",
+      "area": "Python e ferramentas",
+      "repo": "trailofbits/skills",
+      "path": "plugins/modern-python/skills/modern-python",
+      "commit": "bf23bfb21f10a2a4b0406086d690dc8cb1b3ccf3",
+      "skill_blob": "cf5e416095b166547d383e96515377695827defd",
+      "tree": "e84fa2b3a076b4333e4cc6187510f2b180eed427"
+    },
+    {
+      "id": "nodejs-backend-patterns",
+      "area": "Backend e API",
+      "repo": "wshobson/agents",
+      "path": "plugins/javascript-typescript/skills/nodejs-backend-patterns",
+      "commit": "0874a27b17a22e2b7c2e2bcd725768e0803cad06",
+      "skill_blob": "516bae620afc0afa257fed08e3def7549e6a33fb",
+      "tree": "19e2f19840540776ebc45276762e98f4977db7f4"
+    },
+    {
+      "id": "react-best-practices",
+      "area": "Frontend React",
+      "repo": "vercel-labs/agent-skills",
+      "path": "skills/react-best-practices",
+      "commit": "1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62",
+      "skill_blob": "237988de4a66dd8a71d30a2c24ebe1a86b58d04e",
+      "tree": "343db72180d05814949fef7d46be96b5c6ee86b3",
+      "licenseDeclaration": "MIT"
+    },
+    {
+      "id": "frontend-design",
+      "area": "Design e interface",
+      "repo": "anthropics/skills",
+      "path": "skills/frontend-design",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "skill_blob": "a5333457c414d20d625f307df945842c0952ecc3",
+      "tree": "d79e2a5bb4df4a386c2adcdd9ab8709bba28c3f6"
+    },
+    {
+      "id": "postgres-best-practices",
+      "area": "PostgreSQL e Prisma",
+      "repo": "supabase/agent-skills",
+      "path": "skills/supabase-postgres-best-practices",
+      "commit": "c9be0e931b7930f7d02126d04774d904c381e7d7",
+      "skill_blob": "6400792389dfcc82c81953054e546bd72ebcd259",
+      "tree": "27bde25111c4cd5e6f803fc9db5fbffe27bb26cf"
+    },
+    {
+      "id": "property-based-testing",
+      "area": "Testes de propriedades do solver",
+      "repo": "trailofbits/skills",
+      "path": "plugins/property-based-testing/skills/property-based-testing",
+      "commit": "2be6433b39e009cd2b6fd3be1895f6b1faa5af9a",
+      "skill_blob": "1cc39d8d8cba5955bf9c8d7c9a2aef348722a55e",
+      "tree": "cf5e77d684180c80a2f3aa228c53d04b1fa1ba77"
+    }
+  ],
+  "builtin": {
+    "id": "docker-compose",
+    "area": "Docker Compose",
+    "sources": [
+      "https://docs.docker.com/reference/compose-file/version-and-name/",
+      "https://docs.docker.com/compose/how-tos/startup-order/",
+      "https://docs.docker.com/compose/how-tos/use-secrets/"
+    ]
+  },
+  "runtime": {
+    "id": "context-mode",
+    "version": "2.2.1",
+    "minimum_node": "24.15.0",
+    "repo": "mksglu/context-mode",
+    "url": "https://github.com/mksglu/context-mode/releases/download/v2.2.1/context-mode.tar.gz",
+    "sha256": "1c327f8069fad019461309de01abf95c55b600362a141e642ad5e0aa535c59c3"
+  }
+}

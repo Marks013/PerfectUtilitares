@@ -22,6 +22,8 @@ export type EscalaManualShiftOverride = {
   effectiveUntil: string;
 };
 
+export type EscalaFixedRestSlot = { enabled: boolean; weekday: number | null };
+
 export type EscalaEmployee = {
   id: string;
   registration: string;
@@ -57,6 +59,8 @@ export type EscalaEmployee = {
   offMode: "VARIABLE" | "MIXED" | "FIXED";
   /** Monday=0, Sunday=6. Approved fixed days are hard constraints. */
   fixedOffDays: number[];
+  /** Explicit independent controls; disabled weekdays are remembered, never inferred from assignments. */
+  fixedRestSlots?: [EscalaFixedRestSlot, EscalaFixedRestSlot];
   offPattern: "ANY" | "CONSECUTIVE" | "PREFER_CONSECUTIVE";
   maxConsecutiveSundays: 1 | 2;
   /** Explicit legal classification, never inferred from names or the numeric cap. */
@@ -131,7 +135,7 @@ export type EscalaInput = {
   planningWeekStartsOn?: "MONDAY" | "SUNDAY";
   /** Immutable origin of an explicitly created calendar-upgrade draft. */
   planningCalendarSource?: { workspaceId: string; revision: number };
-  restRulesVersion?: 1 | 2;
+  restRulesVersion?: 1 | 2 | 3;
   /** Missing preserves the full search; REST_ONLY fixes one reference per daily duration. */
   generationMode?: "REST_ONLY" | "DAYS_AND_HOURS" | "HOURS_ONLY";
   /** Support scenario: missing administrative evidence remains a publication pending, not approval. */

@@ -1,5 +1,6 @@
 """Structural private-service boundary errors, without echoing submitted values."""
 from datetime import date
+from rest_configuration import fixed_rest_projection
 from planning_calendar import planning_week_starts_on, planning_weeks
 
 
@@ -90,6 +91,14 @@ def validate_manual_shifts(data):
             # shiftIds remains the normal base; never widen it for manual choices.
             locked = locked_work.get((person['id'], day), set())
             _require(not locked or locked == {sid}, place + '.shiftId', 'MANUAL_SHIFT_LOCK_CONFLICT')
+
+
+def validate_fixed_rest_settings(data):
+    for index, person in enumerate(data["employees"]):
+        try:
+            fixed_rest_projection(person)
+        except (ValueError, TypeError):
+            raise ModelInputError(f"employees[{index}].fixedRestSlots", "INVALID_FIXED_REST_CONFIGURATION") from None
 
 
 def validate_planning_horizon(data):
@@ -188,6 +197,7 @@ def validate_model_input(data):
     if "_initialAssignments" in data:
         _assignments(data["_initialAssignments"], "_initialAssignments", 10500, employee_ids, shift_ids)
     validate_manual_shifts(data)
+    validate_fixed_rest_settings(data)
     for index, priority in enumerate(_array(data.get("movementPriorities", []), "movementPriorities", 250)):
         prefix = f"movementPriorities[{index}]"
         priority = _object(priority, prefix)

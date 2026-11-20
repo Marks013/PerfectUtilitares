@@ -20,6 +20,8 @@ export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status
 };
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
+  init?.signal?.throwIfAborted();
+  if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
   let body: unknown;
   try {
     body = await response.json();
@@ -27,7 +29,6 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new EscalaRequestError("INVALID_RESPONSE", response.status, "O servidor não retornou uma resposta válida.");
   }
   if (!response.ok) {
-    if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
     throw new EscalaRequestError(responseCode(body), response.status, responseMessage(body));
   }
   return body as T;
@@ -61,6 +62,8 @@ export function useEscalasWorkspace() {
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [recovery, setRecovery] = useState<RecoverableDraft | null>(null);
   const [sessionLocked, setSessionLocked] = useState(false);
+  const accessLocked = useRef(false);
+  const indexVersion = useRef(0);
   const [localBackup, setLocalBackup] = useState(true);
   const [conflict, setConflict] = useState<EscalaWorkspace | null>(null);
   const unresolvedRecovery = useRef(recovery);
@@ -116,15 +119,18 @@ export function useEscalasWorkspace() {
     return latestWorkspace.current;
   }
 
+  const refreshIndex = useCallback(async (signal: AbortSignal) => {
+    const version = ++indexVersion.current;
+    const result = await requestJson<{ workspaces: WorkspaceSummary[]; canCreate: boolean }>("/api/escalas", { signal });
+    if (!mounted.current || signal.aborted || version !== indexVersion.current) return;
+    setWorkspaces(result.workspaces);
+    setCanCreate(result.canCreate);
+  }, []);
+
   useEffect(() => {
     mounted.current = true;
     const initial = new AbortController();
-    void requestJson<{ workspaces: WorkspaceSummary[]; canCreate: boolean }>("/api/escalas", { signal: initial.signal })
-      .then((result) => {
-        if (initial.signal.aborted) return;
-        setWorkspaces(result.workspaces);
-        setCanCreate(result.canCreate);
-      })
+    void refreshIndex(initial.signal)
       .catch((cause) => {
         if (!initial.signal.aborted) { const next = toEscalaProblem(cause); setProblem(next); setError(next.message); }
       })
@@ -140,7 +146,7 @@ export function useEscalasWorkspace() {
       window.removeEventListener("pagehide", stopGeneration);
       stopGeneration();
     };
-  }, []);
+  }, [refreshIndex]);
 
   const acceptWorkspace = useCallback((value: EscalaWorkspace, preserveOutdated = false) => {
     const next = parseSavedWorkspace(value);
@@ -205,7 +211,7 @@ export function useEscalasWorkspace() {
   );
 
   const update = useCallback((next: EscalaInput) => {
-    if (working.current || unresolvedRecovery.current) return;
+    if (working.current || unresolvedRecovery.current || accessLocked.current || !latestWorkspace.current?.canEdit) return;
     const changed = Boolean(input && scenarioDefinitionChanged(input, next));
     const changedCoverage = Boolean(input && coverageDefinitionChanged(input, next));
     const needsRegeneration = Boolean(next.needsRegeneration || (changed && input?.assignments.length));
@@ -412,7 +418,7 @@ export function useEscalasWorkspace() {
   }
 
   function applyGenerated() {
-    if (!generated || !input) return;
+    if (!generated || !input || working.current || unresolvedRecovery.current || accessLocked.current || !latestWorkspace.current?.canEdit) return;
     const next = generated.proposalInput;
     update(next);
     // Applying a completed, independently validated proposal clears the persisted marker.
@@ -521,12 +527,14 @@ export function useEscalasWorkspace() {
   }
 
   useEffect(() => {
-    const locked = () => setSessionLocked(true);
+    const locked = () => { accessLocked.current = true; setSessionLocked(true); };
     const unlocked = () => {
+      accessLocked.current = false;
       setSessionLocked(false);
       saveQueue.retry();
       if (latestDirty.current) save();
       else if (latestWorkspace.current) open(latestWorkspace.current.id);
+      else void run("Atualizando planejamentos…", signal => refreshIndex(signal));
     };
     window.addEventListener("escalas:unlocked", unlocked);
     window.addEventListener("escalas:unlock-required", locked);
@@ -581,6 +589,6 @@ export function useEscalasWorkspace() {
       generatedReference.current = null;
       setGenerated(null);
     },
-    canEdit: Boolean(workspace?.canEdit && !busy && !recovery),
+    canEdit: Boolean(workspace?.canEdit && !busy && !recovery && !sessionLocked),
   };
 }

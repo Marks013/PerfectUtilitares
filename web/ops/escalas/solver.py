@@ -10,7 +10,8 @@ from ortools.sat.python import cp_model
 from diagnostics import ConflictRegistry
 from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates, saturday_rest_forbidden
 from leadership import PRIORITY, leadership_objective, leadership_summary, movement_priority
-from model_input import validate_manual_shifts, validate_planning_horizon
+from model_input import validate_manual_shifts, validate_planning_horizon, validate_fixed_rest_settings
+from rest_configuration import add_variable_rest_constraints, effective_rest_input, repeated_variable_pattern
 from planning_calendar import planning_week_starts_on
 from optimization import ImprovementContext, Snapshot, improve, remember
 from rest_quality import build_rest_quality, visible_month
@@ -201,6 +202,8 @@ def solve(data, control=None):
     started = time.monotonic()
     validate_planning_horizon(data)
     validate_manual_shifts(data)
+    validate_fixed_rest_settings(data)
+    data = effective_rest_input(data)
     hours_only = data.get('generationMode') == 'HOURS_ONLY'
     baseline = {(a['employeeId'], a['date']): a for a in data['assignments']}
     if hours_only and len(baseline) != len(data['assignments']):
@@ -413,6 +416,7 @@ def _solve(data, control=None, started=None):
             if not untimed:
                 conflicts.track(model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
                                 <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60)), "WEEKLY_MINUTES")
+        add_variable_rest_constraints(model, person, dates, off, baseline, policy, conflicts)
         rest_start = len(model.proto.constraints)
         _streaks(model, person, dates, work, off, boundary, active[pid], policy, baseline=baseline)
         _rest(model, person, dates, active[pid], choices, off, boundary, metrics, policy)
@@ -994,13 +998,17 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
               if prefer_baseline and not hours_only else None)
     source = source if source is not None else baseline
     empty_sectors = set() if hours_only else _empty_estimated_seed_sectors(employees, active, source, policy, estimated_demands)
+    repeating_sectors = {person['sector'] for person in employees
+                         if repeated_variable_pattern(person, dates,
+                             {day: source[person['id'], day] for day in active[person['id']]
+                              if (person['id'], day) in source}, baseline, policy)}
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
     # Completeness alone must not preserve an entirely resting estimated sector.
     # Rebuild hints only; keep locks, HOURS_ONLY and mandatory rules unchanged.
     comparable = {sector for sector, members in sectors.items()
-                  if prefer_baseline and sector not in empty_sectors and all(
+                  if prefer_baseline and sector not in empty_sectors | repeating_sectors and all(
         (old := source.get((person['id'], day))) is not None
         and (old['kind'] == 'ABSENCE' or (day in holidays or baseline.get((person['id'], day), {}).get('kind') == 'HOLIDAY') == (old['kind'] == 'HOLIDAY'))
         and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])
@@ -1017,7 +1025,7 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     # If it fails, the unrestricted fallback remains free to repair the schedule.
     remaining = [person for person in employees if person['sector'] not in comparable]
     rest_candidates = [person for person in remaining
-                       if prefer_baseline and not hours_only and person['sector'] not in empty_sectors
+                       if prefer_baseline and not hours_only and person['sector'] not in empty_sectors | repeating_sectors
                        and any(baseline.get((person['id'], day), {}).get('kind') == 'OFF'
                                for day in active[person['id']])]
     proposals = (balanced_rest_hints(rest_candidates, dates, active, baseline, choices, metrics, policy,

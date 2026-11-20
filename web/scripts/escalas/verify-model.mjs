@@ -46,7 +46,7 @@ function saturdayParityInput() {
   const before = structuredClone(input);
   const prepared = prepareGeneration(input).input;
   assert.deepEqual(input, before, "Preparation must preserve the saved synthetic draft");
-  assert.equal(prepared.restRulesVersion, 2);
+  assert.equal(prepared.restRulesVersion, 3);
   assert(prepared.assignments.some(day => day.kind === "WORK" && day.shiftId === oldShift.id));
   assert(!prepared.employees[0].shiftIds.includes(oldShift.id));
   assert(prepared.demands.every(demand => demand.estimated === true));
@@ -192,7 +192,7 @@ data["assignments"] = [{"employeeId": "p0", "date": data["endDate"], "kind": "WO
 scenarios.append(("current-overnight-cannot-occupy-future-rest", data, {"infeasible": "OFF_OCCUPIED"}))
 
 ${properties ? "" : `data = json.loads(${JSON.stringify(JSON.stringify(saturdayParityInput()))})
-scenarios.append(("saturday-v2-full-horizon-42-to-40", data, {"saturdayParity": True}))
+scenarios.append(("saturday-v3-full-horizon-42-to-40", data, {"saturdayParity": True}))
 `}
 
 ${properties ? `from property_cases import cases
@@ -205,8 +205,23 @@ for index, generated_input in enumerate(generated):
 
 ${properties ? "" : "from test_sunday_week_integration import locked_roster\ndata = fixture(40, weeks=2, start_date=\"2026-11-01\")\ndata[\"planningWeekStartsOn\"] = \"SUNDAY\"\nlocked_roster(data, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-timed-no-previous-week-credit\", data, {\"sundayWeeks\": True}))\nuntimed = copy.deepcopy(data)\nmake_untimed(untimed[\"employees\"][0])\nlocked_roster(untimed, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-untimed-no-fictitious-hours\", untimed, {\"sundayWeeks\": True}))\ninvalid = copy.deepcopy(data)\nlocked_roster(invalid, {\"2026-11-01\", \"2026-11-02\", \"2026-11-05\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-rejects-borrowed-sunday\", invalid, {\"infeasible\": \"FIVE_BY_TWO\"}))\n\n"}
 
+${properties ? "" : `from test_explicit_rest_solver import scenario as explicit_rest_scenario
+
+data = explicit_rest_scenario()
+make_untimed(data["employees"][1])
+scenarios.append(("branch02-closed-sunday-variable-second-rest", data, {"sundayWeeks": True, "explicitRest": True}))
+data = explicit_rest_scenario()
+first, second = data["employees"]
+first.update(offMode="FIXED", fixedOffDays=[2, 6], fixedRestSlots=[{"enabled": True, "weekday": 2}, {"enabled": True, "weekday": 6}])
+second.update(offMode="VARIABLE", fixedOffDays=[], fixedRestSlots=[{"enabled": False, "weekday": 2}, {"enabled": False, "weekday": 6}])
+scenarios.append(("explicit-fixed-slots-and-disabled-dates", data, {"sundayWeeks": True, "explicitRest": True}))
+data = explicit_rest_scenario(weeks=2)
+data["assignments"] = [{"employeeId": "p0", "date": data["startDate"], "kind": "ABSENCE"}]
+scenarios.append(("branch02-absence-is-not-sunday-off-credit", data, {"explicitRest": True}))
+`}
+
 for name, data, expectations in scenarios:
-    before = copy.deepcopy(data) if expectations.get("saturdayParity") else None
+    before = copy.deepcopy(data) if expectations.get("saturdayParity") or expectations.get("explicitRest") else None
     solved = solve(data)
     if before is not None:
         assert data == before, 'Solver must preserve original assignments and continuity records'
@@ -248,6 +263,21 @@ for (const line of result.stdout.trim().split("\n")) {
       if (previous.locked) assert(proposed?.locked, name);
     }
     const validation = validateEscala({ ...input, assignments: solved.assignments });
+    if (expectations.explicitRest) {
+      for (const person of input.employees) {
+        const records = solved.assignments.filter(day => day.employeeId === person.id);
+        assert(records.filter(day => dayOfWeek(day.date) === 6).every(day => ["OFF", "ABSENCE", "HOLIDAY"].includes(day.kind)), name);
+        for (const weekday of person.fixedOffDays) assert(records.filter(day => dayOfWeek(day.date) === weekday).every(day => ["OFF", "ABSENCE", "HOLIDAY"].includes(day.kind)), name);
+      }
+      // An independently forged recurring pair must be rejected, not accepted as fixed.
+      const repeated = structuredClone(input);
+      repeated.assignments = input.employees.flatMap(person => dateRange(input.startDate, input.endDate).map(date => ({
+        employeeId: person.id, date, ...(dayOfWeek(date) === 2 || dayOfWeek(date) === 6
+          ? { kind: "OFF" } : person.scheduleMode === "UNTIMED" ? { kind: "DUTY" } : { kind: "WORK", shiftId: person.shiftIds[0] }),
+      })));
+      const rejection = validateEscala(repeated);
+      assert(rejection.issues.some(issue => issue.code === "VARIABLE_REST_PATTERN_FIXED" && issue.severity === "ERROR"), name);
+    }
     assert(validation.valid, `${name}: ${validation.issues.filter((issue) => issue.severity === "ERROR").map((issue) => issue.code).join(", ")}`);
     if (expectations.sundayWeeks) {
       const dates = dateRange(input.startDate, input.endDate);
@@ -299,5 +329,5 @@ for (const line of result.stdout.trim().split("\n")) {
   passed++;
   console.log(JSON.stringify({ scenario: name, verified: true, status: solved.status, seconds: solved.wallTimeSeconds }));
 }
-assert.equal(passed, properties ? 30 : 26, "Todos os cenários devem ter sido executados.");
+assert.equal(passed, properties ? 30 : 29, "Todos os cenários devem ter sido executados.");
 console.log(JSON.stringify({ verified: true, scenarios: passed, processor: "CP-SAT", verifier: "TypeScript independent" }));

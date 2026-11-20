@@ -423,3 +423,10 @@ table {
   border-color: color-mix(in srgb, var(--app-coral) 58%, var(--app-border));
   background: color-mix(in srgb, var(--app-coral) 16%, var(--app-card));
 }
+
+.app-nav-link[aria-current="page"] {
+  color: var(--app-fg);
+  border-color: var(--app-teal);
+  text-decoration: underline;
+  text-underline-offset: 0.3em;
+}

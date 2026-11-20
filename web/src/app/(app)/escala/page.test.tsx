@@ -19,3 +19,13 @@ describe("public link with protected Escalas workspace", () => {
     const html = renderToStaticMarkup(await EscalaPage()); expect(html).toContain("Planejamento protegido"); expect(html).toContain("Bloquear Escalas"); expect(html).not.toContain("company-default");
   });
 });
+
+
+it.each([{ status: "BLOCKED", tenantId: "company" }, { status: "BANNED", tenantId: "company" }, { status: "ACTIVE", tenantId: null }])("does not mount an operational workspace for an account denied by the API: %j", async user => {
+  mocks.account.mockResolvedValue({ user: { id: "blocked-account", ...user } });
+  mocks.module.mockResolvedValue({ id: "valid-cookie", tenantId: "default-company", expiresAt: new Date("2030-01-01") });
+  const html = renderToStaticMarkup(await EscalaPage());
+  expect(html).toContain("Acesso a Escalas indisponível para esta conta");
+  expect(html).not.toContain("Planejamento protegido"); expect(html).not.toContain("Senha operacional");
+  expect(mocks.module).not.toHaveBeenCalled();
+});

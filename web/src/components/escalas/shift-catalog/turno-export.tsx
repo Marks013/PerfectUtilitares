@@ -9,6 +9,7 @@ import { planPeriod } from "../plan-selector";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "../controls";
 import styles from "../escalas.module.css";
 import { catalogError, catalogPost, catalogRequest } from "./client";
+import { canSyncCatalogReferences } from "./sync-access";
 
 type Format = "TXT1" | "TXT2";
 const keyFor = (workspaceId: string, employeeId: string) => JSON.stringify([workspaceId, employeeId]);
@@ -107,8 +108,9 @@ export function TurnoExport({ plans, disabled }: { plans: WorkspaceSummary[]; di
     } catch (cause) { setError(catalogError(cause)); }
     finally { running.current = false; setBusy(""); }
   }
+  const canSync = canSyncCatalogReferences(manifest, loaded);
   async function syncMissing() {
-    if (disabled || busy || running.current || !manifest || !confirmSync) return;
+    if (disabled || busy || running.current || !manifest || !confirmSync || !current || !canSync) return;
     const byWorkspace = new Map<string, Set<string>>();
     for (const omission of manifest.omissions.filter(item => item.reason === "CATALOG_REQUIRED")) {
       const workspace = loaded.find(item => item.id === omission.workspaceId);
@@ -176,7 +178,8 @@ export function TurnoExport({ plans, disabled }: { plans: WorkspaceSummary[]; di
     {manifest && <div className={styles.stackSmall}>
       <p role="status">{manifest.rowCount} registro(s) incluído(s); {manifest.omissions.length} omissão(ões). Confira antes de baixar.</p>
       {manifest.omissions.length > 0 && <details><summary>Consultar omissões</summary><ul>{manifest.omissions.map(item => <li key={item.workspaceId + ":" + item.employeeId + ":" + item.reason}>{item.registration} · {({ NO_REFERENCE: "sem referência selecionada", MISSING: "horário não informado", UNTIMED: "sem horário fixo", CATALOG_REQUIRED: "turno ainda não cadastrado", ZERO_MARKINGS: "marcações zeradas", PARTIAL: "horário incompleto", OVERNIGHT: "horário ultrapassa o dia", PAID_BREAK: "pausa remunerada", TOO_MANY_PERIODS: "mais períodos que o formato aceita", DUPLICATE_REGISTRATION: "matrícula duplicada" } as const)[item.reason]}</li>)}</ul></details>}
-      {manifest.omissions.some(item => item.reason === "CATALOG_REQUIRED") && <div className={styles.stackSmall}><label className={styles.check}><input type="checkbox" checked={confirmSync} disabled={disabled || Boolean(busy)} onChange={event => setConfirmSync(event.target.checked)} /> Confirmo o cadastro das referências sem código no catálogo da empresa.</label><button type="button" className={buttonClass} disabled={disabled || Boolean(busy) || !confirmSync} onClick={() => void syncMissing()}>Cadastrar turnos necessários</button></div>}
+      {manifest.omissions.some(item => item.reason === "CATALOG_REQUIRED") && !canSync && <p className={styles.muted}>Seu acesso permite consultar e exportar. Para cadastrar as referências pendentes, solicite permissão de edição nas filiais correspondentes.</p>}
+      {canSync && <div className={styles.stackSmall}><label className={styles.check}><input type="checkbox" checked={confirmSync} disabled={disabled || Boolean(busy)} onChange={event => setConfirmSync(event.target.checked)} /> Confirmo o cadastro das referências sem código no catálogo da empresa.</label><button type="button" className={buttonClass} disabled={disabled || Boolean(busy) || !confirmSync} onClick={() => void syncMissing()}>Cadastrar turnos necessários</button></div>}
       {manifest.omissions.length > 0 && <label className={styles.check}><input type="checkbox" checked={acceptOmissions} disabled={disabled || Boolean(busy)} onChange={event => setAcceptOmissions(event.target.checked)} /> Confirmo a exportação com as omissões listadas.</label>}
       <div className={styles.actions}>{(["TXT1", "TXT2"] as const).map(format => <div key={format}><button type="button" className={buttonClass} disabled={disabled || Boolean(busy) || manifest.rowCount === 0 || (manifest.omissions.length > 0 && !acceptOmissions)} onClick={() => void prepareFile(format)}>Preparar {format}</button>{files[format] && (!manifest.omissions.length || acceptOmissions) && <a className={buttonClass} href={files[format]} download={"turnos-" + period + "-" + format + ".txt"}>Baixar {format}</a>}</div>)}</div>
       <p className={styles.muted}>TXT1 contém matrícula e quatro marcações. TXT2 contém código, nome e quatro marcações. Ambos usam esta mesma conferência.</p>

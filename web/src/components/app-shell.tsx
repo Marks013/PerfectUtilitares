@@ -4,6 +4,8 @@ import { logoutAction } from "@/app/login/actions";
 import { auth } from "@/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppNavigation } from "@/components/app-navigation";
+import { AppNavLink } from "@/components/app-nav-link";
+import { getEscalaModuleSession } from "@/lib/escalas/module-session";
 import { isEventsEnabled } from "@/lib/presence/feature";
 
 const publicNavItems = [
@@ -16,9 +18,11 @@ const publicNavItems = [
 export async function AppShell({ children }: { children: React.ReactNode }) {
   const session = await auth();
   const activeSession = session?.user.status !== "ACTIVE" ? null : session;
+  // Never let a module cookie override a blocked or tenant-less account.
+  const moduleAccess = session ? null : await getEscalaModuleSession().catch(() => null);
   const navItems = [
     ...publicNavItems,
-    ...(activeSession?.user.tenantId ? [{ href: "/escalas", label: "Escalas 5×2" }] : []),
+    ...(activeSession?.user.tenantId || moduleAccess ? [{ href: "/escala", label: "Escalas 5×2" }] : []),
     ...(activeSession ? [{ href: "/conta", label: "Conta" }] : []),
     ...(activeSession?.user.role === "ADMIN"
       ? [
@@ -58,16 +62,10 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
 
           <AppNavigation compact={navItems.length > 5}>
           <nav aria-label="Navegação principal" className="flex max-w-full flex-wrap items-center gap-2 lg:justify-center">
-            <Link href="/dashboard" className="app-nav-link">
-              Início
-            </Link>
-            <Link href="/jornada/validar" className="app-nav-link">
-              Validador de Jornada
-            </Link>
+            <AppNavLink href="/dashboard">Início</AppNavLink>
+            <AppNavLink href="/jornada/validar">Validador de Jornada</AppNavLink>
             {navItems.map((item) => (
-              <Link key={item.href} href={item.href} className="app-nav-link">
-                {item.label}
-              </Link>
+              <AppNavLink key={item.href} href={item.href}>{item.label}</AppNavLink>
             ))}
           </nav>
           </AppNavigation>
