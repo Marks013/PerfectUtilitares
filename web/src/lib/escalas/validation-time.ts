@@ -101,7 +101,6 @@ export function validateCoverage(input: EscalaInput, presence = buildCoveragePre
   let minimumCoverageMargin: number | null = null;
   const visible = new Set(visibleDates(input));
   const timelines = new Map<string, ReturnType<typeof coverageTimeline>>();
-  const emptyReported = new Set<string>();
   for (const demand of input.demands) {
     const key = demand.date + "\0" + demand.sector;
     let timeline = timelines.get(key);
@@ -112,20 +111,6 @@ export function validateCoverage(input: EscalaInput, presence = buildCoveragePre
       const present = coverageAt(presence, demand.date, demand.sector, slice.start, demand.role).length;
       const margin = present - demand.minimum;
       if (visible.has(demand.date)) minimumCoverageMargin = minimumCoverageMargin === null ? margin : Math.min(minimumCoverageMargin, margin);
-      // An estimated shortage is not a confirmed staffing minimum. Nonetheless,
-      // a wholly uncovered timed role/sector is a separate operational warning.
-      const emptyKey = JSON.stringify([demand.date, demand.sector, demand.role ?? ""]);
-      if (demand.estimated === true && demand.minimum > 0 && present === 0
-        && visible.has(demand.date) && !input.policy.closedDates.includes(demand.date)
-        && !emptyReported.has(emptyKey)) {
-        emptyReported.add(emptyKey);
-        issues.push({ code: "ESTIMATED_SECTOR_EMPTY", severity: "WARNING", date: demand.date,
-          message: "Atenção: " + demand.sector + (demand.role ? " / " + demand.role : "")
-            + " sem presença horária conhecida em " + demand.date + ", a partir de "
-            + String(Math.floor(slice.start / 60)).padStart(2, "0") + ":"
-            + String(slice.start % 60).padStart(2, "0")
-            + ". A referência é estimada e não é mínimo homologado; confira a operação antes de publicar." });
-      }
       if (margin < 0 && !reported) {
         const estimated = demand.estimated === true;
         issues.push({ code: estimated ? "ESTIMATED_COVERAGE_GAP" : "COVERAGE_DEFICIT", severity: estimated ? "WARNING" : "ERROR", date: demand.date,
