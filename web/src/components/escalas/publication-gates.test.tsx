@@ -111,7 +111,9 @@ describe("publication accessibility guidance", () => {
     viewer.canPublish = false;
     expect(approval(render({ workspace: viewer }))).toContain("não aprovar a publicação");
     const unready = fixture();
-    unready.validation = { ...unready.validation!, readyToPublish: false };
+    const original = unready.validation;
+    if (!original) throw new Error("Expected synthetic validation");
+    unready.validation = { ...original, readyToPublish: false };
     expect(approval(render({ workspace: unready }))).toContain("pendências da validação");
     const published = fixture();
     published.status = "PUBLISHED";
