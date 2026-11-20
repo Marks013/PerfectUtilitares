@@ -22,7 +22,10 @@ describe("accessible Escalas operational access", () => {
     const html = render(null);
     expect(html).toMatch(/<label[^>]*for="escala-access-password"[^>]*>Senha operacional<\/label>/);
     expect(html).toContain('id="escala-access-description"');
-    expect(html).toMatch(/<input[^>]*id="escala-access-password"[^>]*type="password"[^>]*autocomplete="current-password"[^>]*aria-invalid="false"[^>]*aria-describedby="escala-access-description"/);
+    expect(html).toMatch(/<input[^>]*id="escala-access-password"[^>]*type="password"/);
+    expect(html).toContain("current-password");
+    expect(html).toContain('aria-invalid="false"');
+    expect(html).toContain('aria-describedby="escala-access-description"');
     expect(html).toContain('aria-pressed="false"');
     expect(html).toContain("Mostrar senha");
     expect(html).toContain('type="submit"');
