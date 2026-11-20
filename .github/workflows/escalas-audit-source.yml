@@ -1,0 +1,45 @@
+name: Escalas audit source
+on:
+  push:
+    branches: [audit/escalas-integracao-2026-11-19]
+    paths: [.github/workflows/escalas-audit-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Export tracked source only
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, zipfile
+          root = pathlib.Path.cwd()
+          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'escalas-audit-source.zip'
+          files = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          hashes = {}
+          with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
+              for name in files:
+                  path = root / name
+                  if not name or path.is_symlink() or not path.is_file():
+                      continue
+                  if any(part.startswith('.env') for part in path.parts):
+                      continue
+                  if path.suffix not in ('.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.json', '.md', '.css', '.yml', '.yaml', '.toml', '.txt', '.prisma', '.sql', '.sh') and path.name not in ('Dockerfile', '.dockerignore', '.gitignore', '.npmrc', '.nvmrc'):
+                      continue
+                  data = path.read_bytes()
+                  hashes[name] = hashlib.sha256(data).hexdigest()
+                  archive.writestr(name, data)
+              archive.writestr('AUDIT-SOURCE.json', json.dumps({'commit': os.environ['GITHUB_SHA'], 'tree': subprocess.check_output(['git','rev-parse','HEAD^{tree}']).decode().strip(), 'sha256': hashes}, indent=2))
+          print('Tracked source files:', len(hashes))
+          print('Archive SHA256:', hashlib.sha256(target.read_bytes()).hexdigest())
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: escalas-audit-source
+          path: ${{ runner.temp }}/escalas-audit-source.zip
+          retention-days: 1
+          if-no-files-found: error
