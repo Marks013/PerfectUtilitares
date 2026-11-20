@@ -10,7 +10,7 @@ Escopo: navegação global, cadastro de colaboradores, retomada da sessão, perm
 - A conta ativa mantém seu próprio tenant. Uma sessão operacional verificada permite somente o escopo da empresa padrão e nunca publicação ou administração. Uma conta bloqueada, banida ou sem tenant não pode usar o cookie operacional para substituir sua negativa de acesso.
 - `branchPermission` permanece a autoridade para cada leitura/escrita. A descoberta de uma ação na interface não concede autorização.
 - Rascunhos continuam versionados, com comparação de revisão, recuperação e salvamento separado de publicação. Sem alteração no solver, jornada, cobertura, dias protegidos, folgas ou escalas salvas.
-- Nenhuma biblioteca nova, atualização forçada, redução de auditoria ou mudança em lockfiles.
+- Nenhuma biblioteca nova ou atualização forçada. A única mudança de versão é a correção de Effect descrita abaixo, com locks gerados pelo npm e demais versões preservadas.
 
 ## Achados e correções
 
@@ -64,10 +64,20 @@ O aprimoramento de `Field` é compatível com consumidores de um argumento; os f
 
 NPMScan consultou 41 dependências diretas de produção do manifesto desta base: nenhuma vulnerabilidade conhecida reportada e todos os pacotes encontrados. A resolução de `jszip: ^3.10.1` no manifesto consultou 3.10.2; a versão real do lockfile, **3.10.1**, foi verificada separadamente, também sem achados. O alias `@perfectutilitares/smtp` foi identificado como `nodemailer@10.3.1`.
 
-Essa consulta não cobre sozinha as 710 entradas resolvidas do lockfile, dependências de desenvolvimento, imagens ou Python. A CI integral permanece responsável pelas auditorias npm do web/worker/migrator e pelas dependências Python fixadas. Sinais de manutenção antiga em bibliotecas não são tratados como vulnerabilidade nem motivam atualização sem regressões. A consulta de avisos não constitui análise de licenças ou revisão criptográfica de procedência.
+A auditoria npm completa posterior encontrou três entradas de gravidade alta no web e no migrador: `effect`, `@prisma/config` e `prisma`, todas causadas pelo mesmo aviso GHSA-7589-6fvf-x4pw / CVE-2026-121707. O risco é negação de serviço na decodificação de certos Schema.TemplateLiteral. A presença na árvore não comprova exploração ou exposição desse caminho no PerfectUtilitares.
+
+A fonte oficial identifica correção em Effect 3.22.1:
+https://github.com/advisories/GHSA-7589-6fvf-x4pw
+https://github.com/Effect-TS/effect/releases/tag/effect%403.22.1
+
+Como @prisma/config 7.10.0 fixa Effect 3.20.0, foi adicionada uma sobrescrita exata para 3.22.1 nos manifestos do web e migrador. O npm regenerou os locks; uma comparação estrutural exigiu que somente `node_modules/effect` mudasse, sem adicionar ou remover entradas. Prisma permanece 7.10.0, sem downgrade para 6.12.0, sem `npm audit fix --force`, sem exceções e sem reduzir o gate. NPMScan conferiu a versão alvo sem avisos conhecidos, depreciação ou novo script de instalação.
+
+A execução isolada `44652837717` aprovou instalação reproduzível, `npm ls --all`, auditorias dos três ambientes npm, schema/geração Prisma, typecheck e testes dos contratos existentes. Os três relatórios npm finais apresentam zero vulnerabilidades conhecidas naquele momento. A CI integral ainda precisa conferir migrações/PostgreSQL, regressões completas e builds no SHA final. Os limites de auditoria de imagens, Python, licenças e procedência não são ampliados por essa consulta.
 
 ## Evidência e liberação
 
 Na preparação local: verificação sintática dos TypeScript modificados, `git diff --check` e gate de tamanho de módulos aprovados. Este ambiente não tem o Node 24 e as dependências instaladas do projeto; não se apresenta a análise sintática como typecheck ou teste funcional.
 
-As regressões focadas e a CI integral precisam ser conferidas no SHA final antes de integração. Resultados da base não certificam estas alterações. A liberação continua exigindo o gate/recibo de `AGENTS.md`, validação do runtime e procedimento de deploy. Nenhuma implantação, alteração de dados reais, migração ou mudança de segredo foi realizada nesta auditoria.
+A execução `44652427870` reproduziu cinco falhas de comportamento de sessão/edição na base sem as correções e aprovou as mesmas regressões após o patch. Foram aprovados 583 testes em 56 arquivos, typecheck completo, lint sem avisos, tamanho de módulos e cobertura de rotas. Commit de aplicação: `8e810b9192ddd138db6214f29618ca1c90ecff3f`. A tentativa anterior havia parado em três avisos de lint dos testes; foram substituídas as asserções não nulas por verificações explícitas, sem remover expectativas.
+
+A CI integral precisa ser conferida no SHA final antes de integração. Resultados da base ou dos testes focados não certificam a execução completa. As capturas de navegador só poderão ser consideradas revisadas após sua geração e inspeção. A liberação continua exigindo o gate/recibo de `AGENTS.md`, validação do runtime e procedimento de deploy. Nenhuma implantação, alteração de dados reais, migração ou mudança de segredo foi realizada nesta auditoria.
