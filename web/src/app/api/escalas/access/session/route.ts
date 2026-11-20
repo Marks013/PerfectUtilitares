@@ -8,8 +8,11 @@ export const runtime = "nodejs";
 const unlock = z.object({ password: z.string().min(1).max(72) }).strict();
 const bcryptHash = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
 function operationalHash() {
-  // One source of truth: only Unimed's STANDARD password, never its ADMIN credential.
-  const hash = process.env.UNIMED_ACCESS_STANDARD_PASSWORD_HASH?.trim();
+  // Explicit Escalas configuration takes precedence. When absent, keep the
+  // legacy STANDARD-only password until an authorized operations migration.
+  // A present but malformed/blank dedicated value must NOT silently fall back.
+  const configured = process.env.ESCALAS_ACCESS_STANDARD_PASSWORD_HASH;
+  const hash = (configured === undefined ? process.env.UNIMED_ACCESS_STANDARD_PASSWORD_HASH : configured)?.trim();
   return hash && bcryptHash.test(hash) ? hash : null;
 }
 function access(expiresAt: Date) { return { role: "OPERATIONAL", expiresAt }; }
@@ -35,7 +38,7 @@ export async function POST(request: Request) {
   const hash = operationalHash();
   if (!hash) return jsonError(503, "ESCALA_ACCESS_NOT_CONFIGURED", "O acesso operacional ainda não está disponível. Use o acesso da sua conta ou consulte o administrador.");
   try {
-    if (!(await compare(parsed.data.password, hash))) return jsonError(401, "ESCALA_PASSWORD_INCORRECT", "Senha incorreta. Use a senha operacional padrão do Unimed e tente novamente.");
+    if (!(await compare(parsed.data.password, hash))) return jsonError(401, "ESCALA_PASSWORD_INCORRECT", "Senha operacional incorreta. Confira a credencial de Escalas com o responsável e tente novamente.");
     const session = await createEscalaModuleSession();
     const response = privateJson({ access: access(session.expiresAt) });
     response.cookies.set(ESCALA_ACCESS_COOKIE, session.value, escalaSessionCookieOptions(session.maxAgeSeconds));
