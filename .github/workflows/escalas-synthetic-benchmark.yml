@@ -48,6 +48,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Install locked dependencies
         run: npm ci
+      - name: Verify synthetic Sunday-Saturday inputs before benchmarking
+        run: npm exec -- vitest run src/lib/escalas/benchmark-synthetic-input.test.ts
       - name: Build isolated solver only
         run: docker build --target runtime -t web-escalas-solver:latest ops/escalas
       - name: Log hardware and source identity
