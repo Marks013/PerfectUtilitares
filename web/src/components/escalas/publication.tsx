@@ -43,6 +43,19 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
   const hasReferences = hasHourReferences(workspace.input);
   const blocked = busy || outdated || Boolean(exporting) || (hoursOnly ? !hasReferences : !workspace.input.assignments.length);
   const ready = !referencesOnly && workspace.canPublish && !dirty && !blocked && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
+  // Explain existing publication gates without changing eligibility or pretending that estimates are approved.
+  const approvalGuidance = workspace.status === "PUBLISHED"
+    ? "Esta revisão já foi publicada. Confira uma nova revisão antes de publicar novamente."
+    : !workspace.canPublish ? "Seu acesso permite consultar, mas não aprovar a publicação desta filial."
+    : referencesOnly ? "Referências de horários não representam uma escala diária pronta para publicação."
+    : outdated ? "A grade está desatualizada. Gere e aplique uma proposta atualizada antes de publicar."
+    : dirty ? "Há alterações ainda não salvas. Salve a grade antes de confirmar esta revisão."
+    : busy || Boolean(exporting) ? "Conclua a operação em andamento antes de confirmar esta revisão."
+    : hoursOnly && !hasReferences ? "Cadastre referências de horários válidas antes de publicar."
+    : !workspace.input.assignments.length ? "Gere e aplique uma grade antes de confirmar a publicação."
+    : !validation?.readyToPublish ? "Confira as pendências da validação. Esta revisão ainda não está pronta para publicar."
+    : "Confira a revisão salva e marque a confirmação antes de publicar.";
+
   const isDownloadCurrent = (file: FileState | undefined) => Boolean(file
     && file.workspaceId === workspace.id && file.revision === workspace.revision && file.mode === selectedMode
     && (file.separateSectors === undefined || file.separateSectors === separateSectors) && !dirty && !outdated);
@@ -97,6 +110,6 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
     {exporting && <ProcessingBar label={"Preparando " + exporting.toUpperCase() + " da revisão correta"} />}
     <p role="status" aria-live="polite" className="sr-only">{exporting ? "Arquivo em processamento" : Object.values(files).some(isDownloadCurrent) ? "Arquivo pronto para baixar" : ""}</p>
     {error && <p role="alert" className={styles.errorText}>{error}</p>}
-    <details><summary className={styles.disclosureTrigger}>Aprovação interna (opcional)</summary><p className="text-sm">O salvamento automático não publica. A aprovação exige revisão conferida e perfil autorizado.</p><Check label={"Conferi esta revisão da filial " + workspace.input.branchCode} checked={confirmed} disabled={!ready} onChange={checked => setReviewed(checked ? { workspaceId: workspace.id, revision: workspace.revision, input: workspace.input } : null)} /><button type="button" className={buttonClass} disabled={!ready || !confirmed} onClick={() => { if (ready && confirmed) onPublish(); }}>{workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}</button></details>
+    <details><summary className={styles.disclosureTrigger}>Aprovação interna (opcional)</summary><p className="text-sm">O salvamento automático não publica. A aprovação exige revisão conferida e perfil autorizado.</p><p id="escala-publication-guidance" className={styles.muted}>{approvalGuidance}</p><Check label={"Conferi esta revisão da filial " + workspace.input.branchCode} checked={confirmed} disabled={!ready} onChange={checked => setReviewed(checked ? { workspaceId: workspace.id, revision: workspace.revision, input: workspace.input } : null)} /><button type="button" className={buttonClass} aria-describedby="escala-publication-guidance" disabled={!ready || !confirmed} onClick={() => { if (ready && confirmed) onPublish(); }}>{workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}</button></details>
   </section>;
 }
