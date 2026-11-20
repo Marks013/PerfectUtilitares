@@ -7,7 +7,7 @@ vi.mock("@/lib/escalas/module-session", () => ({ ESCALA_ACCESS_COOKIE: "perfectu
 import { DELETE, GET, PATCH, POST } from "./route";
 function request(body: unknown, origin = "http://localhost") { return new Request("http://localhost/api/escalas/access/session", { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) }); }
 beforeEach(async () => {
-  vi.resetAllMocks(); vi.stubEnv("UNIMED_ACCESS_STANDARD_PASSWORD_HASH", await hash("operational-test-only", 4)); vi.stubEnv("UNIMED_ACCESS_ADMIN_PASSWORD_HASH", await hash("admin-test-only", 4));
+  vi.resetAllMocks(); vi.stubEnv("ESCALAS_ACCESS_STANDARD_PASSWORD_HASH", undefined); vi.stubEnv("UNIMED_ACCESS_STANDARD_PASSWORD_HASH", await hash("operational-test-only", 4)); vi.stubEnv("UNIMED_ACCESS_ADMIN_PASSWORD_HASH", await hash("admin-test-only", 4));
   mocks.rate.mockResolvedValue(null); mocks.get.mockResolvedValue(null); mocks.create.mockResolvedValue({ id: "s1", value: "opaque-token.signature", expiresAt: new Date("2030-01-01T00:00:00Z"), maxAgeSeconds: 28800 });
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -18,6 +18,19 @@ describe("/api/escalas/access/session", () => {
     for (const flag of ["perfectutilitares.escalas-access=", "HttpOnly", "Secure", "SameSite=strict"]) expect(response.headers.get("set-cookie")).toContain(flag);
     expect(await response.json()).toEqual({ access: { role: "OPERATIONAL", expiresAt: "2030-01-01T00:00:00.000Z" } });
     expect(mocks.create).toHaveBeenCalledWith();
+  });
+  it("uses a separately configured Escalas password without accepting the Unimed standard credential", async () => {
+    vi.stubEnv("ESCALAS_ACCESS_STANDARD_PASSWORD_HASH", await hash("escalas-only-test", 4));
+    expect((await POST(request({ password: "operational-test-only" }))).status).toBe(401);
+    expect((await POST(request({ password: "escalas-only-test" }))).status).toBe(200);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+  it("fails closed on a malformed or empty dedicated credential instead of silently falling back", async () => {
+    for (const value of ["invalid", ""]) {
+      vi.stubEnv("ESCALAS_ACCESS_STANDARD_PASSWORD_HASH", value);
+      expect((await POST(request({ password: "operational-test-only" }))).status).toBe(503);
+    }
+    expect(mocks.create).not.toHaveBeenCalled();
   });
   it("does not accept the Unimed admin credential or any browser-supplied scope", async () => {
     expect((await POST(request({ password: "admin-test-only" }))).status).toBe(401);
