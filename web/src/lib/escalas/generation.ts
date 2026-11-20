@@ -13,7 +13,7 @@ import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes } from "./stor
 import type { EscalaEmployee, EscalaGenerationPreparation, EscalaInput, EscalaShift } from "./types";
 import { selectMonthlyClockReferences, type MonthlyClockChoice } from "./monthly-clock-selection";
 
-import { manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
+import { manualShiftAt, manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
 import { mealMinutes, nightWorkMinutes, paidMinutes, restOnlyReferences } from "./generation-references";
 export { matchesRestOnlyReferences } from "./generation-references";
 
