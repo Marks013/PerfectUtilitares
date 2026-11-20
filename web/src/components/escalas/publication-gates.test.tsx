@@ -85,3 +85,55 @@ describe("internal publication UI preserves permissions and explicit review", ()
     expect(html).toContain("Referências de horários");
   });
 });
+
+describe("publication accessibility guidance", () => {
+  it("associates the publish control with a human-readable revision acknowledgement", () => {
+    const area = approval(render());
+    expect(area).toContain('id="escala-publication-guidance"');
+    expect(area).toContain('aria-describedby="escala-publication-guidance"');
+    expect(area).toContain("Confira a revisão salva e marque a confirmação antes de publicar.");
+    expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
+  });
+
+  it.each([
+    [{ dirty: true }, "Há alterações ainda não salvas."],
+    [{ outdated: true }, "A grade está desatualizada."],
+    [{ busy: true }, "Conclua a operação em andamento"],
+  ])("explains why publication is blocked for %o", (options, message) => {
+    const area = approval(render(options));
+    expect(area).toContain(message);
+    expect(area).toContain('aria-describedby="escala-publication-guidance"');
+    expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
+  });
+
+  it("distinguishes permission, validation and already-published revisions", () => {
+    const viewer = fixture();
+    viewer.canPublish = false;
+    expect(approval(render({ workspace: viewer }))).toContain("não aprovar a publicação");
+    const unready = fixture();
+    unready.validation = { ...unready.validation!, readyToPublish: false };
+    expect(approval(render({ workspace: unready }))).toContain("pendências da validação");
+    const published = fixture();
+    published.status = "PUBLISHED";
+    expect(approval(render({ workspace: published }))).toContain("Esta revisão já foi publicada.");
+  });
+
+  it("does not present an empty roster or reference-only scenario as publishable", () => {
+    const empty = fixture();
+    empty.input.assignments = [];
+    expect(approval(render({ workspace: empty }))).toContain("Gere e aplique uma grade");
+    const reference = fixture();
+    reference.input.generationMode = "HOURS_ONLY";
+    reference.input.assignments = [];
+    const area = approval(render({ workspace: reference }));
+    expect(area).toContain("Referências de horários não representam uma escala diária");
+    expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
+  });
+
+  it("preserves an explicit review requirement even when all validation gates are ready", () => {
+    const area = approval(render());
+    expect(area).toContain("Conferi esta revisão da filial 08");
+    expect(area).toMatch(/<input[^>]*type="checkbox"[^>]*>/);
+    expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
+  });
+});
