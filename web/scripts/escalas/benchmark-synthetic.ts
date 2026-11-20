@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { loadavg } from "node:os";
+import { pathToFileURL } from "node:url";
 import { newEmployee, newInput } from "../../src/components/escalas/workspace-model";
 import { prepareGeneration } from "../../src/lib/escalas/generation";
 import { validateEscala } from "../../src/lib/escalas/validation";
@@ -29,11 +30,9 @@ function cleanup() {
   if (activeContainer) spawnSync("docker", ["stop", "--time", "2", activeContainer], { stdio: "ignore", timeout: 5000 });
   activeContainer = undefined;
 }
-for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { cleanup(); process.exit(130); });
-
-function syntheticInput(scenario: Scenario) {
+export function syntheticInput(scenario: Scenario) {
   const input = newInput("SYNTH", "Synthetic benchmark", "2026-11", 42);
-  input.startDate = "2026-11-02";
+  input.startDate = "2026-11-01";
   input.endDate = new Date(Date.parse(input.startDate + "T12:00:00Z") + (scenario.weeks * 7 - 1) * 86400000).toISOString().slice(0, 10);
   delete input.visibleMonth;
   // Explicitly synthetic calendar: no external demand or locality facts are inferred.
@@ -144,4 +143,7 @@ async function main() {
       nonFeasible: rows.filter(item => item.shortage === null).length }));
   }
 }
-main().catch(() => { cleanup(); console.error("Synthetic benchmark failed. No production data or services were changed."); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { cleanup(); process.exit(130); });
+  main().catch(() => { cleanup(); console.error("Synthetic benchmark failed. No production data or services were changed."); process.exitCode = 1; });
+}
