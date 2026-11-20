@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-export const BASELINE_REVISION = "ee815cd26fd8c6557f3228482338338d8288e91f";
+/** Stable baseline with current Sunday-Saturday and Saturday-rest rules; older solvers are not comparable. */
+export const BASELINE_REVISION = "2657f4a6894d01df58db9e3353f3ff7421047fc1";
 
 export function sourceSnapshot(revision?: string) {
   const directory = "ops/escalas/";
