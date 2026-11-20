@@ -5,8 +5,6 @@ import { generationScenarioBasis, validateHoursReferences } from "./hours-refere
 
 function fixture() {
   const input = newInput("08", "Filial sintética", "2027-01", 42);
-  input.startDate = "2027-01-10";
-  input.endDate = "2027-01-16";
   input.generationMode = "HOURS_ONLY";
   input.needsRegeneration = false;
   input.policy.compensationAuthorized = true;
@@ -75,6 +73,7 @@ describe("clock validation hardening", () => {
     const input = fixture();
     input.shifts[0].segments[2].end = 960;
     input.employees[0].activeFrom = "2027-01-12";
+    input.employees[0].activeUntil = "2027-01-15";
     input.generationBasis = generationScenarioBasis(input);
     expect(validateHoursReferences(input).issues.some(issue => issue.code === "HOURS_WEEKLY_REFERENCE_INCOMPATIBLE")).toBe(false);
   });
