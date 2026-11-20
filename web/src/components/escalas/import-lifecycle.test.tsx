@@ -22,6 +22,13 @@ vi.mock("react", async importOriginal => {
     },
     useRef<T>(initial: T) { const slot = hooks.cursor++; if (!(slot in hooks.slots)) hooks.slots[slot] = { current: initial }; return hooks.slots[slot]; },
     useId() { return `synthetic-${hooks.cursor++}`; },
+    useCallback<T>(callback: T, deps: readonly unknown[]) {
+      const slot = hooks.cursor++;
+      if (!hooks.deps[slot] || deps.some((value, i) => !Object.is(value, hooks.deps[slot]?.[i]))) {
+        hooks.slots[slot] = callback; hooks.deps[slot] = deps;
+      }
+      return hooks.slots[slot];
+    },
     useEffect(effect: () => unknown, deps?: readonly unknown[]) {
       const slot = hooks.cursor++;
       if (!deps || !hooks.deps[slot] || deps.length !== hooks.deps[slot]?.length || deps.some((value, i) => !Object.is(value, hooks.deps[slot]?.[i]))) {
@@ -36,7 +43,7 @@ type Props = { input: EscalaInput; disabled: boolean; onChange: (input: EscalaIn
 type NodeProps = { children?: ReactNode | ((id: string) => ReactNode); type?: string; disabled?: boolean;
   onClick?: () => void; onChange?: (event: { target: { files: File[] } }) => void; onApply?: () => void; role?: string };
 let props: Props, component: (props: Props) => ReactNode, tree: ReactNode;
-function nodes(node = tree): ReactElement<NodeProps>[] {
+function nodes(node: ReactNode): ReactElement<NodeProps>[] {
   if (Array.isArray(node)) return node.flatMap(value => nodes(value));
   if (!isValidElement<NodeProps>(node)) return [];
   const children = node.type === Field && typeof node.props.children === "function" ? node.props.children("synthetic-file") : node.props.children;
@@ -47,18 +54,18 @@ function text(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   return isValidElement<{ children?: ReactNode }>(node) ? text(node.props.children) : "";
 }
-function button(label: string) { const found = nodes().find(node => node.type === "button" && text(node) === label); if (!found) throw new Error(`Button absent: ${label}`); return found.props; }
+function button(label: string) { const found = nodes(tree).find(node => node.type === "button" && text(node) === label); if (!found) throw new Error(`Button absent: ${label}`); return found.props; }
 function render() { hooks.cursor = 0; hooks.changed = false; tree = component(props); for (const effect of hooks.effects.splice(0)) effect(); }
 async function settle() { for (let i = 0; i < 30; i++) { if (hooks.changed) render(); await Promise.resolve(); } if (hooks.changed) render(); }
 async function select(file = new File(["synthetic"], "team.csv", { type: "text/csv" })) {
-  const input = nodes().find(node => node.type === "input" && node.props.type === "file");
+  const input = nodes(tree).find(node => node.type === "input" && node.props.type === "file");
   if (!input?.props.onChange) throw new Error("File input absent");
   input.props.onChange({ target: { files: [file] } }); await settle();
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
 function teamReply() { return Response.json({ preview: { employees: [{ ...newEmployee(42), id: "new-person", registration: "0002", name: "Synthetic imported", sector: "Store", role: "Clerk", scheduleMode: "MISSING" }], shifts: [], issues: [], totalRows: 1 } }); }
 function absenceReply() { return Response.json({ preview: { assignments: [{ employeeId: "existing", date: "2026-12-01", kind: "ABSENCE" }], issues: [], counts: { employees: 1, days: 1, matchedRows: 1, unmatchedRows: 0, outsidePeriodRows: 0 } } }); }
-function apply() { return nodes().find(node => node.type === AbsenceImportReview)?.props.onApply; }
+function apply() { return nodes(tree).find(node => node.type === AbsenceImportReview)?.props.onApply; }
 
 beforeEach(() => {
   hooks.slots = []; hooks.deps = []; hooks.cursor = 0; hooks.changed = false; hooks.effects = []; hooks.cleanup = [];
@@ -131,7 +138,7 @@ describe("employee import lifecycle", () => {
     await select(); button("Conferir arquivo").onClick?.(); await settle();
     const oldApply = button("Aplicar registros aceitos à proposta").onClick;
     props = { ...props, input: { ...props.input, assignments: [{ employeeId: "existing", date: "2026-12-01", kind: "OFF", locked: true }] } }; render(); await settle();
-    oldApply?.(); await settle();
+    oldApply?.(); oldApply?.(); await settle();
     expect(props.onChange).toHaveBeenCalledTimes(1);
     expect(vi.mocked(props.onChange).mock.calls[0][0].assignments).toEqual(props.input.assignments);
   });
@@ -163,6 +170,12 @@ describe("absence import recovery", () => {
     const unlock = vi.fn(); window.addEventListener("escalas:unlock-required", unlock);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
     await select(); button("Conferir afastamentos").onClick?.(); await settle(); expect(unlock).toHaveBeenCalledTimes(1);
+  });
+  it("[regression] refuses a stale apply callback after changing files", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => absenceReply()));
+    await select(); button("Conferir afastamentos").onClick?.(); await settle(); const previousApply = apply();
+    await select(new File(["different synthetic source"], "other.csv")); previousApply?.(); await settle();
+    expect(props.onChange).not.toHaveBeenCalled();
   });
   it("[regression] clears a completed preview on lock, and cannot revive it on unlock", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => absenceReply()));
