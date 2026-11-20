@@ -1,7 +1,7 @@
 import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
-import { branchPermission, requireEscalaPermission } from "@/lib/escalas/access";
+import { branchPermission, canCreateEscala, requireEscalaPermission } from "@/lib/escalas/access";
 import { createEscala, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
 import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGenerationOperation, generationOperationStatus } from "@/lib/escalas/solve-operations";
@@ -33,7 +33,7 @@ export async function GET(request: Request) {
       if (!id.safeParse(requestedId).success) return jsonError(400, "ESCALA_INVALID_ID", "Identificador de escala inválido.");
       return escalaJson(await getEscala(actor, requestedId));
     }
-    return escalaJson({ workspaces: await listEscalas(actor), canCreate: actor.admin || Boolean(actor.moduleSessionId) });
+    return escalaJson({ workspaces: await listEscalas(actor), canCreate: await canCreateEscala(actor) });
   } catch (error) { return escalaFailure(error); }
 }
 

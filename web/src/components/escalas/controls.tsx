@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import { useId, type AriaAttributes, type ReactNode } from "react";
 import styles from "./escalas.module.css";
 
 export const controlClass = styles.control;
@@ -10,19 +10,23 @@ export function Field({
   label,
   children,
   hint,
+  error,
 }: {
   label: string;
-  children: (id: string) => ReactNode;
+  children: (id: string, accessibility: Pick<AriaAttributes, "aria-describedby" | "aria-invalid">) => ReactNode;
   hint?: string;
+  error?: string;
 }) {
   const id = useId();
+  const description = [hint ? `${id}-hint` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined;
   return (
     <div className={styles.field}>
       <label className={styles.fieldLabel} htmlFor={id}>
         {label}
       </label>
-      {children(id)}
-      {hint && <p className={styles.fieldHint}>{hint}</p>}
+      {children(id, { "aria-describedby": description, "aria-invalid": error ? true : undefined })}
+      {hint && <p id={`${id}-hint`} className={styles.fieldHint}>{hint}</p>}
+      {error && <p id={`${id}-error`} className={styles.errorText}>{error}</p>}
     </div>
   );
 }

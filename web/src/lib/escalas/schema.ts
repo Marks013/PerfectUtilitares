@@ -55,7 +55,7 @@ const manualShiftOverride = z.strictObject({
   try { manualCatalogShift(value); } catch { context.addIssue({ code: "custom", path: ["markings"], message: "Marcações manuais inválidas" }); }
 });
 
-const employee = z.strictObject({
+export const escalaEmployeeSchema = z.strictObject({
   id: identifier, registration: label, name: label,
   sector: z.string().trim().max(160), role: z.string().trim().max(160), weeklyHours,
   leadership: z.strictObject({ role: z.enum(["SECTOR", "BRANCH", "NONE"]), source: z.enum(["INFERRED", "MANUAL"]),
@@ -153,7 +153,7 @@ export const escalaInputSchema = z.strictObject({
   movementPriorities: z.array(z.strictObject({ startDate: date, endDate: date, sector: label.optional(),
     level: z.enum(["LOW", "NORMAL", "HIGH"]),
   }).refine(value => value.endDate >= value.startDate, "Fim da prioridade anterior ao início")).max(250).optional(),
-  employees: z.array(employee).max(250), shifts: z.array(shift).max(120),
+  employees: z.array(escalaEmployeeSchema).max(250), shifts: z.array(shift).max(120),
   demands: z.array(z.strictObject({
     id: identifier, date, sector: label, role: label.optional(),
     start: z.number().int().min(0).max(1439), end: z.number().int().min(1).max(1440),

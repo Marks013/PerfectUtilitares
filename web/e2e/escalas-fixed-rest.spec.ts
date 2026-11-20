@@ -22,6 +22,8 @@ test("two personal fixed-rest controls save independently and retain disabled we
     const team = page.locator('button[aria-controls="escala-area-team"]');
     if (!await team.isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
     await team.click();
+    const restrictions = page.locator("#escala-team-restrictions");
+    if (await restrictions.getAttribute("open") === null) await restrictions.locator(":scope > summary").click();
     await page.getByRole("button", { name: "Editar Pessoa sintética de folgas", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Editar colaborador", exact: true })).toBeVisible();
   }
@@ -37,6 +39,17 @@ test("two personal fixed-rest controls save independently and retain disabled we
   }
   try {
     await openEditor();
+    const admission = page.getByLabel("Data real de admissão (opcional)", { exact: true });
+    await admission.fill("1899-12-31");
+    await page.getByRole("button", { name: "Aplicar cadastro à proposta", exact: true }).click();
+    await expect(admission).toHaveAttribute("aria-invalid", "true");
+    await expect(admission).toBeFocused();
+    await expect(page.getByRole("alert")).toContainText("cadastro ainda não foi aplicado");
+    const beforeCorrection: EscalaWorkspace = await (await page.request.get(`/api/escalas?id=${workspace.id}`)).json();
+    expect(beforeCorrection.revision).toBe(workspace.revision);
+    expect(beforeCorrection.input.employees[0].activeFrom).toBe("2020-01-01");
+    await admission.fill("2020-01-01");
+    await expect(admission).not.toHaveAttribute("aria-invalid", "true");
     await expect(page.getByLabel("Habilitar folga fixa 1", { exact: true })).not.toBeChecked();
     await expect(page.getByLabel("Habilitar folga fixa 2", { exact: true })).not.toBeChecked();
     await page.getByLabel("Dia da folga fixa 1", { exact: true }).selectOption("2");
@@ -67,6 +80,12 @@ test("two personal fixed-rest controls save independently and retain disabled we
       { enabled: false, weekday: 2 }, { enabled: false, weekday: 6 },
     ] });
     expect(saved.input.assignments).toEqual([]);
+    await openEditor();
+    for (const width of [375, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`escalas-audit-${width}.png`), fullPage: true });
+    }
   } finally {
     const response = await page.request.get(`/api/escalas?id=${workspace.id}`);
     if (response.status() !== 404) {

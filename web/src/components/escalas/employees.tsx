@@ -2,14 +2,13 @@
 
 import styles from "./escalas.module.css";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { revealRecoveryElement, type EscalaRecoveryRequest } from "./recovery-navigation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from "@/lib/escalas/types";
-import { sortEmployees } from "@/lib/escalas/order";
-import { currentLeadership } from "@/lib/escalas/leadership";
+import { indexEmployees, searchEmployees } from "./employee-search";
+import { validateEmployeeForm } from "./employee-form";
 import { BulkControls } from "./bulk-controls";
 import { FixedRestFields } from "./fixed-rest-fields";
-import { fixedRestConfigurationError } from "@/lib/escalas/fixed-rest";
 import { ExcludedEmployees } from "./excluded-employees";
 import { LeadershipFields } from "./leadership-fields";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
@@ -159,46 +158,31 @@ export function EmployeeEditor({
   function change<K extends keyof EscalaEmployee>(field: K, value: EscalaEmployee[K]) {
     setDraft((previous) => ({ ...previous, ...(field === "weeklyHours" ? { weeklyHoursMode: "INDIVIDUAL" as const } : {}), [field]: value }));
   }
+  const [attempt, setAttempt] = useState(0);
+  const form = useRef<HTMLFormElement>(null);
+  const checked = useMemo(() => validateEmployeeForm({ ...draft, history }, input.employees), [draft, history, input.employees]);
+  const fieldErrors = attempt ? checked.errors : {};
+  useEffect(() => {
+    if (attempt) form.current?.querySelector<HTMLElement>('[aria-invalid="true"], [role="alert"]')?.focus();
+  }, [attempt]);
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    try {
-      if (
-        !draft.name.trim() ||
-        !draft.registration.trim() ||
-        !draft.sector.trim() ||
-        !draft.role.trim() ||
-        (draft.planningEnabled !== false && draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && !draft.shiftIds.length)
-      )
-        throw new Error("Preencha matrícula, nome, setor, cargo e, para incluir quem tem horário fixo, ao menos um turno autorizado.");
-      if (input.employees.some((item) => item.id !== draft.id && item.registration === draft.registration.trim()))
-        throw new Error("Essa matrícula já está cadastrada nesta filial.");
-      const configurationError = fixedRestConfigurationError(draft);
-      if (configurationError) throw new Error(configurationError);
-      const expected = draft.offMode === "FIXED" ? 2 : draft.offMode === "MIXED" ? 1 : 0;
-      if (draft.fixedOffDays.length !== expected) throw new Error(`Esta modalidade exige ${expected} dia(s) fixo(s).`);
-      onSave({
-        ...draft,
-        leadership: currentLeadership(draft),
-        name: draft.name.trim(),
-        registration: draft.registration.trim(),
-        sector: draft.sector.trim(),
-        role: draft.role.trim(),
-        history,
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Confira o cadastro.");
-    }
+    setError("");
+    setAttempt(previous => previous + 1);
+    if (!checked.employee) return;
+    try { onSave(checked.employee); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Confira o cadastro."); }
   }
   return (
-    <form id="escala-employee-editor" tabIndex={-1} aria-labelledby="escala-employee-editor-title" onSubmit={submit} className={`${panelClass} border-[color:var(--app-teal)] focus:outline-2 focus:outline-[color:var(--app-action-blue)]`}>
+    <form ref={form} noValidate id="escala-employee-editor" tabIndex={-1} aria-labelledby="escala-employee-editor-title" onSubmit={submit} className={`${panelClass} border-[color:var(--app-teal)] focus:outline-2 focus:outline-[color:var(--app-action-blue)]`}>
       <h3 id="escala-employee-editor-title" className="font-semibold">
         {input.employees.some((item) => item.id === employee.id) ? "Editar colaborador" : "Novo colaborador"}
       </h3>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Matrícula">
-          {(id) => (
+        <Field label="Matrícula" error={fieldErrors.registration}>
+          {(id, accessibility) => (
             <input
-              id={id}
+              id={id} {...accessibility}
               required
               maxLength={50}
               value={draft.registration}
@@ -207,10 +191,10 @@ export function EmployeeEditor({
             />
           )}
         </Field>
-        <Field label="Nome completo">
-          {(id) => (
+        <Field label="Nome completo" error={fieldErrors.name}>
+          {(id, accessibility) => (
             <input
-              id={id}
+              id={id} {...accessibility}
               required
               maxLength={160}
               value={draft.name}
@@ -223,9 +207,9 @@ export function EmployeeEditor({
           label="Carga semanal de referência"
           hint="O cálculo respeita o teto legal vigente em cada semana; uma carga menor é preservada."
         >
-          {(id) => (
+          {(id, accessibility) => (
             <select
-              id={id}
+              id={id} {...accessibility}
               value={draft.weeklyHours}
               onChange={(event) => change("weeklyHours", Number(event.target.value) as WeeklyHours)}
               className={controlClass}
@@ -238,10 +222,10 @@ export function EmployeeEditor({
             </select>
           )}
         </Field>
-        <Field label="Setor">
-          {(id) => (
+        <Field label="Setor" error={fieldErrors.sector}>
+          {(id, accessibility) => (
             <input
-              id={id}
+              id={id} {...accessibility}
               required
               maxLength={100}
               value={draft.sector}
@@ -250,10 +234,10 @@ export function EmployeeEditor({
             />
           )}
         </Field>
-        <Field label="Cargo">
-          {(id) => (
+        <Field label="Cargo" error={fieldErrors.role}>
+          {(id, accessibility) => (
             <input
-              id={id}
+              id={id} {...accessibility}
               required
               maxLength={100}
               value={draft.role}
@@ -264,24 +248,28 @@ export function EmployeeEditor({
         </Field>
         <Field
           label="Data real de admissão (opcional)"
+          error={fieldErrors.activeFrom}
           hint="Deixe em branco quando desconhecida. Não substitua pelo início da proposta."
         >
-          {(id) => (
+          {(id, accessibility) => (
             <input
-              id={id}
+              id={id} {...accessibility}
               type="date"
+              max="2099-12-31"
+              min="1900-01-01"
               value={draft.activeFrom}
               onChange={(event) => change("activeFrom", event.target.value)}
               className={controlClass}
             />
           )}
         </Field>
-        <Field label="Fim do vínculo, se aplicável">
-          {(id) => (
+        <Field label="Fim do vínculo, se aplicável" error={fieldErrors.activeUntil}>
+          {(id, accessibility) => (
             <input
-              id={id}
+              id={id} {...accessibility}
               type="date"
-              min={draft.activeFrom}
+              max="2099-12-31"
+              min={draft.activeFrom || "1900-01-01"}
               value={draft.activeUntil ?? ""}
               onChange={(event) => change("activeUntil", event.target.value || undefined)}
               className={controlClass}
@@ -296,9 +284,9 @@ export function EmployeeEditor({
         {input.generationMode !== "HOURS_ONLY" && <>
         <FixedRestFields employee={draft} input={input} onChange={setDraft} />
         <Field label="Organização das folgas">
-          {(id) => (
+          {(id, accessibility) => (
             <select
-              id={id}
+              id={id} {...accessibility}
               value={draft.offPattern}
               onChange={(event) => change("offPattern", event.target.value as EscalaEmployee["offPattern"])}
               className={controlClass}
@@ -313,9 +301,9 @@ export function EmployeeEditor({
           label="Descanso aos domingos"
           hint="O padrão quinzenal protetivo vale para todos, sem identificar sexo pelo nome. Exceções são opcionais."
         >
-          {(id) => (
+          {(id, accessibility) => (
             <select
-              id={id}
+              id={id} {...accessibility}
               value={draft.sundayRestRule ?? "PROTECTIVE"}
               onChange={(event) =>
                 setDraft((previous) => ({
@@ -337,9 +325,9 @@ export function EmployeeEditor({
           label="Máximo de domingos seguidos"
           hint="O padrão protetivo permite no máximo um domingo seguido. Dois exigem enquadramento específico conferido."
         >
-          {(id) => (
+          {(id, accessibility) => (
             <select
-              id={id}
+              id={id} {...accessibility}
               value={draft.sundayRestRule === "COMMERCE" ? draft.maxConsecutiveSundays : 1}
               onChange={(event) => change("maxConsecutiveSundays", Number(event.target.value) as 1 | 2)}
               className={controlClass}
@@ -352,7 +340,7 @@ export function EmployeeEditor({
         </>}
       </div>
       <Field label="Horário de trabalho" hint={input.generationMode === "HOURS_ONLY" ? "Informe uma referência real para propor horários. Sem horário fixo, nenhuma jornada fictícia é atribuída." : "Sem horário fixo, o sistema planeja as folgas, mas não conta essa pessoa por hora."}>
-        {(id) => <select id={id} value={draft.scheduleMode ?? "TIMED"} className={controlClass}
+        {(id, accessibility) => <select id={id} {...accessibility} value={draft.scheduleMode ?? "TIMED"} className={controlClass}
           onChange={(event) => setDraft((previous) => ({
             ...previous,
             scheduleMode: event.target.value as EscalaEmployee["scheduleMode"],
@@ -373,7 +361,7 @@ export function EmployeeEditor({
         checked={draft.planningEnabled !== false}
         onChange={(checked) => setDraft((previous) => ({ ...previous, planningEnabled: checked, planningExclusionReason: checked ? undefined : "Não incluído manualmente nesta proposta." }))}
       />
-      {draft.planningEnabled === false && <Field label="Motivo da não inclusão" hint="Explique a decisão ou a informação que precisa ser corrigida. O cadastro permanece na equipe.">{(id) => <input id={id} maxLength={240} value={draft.planningExclusionReason ?? ""} onChange={(event) => change("planningExclusionReason", event.target.value)} className={controlClass} />}</Field>}
+      {draft.planningEnabled === false && <Field label="Motivo da não inclusão" hint="Explique a decisão ou a informação que precisa ser corrigida. O cadastro permanece na equipe.">{(id, accessibility) => <input id={id} {...accessibility} maxLength={240} value={draft.planningExclusionReason ?? ""} onChange={(event) => change("planningExclusionReason", event.target.value)} className={controlClass} />}</Field>}
       {draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && <fieldset>
         <legend className="text-sm font-semibold">Turnos autorizados</legend>
         <div className="flex flex-wrap gap-x-5">
@@ -414,10 +402,12 @@ export function EmployeeEditor({
           onChange={(value) => change("historyKnown", value)}
         />
       </details>
-      {error && (
-        <p role="alert" className="text-sm text-[color:var(--app-coral)]">
-          {error}
-        </p>
+      {(error || (attempt > 0 && !checked.employee)) && (
+        <div role="alert" tabIndex={-1} className="text-sm text-[color:var(--app-coral)]">
+          <p>{error || "Confira os campos indicados. O cadastro ainda não foi aplicado."}</p>
+          {Object.entries(fieldErrors).filter(([field]) => !["registration", "name", "sector", "role", "activeFrom", "activeUntil"].includes(field))
+            .map(([field, message]) => <p key={field}>{message}</p>)}
+        </div>
       )}
       <div className="flex flex-wrap gap-3">
         <button className={primaryClass} type="submit">
@@ -463,11 +453,9 @@ export function Employees({
     const editor = document.getElementById("escala-employee-editor");
     if (editor) revealRecoveryElement(editor);
   }, [editing, review]);
-  const employees = sortEmployees(input.employees).filter((employee) =>
-    `${employee.name} ${employee.registration} ${employee.sector} ${employee.role}`
-      .toLocaleLowerCase("pt-BR")
-      .includes(search.toLocaleLowerCase("pt-BR")),
-  );
+  const searchInput = useRef<HTMLInputElement>(null);
+  const employeeIndex = useMemo(() => indexEmployees(input.employees), [input.employees]);
+  const employees = useMemo(() => searchEmployees(employeeIndex, search), [employeeIndex, search]);
   const included = employees.filter((employee) => employee.planningEnabled !== false);
   const excluded = employees.filter((employee) => employee.planningEnabled === false);
   const removingEmployee = input.employees.find((employee) => employee.id === removing);
@@ -505,12 +493,15 @@ export function Employees({
           <input
             id={id}
             type="search"
+            ref={searchInput}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className={controlClass}
           />
         )}
       </Field>
+      {search && <button type="button" className={buttonClass} onClick={() => { setSearch(""); searchInput.current?.focus(); }}>Limpar busca de colaboradores</button>}
+      <p role="status" className={styles.muted}>{employees.length} de {input.employees.length} colaborador(es) na consulta.</p>
       {!input.employees.length && (
         <p className="text-sm">Nenhum colaborador cadastrado. Adicione a equipe ou importe o modelo abaixo.</p>
       )}

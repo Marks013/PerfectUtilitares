@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
+  module: vi.fn(), pathname: "/escala" as string | null,
   session: null as null | {
     user: {
       id: string;
@@ -26,6 +27,8 @@ vi.mock("@/components/theme-toggle", () => ({
   ThemeToggle: () => <button type="button">Tema</button>,
 }));
 
+vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: state.module }));
+vi.mock("next/navigation", () => ({ usePathname: () => state.pathname }));
 import { AppShell } from "./app-shell";
 
 async function renderShell() {
@@ -36,7 +39,7 @@ async function renderShell() {
 
 describe("AppShell Jornada navigation", () => {
   beforeEach(() => {
-    state.session = null;
+    state.session = null; state.module.mockReset().mockResolvedValue(null); state.pathname = "/escala";
   });
 
   it("opens Jornada directly in Validar without a dropdown", async () => {
@@ -52,7 +55,7 @@ describe("AppShell Jornada navigation", () => {
     expect(html).not.toContain('href="/jornada/codigos"');
     expect(html).not.toContain('href="/jornada/historico"');
     expect(html).not.toContain('href="/admin/ferias"');
-    expect(html).not.toContain('href="/escalas"');
+    expect(html).not.toContain('href="/escala"');
   });
 
   it("keeps administrative navigation while Jornada options live inside the module", async () => {
@@ -74,7 +77,7 @@ describe("AppShell Jornada navigation", () => {
     expect(html).not.toContain('href="/jornada/codigos"');
     expect(html).not.toContain('href="/jornada/historico"');
     expect(html).toContain('href="/admin/ferias"');
-    expect(html).toContain('href="/escalas"');
+    expect(html).toContain('href="/escala"');
   });
 
   it.each([
@@ -86,5 +89,25 @@ describe("AppShell Jornada navigation", () => {
       user: { id: "user-test", name: "Usuário", email: "user@example.test", ...access },
     };
     expect(await renderShell()).not.toContain('href="/admin/ferias"');
+  });
+});
+
+
+describe("Escalas canonical navigation and operational access", () => {
+  beforeEach(() => { state.session = null; state.module.mockReset().mockResolvedValue(null); state.pathname = "/escala"; });
+  it("shows only the module link for a verified shared session, without account or administrative privileges", async () => {
+    state.module.mockResolvedValue({ id: "verified", tenantId: "default-private-tenant" });
+    const html = await renderShell();
+    expect(html).toMatch(/<a(?=[^>]*href="\/escala")(?=[^>]*aria-current="page")[^>]*>/);
+    expect(html).not.toContain('href="/conta"'); expect(html).not.toContain('href="/admin/'); expect(html).not.toContain("default-private-tenant");
+  });
+  it.each([{ status: "BLOCKED" as const, tenantId: "tenant-test" }, { status: "ACTIVE" as const, tenantId: undefined }])("does not fall back to shared access for a denied account: %j", value => {
+    state.session = { user: { id: "u1", name: "Conta", email: "user@example.test", role: "USER", ...value } };
+    state.module.mockResolvedValue({ id: "verified", tenantId: "default-private-tenant" });
+    return renderShell().then(html => { expect(html).not.toContain('href="/escala"'); expect(state.module).not.toHaveBeenCalled(); });
+  });
+  it("keeps public navigation available without exposing the protected module on a session-store failure", async () => {
+    state.module.mockRejectedValue(new Error("private internal failure"));
+    const html = await renderShell(); expect(html).toContain('href="/pdf"'); expect(html).not.toContain('href="/escala"'); expect(html).not.toContain("private internal failure");
   });
 });

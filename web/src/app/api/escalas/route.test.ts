@@ -5,8 +5,8 @@ import { EscalaSolverError } from "@/lib/escalas/solver-client";
 import { DELETE, GET, PATCH, POST } from "./route";
 
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
-const candidateDb = vi.hoisted(() => ({ row: vi.fn(), revision: vi.fn(), peers: vi.fn(), solver: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: { findFirst: candidateDb.row, findMany: candidateDb.peers }, escalaRevision: { findUnique: candidateDb.revision } } }));
+const candidateDb = vi.hoisted(() => ({ row: vi.fn(), revision: vi.fn(), peers: vi.fn(), solver: vi.fn(), creationGrant: vi.fn() }));
+vi.mock("@/lib/prisma", () => ({ prisma: { escalaBranchAccess: { findFirst: candidateDb.creationGrant }, escalaWorkspace: { findFirst: candidateDb.row, findMany: candidateDb.peers }, escalaRevision: { findUnique: candidateDb.revision } } }));
 vi.mock("@/lib/escalas/solver-client", async original => ({ ...await original<typeof import("@/lib/escalas/solver-client")>(), solveEscala: candidateDb.solver }));
 vi.mock("@/lib/escalas/solver-transport", async original => {
   const crypto = await import("node:crypto");
@@ -24,6 +24,7 @@ const workspace = { id: "w1", revision: 1, status: "DRAFT", input, canEdit: true
 const command = (body: unknown, headers: HeadersInit = { origin: "http://localhost", "content-type": "application/json" }) => new Request("http://localhost/api/escalas", { method: "POST", headers, body: JSON.stringify(body) });
 beforeEach(() => {
   vi.clearAllMocks();
+  candidateDb.creationGrant.mockResolvedValue(null);
   mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
   mocks.list.mockResolvedValue([workspace]); mocks.get.mockResolvedValue(workspace); mocks.create.mockResolvedValue(workspace); mocks.save.mockResolvedValue({ ...workspace, revision: 2 });
   mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input, validation: { valid: true }, preparation: { adjustedEmployeeIds: [], excludedEmployeeIds: [], generatedCoverageSlots: 7, includedEmployees: 81, untimedEmployees: 12 } });
@@ -31,6 +32,16 @@ beforeEach(() => {
 });
 
 describe("/api/escalas", () => {
+  it.each([false, true])("lists authorized workspaces and derives operator creation from editable grants=%s", async editable => {
+    mocks.session = { user: { id: "planner", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+    candidateDb.creationGrant.mockResolvedValue(editable ? { branchCode: "07" } : null);
+    const response = await GET(new Request("http://localhost/api/escalas"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ workspaces: [workspace], canCreate: editable });
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(candidateDb.creationGrant).toHaveBeenCalledWith({ where: { tenantId: "t1", userId: "planner", role: { in: ["PLANNER", "APPROVER"] } }, select: { branchCode: true } });
+    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1", userId: "planner", admin: false }));
+  });
   it("successfully round-trips a real service-produced receipt through GENERATE and rejects tampering before the solver", async () => {
     const value = newInput("02", "Synthetic", "2026-11", 42);
     value.startDate = "2026-11-02"; value.endDate = "2026-11-08"; delete value.visibleMonth;

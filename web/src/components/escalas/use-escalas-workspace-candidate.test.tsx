@@ -382,3 +382,57 @@ describe("trusted candidate lifecycle in the real workspace hook", () => {
     expect(calls.some(body => body.action === "SAVE" || body.action === "PUBLISH")).toBe(false);
   });
 });
+
+
+describe("workspace access recovery", () => {
+  it("reloads the initial list after unlocking without a previously selected workspace", async () => {
+    for (const cleanup of hooks.cleanup) cleanup?.();
+    hooks.slots = []; hooks.deps = []; hooks.cleanup = []; hooks.effects = []; hooks.cursor = 0; hooks.changed = false;
+    const fetcher = vi.mocked(fetch);
+    fetcher.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: { code: "ESCALA_ACCESS_REQUIRED", message: "Acesso expirado" } }) } as Response);
+    render(); await settle();
+    expect(current.workspace).toBeNull(); expect(current.workspaces).toEqual([]); expect(current.canCreate).toBe(false);
+    window.dispatchEvent(new Event("escalas:unlocked")); await settle();
+    expect(current.workspace).toBeNull();
+    expect(current.workspaces.map(item => item.id)).toEqual(["plan-08", "plan-07"]);
+    expect(current.canCreate).toBe(true); expect(current.busy).toBe(""); expect(current.error).toBe("");
+    expect(calls.filter(item => ["SAVE", "CREATE", "PUBLISH"].includes(String(item.action)))).toEqual([]);
+  });
+  it("blocks a stale editing callback immediately after locking and restores only after reloading", async () => {
+    const previous = structuredClone(current.input), staleUpdate = current.update;
+    if (!previous) throw new Error("Workspace not loaded");
+    window.dispatchEvent(new Event("escalas:unlock-required"));
+    staleUpdate({ ...previous, branchName: "Rejected while locked" }); await settle();
+    expect(current.canEdit).toBe(false); expect(current.dirty).toBe(false); expect(current.input).toEqual(previous);
+    window.dispatchEvent(new Event("escalas:unlocked")); await settle();
+    expect(current.canEdit).toBe(true); expect(current.input).toEqual(previous);
+  });
+  it("does not queue a write for a read-only workspace even if a stale control invokes update", async () => {
+    const source = sources.get("plan-08");
+    if (!source) throw new Error("Workspace not found");
+    sources.set("plan-08", { ...source, canEdit: false, canPublish: false });
+    await open(); const previous = structuredClone(current.input);
+    if (!previous) throw new Error("Workspace not loaded");
+    current.update({ ...previous, branchName: "Not permitted" }); await settle();
+    expect(current.canEdit).toBe(false); expect(current.dirty).toBe(false); expect(current.input).toEqual(previous);
+    await vi.advanceTimersByTimeAsync(1000); await settle();
+    expect(calls.filter(item => item.action === "SAVE")).toEqual([]);
+  });
+  it("requests unlock on a non-JSON 401 instead of leaving the editing controls enabled", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 401, json: async () => { throw new SyntaxError("synthetic expired response"); } } as unknown as Response);
+    await open();
+    expect(current.canEdit).toBe(false); expect(current.workspace?.id).toBe("plan-08"); expect(current.error).not.toBe("");
+  });
+});
+
+
+describe("locked proposal protection", () => {
+  it("does not apply a prepared proposal through a stale callback while the session is locked", async () => {
+    await generate(); const previous = structuredClone(current.input), apply = current.applyGenerated;
+    expect(current.generated).not.toBeNull();
+    window.dispatchEvent(new Event("escalas:unlock-required")); apply(); await settle();
+    expect(current.input).toEqual(previous); expect(current.dirty).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000); await settle();
+    expect(calls.filter(item => item.action === "SAVE")).toEqual([]);
+  });
+});
