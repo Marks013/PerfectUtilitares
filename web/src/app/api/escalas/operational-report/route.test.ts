@@ -62,7 +62,7 @@ describe("GET optional operational PDF", () => {
   it.each((["REST_ONLY", "DAYS_AND_HOURS", "HOURS_ONLY"] as const).flatMap(mode => [false, true].map(withProtected => ({ mode, withProtected }))))("returns real reference PDF in $mode with protected=$withProtected without clearing pending state", async ({ mode, withProtected }) => {
     const current = await mocks.get();
     current.input.generationMode = mode;
-    current.input.shifts[0].segments[2].end = 1020;
+    current.input.shifts[0].segments[2].end = 1044;
     current.input.assignments = withProtected ? [{ employeeId: "a", date: "2026-12-02", kind: "ABSENCE", locked: true }, { employeeId: "a", date: "2026-12-25", kind: "HOLIDAY", locked: true }] : [];
     current.input.needsRegeneration = true;
     current.validation = validateEscala(current.input);
@@ -78,7 +78,7 @@ describe("GET optional operational PDF", () => {
       const parts: string[] = [];
       for (let i = 1; i <= document.numPages; i++) { const content = await (await document.getPage(i)).getTextContent(); parts.push(content.items.filter(item => "str" in item).map(item => item.str).join(" ")); }
       const text = parts.join(" ").replace(/\s+/g, " ");
-      expect(text).toContain("Pessoa sintética"); expect(text).toContain("08:00-12:00"); expect(text).toContain("13:00-17:00");
+      expect(text).toContain("Pessoa sintética"); expect(text).toContain("08:00-12:00"); expect(text).toContain("13:00-17:24");
       expect(text).toContain("sem grade diária"); expect(text).not.toMatch(/Calendário mensal|Mapa diário|Pessoas-dia/);
     } finally { await task.destroy(); }
     expect(current).toEqual(before); expect(current.input.needsRegeneration).toBe(true); expect(current.validation.valid).toBe(false);
