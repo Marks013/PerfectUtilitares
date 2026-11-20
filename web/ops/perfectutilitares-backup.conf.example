@@ -1,6 +1,11 @@
+# Defaults from perfectutilitares-backup. Daily snapshots for 7 days,
+# then the latest snapshot of each ISO week until the 30-day limit.
+# These values document existing runtime defaults. This file is not applied
+# automatically to /etc/perfectutilitares-backup.conf on any server.
 BACKUP_ROOT=/home/ubuntu/perfectutilitares-backups
-BACKUP_KEEP_COUNT=14
+BACKUP_DAILY_KEEP_DAYS=7
+BACKUP_MAX_AGE_DAYS=30
 
-# Opcional. Configure antes um remote no rclone; nenhuma credencial fica aqui.
-# O backup remoto é validado byte a byte com rclone check após o envio.
+# Optional. Configure the rclone remote first; credentials stay outside
+# this file. A remote copy is checked after uploading.
 BACKUP_RCLONE_REMOTE=
