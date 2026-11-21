@@ -76,4 +76,3 @@ export function matchesRestOnlyReferences(input: EscalaInput, assignments: Escal
       || references.get(day.employeeId)?.get(paidMinutes(shift)) === day.shiftId));
   });
 }
-

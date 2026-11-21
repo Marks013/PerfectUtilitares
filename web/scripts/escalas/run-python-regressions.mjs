@@ -7,6 +7,6 @@ const result = spawnSync("docker", ["run", "--rm", "--pull=never", "--read-only"
   "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m,uid=1001,gid=1001,mode=1770", "--cpus", "1", "--memory", "1536m",
   "--pids-limit", "96", "--env", "PYTHONDONTWRITEBYTECODE=1", "--mount", `type=bind,src=${directory},dst=/model,readonly`,
   "--workdir", "/model", "--entrypoint", "python", process.env.ESCALAS_TEST_IMAGE || "web-escalas-solver",
-  "-B", "-m", "unittest", "discover", "-s", ".", "-p", "test_*.py"], { stdio: "inherit", timeout: 600_000 });
+  "-B", "-X", "faulthandler", "-m", "unittest", "discover", "-s", ".", "-p", "test_*.py", "-v"], { stdio: "inherit", timeout: 600_000 });
 if (result.error) console.error("The scheduling regression processor could not finish.");
 process.exitCode = result.status ?? 1;
