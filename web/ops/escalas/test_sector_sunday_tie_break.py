@@ -79,6 +79,12 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertEqual((len(spreads), len(losses), upper), (1, 1, 4))
         self.assertEqual(values[spreads[0].index], 10000)
         self.assertEqual(values[losses[0].index], 0)
+        # The sector-only tie-break must not inject division equalities into
+        # the model before the higher-priority coverage searches.
+        self.assertFalse(any(constraint.HasField('int_div')
+                             for constraint in model.proto.constraints))
+        self.assertFalse(any(variable.name.startswith('sector-sunday-rate:')
+                             for variable in model.proto.variables))
         preserve_sunday_presence(model, data['employees'], SUNDAYS, work, values)
 
         protected_roles = {}
@@ -223,6 +229,17 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         data['employees'][0]['scheduleMode'] = 'MISSING'
         self.assertEqual(sector_sunday_distribution(model, groups, data['employees'], SUNDAYS,
             work, {}, data['policy'], values), ([], [], 0))
+        self.assertEqual(len(model.proto.variables), before)
+
+    def test_different_eligible_headcounts_do_not_create_false_spread(self):
+        data, model, work, values, groups, _, _ = self.synthetic_cross_role_case()
+        person = data['employees'][0]
+        baseline = {(person['id'], SUNDAYS[1]): {'kind': 'ABSENCE'}}
+        before = len(model.proto.variables)
+        spreads, losses, maximum = sector_sunday_distribution(
+            model, groups, data['employees'], SUNDAYS, work,
+            baseline, data['policy'], values)
+        self.assertEqual((spreads, losses, maximum), ([], [], 0))
         self.assertEqual(len(model.proto.variables), before)
 
     def test_unavailable_sundays_do_not_create_fake_sector_rates(self):
