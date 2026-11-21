@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
 import { strFromU8, unzipSync } from "fflate";
 import { newEmployee, newInput, changeMixed42Sectors } from "../src/components/escalas/workspace-model";
@@ -29,6 +29,55 @@ async function pdfText(bytes: Buffer) {
   } finally { await task.destroy(); }
 }
 
+async function expectBasicDownloads(page: Page, workspace: EscalaWorkspace, employeeName: string) {
+  await openEscalasArea(page, "roster");
+  for (const format of ["pdf", "xlsx"] as const) {
+    const matches = ({ pathname, searchParams }: URL) => pathname === "/api/escalas/export"
+      && searchParams.get("id") === workspace.id && searchParams.get("revision") === String(workspace.revision)
+      && searchParams.get("format") === format && searchParams.get("mode") === "both"
+      && searchParams.get("projection") === "BASIC_SCHEDULE";
+    const capture: { bytes?: Buffer } = {};
+    // Read the real response before relaying it. Chromium's trace body may be empty for binary fetches.
+    const relay = async (route: Route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const upstream = await route.fetch({ maxRedirects: 0 });
+      try {
+        capture.bytes = await upstream.body();
+        await route.fulfill({ response: upstream, body: capture.bytes });
+      } finally { await upstream.dispose(); }
+    };
+    await page.route(matches, relay);
+    try {
+      const [response] = await Promise.all([
+        page.waitForResponse(response => response.request().method() === "GET" && matches(new URL(response.url()))),
+        page.getByRole("button", { name: `Gerar ${format.toUpperCase()}`, exact: true }).click(),
+      ]);
+      expect(response.status()).toBe(200);
+      const link = page.getByRole("link", { name: `Baixar ${format.toUpperCase()}`, exact: true });
+      await expect(link).toHaveAttribute("download", new RegExp(`-r${workspace.revision}-both\\.${format}$`));
+      const [download] = await Promise.all([page.waitForEvent("download", { timeout: 15_000 }), link.click()]);
+      try {
+        const bytes = await downloadBytes(download);
+        const expected = capture.bytes;
+        if (!expected?.length) throw new Error(`A resposta real de ${format} voltou vazia.`);
+        expect(bytes.equals(expected), `Arquivo ${format}: ${bytes.length} baixados, ${expected.length} enviados`).toBe(true);
+        if (format === "pdf") {
+          const text = await pdfText(bytes);
+          expect(text).toContain(employeeName);
+          expect(text).not.toMatch(/Desfalques de cobertura|Capacidade semanal/);
+        } else {
+          const archive = unzipSync(bytes);
+          expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/Capacidade|Desfalques|Análises|Analises/);
+        }
+      } finally { await download.delete(); }
+    } finally { await page.unroute(matches, relay); }
+  }
+}
+
+function reviewedConfiguration(input: EscalaInput): EscalaInput["policy"] {
+  return { ...input.policy, source: "Referência sintética E2E", reviewed: true, reviewedBy: "Conferência administrativa E2E" };
+}
+
 async function editName(page: Page, previous: string, next: string) {
   await openEscalasArea(page, "team");
   const edit = page.getByRole("button", { name: `Editar ${previous}`, exact: true, includeHidden: true });
@@ -55,10 +104,14 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     const input = newInput(syntheticBranch("AUTHORIZED"), "Filial autorizada", "2026-12", 40);
     input.shifts = [{ id: "day", name: "Diurno aprovado", segments: [{ kind: "WORK", start: 480, end: 720 }, { kind: "BREAK", start: 720, end: 780 }, { kind: "WORK", start: 780, end: 1020 }] }];
     input.employees = [{ ...newEmployee(40, "day"), id: "person", registration: "0001", name: "Pessoa nominal", sector: "Loja", role: "Operador", activeFrom: "2020-01-01" }];
+    input.policy = { ...reviewedConfiguration(input), holidayDates: ["2026-12-25"], closedDates: ["2026-12-25"] };
+    input.employees[0].scheduleMode = "TIMED";
     input.assignments = [{ employeeId: "person", date: "2026-12-09", kind: "ABSENCE", locked: true }, { employeeId: "person", date: "2026-12-25", kind: "HOLIDAY", locked: true }];
     const approved = await scope.approve(input);
     let administrative = newInput(syntheticBranch("ADMIN"), "Configuração administrativa", "2026-12", 42);
     administrative.employees = [{ ...newEmployee(42, administrative.shifts[0].id), id: "admin-person", registration: "0099", name: "Pessoa administrativa", sector: "Loja", role: "Operador", activeFrom: "2020-01-01" }];
+    administrative.policy = reviewedConfiguration(administrative);
+    administrative.employees[0].scheduleMode = "TIMED";
     administrative = changeMixed42Sectors(administrative, ["Loja"]);
     expect(administrative.mixed42Sectors).toEqual(["Loja"]);
     const adminPolicy = await scope.approve(administrative);
@@ -107,7 +160,13 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect((await page.request.get(`/api/escalas?id=${foreignWorkspace.id}`)).status()).toBe(404);
     expect((await page.request.get(`/api/escalas/export?id=${foreignWorkspace.id}&revision=${foreignWorkspace.revision}&format=pdf`)).status()).toBe(404);
     for (const action of ["SAVE", "GENERATE"] as const) expect((await post({ action, id: foreignWorkspace.id, expectedRevision: foreignWorkspace.revision, ...(action === "SAVE" ? { input: workspace.input } : {}) })).status()).toBe(404);
-    expect((await page.request.delete("/api/escalas", { headers, data: { workspaceId: foreignWorkspace.id, expectedRevision: foreignWorkspace.revision } })).status()).toBe(404);
+    // Operators have no delete capability, so both owned and foreign IDs are denied before lookup.
+    const deleteBody = { workspaceId: foreignWorkspace.id, expectedRevision: foreignWorkspace.revision };
+    expect((await page.request.delete("/api/escalas", { headers, data: deleteBody })).status()).toBe(403);
+    expect((await page.request.delete("/api/escalas", { headers, data: { workspaceId: workspace.id, expectedRevision: workspace.revision } })).status()).toBe(403);
+    // The authorized administrator still cannot resolve an ID from another tenant.
+    expect((await scope.admin.request.delete("/api/escalas", { headers, data: deleteBody })).status()).toBe(404);
+    expect((await readWorkspace(foreign.admin, foreignWorkspace.id)).revision).toBe(foreignWorkspace.revision);
     await selectEscalasWorkspace(page, workspace);
     const list = await page.request.get("/api/escalas").then(response => response.json()) as { workspaces: EscalaWorkspace[] };
     expect(list.workspaces.map(item => item.id)).toEqual([workspace.id]);
@@ -145,7 +204,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect(deniedImport.status()).toBe(403);
     expect((await page.request.get("/api/escalas/access/admin")).status()).toBe(403);
     expect((await page.request.post("/api/escalas/approved-policy", { headers, data: { action: "REVOKE", id: approved.id } })).status()).toBe(403);
-    expect((await post({ action: "PUBLISH", id: workspace.id, expectedRevision: workspace.revision, input: workspace.input })).status()).toBe(403);
+    expect((await post({ action: "PUBLISH", id: workspace.id, expectedRevision: workspace.revision })).status()).toBe(403);
 
     // The administrator creates the definition. The branch may only assign that existing permitted reference.
     const synced = await scope.admin.request.post("/api/escalas/turnos", { headers, data: { action: "SYNC", confirm: true, sources: [{ workspaceId: workspace.id, expectedRevision: workspace.revision, localShiftIds: ["day"] }] } });
@@ -161,7 +220,11 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect(preview.canApply).toBe(true); expect(preview.validationIssues).toEqual([]);
     const swapping = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "APPLY_SWAP");
     await swap.getByRole("button", { name: "Confirmar e salvar atribuição", exact: true }).click();
-    const swapped = await swapping; expect(swapped.status()).toBe(200); workspace = await swapped.json() as EscalaWorkspace;
+    const swapped = await swapping;
+    const swappedBody = await swapped.json();
+    const swapCode = typeof swappedBody?.error?.code === "string" && /^[A-Z_]+$/.test(swappedBody.error.code) ? swappedBody.error.code : "UNCLASSIFIED";
+    expect(swapped.status(), `APPLY_SWAP public code: ${swapCode}`).toBe(200);
+    workspace = swappedBody as EscalaWorkspace;
     expect(workspace.input.assignments).toEqual(expect.arrayContaining(input.assignments));
     expect((await readWorkspace(scope.admin, adminOnlyWorkspace.id)).input.mixed42Sectors).toEqual(["Loja"]);
 
@@ -185,7 +248,10 @@ test("nominal access owns its scope, preserves admin configuration, operates the
         && new URL(response.url()).pathname === "/api/escalas" && response.request().postDataJSON()?.action === "GENERATE"
         && response.request().postDataJSON()?.id === workspace.id, { timeout: 60_000 });
       await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
-      const response = await generating; expect(response.status()).toBe(200); const proposal = await response.json();
+      const response = await generating;
+      const proposal = await response.json();
+      const generationCode = typeof proposal?.error?.code === "string" && /^[A-Z_]+$/.test(proposal.error.code) ? proposal.error.code : "UNCLASSIFIED";
+      expect(response.status(), `GENERATE public code: ${generationCode}`).toBe(200);
       expect(["FEASIBLE", "OPTIMAL"]).toContain(proposal.result.status); expect(proposal.validation.valid).toBe(true); expect(proposal.proposalProof).toBeTruthy();
       expect(proposal.proposalInput.assignments).toEqual(expect.arrayContaining(input.assignments));
       expect(proposal.proposalInput.assignments.some((day: { kind: string }) => day.kind === "OFF")).toBe(true);
@@ -222,25 +288,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect((await page.request.get(exportUrl("pdf", "ADMIN_FULL"))).status()).toBe(403);
     expect((await page.request.get(`/api/escalas/operational-report?workspaceId=${workspace.id}&revision=${workspace.revision}&month=2026-12&section=journeys`)).status()).toBe(403);
     expect((await page.request.post("/api/escalas/turnos/export/manifest", { headers, data: { month: 12, year: 2026, selections: [{ workspaceId: workspace.id, revision: workspace.revision, employees: [{ employeeId: "person", localShiftId: "day" }] }] } })).status()).toBe(403);
-    await openEscalasArea(page, "roster");
-    for (const format of ["pdf", "xlsx"] as const) {
-      const preparing = page.waitForResponse(response => {
-        const { pathname, searchParams } = new URL(response.url());
-        return response.request().method() === "GET" && pathname === "/api/escalas/export"
-          && searchParams.get("id") === workspace.id && searchParams.get("revision") === String(workspace.revision)
-          && searchParams.get("format") === format && searchParams.get("mode") === "both"
-          && searchParams.get("projection") === "BASIC_SCHEDULE";
-      });
-      await page.getByRole("button", { name: `Gerar ${format.toUpperCase()}`, exact: true }).click();
-      const response = await preparing; expect(response.status()).toBe(200);
-      const downloading = page.waitForEvent("download"); await page.getByRole("link", { name: `Baixar ${format.toUpperCase()}`, exact: true }).click();
-      const download = await downloading;
-      try {
-        const bytes = await downloadBytes(download); expect(bytes).toEqual(await response.body());
-        if (format === "pdf") { const text = await pdfText(bytes); expect(text).toContain("Pessoa autorizada"); expect(text).not.toMatch(/Desfalques de cobertura|Capacidade semanal/); }
-        else { const archive = unzipSync(bytes); expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/Capacidade|Desfalques|Análises|Analises/); }
-      } finally { await download.delete(); }
-    }
+    await expectBasicDownloads(page, workspace, "Pessoa autorizada");
 
     // A real account takes precedence over a valid module cookie and cannot borrow its grants.
     const noGrant = await scope.createUser("OPERATOR");

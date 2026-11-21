@@ -104,7 +104,11 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
     // A committed approval can outlive a lost/unreadable acknowledgement. Preserve its possible signer before sending.
     retainedApprovers.add(owner.id);
     const response = await admin.request.post("/api/escalas/approved-policy", { headers, data });
-    expect(response.status()).toBe(201); const { policy } = await response.json() as { policy: EscalaApprovedPolicyView }; policies.push(policy.id); return policy;
+    const body = await response.json() as { policy?: EscalaApprovedPolicyView; error?: { code?: unknown } };
+    const code = typeof body.error?.code === "string" && /^[A-Z_]+$/.test(body.error.code) ? body.error.code : "UNCLASSIFIED";
+    expect(response.status(), `APPROVE public code: ${code}`).toBe(201);
+    if (!body.policy) throw new Error("Approved configuration missing from response");
+    policies.push(body.policy.id); return body.policy;
   }
   async function cleanup() {
     const failures: Error[] = [];
@@ -169,8 +173,12 @@ export async function removeOwnedWorkspace(page: Page, owned: Pick<EscalaWorkspa
 }
 
 export function isImportResponse(response: Response, action: "PREVIEW_REPLACE" | "APPLY_REPLACE") {
-  return response.request().method() === "POST" && new URL(response.url()).pathname === "/api/escalas/import"
-    && Boolean(response.request().postDataBuffer()?.includes(Buffer.from(`"action":"${action}"`)));
+  const request = response.request();
+  if (request.method() !== "POST" || new URL(response.url()).pathname !== "/api/escalas/import") return false;
+  // Chromium response events may omit multipart bodies. Waiters are armed for one
+  // UI action after the preceding preview/apply settled and validate its response.
+  const body = request.postDataBuffer();
+  return body === null || body.includes(Buffer.from(`"action":"${action}"`));
 }
 
 export async function importPanel(page: Page, purpose: ImportSyncPurpose): Promise<Locator> {
@@ -194,6 +202,7 @@ export async function previewReplacement(page: Page, purpose: ImportSyncPurpose,
   await panel.getByRole("button", { name: purpose === "EMPLOYEES" ? "Conferir substituição de equipe" : "Conferir substituição de afastamentos", exact: true }).click();
   const response = await receiving; expect(response.status()).toBe(200);
   const { preview } = await response.json() as { preview: ImportSyncPreview };
+  expect(preview).toMatchObject({ purpose });
   await expect(panel.getByRole("region", { name: "Conferência da substituição", exact: true })).toBeVisible();
   return { panel, preview };
 }
@@ -205,6 +214,7 @@ export async function applyReplacement(page: Page, panel: Locator, purpose: Impo
   await panel.getByRole("button", { name: purpose === "EMPLOYEES" ? "Confirmar e salvar substituição de equipe" : "Confirmar e salvar substituição de afastamentos", exact: true }).click();
   const response = await receiving; expect(response.status()).toBe(200);
   const result: ImportSyncApplyResult = await response.json();
+  expect(result.summary.purpose).toBe(purpose);
   expect(result.workspace.status).toBe("DRAFT");
   expect(result.workspace.revision).toBe(result.summary.context.revision + 1);
   await expect(page.locator('[data-state="saved"]')).toBeVisible();

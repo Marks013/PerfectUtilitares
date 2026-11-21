@@ -15,6 +15,7 @@ DO $$
 DECLARE
   v_snapshot jsonb;
   v_count integer;
+  v_constraint text;
 BEGIN
   INSERT INTO "Tenant" ("id", "name", "slug", "updatedAt") VALUES
     ('policy-test-a', 'Synthetic A', 'policy-test-a', CURRENT_TIMESTAMP),
@@ -115,6 +116,26 @@ BEGIN
   INSERT INTO "EscalaWorkspace" ("id", "tenantId", "branchCode", "branchName", "startDate", "endDate", "updatedAt") VALUES
     ('policy-work-a', 'policy-test-a', '02', 'Synthetic A', '2026-11-30', '2027-01-03', CURRENT_TIMESTAMP),
     ('policy-work-b', 'policy-test-b', '02', 'Synthetic B', '2026-11-30', '2027-01-03', CURRENT_TIMESTAMP);
+  -- A complete Sunday period is accepted only when its immutable snapshot declares it.
+  INSERT INTO "EscalaBranchPolicyVersion" ("id", "tenantId", "branchCode", "startDate", "endDate",
+    "visibleMonth", "version", "snapshotSchemaVersion", "snapshot", "snapshotHash", "approvedById", "approvedAt")
+  VALUES ('policy-test-sunday', 'policy-test-a', '02', '2026-11-29', '2027-01-02', '2026-12',
+    1, 1, jsonb_set(v_snapshot, '{configuration}', (v_snapshot->'configuration') ||
+      '{"startDate":"2026-11-29","endDate":"2027-01-02","planningWeekStartsOn":"SUNDAY"}'),
+    repeat('d', 64), 'policy-admin-a', '2026-11-13 12:00:00');
+  BEGIN
+    INSERT INTO "EscalaBranchPolicyVersion" ("id", "tenantId", "branchCode", "startDate", "endDate",
+      "visibleMonth", "version", "snapshotSchemaVersion", "snapshot", "snapshotHash", "approvedById", "approvedAt")
+    VALUES ('policy-test-undeclared-sunday', 'policy-test-a', '02', '2026-11-29', '2027-01-02', '2026-12',
+      2, 1, jsonb_set(v_snapshot, '{configuration}', (v_snapshot->'configuration') ||
+        '{"startDate":"2026-11-29","endDate":"2027-01-02"}'),
+      repeat('e', 64), 'policy-admin-a', '2026-11-13 12:00:00');
+    RAISE EXCEPTION 'Expected Sunday period without a declared calendar to be rejected';
+  EXCEPTION WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+    IF v_constraint IS DISTINCT FROM 'EscalaPolicy_period' THEN RAISE; END IF;
+  END;
+
   -- Legacy all-null reference remains allowed. No backfill is inferred.
   INSERT INTO "EscalaRevision" ("id", "tenantId", "workspaceId", "revision", "status", "input") VALUES
     ('policy-legacy', 'policy-test-a', 'policy-work-a', 1, 'DRAFT', '{}'::jsonb);

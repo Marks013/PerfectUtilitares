@@ -1,3 +1,4 @@
+import { applyLocalHolidayCalendar, closedHolidayDates } from "./calendar";
 import { EscalaError } from "./errors";
 import type { EscalaCapability } from "./permissions";
 import type { EscalaInput } from "./types";
@@ -26,9 +27,15 @@ export function assertEscalaProtectedAssignments(previous: EscalaInput, next: Es
       if (!same(entry, nextAssignments.get(key(entry))) && !unlock(entry, nextAssignments.get(key(entry)))) forbidden();
     }
   }
+  let trustedHolidays: Set<string> | undefined;
   for (const entry of next.assignments) {
     const old = previousAssignments.get(key(entry));
-    if (!old && trustedProposal && entry.kind === "HOLIDAY" && previous.policy.holidayDates.includes(entry.date)) continue;
+    if (!old && trustedProposal && entry.kind === "HOLIDAY") {
+      // A signed proposal may project server-derived store closures. Never use
+      // holiday data from the candidate to authorize a previously unknown date.
+      trustedHolidays ??= new Set([...previous.policy.holidayDates, ...closedHolidayDates(applyLocalHolidayCalendar(previous))]);
+      if (trustedHolidays.has(entry.date)) continue;
+    }
     const changedLock = old ? entry.locked !== old.locked : entry.locked !== false;
     if ((entry.kind === "ABSENCE" || entry.kind === "HOLIDAY" || changedLock) && !same(old, entry) && !unlock(old, entry)) forbidden();
   }

@@ -154,35 +154,37 @@ test("replacement blocks protected collisions, then preserves borders and locked
   test.setTimeout(150_000);
   await loginAsAdmin(page);
   const origin = new URL(page.url()).origin;
-  const input = newInput("E2E-ABS-" + Date.now().toString(36), "Afastamentos sintéticos", "2026-11", 40);
+  const input = newInput("E2E-ABS-" + Date.now().toString(36), "Afastamentos sintéticos", "2026-12", 40);
   input.employees = ["a", "b"].map((id, index) => ({ id, registration: "000" + (index + 1), name: index ? "Bruno Sintético" : "Ana Sintética", sector: "Loja", role: "Repositor", weeklyHours: 40, weeklyHoursMode: "BRANCH", shiftIds: [input.shifts[0].id], activeFrom: "", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 2, preferredOffDays: [], historyKnown: false, history: [] }));
   input.assignments = [
-    { employeeId: "a", date: "2026-11-04", kind: "WORK", shiftId: input.shifts[0].id, locked: true },
-    { employeeId: "b", date: "2026-11-10", kind: "ABSENCE", locked: true },
-    { employeeId: "b", date: "2026-10-31", kind: "ABSENCE", locked: true },
-    { employeeId: "b", date: "2026-12-01", kind: "ABSENCE", locked: true },
+    { employeeId: "a", date: "2026-12-04", kind: "WORK", shiftId: input.shifts[0].id, locked: true },
+    { employeeId: "b", date: "2026-12-10", kind: "ABSENCE", locked: true },
+    { employeeId: "b", date: input.startDate, kind: "ABSENCE", locked: true },
+    { employeeId: "b", date: input.endDate, kind: "ABSENCE", locked: true },
   ];
   const createdResponse = await page.request.post("/api/escalas", { headers: { origin }, data: { action: "CREATE", input } });
-  expect(createdResponse.status()).toBe(201);
-  const created: EscalaWorkspace = await createdResponse.json();
+  const createBody = await createdResponse.json();
+  const createCode = typeof createBody?.error?.code === "string" && /^[A-Z_]+$/.test(createBody.error.code) ? createBody.error.code : "UNCLASSIFIED";
+  expect(createdResponse.status(), `CREATE public code: ${createCode}`).toBe(201);
+  const created: EscalaWorkspace = createBody;
   disposableId = created.id;
   await page.goto("/escala");
   await selectEscalasWorkspace(page, created);
   const csvRows = [
-    ["Período", "01/11/2026", "a", "30/11/2026"],
+    ["Período", "01/12/2026", "a", "31/12/2026"],
     ["Empresa", "Tipo", "Cadastro", "Nome", "Função", "Admissão", "Afastamento", "CID", "Situação", "Término", "Dias"],
-    ["0001", "1", "0001", "Nome não utilizado", "Função não utilizada", "01/01/2020", "03/11/2026", "MEDICAL-DO-NOT-KEEP", "PRIVATE", "2", "Férias", "06/11/2026", "4"],
-    ["0001", "1", "0002", "Nome não utilizado", "Função não utilizada", "01/01/2020", "09/11/2026", "", "", "2", "Férias", "11/11/2026", "3"],
+    ["0001", "1", "0001", "Nome não utilizado", "Função não utilizada", "01/01/2020", "03/12/2026", "MEDICAL-DO-NOT-KEEP", "PRIVATE", "2", "Férias", "06/12/2026", "4"],
+    ["0001", "1", "0002", "Nome não utilizado", "Função não utilizada", "01/01/2020", "09/12/2026", "", "", "2", "Férias", "11/12/2026", "3"],
   ];
   const csv = csvRows.map(row => row.map(value => '"' + value.replaceAll('"', '""') + '"').join(",")).join("\r\n");
-  const scope = { startDate: "2026-11-01", endDate: "2026-11-30" };
+  const scope = { startDate: "2026-12-01", endDate: "2026-12-31" };
   const blocked = await previewReplacement(page, "ABSENCES", { name: "FPHI105-conflito.csv", mimeType: "text/csv", buffer: Buffer.from(csv) }, scope);
   expect(blocked.preview.canApply).toBe(false);
   expect(blocked.preview.blockers.some(problem => problem.code === "PROTECTED_ASSIGNMENT")).toBe(true);
   expect(JSON.stringify(blocked.preview)).not.toContain("MEDICAL-DO-NOT-KEEP");
   await expect(blocked.panel.getByRole("checkbox", { name: /^Confirmo substituir/ })).toBeDisabled();
   expect((await page.request.get("/api/escalas?id=" + created.id).then(response => response.json())).input).toEqual(created.input);
-  const safeRows = [...csvRows.slice(0, 2), [...csvRows[2].slice(0, 11), "03/11/2026", "1"], [...csvRows[2].slice(0, 6), "05/11/2026", ...csvRows[2].slice(7)], csvRows[3]];
+  const safeRows = [...csvRows.slice(0, 2), [...csvRows[2].slice(0, 11), "03/12/2026", "1"], [...csvRows[2].slice(0, 6), "05/12/2026", ...csvRows[2].slice(7)], csvRows[3]];
   const safeCsv = safeRows.map(row => row.map(value => JSON.stringify(value)).join(",")).join("\r\n");
   const reviewed = await previewReplacement(page, "ABSENCES", { name: "FPHI105-sem-colisao.csv", mimeType: "text/csv", buffer: Buffer.from(safeCsv) }, scope);
   expect(reviewed.preview.canApply).toBe(true); expect(reviewed.preview.blockers).toEqual([]);
@@ -204,7 +206,7 @@ test("replacement blocks protected collisions, then preserves borders and locked
   expect(generatedResponse.status(), `GENERATE public code: ${failureCode}`).toBe(200);
   expect(["FEASIBLE", "OPTIMAL"]).toContain(generated.result.status);
   expect(generated.validation.valid).toBe(true);
-  const expected = ["a:2026-11-03", "a:2026-11-05", "a:2026-11-06", "b:2026-11-09", "b:2026-11-10", "b:2026-11-11"];
+  const expected = ["a:2026-12-03", "a:2026-12-05", "a:2026-12-06", "b:2026-12-09", "b:2026-12-10", "b:2026-12-11"];
   const proposal: EscalaInput = generated.proposalInput;
   const absent = new Set(proposal.assignments.filter(item => item.kind === "ABSENCE").map(item => item.employeeId + ":" + item.date));
   expect(expected.every(key => absent.has(key))).toBe(true);

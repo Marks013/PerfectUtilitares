@@ -1,6 +1,8 @@
+import type { APIResponse, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { loginAsAdmin } from "./admin-session";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
+import { addDays } from "../src/lib/escalas/dates";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { openEscalasArea, selectEscalasWorkspace } from "./escalas-selection";
 import { absenceCsv, applyReplacement, employeeCsv, importPanel, isImportResponse, ownedAccountScope, previewReplacement, readWorkspace, removeOwnedWorkspace, responseWorkspace, syntheticBranch } from "./escalas-access-fixtures";
@@ -13,13 +15,24 @@ test.beforeEach(async ({ page }) => {
   await loginAsAdmin(page);
 });
 
-async function createAB(page: import("@playwright/test").Page) {
+async function createdWorkspace(response: APIResponse): Promise<EscalaWorkspace> {
+  const status = response.status();
+  if (status !== 201) {
+    const body = await response.json().catch(() => null) as { error?: { code?: unknown } } | null;
+    const reported = body?.error?.code;
+    const code = typeof reported === "string" && /^(?:ESCALA|API)_[A-Z0-9_]{1,63}$/.test(reported) ? reported : "NO_SAFE_CODE";
+    throw new Error(`CREATE de Escalas falhou: HTTP ${status} (${code}).`);
+  }
+  return response.json();
+}
+
+async function createAB(page: Page) {
   const input = newInput(syntheticBranch("REPLACE"), "Substituição sintética", "2026-12", 40);
   input.shifts = [{ id: "day", name: "Diurno", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1020, kind: "WORK" }] }];
   input.employees = ["0001", "0002"].map((registration, index) => ({ ...newEmployee(40, "day"), id: index ? "B" : "A", registration, name: `Pessoa ${registration}`, sector: "Loja", role: "Operador", activeFrom: "2020-01-01", scheduleMode: "TIMED", weeklyHoursMode: "INDIVIDUAL" }));
   input.employees[1].historyKnown = true;
-  input.employees[1].history = [{ employeeId: "B", date: "2026-11-29", kind: "OFF" }];
-  const created = await responseWorkspace(await page.request.post("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { action: "CREATE", input } }), 201);
+  input.employees[1].history = [{ employeeId: "B", date: addDays(input.startDate, -1), kind: "OFF" }];
+  const created = await createdWorkspace(await page.request.post("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { action: "CREATE", input } }));
   await page.goto("/escala"); await selectEscalasWorkspace(page, created);
   return created;
 }
@@ -31,13 +44,13 @@ test("PREVIEW leaves A/B intact; visible removals and one explicit APPLY adopt c
     expect(reviewed.preview.canApply).toBe(true); expect(reviewed.preview.blockers).toEqual([]);
     expect(reviewed.preview.counts).toMatchObject({ addedPeople: 1, removedPeople: 1 });
     const unchanged = await readWorkspace(page, created.id); expect(unchanged.revision).toBe(created.revision); expect(unchanged.input).toEqual(created.input);
-    const removed = reviewed.panel.locator("details").filter({ has: reviewed.panel.locator("summary").filter({ hasText: /^Pessoas retiradas \(1\)$/ }) });
+    const removed = reviewed.panel.locator("summary").filter({ hasText: /^Pessoas retiradas \(1\)$/ }).locator("..");
     await expect(removed).toHaveAttribute("open", ""); await expect(removed).toContainText("0001 · Pessoa 0001");
     await expect(reviewed.panel.getByRole("region", { name: "Conferência da substituição", exact: true })).toBeFocused();
     const apply = reviewed.panel.getByRole("button", { name: "Confirmar e salvar substituição de equipe", exact: true });
     await expect(apply).toBeDisabled(); await reviewed.panel.getByRole("checkbox", { name: /^Confirmo substituir equipe/ }).check();
     let applyRequests = 0;
-    page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/escalas/import" && request.postDataBuffer()?.includes(Buffer.from('"action":"APPLY_REPLACE"'))) applyRequests++; });
+    page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/escalas/import") applyRequests++; });
     const receiving = page.waitForResponse(response => isImportResponse(response, "APPLY_REPLACE"));
     await apply.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
     const response = await receiving; expect(response.status()).toBe(200);
@@ -79,9 +92,9 @@ test("partial absence file is blocked; scoped replacement preserves technical bo
 
 test("real revision conflict clears the preview and never retries APPLY automatically", async ({ page }) => {
   const created = await createAB(page); let requests = 0;
-  page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/escalas/import" && request.postDataBuffer()?.includes(Buffer.from('"action":"APPLY_REPLACE"'))) requests++; });
   try {
     const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "equipe.csv", mimeType: "text/csv", buffer: employeeCsv(["0002", "0003"]) });
+    page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/escalas/import") requests++; });
     const external = await responseWorkspace(await page.request.post("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { action: "SAVE", id: created.id, expectedRevision: created.revision, input: { ...created.input, branchName: "Revisão externa sintética" } } }));
     await reviewed.panel.getByRole("checkbox", { name: /^Confirmo substituir/ }).check();
     const receiving = page.waitForResponse(response => isImportResponse(response, "APPLY_REPLACE"));
@@ -135,8 +148,8 @@ test("FPRE136 page gaps, duplicates, reversed pages and a missing first page blo
   const scope = await ownedAccountScope(browser); const page = scope.admin;
   const input = newInput("02", "Filial sintética exclusiva", "2026-12", 40);
   input.employees = ["0001", "0002"].map((registration, index) => ({ ...newEmployee(40, input.shifts[0].id), id: index ? "B" : "A", registration, name: `Pessoa ${registration}`, sector: "Loja", role: "Operador", activeFrom: "2020-01-01" }));
-  const owned = scope.trackWorkspace(await responseWorkspace(await scope.post({ action: "CREATE", input }), 201));
   try {
+    const owned = scope.trackWorkspace(await createdWorkspace(await scope.post({ action: "CREATE", input })));
     await page.goto("/escala"); await selectEscalasWorkspace(page, owned);
     for (const pages of [[2], [1, 3], [1, 1], [2, 1], [0], [1, 0]]) {
       const rows = pages.flatMap((number, index) => [

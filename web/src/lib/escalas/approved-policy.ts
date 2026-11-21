@@ -16,6 +16,7 @@ const configurationSchema = z.strictObject({
   generationMode: fields.generationMode, simulation: fields.simulation,
   branchCode: fields.branchCode, branchName: fields.branchName,
   startDate: fields.startDate, endDate: fields.endDate, visibleMonth: fields.visibleMonth,
+  planningWeekStartsOn: fields.planningWeekStartsOn,
   defaultWeeklyHours: fields.defaultWeeklyHours, timeZone: fields.timeZone,
   storeClosingMinutes: fields.storeClosingMinutes, mixed42Sectors: fields.mixed42Sectors,
   policy: fields.policy, demands: fields.demands, movementPriorities: fields.movementPriorities,

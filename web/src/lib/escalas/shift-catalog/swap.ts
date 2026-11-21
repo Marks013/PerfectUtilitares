@@ -125,12 +125,15 @@ async function computeSwap(actor: EscalaActor, request: TurnoSwapRequest): Promi
     return next;
   });
 
+  const nextEmployee = withManualShiftOverride(employee, {
+    catalogCode: target.code, shiftId: targetShift.id, markings: target.markings,
+    effectiveFrom: request.effectiveFrom, effectiveUntil: request.effectiveUntil,
+  });
+  // A branch may choose an approved shift but must not create or alter imported provenance.
+  if (!actor.admin && employee.originalShiftIds === undefined) delete nextEmployee.originalShiftIds;
   const nextInput = materializeManualShiftOverrides({
     ...workspace.input,
-    employees: workspace.input.employees.map(person => person.id === employee.id ? { ...withManualShiftOverride(person, {
-      catalogCode: target.code, shiftId: (targetShift as NonNullable<typeof targetShift>).id, markings: target.markings,
-      effectiveFrom: request.effectiveFrom, effectiveUntil: request.effectiveUntil,
-    }) } : person),
+    employees: workspace.input.employees.map(person => person.id === employee.id ? nextEmployee : person),
     shifts: existingShifts.some(shift => shift.id === (targetShift as NonNullable<typeof targetShift>).id) ? existingShifts : [...existingShifts, targetShift],
     assignments,
   });

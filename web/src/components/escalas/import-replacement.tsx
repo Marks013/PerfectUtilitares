@@ -53,15 +53,24 @@ function ReplacementSession({ workspace, purpose, disabled: permanentlyDisabled,
   const [dateErrors, setDateErrors] = useState<{ start?: string; end?: string }>({});
   const errorRef = useRef<HTMLDivElement>(null), startRef = useRef<HTMLInputElement>(null), endRef = useRef<HTMLInputElement>(null), fileRef = useRef<HTMLInputElement>(null), previewRef = useRef<HTMLElement>(null);
   const active = useRef<AbortController | null>(null), alive = useRef(true);
+  const previewFocus = useRef<{ context: string; signal: AbortSignal } | null>(null);
   const context = JSON.stringify([workspace.id, workspace.revision, workspace.status, workspace.input.branchCode, workspace.input.startDate, workspace.input.endDate, workspace.input.visibleMonth, permanentlyDisabled, pendingSave]);
   const latestContext = useRef(context); latestContext.current = context;
   const uncertain = "A gravação pode ter sido concluída. Recarregue o planejamento e confira a revisão antes de repetir. Cancelar a espera não desfaz uma gravação.";
-  const invalidate = useCallback(() => { active.current?.abort(); active.current = null; setPreview(null); setConfirmed(false); setBusy(""); setError(""); setDateErrors({}); setNotice(""); }, []);
+  const invalidate = useCallback(() => { active.current?.abort(); active.current = null; previewFocus.current = null; setPreview(null); setConfirmed(false); setBusy(""); setError(""); setDateErrors({}); setNotice(""); }, []);
   useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; active.current?.abort(); }; }, []);
   useEffect(() => { void context; invalidate(); }, [context, invalidate]);
   useEffect(() => { setStart(workspace.input.startDate); setEnd(workspace.input.endDate); setCoverage(false); }, [workspace.input.startDate, workspace.input.endDate]);
   useEffect(() => { if (error) { errorRef.current?.focus(); errorRef.current?.scrollIntoView({ block: "center" }); } }, [error]);
   useLayoutEffect(() => { if (dateErrors.start) startRef.current?.focus(); else if (dateErrors.end) endRef.current?.focus(); }, [dateErrors]);
+  useLayoutEffect(() => {
+    const focus = previewFocus.current;
+    if (!preview || busy || !focus) return;
+    previewFocus.current = null;
+    if (focus.context !== context || focus.signal.aborted || active.current) return;
+    previewRef.current?.focus({ preventScroll: true });
+    previewRef.current?.scrollIntoView({ block: "center" });
+  }, [preview, busy, context]);
   function datesValid() {
     const errors = replacementDateErrors(start, end, workspace.input);
     setDateErrors(errors);
@@ -84,7 +93,10 @@ function ReplacementSession({ workspace, purpose, disabled: permanentlyDisabled,
       const result = await replaceImport(file, command, current.signal);
       if (!alive.current || current.signal.aborted || active.current !== current || latestContext.current !== snapshot) return;
       if (!result) throw new Error("A operação não foi confirmada. Confira o estado do planejamento.");
-      if ("preview" in result) { setPreview(result.preview); requestAnimationFrame(() => { if (alive.current && !current.signal.aborted && latestContext.current === snapshot && active.current === null) { previewRef.current?.focus(); previewRef.current?.scrollIntoView({ block: "center" }); } }); }
+      if ("preview" in result) {
+        previewFocus.current = { context: snapshot, signal: current.signal };
+        setPreview(result.preview);
+      }
       else { setPreview(null); setConfirmed(false); setNotice(`Substituição salva na revisão ${result.workspace.revision}. Confira a escala antes de gerar ou publicar.`); }
     } catch (cause) {
       if (alive.current && !current.signal.aborted && active.current === current && latestContext.current === snapshot) {

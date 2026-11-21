@@ -45,9 +45,15 @@ export async function administerEscalaOperators(actor: EscalaActor, value: unkno
         if (!workspace && !approved) throw new EscalaError(422, "ESCALA_BRANCH_FORBIDDEN", "A filial não possui referência administrativa cadastrada.");
       }
       if (command.action === "CREATE_OPERATOR") {
-        await tx.escalaOperator.create({ data: { tenantId: actor.tenantId,
-          usernameNormalized: command.usernameNormalized, displayName: command.displayName, active: command.active,
-          branchGrants: { create: command.branchGrants.map(grant => ({ ...grant, tenantId: actor.tenantId })) } } });
+        const operator = await tx.escalaOperator.create({
+          data: { tenantId: actor.tenantId, usernameNormalized: command.usernameNormalized,
+            displayName: command.displayName, active: command.active },
+          select: { id: true },
+        });
+        // Both foreign keys share tenantId. Persist grants explicitly in this same transaction.
+        if (command.branchGrants.length) await tx.escalaOperatorBranchGrant.createMany({
+          data: command.branchGrants.map(grant => ({ ...grant, tenantId: actor.tenantId, operatorId: operator.id })),
+        });
       } else {
         const operator = await tx.escalaOperator.findUnique({ where: { tenantId_id: { tenantId: actor.tenantId, id: command.operatorId } } });
         if (!operator) throw new EscalaError(404, "ESCALA_OPERATOR_NOT_FOUND", "Cadastro não encontrado.");

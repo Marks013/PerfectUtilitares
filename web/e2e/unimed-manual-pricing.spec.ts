@@ -8,8 +8,12 @@ test("manual dependent calculates through the real API without a beneficiary bas
   const password = process.env.E2E_UNIMED_ADMIN_PASSWORD;
   const databaseUrl = process.env.DATABASE_URL;
   test.skip(!password || !databaseUrl, "Requires the isolated E2E runner");
-  if (process.env.E2E_MUTATION !== "1" ||
-      !/^\/perfectutilitares_e2e_\d+_\d+$/.test(new URL(databaseUrl!).pathname)) {
+  // The runner derives the database name and its synthetic administrator from the same run ID.
+  const run = /^e2e-general-([a-z0-9]+)-([a-f0-9]{16})@example\.test$/.exec(process.env.ADMIN_EMAIL ?? "");
+  const target = databaseUrl && URL.canParse(databaseUrl) ? new URL(databaseUrl) : null;
+  if (process.env.E2E_MUTATION !== "1" || process.env.E2E_SUITE_PHASE !== "general" || !run || !target?.hostname
+      || !["postgres:", "postgresql:"].includes(target.protocol)
+      || target.pathname !== "/perfectutilitares_e2e_general_" + run[1] + "_" + run[2]) {
     throw new Error("This fixture only runs in the disposable E2E database.");
   }
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });

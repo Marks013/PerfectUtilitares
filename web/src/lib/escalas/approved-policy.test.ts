@@ -64,6 +64,30 @@ describe("approved branch/period policy candidate", () => {
     fresh.value.employees[0].name = "Mudança posterior";
     expect(snapshot.seed.employees[0].name).toBe("Pessoa exemplo");
   });
+  it("approves and restores a Sunday schedule without invalidating legacy snapshots", () => {
+    const legacy = candidate();
+    // Captured with the original serializer and fixture at 03233b3.
+    expect(legacy.snapshotHash).toBe("89bc235a7578db77b53d5420971e1ed0a73e83cf2488aceb8f2b6703816f702e");
+    const legacyJson = JSON.parse(JSON.stringify(legacy.snapshot));
+    expect(legacyJson.configuration).not.toHaveProperty("planningWeekStartsOn");
+    expect(createInputFromEscalaApprovedPolicy(legacyJson, legacy.snapshotHash).ok).toBe(true);
+
+    const source = request();
+    source.input.planningWeekStartsOn = "SUNDAY";
+    source.input.startDate = "2026-11-29";
+    source.input.endDate = "2027-01-02";
+    source.input.employees[0].history[0].date = "2026-11-28";
+    const approved = buildEscalaApprovedPolicy(source);
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) return;
+    const { snapshot, snapshotHash } = approved.value;
+    expect(snapshot.configuration.planningWeekStartsOn).toBe("SUNDAY");
+    const restored = createInputFromEscalaApprovedPolicy(JSON.parse(JSON.stringify(snapshot)), snapshotHash);
+    expect(restored).toMatchObject({ ok: true, value: { planningWeekStartsOn: "SUNDAY", startDate: "2026-11-29", endDate: "2027-01-02" } });
+    const tampered = { ...snapshot, configuration: { ...snapshot.configuration, planningWeekStartsOn: "MONDAY" } };
+    expect(readEscalaApprovedPolicy(tampered, snapshotHash).ok).toBe(false);
+  });
+
   it("hashes object keys stably, includes provenance and retains meaningful array order", () => {
     const source = request();
     const reversed = Object.fromEntries(Object.entries(source).reverse());

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applyLocalHolidayCalendar } from "./calendar";
 import { assertEscalaOperationalInput } from "./operational-input-policy";
 import type { EscalaInput } from "./types";
 const fixture = () => ({ schemaVersion: 1, branchCode: "02", startDate: "2026-11-30", endDate: "2027-01-03",
@@ -37,6 +38,23 @@ describe("raw operational field comparison", () => {
     next.assignments = [{ ...old.assignments[0], locked: false }, old.assignments[1]];
     expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"])).toThrow();
   });
+  it("allows only canonical new closures in a signed proposal", () => {
+    const old = fixture();
+    old.demands = [];
+    old.policy = { ...old.policy, calendarMode: "LOCAL", holidayDates: ["2026-12-25"], closedDates: ["2026-12-25"] };
+    const canonical = applyLocalHolidayCalendar(old);
+    expect(old.policy.holidayDates).not.toContain("2027-01-01");
+    expect(canonical.policy.paidHolidayDates).toContain("2027-01-01");
+    const holiday = { employeeId: "p", date: "2027-01-01", kind: "HOLIDAY" as const };
+    const next = { ...canonical, assignments: [...old.assignments, holiday] };
+    expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"], true)).not.toThrow();
+    expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"])).toThrow();
+    const other = "2026-12-30";
+    const unexpected = { ...next, policy: { ...next.policy, holidayDates: [...next.policy.holidayDates, other] },
+      assignments: [...old.assignments, { ...holiday, date: other }] };
+    expect(() => assertEscalaOperationalInput(old, unexpected, ["schedule.apply"], true)).toThrow();
+  });
+
   it("signed proposals still preserve protected assignments and require apply", () => {
     const old = fixture(), next = structuredClone(old);
     next.assignments[1].kind = "OFF";

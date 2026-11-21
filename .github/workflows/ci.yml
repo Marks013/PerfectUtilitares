@@ -229,7 +229,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: escalas-interface-evidence
-          path: web/test-results/**/escalas-audit-*.png
+          path: outputs/escalas-e2e-harness/**/test-results/**/escalas-audit-*.png
           retention-days: 3
           if-no-files-found: ignore
       - name: Keep synthetic browser failure evidence
@@ -237,9 +237,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: synthetic-browser-failures
-          path: |
-            web/test-results/
-            web/playwright-report/
+          path: outputs/escalas-e2e-harness/**/test-results/**/error-context.md
           retention-days: 3
           if-no-files-found: ignore
       - name: Ensure build did not modify tracked files

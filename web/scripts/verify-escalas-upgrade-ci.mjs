@@ -20,9 +20,11 @@ const migration = "20261114072100_escalas_scoped_access";
 const migrations = new URL("../prisma/migrations/", import.meta.url);
 const fixtures = new URL("../../docs/sql/", import.meta.url);
 const read = (dir, path) => readFileSync(new URL(path, dir), "utf8");
-const old = readdirSync(migrations, { withFileTypes: true })
-  .filter(entry => entry.isDirectory() && /^\d+_/.test(entry.name) && entry.name < migration)
+const chain = readdirSync(migrations, { withFileTypes: true })
+  .filter(entry => entry.isDirectory() && /^\d+_/.test(entry.name))
   .map(entry => entry.name).sort();
+const old = chain.filter(name => name < migration);
+const successors = chain.filter(name => name > migration);
 const sql = read(migrations, migration + "/migration.sql");
 const firstChange = sql.indexOf('ALTER TABLE "EscalaModuleSession"');
 const injectAfter = sql.indexOf(";", firstChange) + 1;
@@ -85,6 +87,7 @@ SELECT NOT EXISTS (SELECT FROM information_schema.columns WHERE table_name='Esca
   if (fingerprint(restoredDb) !== before) throw new Error("The restored legacy rows differ.");
   for (const db of [legacyDb, restoredDb]) {
     psql(db, sql);
+    for (const path of successors) psql(db, read(migrations, path + "/migration.sql"));
     if (fingerprint(db) !== before || psql(db, 'SELECT "approvedPolicyVersionId" IS NULL FROM "EscalaRevision" WHERE id = \'upgrade-test-revision\';') !== "t") {
       throw new Error("The upgrade changed protected legacy data.");
     }

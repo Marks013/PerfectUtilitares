@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyTurnoSwap, previewTurnoSwap } from "./swap";
 import type { EscalaAssignment } from "../types";
+import { assertEscalaOperationalInput } from "../operational-input-policy";
+import { escalaInputSchema } from "../schema";
 vi.mock("../access", async original => ({ ...await original<typeof import("../access")>(), requireEscalaCapability: async () => undefined }));
 
-const state = vi.hoisted(() => ({ get: vi.fn(), parse: vi.fn(), save: vi.fn(), entry: vi.fn(), oldCode: vi.fn(), validate: vi.fn() }));
+const state = vi.hoisted(() => ({ get: vi.fn(), parse: vi.fn(), save: vi.fn(), approval: vi.fn(), entry: vi.fn(), oldCode: vi.fn(), validate: vi.fn() }));
 vi.mock("../service", () => ({ getEscala: state.get, parseEscalaInput: state.parse, saveEscala: state.save }));
+vi.mock("../approved-policy-service", () => ({ loadEscalaApproval: state.approval }));
 vi.mock("../validation", () => ({ validateEscala: state.validate }));
 vi.mock("./catalog", () => ({ getTurnoCatalogEntry: state.entry, findTurnoCatalogCode: state.oldCode }));
 
@@ -188,6 +191,32 @@ describe("employee turn swap", () => {
     expect(saved.employees[0].sourceSchedule).toEqual(source);
     expect(saved.employees[0].manualShiftOverrides).toEqual([expect.objectContaining({ catalogCode: 1500, effectiveFrom: request.effectiveFrom, effectiveUntil: request.effectiveUntil, markings: ["09:00", "13:00", "14:00", "18:00"] })]);
     expect(saved.assignments).toEqual([]);
+  });
+
+  it("applies a branch-approved catalog clock without inventing an original reference", async () => {
+    const branchActor = { ...actor, admin: false };
+    const plan = current(undefined, []);
+    const input = escalaInputSchema.parse({ ...plan.input,
+      employees: [{ ...plan.input.employees[0], scheduleMode: "TIMED" }],
+      shifts: [{ id: "old", name: "08:00–17:00", segments: [
+        { start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" },
+        { start: 780, end: 1020, kind: "WORK" },
+      ] }],
+    });
+    state.get.mockResolvedValue({ ...plan, input, approvedPolicyVersionId: "approved" });
+    state.approval.mockResolvedValue({ snapshot: { seed: { employees: input.employees, shifts: input.shifts }, regimeModels: [] } });
+    state.entry.mockResolvedValue({ code: 1500, markings: ["08:00", "12:00", "13:00", "17:00"], name: "Approved reference" });
+    state.parse.mockImplementation(value => escalaInputSchema.parse(value));
+    state.save.mockImplementation(async (_actor, _id, _revision, next) => {
+      assertEscalaOperationalInput(input, next, ["workspace.save", "shift.manage"], false, true);
+      return { id: plan.id, revision: 4, input: next };
+    });
+    const preview = await previewTurnoSwap(branchActor, request);
+    expect(preview.canApply).toBe(true);
+    const saved = await applyTurnoSwap(branchActor, { ...request, previewId: preview.previewId, confirm: true });
+    expect(saved.revision).toBe(4);
+    expect(saved.input.employees[0]).not.toHaveProperty("originalShiftIds");
+    expect(saved.input.employees[0].manualShiftOverrides).toEqual([expect.objectContaining({ catalogCode: 1500, shiftId: "old" })]);
   });
 
   it("rejects stale revision before applying the confirmed preview", async () => {

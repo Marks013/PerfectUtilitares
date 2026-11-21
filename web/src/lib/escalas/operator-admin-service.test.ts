@@ -25,17 +25,24 @@ beforeEach(() => {
 });
 describe("administrative operator persistence and HTTP", () => {
   it("creates a normalized operator with explicit grants through a successful HTTP request", async () => {
-    mocks.create.mockImplementation(async ({ data }) => {
-      mocks.operators.mockResolvedValue([{ id: "o", usernameNormalized: data.usernameNormalized, displayName: data.displayName,
-        active: data.active, permissionVersion: 1, branchGrants: data.branchGrants.create }]);
-      return { id: "o" };
+    mocks.create.mockResolvedValue({ id: "o" });
+    mocks.replace.mockImplementation(async ({ data }) => {
+      mocks.operators.mockResolvedValue([{ id: "o", usernameNormalized: "maria", displayName: "Pessoa sintética",
+        active: true, permissionVersion: 1, branchGrants: data }]);
+      return { count: data.length };
     });
     const response = await POST(request({ action: "CREATE_OPERATOR", username: "  ＭＡＲＩＡ ", displayName: "Pessoa sintética", active: true,
       branchGrants: [{ branchCode: "002", active: true, capabilities: ["workspace.read"] }] }));
     expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ policy: { mode: "SCOPED", version: 1 }, operators: [{ id: "o", username: "maria", active: true }] });
-    expect(mocks.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tenantId: "t", usernameNormalized: "maria",
-      branchGrants: { create: [{ tenantId: "t", branchCode: "02", active: true, capabilities: ["workspace.read"] }] } }) });
+    expect(mocks.create).toHaveBeenCalledWith({
+      data: { tenantId: "t", usernameNormalized: "maria", displayName: "Pessoa sintética", active: true },
+      select: { id: true },
+    });
+    expect(mocks.replace).toHaveBeenCalledWith({
+      data: [{ tenantId: "t", operatorId: "o", branchCode: "02", active: true, capabilities: ["workspace.read"] }],
+    });
     expect(mocks.lock.mock.invocationCallOrder[0]).toBeLessThan(mocks.create.mock.invocationCallOrder[0]);
+    expect(mocks.create.mock.invocationCallOrder[0]).toBeLessThan(mocks.replace.mock.invocationCallOrder[0]);
     expect((await GET()).status).toBe(200);
   });
   it.each(["UPDATE_OPERATOR", "REPLACE_BRANCH_GRANTS", "REVOKE_SESSIONS"])("applies %s with CAS and transactional session revocation", async action => {
