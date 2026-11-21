@@ -77,4 +77,24 @@ describe("clock validation hardening", () => {
     input.generationBasis = generationScenarioBasis(input);
     expect(validateHoursReferences(input).issues.some(issue => issue.code === "HOURS_WEEKLY_REFERENCE_INCOMPATIBLE")).toBe(false);
   });
+
+  it("does not require full weekly hours across a protected absence", () => {
+    const input = fixture();
+    input.startDate = "2027-01-10";
+    input.endDate = "2027-01-16";
+    input.shifts[0].segments[2].end = 960;
+    input.generationBasis = generationScenarioBasis(input);
+    const weeklyIssue = (id: string) => validateHoursReferences(input).issues.some(issue =>
+      issue.code === "HOURS_WEEKLY_REFERENCE_INCOMPATIBLE" && issue.employeeId === id);
+    expect(weeklyIssue("p")).toBe(true);
+
+    input.employees.push({ ...input.employees[0], id: "q", registration: "0002" });
+    input.assignments = [{ employeeId: "p", date: "2027-01-12", kind: "ABSENCE", locked: true }];
+    input.generationBasis = generationScenarioBasis(input);
+    const original = structuredClone(input);
+
+    expect(weeklyIssue("p")).toBe(false);
+    expect(weeklyIssue("q")).toBe(true);
+    expect(input).toEqual(original);
+  });
 });

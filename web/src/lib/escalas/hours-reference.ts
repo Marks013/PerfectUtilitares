@@ -96,7 +96,11 @@ function referenceCanMeetWeek(input: EscalaInput, person: EscalaEmployee, days: 
 /** Validate permitted clocks, without claiming daily presence or a published monthly roster. */
 export function validateHoursReferences(input: EscalaInput): EscalaValidation {
   const issues: EscalaIssue[] = manualShiftIssues(input), shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
-  const dates = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
+  const calendarDays = dateRange(input.startDate, input.endDate);
+  const dates = calendarDays.filter((_, index) => index % 7 === 0);
+  const holidays = new Set(input.policy.holidayDates);
+  const absences = new Set(input.assignments.filter(day => day.kind === "ABSENCE")
+    .map(day => `${day.employeeId}\0${day.date}`));
   const calendarCodes = new Set(["CLOSED_DATE", "HOLIDAY_WORK", "CCT_SUNDAY_CERTIFICATE", "CCT_HOLIDAY_CERTIFICATE", "CCT_NIGHT_CERTIFICATE"]);
   const included = input.employees.filter(person => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
   if (input.needsRegeneration || input.generationBasis !== generationScenarioBasis(input)) issues.push({ code: "SCENARIO_OUTDATED", severity: "ERROR", message: "Prepare novamente as referências após alterar modo, jornada ou equipe antes de exportar." });
@@ -109,12 +113,11 @@ export function validateHoursReferences(input: EscalaInput): EscalaValidation {
     if (mode === "MISSING") issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "WARNING", employeeId: person.id, message: "Este colaborador está sem horário informado e não tem referência para exportar. As referências reais dos demais permanecem disponíveis." });
     if (mode === "UNTIMED" || mode === "MISSING") continue;
     if (!person.shiftIds.length) issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "ERROR", employeeId: person.id, message: "Informe um horário de referência para este colaborador." });
-    // Incomplete employment and holiday weeks cannot be inferred from references alone.
-    const calendarDays = dateRange(input.startDate, input.endDate);
+    // Do not require an exact full week across holidays, absences or partial employment.
     for (let index = 0; index + 7 <= calendarDays.length; index += 7) {
       const week = calendarDays.slice(index, index + 7);
       if (week.some(day => day < person.activeFrom || person.activeUntil && day > person.activeUntil
-        || input.policy.holidayDates.includes(day))) continue;
+        || holidays.has(day) || absences.has(`${person.id}\0${day}`))) continue;
       if (!referenceCanMeetWeek(input, person, week, shifts)) {
         issues.push({ code: "HOURS_WEEKLY_REFERENCE_INCOMPATIBLE", severity: "ERROR", employeeId: person.id,
           message: `As referências disponíveis não permitem completar ${effectiveWeeklyMinutes(person, week[0], input)} minutos semanais em cinco dias na semana de ${week[0]}. Revise turnos, folgas fixas ou regime; nenhum dia foi criado.` });
