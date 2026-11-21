@@ -81,7 +81,7 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertEqual(values[losses[0].index], 0)
         # The sector-only tie-break must not inject division equalities into
         # the model before the higher-priority coverage searches.
-        self.assertFalse(any(constraint.HasField('int_div')
+        self.assertFalse(any(constraint.has_int_div()
                              for constraint in model.proto.constraints))
         self.assertFalse(any(variable.name.startswith('sector-sunday-rate:')
                              for variable in model.proto.variables))
