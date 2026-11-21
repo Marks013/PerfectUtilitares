@@ -137,25 +137,29 @@ def sector_sunday_distribution(model, groups, employees, days, work, baseline, p
         incumbent = sum(values[variable.index] for variable in present)
         if incumbent == 0:
             continue  # No reference presence: do not invent a staffing target.
-        rates, starting = [], []
-        for day_index, eligible in enumerate(per_day):
-            if not eligible:
-                continue
-            initial = sum(values[variable.index] for variable in eligible) * 10000 // len(eligible)
-            rate = model.new_int_var(0, 10000, f'sector-sunday-rate:{index}:{day_index}')
-            model.add_division_equality(rate, sum(eligible) * 10000, len(eligible))
-            remember(model, values, rate, initial)
-            rates.append(rate)
-            starting.append(initial)
-        maximum = model.new_int_var(0, 10000, f'sector-sunday-max:{index}')
-        minimum = model.new_int_var(0, 10000, f'sector-sunday-min:{index}')
+        # Compare only dates with the same eligible headcount. A division
+        # equality for every Sunday used to add nonlinear auxiliary geometry
+        # before COVERAGE was optimized, changing bounded repair outcomes.
+        # Count extrema need just two variables and linear expressions; when
+        # denominators differ, abstain rather than compare unlike rates.
+        counts = {len(entry) for entry in eligible_days}
+        if len(counts) != 1:
+            continue
+        eligible_count = next(iter(counts))
+        initial_counts = [sum(values[variable.index] for variable in entry)
+                          for entry in eligible_days]
+        maximum = model.new_int_var(0, eligible_count, f'sector-sunday-max:{index}')
+        minimum = model.new_int_var(0, eligible_count, f'sector-sunday-min:{index}')
         spread = model.new_int_var(0, 10000, f'sector-sunday-spread:{index}')
-        model.add_max_equality(maximum, rates)
-        model.add_min_equality(minimum, rates)
-        model.add(spread == maximum - minimum)
-        remember(model, values, maximum, max(starting))
-        remember(model, values, minimum, min(starting))
-        remember(model, values, spread, max(starting) - min(starting))
+        model.add_max_equality(maximum, [sum(entry) for entry in eligible_days])
+        model.add_min_equality(minimum, [sum(entry) for entry in eligible_days])
+        # Scaled by the common eligible population (floor error < headcount
+        # per sector); this is still a soft tie-break, never a coverage rule.
+        scale = 10000 // eligible_count
+        model.add(spread == scale * (maximum - minimum))
+        remember(model, values, maximum, max(initial_counts))
+        remember(model, values, minimum, min(initial_counts))
+        remember(model, values, spread, scale * (max(initial_counts) - min(initial_counts)))
         # Soft loss budget, not a new minimum: earlier coverage optimization
         # may legally reduce incumbent Sunday presence if it must.
         deficit = model.new_int_var(0, incumbent, f'sector-sunday-presence-loss:{index}')
