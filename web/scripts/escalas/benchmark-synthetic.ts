@@ -15,11 +15,12 @@ import { sundaySectorObservations, sundaySectorVariation } from "../../src/lib/e
 import { BASELINE_REVISION, benchmarkPython, sourceSnapshot, quantile } from "./benchmark-runtime";
 
 type Variant = "baseline" | "corrected" | "workers2" | "linearization1" | "symmetry1";
-type Scenario = { id: string; people: number; weeks: number };
+type Scenario = { id: string; people: number; weeks: number; untimedLeaders?: boolean };
 const scenarios: Scenario[] = [
   { id: "team-10-week", people: 10, weeks: 1 },
   { id: "branch-50-four-weeks", people: 50, weeks: 4 },
   { id: "branch-115-six-weeks", people: 115, weeks: 6 },
+  { id: "branch-115-six-weeks-untimed", people: 115, weeks: 6, untimedLeaders: true },
 ];
 let activeContainer: string | undefined;
 function capture(args: string[], input?: string) {
@@ -44,13 +45,22 @@ export function syntheticInput(scenario: Scenario) {
     { start: 420, end: 660, kind: "WORK" }, { start: 660, end: 780, kind: "BREAK" },
     { start: 780, end: 1068, kind: "WORK" },
   ] }];
-  input.employees = Array.from({ length: scenario.people }, (_, index) => ({
-    ...newEmployee(42, "reference"), id: `person-${index}`, registration: String(index), name: `Synthetic person ${index}`,
-    sector: `Sector ${Math.floor(index / 12) + 1}`, role: index % 12 === 0 ? "Encarregado" : "Repositor",
-    activeFrom: "", scheduleMode: "TIMED" as const,
-    sourceSchedule: { report: "FPRE136" as const, code: "SYNTHETIC", description: "Synthetic imported reference",
-      weekday: "07:00-11:00 / 13:00-17:48", saturday: "07:00-11:00 / 00:00-00:00" },
-  }));
+  input.employees = Array.from({ length: scenario.people }, (_, index) => {
+    const leader = index % 12 === 0;
+    const untimed = Boolean(scenario.untimedLeaders && leader);
+    return {
+      ...newEmployee(42, untimed ? undefined : "reference"),
+      id: `person-${index}`, registration: String(index), name: `Synthetic person ${index}`,
+      sector: `Sector ${Math.floor(index / 12) + 1}`,
+      role: untimed && index === 0 ? "Gerente" : leader ? "Encarregado" : "Repositor",
+      activeFrom: "", scheduleMode: untimed ? "UNTIMED" as const : "TIMED" as const,
+      // Untimed leaders are DUTY/OFF without an invented imported clock.
+      ...(untimed ? {} : { sourceSchedule: {
+        report: "FPRE136" as const, code: "SYNTHETIC", description: "Synthetic imported reference",
+        weekday: "07:00-11:00 / 13:00-17:48", saturday: "07:00-11:00 / 00:00-00:00",
+      } }),
+    };
+  });
   return escalaInputSchema.parse(prepareGeneration(input).input);
 }
 
@@ -143,7 +153,10 @@ async function main() {
   for (const scenario of selected) for (const variant of requested) {
     const rows = observations.filter(item => item.scenario === scenario.id && item.variant === variant);
     console.log(JSON.stringify({ kind: "summary", scenario: scenario.id, variant, samples: rows.length,
-      medianSeconds: quantile(rows.map(item => item.seconds), .5), p95Seconds: quantile(rows.map(item => item.seconds), .95),
+      medianSeconds: quantile(rows.map(item => item.seconds), .5),
+      // Five repetitions cannot support a useful 95th percentile. Keep a maximum for short CI runs.
+      p95Seconds: rows.length >= 20 ? quantile(rows.map(item => item.seconds), .95) : null,
+      maxSeconds: Math.max(...rows.map(item => item.seconds)), tailSampleSufficient: rows.length >= 20,
       peakRssKiB: Math.max(...rows.map(item => item.rss)),
       medianShortage: quantile(rows.flatMap(item => item.shortage === null ? [] : [item.shortage]), .5),
       medianComparableSundayOffSpread: quantile(rows.map(item => item.comparableOffSpread), .5),
