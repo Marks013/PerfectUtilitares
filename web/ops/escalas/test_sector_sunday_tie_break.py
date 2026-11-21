@@ -8,7 +8,8 @@ import unittest
 
 from ortools.sat.python import cp_model
 
-from optimization import ImprovementContext, Snapshot, improve
+from optimization import (ImprovementContext, Snapshot, _movable_people,
+                          _sector_sunday_people, improve)
 from solver import _clock_profiles, _coverage, _weekend_group_key, days_between
 from test_solver import fixture
 from weekend_balance import (preserve_sunday_presence, sector_sunday_distribution,
@@ -129,6 +130,32 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertEqual(outcome[loss.index], 1)
         self.assertLess(Snapshot(outcome).value(objective), Snapshot(values).value(objective))
         self.assertTrue(phases)
+
+    def test_sunday_sector_selection_releases_both_role_cohorts(self):
+        data, model, work, values, groups, _, _ = self.synthetic_cross_role_case()
+        spreads, losses, maximum = sector_sunday_distribution(
+            model, groups, data['employees'], SUNDAYS, work, {}, data['policy'], values)
+        self.assertEqual((len(spreads), len(losses), maximum), (1, 1, 4))
+        variables = [model.get_int_var_from_proto_index(i)
+                     for i in range(len(model.proto.variables))]
+        # The legacy selector sees only comparable rates, no sector spread.
+        self.assertEqual(_movable_people(variables, values, list(groups.values())), set())
+        sectors = {'ADMINISTRATIVO': [person['id'] for person in data['employees']]}
+        self.assertEqual(_sector_sunday_people(variables, values, sectors),
+                         {person['id'] for person in data['employees']})
+
+    def test_sector_neighborhood_never_truncates_oversized_cohorts(self):
+        model = cp_model.CpModel()
+        largest = model.new_int_var(0, 10000, 'sector-sunday-spread:0')
+        smaller = model.new_int_var(0, 10000, 'sector-sunday-spread:1')
+        values = {largest.index: 10000, smaller.index: 5000}
+        variables = [largest, smaller]
+        sectors = {'large': [f'p{i:02}' for i in range(37)],
+                   'small': ['a', 'b']}
+        self.assertEqual(_sector_sunday_people(variables, values, sectors, limit=36),
+                         {'a', 'b'})
+        self.assertEqual(_sector_sunday_people(variables, values, {'large': sectors['large']},
+                                               limit=36), set())
 
     def test_sector_spread_cannot_purchase_worse_personal_fairness(self):
         model = cp_model.CpModel()
