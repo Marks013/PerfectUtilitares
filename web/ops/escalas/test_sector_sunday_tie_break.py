@@ -144,6 +144,33 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertTrue(any(phase['objective'] == 'SUNDAY_BALANCE'
                             for phase in phases))
 
+    def test_deferred_sector_objective_does_not_consume_full_rest_reserve(self):
+        model = cp_model.CpModel()
+        coverage = model.new_int_var(0, 0, 'coverage')
+        sunday = model.new_bool_var('sunday-decision')
+        values = {coverage.index: 0, sunday.index: 1}
+        observed = []
+
+        def prepare(current_model, accepted, control):
+            score = current_model.new_int_var(0, 10000, 'sector-sunday-spread:0')
+            current_model.add(score == sunday * 10000)
+            remember(current_model, accepted, score, 10000)
+            observed.append(accepted[coverage.index])
+            return score
+
+        result, _, phases = improve(
+            model, [coverage, sunday], values, time.monotonic() + 3,
+            ['COVERAGE', 'SUNDAY_BALANCE'],
+            context=ImprovementContext(prepare_sunday_balance=prepare,
+                                       refinement_reserve_seconds=0.8))
+        self.assertEqual(observed, [0])
+        self.assertEqual(result[coverage.index], 0)
+        self.assertEqual(result[sunday.index], 0)
+        sector_phases = [phase for phase in phases if phase['objective'] == 'SUNDAY_BALANCE']
+        self.assertEqual(len(sector_phases), 1)
+        self.assertLessEqual(sector_phases[0]['budgetSeconds'], 0.15)
+        self.assertGreaterEqual(sector_phases[0]['budgetSeconds'], 0.10)
+
     def test_soft_sector_metrics_do_not_hard_freeze_before_cohort_fairness(self):
         # Seed has the best sector spread and no presence loss, but worse
         # personal fairness. The alternative must remain admissible even if
