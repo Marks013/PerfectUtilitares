@@ -919,10 +919,11 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
         sunday_shortage = snapshot.value(sum((sunday_shortages or {}).get(sector, [])))
         if empty or shortage > 0 or sunday_shortage > 0:
             sunday_count = sum(date.fromisoformat(day).weekday() == 6 for day in empty)
-            # Offer empty, estimated OPEN Sundays an early repair chance.
-            # Coverage guards still decide whether each change can be accepted.
+            # Put independently measured staffing shortages first. A recovered
+            # Sunday may break a tie, but cannot displace a worse-covered sector
+            # from the bounded four whole-sector repair neighborhoods.
             recovery_count = sum((sector, day) in priority_sundays for day in empty)
-            ranked.append((-recovery_count, -shortage, -sunday_shortage, -sunday_count, -len(empty),
+            ranked.append((-shortage, -sunday_shortage, -recovery_count, -sunday_count, -len(empty),
                            len(members), sector, {person["id"] for person in members}))
     # Small sectors share one neighborhood. A large team gets its own complete
     # exchange group instead of being silently excluded by the old size limit.
@@ -1054,10 +1055,12 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
-    # An empty estimated day is not evidence against an otherwise exact seed.
-    # The fixed-hint CP-SAT pass proves legality before any reference is reused.
+    # A complete draft can be mandatory-feasible but leave an estimated OPEN
+    # day with no timed staff. Do not freeze that sector as a preferred exact
+    # hint in day-changing modes: permit legal, protected rest reconstruction.
+    # HOURS_ONLY explicitly keeps its unchanged-reference behavior.
     comparable = {sector for sector, members in sectors.items()
-                  if prefer_baseline and sector not in repeating_sectors and all(
+                  if prefer_baseline and sector not in empty_sectors | repeating_sectors and all(
         (old := source.get((person['id'], day))) is not None
         and (old['kind'] == 'ABSENCE' or (day in holidays or baseline.get((person['id'], day), {}).get('kind') == 'HOLIDAY') == (old['kind'] == 'HOLIDAY'))
         and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])
