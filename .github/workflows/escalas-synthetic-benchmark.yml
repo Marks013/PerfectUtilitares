@@ -14,6 +14,8 @@ on:
   pull_request:
     paths:
       - .github/workflows/escalas-synthetic-benchmark.yml
+      - web/scripts/escalas/benchmark-synthetic.ts
+      - web/src/lib/escalas/sunday-sector-observations.ts
 
 permissions:
   contents: read
@@ -92,7 +94,10 @@ jobs:
                   assert isinstance(row.get("seconds"), (int, float)) and math.isfinite(row["seconds"]), "Invalid duration"
                   assert isinstance(row.get("maxRssKiB"), (int, float)) and row["maxRssKiB"] > 0, "Invalid memory"
                   assert row.get("shortagePersonMinutes") is not None, "Missing coverage metric"
-              for key in ("medianSeconds", "p95Seconds", "peakRssKiB", "medianShortage"):
+                  for key in ("sectorDaysAllOff", "sectorDaysWithoutKnownService", "sectorDaysWithUnverifiedPresence", "comparableOffSpread"):
+                      assert type(row.get(key)) is int and row[key] >= 0, "Invalid Sunday sector metric: " + key
+              for key in ("medianSeconds", "p95Seconds", "peakRssKiB", "medianShortage",
+                          "medianComparableSundayOffSpread", "medianSundaySectorDaysWithoutKnownService"):
                   assert reports[0].get(key) is not None, "Missing " + key
               print(json.dumps(reports[0], sort_keys=True))
           print("Benchmark: 5 synthetic repetitions per variant, independent rules checked.")

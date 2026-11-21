@@ -11,6 +11,7 @@ import { dateRange } from "../../src/lib/escalas/dates";
 import { escalaInputSchema } from "../../src/lib/escalas/schema";
 import type { EscalaInput, EscalaSolveResult } from "../../src/lib/escalas/types";
 import { independentShortage, weekendMetrics } from "./benchmark-metrics";
+import { sundaySectorObservations, sundaySectorVariation } from "../../src/lib/escalas/sunday-sector-observations";
 import { BASELINE_REVISION, benchmarkPython, sourceSnapshot, quantile } from "./benchmark-runtime";
 
 type Variant = "baseline" | "corrected" | "workers2" | "linearization1" | "symmetry1";
@@ -73,8 +74,9 @@ function operationalMetrics(input: EscalaInput, baseline: EscalaInput) {
     const previous = original.get(`${item.employeeId}\0${item.date}`);
     return previous && (previous.kind !== item.kind || previous.shiftId !== item.shiftId);
   });
+  const sunday = sundaySectorVariation(sundaySectorObservations(input));
   return { collectiveRestDays, leaderMissingDays, changedDays: changed.length,
-    changedPeople: new Set(changed.map(item => item.employeeId)).size };
+    changedPeople: new Set(changed.map(item => item.employeeId)).size, ...sunday };
 }
 
 async function main() {
@@ -87,7 +89,8 @@ async function main() {
     throw new Error("BENCHMARK_VARIANT_FAILED");
   const image = JSON.parse(capture(["image", "inspect", process.env.ESCALAS_BENCHMARK_IMAGE || "web-escalas-solver:latest"]))[0].Id as string;
   const snapshots = { baseline: sourceSnapshot(BASELINE_REVISION), corrected: sourceSnapshot() };
-  const observations: { scenario: string; variant: Variant; seconds: number; rss: number; shortage: number | null }[] = [];
+  const observations: { scenario: string; variant: Variant; seconds: number; rss: number; shortage: number | null;
+    comparableOffSpread: number; sectorDaysWithoutKnownService: number }[] = [];
   for (const scenario of selected) {
     const input = syntheticInput(scenario);
     let comparison: EscalaInput | undefined;
@@ -119,15 +122,18 @@ async function main() {
         const validation = feasible ? validateEscala(proposal) : undefined;
         const deficits = feasible ? independentShortage(proposal) : undefined;
         const errors = validation?.issues.filter(issue => issue.severity === "ERROR").map(issue => issue.code) || [];
+        const operational = operationalMetrics(proposal, comparison);
         observations.push({ scenario: scenario.id, variant, seconds: solved.result.wallTimeSeconds,
-          rss: solved.maxRssKiB, shortage: deficits?.total ?? null });
+          rss: solved.maxRssKiB, shortage: deficits?.total ?? null,
+          comparableOffSpread: operational.comparableOffSpread,
+          sectorDaysWithoutKnownService: operational.sectorDaysWithoutKnownService });
         console.log(JSON.stringify({ kind: "measurement", scenario: scenario.id, variant, repetition,
           baselineRevision: BASELINE_REVISION, sourceHash: snapshot.hash, sourceHashes: snapshot.hashes, image,
           resources: { workers, cpus: workers, memoryMiB: 1536, linearization, symmetry }, hostLoad1m: loadavg()[0],
           status: solved.result.status, seconds: solved.result.wallTimeSeconds, maxRssKiB: solved.maxRssKiB,
           calls: solved.calls.length, phases: solved.result.optimization?.phases,
           shortagePersonMinutes: deficits?.total ?? null, shortageBySector: deficits?.bySector,
-          ...(feasible ? { ...weekendMetrics(proposal), ...operationalMetrics(proposal, comparison) } : {}),
+          ...(feasible ? { ...weekendMetrics(proposal), ...operational } : {}),
           errors: [...new Set(errors)] }));
         if (errors.length) throw new Error("BENCHMARK_INDEPENDENT_VALIDATION_FAILED");
       }
@@ -140,6 +146,8 @@ async function main() {
       medianSeconds: quantile(rows.map(item => item.seconds), .5), p95Seconds: quantile(rows.map(item => item.seconds), .95),
       peakRssKiB: Math.max(...rows.map(item => item.rss)),
       medianShortage: quantile(rows.flatMap(item => item.shortage === null ? [] : [item.shortage]), .5),
+      medianComparableSundayOffSpread: quantile(rows.map(item => item.comparableOffSpread), .5),
+      medianSundaySectorDaysWithoutKnownService: quantile(rows.map(item => item.sectorDaysWithoutKnownService), .5),
       nonFeasible: rows.filter(item => item.shortage === null).length }));
   }
 }
