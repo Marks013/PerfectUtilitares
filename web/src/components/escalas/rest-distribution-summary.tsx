@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { restPairSummary } from "@/lib/escalas/rest-quality";
+import { sundaySectorObservations } from "@/lib/escalas/sunday-sector-observations";
 import { sortEmployees } from "@/lib/escalas/order";
 import type { EscalaInput } from "@/lib/escalas/types";
 import styles from "./escalas.module.css";
@@ -14,6 +15,16 @@ export function RestDistributionSummary({ input, previousInput, search }: {
 }) {
   const summary = useMemo(() => restPairSummary(input), [input]);
   const previous = useMemo(() => previousInput ? restPairSummary(previousInput) : undefined, [previousInput]);
+  const sundays = useMemo(() => {
+    if (!input.assignments.length) return [];
+    const groups = new Map<string, ReturnType<typeof sundaySectorObservations>>();
+    for (const row of sundaySectorObservations(input)) {
+      const days = groups.get(row.sector) ?? [];
+      days.push(row);
+      groups.set(row.sector, days);
+    }
+    return [...groups].map(([sector, days]) => ({ sector, days }));
+  }, [input]);
   const aboveTarget = useMemo(() => {
     const counts = new Map(summary.people.filter(person => person.correctableExcess > 0).map(person => [person.employeeId, person]));
     return sortEmployees(input.employees.filter(person => person.planningEnabled !== false && counts.has(person.id)))
@@ -35,6 +46,25 @@ export function RestDistributionSummary({ input, previousInput, search }: {
       : search && !search.attempted ? <p>A etapa de redistribuição não foi executada no prazo disponível. Os pares restantes ainda podem ser revistos.</p>
       : search?.attempted && aboveTarget.length > 0 ? <p>Não foi encontrada uma troca segura para todo o excesso no prazo disponível. Isso não comprova que todos os pares sejam inevitáveis.</p>
       : !search ? <p className={styles.muted}>Contagem da grade exibida, sem alterar as folgas salvas.</p> : null}
+    {sundays.length > 0 && <details>
+      <summary className={styles.disclosureTrigger}>Conferir domingos por setor</summary>
+      <p className={styles.muted}>Contagem da grade atual em domingos não fechados. Folga, afastamento e presença horária são diferentes; os números não definem mínimo obrigatório nem autorizam mudanças de folga.</p>
+      <ul className="mt-2 space-y-2" aria-label="Distribuição por domingo e setor">
+        {sundays.map(({ sector, days }) => <li key={sector} className="min-w-0 break-words">
+          <strong>{sector}</strong>
+          <ul className="mt-1 space-y-1">
+            {days.map(day => <li key={day.date}>{day.date}: {day.off} de {day.active} pessoa(s) com folga
+              {day.lockedOff > 0 ? ` (${day.lockedOff} bloqueada(s))` : ""};
+              {" "}{day.timed} com presença horária conhecida,
+              {" "}{day.duty} em atividade sem horário,
+              {" "}{day.absent} afastada(s),
+              {" "}{day.unverified} sem presença verificável.
+              {day.allOff ? " Todos os incluídos estão de folga neste domingo." : ""}
+            </li>)}
+          </ul>
+        </li>)}
+      </ul>
+    </details>}
     {aboveTarget.length > 0 && <details>
       <summary className={styles.disclosureTrigger}>Conferir quem passou da meta</summary>
       <ul className="mt-2 space-y-2">
