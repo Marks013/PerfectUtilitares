@@ -135,6 +135,29 @@ def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT, weekd
     return selected
 
 
+def _sector_sunday_people(variables, values, sectors, limit=MOVABLE_PEOPLE_LIMIT):
+    """Release whole sectors with measured cross-cohort Sunday concentration.
+
+    Indexes match the sorted sector enumeration in sector_sunday_distribution.
+    An oversized sector is skipped, never silently trimmed: partial cohort
+    release would not be an honest cross-role Sunday exchange.
+    """
+    prefix = 'sector-sunday-spread:'
+    spreads = {int(variable.name[len(prefix):]): values[variable.index]
+               for variable in variables if variable.name.startswith(prefix)}
+    ranked = []
+    for index, (sector, members) in enumerate(sorted(sectors.items())):
+        spread = spreads.get(index, 0)
+        people = tuple(sorted(set(members)))
+        if spread > 0 and people and len(people) <= limit:
+            ranked.append((spread, sector, people))
+    selected = set()
+    for _spread, _sector, members in sorted(ranked, reverse=True):
+        if len(selected | set(members)) <= limit:
+            selected.update(members)
+    return selected
+
+
 def _coverage_people(groups, shortages, values, limit=MOVABLE_PEOPLE_LIMIT):
     """Release complete sectors with the largest shortage for this phase.
 
@@ -495,6 +518,16 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             movable_people = (_movable_people(variables, values, employee_groups or [],
                                                preferred=sunday_repair_people)
                               if names[index] == 'SUNDAY_BALANCE' else set())
+            if names[index] == 'SUNDAY_BALANCE':
+                sector_people = _sector_sunday_people(
+                    variables, values, context.rest_spacing_groups or {})
+                if sector_people:
+                    # A sector is a union of the approved role/clock cohorts.
+                    # Search them together, never release only an arbitrary
+                    # leader or role. Stay under the existing 36-person cap.
+                    combined = movable_people | sector_people
+                    movable_people = (combined if len(combined) <= MOVABLE_PEOPLE_LIMIT
+                                      else sector_people)
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
             if names[index] == 'SUNDAY_PEAK':
