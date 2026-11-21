@@ -62,3 +62,39 @@ describe("plain-language rest distribution summary", () => {
     expect(html).not.toContain("Conferir quem passou da meta");
   });
 });
+
+
+describe("open-Sunday sector visibility without binding staffing minima", () => {
+  it("shows actual Sunday OFF, non-hourly DUTY and missing presence separately", () => {
+    const input = fixture(0);
+    input.assignments = [
+      { employeeId: "one", date: "2026-11-08", kind: "OFF", locked: true },
+      { employeeId: "one", date: "2026-11-15", kind: "DUTY" },
+    ];
+    const before = structuredClone(input);
+    const html = renderToStaticMarkup(<RestDistributionSummary input={input} />);
+    expect(html).toContain("Conferir domingos por setor");
+    expect(html).toContain('aria-label="Distribuição por domingo e setor"');
+    expect(html).toContain("2026-11-08: 1 de 1 pessoa(s) com folga");
+    expect(html).toContain("1 bloqueada(s)");
+    expect(html).toContain("Todos os incluídos estão de folga neste domingo");
+    expect(html).toContain("2026-11-15: 0 de 1 pessoa(s) com folga");
+    expect(html).toContain("1 em atividade sem horário");
+    expect(html).toContain("não definem mínimo obrigatório");
+    expect(input).toEqual(before);
+  });
+
+  it("excludes explicitly closed Sundays from the review without hiding other open Sundays", () => {
+    const input = fixture(0);
+    input.assignments = [{ employeeId: "one", date: "2026-11-08", kind: "OFF" }];
+    input.policy.closedDates = ["2026-11-08"];
+    const html = renderToStaticMarkup(<RestDistributionSummary input={input} />);
+    expect(html).toContain("Conferir domingos por setor");
+    expect(html).not.toContain("2026-11-08:");
+    expect(html).toContain("2026-11-15:");
+    input.restRulesVersion = 3;
+    input.branchCode = "02";
+    const closed = renderToStaticMarkup(<RestDistributionSummary input={input} />);
+    expect(closed).not.toContain("Conferir domingos por setor");
+  });
+});
