@@ -38,7 +38,7 @@ test("MediaPipe assets are same-origin, cacheable and have measurable browser re
     expect(resource.bytes, resource.path).toBeGreaterThan(100_000);
     expect(Number.isFinite(resource.requestDurationMs), resource.path).toBe(true);
     expect(resource.requestDurationMs, resource.path).toBeGreaterThanOrEqual(0);
-    expect(resource.resourceDurationMs, resource.path).not.toBeNull();
+    expect(resource.resourceDurationMs ?? -1, resource.path).toBeGreaterThanOrEqual(0);
   }
   for (const resource of measurements.filter(item => item.path.endsWith(".wasm"))) {
     expect(resource.contentType).toContain("application/wasm");
