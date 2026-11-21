@@ -17,6 +17,7 @@ on:
       - web/scripts/escalas/benchmark-synthetic.ts
       - web/src/lib/escalas/sunday-sector-observations.ts
       - web/ops/escalas/solver.py
+      - web/ops/escalas/optimization.py
       - web/ops/escalas/weekend_balance.py
 
 permissions:
@@ -112,6 +113,29 @@ jobs:
                       assert reports[0].get(key) is not None, "Missing " + key
                   print(json.dumps(reports[0], sort_keys=True))
           assert len(measured) == len(scenarios) * 10 and len(summary) == len(scenarios) * 2, "Unexpected scenario data"
+          # When Python sources differ, operational safety outranks cosmetic
+          # Sunday fairness. Same-source variants provide instrumentation only.
+          for scenario in scenarios:
+              baseline = next(x for x in summary if x["scenario"] == scenario and x["variant"] == "baseline")
+              corrected = next(x for x in summary if x["scenario"] == scenario and x["variant"] == "corrected")
+              sources = {}
+              for variant in ("baseline", "corrected"):
+                  hashes = {row.get("sourceHash") for row in measured
+                            if row["scenario"] == scenario and row["variant"] == variant}
+                  assert len(hashes) == 1 and next(iter(hashes)), "Missing or inconsistent solver source hash"
+                  sources[variant] = next(iter(hashes))
+              if sources["baseline"] == sources["corrected"]:
+                  print("Same-source benchmark: only independent validation is enforced for " + scenario)
+                  continue
+              for metric in ("medianShortage", "medianComparableSundayOffSpread",
+                             "medianSundaySectorDaysWithoutKnownService"):
+                  reference = baseline[metric]
+                  candidate = corrected[metric]
+                  assert isinstance(reference, (int, float)) and isinstance(candidate, (int, float)), "Invalid " + metric
+                  assert math.isfinite(reference) and math.isfinite(candidate), "Non-finite " + metric
+                  assert candidate <= reference, (
+                      "REGRESSION " + scenario + " " + metric + ": " + str(reference) + " -> " + str(candidate))
+              print("No measured coverage/Sunday spread regression for " + scenario)
           print("Benchmark: 5 synthetic repetitions per variant/scenario, independent rules checked.")
           PY
       - name: Keep metrics, never private rosters
