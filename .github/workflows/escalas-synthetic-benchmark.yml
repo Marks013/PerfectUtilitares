@@ -16,6 +16,8 @@ on:
       - .github/workflows/escalas-synthetic-benchmark.yml
       - web/scripts/escalas/benchmark-synthetic.ts
       - web/src/lib/escalas/sunday-sector-observations.ts
+      - web/ops/escalas/solver.py
+      - web/ops/escalas/weekend_balance.py
 
 permissions:
   contents: read
