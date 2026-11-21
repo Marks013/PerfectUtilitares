@@ -82,6 +82,16 @@ jobs:
             printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":5,"pairedSeed":%s}\n' "$scenario" "$PAIRED_SEED" \
               | npm run benchmark:escalas | tee -a "$RUNNER_TEMP/escalas-benchmark.jsonl"
           done
+      - name: Capture shared-seed Sunday diagnosis (exploratory, non-gating)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The normal strict benchmark is unchanged. Diagnose the 115/6 case
+          # from one common synthetic feasibility roster in the same runner.
+          printf '{"scenarios":["branch-115-six-weeks"],"variants":["baseline","corrected"],"repeats":5,"pairedSeed":true}\\n' \\
+            | npm run benchmark:escalas | tee "$RUNNER_TEMP/escalas-paired-seed.jsonl"
       - name: Require independent validation and complete measurements
         shell: bash
         run: |
@@ -148,6 +158,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: escalas-synthetic-metrics
-          path: ${{ runner.temp }}/escalas-benchmark.jsonl
+          path: |
+            ${{ runner.temp }}/escalas-benchmark.jsonl
+            ${{ runner.temp }}/escalas-paired-seed.jsonl
           if-no-files-found: ignore
           retention-days: 7
