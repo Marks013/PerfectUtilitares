@@ -40,7 +40,10 @@ describe("FPRE136 single report import", () => {
   });
   it("reports duplicate registrations, invalid schedules and missing Saturday without silently importing them", () => {
     const data = rows(); data.splice(5, 0, ...person("001"));
-    expect(previewEscalaRows(data, options).issues[0].message).toContain("duplicada");
+    const duplicates = previewEscalaRows(data, options);
+    expect(duplicates.employees.map(employee => employee.registration)).toEqual(["002"]);
+    expect(duplicates.shifts).toEqual([]);
+    expect(duplicates.issues.filter(issue => issue.message.includes("duplicada")).map(issue => issue.line)).toEqual([6, 8]);
     const invalid = rows(); invalid[5][4] = "24:00";
     expect(previewEscalaRows(invalid, options).issues).toHaveLength(1);
     const noSaturday = rows(); noSaturday.splice(6, 1);

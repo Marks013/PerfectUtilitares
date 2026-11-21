@@ -57,13 +57,20 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
   if (selected.length > 250) throw new EscalaError(400, "ESCALA_IMPORT_LIMIT", "A importação aceita até 250 colaboradores da filial por proposta.");
   const result: EscalaImportPreview = { employees: [], shifts: [], issues: [], totalRows: selected.length,
     report: { format: "FPRE136", branchCode, branchName, sourceEmployees, otherBranchesExcluded: sourceEmployees - selected.length, missingSchedule: 0 } };
-  const registrations = new Set<string>(), shifts = new Map<string, EscalaShift>();
+  // Count only records from the selected branch, excluding every repeated
+  // registration rather than allowing its first occurrence through the preview.
+  const registrationCounts = new Map<string, number>();
+  for (const record of selected) {
+    const registration = cell(record.row[0]);
+    if (registration) registrationCounts.set(registration, (registrationCounts.get(registration) ?? 0) + 1);
+  }
+  const shifts = new Map<string, EscalaShift>();
   for (const record of selected) {
     try {
       const { row } = record;
       const registration = required(row[0], 60), name = required(row[2], 160), role = required(row[3], 120);
       const sector = required(record.sector, 120);
-      if (registrations.has(registration)) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
+      if ((registrationCounts.get(registration) ?? 0) > 1) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
       if (!record.saturday) throw new Error("Linha de sábado ausente no FPRE136.");
       const classified = classifyFpre136Schedule({ report: "FPRE136", weekday: [row[4], row[6], row[7], row[9]],
         saturday: [record.saturday[1], record.saturday[3], record.saturday[4], record.saturday[6]] });
@@ -80,7 +87,6 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
       if (shift) shifts.set(shift.id, shift);
       if (classified.mode === "MISSING" && result.report) result.report.missingSchedule++;
       for (const message of classified.warnings) result.issues.push({ line: record.line, message });
-      registrations.add(registration);
     } catch (error) { result.issues.push({ line: record.line, message: error instanceof Error ? error.message : "Linha FPRE136 inválida." }); }
   }
   result.employees = sortEmployees(result.employees.map(applyRestEligibility));

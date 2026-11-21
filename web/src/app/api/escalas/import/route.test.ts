@@ -66,6 +66,23 @@ describe("/api/escalas/import", () => {
     expect(result.preview.shifts[0].segments).toHaveLength(3);
     expect(result.preview.issues).toEqual([]);
   });
+  it("does not offer either duplicate CSV registration for application through the API preview", async () => {
+    const csv = [
+      "Matricula;Nome;Setor;Cargo;CargaSemanal;Horarios;Admissao",
+      "0001;Pessoa primeira;Caixa;Operador;42;08:00-12:00 / 13:00-17:24;2020-01-01",
+      " 0001 ;Pessoa segunda;Caixa;Operador;42;09:00-12:00 / 13:00-17:24;2020-01-01",
+      "0002;Pessoa distinta;Loja;Operador;42;07:00-11:00 / 12:00-16:24;2020-01-01",
+    ].join("\n");
+    const response = await POST(upload(csv));
+    expect(response.status).toBe(200);
+    const { preview } = await response.json() as { preview: { totalRows: number; employees: { registration: string }[];
+      shifts: unknown[]; issues: { line: number; message: string }[] } };
+    expect(preview.totalRows).toBe(3);
+    expect(preview.employees.map(person => person.registration)).toEqual(["0002"]);
+    expect(preview.shifts).toHaveLength(1);
+    expect(preview.issues.map(issue => issue.line)).toEqual([2, 3]);
+    expect(preview.issues.every(issue => issue.message.includes("duplicada"))).toBe(true);
+  });
   it("rejects operators without branch permission before processing personal cells", async () => {
     if (mocks.session) mocks.session.user.role = "OPERATOR";
     mocks.grant.mockResolvedValue(null);
