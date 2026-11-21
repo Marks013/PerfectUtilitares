@@ -54,10 +54,11 @@ export function RestDistributionSummary({ input, previousInput, search }: {
           <strong>{sector}</strong>
           <ul className="mt-1 space-y-1">
             {days.map(day => <li key={day.date}>{day.date}: {day.off} de {day.active} pessoa(s) com folga
-              {day.lockedOff > 0 ? ` (${day.lockedOff} bloqueada(s))` : ""};
+              {day.lockedOff > 0 ? ` (${day.lockedOff} bloqueada(s))` : ""}
               {" "}{day.timed} com presença horária conhecida,
               {" "}{day.duty} em atividade sem horário,
               {" "}{day.absent} afastada(s),
+              {" "}{day.holiday} em feriado,
               {" "}{day.unverified} sem presença verificável.
               {day.allOff ? " Todos os incluídos estão de folga neste domingo." : ""}
             </li>)}
