@@ -24,13 +24,17 @@ describe("Escalas import preview", () => {
     expect(preview.issues[0].message).toContain("data real de admissão");
     expect(preview.issues[1].message).toContain("setor");
   });
-  it("does not merge homonyms and rejects duplicate registrations", () => {
+  it("keeps homonyms distinct but excludes every occurrence of a repeated registration", () => {
     const second = row(); second[0] = "0002";
+    const distinct = previewEscalaRows([header, row(), second], options);
+    expect(distinct.employees).toHaveLength(2);
+    expect(distinct.employees[0].id).not.toBe(distinct.employees[1].id);
     const preview = previewEscalaRows([header, row(), second, row()], options);
-    expect(preview.employees).toHaveLength(2);
-    expect(preview.employees[0].id).not.toBe(preview.employees[1].id);
+    expect(preview.totalRows).toBe(3);
+    expect(preview.employees.map(person => person.registration)).toEqual(["0002"]);
     expect(preview.shifts).toHaveLength(1);
-    expect(preview.issues[0].message).toContain("duplicada");
+    expect(preview.issues.map(issue => issue.line)).toEqual([2, 4]);
+    expect(preview.issues.every(issue => issue.message.includes("duplicada"))).toBe(true);
   });
   it.each(["39", "44,5", "0", "texto"])("rejects unsupported weekly hours %s", (hours) => {
     const value = row(); value[4] = hours;
