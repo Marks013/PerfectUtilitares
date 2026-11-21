@@ -1,0 +1,85 @@
+name: One-time merged PR 56, 57 and 59 branch cleanup
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/cleanup-integrated-prs-56-57-59-once.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: perfectutilitares-clean-merged-prs-56-57-59-once
+  cancel-in-progress: false
+
+jobs:
+  cleanup-merged-pr-branches:
+    if: github.repository == 'Marks013/PerfectUtilitares'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete only unchanged merged PR branches, preserving open PR 58
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EXPECTED_PARENT: 714c630ded7fc799c3e6474ec5d3c3b322e1b7fc
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_main="$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$GITHUB_SHA" || {
+            echo "Main moved; refusing cleanup" >&2; exit 1;
+          }
+          parent="$(gh api "repos/$REPO/commits/$GITHUB_SHA" --jq '.parents[0].sha')"
+          test "$parent" = "$EXPECTED_PARENT" || {
+            echo "Unexpected cleanup commit ancestry" >&2; exit 1;
+          }
+
+          open="$(gh api "repos/$REPO/pulls?state=open&per_page=100" --jq '[.[].number] | sort | join(",")')"
+          test "$open" = "58" || {
+            echo "Unexpected open pull requests; refusing cleanup" >&2; exit 1;
+          }
+
+          expected_before="audit/escalas-a08-multimonth-synthetic-2026-11-20,audit/escalas-sunday-sector-evidence-2026-11-20,audit/mediapipe-runtime-browser-2026-11-20,main,test/escalas-import-duplicate-source-2026-11-20"
+          found="$(gh api "repos/$REPO/branches?per_page=100" --jq '[.[].name] | sort | join(",")')"
+          test "$found" = "$expected_before" || {
+            echo "Branch inventory changed; refusing cleanup" >&2; exit 1;
+          }
+
+          targets=(
+            '56|audit/escalas-sunday-sector-evidence-2026-11-20|2252312297ca7c5b052a5c4b9cb196a82cca6f94'
+            '57|test/escalas-import-duplicate-source-2026-11-20|a4bea8f77926163669cb382b0b7d69f9b8fd37ff'
+            '59|audit/escalas-a08-multimonth-synthetic-2026-11-20|da303603f33f9f96932b0357b2ef38a78801b169'
+          )
+          # Verify ALL PR and branch SHAs before deleting ANY ref.
+          for target in "${targets[@]}"; do
+            IFS='|' read -r pr branch expected_sha <<< "$target"
+            merged="$(gh api "repos/$REPO/pulls/$pr" --jq '.merged')"
+            pr_head="$(gh api "repos/$REPO/pulls/$pr" --jq '.head.sha')"
+            pr_branch="$(gh api "repos/$REPO/pulls/$pr" --jq '.head.ref')"
+            pr_repo="$(gh api "repos/$REPO/pulls/$pr" --jq '.head.repo.full_name')"
+            ref_head="$(gh api "repos/$REPO/git/ref/heads/$branch" --jq '.object.sha')"
+            test "$merged" = true && test "$pr_head" = "$expected_sha" \
+              && test "$pr_branch" = "$branch" && test "$pr_repo" = "$REPO" \
+              && test "$ref_head" = "$expected_sha" || {
+              echo "PR $pr or its branch has changed; refusing cleanup" >&2; exit 1;
+            }
+          done
+
+          # Recheck main immediately before mutations.
+          test "$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')" = "$GITHUB_SHA"
+          for target in "${targets[@]}"; do
+            IFS='|' read -r pr branch expected_sha <<< "$target"
+            test "$(gh api "repos/$REPO/git/ref/heads/$branch" --jq '.object.sha')" = "$expected_sha" || exit 1
+            gh api -X DELETE "repos/$REPO/git/refs/heads/$branch" >/dev/null
+            echo "Removed unchanged branch of merged PR $pr"
+          done
+
+          remaining="$(gh api "repos/$REPO/branches?per_page=100" --jq '[.[].name] | sort | join(",")')"
+          test "$remaining" = "audit/mediapipe-runtime-browser-2026-11-20,main" || {
+            echo "Unexpected remaining branch inventory: $remaining" >&2; exit 1;
+          }
+          echo "Success: preserved main and open PR 58 branch only"
