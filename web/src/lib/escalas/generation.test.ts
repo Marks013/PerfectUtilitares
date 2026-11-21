@@ -25,6 +25,12 @@ function input(): EscalaInput {
 
 const minutes = (value: EscalaInput, id: string) => value.shifts.find((shift) => shift.id === id)?.segments.reduce((total, segment) => total + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
 
+function automaticClockId(segments: EscalaInput["shifts"][number]["segments"], prefix = "prep"): string {
+  let hash = 2166136261;
+  for (const character of JSON.stringify(segments)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return `${prefix}-${(hash >>> 0).toString(16)}`;
+}
+
 function legacyContinuousReference(hours: 40 | 42, blocks: boolean): EscalaInput {
   const value = input();
   value.generationMode = "HOURS_ONLY"; value.defaultWeeklyHours = hours;
@@ -33,15 +39,65 @@ function legacyContinuousReference(hours: 40 | 42, blocks: boolean): EscalaInput
   value.policy.limitContinuousWorkBlocks = blocks; value.policy.allowShortMealSimulation = false;
   value.employees[0].weeklyHours = hours; value.employees[0].weeklyHoursMode = "BRANCH";
   const segments: EscalaInput["shifts"][number]["segments"] = [{ start: 420, end: 420 + hours * 12, kind: "WORK" }];
-  let hash = 2166136261;
-  for (const character of JSON.stringify(segments)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
-  value.shifts.push({ id: `prep-${(hash >>> 0).toString(16)}`, name: "Legacy automatic", segments });
+  value.shifts.push({ id: automaticClockId(segments), name: "Legacy automatic", segments });
   value.employees[0].shiftIds = [value.shifts[1].id];
   value.employees[0].originalShiftIds = ["source"];
   return value;
 }
 
 describe("legacy automatic meal repair and excluded-record retention", () => {
+  it.each([
+    ["flex", 450, 750, 930, 1134],
+    ["prep", 561, 771, 906, 1200],
+  ] as const)("repairs a legacy %s meal without dropping its editable WORK date", (prefix, start, mealStart, mealEnd, end) => {
+    const value = legacyContinuousReference(42, true);
+    value.generationMode = "DAYS_AND_HOURS";
+    value.storeClosingMinutes = 1200;
+    const segments: EscalaInput["shifts"][number]["segments"] = [
+      { start, end: mealStart, kind: "WORK" },
+      { start: mealStart, end: mealEnd, kind: "BREAK" },
+      { start: mealEnd, end, kind: "WORK" },
+    ];
+    const id = automaticClockId(segments, prefix);
+    value.shifts[1] = { id, name: "Legacy automatic meal", segments };
+    value.employees[0].shiftIds = [id];
+    value.assignments = [
+      { employeeId: "p1", date: value.startDate, kind: "WORK", shiftId: id },
+      { employeeId: "p1", date: addDays(value.startDate, 1), kind: "OFF" },
+      { employeeId: "p1", date: addDays(value.startDate, 2), kind: "ABSENCE", locked: true },
+    ];
+    const original = structuredClone(value), prepared = prepareGeneration(value).input;
+    const repaired = prepared.shifts.find(shift => shift.id === prepared.assignments[0]?.shiftId);
+    expect(repaired).toBeDefined();
+    expect(repaired!.id).not.toBe(id);
+    expect(prepared.employees[0].fixedImportedShiftId).toBe(repaired!.id);
+    expect(minutes(prepared, repaired!.id)).toBe(504);
+    expect(repaired!.segments.filter(s => s.kind === "BREAK").map(s => s.end - s.start)).toEqual([120]);
+    expect(repaired!.segments.at(-1)!.end).toBeLessThanOrEqual(1200);
+    expect(prepared.assignments).toEqual([{ ...original.assignments[0], shiftId: repaired!.id }, ...original.assignments.slice(1)]);
+    expect(prepared.shifts.find(shift => shift.id === "source")).toEqual(original.shifts[0]);
+    expect(prepared.employees[0].sourceSchedule).toEqual(original.employees[0].sourceSchedule);
+    expect(value).toEqual(original);
+  });
+
+  it("uses the single compatible automatic clock actually worked instead of an unused nearer alternative", () => {
+    const value = legacyContinuousReference(42, true);
+    value.generationMode = "DAYS_AND_HOURS";
+    const segments = (start: number): EscalaInput["shifts"][number]["segments"] => [
+      { start, end: start + 250, kind: "WORK" },
+      { start: start + 250, end: start + 370, kind: "BREAK" },
+      { start: start + 370, end: start + 624, kind: "WORK" },
+    ];
+    const worked = { id: automaticClockId(segments(450), "flex"), name: "Worked", segments: segments(450) };
+    const unused = { id: automaticClockId(segments(420)), name: "Unused", segments: segments(420) };
+    value.shifts = [value.shifts[0], worked, unused];
+    value.employees[0].shiftIds = [worked.id, unused.id];
+    value.assignments = [{ employeeId: "p1", date: value.startDate, kind: "WORK", shiftId: worked.id }];
+    const prepared = prepareGeneration(value).input;
+    expect(prepared.employees[0]).toMatchObject({ shiftIds: [worked.id], fixedImportedShiftId: worked.id });
+    expect(prepared.assignments).toEqual(value.assignments);
+  });
+
   it.each(["DAYS_AND_HOURS", "HOURS_ONLY"] as const)("preserves a legacy automatic clock when its six-hour import is excluded in %s", mode => {
     const value = legacyContinuousReference(42, false);
     value.generationMode = mode; value.policy.minMealMinutes = 90;

@@ -555,8 +555,8 @@ def _solve(data, control=None, started=None):
     model.clear_hints()
     for variable in seed_variables:
         model.add_hint(variable, seed.value(variable))
-    _preserve_daily_timed_presence(model, employees, dates, choices, shifts,
-                                   data["demands"], values, control)
+    sunday_recovery = _preserve_daily_timed_presence(model, employees, dates, choices, shifts,
+                                                     data["demands"], values, control) or {}
     sunday_coverage = {}
     sector_coverage = {}
     visible_sunday_coverage = {}
@@ -635,7 +635,8 @@ def _solve(data, control=None, started=None):
     decisions = {variable.index: key for key, variable in off.items()}
     repair_groups = _rest_repair_groups(employees, dates, work, baseline, values, policy,
                                        data["demands"], data.get("visibleMonth"),
-                                       sector_coverage, sunday_coverage)
+                                       sector_coverage, sunday_coverage,
+                                       priority_sundays=sunday_recovery)
     # Move the existing bounded alternative construction to the global coverage
     # call, where it can use the accepted incumbent after local repairs.
     def coverage_hint_builder(current_values, hint_deadline, hint_control):
@@ -681,6 +682,7 @@ def _solve(data, control=None, started=None):
                                                           for sector in {p['sector'] for p in employees}},
                                      coverage_groups={sector: [p['id'] for p in employees if p['sector'] == sector]
                                                       for sector in sector_coverage}, sunday_coverage=sunday_coverage,
+                                     sunday_recovery=sunday_recovery,
                                      sunday_peaks=peak_plan.neighborhoods,
                                      sector_coverage=sector_coverage,
                                      closing_coverage=closing_coverage,
@@ -717,9 +719,9 @@ def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, dem
     """Preserve staffed sector-days in the feasible seed, not hourly coverage.
 
     Referenced days already containing timed WORK gain a guard, even when an
-    automatic rounding produced a zero target. This preserves the seed, not a minimum.
-    Empty days remain repair goals; DUTY cannot replace timed presence. Existing
-    absence, closure, fixed-rest and locked-assignment constraints stay intact.
+    automatic rounding produced a zero target. Empty Sundays with a positive
+    estimate become optional recovery targets, guarded only once staffed.
+    DUTY cannot replace timed presence. Existing mandatory rules stay intact.
     WORK segments count on each occupied civil date, including overnight shifts.
     """
     sectors = {person["id"]: person["sector"] for person in employees if not has_no_clock(person)}
@@ -727,7 +729,11 @@ def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, dem
     demanded = {(item["sector"], item["date"]) for item in demands
                 if item["date"] in active_dates}
     if not demanded:
-        return
+        return {}
+    sundays = {day for day in active_dates if date.fromisoformat(day).weekday() == 6}
+    estimated_sundays = {(item["sector"], item["date"]) for item in demands
+                         if item["date"] in sundays and item.get("estimated") is True
+                         and item["minimum"] > 0}
     present, occupied = {}, {}
     for (pid, day), options in choices.items():
         if control is not None:
@@ -742,11 +748,15 @@ def _preserve_daily_timed_presence(model, employees, dates, choices, shifts, dem
                 key = sectors[pid], civil
                 if key in demanded:
                     present.setdefault(key, {})[variable.index] = variable
-    for variables in present.values():
+    pending = {}
+    for key, variables in present.items():
         if control is not None:
             control.checkpoint()
         if any(values[index] for index in variables):
             model.add(sum(variables.values()) >= 1)
+        elif key in estimated_sundays:
+            pending[key] = sum(variables.values())
+    return pending
 
 
 def _composed_decision_hints(employees, dates, active, baseline, off, work, choices,
@@ -843,7 +853,7 @@ def _repair_clock_fixes(choices, metrics, values):
 
 
 def _rest_repair_groups(employees, dates, work, baseline, values, policy, demands, visible_month=None,
-                        sector_shortages=None, sunday_shortages=None):
+                        sector_shortages=None, sunday_shortages=None, *, priority_sundays=()):
     """Release whole deficient sectors, without assuming sales peaks or staffing minima."""
     sectors = {}
     for person in employees:
@@ -871,16 +881,18 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
         sunday_shortage = snapshot.value(sum((sunday_shortages or {}).get(sector, [])))
         if empty or shortage > 0 or sunday_shortage > 0:
             sunday_count = sum(date.fromisoformat(day).weekday() == 6 for day in empty)
-            # Recover measured person-minutes first; an almost empty large team
-            # must not rank below every completely empty small department.
-            ranked.append((-shortage, -sunday_shortage, -sunday_count, -len(empty), len(members), sector,
+            # Give an open Sunday with zero timed service a repair opportunity
+            # before ordinary shortages; coverage bounds still decide acceptance.
+            recovery_count = sum((sector, day) in priority_sundays for day in empty)
+            ranked.append((-recovery_count, -shortage, -sunday_shortage, -sunday_count, -len(empty),
+                           len(members), sector,
                            {person["id"] for person in members}))
     # Small sectors share one neighborhood. A large team gets its own complete
     # exchange group instead of being silently excluded by the old size limit.
     # Anchor the union at its highest-ranked member, not unconditionally first.
     # Grouping must not displace a more urgent sector from the four attempts.
     small, groups, small_rank = set(), [], None
-    for rank, (_, _, _, _, size, _, members) in enumerate(sorted(ranked)):
+    for rank, (_, _, _, _, _, size, _, members) in enumerate(sorted(ranked)):
         if size <= 8 and len(small | members) <= 16:
             if not small:
                 small_rank = rank
@@ -1005,10 +1017,11 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
-    # Completeness alone must not preserve an entirely resting estimated sector.
-    # Rebuild hints only; keep locks, HOURS_ONLY and mandatory rules unchanged.
+    # An empty estimated day is not evidence against an otherwise exact seed.
+    # The fixed-hint pass still proves legality, then coverage repairs retain
+    # the known staffed days instead of rebuilding an entire usable sector.
     comparable = {sector for sector, members in sectors.items()
-                  if prefer_baseline and sector not in empty_sectors | repeating_sectors and all(
+                  if prefer_baseline and sector not in repeating_sectors and all(
         (old := source.get((person['id'], day))) is not None
         and (old['kind'] == 'ABSENCE' or (day in holidays or baseline.get((person['id'], day), {}).get('kind') == 'HOLIDAY') == (old['kind'] == 'HOLIDAY'))
         and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])
