@@ -254,6 +254,48 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertEqual(engine.value(presence_loss), 0)
         self.assertEqual(engine.value(sector), 10000)
 
+    def test_mixed_untimed_leader_balances_only_explicit_off_without_invented_service(self):
+        data, model, work, values, groups, _, _ = self.synthetic_cross_role_case()
+        timed, leader = data['employees']
+        leader.update(scheduleMode='UNTIMED', shiftIds=[], sourceSchedule=None)
+        # This is a genuine cross-role case. The timed employee's clocked
+        # attendance is fixed throughout; untimed WORK means DUTY, not hourly
+        # staffing. Both remain subject to mandatory Sunday-rest constraints.
+        off = {}
+        for person in (timed, leader):
+            for day in SUNDAYS:
+                key = person['id'], day
+                rest = model.new_bool_var(f'o:{person["id"]}:{day}')
+                model.add(rest + work[key] == 1)
+                off[key] = rest
+                values[rest.index] = 1 - values[work[key].index]
+                if person is timed:
+                    model.add(work[key] == values[work[key].index])
+        self.assertEqual(sector_sunday_distribution(
+            model, groups, data['employees'], SUNDAYS, work, {}, data['policy'],
+            values), ([], [], 0))  # Legacy clocked-only mode skips mixed sectors.
+        spreads, losses, maximum = sector_sunday_distribution(
+            model, groups, data['employees'], SUNDAYS, work, {}, data['policy'],
+            values, off=off)
+        self.assertEqual((len(spreads), losses, maximum), (1, [], 0))
+        self.assertEqual(values[spreads[0].index], 10000)
+        self.assertFalse(any(variable.name.startswith('sector-sunday-presence-loss:')
+                             for variable in model.proto.variables))
+        preserve_sunday_presence(model, data['employees'], SUNDAYS, work, values)
+        model.minimize(spreads[0])
+        engine = cp_model.CpSolver()
+        engine.parameters.num_workers = 1
+        engine.parameters.max_time_in_seconds = 2
+        self.assertEqual(engine.solve(model), cp_model.OPTIMAL)
+        self.assertEqual(engine.value(spreads[0]), 0)
+        self.assertEqual([sum(engine.value(off[person['id'], day])
+                              for person in data['employees']) for day in SUNDAYS],
+                         [1, 1, 1, 1])
+        self.assertEqual([engine.value(work[timed['id'], day]) for day in SUNDAYS],
+                         [1, 0, 1, 0])
+        self.assertEqual([engine.value(work[leader['id'], day]) for day in SUNDAYS],
+                         [0, 1, 0, 1])
+
     def test_excludes_overnight_and_unverified_sectors_without_extra_variables(self):
         data, model, work, values, groups, _, _ = self.synthetic_cross_role_case()
         before = len(model.proto.variables)

@@ -620,7 +620,7 @@ def _solve(data, control=None, started=None):
     def prepare_sector_sunday_balance(current_model, accepted_values, current_control):
         sector_spreads, sector_presence_losses, max_presence_loss = sector_sunday_distribution(
             current_model, groups, employees, dates, work, baseline, policy, accepted_values,
-            excluded_sectors=overnight_sectors, control=current_control)
+            excluded_sectors=overnight_sectors, control=current_control, off=off)
         return sector_sunday_tie_break(
             sundays, sector_spreads, sector_presence_losses, max_presence_loss)
 

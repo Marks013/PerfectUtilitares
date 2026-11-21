@@ -98,14 +98,14 @@ def sunday_distribution(model, groups, employees, days, work, baseline, policy, 
 
 
 def sector_sunday_distribution(model, groups, employees, days, work, baseline, policy,
-                               values, excluded_sectors=(), control=None):
-    """Secondary cross-cohort Sunday rate spreads, never an operational minimum.
+                               values, excluded_sectors=(), control=None, off=None):
+    """Secondary sector Sunday fairness, never a new staffing requirement.
 
-    Only compare a sector containing distinct already-approved role/clock
-    cohorts. Skip untimed or overnight sectors: an origin-day WORK boolean
-    cannot verify their civil-Sunday staffing. A deficit variable makes any
-    loss of the incumbent's aggregate eligible Sunday presence visible to
-    the soft objective, without making a new hard staffing requirement.
+    Timed-only sectors compare WORK presence, retaining the original soft
+    presence-loss preference. Sectors with UNTIMED/MISSING or no shift IDs
+    compare only explicit OFF decisions. DUTY is NOT counted as clocked
+    service; there is no coverage minimum or presence deficit for this mode.
+    Overnight sectors are excluded by the caller in either mode.
     """
     sundays = [day for day in days if date.fromisoformat(day).weekday() == 6]
     if len(sundays) < 2:
@@ -120,15 +120,18 @@ def sector_sunday_distribution(model, groups, employees, days, work, baseline, p
     for index, (sector, people) in enumerate(sorted(sectors.items())):
         if control is not None:
             control.checkpoint()
-        if (sector in excluded or len(people) < 2
-                or any(person.get('scheduleMode') in ('UNTIMED', 'MISSING')
-                       or not person.get('shiftIds') for person in people)
+        non_hourly = any(person.get('scheduleMode') in ('UNTIMED', 'MISSING')
+                         or not person.get('shiftIds') for person in people)
+        if (sector in excluded or len(people) < 2 or (non_hourly and off is None)
                 or len({cohort.get(person['id']) for person in people}) < 2):
             continue
+        # Explicit OFF is an observable rest even when DUTY has no known
+        # clock. Never map a non-hourly work boolean into hourly coverage.
+        decisions = off if non_hourly else work
         opportunities = {person['id']: set(available_weekends(person, sundays, baseline, policy))
                          for person in people}
-        per_day = [[work[person['id'], day] for person in people
-                    if day in opportunities[person['id']] and (person['id'], day) in work]
+        per_day = [[decisions[person['id'], day] for person in people
+                    if day in opportunities[person['id']] and (person['id'], day) in decisions]
                    for day in sundays]
         eligible_days = [entry for entry in per_day if entry]
         if len(eligible_days) < 2:
@@ -136,7 +139,7 @@ def sector_sunday_distribution(model, groups, employees, days, work, baseline, p
         present = [variable for entry in eligible_days for variable in entry]
         incumbent = sum(values[variable.index] for variable in present)
         if incumbent == 0:
-            continue  # No reference presence: do not invent a staffing target.
+            continue  # No reference WORK/OFF signal: no metric or target.
         # Compare only dates with the same eligible headcount. A division
         # equality for every Sunday used to add nonlinear auxiliary geometry
         # before COVERAGE was optimized, changing bounded repair outcomes.
@@ -160,6 +163,11 @@ def sector_sunday_distribution(model, groups, employees, days, work, baseline, p
         remember(model, values, maximum, max(initial_counts))
         remember(model, values, minimum, min(initial_counts))
         remember(model, values, spread, scale * (max(initial_counts) - min(initial_counts)))
+        if non_hourly:
+            # This is purely a rest-count distribution, not presence/coverage.
+            # In particular, no inferred DUTY or hourly service guarantee.
+            spreads.append(spread)
+            continue
         # Soft loss budget, not a new minimum: earlier coverage optimization
         # may legally reduce incumbent Sunday presence if it must.
         deficit = model.new_int_var(0, incumbent, f'sector-sunday-presence-loss:{index}')
