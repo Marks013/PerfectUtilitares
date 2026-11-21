@@ -8,6 +8,7 @@ on:
         type: choice
         options:
           - team-10-week
+          - team-12-four-weeks
           - branch-50-four-weeks
           - branch-115-six-weeks
           - branch-115-six-weeks-untimed
@@ -19,6 +20,10 @@ on:
           - '5'
           - '20'
         default: '5'
+      paired_seed:
+        description: 'Optional diagnostic with a common synthetic feasibility seed'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/escalas-synthetic-benchmark.yml
@@ -50,8 +55,9 @@ jobs:
       run:
         working-directory: web
     env:
-      SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week branch-50-four-weeks branch-115-six-weeks branch-115-six-weeks-untimed' || inputs.scenario || 'team-10-week' }}
+      SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week team-12-four-weeks branch-50-four-weeks branch-115-six-weeks branch-115-six-weeks-untimed' || inputs.scenario || 'team-10-week' }}
       REPEATS: ${{ github.event_name == 'pull_request' && '5' || inputs.repeats || '5' }}
+      PAIRED_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.paired_seed && 'true' || 'false' }}
       CI: "true"
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -91,9 +97,18 @@ jobs:
           # One job/runner for every PR scenario, so the hardware and image stay constant.
           # Workflow dispatch retains its original single-scenario selector.
           for scenario in $SCENARIOS; do
-            printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":%s}\n' "$scenario" "$REPEATS" \
+            printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":%s,"pairedSeed":%s}\n' "$scenario" "$REPEATS" "$PAIRED_SEED" \
               | npm run benchmark:escalas | tee -a "$RUNNER_TEMP/escalas-benchmark.jsonl"
           done
+      - name: Capture paired Sunday seed evidence (exploratory, non-gating)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Strict four-scenario non-regression validation remains mandatory.
+          printf '{"scenarios":["branch-115-six-weeks"],"variants":["baseline","corrected"],"repeats":5,"pairedSeed":true}\n' \
+            | npm run benchmark:escalas | tee "$RUNNER_TEMP/escalas-paired-seed.jsonl"
       - name: Require independent validation and complete measurements
         shell: bash
         run: |
@@ -105,6 +120,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: escalas-synthetic-metrics
-          path: ${{ runner.temp }}/escalas-benchmark.jsonl
+          path: |
+            ${{ runner.temp }}/escalas-benchmark.jsonl
+            ${{ runner.temp }}/escalas-paired-seed.jsonl
           if-no-files-found: ignore
           retention-days: 7

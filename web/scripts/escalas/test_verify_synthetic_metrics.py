@@ -51,6 +51,45 @@ class ContractTest(unittest.TestCase):
         self.assertTrue(reports[0]["p95Available"])
         self.assertEqual(reports[0]["sourceComparison"], "DISTINCT_SOLVER_SOURCE")
 
+    def test_distinct_source_regressions_are_rejected_without_weakening_integrity(self):
+        for metric, report in (
+                ("shortagePersonMinutes", "medianShortage"),
+                ("comparableOffSpread", "medianComparableSundayOffSpread"),
+                ("sectorDaysWithoutKnownService", "medianSundaySectorDaysWithoutKnownService")):
+            with self.subTest(metric=metric):
+                data, scenarios = records(same_source=False)
+                for row in data:
+                    if row["variant"] == "corrected":
+                        if row["kind"] == "measurement":
+                            row[metric] += 1
+                        else:
+                            row[report] += 1
+                with self.assertRaisesRegex(ValueError, "REGRESSION"):
+                    contract.verify(data, scenarios, 5)
+
+    def test_same_source_variability_is_not_misreported_as_algorithm_regression(self):
+        data, scenarios = records(same_source=True)
+        for row in data:
+            if row["variant"] == "corrected":
+                if row["kind"] == "measurement":
+                    row["shortagePersonMinutes"] += 1
+                else:
+                    row["medianShortage"] += 1
+        reports = contract.verify(data, scenarios, 5)
+        self.assertTrue(all(row["sourceComparison"] == "SAME_SOLVER_SOURCE" for row in reports))
+
+    def test_four_week_cross_role_scenario_requires_all_measured_samples(self):
+        data, scenarios = records()
+        for row in data:
+            if row["scenario"] == scenarios[0]:
+                row["scenario"] = "team-12-four-weeks"
+        reports = contract.verify(data, ["team-12-four-weeks", scenarios[1]], 5)
+        self.assertEqual(reports[0]["scenario"], "team-12-four-weeks")
+        self.assertFalse(reports[0]["p95Available"])
+        data.pop(0)
+        with self.assertRaisesRegex(ValueError, "Incomplete"):
+            contract.verify(data, ["team-12-four-weeks", scenarios[1]], 5)
+
     def test_duplicate_repetition_is_rejected(self):
         data, scenarios = records()
         data[1]["repetition"] = 0

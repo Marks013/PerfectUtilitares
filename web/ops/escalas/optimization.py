@@ -14,6 +14,11 @@ MIN_SEARCH_SECONDS = 0.10
 # own floor after setup. An admitted phase is not evidence of optimization.
 MIN_PHASE_BUDGET = 2 * MIN_SEARCH_SECONDS
 MAX_COVERAGE_HINT_SECONDS = 0.6
+# Auxiliary cross-role Sunday search is deliberately opportunistic.
+# In 115-person synthetic evidence its former ~1.24s search did not improve
+# fairness and displaced later rest phases which can incidentally improve
+# higher-priority coverage. This cap is net CP-SAT time after charged setup.
+MAX_DEFERRED_SECTOR_SUNDAY_SEARCH_SECONDS = 0.15
 
 
 @dataclass
@@ -40,6 +45,7 @@ class ImprovementContext:
     rest_spacing: dict | None = None
     rest_spacing_groups: dict | None = None
     refinement_reserve_seconds: float = 0.0
+    prepare_sunday_balance: object = None
 
 
 class Snapshot:
@@ -131,6 +137,29 @@ def _movable_people(variables, values, groups, limit=MOVABLE_PEOPLE_LIMIT, weekd
             # A large tied group needs all its peers movable to lower its spread.
             # Release it alone; the overall model and wall-clock limits still apply.
             return set(members)
+        if len(selected | set(members)) <= limit:
+            selected.update(members)
+    return selected
+
+
+def _sector_sunday_people(variables, values, sectors, limit=MOVABLE_PEOPLE_LIMIT):
+    """Release whole sectors with measured cross-cohort Sunday concentration.
+
+    Indexes match the sorted sector enumeration in sector_sunday_distribution.
+    An oversized sector is skipped, never silently trimmed: partial cohort
+    release would not be an honest cross-role Sunday exchange.
+    """
+    prefix = 'sector-sunday-spread:'
+    spreads = {int(variable.name[len(prefix):]): values[variable.index]
+               for variable in variables if variable.name.startswith(prefix)}
+    ranked = []
+    for index, (sector, members) in enumerate(sorted(sectors.items())):
+        spread = spreads.get(index, 0)
+        people = tuple(sorted(set(members)))
+        if spread > 0 and people and len(people) <= limit:
+            ranked.append((spread, sector, people))
+    selected = set()
+    for _spread, _sector, members in sorted(ranked, reverse=True):
         if len(selected | set(members)) <= limit:
             selected.update(members)
     return selected
@@ -415,6 +444,38 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             proven = False
             break
         preparation_started = time.monotonic()
+        active_deferred_sector_balance = False
+        # A large joint model has insufficient search headroom for
+        # supplementary sector extrema. On 115-person / six-week evidence,
+        # their construction and propagation displaced later refinements and
+        # increased independently measured staffing shortfalls. Fall back to
+        # the ORIGINAL Sunday cohort objective, not a weaker requirement.
+        # The extra cross-role rule remains eligible for smaller models.
+        # Never introduce new mandatory staffing minima or change the
+        # 12-second absolute deadline to mask this tradeoff.
+        can_build_sector_balance = (
+            context.prepare_sunday_balance is not None
+            and not (len(variables) > LARGE_MODEL_VARIABLES and len(dates) > 7))
+        if name == 'SUNDAY_BALANCE' and can_build_sector_balance:
+            original_variable_count = len(model.proto.variables)
+            # Construct optional cross-role sector auxiliaries only AFTER
+            # higher-priority COVERAGE and SUNDAY_COVERAGE are accepted.
+            # Large-model fallback keeps the established model geometry.
+            objective = context.prepare_sunday_balance(model, values, control)
+            plans[index] = name, objective
+            variables = [model.get_int_var_from_proto_index(i)
+                         for i in range(len(model.proto.variables))]
+            if len(values) != len(variables):
+                raise ValueError('incomplete deferred Sunday incumbent')
+            # A legacy-only Sunday objective must keep its existing reserve.
+            # Cap the extra sector tie-break only when an ACTUAL positive
+            # sector spread was constructed from the accepted incumbent.
+            active_deferred_sector_balance = any(
+                var.name.startswith('sector-sunday-spread:') and values[var.index] > 0
+                for var in variables[original_variable_count:])
+            # The builder records all new extrema/deficit values; keep hints
+            # consistent with the accepted higher-priority decisions.
+            _replace_hints(model, values)
         # Consecutive sector repairs reuse the exact same coverage expression.
         # Flatten its coefficients and domain floor once, not once per clone.
         if objective is not current_objective:
@@ -447,14 +508,21 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             objective_cache[id(objective)] = terms, objective_key, lower
         else:
             terms, objective_key, lower = cached
-        visited.append((objective, terms, objective_key))
+        # The extra sector tie-break is observational and subordinate to
+        # subsequent operational improvements. Its incumbent bound belongs
+        # to its OWN search clone, not permanently to the shared model.
+        # Existing cohort/presence guards above remain hard no-regression.
+        if not active_deferred_sector_balance:
+            visited.append((objective, terms, objective_key))
         incumbent = _linear_value(terms, values)
-        # A new search may not worsen even its own goal relative to the known draft.
-        add_upper_bound(objective, terms, objective_key, incumbent)
+        if not active_deferred_sector_balance:
+            # Ordinary objectives keep their established lexicographic bounds.
+            add_upper_bound(objective, terms, objective_key, incumbent)
         if lower == incumbent:
             if repair_phase:
                 continue
-            model.add(objective == incumbent)
+            if not active_deferred_sector_balance:
+                model.add(objective == incumbent)
             phases.append({'objective': names[index], 'status': 'OPTIMAL',
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
@@ -497,6 +565,16 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             movable_people = (_movable_people(variables, values, employee_groups or [],
                                                preferred=sunday_repair_people)
                               if names[index] == 'SUNDAY_BALANCE' else set())
+            if names[index] == 'SUNDAY_BALANCE':
+                sector_people = _sector_sunday_people(
+                    variables, values, context.rest_spacing_groups or {})
+                if sector_people:
+                    # A sector is a union of the approved role/clock cohorts.
+                    # Search them together, never release only an arbitrary
+                    # leader or role. Stay under the existing 36-person cap.
+                    combined = movable_people | sector_people
+                    movable_people = (combined if len(combined) <= MOVABLE_PEOPLE_LIMIT
+                                      else sector_people)
             if names[index] == 'SUNDAY_COVERAGE':
                 movable_people = _coverage_people(coverage_groups or {}, sunday_coverage or {}, values)
             if names[index] == 'SUNDAY_PEAK':
@@ -545,6 +623,13 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                     domain.clear()
                     value = repair_clock_fixes[variable_index] if narrowed_clock else values[variable_index]
                     domain.extend([value, value])
+        if active_deferred_sector_balance:
+            if search_model is model:
+                search_model = model.clone()
+            # Never accept a worse optional sector goal in its own search.
+            # Leave the parent model free for later phases to improve coverage
+            # incidentally, even if that requires yielding a cosmetic spread.
+            search_model.add(objective <= incumbent)
         hint_status = None
         hint_builder = (context.coverage_repair_hint_builder if repair_phase
                         else context.coverage_hint_builder if phase_index == 0 else None)
@@ -612,6 +697,11 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             # the deadline or taking the next Sunday's reserved allocation.
             budget = max(budget, _refinement_reserve(name, names, context.refinement_reserve_seconds))
         budget = min(budget, available)
+        if name == 'SUNDAY_BALANCE' and active_deferred_sector_balance:
+            # Never spend the full Sunday reserve on a costly optional sector
+            # tie-break that is not required for feasibility or staffing.
+            # Let lower phases run; the absolute 12s deadline stays unchanged.
+            budget = min(budget, MAX_DEFERRED_SECTOR_SUNDAY_SEARCH_SECONDS)
         if budget < MIN_SEARCH_SECONDS:
             if name == 'COVERAGE' and phase_index == 0:
                 record_global_skip('PREPARATION_EXHAUSTED', preparation_seconds, hint_status)
@@ -653,8 +743,8 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
         values = {variable.index: engine.value(variable) for variable in variables}
         best = engine.value(objective)
         if pending_sundays:
-            # An accepted repair may open timed service on another Sunday.
-            # Retain that gain, just as we retain service in the verified seed.
+            # Preserve a newly recovered clocked-service Sunday only after an
+            # actual accepted solve. Keep this separate from sector OFF fairness.
             remaining_sundays = []
             for presence in pending_sundays:
                 if engine.value(presence) > 0:
@@ -674,11 +764,14 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             add_upper_bound(variable, variable_terms, key, _linear_value(variable_terms, values))
         phase.update(incumbentValue=best, bestBound=engine.best_objective_bound)
         _replace_hints(model, values)
-        if status == cp_model.OPTIMAL and not restricted:
+        if status == cp_model.OPTIMAL and not restricted and not active_deferred_sector_balance:
             model.add(objective == best)
         else:
             proven = False
-            # Preserve the best higher-priority incumbent, while reserving time for operational balance.
-            # This is bounded lexicographic improvement, not proof that any unfinished objective is optimal.
-            add_upper_bound(objective, terms, objective_key, best)
+            # The auxiliary sector goal is soft even AFTER an improvement:
+            # a later, better operational incumbent must remain admissible.
+            if not active_deferred_sector_balance:
+                # Other objectives retain their existing hard no-regression
+                # guards; no mandatory constraints or budgets are loosened.
+                add_upper_bound(objective, terms, objective_key, best)
     return values, proven, phases

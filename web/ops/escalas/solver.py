@@ -18,7 +18,8 @@ from rest_quality import build_rest_quality, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
 from runtime_settings import MAX_SECONDS, RANDOM_SEED
 from sunday_peak import build_sunday_peaks
-from weekend_balance import available_weekends, preserve_sunday_presence, sunday_distribution, weekend_objectives
+from weekend_balance import (available_weekends, preserve_sunday_presence, sector_sunday_distribution,
+                             sector_sunday_tie_break, sunday_balance_guards, sunday_distribution, weekend_objectives)
 
 ZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -599,6 +600,42 @@ def _solve(data, control=None, started=None):
     date_spreads, sunday_presence, untimed_spreads = sunday_distribution(
         model, groups, employees, dates, work, baseline, policy, values, control)
     sundays.extend(date_spreads)
+    # A civil-Sunday rate cannot be inferred from origin-day WORK when an
+    # admissible or historical shift crosses midnight. Do not compare those
+    # sectors using this extra soft objective.
+    overnight_sectors = set()
+    for person in employees:
+        referenced_shifts = set(person['shiftIds'])
+        referenced_shifts.update(item['shiftId'] for item in
+            person.get('planningHistory', []) + person['history'] + person.get('planningFuture', [])
+            if item['kind'] == 'WORK')
+        if any(any(segment['kind'] == 'WORK' and segment['end'] > 1440
+                   for segment in shifts[sid]['segments'])
+               for sid in referenced_shifts if sid in shifts):
+            overnight_sectors.add(person['sector'])
+    # Do not attach sector-level auxiliary variables before COVERAGE searches:
+    # even soft later objectives change CP-SAT presolve and the 12-second
+    # incumbent when constructed up front. Build them with the current accepted
+    # incumbent at the SUNDAY_BALANCE phase, after coverage/role/time guards.
+    def prepare_sector_sunday_balance(current_model, accepted_values, current_control):
+        sector_spreads, sector_presence_losses, max_presence_loss = sector_sunday_distribution(
+            current_model, groups, employees, dates, work, baseline, policy, accepted_values,
+            excluded_sectors=overnight_sectors, control=current_control, off=off)
+        return sector_sunday_tie_break(
+            sundays, sector_spreads, sector_presence_losses, max_presence_loss)
+
+    sunday_fairness_goal = sum(sundays)
+    if isinstance(sunday_fairness_goal, int) and len(dates) > 7:
+        # A sector with separate singleton role/clock cohorts has no legacy
+        # SUNDAY_BALANCE term. Preserve its phase slot for the deferred builder
+        # using an EXISTING work variable (no pre-coverage auxiliary).
+        sector_cohorts = {}
+        sector_by_person = {person['id']: person['sector'] for person in employees}
+        for index, members in enumerate(groups.values()):
+            for pid in members:
+                sector_cohorts.setdefault(sector_by_person[pid], set()).add(index)
+        if any(len(cohorts) > 1 for cohorts in sector_cohorts.values()):
+            sunday_fairness_goal = next(iter(work.values()), 0)
     # Unconfirmed staffing estimates are planning goals, never approved minima.
     # Prioritize their person-minute shortages before rotation and preferences.
     untimed_rotation = list(untimed_spreads)
@@ -621,7 +658,7 @@ def _solve(data, control=None, started=None):
              # opportunities, freezing the seed's zero spread can force every
              # person to stay OFF. Compare fairness only after this recovery.
              ("UNTIMED_ROTATION", sum(untimed_rotation)),
-             ("SUNDAY_BALANCE", sum(sundays)),
+             ("SUNDAY_BALANCE", sunday_fairness_goal),
              ("REST_SPACING", rest_quality['objective']),
              ("LEADERSHIP", sum(leader_terms)),
              ("SATURDAY_BALANCE", sum(saturdays)),
@@ -657,6 +694,7 @@ def _solve(data, control=None, started=None):
                                      started + MAX_SECONDS, [name for name, _ in goals], context=ImprovementContext(control=control,
                                      # Coverage may leave an equal-but-empty Sunday seed.
                                      # Fairness guards start only at their own later phase.
+                                     prepare_sunday_balance=prepare_sector_sunday_balance,
                                      protected_groups={goals[0][0]: [sum(terms) for terms in sunday_coverage.values()]
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
@@ -671,7 +709,7 @@ def _solve(data, control=None, started=None):
                                                        # from their accepted incumbent, never the seed.
                                                        'SUNDAY_PEAK': [sum(terms) for terms in peak_plan.peaks.values()],
                                                        'UNTIMED_ROTATION': sunday_presence,
-                                                       'SUNDAY_BALANCE': sundays + sunday_presence,
+                                                       'SUNDAY_BALANCE': sunday_balance_guards(sundays, sunday_presence),
                                                        'SATURDAY_BALANCE': saturdays,
                                                        'REST_SPACING': rest_quality['guards']} if goals else {},
                                      employee_groups=list(groups.values()),
@@ -881,12 +919,12 @@ def _rest_repair_groups(employees, dates, work, baseline, values, policy, demand
         sunday_shortage = snapshot.value(sum((sunday_shortages or {}).get(sector, [])))
         if empty or shortage > 0 or sunday_shortage > 0:
             sunday_count = sum(date.fromisoformat(day).weekday() == 6 for day in empty)
-            # Give an open Sunday with zero timed service a repair opportunity
-            # before ordinary shortages; coverage bounds still decide acceptance.
+            # Put independently measured staffing shortages first. A recovered
+            # Sunday may break a tie, but cannot displace a worse-covered sector
+            # from the bounded four whole-sector repair neighborhoods.
             recovery_count = sum((sector, day) in priority_sundays for day in empty)
-            ranked.append((-recovery_count, -shortage, -sunday_shortage, -sunday_count, -len(empty),
-                           len(members), sector,
-                           {person["id"] for person in members}))
+            ranked.append((-shortage, -sunday_shortage, -recovery_count, -sunday_count, -len(empty),
+                           len(members), sector, {person["id"] for person in members}))
     # Small sectors share one neighborhood. A large team gets its own complete
     # exchange group instead of being silently excluded by the old size limit.
     # Anchor the union at its highest-ranked member, not unconditionally first.
@@ -1017,11 +1055,12 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
     sectors = {}
     for person in employees:
         sectors.setdefault(person['sector'], []).append(person)
-    # An empty estimated day is not evidence against an otherwise exact seed.
-    # The fixed-hint pass still proves legality, then coverage repairs retain
-    # the known staffed days instead of rebuilding an entire usable sector.
+    # A complete draft can be mandatory-feasible but leave an estimated OPEN
+    # day with no timed staff. Do not freeze that sector as a preferred exact
+    # hint in day-changing modes: permit legal, protected rest reconstruction.
+    # HOURS_ONLY explicitly keeps its unchanged-reference behavior.
     comparable = {sector for sector, members in sectors.items()
-                  if prefer_baseline and sector not in repeating_sectors and all(
+                  if prefer_baseline and sector not in empty_sectors | repeating_sectors and all(
         (old := source.get((person['id'], day))) is not None
         and (old['kind'] == 'ABSENCE' or (day in holidays or baseline.get((person['id'], day), {}).get('kind') == 'HOLIDAY') == (old['kind'] == 'HOLIDAY'))
         and not (old['kind'] in ('WORK', 'DUTY') and day in policy["closedDates"])

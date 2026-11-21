@@ -32,7 +32,7 @@ export function sourceSnapshot(revision?: string) {
   return { sources, resources, hashes, revision: revision || "working-tree", hash: createHash("sha256").update(JSON.stringify(hashes)).digest("hex") };
 }
 
-export const benchmarkPython = String.raw`import sys,json,time,types,resource,importlib.abc,importlib.util
+export const benchmarkPython = String.raw`import sys,json,time,types,resource,importlib.abc,importlib.util,hashlib
 from pathlib import Path
 from ortools.sat.python import cp_model
 request=json.load(sys.stdin)
@@ -53,6 +53,24 @@ def read_resource(path,*args,**kwargs):
 Path.read_text=read_resource
 sys.meta_path.insert(0,SnapshotLoader())
 import solver
+# Diagnostic mode only: fingerprint the ACTUAL accepted feasibility incumbent.
+# No synthetic roster is persisted or written to benchmark logs.
+initial_seed_hash=None
+if request.get('pairedSeed') is True:
+    original_read=solver._read_assignments
+    def record_initial_seed(*args, **kwargs):
+        global initial_seed_hash
+        entries=original_read(*args,**kwargs)
+        # _read_assignments is invoked both for feasibility and AFTER
+        # refinement. Capture the FIRST accepted feasible roster only.
+        # Otherwise the paired diagnostic compares two final outputs and
+        # falsely calls them a common initial seed.
+        if initial_seed_hash is None:
+            canonical=sorted((item['employeeId'],item['date'],item['kind'],item.get('shiftId',''))
+                             for item in entries)
+            initial_seed_hash=hashlib.sha256(json.dumps(canonical,separators=(',',':')).encode()).hexdigest()
+        return entries
+    solver._read_assignments=record_initial_seed
 native=cp_model.CpSolver.solve
 calls=[]
 started=time.monotonic()
@@ -63,7 +81,8 @@ def traced(self,model,*args,**kwargs):
     return status
 cp_model.CpSolver.solve=traced
 result=solver.solve(request['input'])
-print(json.dumps({'result':result,'calls':calls,'maxRssKiB':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}))`;
+print(json.dumps({'result':result,'calls':calls,'maxRssKiB':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                  **({'initialSeedHash':initial_seed_hash} if request.get('pairedSeed') is True else {})}))`;
 
 export function quantile(values: number[], fraction: number) {
   if (!values.length) return null;

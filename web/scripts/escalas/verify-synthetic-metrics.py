@@ -10,6 +10,7 @@ from collections import defaultdict
 
 SCENARIOS = {
     "team-10-week",
+    "team-12-four-weeks",
     "branch-50-four-weeks",
     "branch-115-six-weeks",
     "branch-115-six-weeks-untimed",
@@ -134,6 +135,14 @@ def verify(records: list[dict], scenarios: list[str], repeats: int) -> list[dict
     require(len(images) == 1, "Mixed isolated Docker image IDs across scenarios")
     for scenario in scenarios:
         before, after = reports[(scenario, "baseline")], reports[(scenario, "corrected")]
+        if source_by_variant["baseline"] != source_by_variant["corrected"]:
+            # Earlier coverage remains the priority over secondary Sunday fairness.
+            # A same-source comparison is evidence instrumentation, not a
+            # claim of algorithmic improvement or deterministic timings.
+            for metric in ("medianShortage", "medianComparableSundayOffSpread",
+                           "medianSundaySectorDaysWithoutKnownService"):
+                require(after[metric] <= before[metric],
+                        f"REGRESSION {scenario} {metric}: {before[metric]} -> {after[metric]}")
         output.append({
             "scenario": scenario,
             "sourceComparison": ("SAME_SOLVER_SOURCE" if source_by_variant["baseline"] == source_by_variant["corrected"]

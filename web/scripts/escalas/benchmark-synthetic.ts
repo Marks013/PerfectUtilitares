@@ -1,5 +1,5 @@
 /** Bounded, reproducible synthetic benchmark; no database writes or production service changes. */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { loadavg } from "node:os";
@@ -18,6 +18,7 @@ type Variant = "baseline" | "corrected" | "workers2" | "linearization1" | "symme
 type Scenario = { id: string; people: number; weeks: number; untimedLeaders?: boolean };
 const scenarios: Scenario[] = [
   { id: "team-10-week", people: 10, weeks: 1 },
+  { id: "team-12-four-weeks", people: 12, weeks: 4 },
   { id: "branch-50-four-weeks", people: 50, weeks: 4 },
   { id: "branch-115-six-weeks", people: 115, weeks: 6 },
   { id: "branch-115-six-weeks-untimed", people: 115, weeks: 6, untimedLeaders: true },
@@ -27,6 +28,26 @@ function capture(args: string[], input?: string) {
   const result = spawnSync("docker", args, { input, encoding: "utf8", timeout: 35_000, maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0 || result.error) throw new Error("BENCHMARK_PROCESS_FAILED");
   return result.stdout;
+}
+/** Fingerprint the FINAL baseline roster that both versions receive as a hint. */
+export function fingerprintSyntheticRoster(assignments: EscalaSolveResult["assignments"]): string {
+  const canonical = assignments.map(entry => [
+    entry.employeeId, entry.date, entry.kind, entry.shiftId ?? "",
+  ]);
+  canonical.sort((left, right) => {
+    for (let index = 0; index < left.length; index++) {
+      if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+    }
+    return 0;
+  });
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+/** Refuse unpaired comparisons when the actual CP-SAT incumbents differ. */
+export function requireSharedSyntheticSeed(expected: string | undefined, actual: string | undefined): void {
+  if (!expected || !actual || !/^[0-9a-f]{64}$/.test(expected) || expected !== actual) {
+    throw new Error("BENCHMARK_SHARED_SEED_DIVERGED");
+  }
 }
 function cleanup() {
   if (activeContainer) spawnSync("docker", ["stop", "--time", "2", activeContainer], { stdio: "ignore", timeout: 5000 });
@@ -95,8 +116,12 @@ async function main() {
   const selected = payload.scenarios ? scenarios.filter(item => payload.scenarios.includes(item.id)) : scenarios;
   if (!selected.length) throw new Error("BENCHMARK_SCENARIO_FAILED");
   const requested: Variant[] = payload.variants || ["baseline", "corrected", "workers2", "linearization1", "symmetry1"];
+  const pairedSeed = payload.pairedSeed === true;
   if (!requested.length || !requested.every(name => ["baseline", "corrected", "workers2", "linearization1", "symmetry1"].includes(name)))
     throw new Error("BENCHMARK_VARIANT_FAILED");
+  if (pairedSeed && (selected.length !== 1 || requested.join(",") !== "baseline,corrected")) {
+    throw new Error("BENCHMARK_PAIRED_SEED_SCOPE");
+  }
   const image = JSON.parse(capture(["image", "inspect", process.env.ESCALAS_BENCHMARK_IMAGE || "web-escalas-solver:latest"]))[0].Id as string;
   const snapshots = { baseline: sourceSnapshot(BASELINE_REVISION), corrected: sourceSnapshot() };
   const observations: { scenario: string; variant: Variant; seconds: number; rss: number; shortage: number | null;
@@ -104,6 +129,8 @@ async function main() {
   for (const scenario of selected) {
     const input = syntheticInput(scenario);
     let comparison: EscalaInput | undefined;
+    let sharedSeed: EscalaSolveResult["assignments"] | undefined;
+    let sharedSeedHash: string | undefined;
     for (let repetition = -1; repetition < repeats; repetition++) {
       // Rotate order to avoid consistently favouring the first warmed implementation.
       const offset = (repetition + 1) % requested.length;
@@ -113,18 +140,31 @@ async function main() {
         const workers = variant === "workers2" ? 2 : 1;
         const linearization = variant === "linearization1" ? 1 : 0;
         const symmetry = variant === "symmetry1" ? 1 : 0;
+        if (pairedSeed && repetition >= 0 && (!sharedSeed?.length || !sharedSeedHash)) {
+          throw new Error("BENCHMARK_SHARED_SEED_MISSING");
+        }
+        // Synthetic-only optional hint, not a persisted reference or a staffing requirement.
+        const solveInput = pairedSeed && repetition >= 0
+          ? { ...input, _initialAssignments: sharedSeed } : input;
         activeContainer = "escalas-benchmark-" + randomUUID();
         const output = capture(["run", "--rm", "--pull=never", "--name", activeContainer, "--read-only", "--network", "none",
           "--cpus", String(workers), "--memory", "1536m", "--pids-limit", "96", "--env", "PYTHONDONTWRITEBYTECODE=1",
           "--env", `ESCALAS_SOLVER_WORKERS=${workers}`, "--env", `ESCALAS_SOLVER_LINEARIZATION=${linearization}`,
           "--env", `ESCALAS_SOLVER_SYMMETRY=${symmetry}`, "--workdir", "/app", "--entrypoint", "python", "-i", image,
-          "-B", "-c", benchmarkPython], JSON.stringify({ ...snapshot, input }));
+          "-B", "-c", benchmarkPython], JSON.stringify({ ...snapshot, input: solveInput, pairedSeed }));
         activeContainer = undefined;
-        const solved = JSON.parse(output) as { result: EscalaSolveResult; calls: object[]; maxRssKiB: number };
+        const solved = JSON.parse(output) as { result: EscalaSolveResult; calls: object[]; maxRssKiB: number; initialSeedHash?: string };
+        if (pairedSeed && repetition >= 0) {
+          requireSharedSyntheticSeed(sharedSeedHash, solved.initialSeedHash);
+        }
         const feasible = ["FEASIBLE", "OPTIMAL"].includes(solved.result.status);
         if (!feasible) throw new Error("BENCHMARK_EXPECTED_FEASIBLE_INPUT");
         const proposal = { ...input, assignments: solved.result.assignments };
         if (repetition < 0) {
+          if (pairedSeed && variant === "baseline") {
+            sharedSeed = solved.result.assignments;
+            sharedSeedHash = fingerprintSyntheticRoster(sharedSeed);
+          }
           if (!comparison || variant === "baseline") comparison = proposal;
           continue;
         }
@@ -142,6 +182,7 @@ async function main() {
           resources: { workers, cpus: workers, memoryMiB: 1536, linearization, symmetry }, hostLoad1m: loadavg()[0],
           status: solved.result.status, seconds: solved.result.wallTimeSeconds, maxRssKiB: solved.maxRssKiB,
           calls: solved.calls.length, phases: solved.result.optimization?.phases,
+          ...(pairedSeed ? { pairedSeed: true, initialSeedHash: solved.initialSeedHash, sharedSeedHash } : {}),
           shortagePersonMinutes: deficits?.total ?? null, shortageBySector: deficits?.bySector,
           ...(feasible ? { ...weekendMetrics(proposal), ...operational } : {}),
           errors: [...new Set(errors)] }));
@@ -166,5 +207,12 @@ async function main() {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { cleanup(); process.exit(130); });
-  main().catch(() => { cleanup(); console.error("Synthetic benchmark failed. No production data or services were changed."); process.exitCode = 1; });
+  main().catch((error: unknown) => {
+    cleanup();
+    // Whitelist only fixed internal benchmark codes: never print synthetic input/rosters.
+    const code = error instanceof Error && /^BENCHMARK_[A-Z_]+$/.test(error.message)
+      ? error.message : "BENCHMARK_UNEXPECTED_FAILURE";
+    console.error(`Synthetic benchmark failed (${code}). No production data or services were changed.`);
+    process.exitCode = 1;
+  });
 }
