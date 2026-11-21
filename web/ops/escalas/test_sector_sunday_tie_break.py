@@ -5,6 +5,7 @@ or inferred hard staffing requirements.
 """
 import time
 import unittest
+from unittest.mock import patch
 
 from ortools.sat.python import cp_model
 
@@ -143,6 +144,34 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         sectors = {'ADMINISTRATIVO': [person['id'] for person in data['employees']]}
         self.assertEqual(_sector_sunday_people(variables, values, sectors),
                          {person['id'] for person in data['employees']})
+
+    def test_bounded_improve_releases_cross_role_sector_instead_of_singletons(self):
+        model = cp_model.CpModel()
+        coverage = model.new_int_var(0, 0, 'coverage')
+        spread = model.new_int_var(0, 10000, 'sector-sunday-spread:0')
+        model.add(spread == 10000)
+        values = {coverage.index: 0, spread.index: 10000}
+        decisions = {}
+        # Eight distinct dates trigger the production restricted-search path.
+        for index in range(8):
+            pid = ('a', 'b')[index % 2]
+            day = f'2026-12-{index + 1:02}'
+            variable = model.new_bool_var(f'w:{pid}:{day}')
+            model.add(variable == 0)
+            values[variable.index] = 0
+            decisions[variable.index] = (pid, day)
+        with patch('optimization.LARGE_MODEL_VARIABLES', 1):
+            result, _, phases = improve(
+                model, [coverage, spread], values, time.monotonic() + 3,
+                ['COVERAGE', 'SUNDAY_BALANCE'],
+                context=ImprovementContext(employee_groups=[['a'], ['b']],
+                    rest_spacing_groups={'ADMINISTRATIVO': ['a', 'b']},
+                    decision_variables=decisions))
+        selected = [phase for phase in phases if phase['objective'] == 'SUNDAY_BALANCE']
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]['searchScope'], 'SELECTED_PEOPLE')
+        self.assertEqual(selected[0]['movablePeople'], 2)
+        self.assertEqual(result[spread.index], 10000)
 
     def test_sector_neighborhood_never_truncates_oversized_cohorts(self):
         model = cp_model.CpModel()
