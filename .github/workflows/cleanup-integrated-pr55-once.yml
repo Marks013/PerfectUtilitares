@@ -1,0 +1,43 @@
+name: One-time PR 55 branch cleanup
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cleanup-integrated-pr55-once.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: perfectutilitares-pr55-cleanup-once
+  cancel-in-progress: false
+
+jobs:
+  prune-merged-branch:
+    if: github.repository == 'Marks013/PerfectUtilitares'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete only the unchanged and merged PR 55 head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_BRANCH: fix/escalas-import-duplicate-preview-2026-11-20
+          EXPECTED_HEAD: 57a8248fed13ee3b4024346293fbb1c536923609
+        run: |
+          set -euo pipefail
+          repo="Marks013/PerfectUtilitares"
+          current_main="$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$GITHUB_SHA" || { echo "Main moved; refusing cleanup" >&2; exit 1; }
+          merged="$(gh api "repos/$repo/pulls/55" --jq '.merged')"
+          head="$(gh api "repos/$repo/pulls/55" --jq '.head.sha')"
+          test "$merged" = "true" && test "$head" = "$EXPECTED_HEAD" || { echo "Unexpected PR #55 head" >&2; exit 1; }
+          open_count="$(gh api "repos/$repo/pulls?state=open&per_page=100" --jq 'length')"
+          test "$open_count" = "0" || { echo "Open PR detected" >&2; exit 1; }
+          current_ref="$(gh api "repos/$repo/git/ref/heads/$TARGET_BRANCH" --jq '.object.sha')"
+          test "$current_ref" = "$EXPECTED_HEAD" || { echo "Branch moved; refusing delete" >&2; exit 1; }
+          gh api -X DELETE "repos/$repo/git/refs/heads/$TARGET_BRANCH" >/dev/null
+          remaining="$(gh api "repos/$repo/branches?per_page=100" --jq 'map(.name) | join(",")')"
+          test "$remaining" = "main" || { echo "Unexpected branches remain: $remaining" >&2; exit 1; }
+          echo "Success: only main remains"
