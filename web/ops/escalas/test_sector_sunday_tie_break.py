@@ -110,6 +110,43 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         for terms in protected_roles.values():
             self.assertLessEqual(engine.value(sum(terms)), original.value(sum(terms)))
 
+    def test_bounded_phase_reduces_concentrated_cross_role_sundays_without_coverage_loss(self):
+        # Two independently protected roles initially take the SAME Sundays
+        # off. The supplemental goal, not the model builder alone, must
+        # accept a feasible exchange with one worker on each open Sunday.
+        data, model, work, values, groups, _, _ = self.synthetic_cross_role_case()
+        self.assertEqual([sum(values[work[p['id'], day].index]
+                              for p in data['employees']) for day in SUNDAYS],
+                         [2, 0, 2, 0])
+        coverage = model.new_int_var(0, 0, 'protected-coverage-shortage')
+        values[coverage.index] = 0
+        prepared = []
+
+        def prepare(current_model, accepted, control):
+            spreads, losses, maximum = sector_sunday_distribution(
+                current_model, groups, data['employees'], SUNDAYS,
+                work, {}, data['policy'], accepted, control=control)
+            self.assertEqual(len(spreads), 1)
+            self.assertEqual(accepted[spreads[0].index], 10000)
+            prepared.append(spreads[0].index)
+            return sector_sunday_tie_break([], spreads, losses, maximum)
+
+        outcome, _, phases = improve(
+            model, [coverage, next(iter(work.values()))], values,
+            time.monotonic() + 4,
+            ['COVERAGE', 'SUNDAY_BALANCE'],
+            context=ImprovementContext(prepare_sunday_balance=prepare,
+                                       refinement_reserve_seconds=0.8))
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(outcome[coverage.index], 0)
+        self.assertEqual(outcome[prepared[0]], 0)
+        self.assertEqual([sum(outcome[work[p['id'], day].index]
+                              for p in data['employees']) for day in SUNDAYS],
+                         [1, 1, 1, 1])
+        self.assertTrue(any(phase['objective'] == 'SUNDAY_BALANCE'
+                            and phase['incumbentValue'] < phase['initialValue']
+                            for phase in phases))
+
     def test_sector_auxiliaries_are_added_only_after_coverage_improves(self):
         model = cp_model.CpModel()
         work = model.new_bool_var('w:worker:2026-12-06')
