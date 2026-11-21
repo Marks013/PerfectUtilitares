@@ -31,7 +31,9 @@ No benchmark sintético, para cada solução validada o relatório acrescenta:
 
 O resumo do benchmark inclui a mediana da variação de folgas e das datas sem presença conhecida para cada cenário/versão. Não há limiar de pessoal inventado, ponderação sobre segurança operacional, nem alegação automática de ganho de desempenho. As métricas são secundárias a erros de jornada, cobertura obrigatória e preservação de bloqueios.
 
-O workflow `.github/workflows/escalas-synthetic-benchmark.yml` executa a comparação isolada para `team-10-week` quando esta instrumentação mudar, com cinco repetições por variante e logs/artifact JSONL. A baseline compatível é `2657f4a6894d01df58db9e3353f3ff7421047fc1`; resultados de outras versões de calendário não são comparáveis.
+O workflow `.github/workflows/escalas-synthetic-benchmark.yml` executa, nos PRs que alterem a instrumentação, os três cenários `team-10-week`, `branch-50-four-weeks` e `branch-115-six-weeks` no **mesmo runner e na mesma imagem**, com cinco repetições por variante/cenário e um artifact JSONL. A execução manual ainda permite escolher só um cenário. Os valores não comprovam ganho de desempenho quando `baseline` e `corrected` contêm as mesmas fontes do Solver. A baseline metodologicamente compatível é `2657f4a6894d01df58db9e3353f3ff7421047fc1`; calendários diferentes não são comparáveis.
+
+O cenário curto `team-10-week` cobre apenas um domingo (`2026-11-01`): um `comparableOffSpread` igual a zero nele não demonstra equilíbrio entre domingos. Os cenários de quatro e seis semanas são necessários para investigar a concentração ao longo do período.
 
 Para encerrar **A08**, ainda será necessário analisar versões distintas com melhoria real, comparar os três tamanhos sintéticos em hardware/recursos equivalentes, p50/p95, memória, timeouts e faltas por setor, e decidir critérios de aceite. Para encerrar **A04**, um responsável habilitado deve confirmar mínimos reais por setor/faixa com identidade e revisão verificáveis no servidor. Para **A05**, precisa-se validar a identidade persistente da Filial 02 de Icaraíma antes de migrar calendários entre empresas.
 

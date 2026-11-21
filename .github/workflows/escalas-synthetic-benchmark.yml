@@ -33,7 +33,7 @@ jobs:
       run:
         working-directory: web
     env:
-      SCENARIO: ${{ inputs.scenario || 'team-10-week' }}
+      SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week branch-50-four-weeks branch-115-six-weeks' || inputs.scenario || 'team-10-week' }}
       CI: "true"
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -67,8 +67,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":5}\n' "$SCENARIO" \
-            | npm run benchmark:escalas | tee "$RUNNER_TEMP/escalas-benchmark.jsonl"
+          : > "$RUNNER_TEMP/escalas-benchmark.jsonl"
+          # One job/runner for every PR scenario, so the hardware and image stay constant.
+          # Workflow dispatch retains its original single-scenario selector.
+          for scenario in $SCENARIOS; do
+            printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":5}\n' "$scenario" \
+              | npm run benchmark:escalas | tee -a "$RUNNER_TEMP/escalas-benchmark.jsonl"
+          done
       - name: Require independent validation and complete measurements
         shell: bash
         run: |
@@ -80,27 +85,32 @@ jobs:
           for line in path.read_text().splitlines():
               if line.startswith("{") and '"kind"' in line:
                   data.append(json.loads(line))
-          scenario = os.environ["SCENARIO"]
+          scenarios = os.environ["SCENARIOS"].split()
+          allowed = {"team-10-week", "branch-50-four-weeks", "branch-115-six-weeks"}
+          assert scenarios and len(scenarios) == len(set(scenarios)), "Missing or repeated scenarios"
+          assert all(scenario in allowed for scenario in scenarios), "Unsupported synthetic scenario"
           measured = [x for x in data if x.get("kind") == "measurement"]
           summary = [x for x in data if x.get("kind") == "summary"]
-          for variant in ("baseline", "corrected"):
-              rows = [x for x in measured if x.get("variant") == variant and x.get("scenario") == scenario]
-              reports = [x for x in summary if x.get("variant") == variant and x.get("scenario") == scenario]
-              assert len(rows) == 5 and len(reports) == 1, "Incomplete benchmark samples"
-              assert reports[0].get("samples") == 5, "Missing repetitions"
-              for row in rows:
-                  assert row.get("status") in ("FEASIBLE", "OPTIMAL"), "Unsolved scenario"
-                  assert row.get("errors") == [], "Independent validation rejected output"
-                  assert isinstance(row.get("seconds"), (int, float)) and math.isfinite(row["seconds"]), "Invalid duration"
-                  assert isinstance(row.get("maxRssKiB"), (int, float)) and row["maxRssKiB"] > 0, "Invalid memory"
-                  assert row.get("shortagePersonMinutes") is not None, "Missing coverage metric"
-                  for key in ("sectorDaysAllOff", "sectorDaysWithoutKnownService", "sectorDaysWithUnverifiedPresence", "comparableOffSpread"):
-                      assert type(row.get(key)) is int and row[key] >= 0, "Invalid Sunday sector metric: " + key
-              for key in ("medianSeconds", "p95Seconds", "peakRssKiB", "medianShortage",
-                          "medianComparableSundayOffSpread", "medianSundaySectorDaysWithoutKnownService"):
-                  assert reports[0].get(key) is not None, "Missing " + key
-              print(json.dumps(reports[0], sort_keys=True))
-          print("Benchmark: 5 synthetic repetitions per variant, independent rules checked.")
+          for scenario in scenarios:
+              for variant in ("baseline", "corrected"):
+                  rows = [x for x in measured if x.get("variant") == variant and x.get("scenario") == scenario]
+                  reports = [x for x in summary if x.get("variant") == variant and x.get("scenario") == scenario]
+                  assert len(rows) == 5 and len(reports) == 1, "Incomplete benchmark samples"
+                  assert reports[0].get("samples") == 5, "Missing repetitions"
+                  for row in rows:
+                      assert row.get("status") in ("FEASIBLE", "OPTIMAL"), "Unsolved scenario"
+                      assert row.get("errors") == [], "Independent validation rejected output"
+                      assert isinstance(row.get("seconds"), (int, float)) and math.isfinite(row["seconds"]), "Invalid duration"
+                      assert isinstance(row.get("maxRssKiB"), (int, float)) and row["maxRssKiB"] > 0, "Invalid memory"
+                      assert row.get("shortagePersonMinutes") is not None, "Missing coverage metric"
+                      for key in ("sectorDaysAllOff", "sectorDaysWithoutKnownService", "sectorDaysWithUnverifiedPresence", "comparableOffSpread"):
+                          assert type(row.get(key)) is int and row[key] >= 0, "Invalid Sunday sector metric: " + key
+                  for key in ("medianSeconds", "p95Seconds", "peakRssKiB", "medianShortage",
+                              "medianComparableSundayOffSpread", "medianSundaySectorDaysWithoutKnownService"):
+                      assert reports[0].get(key) is not None, "Missing " + key
+                  print(json.dumps(reports[0], sort_keys=True))
+          assert len(measured) == len(scenarios) * 10 and len(summary) == len(scenarios) * 2, "Unexpected scenario data"
+          print("Benchmark: 5 synthetic repetitions per variant/scenario, independent rules checked.")
           PY
       - name: Keep metrics, never private rosters
         if: always()
