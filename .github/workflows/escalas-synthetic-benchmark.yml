@@ -28,6 +28,7 @@ on:
       - web/scripts/escalas/test_verify_synthetic_metrics.py
       - web/src/lib/escalas/benchmark-synthetic-input.test.ts
       - web/src/lib/escalas/sunday-sector-observations.ts
+      - web/src/lib/escalas/sunday-sector-observations.test.ts
       - web/src/lib/escalas/coverage-presence.ts
       - web/src/lib/escalas/validation.ts
       - web/src/lib/escalas/generation.ts
