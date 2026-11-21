@@ -21,6 +21,9 @@ COUNT_METRICS = (
     "sectorDaysWithUnverifiedPresence",
     "comparableOffSpread",
 )
+# The CI benchmark executes the two production-equivalent variants with identical bounds.
+RESOURCE_PROFILE = {"workers": 1, "cpus": 1, "memoryMiB": 1536, "linearization": 0, "symmetry": 0}
+IMAGE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def require(condition: bool, message: str) -> None:
@@ -75,11 +78,13 @@ def verify(records: list[dict], scenarios: list[str], repeats: int) -> list[dict
         reports[key] = row
     output = []
     source_by_variant: dict[str, str] = {}
+    images: set[str] = set()
     for scenario in scenarios:
         for variant in VARIANTS:
             key = scenario, variant
             rows, summary = grouped[key], reports[key]
-            require({row.get("repetition") for row in rows} == set(range(repeats)),
+            require(all(type(row.get("repetition")) is int for row in rows)
+                    and {row["repetition"] for row in rows} == set(range(repeats)),
                     f"Duplicate or missing repetition: {key}")
             hashes = {row.get("sourceHash") for row in rows}
             require(len(hashes) == 1 and isinstance(next(iter(hashes)), str)
@@ -92,9 +97,21 @@ def verify(records: list[dict], scenarios: list[str], repeats: int) -> list[dict
             for row in rows:
                 require(row.get("status") in ("FEASIBLE", "OPTIMAL") and row.get("errors") == [],
                         f"Solver infeasible or independent validation failed: {key}")
-                require(number(row.get("seconds")) and number(row.get("maxRssKiB"), positive=True)
+                require(number(row.get("seconds"), positive=True)
+                        and number(row.get("maxRssKiB"), positive=True)
                         and number(row.get("shortagePersonMinutes")),
                         f"Invalid measured time, memory or coverage: {key}")
+                image = row.get("image")
+                require(type(image) is str and IMAGE_PATTERN.fullmatch(image) is not None,
+                        f"Missing or invalid isolated Docker image ID: {key}")
+                images.add(image)
+                resources = row.get("resources")
+                require(type(resources) is dict and set(resources) == set(RESOURCE_PROFILE)
+                        and all(type(resources[name]) is int and resources[name] == expected
+                                for name, expected in RESOURCE_PROFILE.items()),
+                        f"Unexpected benchmark CPU/memory/solver settings: {key}")
+                require(number(row.get("hostLoad1m")),
+                        f"Missing or invalid runner load: {key}")
                 for metric in COUNT_METRICS:
                     require(type(row.get(metric)) is int and row[metric] >= 0,
                             f"Missing or invalid Sunday metric {metric}: {key}")
@@ -114,6 +131,7 @@ def verify(records: list[dict], scenarios: list[str], repeats: int) -> list[dict
                 require(summary.get(metric) == value, f"Incorrect {metric}: {key}")
             require(summary.get("tailSampleSufficient") is (repeats >= 20),
                     f"Incorrect p95 sample disclosure: {key}")
+    require(len(images) == 1, "Mixed isolated Docker image IDs across scenarios")
     for scenario in scenarios:
         before, after = reports[(scenario, "baseline")], reports[(scenario, "corrected")]
         output.append({
