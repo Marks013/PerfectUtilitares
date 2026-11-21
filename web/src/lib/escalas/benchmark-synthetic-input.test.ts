@@ -1,8 +1,45 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { escalaInputSchema } from "./schema";
 import { fingerprintSyntheticRoster, requireSharedSyntheticSeed, syntheticInput } from "../../../scripts/escalas/benchmark-synthetic";
+import { benchmarkPython } from "../../../scripts/escalas/benchmark-runtime";
 
 describe("synthetic solver benchmark calendar", () => {
+  it("fingerprints only the FIRST feasible roster, never the refined final output", () => {
+    // Mock CP-SAT imports so we can execute the exact Python benchmark wrapper
+    // without external dependencies, databases or any real scheduling input.
+    const shim = String.raw`
+import sys, types
+for name in ("ortools", "ortools.sat", "ortools.sat.python"):
+    module = types.ModuleType(name)
+    module.__path__ = []
+    sys.modules[name] = module
+cp_module = types.ModuleType("ortools.sat.python.cp_model")
+class FakeCpSolver:
+    def solve(self, _model): return 4
+    def status_name(self, _status): return "FEASIBLE"
+cp_module.CpSolver = FakeCpSolver
+sys.modules[cp_module.__name__] = cp_module
+sys.modules["ortools.sat.python"].cp_model = cp_module
+`;
+    const solverSource = String.raw`
+def _read_assignments(stage):
+    return [{"employeeId": "synthetic", "date": "2026-12-06", "kind": stage}]
+def solve(_data):
+    _read_assignments("OFF")
+    _read_assignments("WORK")  # Simulates the later, refined schedule.
+    return {"status": "FEASIBLE"}
+`;
+    const outcome = spawnSync("python3", ["-c", shim + "\n" + benchmarkPython], {
+      encoding: "utf8", timeout: 5000,
+      input: JSON.stringify({ sources: { solver: solverSource }, resources: {}, input: {}, pairedSeed: true }),
+    });
+    expect(outcome.status).toBe(0);
+    const actual = JSON.parse(outcome.stdout) as { initialSeedHash: string };
+    expect(actual.initialSeedHash).toBe("cf4470587529a841001d067d0c89646fa3f6b92d2bb223492c2a4a32ee16e9b3");
+  });
+
+
   it("fingerprints the FINAL reused roster with the same canonical SHA-256 as Python", () => {
     const finalRoster = [
       { employeeId: "person-2", date: "2026-11-01", kind: "WORK" as const, shiftId: "reference" },
