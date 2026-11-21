@@ -76,12 +76,13 @@ function sample() {
 }
 
 describe("Escalas practical accessibility and publication states", () => {
-  it("defaults to a clearly labeled PDF-only sector separation", () => {
+  it("offers both exports without an unsupported PDF pagination setting", () => {
     const { workspace, validation } = sample();
     const html = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} /></EscalaAccessProvider>);
-    expect(html).toMatch(/<label[^>]*><input(?=[^>]*type="checkbox")(?=[^>]*checked="")[^>]*\/><span>Separar setores por página<\/span><\/label>/);
-    expect(html).toContain("Só no PDF. Desmarque para reunir setores em menos páginas.");
-    expect(html).toContain("Gerar XLSX");
+    expect(html).toContain("Conteúdo do PDF e XLSX");
+    expect(html).toMatch(/<button[^>]+>Gerar PDF<\/button>/);
+    expect(html).toMatch(/<button[^>]+>Gerar XLSX<\/button>/);
+    expect(html).not.toContain("Separar setores por página");
   });
 
   it("does not ask for a second weekly journey in special rules", () => {
