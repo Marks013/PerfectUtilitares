@@ -15,11 +15,12 @@ import { sundaySectorObservations, sundaySectorVariation } from "../../src/lib/e
 import { BASELINE_REVISION, benchmarkPython, sourceSnapshot, quantile } from "./benchmark-runtime";
 
 type Variant = "baseline" | "corrected" | "workers2" | "linearization1" | "symmetry1";
-type Scenario = { id: string; people: number; weeks: number };
+type Scenario = { id: string; people: number; weeks: number; untimedLeaders?: boolean };
 const scenarios: Scenario[] = [
   { id: "team-10-week", people: 10, weeks: 1 },
   { id: "branch-50-four-weeks", people: 50, weeks: 4 },
   { id: "branch-115-six-weeks", people: 115, weeks: 6 },
+  { id: "branch-115-six-weeks-untimed", people: 115, weeks: 6, untimedLeaders: true },
 ];
 let activeContainer: string | undefined;
 function capture(args: string[], input?: string) {
@@ -27,10 +28,7 @@ function capture(args: string[], input?: string) {
   if (result.status !== 0 || result.error) throw new Error("BENCHMARK_PROCESS_FAILED");
   return result.stdout;
 }
-/** Match the Python wrapper's canonical SHA-256 of an accepted SYNTHETIC roster.
- * Hashing the final baseline output, not the warm-up's initial seed, is essential:
- * optimization can legitimately change that first feasible roster.
- */
+/** Fingerprint the FINAL baseline roster that both versions receive as a hint. */
 export function fingerprintSyntheticRoster(assignments: EscalaSolveResult["assignments"]): string {
   const canonical = assignments.map(entry => [
     entry.employeeId, entry.date, entry.kind, entry.shiftId ?? "",
@@ -44,7 +42,7 @@ export function fingerprintSyntheticRoster(assignments: EscalaSolveResult["assig
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
-/** Only a matching accepted feasibility roster proves a common synthetic seed. */
+/** Refuse unpaired comparisons when the actual CP-SAT incumbents differ. */
 export function requireSharedSyntheticSeed(expected: string | undefined, actual: string | undefined): void {
   if (!expected || !actual || !/^[0-9a-f]{64}$/.test(expected) || expected !== actual) {
     throw new Error("BENCHMARK_SHARED_SEED_DIVERGED");
@@ -67,13 +65,22 @@ export function syntheticInput(scenario: Scenario) {
     { start: 420, end: 660, kind: "WORK" }, { start: 660, end: 780, kind: "BREAK" },
     { start: 780, end: 1068, kind: "WORK" },
   ] }];
-  input.employees = Array.from({ length: scenario.people }, (_, index) => ({
-    ...newEmployee(42, "reference"), id: `person-${index}`, registration: String(index), name: `Synthetic person ${index}`,
-    sector: `Sector ${Math.floor(index / 12) + 1}`, role: index % 12 === 0 ? "Encarregado" : "Repositor",
-    activeFrom: "", scheduleMode: "TIMED" as const,
-    sourceSchedule: { report: "FPRE136" as const, code: "SYNTHETIC", description: "Synthetic imported reference",
-      weekday: "07:00-11:00 / 13:00-17:48", saturday: "07:00-11:00 / 00:00-00:00" },
-  }));
+  input.employees = Array.from({ length: scenario.people }, (_, index) => {
+    const leader = index % 12 === 0;
+    const untimed = Boolean(scenario.untimedLeaders && leader);
+    return {
+      ...newEmployee(42, untimed ? undefined : "reference"),
+      id: `person-${index}`, registration: String(index), name: `Synthetic person ${index}`,
+      sector: `Sector ${Math.floor(index / 12) + 1}`,
+      role: untimed && index === 0 ? "Gerente" : leader ? "Encarregado" : "Repositor",
+      activeFrom: "", scheduleMode: untimed ? "UNTIMED" as const : "TIMED" as const,
+      // Untimed leaders are DUTY/OFF without an invented imported clock.
+      ...(untimed ? {} : { sourceSchedule: {
+        report: "FPRE136" as const, code: "SYNTHETIC", description: "Synthetic imported reference",
+        weekday: "07:00-11:00 / 13:00-17:48", saturday: "07:00-11:00 / 00:00-00:00",
+      } }),
+    };
+  });
   return escalaInputSchema.parse(prepareGeneration(input).input);
 }
 
@@ -111,7 +118,6 @@ async function main() {
   const pairedSeed = payload.pairedSeed === true;
   if (!requested.length || !requested.every(name => ["baseline", "corrected", "workers2", "linearization1", "symmetry1"].includes(name)))
     throw new Error("BENCHMARK_VARIANT_FAILED");
-  // Manual, single-scenario diagnosis only; the CI non-regression gate is unchanged.
   if (pairedSeed && (selected.length !== 1 || requested.join(",") !== "baseline,corrected")) {
     throw new Error("BENCHMARK_PAIRED_SEED_SCOPE");
   }
@@ -136,11 +142,9 @@ async function main() {
         if (pairedSeed && repetition >= 0 && (!sharedSeed?.length || !sharedSeedHash)) {
           throw new Error("BENCHMARK_SHARED_SEED_MISSING");
         }
-        // Reuse only a SYNTHETIC feasible roster, as a non-persisted internal hint.
-        // The actual accepted incumbent is checked independently in Python.
+        // Synthetic-only optional hint, not a persisted reference or a staffing requirement.
         const solveInput = pairedSeed && repetition >= 0
-          ? { ...input, _initialAssignments: sharedSeed }
-          : input;
+          ? { ...input, _initialAssignments: sharedSeed } : input;
         activeContainer = "escalas-benchmark-" + randomUUID();
         const output = capture(["run", "--rm", "--pull=never", "--name", activeContainer, "--read-only", "--network", "none",
           "--cpus", String(workers), "--memory", "1536m", "--pids-limit", "96", "--env", "PYTHONDONTWRITEBYTECODE=1",
@@ -157,9 +161,6 @@ async function main() {
         const proposal = { ...input, assignments: solved.result.assignments };
         if (repetition < 0) {
           if (pairedSeed && variant === "baseline") {
-            // The warm-up's INITIAL feasibility seed can differ from its FINAL
-            // refined output. The latter is what _initialAssignments will pass
-            // to both variants during all measured repetitions.
             sharedSeed = solved.result.assignments;
             sharedSeedHash = fingerprintSyntheticRoster(sharedSeed);
           }
@@ -192,7 +193,10 @@ async function main() {
   for (const scenario of selected) for (const variant of requested) {
     const rows = observations.filter(item => item.scenario === scenario.id && item.variant === variant);
     console.log(JSON.stringify({ kind: "summary", scenario: scenario.id, variant, samples: rows.length,
-      medianSeconds: quantile(rows.map(item => item.seconds), .5), p95Seconds: quantile(rows.map(item => item.seconds), .95),
+      medianSeconds: quantile(rows.map(item => item.seconds), .5),
+      // Five repetitions cannot support a useful 95th percentile. Keep a maximum for short CI runs.
+      p95Seconds: rows.length >= 20 ? quantile(rows.map(item => item.seconds), .95) : null,
+      maxSeconds: Math.max(...rows.map(item => item.seconds)), tailSampleSufficient: rows.length >= 20,
       peakRssKiB: Math.max(...rows.map(item => item.rss)),
       medianShortage: quantile(rows.flatMap(item => item.shortage === null ? [] : [item.shortage]), .5),
       medianComparableSundayOffSpread: quantile(rows.map(item => item.comparableOffSpread), .5),
@@ -202,5 +206,12 @@ async function main() {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { cleanup(); process.exit(130); });
-  main().catch(() => { cleanup(); console.error("Synthetic benchmark failed. No production data or services were changed."); process.exitCode = 1; });
+  main().catch((error: unknown) => {
+    cleanup();
+    // Whitelist only fixed internal benchmark codes: never print synthetic input/rosters.
+    const code = error instanceof Error && /^BENCHMARK_[A-Z_]+$/.test(error.message)
+      ? error.message : "BENCHMARK_UNEXPECTED_FAILURE";
+    console.error(`Synthetic benchmark failed (${code}). No production data or services were changed.`);
+    process.exitCode = 1;
+  });
 }

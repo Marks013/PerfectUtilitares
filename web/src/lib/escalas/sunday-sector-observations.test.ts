@@ -97,4 +97,49 @@ describe("observed Sunday staffing is independent of staffing requirements", () 
     const reduced = rows.filter(row => row.date !== "2026-11-08");
     expect(sundaySectorVariation(reduced).sectorDaysAllOff).toBe(0);
   });
+
+  it("detects synchronized Sunday rests across singleton roles without inventing staffing minimums", () => {
+    const input = sample();
+    input.startDate = "2026-11-01";
+    input.endDate = "2026-11-14";
+    delete input.visibleMonth;
+    const roles = ["Gerente", "Encarregado", "Operador", "Repositor"] as const;
+    input.employees = roles.map((role, index) => ({
+      ...newEmployee(42, index < 2 ? undefined : "day"),
+      id: `synthetic-${index}`, registration: String(index),
+      name: `Pessoa sintética ${index}`, sector: "Caixas", role,
+      activeFrom: "2025-01-01",
+      scheduleMode: index < 2 ? "UNTIMED" as const : "TIMED" as const,
+    }));
+    const sundays = ["2026-11-01", "2026-11-08"];
+    const candidate = (firstSundayOff: readonly number[]) => ({
+      ...input,
+      assignments: sundays.flatMap((date, sundayIndex) => input.employees.map((person, index) => {
+        const off = sundayIndex === 0 ? firstSundayOff.includes(index) : !firstSundayOff.includes(index);
+        if (off) return { employeeId: person.id, date, kind: "OFF" as const };
+        if (person.scheduleMode === "UNTIMED") return { employeeId: person.id, date, kind: "DUTY" as const };
+        return { employeeId: person.id, date, kind: "WORK" as const, shiftId: "day" };
+      })),
+    });
+    const concentrated = candidate([0, 1, 2, 3]);
+    const staggered = candidate([0, 2]);
+    for (const proposal of [concentrated, staggered]) {
+      expect(proposal.assignments.filter(record => record.kind === "OFF")).toHaveLength(4);
+      for (const person of proposal.employees) {
+        expect(proposal.assignments.filter(record => record.employeeId === person.id && record.kind === "OFF")).toHaveLength(1);
+      }
+    }
+    const concentratedRows = sundaySectorObservations(concentrated);
+    const staggeredRows = sundaySectorObservations(staggered);
+    expect(concentratedRows.map(row => row.off)).toEqual([4, 0]);
+    expect(staggeredRows.map(row => row.off)).toEqual([2, 2]);
+    expect(sundaySectorVariation(concentratedRows)).toMatchObject({
+      comparableOffSpread: 4, sectorDaysAllOff: 1, sectorDaysWithoutKnownService: 1,
+    });
+    expect(sundaySectorVariation(staggeredRows)).toMatchObject({
+      comparableOffSpread: 0, sectorDaysAllOff: 0, sectorDaysWithoutKnownService: 0,
+    });
+    expect(staggeredRows.every(row => row.timed === 1 && row.duty === 1 && row.unverified === 0)).toBe(true);
+  });
+
 });
