@@ -70,8 +70,8 @@ jobs:
         run: npm ci
       - name: Test synthetic metrics verifier
         run: python3 -m unittest discover -s scripts/escalas -p 'test_verify_synthetic_metrics.py'
-      - name: Verify synthetic Sunday-Saturday inputs before benchmarking
-        run: npm exec -- vitest run src/lib/escalas/benchmark-synthetic-input.test.ts
+      - name: Verify synthetic calendar and cross-role Sunday concentration
+        run: npm exec -- vitest run src/lib/escalas/benchmark-synthetic-input.test.ts src/lib/escalas/sunday-sector-observations.test.ts
       - name: Build isolated solver only
         run: docker build --target runtime -t web-escalas-solver:latest ops/escalas
       - name: Log hardware and source identity
