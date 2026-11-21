@@ -52,7 +52,14 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
     throw new EscalaError(400, "ESCALA_IMPORT_LAYOUT", "Use o modelo de Escalas com as colunas Matricula, Nome, Setor, Cargo, CargaSemanal, Horarios e Admissao. Relatórios de folha não contêm todos os dados necessários.");
   }
   const result: EscalaImportPreview = { employees: [], shifts: [], issues: [], totalRows: rows.length - 1 };
-  const registrations = new Set<string>();
+  // Fail closed for every occurrence of a repeated registration. Otherwise the
+  // first row could remain importable even though later duplicates are warned about.
+  const registrationCounts = new Map<string, number>();
+  for (const row of rows.slice(1)) {
+    if (row.every((cell) => cell === null || cell === undefined || String(cell).trim() === "")) continue;
+    const registration = String(row[0] ?? "").trim();
+    if (registration) registrationCounts.set(registration, (registrationCounts.get(registration) ?? 0) + 1);
+  }
   const shifts = new Map<string, EscalaShift>();
   rows.slice(1).forEach((row, index) => {
     if (row.every((cell) => cell === null || cell === undefined || String(cell).trim() === "")) return;
@@ -60,7 +67,7 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
     try {
       const registration = bounded(row[0], 60), name = bounded(row[1], 160), sector = bounded(row[2], 120), role = bounded(row[3], 120);
       if (!registration || !name || !sector || !role) throw new Error("Matrícula, nome, setor e cargo são obrigatórios; nenhuma classificação será inferida.");
-      if (registrations.has(registration)) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
+      if ((registrationCounts.get(registration) ?? 0) > 1) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
       const hoursText = bounded(row[4], 10);
       const weeklyHours = hoursText === "" ? options.defaultWeeklyHours : Number(hoursText);
       if (![40, 42, 44].includes(weeklyHours)) throw new Error("Carga semanal deve ser 40, 42 ou 44 horas.");
@@ -78,7 +85,6 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
         sundayRestRule: sundayRule === "COMMERCE" ? "COMMERCE" : sundayRule === "CLT_386" ? "CLT_386" : "UNREVIEWED",
         preferredOffDays: [], historyKnown: false, history: [] });
       shifts.set(shift.id, shift);
-      registrations.add(registration);
     } catch (error) { result.issues.push({ line, message: error instanceof Error ? error.message : "Linha inválida." }); }
   });
   result.shifts = [...shifts.values()];
