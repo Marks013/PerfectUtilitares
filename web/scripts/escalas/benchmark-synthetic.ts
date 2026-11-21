@@ -1,5 +1,5 @@
 /** Bounded, reproducible synthetic benchmark; no database writes or production service changes. */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { loadavg } from "node:os";
@@ -27,6 +27,23 @@ function capture(args: string[], input?: string) {
   if (result.status !== 0 || result.error) throw new Error("BENCHMARK_PROCESS_FAILED");
   return result.stdout;
 }
+/** Match the Python wrapper's canonical SHA-256 of an accepted SYNTHETIC roster.
+ * Hashing the final baseline output, not the warm-up's initial seed, is essential:
+ * optimization can legitimately change that first feasible roster.
+ */
+export function fingerprintSyntheticRoster(assignments: EscalaSolveResult["assignments"]): string {
+  const canonical = assignments.map(entry => [
+    entry.employeeId, entry.date, entry.kind, entry.shiftId ?? "",
+  ]);
+  canonical.sort((left, right) => {
+    for (let index = 0; index < left.length; index++) {
+      if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+    }
+    return 0;
+  });
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
 /** Only a matching accepted feasibility roster proves a common synthetic seed. */
 export function requireSharedSyntheticSeed(expected: string | undefined, actual: string | undefined): void {
   if (!expected || !actual || !/^[0-9a-f]{64}$/.test(expected) || expected !== actual) {
@@ -140,11 +157,11 @@ async function main() {
         const proposal = { ...input, assignments: solved.result.assignments };
         if (repetition < 0) {
           if (pairedSeed && variant === "baseline") {
-            if (!solved.initialSeedHash || !/^[0-9a-f]{64}$/.test(solved.initialSeedHash)) {
-              throw new Error("BENCHMARK_SHARED_SEED_MISSING");
-            }
-            sharedSeedHash = solved.initialSeedHash;
+            // The warm-up's INITIAL feasibility seed can differ from its FINAL
+            // refined output. The latter is what _initialAssignments will pass
+            // to both variants during all measured repetitions.
             sharedSeed = solved.result.assignments;
+            sharedSeedHash = fingerprintSyntheticRoster(sharedSeed);
           }
           if (!comparison || variant === "baseline") comparison = proposal;
           continue;
