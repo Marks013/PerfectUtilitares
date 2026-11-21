@@ -17,4 +17,23 @@ describe("synthetic solver benchmark calendar", () => {
     expect(input.visibleMonth).toBeUndefined();
     expect(input.assignments).toEqual([]);
   });
+  it("keeps synthetic managers and supervisors untimed without fixed weekend rest", () => {
+    const input = syntheticInput({
+      id: "branch-115-six-weeks-untimed", people: 115, weeks: 6, untimedLeaders: true,
+    });
+    const leaders = input.employees.filter((person) => person.role === "Gerente" || person.role === "Encarregado");
+    expect(input.endDate).toBe("2026-12-12");
+    expect(input.employees).toHaveLength(115);
+    expect(leaders).toHaveLength(10);
+    expect(leaders.some((person) => person.role === "Gerente")).toBe(true);
+    for (const leader of leaders) {
+      expect(leader.scheduleMode).toBe("UNTIMED");
+      expect(leader.shiftIds).toEqual([]);
+      expect(leader.sourceSchedule).toBeUndefined();
+      expect(leader.fixedOffDays).toEqual([]);
+      expect(leader.offMode).toBe("VARIABLE");
+    }
+    expect(input.employees.filter((person) => person.scheduleMode === "TIMED")).toHaveLength(105);
+    expect(escalaInputSchema.safeParse(input).success).toBe(true);
+  });
 });

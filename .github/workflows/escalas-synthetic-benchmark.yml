@@ -10,12 +10,29 @@ on:
           - team-10-week
           - branch-50-four-weeks
           - branch-115-six-weeks
+          - branch-115-six-weeks-untimed
         default: team-10-week
+      repeats:
+        description: '5 exploratory repetitions or 20 for p95 (manual, single scenario)'
+        type: choice
+        options:
+          - '5'
+          - '20'
+        default: '5'
   pull_request:
     paths:
       - .github/workflows/escalas-synthetic-benchmark.yml
-      - web/scripts/escalas/benchmark-synthetic.ts
+      - web/ops/escalas/**
+      - web/scripts/escalas/benchmark-*.ts
+      - web/scripts/escalas/verify-synthetic-metrics.py
+      - web/scripts/escalas/test_verify_synthetic_metrics.py
+      - web/src/lib/escalas/benchmark-synthetic-input.test.ts
       - web/src/lib/escalas/sunday-sector-observations.ts
+      - web/src/lib/escalas/sunday-sector-observations.test.ts
+      - web/src/lib/escalas/coverage-presence.ts
+      - web/src/lib/escalas/validation.ts
+      - web/src/lib/escalas/generation.ts
+      - web/src/lib/escalas/preparation.ts
 
 permissions:
   contents: read
@@ -26,14 +43,15 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Measured solver baseline (synthetic)
+    name: Measured solver evidence (synthetic)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     defaults:
       run:
         working-directory: web
     env:
-      SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week branch-50-four-weeks branch-115-six-weeks' || inputs.scenario || 'team-10-week' }}
+      SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week branch-50-four-weeks branch-115-six-weeks branch-115-six-weeks-untimed' || inputs.scenario || 'team-10-week' }}
+      REPEATS: ${{ github.event_name == 'pull_request' && '5' || inputs.repeats || '5' }}
       CI: "true"
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -50,8 +68,10 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Install locked dependencies
         run: npm ci
-      - name: Verify synthetic Sunday-Saturday inputs before benchmarking
-        run: npm exec -- vitest run src/lib/escalas/benchmark-synthetic-input.test.ts
+      - name: Test synthetic metrics verifier
+        run: python3 -m unittest discover -s scripts/escalas -p 'test_verify_synthetic_metrics.py'
+      - name: Verify synthetic calendar and cross-role Sunday concentration
+        run: npm exec -- vitest run src/lib/escalas/benchmark-synthetic-input.test.ts src/lib/escalas/sunday-sector-observations.test.ts
       - name: Build isolated solver only
         run: docker build --target runtime -t web-escalas-solver:latest ops/escalas
       - name: Log hardware and source identity
@@ -71,47 +91,15 @@ jobs:
           # One job/runner for every PR scenario, so the hardware and image stay constant.
           # Workflow dispatch retains its original single-scenario selector.
           for scenario in $SCENARIOS; do
-            printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":5}\n' "$scenario" \
+            printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":%s}\n' "$scenario" "$REPEATS" \
               | npm run benchmark:escalas | tee -a "$RUNNER_TEMP/escalas-benchmark.jsonl"
           done
       - name: Require independent validation and complete measurements
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os, pathlib, math
-          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "escalas-benchmark.jsonl"
-          data = []
-          for line in path.read_text().splitlines():
-              if line.startswith("{") and '"kind"' in line:
-                  data.append(json.loads(line))
-          scenarios = os.environ["SCENARIOS"].split()
-          allowed = {"team-10-week", "branch-50-four-weeks", "branch-115-six-weeks"}
-          assert scenarios and len(scenarios) == len(set(scenarios)), "Missing or repeated scenarios"
-          assert all(scenario in allowed for scenario in scenarios), "Unsupported synthetic scenario"
-          measured = [x for x in data if x.get("kind") == "measurement"]
-          summary = [x for x in data if x.get("kind") == "summary"]
-          for scenario in scenarios:
-              for variant in ("baseline", "corrected"):
-                  rows = [x for x in measured if x.get("variant") == variant and x.get("scenario") == scenario]
-                  reports = [x for x in summary if x.get("variant") == variant and x.get("scenario") == scenario]
-                  assert len(rows) == 5 and len(reports) == 1, "Incomplete benchmark samples"
-                  assert reports[0].get("samples") == 5, "Missing repetitions"
-                  for row in rows:
-                      assert row.get("status") in ("FEASIBLE", "OPTIMAL"), "Unsolved scenario"
-                      assert row.get("errors") == [], "Independent validation rejected output"
-                      assert isinstance(row.get("seconds"), (int, float)) and math.isfinite(row["seconds"]), "Invalid duration"
-                      assert isinstance(row.get("maxRssKiB"), (int, float)) and row["maxRssKiB"] > 0, "Invalid memory"
-                      assert row.get("shortagePersonMinutes") is not None, "Missing coverage metric"
-                      for key in ("sectorDaysAllOff", "sectorDaysWithoutKnownService", "sectorDaysWithUnverifiedPresence", "comparableOffSpread"):
-                          assert type(row.get(key)) is int and row[key] >= 0, "Invalid Sunday sector metric: " + key
-                  for key in ("medianSeconds", "p95Seconds", "peakRssKiB", "medianShortage",
-                              "medianComparableSundayOffSpread", "medianSundaySectorDaysWithoutKnownService"):
-                      assert reports[0].get(key) is not None, "Missing " + key
-                  print(json.dumps(reports[0], sort_keys=True))
-          assert len(measured) == len(scenarios) * 10 and len(summary) == len(scenarios) * 2, "Unexpected scenario data"
-          print("Benchmark: 5 synthetic repetitions per variant/scenario, independent rules checked.")
-          PY
+          python3 scripts/escalas/verify-synthetic-metrics.py \
+            "$RUNNER_TEMP/escalas-benchmark.jsonl" "$REPEATS" $SCENARIOS
       - name: Keep metrics, never private rosters
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
