@@ -10,7 +10,7 @@ from unittest.mock import patch
 from ortools.sat.python import cp_model
 
 from optimization import (ImprovementContext, Snapshot, _movable_people,
-                          _sector_sunday_people, improve)
+                          _sector_sunday_people, improve, remember)
 from solver import _clock_profiles, _coverage, _weekend_group_key, days_between
 from test_solver import fixture
 from weekend_balance import (preserve_sunday_presence, sector_sunday_distribution,
@@ -109,6 +109,40 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertLessEqual(engine.value(sum(coverage)), original.value(sum(coverage)))
         for terms in protected_roles.values():
             self.assertLessEqual(engine.value(sum(terms)), original.value(sum(terms)))
+
+    def test_sector_auxiliaries_are_added_only_after_coverage_improves(self):
+        model = cp_model.CpModel()
+        work = model.new_bool_var('w:worker:2026-12-06')
+        gap = model.new_bool_var('coverage-gap')
+        model.add(gap + work == 1)
+        seed = {work.index: 0, gap.index: 1}
+        original_variables = len(model.proto.variables)
+        observed = []
+
+        def build_sector_goal(current_model, accepted_values, _control):
+            # This callback must not affect the higher-priority coverage
+            # neighborhood. It must receive the coverage-improved incumbent,
+            # including its original decision, before adding a soft metric.
+            observed.append((len(current_model.proto.variables),
+                             accepted_values[gap.index], accepted_values[work.index]))
+            score = current_model.new_int_var(0, 1, 'sector-sunday-spread:0')
+            current_model.add(score + work == 1)
+            remember(current_model, accepted_values, score,
+                     1 - accepted_values[work.index])
+            return score
+
+        result, _, phases = improve(model, [gap, work], seed,
+            time.monotonic() + 3, ['COVERAGE', 'SUNDAY_BALANCE'],
+            context=ImprovementContext(prepare_sunday_balance=build_sector_goal))
+        self.assertEqual(observed, [(original_variables, 0, 1)])
+        self.assertEqual(len(model.proto.variables), original_variables + 1)
+        self.assertEqual(result[gap.index], 0)
+        self.assertEqual(result[work.index], 1)
+        self.assertEqual(result[original_variables], 0)
+        self.assertTrue(any(phase['objective'] == 'COVERAGE'
+                            for phase in phases))
+        self.assertTrue(any(phase['objective'] == 'SUNDAY_BALANCE'
+                            for phase in phases))
 
     def test_soft_sector_metrics_do_not_hard_freeze_before_cohort_fairness(self):
         # Seed has the best sector spread and no presence loss, but worse
