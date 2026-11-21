@@ -613,14 +613,29 @@ def _solve(data, control=None, started=None):
                    for segment in shifts[sid]['segments'])
                for sid in referenced_shifts if sid in shifts):
             overnight_sectors.add(person['sector'])
-    sector_spreads, sector_presence_losses, max_presence_loss = sector_sunday_distribution(
-        model, groups, employees, dates, work, baseline, policy, values,
-        excluded_sectors=overnight_sectors, control=control)
-    # Existing comparable cohort fairness stays lexicographically ahead of
-    # sector-level distribution; preserving the seed's eligible Sunday presence
-    # stays ahead of cosmetic sector spread. No new hard staffing minimum.
-    sunday_fairness_goal = sector_sunday_tie_break(
-        sundays, sector_spreads, sector_presence_losses, max_presence_loss)
+    # Do not attach sector-level auxiliary variables before COVERAGE searches:
+    # even soft later objectives change CP-SAT presolve and the 12-second
+    # incumbent when constructed up front. Build them with the current accepted
+    # incumbent at the SUNDAY_BALANCE phase, after coverage/role/time guards.
+    def prepare_sector_sunday_balance(current_model, accepted_values, current_control):
+        sector_spreads, sector_presence_losses, max_presence_loss = sector_sunday_distribution(
+            current_model, groups, employees, dates, work, baseline, policy, accepted_values,
+            excluded_sectors=overnight_sectors, control=current_control)
+        return sector_sunday_tie_break(
+            sundays, sector_spreads, sector_presence_losses, max_presence_loss)
+
+    sunday_fairness_goal = sum(sundays)
+    if isinstance(sunday_fairness_goal, int) and len(dates) > 7:
+        # A sector with separate singleton role/clock cohorts has no legacy
+        # SUNDAY_BALANCE term. Preserve its phase slot for the deferred builder
+        # using an EXISTING work variable (no pre-coverage auxiliary).
+        sector_cohorts = {}
+        sector_by_person = {person['id']: person['sector'] for person in employees}
+        for index, members in enumerate(groups.values()):
+            for pid in members:
+                sector_cohorts.setdefault(sector_by_person[pid], set()).add(index)
+        if any(len(cohorts) > 1 for cohorts in sector_cohorts.values()):
+            sunday_fairness_goal = next(iter(work.values()), 0)
     # Unconfirmed staffing estimates are planning goals, never approved minima.
     # Prioritize their person-minute shortages before rotation and preferences.
     untimed_rotation = list(untimed_spreads)
@@ -678,6 +693,7 @@ def _solve(data, control=None, started=None):
                                      started + MAX_SECONDS, [name for name, _ in goals], context=ImprovementContext(control=control,
                                      # Coverage may leave an equal-but-empty Sunday seed.
                                      # Fairness guards start only at their own later phase.
+                                     prepare_sunday_balance=prepare_sector_sunday_balance,
                                      protected_groups={goals[0][0]: [sum(terms) for terms in sunday_coverage.values()]
                                                        + [sum(terms) for terms in sector_coverage.values()]
                                                        + [sum(terms) for terms in visible_sunday_coverage.values()]
