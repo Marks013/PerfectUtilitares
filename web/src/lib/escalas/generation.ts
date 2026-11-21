@@ -29,11 +29,13 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const closing = storeClosingMinutes(input);
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const savedWorkClocks = new Map<string, Set<string>>();
+  const employeesWithEditableWork = new Set<string>();
   for (const day of input.assignments) {
     if (day.kind !== "WORK" || !day.shiftId) continue;
     const clocks = savedWorkClocks.get(day.employeeId) ?? new Set<string>();
     clocks.add(day.shiftId);
     savedWorkClocks.set(day.employeeId, clocks);
+    if (!day.locked) employeesWithEditableWork.add(day.employeeId);
   }
   const invalidAutomaticMeal = (shift: EscalaShift, date = input.startDate) => isAutomaticPreparedShift(shift)
     && (mealMinutes(shift) < minimumMealMinutes(input.policy, paidMinutes(shift), input.simulation)
@@ -109,10 +111,10 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       adaptedOptions.set(person.id, new Set([fixed.id]));
       return { ...person, ...reference, simulationDailyMinutes: undefined, shiftIds, fixedImportedShiftId: fixed.id };
     }
-    // A single verified-shaped automatic clock actually worked in this saved scenario
-    // takes precedence over unused alternatives. Never carry forward clock rotation.
+    // Keep a sole compatible clock used on editable days, not a lock-only exception
+    // or a rotation between multiple clocks.
     const workedClocks = savedWorkClocks.get(person.id);
-    const savedClock = workedClocks?.size === 1 && !rawInput.needsRegeneration && !mixedWeeks
+    const savedClock = workedClocks?.size === 1 && employeesWithEditableWork.has(person.id) && !rawInput.needsRegeneration && !mixedWeeks
       && !person.manualShiftOverrides?.length && hours === person.weeklyHours && targets.size === 1
       ? allowed.find(shift => workedClocks.has(shift.id) && isAutomaticPreparedShift(shift)
         && targets.has(paidMinutes(shift)) && !invalidAutomaticMeal(shift) && fitsStoreClosing(shift, closing)
