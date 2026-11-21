@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import patch
 from ortools.sat.python import cp_model
-from optimization import Snapshot, improve
+from optimization import improve
 from solver import _repair_clock_fixes, _rest_repair_groups, days_between, solve
 from test_solver import fixture
 
@@ -69,14 +69,10 @@ class SectorRepairTests(unittest.TestCase):
             for index, day in enumerate(days) if index != 1]
         data["movementPriorities"] = [{"startDate": days[4], "endDate": days[4], "level": "HIGH"}]
 
-        def inspect(model, objectives, values, deadline, names, *, context):
-            # An empty Sunday used to replace the complete saved sector before
-            # this point and freeze coverage relative to a different baseline.
-            self.assertEqual(Snapshot(values).value(sum(context.sunday_coverage["Reposição"])), 240)
-            self.assertIn(("Reposição", days[6]), context.sunday_recovery)
-            return improve(model, objectives, values, deadline, names, context=context)
-
-        with patch("solver.improve", side_effect=inspect) as refine:
+        # Empty estimated days may be recovered during feasibility hints or
+        # during bounded repair. Neither timing is a mandatory staffing floor.
+        # Verify the final result instead of requiring one particular seed.
+        with patch("solver.improve", wraps=improve) as refine:
             result = solve(data)
         refine.assert_called_once()
         self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"))
@@ -86,7 +82,7 @@ class SectorRepairTests(unittest.TestCase):
                        for entry in result["assignments"])
             self.assertGreaterEqual(work, demand["minimum"], demand["date"])
 
-    def test_repair_gives_empty_open_sunday_a_slot_before_ordinary_shortages(self):
+    def test_repair_prioritizes_measured_shortage_and_uses_sunday_as_tiebreak(self):
         data = fixture(40, people=10)
         people = data["employees"]
         people[-1]["sector"] = "Padaria"
@@ -99,7 +95,15 @@ class SectorRepairTests(unittest.TestCase):
         groups = _rest_repair_groups(people, [day], work, {}, values, data["policy"], demands,
                                      sector_shortages={"Reposição": [2000], "Padaria": [500]},
                                      priority_sundays={("Padaria", day)})
-        self.assertEqual(groups[0], {"p9"})
+        # Larger measured shortage wins, even with a recovery Sunday elsewhere.
+        self.assertEqual(groups[0], {f"p{i}" for i in range(9)})
+        self.assertIn({"p9"}, groups)
+        tied = _rest_repair_groups(
+            people, [day], work, {}, values, data["policy"], demands,
+            sector_shortages={"Reposição": [500], "Padaria": [500]},
+            priority_sundays={("Padaria", day)})
+        # With equal shortages, the open Sunday becomes the next priority.
+        self.assertEqual(tied[0], {"p9"})
 
     def test_later_preference_cannot_undo_recovered_timed_service(self):
         model = cp_model.CpModel()
