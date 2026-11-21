@@ -17,7 +17,7 @@ describe("Escalas import preview", () => {
   });
   it("never guesses admission from the scheduling period or hides missing sector", () => {
     const missing = row(); missing[6] = "";
-    const sector = row(); sector[2] = "";
+    const sector = row(); sector[0] = "0002"; sector[2] = "";
     const preview = previewEscalaRows([header, missing, sector], options);
     expect(preview.employees).toEqual([]);
     expect(preview.issues).toHaveLength(2);
