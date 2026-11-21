@@ -8,11 +8,11 @@ import unittest
 
 from ortools.sat.python import cp_model
 
-from optimization import Snapshot
+from optimization import ImprovementContext, Snapshot, improve
 from solver import _clock_profiles, _coverage, _weekend_group_key, days_between
 from test_solver import fixture
 from weekend_balance import (preserve_sunday_presence, sector_sunday_distribution,
-                             sector_sunday_tie_break, sunday_distribution,
+                             sector_sunday_tie_break, sunday_balance_guards, sunday_distribution,
                              weekend_objectives)
 
 
@@ -101,6 +101,34 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertLessEqual(engine.value(sum(coverage)), original.value(sum(coverage)))
         for terms in protected_roles.values():
             self.assertLessEqual(engine.value(sum(terms)), original.value(sum(terms)))
+
+    def test_soft_sector_metrics_do_not_hard_freeze_before_cohort_fairness(self):
+        # Seed has the best sector spread and no presence loss, but worse
+        # personal fairness. The alternative must remain admissible even if
+        # its lower-priority sector spread and soft presence loss get worse.
+        model = cp_model.CpModel()
+        change = model.new_bool_var("exchange")
+        personal = model.new_int_var(0, 1, "personal-spread")
+        sector = model.new_int_var(0, 10000, "sector-spread")
+        loss = model.new_int_var(0, 1, "eligible-presence-loss")
+        model.add(personal + change == 1)
+        model.add(sector == 10000 * change)
+        model.add(loss == change)
+        values = {change.index: 0, personal.index: 1, sector.index: 0, loss.index: 0}
+        protected = sunday_balance_guards([personal], [])
+        self.assertEqual(len(protected), 1)
+        self.assertIs(protected[0], personal)
+        objective = sector_sunday_tie_break([personal], [sector], [loss], 1)
+        self.assertEqual(Snapshot(values).value(objective), 20002)
+        outcome, _, phases = improve(model, [objective], values, time.monotonic() + 3,
+            ['SUNDAY_BALANCE'], context=ImprovementContext(
+                protected_groups={'SUNDAY_BALANCE': protected}))
+        self.assertEqual(outcome[change.index], 1)
+        self.assertEqual(outcome[personal.index], 0)
+        self.assertEqual(outcome[sector.index], 10000)
+        self.assertEqual(outcome[loss.index], 1)
+        self.assertLess(Snapshot(outcome).value(objective), Snapshot(values).value(objective))
+        self.assertTrue(phases)
 
     def test_sector_spread_cannot_purchase_worse_personal_fairness(self):
         model = cp_model.CpModel()
