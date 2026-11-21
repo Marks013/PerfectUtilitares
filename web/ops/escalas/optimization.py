@@ -14,6 +14,11 @@ MIN_SEARCH_SECONDS = 0.10
 # own floor after setup. An admitted phase is not evidence of optimization.
 MIN_PHASE_BUDGET = 2 * MIN_SEARCH_SECONDS
 MAX_COVERAGE_HINT_SECONDS = 0.6
+# Auxiliary cross-role Sunday search is deliberately opportunistic.
+# In 115-person synthetic evidence its former ~1.24s search did not improve
+# fairness and displaced later rest phases which can incidentally improve
+# higher-priority coverage. This cap is net CP-SAT time after charged setup.
+MAX_DEFERRED_SECTOR_SUNDAY_SEARCH_SECONDS = 0.15
 
 
 @dataclass
@@ -658,6 +663,11 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             # the deadline or taking the next Sunday's reserved allocation.
             budget = max(budget, _refinement_reserve(name, names, context.refinement_reserve_seconds))
         budget = min(budget, available)
+        if name == 'SUNDAY_BALANCE' and context.prepare_sunday_balance:
+            # Never spend the full Sunday reserve on a costly optional sector
+            # tie-break that is not required for feasibility or staffing.
+            # Let lower phases run; the absolute 12s deadline stays unchanged.
+            budget = min(budget, MAX_DEFERRED_SECTOR_SUNDAY_SEARCH_SECONDS)
         if budget < MIN_SEARCH_SECONDS:
             if name == 'COVERAGE' and phase_index == 0:
                 record_global_skip('PREPARATION_EXHAUSTED', preparation_seconds, hint_status)
