@@ -496,14 +496,21 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             objective_cache[id(objective)] = terms, objective_key, lower
         else:
             terms, objective_key, lower = cached
-        visited.append((objective, terms, objective_key))
+        # The extra sector tie-break is observational and subordinate to
+        # subsequent operational improvements. Its incumbent bound belongs
+        # to its OWN search clone, not permanently to the shared model.
+        # Existing cohort/presence guards above remain hard no-regression.
+        if not active_deferred_sector_balance:
+            visited.append((objective, terms, objective_key))
         incumbent = _linear_value(terms, values)
-        # A new search may not worsen even its own goal relative to the known draft.
-        add_upper_bound(objective, terms, objective_key, incumbent)
+        if not active_deferred_sector_balance:
+            # Ordinary objectives keep their established lexicographic bounds.
+            add_upper_bound(objective, terms, objective_key, incumbent)
         if lower == incumbent:
             if repair_phase:
                 continue
-            model.add(objective == incumbent)
+            if not active_deferred_sector_balance:
+                model.add(objective == incumbent)
             phases.append({'objective': names[index], 'status': 'OPTIMAL',
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
@@ -604,6 +611,13 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                     domain.clear()
                     value = repair_clock_fixes[variable_index] if narrowed_clock else values[variable_index]
                     domain.extend([value, value])
+        if active_deferred_sector_balance:
+            if search_model is model:
+                search_model = model.clone()
+            # Never accept a worse optional sector goal in its own search.
+            # Leave the parent model free for later phases to improve coverage
+            # incidentally, even if that requires yielding a cosmetic spread.
+            search_model.add(objective <= incumbent)
         hint_status = None
         hint_builder = (context.coverage_repair_hint_builder if repair_phase
                         else context.coverage_hint_builder if phase_index == 0 else None)
@@ -727,11 +741,14 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             add_upper_bound(variable, variable_terms, key, _linear_value(variable_terms, values))
         phase.update(incumbentValue=best, bestBound=engine.best_objective_bound)
         _replace_hints(model, values)
-        if status == cp_model.OPTIMAL and not restricted:
+        if status == cp_model.OPTIMAL and not restricted and not active_deferred_sector_balance:
             model.add(objective == best)
         else:
             proven = False
-            # Preserve the best higher-priority incumbent, while reserving time for operational balance.
-            # This is bounded lexicographic improvement, not proof that any unfinished objective is optimal.
-            add_upper_bound(objective, terms, objective_key, best)
+            # The auxiliary sector goal is soft even AFTER an improvement:
+            # a later, better operational incumbent must remain admissible.
+            if not active_deferred_sector_balance:
+                # Other objectives retain their existing hard no-regression
+                # guards; no mandatory constraints or budgets are loosened.
+                add_upper_bound(objective, terms, objective_key, best)
     return values, proven, phases

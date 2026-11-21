@@ -171,6 +171,34 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertLessEqual(sector_phases[0]['budgetSeconds'], 0.15)
         self.assertGreaterEqual(sector_phases[0]['budgetSeconds'], 0.10)
 
+    def test_extra_sector_tie_break_does_not_hard_block_later_operational_improvement(self):
+        model = cp_model.CpModel()
+        exchange = model.new_bool_var('later-operational-exchange')
+        rest = model.new_bool_var('later-operational-rest')
+        model.add(exchange + rest == 1)
+        values = {exchange.index: 0, rest.index: 1}
+
+        def extra_sector_score(current_model, incumbent, _control):
+            spread = current_model.new_int_var(0, 10000, 'sector-sunday-spread:0')
+            current_model.add(spread == 5000 + 5000 * exchange)
+            remember(current_model, incumbent, spread, 5000)
+            return spread
+
+        outcome, proven, phases = improve(
+            model, [exchange, rest], values, time.monotonic() + 3,
+            ['SUNDAY_BALANCE', 'REST_DISTRIBUTION'],
+            context=ImprovementContext(prepare_sunday_balance=extra_sector_score,
+                                       refinement_reserve_seconds=0.8))
+        self.assertEqual([p['objective'] for p in phases],
+                         ['SUNDAY_BALANCE', 'REST_DISTRIBUTION'])
+        self.assertEqual(outcome[exchange.index], 1)
+        self.assertEqual(outcome[rest.index], 0)
+        self.assertFalse(proven)
+        # The first search must not add an everlasting spread <= 5000 bound
+        # to the model; the later rest refinement legally needs spread=10000.
+        baseline = model.proto.variables
+        self.assertEqual(baseline[-1].name, 'sector-sunday-spread:0')
+
     def test_legacy_only_sunday_goal_keeps_its_full_search_reserve(self):
         model = cp_model.CpModel()
         sunday = model.new_bool_var('legacy-sunday')
