@@ -207,6 +207,34 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertEqual(engine.value(exchange), 1)
         self.assertEqual(engine.value(rest), 0)
 
+    def test_large_multiweek_keeps_legacy_fairness_without_extra_sector_geometry(self):
+        model = cp_model.CpModel()
+        days = [f'2026-11-{day:02}' for day in range(1, 9)]
+        work = [model.new_bool_var(f'w:synthetic:{day}') for day in days]
+        values = {variable.index: 0 for variable in work}
+        calls = []
+
+        def optional_sector(_model, _values, _control):
+            calls.append('unexpected large-model sector auxiliary')
+            raise AssertionError('large-model optional geometry must not be built')
+
+        original_variables = len(model.proto.variables)
+        # Exercise the SAME production variable-count gate with a tiny
+        # synthetic model; no thousands of artificial booleans or private
+        # schedules are required for the test.
+        with patch('optimization.LARGE_MODEL_VARIABLES', 1):
+            result, _, phases = improve(
+                model, [work[0]], values, time.monotonic() + 3,
+                ['SUNDAY_BALANCE'],
+                context=ImprovementContext(prepare_sunday_balance=optional_sector,
+                                           decision_variables={
+                                               var.index: ('synthetic', day)
+                                               for var, day in zip(work, days)}))
+        self.assertEqual(calls, [])
+        self.assertEqual(len(model.proto.variables), original_variables)
+        self.assertEqual(result[work[0].index], 0)
+        self.assertTrue(any(phase['objective'] == 'SUNDAY_BALANCE' for phase in phases))
+
     def test_legacy_only_sunday_goal_keeps_its_full_search_reserve(self):
         model = cp_model.CpModel()
         sunday = model.new_bool_var('legacy-sunday')

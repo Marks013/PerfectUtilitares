@@ -443,12 +443,22 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             break
         preparation_started = time.monotonic()
         active_deferred_sector_balance = False
-        if name == 'SUNDAY_BALANCE' and context.prepare_sunday_balance:
+        # A large joint model has insufficient search headroom for
+        # supplementary sector extrema. On 115-person / six-week evidence,
+        # their construction and propagation displaced later refinements and
+        # increased independently measured staffing shortfalls. Fall back to
+        # the ORIGINAL Sunday cohort objective, not a weaker requirement.
+        # The extra cross-role rule remains eligible for smaller models.
+        # Never introduce new mandatory staffing minima or change the
+        # 12-second absolute deadline to mask this tradeoff.
+        can_build_sector_balance = (
+            context.prepare_sunday_balance is not None
+            and not (len(variables) > LARGE_MODEL_VARIABLES and len(dates) > 7))
+        if name == 'SUNDAY_BALANCE' and can_build_sector_balance:
             original_variable_count = len(model.proto.variables)
-            # Add optional cross-role sector auxiliaries only AFTER higher
-            # priority COVERAGE and SUNDAY_COVERAGE searches have accepted
-            # their incumbents. Building them up front perturbs the bounded
-            # repair model even when they are not in the coverage objective.
+            # Construct optional cross-role sector auxiliaries only AFTER
+            # higher-priority COVERAGE and SUNDAY_COVERAGE are accepted.
+            # Large-model fallback keeps the established model geometry.
             objective = context.prepare_sunday_balance(model, values, control)
             plans[index] = name, objective
             variables = [model.get_int_var_from_proto_index(i)
