@@ -19,7 +19,7 @@ from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSI
 from runtime_settings import MAX_SECONDS, RANDOM_SEED
 from sunday_peak import build_sunday_peaks
 from weekend_balance import (available_weekends, preserve_sunday_presence, sector_sunday_distribution,
-                             sector_sunday_tie_break, sunday_distribution, weekend_objectives)
+                             sector_sunday_tie_break, sunday_balance_guards, sunday_distribution, weekend_objectives)
 
 ZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -692,7 +692,7 @@ def _solve(data, control=None, started=None):
                                                        # from their accepted incumbent, never the seed.
                                                        'SUNDAY_PEAK': [sum(terms) for terms in peak_plan.peaks.values()],
                                                        'UNTIMED_ROTATION': sunday_presence,
-                                                       'SUNDAY_BALANCE': sundays + sector_spreads + sector_presence_losses + sunday_presence,
+                                                       'SUNDAY_BALANCE': sunday_balance_guards(sundays, sunday_presence),
                                                        'SATURDAY_BALANCE': saturdays,
                                                        'REST_SPACING': rest_quality['guards']} if goals else {},
                                      employee_groups=list(groups.values()),
