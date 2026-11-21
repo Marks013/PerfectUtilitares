@@ -442,7 +442,9 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             proven = False
             break
         preparation_started = time.monotonic()
+        active_deferred_sector_balance = False
         if name == 'SUNDAY_BALANCE' and context.prepare_sunday_balance:
+            original_variable_count = len(model.proto.variables)
             # Add optional cross-role sector auxiliaries only AFTER higher
             # priority COVERAGE and SUNDAY_COVERAGE searches have accepted
             # their incumbents. Building them up front perturbs the bounded
@@ -453,6 +455,12 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                          for i in range(len(model.proto.variables))]
             if len(values) != len(variables):
                 raise ValueError('incomplete deferred Sunday incumbent')
+            # A legacy-only Sunday objective must keep its existing reserve.
+            # Cap the extra sector tie-break only when an ACTUAL positive
+            # sector spread was constructed from the accepted incumbent.
+            active_deferred_sector_balance = any(
+                var.name.startswith('sector-sunday-spread:') and values[var.index] > 0
+                for var in variables[original_variable_count:])
             # The builder records all new extrema/deficit values; keep hints
             # consistent with the accepted higher-priority decisions.
             _replace_hints(model, values)
@@ -663,7 +671,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             # the deadline or taking the next Sunday's reserved allocation.
             budget = max(budget, _refinement_reserve(name, names, context.refinement_reserve_seconds))
         budget = min(budget, available)
-        if name == 'SUNDAY_BALANCE' and context.prepare_sunday_balance:
+        if name == 'SUNDAY_BALANCE' and active_deferred_sector_balance:
             # Never spend the full Sunday reserve on a costly optional sector
             # tie-break that is not required for feasibility or staffing.
             # Let lower phases run; the absolute 12s deadline stays unchanged.

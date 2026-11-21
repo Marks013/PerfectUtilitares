@@ -171,6 +171,27 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertLessEqual(sector_phases[0]['budgetSeconds'], 0.15)
         self.assertGreaterEqual(sector_phases[0]['budgetSeconds'], 0.10)
 
+    def test_legacy_only_sunday_goal_keeps_its_full_search_reserve(self):
+        model = cp_model.CpModel()
+        sunday = model.new_bool_var('legacy-sunday')
+        values = {sunday.index: 1}
+        observed = []
+
+        def unchanged(_model, accepted, _control):
+            observed.append(accepted[sunday.index])
+            return sunday  # No sector spread or other new auxiliary.
+
+        result, _, phases = improve(
+            model, [sunday], values, time.monotonic() + 3,
+            ['SUNDAY_BALANCE'],
+            context=ImprovementContext(prepare_sunday_balance=unchanged,
+                                       refinement_reserve_seconds=0.8))
+        self.assertEqual(observed, [1])
+        self.assertEqual(result[sunday.index], 0)
+        sector_phases = [phase for phase in phases if phase['objective'] == 'SUNDAY_BALANCE']
+        self.assertEqual(len(sector_phases), 1)
+        self.assertGreater(sector_phases[0]['budgetSeconds'], 0.15)
+
     def test_soft_sector_metrics_do_not_hard_freeze_before_cohort_fairness(self):
         # Seed has the best sector spread and no presence loss, but worse
         # personal fairness. The alternative must remain admissible even if
