@@ -167,6 +167,16 @@ def sector_sunday_distribution(model, groups, employees, days, work, baseline, p
     return spreads, deficits, maximum_presence_deficit
 
 
+def sunday_balance_guards(cohort_spreads, cohort_presence):
+    """Freeze only prior eligible-cohort guarantees, not new soft tie-breaks.
+
+    Registering the sector spread or the soft presence-loss variables as
+    no-regression guards before search would turn their seed values into hard
+    limits, preventing a better higher-priority cohort solution.
+    """
+    return [*cohort_spreads, *cohort_presence]
+
+
 def sector_sunday_tie_break(personal_spreads, sector_spreads, presence_losses,
                             max_presence_loss):
     """Lexicographic weights: personal fairness, presence, then sector spread.
