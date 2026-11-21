@@ -18,7 +18,8 @@ from rest_quality import build_rest_quality, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
 from runtime_settings import MAX_SECONDS, RANDOM_SEED
 from sunday_peak import build_sunday_peaks
-from weekend_balance import available_weekends, preserve_sunday_presence, sunday_distribution, weekend_objectives
+from weekend_balance import (available_weekends, preserve_sunday_presence, sector_sunday_distribution,
+                             sector_sunday_tie_break, sunday_distribution, weekend_objectives)
 
 ZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -599,6 +600,27 @@ def _solve(data, control=None, started=None):
     date_spreads, sunday_presence, untimed_spreads = sunday_distribution(
         model, groups, employees, dates, work, baseline, policy, values, control)
     sundays.extend(date_spreads)
+    # A civil-Sunday rate cannot be inferred from origin-day WORK when an
+    # admissible or historical shift crosses midnight. Do not compare those
+    # sectors using this extra soft objective.
+    overnight_sectors = set()
+    for person in employees:
+        referenced_shifts = set(person['shiftIds'])
+        referenced_shifts.update(item['shiftId'] for item in
+            person.get('planningHistory', []) + person['history'] + person.get('planningFuture', [])
+            if item['kind'] == 'WORK')
+        if any(any(segment['kind'] == 'WORK' and segment['end'] > 1440
+                   for segment in shifts[sid]['segments'])
+               for sid in referenced_shifts if sid in shifts):
+            overnight_sectors.add(person['sector'])
+    sector_spreads, sector_presence_losses, max_presence_loss = sector_sunday_distribution(
+        model, groups, employees, dates, work, baseline, policy, values,
+        excluded_sectors=overnight_sectors, control=control)
+    # Existing comparable cohort fairness stays lexicographically ahead of
+    # sector-level distribution; preserving the seed's eligible Sunday presence
+    # stays ahead of cosmetic sector spread. No new hard staffing minimum.
+    sunday_fairness_goal = sector_sunday_tie_break(
+        sundays, sector_spreads, sector_presence_losses, max_presence_loss)
     # Unconfirmed staffing estimates are planning goals, never approved minima.
     # Prioritize their person-minute shortages before rotation and preferences.
     untimed_rotation = list(untimed_spreads)
@@ -621,7 +643,7 @@ def _solve(data, control=None, started=None):
              # opportunities, freezing the seed's zero spread can force every
              # person to stay OFF. Compare fairness only after this recovery.
              ("UNTIMED_ROTATION", sum(untimed_rotation)),
-             ("SUNDAY_BALANCE", sum(sundays)),
+             ("SUNDAY_BALANCE", sunday_fairness_goal),
              ("REST_SPACING", rest_quality['objective']),
              ("LEADERSHIP", sum(leader_terms)),
              ("SATURDAY_BALANCE", sum(saturdays)),
@@ -670,7 +692,7 @@ def _solve(data, control=None, started=None):
                                                        # from their accepted incumbent, never the seed.
                                                        'SUNDAY_PEAK': [sum(terms) for terms in peak_plan.peaks.values()],
                                                        'UNTIMED_ROTATION': sunday_presence,
-                                                       'SUNDAY_BALANCE': sundays + sunday_presence,
+                                                       'SUNDAY_BALANCE': sundays + sector_spreads + sector_presence_losses + sunday_presence,
                                                        'SATURDAY_BALANCE': saturdays,
                                                        'REST_SPACING': rest_quality['guards']} if goals else {},
                                      employee_groups=list(groups.values()),
