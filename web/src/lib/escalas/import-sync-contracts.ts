@@ -2,7 +2,6 @@ import { z } from "zod";
 import { isDate } from "./dates";
 import type { EscalaAssignment, EscalaWorkspace } from "./types";
 
-export const ESCALA_IMPORT_SYNC_VERSION = 1;
 const id = z.string().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u);
 const date = z.string().refine(isDate, "Informe uma data real no formato AAAA-MM-DD.");
 const common = {
@@ -19,24 +18,23 @@ export const importSyncCommandSchema = z.discriminatedUnion("action", [
 export type ImportSyncCommand = z.infer<typeof importSyncCommandSchema>;
 export type ImportSyncPurpose = ImportSyncCommand["purpose"];
 export type ImportSyncPreviewCommand = Extract<ImportSyncCommand, { action: "PREVIEW_REPLACE" }>;
-export type ImportSyncApplyCommand = Extract<ImportSyncCommand, { action: "APPLY_REPLACE" }>;
 export const importSyncLayoutSchema = z.enum(["ESCALA_TEMPLATE", "FPRE136", "FPHI105", "UNRECOGNIZED"]);
-export type ImportSyncLayout = z.infer<typeof importSyncLayoutSchema>;
+type ImportSyncLayout = z.infer<typeof importSyncLayoutSchema>;
 
 export const IMPORT_SYNC_BLOCKER_CODES = ["COVERAGE_UNCONFIRMED", "SCOPE_MISMATCH", "SOURCE_INVALID", "EMPTY_SOURCE",
   "SOURCE_PERIOD", "AMBIGUOUS_REGISTRATION", "DUPLICATE_REGISTRATION", "PROTECTED_ASSIGNMENT", "MANUAL_REFERENCE_CONFLICT",
   "ID_CONFLICT", "INVALID_CANDIDATE", "APPROVAL_UNAVAILABLE", "TOO_MANY_PEOPLE", "OUTSIDE_BINDING", "SOURCE_IDENTITY", "SOURCE_PARTIAL"] as const;
-export type ImportSyncBlockerCode = typeof IMPORT_SYNC_BLOCKER_CODES[number];
+type ImportSyncBlockerCode = typeof IMPORT_SYNC_BLOCKER_CODES[number];
 export type ImportSyncProblem = { code: ImportSyncBlockerCode; message: string; line?: number; employeeId?: string; date?: string };
-export type ImportSyncWarning = { code: "SOURCE_WARNING" | "NUMERIC_REGISTRATION_MATCH" | "UNKNOWN_BINDING" | "OUTSIDE_SCOPE";
+type ImportSyncWarning = { code: "SOURCE_WARNING" | "NUMERIC_REGISTRATION_MATCH" | "UNKNOWN_BINDING" | "OUTSIDE_SCOPE";
   message: string; line?: number; employeeId?: string };
 export type ImportSyncPersonChange = { id: string; registration: string; name: string; fields: string[] };
-export type ImportSyncAbsenceDay = { employeeId: string; registration: string; date: string };
-export type ImportSyncAssignmentChange = { employeeId: string; registration: string; date: string;
+type ImportSyncAbsenceDay = { employeeId: string; registration: string; date: string };
+type ImportSyncAssignmentChange = { employeeId: string; registration: string; date: string;
   previousKind: EscalaAssignment["kind"] | null; nextKind: EscalaAssignment["kind"] | null;
   previousShiftId: string | null; nextShiftId: string | null };
-export type ImportSyncReferenceChange = { employeeId: string; registration: string; before: string; after: string };
-export type ImportSyncImpact = {
+type ImportSyncReferenceChange = { employeeId: string; registration: string; before: string; after: string };
+type ImportSyncImpact = {
   people: { added: ImportSyncPersonChange[]; updated: ImportSyncPersonChange[]; removed: ImportSyncPersonChange[]; unchanged: ImportSyncPersonChange[] };
   absences: { added: ImportSyncAbsenceDay[]; removed: ImportSyncAbsenceDay[]; unchanged: ImportSyncAbsenceDay[] };
   assignments: ImportSyncAssignmentChange[];

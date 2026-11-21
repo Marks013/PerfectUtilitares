@@ -6,7 +6,7 @@ import { escalaInputSchema } from "./schema";
 import { manualCatalogShift } from "./shift-catalog/manual-override";
 import type { EscalaEmployee, EscalaInput } from "./types";
 
-export const ESCALA_APPROVED_POLICY_SCHEMA_VERSION = 1;
+const ESCALA_APPROVED_POLICY_SCHEMA_VERSION = 1;
 const id = z.string().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u);
 const positiveVersion = z.number().int().min(1).max(2_147_483_647);
 const fields = escalaInputSchema.shape;
@@ -48,7 +48,7 @@ const snapshotSchema = z.strictObject({
   provenance: provenanceSchema,
 });
 export type EscalaApprovedPolicySnapshot = z.output<typeof snapshotSchema>;
-export type EscalaApprovedRegimeModel = EscalaApprovedPolicySnapshot["regimeModels"][number];
+type EscalaApprovedRegimeModel = EscalaApprovedPolicySnapshot["regimeModels"][number];
 export type EscalaApprovedPolicyCandidate = Readonly<{
   tenantId: string; branchCode: string; startDate: string; endDate: string; visibleMonth: string | null;
   version: number; snapshotSchemaVersion: 1; snapshot: EscalaApprovedPolicySnapshot; snapshotHash: string;

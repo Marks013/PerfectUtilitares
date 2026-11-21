@@ -15,7 +15,7 @@ export const ESCALA_CAPABILITIES = Object.freeze([
 export type EscalaCapability = typeof ESCALA_CAPABILITIES[number];
 export type EscalaExportProjection = "BASIC_SCHEDULE" | "ADMIN_FULL";
 
-export type EscalaAccountBranchGrant = Readonly<{
+type EscalaAccountBranchGrant = Readonly<{
   tenantId: string; userId: string; branchCode: string; role: string;
 }>;
 
@@ -41,7 +41,7 @@ export type EscalaPermissionContext = Readonly<{
   mode: string;
 }>;
 
-export type EscalaPermissionDenial = "UNKNOWN_CAPABILITY" | "UNSUPPORTED_MODE" | "IDENTITY_REQUIRED"
+type EscalaPermissionDenial = "UNKNOWN_CAPABILITY" | "UNSUPPORTED_MODE" | "IDENTITY_REQUIRED"
   | "INACTIVE_IDENTITY" | "TENANT_FORBIDDEN" | "ADMIN_REQUIRED" | "BRANCH_REQUIRED"
   | "BRANCH_FORBIDDEN" | "AMBIGUOUS_GRANT" | "CAPABILITY_FORBIDDEN";
 

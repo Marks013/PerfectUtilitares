@@ -12,7 +12,7 @@ import type {
 import { coverageDefinitionChanged, hasOutdatedResults, isCurrentResponse, responseMessage, scenarioDefinitionChanged } from "./workspace-model";
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
 import { GenerationOperation, generationCancellationNotice } from "./generation-operation";
-import { EscalaRequestError, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
+import { EscalaRequestError, invalidatesCandidate, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
 import { operationalCommand } from "./operational-client";
 import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
 import { pendingNavigation } from "./workspace-navigation";
@@ -40,12 +40,6 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new EscalaRequestError(responseCode(body), response.status, responseMessage(body));
   }
   return body as T;
-}
-
-function invalidatesCandidate(cause: unknown): boolean {
-  return cause instanceof EscalaRequestError && ([401, 403, 404, 409].includes(cause.status)
-    || cause.code === "ESCALA_COMPARISON_REFERENCE_INVALID" || cause.code?.startsWith("ESCALA_CONFIG_") === true
-    || cause.code?.startsWith("ESCALA_PROPOSAL_") === true || cause.code === "ESCALA_ACCESS_REQUIRED");
 }
 
 export function useEscalasWorkspace() {

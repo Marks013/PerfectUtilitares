@@ -1,13 +1,7 @@
 "use client";
 
 import { ImportReplacement, type ImportReplacementProps } from "./import-replacement";
-import type { EscalaAssignment, EscalaInput } from "@/lib/escalas/types";
-
-/** Only context that determines the interpretation of this file belongs in the preview identity. */
-export function absenceScenarioKey(input: EscalaInput) {
-  return JSON.stringify([input.branchCode, input.startDate, input.endDate, input.visibleMonth, input.planningWeekStartsOn, input.defaultWeeklyHours,
-    input.employees.map((person) => [person.id, person.registration, person.activeFrom, person.activeUntil, person.planningEnabled])]);
-}
+import type { EscalaAssignment } from "@/lib/escalas/types";
 
 export function absencePeriods(assignments: EscalaAssignment[]) {
   const sorted = [...assignments].filter((item) => item.kind === "ABSENCE").sort((a, b) => a.employeeId.localeCompare(b.employeeId) || a.date.localeCompare(b.date));

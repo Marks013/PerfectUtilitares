@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { isIPv4 } from "node:net";
 
 export const releasePostgresImage = "postgres:17.10@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d";
-export const releasePostgresDatabase = "perfectutilitares_release_test";
+const releasePostgresDatabase = "perfectutilitares_release_test";
 
 export function releaseTestPostgresId(env = process.env) {
   const id = env.ESCALAS_RELEASE_POSTGRES_ID;

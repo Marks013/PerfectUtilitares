@@ -39,7 +39,6 @@ export const turnoSelectionManifestSchema = z.union([
 });
 
 export type TurnoSelectionManifestRequest = z.infer<typeof turnoSelectionManifestSchema>;
-export type TurnoFlowSource = z.infer<typeof source>;
 export type TurnoFlowPersonKey = z.infer<typeof personKey>;
 export type TurnoFlowFilters = z.infer<typeof filters>;
 export type TurnoSelectionOmission = TurnoFlowPersonKey & {
@@ -50,7 +49,7 @@ export type TurnoSelectionBlocker = { reason: "DUPLICATE_REGISTRATION"; members:
 export type TurnoEmployeeExportLine = TurnoFlowPersonKey & {
   registration: string; localShiftId: string; code: number; markings: TurnoCatalogEntryDto["markings"];
 };
-export type TurnoSelectionCounts = { found: number; selected: number; includedEmployees: number; includedCodes: number;
+type TurnoSelectionCounts = { found: number; selected: number; includedEmployees: number; includedCodes: number;
   txt1Lines: number; txt2Lines: number; omitted: number; blockers: number };
 type ManifestCommon = { selectionVersion: 2; manifestId: string; expiresAt: string; selectionDigest: string;
   counts: TurnoSelectionCounts; omissions: TurnoSelectionOmission[]; blockers: TurnoSelectionBlocker[] };

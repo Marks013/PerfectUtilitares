@@ -10,14 +10,14 @@ import { planPeriod } from "../plan-selector";
 export const personKey = (value: { workspaceId: string; employeeId: string }) => JSON.stringify([value.workspaceId, value.employeeId]);
 export const sectorKey = (value: { workspaceId: string; value: string }) => JSON.stringify([value.workspaceId, value.value]);
 export const emptyFilters = (): TurnoFlowFilters => ({ branchCodes: [], employeeKeys: [], sectors: [], catalogCodes: [], registrations: [] });
-export function validClockRow(value: unknown): value is Pick<TurnoCatalogEntryDto, "code" | "markings"> {
+function validClockRow(value: unknown): value is Pick<TurnoCatalogEntryDto, "code" | "markings"> {
   return Boolean(value && typeof value === "object" && "code" in value && typeof value.code === "number" && Number.isInteger(value.code) && value.code >= 1500 && value.code <= 2_147_483_647
     && "markings" in value && Array.isArray(value.markings) && value.markings.length === 4 && value.markings.every((mark: unknown) => typeof mark === "string" && clockMinutes(mark) !== null));
 }
 export function validCatalogEntry(value: unknown): value is TurnoCatalogEntryDto {
   return validClockRow(value) && "name" in value && typeof value.name === "string";
 }
-export type PersonReference = { shiftId: string; label: string; source: "BASE" | "MANUAL" | "WORK"; code: number | null; problem: string | null };
+type PersonReference = { shiftId: string; label: string; source: "BASE" | "MANUAL" | "WORK"; code: number | null; problem: string | null };
 export type FlowPerson = { key: string; workspaceId: string; employeeId: string; branchCode: string; branchName: string; name: string; registration: string; sector: string; references: PersonReference[]; referenceProblem: "MISSING" | "UNTIMED" | "NO_REFERENCE" };
 
 export function flowPeople(workspaces: readonly EscalaWorkspace[], entries: readonly TurnoCatalogEntryDto[]): FlowPerson[] {

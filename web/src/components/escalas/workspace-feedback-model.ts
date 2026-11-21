@@ -16,6 +16,12 @@ export function responseCode(body: unknown): string | undefined {
   return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,119}$/.test(code) ? code : undefined;
 }
 
+export function invalidatesCandidate(cause: unknown): boolean {
+  return cause instanceof EscalaRequestError && ([401, 403, 404, 409].includes(cause.status)
+    || cause.code === "ESCALA_COMPARISON_REFERENCE_INVALID" || cause.code?.startsWith("ESCALA_CONFIG_") === true
+    || cause.code?.startsWith("ESCALA_PROPOSAL_") === true || cause.code === "ESCALA_ACCESS_REQUIRED");
+}
+
 export function toEscalaProblem(cause: unknown): EscalaProblem {
   const code = cause instanceof EscalaRequestError ? cause.code : undefined;
   const status = cause instanceof EscalaRequestError ? cause.status : 0;

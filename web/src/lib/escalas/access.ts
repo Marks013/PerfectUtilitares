@@ -18,7 +18,7 @@ export async function lockEscalaAccess(tx: Prisma.TransactionClient, tenantId: s
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
 }
 
-export async function currentEscalaPermissionContext(actor: EscalaActor,
+async function currentEscalaPermissionContext(actor: EscalaActor,
   db: Prisma.TransactionClient = prisma): Promise<EscalaPermissionContext> {
   const policy = await db.escalaModuleAccessPolicy.findUnique({ where: { tenantId: actor.tenantId } });
   if (actor.userId) {

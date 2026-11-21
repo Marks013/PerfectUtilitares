@@ -44,5 +44,3 @@ export function createEscalaExportDescriptor(metadata: unknown) {
     ]),
   });
 }
-
-export type EscalaExportDescriptor = NonNullable<ReturnType<typeof createEscalaExportDescriptor>>;

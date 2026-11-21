@@ -20,7 +20,7 @@ export type EscalaRouteRequest = Readonly<{
   route: string; method: string; action?: unknown; purpose?: unknown; format?: unknown;
   projection?: unknown; workspaceId?: unknown;
 }>;
-export type EscalaResourcePolicy = Readonly<{
+type EscalaResourcePolicy = Readonly<{
   kind: "resource"; operation: string; allOf: readonly EscalaCapability[];
   scope: Scope; requiredChecks: readonly Check[]; projection?: EscalaExportProjection;
 }>;
