@@ -18,6 +18,8 @@ def records(repeats=5, same_source=True):
             for i in range(repeats):
                 data.append({"kind": "measurement", "scenario": scenario, "variant": variant,
                              "repetition": i, "sourceHash": sha, "status": "FEASIBLE", "errors": [],
+                             "image": "sha256:" + "c" * 64, "hostLoad1m": 0.5,
+                             "resources": dict(contract.RESOURCE_PROFILE),
                              "seconds": 10 + i / 100, "maxRssKiB": 100 + i,
                              "shortagePersonMinutes": i, "comparableOffSpread": 0,
                              "sectorDaysAllOff": 0, "sectorDaysWithoutKnownService": 0,
@@ -77,6 +79,42 @@ class ContractTest(unittest.TestCase):
         data, scenarios = records()
         data[5]["p95Seconds"] = 10.04
         with self.assertRaisesRegex(ValueError, "Incorrect p95Seconds"):
+            contract.verify(data, scenarios, 5)
+
+    def test_missing_or_invalid_image_identity_is_rejected(self):
+        data, scenarios = records()
+        data[0]["image"] = "latest"
+        with self.assertRaisesRegex(ValueError, "isolated Docker image"):
+            contract.verify(data, scenarios, 5)
+
+    def test_mixed_docker_images_are_rejected(self):
+        data, scenarios = records()
+        data[0]["image"] = "sha256:" + "d" * 64
+        with self.assertRaisesRegex(ValueError, "Mixed isolated Docker image"):
+            contract.verify(data, scenarios, 5)
+
+    def test_changed_resource_budget_is_rejected(self):
+        data, scenarios = records()
+        data[0]["resources"]["memoryMiB"] = 8192
+        with self.assertRaisesRegex(ValueError, "CPU/memory/solver settings"):
+            contract.verify(data, scenarios, 5)
+
+    def test_missing_host_load_is_rejected(self):
+        data, scenarios = records()
+        data[0].pop("hostLoad1m")
+        with self.assertRaisesRegex(ValueError, "runner load"):
+            contract.verify(data, scenarios, 5)
+
+    def test_zero_duration_is_rejected(self):
+        data, scenarios = records()
+        data[0]["seconds"] = 0
+        with self.assertRaisesRegex(ValueError, "time, memory or coverage"):
+            contract.verify(data, scenarios, 5)
+
+    def test_boolean_repetition_is_rejected(self):
+        data, scenarios = records()
+        data[0]["repetition"] = False
+        with self.assertRaisesRegex(ValueError, "Duplicate or missing repetition"):
             contract.verify(data, scenarios, 5)
 
     def test_unexpected_scenario_is_rejected(self):
