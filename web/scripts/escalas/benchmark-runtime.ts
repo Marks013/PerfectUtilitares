@@ -61,9 +61,14 @@ if request.get('pairedSeed') is True:
     def record_initial_seed(*args, **kwargs):
         global initial_seed_hash
         entries=original_read(*args,**kwargs)
-        canonical=sorted((item['employeeId'],item['date'],item['kind'],item.get('shiftId',''))
-                         for item in entries)
-        initial_seed_hash=hashlib.sha256(json.dumps(canonical,separators=(',',':')).encode()).hexdigest()
+        # _read_assignments is invoked both for feasibility and AFTER
+        # refinement. Capture the FIRST accepted feasible roster only.
+        # Otherwise the paired diagnostic compares two final outputs and
+        # falsely calls them a common initial seed.
+        if initial_seed_hash is None:
+            canonical=sorted((item['employeeId'],item['date'],item['kind'],item.get('shiftId',''))
+                             for item in entries)
+            initial_seed_hash=hashlib.sha256(json.dumps(canonical,separators=(',',':')).encode()).hexdigest()
         return entries
     solver._read_assignments=record_initial_seed
 native=cp_model.CpSolver.solve
