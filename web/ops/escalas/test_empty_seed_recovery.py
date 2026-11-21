@@ -84,12 +84,15 @@ def entries_from_hints(parts, model, pid):
 
 
 class EmptySeedRecoveryTests(unittest.TestCase):
-    def test_complete_empty_sector_is_rebalanced_in_day_changing_modes(self):
+    def test_unrestricted_fallback_rebalances_empty_sector_in_day_changing_modes(self):
         for mode in ('REST_ONLY', 'DAYS_AND_HOURS'):
             with self.subTest(mode=mode):
                 parts = scenario(mode)
                 before = copy.deepcopy(parts)
-                reused, collector = run_hints(parts)
+                # The saved reference is only a hint in the first pass;
+                # the unrestricted CP-SAT retry must still be capable of
+                # rebuilding a synchronized, empty sector.
+                reused, collector = run_hints(parts, prefer_baseline=False)
                 people, dates, _, _, _, _, _, metrics, policy, _ = parts
                 entries = [entries_from_hints(parts, collector, person['id']) for person in people]
                 self.assertFalse(reused)
@@ -106,6 +109,31 @@ class EmptySeedRecoveryTests(unittest.TestCase):
                         kinds = [calendar[day]['kind'] for day in dates[index:index + 7]]
                         self.assertEqual(kinds.count('OFF'), 2)
                         self.assertEqual(kinds.count('WORK'), 5 - kinds.count('HOLIDAY'))
+
+    def test_complete_seed_is_only_a_hint_before_independent_solver_validation(self):
+        for mode in ('REST_ONLY', 'DAYS_AND_HOURS'):
+            with self.subTest(mode=mode):
+                parts = scenario(mode)
+                original = copy.deepcopy(parts)
+                reused, collector = run_hints(parts)
+                # The preferred branch may retain the exact draft; 'reused'
+                # does NOT certify the proposed roster's feasibility or
+                # satisfy the estimated Sunday demand.
+                self.assertTrue(reused)
+                for key, saved in parts[6].items():
+                    self.assertEqual(collector.values[parts[2][key]],
+                                     int(saved['kind'] == 'OFF'))
+                    self.assertEqual(collector.values[parts[3][key]],
+                                     int(saved['kind'] == 'WORK'))
+                self.assertFalse(any(collector.values[parts[3][person['id'], '2026-12-04']]
+                                     for person in parts[0]))
+                # A rejected first feasibility pass must have a distinct,
+                # permitted recovery path; never silently keep everyone OFF.
+                retry_reused, retry = run_hints(parts, prefer_baseline=False)
+                self.assertFalse(retry_reused)
+                self.assertTrue(any(retry.values[parts[3][person['id'], '2026-12-04']]
+                                    for person in parts[0]))
+                self.assertEqual(parts, original)
 
     def test_hours_only_never_redistributes_even_an_empty_sector(self):
         parts = scenario('HOURS_ONLY')
@@ -145,12 +173,19 @@ class EmptySeedRecoveryTests(unittest.TestCase):
             self.assertEqual(second.values[parts[3][key]], int(old['kind'] == 'WORK'))
         self.assertEqual(parts, before)
 
-    def test_optional_initial_assignments_do_not_hide_an_empty_sector(self):
+    def test_initial_assignments_reuse_as_hint_but_rejected_retry_reopens_sector(self):
         parts = scenario()
         initial = list(copy.deepcopy(parts[6]).values())
         reused, collector = run_hints(parts, initial_assignments=initial)
-        self.assertFalse(reused)
-        self.assertTrue(any(collector.values[parts[3][person['id'], '2026-12-04']]
+        self.assertTrue(reused)
+        self.assertFalse(any(collector.values[parts[3][person['id'], '2026-12-04']]
+                             for person in parts[0]))
+        # After an independent fixed-hint rejection, the fallback ignores
+        # the previous complete roster and offers a nonempty sector again.
+        retry_reused, retry = run_hints(
+            parts, initial_assignments=initial, prefer_baseline=False)
+        self.assertFalse(retry_reused)
+        self.assertTrue(any(retry.values[parts[3][person['id'], '2026-12-04']]
                             for person in parts[0]))
 
     def test_absence_holiday_and_individual_locks_are_not_rewritten(self):
