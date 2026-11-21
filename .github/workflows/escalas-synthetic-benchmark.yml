@@ -8,6 +8,7 @@ on:
         type: choice
         options:
           - team-10-week
+          - team-12-four-weeks
           - branch-50-four-weeks
           - branch-115-six-weeks
           - branch-115-six-weeks-untimed
@@ -54,7 +55,7 @@ jobs:
       run:
         working-directory: web
     env:
-      SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week branch-50-four-weeks branch-115-six-weeks branch-115-six-weeks-untimed' || inputs.scenario || 'team-10-week' }}
+      SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week team-12-four-weeks branch-50-four-weeks branch-115-six-weeks branch-115-six-weeks-untimed' || inputs.scenario || 'team-10-week' }}
       REPEATS: ${{ github.event_name == 'pull_request' && '5' || inputs.repeats || '5' }}
       PAIRED_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.paired_seed && 'true' || 'false' }}
       CI: "true"

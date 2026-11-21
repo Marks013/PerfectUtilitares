@@ -2,9 +2,10 @@ from optimization import ImprovementContext
 """Sector repair targets real empty operating days without weakening protection."""
 import time
 import unittest
+from unittest.mock import patch
 from ortools.sat.python import cp_model
-from optimization import improve
-from solver import _repair_clock_fixes, _rest_repair_groups
+from optimization import Snapshot, improve
+from solver import _repair_clock_fixes, _rest_repair_groups, days_between, solve
 from test_solver import fixture
 
 
@@ -50,6 +51,83 @@ class SectorRepairTests(unittest.TestCase):
             person["fixedOffDays"] = [6]
         self.assertEqual(_rest_repair_groups(data["employees"], [day], work, {}, values,
                                             data["policy"], [demand]), [])
+
+    def test_empty_sunday_repair_starts_from_saved_service_and_preserves_priorities(self):
+        data = fixture(40, people=2)
+        data["restRulesVersion"] = 3
+        data["employees"][1]["role"] = "Atendente"
+        days = days_between(data["startDate"], data["endDate"])
+        data["assignments"] = [
+            {"employeeId": person["id"], "date": day, "kind": "OFF"}
+            if index in (1, 6) else
+            {"employeeId": person["id"], "date": day, "kind": "WORK", "shiftId": "day"}
+            for person in data["employees"] for index, day in enumerate(days)]
+        data["assignments"][0]["locked"] = True
+        data["demands"] = [
+            {"id": str(index), "date": day, "sector": "Reposição", "start": 480,
+             "end": 720, "minimum": 2 if index == 4 else 1, "estimated": True}
+            for index, day in enumerate(days) if index != 1]
+        data["movementPriorities"] = [{"startDate": days[4], "endDate": days[4], "level": "HIGH"}]
+
+        def inspect(model, objectives, values, deadline, names, *, context):
+            # An empty Sunday used to replace the complete saved sector before
+            # this point and freeze coverage relative to a different baseline.
+            self.assertEqual(Snapshot(values).value(sum(context.sunday_coverage["Reposição"])), 240)
+            self.assertIn(("Reposição", days[6]), context.sunday_recovery)
+            return improve(model, objectives, values, deadline, names, context=context)
+
+        with patch("solver.improve", side_effect=inspect) as refine:
+            result = solve(data)
+        refine.assert_called_once()
+        self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"))
+        self.assertIn(data["assignments"][0], result["assignments"])
+        for demand in data["demands"]:
+            work = sum(entry["kind"] == "WORK" and entry["date"] == demand["date"]
+                       for entry in result["assignments"])
+            self.assertGreaterEqual(work, demand["minimum"], demand["date"])
+
+    def test_repair_gives_empty_open_sunday_a_slot_before_ordinary_shortages(self):
+        data = fixture(40, people=10)
+        people = data["employees"]
+        people[-1]["sector"] = "Padaria"
+        model = cp_model.CpModel()
+        day = "2026-11-08"
+        work = {(person["id"], day): model.new_bool_var(person["id"]) for person in people}
+        values = {variable.index: int(person != "p9") for (person, _), variable in work.items()}
+        demands = [{"sector": sector, "date": day, "minimum": 2}
+                   for sector in ("Reposição", "Padaria")]
+        groups = _rest_repair_groups(people, [day], work, {}, values, data["policy"], demands,
+                                     sector_shortages={"Reposição": [2000], "Padaria": [500]},
+                                     priority_sundays={("Padaria", day)})
+        self.assertEqual(groups[0], {"p9"})
+
+    def test_later_preference_cannot_undo_recovered_timed_service(self):
+        model = cp_model.CpModel()
+        sunday, weekday = [model.new_bool_var(day) for day in ("sunday", "weekday")]
+        model.add(sunday + weekday <= 1)
+
+        class ChooseSundayOnCoverage:
+            first = True
+
+            def checkpoint(self):
+                pass
+
+            def solve(self, engine, search_model):
+                if self.first:
+                    self.first = False
+                    # Select one of two equally good coverage outcomes with a
+                    # real solver, without relying on its tie-breaking order.
+                    search_model = search_model.clone()
+                    search_model.add(sunday == 1)
+                return engine.solve(search_model)
+
+        values, _, phases = improve(
+            model, [1 - sunday - weekday, sunday], {sunday.index: 0, weekday.index: 0},
+            time.monotonic() + 3, ["COVERAGE", "PREFERENCES"],
+            context=ImprovementContext(control=ChooseSundayOnCoverage(),
+                                       sunday_recovery={("Padaria", "2026-11-08"): sunday}))
+        self.assertEqual([phase["objective"] for phase in phases], ["COVERAGE", "PREFERENCES"])
+        self.assertEqual(values, {sunday.index: 1, weekday.index: 0})
 
     def test_clock_repair_preserves_the_incumbent_and_one_choice_per_duration(self):
         model = cp_model.CpModel()

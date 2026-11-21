@@ -10,6 +10,7 @@ from collections import defaultdict
 
 SCENARIOS = {
     "team-10-week",
+    "team-12-four-weeks",
     "branch-50-four-weeks",
     "branch-115-six-weeks",
     "branch-115-six-weeks-untimed",

@@ -5,14 +5,16 @@ import { regularRestQuality } from "./rest-spacing";
 import { exchangeRestImprovement, exchangeRestRepair } from "./rest-exchange";
 import { repairUntimedRests } from "./untimed-rest-repair";
 import { buildCoveragePresence } from "./coverage-presence";
+import { variableRestIssues } from "./rest-configuration";
 import { validateEscala } from "./validation";
 import { validateEmployee } from "./validation-employee";
 import { workJourney } from "./validation-time";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaValidation } from "./types";
 
 type Slice = { start: number; end: number; present: number; general: number; roleMinimum: Map<string, number>; rolePresent: Map<string, number>; roleMissing: number; deficit: number };
-type Candidate = { person: EscalaEmployee; work: EscalaAssignment; off: EscalaAssignment; gain: number; longGain: number; pairGain: number };
+type Candidate = { person: EscalaEmployee; work: EscalaAssignment; off: EscalaAssignment; gain: number; longGain: number; pairGain: number; recoversSunday: boolean };
 const key = (date: string, sector: string) => `${date}\0${sector}`;
+const repairableRestIssue = (code: string) => code === "CONSECUTIVE_REST_LIMIT" || code === "VARIABLE_REST_PATTERN_FIXED";
 
 /** A bounded batch of independent sector improvements, never a substitute for the solver or its verifier. */
 export function refineRoster(input: EscalaInput, budgetMs?: number): EscalaInput {
@@ -26,7 +28,7 @@ export function refineRoster(input: EscalaInput, budgetMs?: number): EscalaInput
   let proposal = input;
   let best = input;
   let validation = validateEscala(input);
-  const repairing = validation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT");
+  const repairing = validation.issues.some(issue => repairableRestIssue(issue.code));
   for (let pass = 0; pass < 32 && state.checked < 32 && performance.now() < deadline - 160; pass++) {
     // Offer a safe joint exchange before independent improvements consume every check.
     let next = validation.valid ? exchangeRestImprovement(proposal, validation, deadline - 120, state) : proposal;
@@ -47,8 +49,9 @@ export function refineRoster(input: EscalaInput, budgetMs?: number): EscalaInput
 function refinePass(input: EscalaInput, deadline: number, state: { checked: number }, baseline: EscalaValidation): EscalaInput {
   const expired = () => performance.now() >= deadline;
   if (!input.assignments.length || !input.demands.some(demand => demand.minimum > 0)) return input;
-  if (baseline.issues.some(issue => issue.severity === "ERROR" && issue.code !== "CONSECUTIVE_REST_LIMIT") || expired()) return input;
+  if (baseline.issues.some(issue => issue.severity === "ERROR" && !repairableRestIssue(issue.code)) || expired()) return input;
   const repairs = new Set(baseline.issues.filter(issue => issue.code === "CONSECUTIVE_REST_LIMIT").map(issue => issue.employeeId));
+  const fixedPatterns = new Set(baseline.issues.filter(issue => issue.code === "VARIABLE_REST_PATTERN_FIXED").map(issue => issue.employeeId));
   const presence = buildCoveragePresence(input);
   const visible = new Set(visibleDates(input));
   const days = dateRange(input.startDate, input.endDate);
@@ -114,20 +117,25 @@ function refinePass(input: EscalaInput, deadline: number, state: { checked: numb
   };
   const candidates: Candidate[] = [];
   for (const person of input.employees) {
-    if (repairs.size && !repairs.has(person.id)) continue;
+    const needsSpacingRepair = repairs.has(person.id), needsPatternRepair = fixedPatterns.has(person.id);
+    if ((repairs.size || fixedPatterns.size) && !needsSpacingRepair && !needsPatternRepair) continue;
     if (expired()) return input;
     if (person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || person.offMode === "FIXED") continue;
     const records = assignments.get(person.id) ?? [];
     const previousQuality = regularRestQuality(input, person, records);
     const repairDays = new Set(previousQuality.longWindows.flatMap(day => [day, importDate(day, 1), importDate(day, 2)]));
-    const available = records.filter(record => !record.locked && (repairs.size > 0 || visible.has(record.date)) && dayOfWeek(record.date) !== 6
+    const available = records.filter(record => !record.locked && (needsSpacingRepair || visible.has(record.date))
       && person.activeFrom <= record.date && (!person.activeUntil || person.activeUntil >= record.date));
-    const offs = available.filter(record => record.kind === "OFF" && (!repairs.size || repairDays.has(record.date))
-      && !closed.has(record.date) && !person.fixedOffDays.includes(dayOfWeek(record.date)));
-    for (const work of available.filter(record => record.kind === "WORK")) {
+    // A Sunday can receive work only when it is open, estimated or declared demand
+    // exists, and the sector has no known hourly presence. Never use a Sunday as donor.
+    const offs = available.filter(record => record.kind === "OFF" && (!needsSpacingRepair || repairDays.has(record.date))
+      && !closed.has(record.date) && !person.fixedOffDays.includes(dayOfWeek(record.date))
+      && (dayOfWeek(record.date) !== 6 || !needsSpacingRepair && !presence.has(key(record.date, person.sector))
+        && demands.has(key(record.date, person.sector))));
+    for (const work of available.filter(record => record.kind === "WORK" && dayOfWeek(record.date) !== 6)) {
       if (expired()) return input;
       const shift = shifts.get(work.shiftId ?? "");
-      // This bounded neighborhood changes no adjoining civil date, Sunday or weekly duration.
+      // Move the exact clock within its planning week; never touch adjacent civil dates.
       if (!shift || shift.segments.some(segment => segment.start < 0 || segment.end > 1440)) continue;
       const sectorDay = presence.get(key(work.date, person.sector)) ?? [];
       if (!sectorDay.some(interval => interval.employee.id !== person.id)) continue;
@@ -137,19 +145,25 @@ function refinePass(input: EscalaInput, deadline: number, state: { checked: numb
       if (loss > 0) continue;
       for (const off of offs) {
         if (weekByDate.get(work.date) !== weekByDate.get(off.date)) continue;
+        const recoversSunday = dayOfWeek(off.date) === 6;
+        if (recoversSunday && dayOfWeek(work.date) === 5) continue;
         const gain = -change(person, off.date, shift, 1) - loss;
-        if (gain < 0) continue;
+        if (gain < 0 || recoversSunday && gain === 0) continue;
         const current = records.map(record => record === work ? { ...record, kind: "OFF" as const, shiftId: undefined }
           : record === off ? { ...record, kind: "WORK" as const, shiftId: work.shiftId } : record);
         const quality = regularRestQuality(input, person, current);
         const longGain = previousQuality.longWindows.length - quality.longWindows.length;
         const pairGain = previousQuality.adjacentPairs - quality.adjacentPairs;
-        if (longGain < 0 || pairGain < 0 || gain === 0 && longGain === 0 && pairGain === 0) continue;
-        candidates.push({ person, work, off, gain, longGain, pairGain });
+        if (longGain < 0 || pairGain < 0) continue;
+        const fixesPattern = needsPatternRepair
+          && !variableRestIssues({ ...input, employees: [person], assignments: current }).length;
+        if (needsPatternRepair && !fixesPattern && longGain === 0 || gain === 0 && longGain === 0 && pairGain === 0 && !fixesPattern) continue;
+        candidates.push({ person, work, off, gain, longGain, pairGain, recoversSunday });
       }
     }
   }
-  candidates.sort((a, b) => b.longGain - a.longGain || b.pairGain - a.pairGain || b.gain - a.gain || a.person.id.localeCompare(b.person.id)
+  candidates.sort((a, b) => b.longGain - a.longGain || Number(b.recoversSunday) - Number(a.recoversSunday)
+    || b.pairGain - a.pairGain || b.gain - a.gain || a.person.id.localeCompare(b.person.id)
     || a.work.date.localeCompare(b.work.date) || a.off.date.localeCompare(b.off.date));
   const civilMinutes = new Map<string, number>();
   const toAbsoluteMinute: typeof absoluteMinute = (date, minute) => {

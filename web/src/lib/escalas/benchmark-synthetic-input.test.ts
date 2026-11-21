@@ -64,8 +64,19 @@ def solve(_data):
     expect(() => requireSharedSyntheticSeed("invalid", "invalid")).toThrow("BENCHMARK_SHARED_SEED_DIVERGED");
   });
 
+  it("keeps one synthetic sector with distinct role cohorts across four Sundays", () => {
+    const input = syntheticInput({ id: "team-12-four-weeks", people: 12, weeks: 4 });
+    expect(input.employees).toHaveLength(12);
+    expect(new Set(input.employees.map(person => person.sector)).size).toBe(1);
+    expect(input.employees.filter(person => person.role === "Encarregado")).toHaveLength(1);
+    expect(input.employees.filter(person => person.role === "Repositor")).toHaveLength(11);
+    expect(input.employees.every(person => person.scheduleMode === "TIMED")).toBe(true);
+    expect(escalaInputSchema.safeParse(input).success).toBe(true);
+  });
+
   it.each([
     ["team-10-week", 10, 1, "2026-11-07"],
+    ["team-12-four-weeks", 12, 4, "2026-11-28"],
     ["branch-50-four-weeks", 50, 4, "2026-11-28"],
     ["branch-115-six-weeks", 115, 6, "2026-12-12"],
   ] as const)("creates a complete Sunday-Saturday scenario for %s", (id, people, weeks, endDate) => {

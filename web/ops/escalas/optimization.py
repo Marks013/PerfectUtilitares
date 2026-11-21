@@ -29,6 +29,7 @@ class ImprovementContext:
     decision_variables: dict | None = None
     coverage_groups: dict | None = None
     sunday_coverage: dict | None = None
+    sunday_recovery: dict | None = None
     sunday_peaks: dict | None = None
     sector_coverage: dict | None = None
     initial_decision_hints: dict | None = None
@@ -394,6 +395,7 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
     protected_groups, active_groups = protected_groups or {}, {}
     registered_groups = {}
     active_group_count, upper_bounds = 0, {}
+    pending_sundays = list((context.sunday_recovery or {}).values())
 
     def add_upper_bound(expression, terms, key, value):
         limit = value - terms[2]
@@ -740,6 +742,17 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             break
         values = {variable.index: engine.value(variable) for variable in variables}
         best = engine.value(objective)
+        if pending_sundays:
+            # Preserve a newly recovered clocked-service Sunday only after an
+            # actual accepted solve. Keep this separate from sector OFF fairness.
+            remaining_sundays = []
+            for presence in pending_sundays:
+                if engine.value(presence) > 0:
+                    model.add(presence >= 1)
+                    proven = False
+                else:
+                    remaining_sundays.append(presence)
+            pending_sundays = remaining_sundays
         if name in ('SUNDAY_COVERAGE', 'SUNDAY_PEAK') and restricted and movable_people and best < incumbent:
             # Only a strictly improving, accepted solve creates continuity.
             # Store identities only; hints, guards and values remain current.

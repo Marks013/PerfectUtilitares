@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { refineRoster } from "./roster-refinement";
+import { compareRosterCoverage } from "./roster-quality";
 import { validateEscala } from "./validation";
 import type { EscalaInput } from "./types";
 
@@ -23,6 +24,69 @@ function fixture(): EscalaInput {
 }
 
 describe("bounded roster refinement against fixed staffing references", () => {
+  it.each(["MONDAY", "SUNDAY"] as const)("recovers an unstaffed open Sunday within its %s week", weekStart => {
+    const input = fixture();
+    input.planningWeekStartsOn = weekStart;
+    input.startDate = weekStart === "SUNDAY" ? "2026-11-01" : "2026-11-02";
+    input.endDate = weekStart === "SUNDAY" ? "2026-11-07" : "2026-11-08";
+    const target = weekStart === "SUNDAY" ? "2026-11-01" : "2026-11-08";
+    const donor = "2026-11-03";
+    const dates = [target, "2026-11-02", donor, "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"].sort();
+    input.assignments = input.employees.flatMap(person => dates.map(date => {
+      const works = date !== target && date !== (person.id === "p1" ? "2026-11-05" : "2026-11-07");
+      return { employeeId: person.id, date, kind: works ? "WORK" as const : "OFF" as const,
+        ...(works ? { shiftId: "day" } : {}), locked: person.id !== "p1" || (date !== target && date !== donor) };
+    }));
+    input.demands = [target, donor].map(date => ({ id: date, date, sector: "Loja", role: "Repositor",
+      start: 480, end: 720, minimum: 1, estimated: true }));
+    const original = structuredClone(input);
+    expect(validateEscala(input).valid).toBe(true);
+
+    const refined = refineRoster(input);
+    expect(refined.assignments.find(day => day.employeeId === "p1" && day.date === target))
+      .toMatchObject({ kind: "WORK", shiftId: "day" });
+    expect(refined.assignments.find(day => day.employeeId === "p1" && day.date === donor))
+      .toMatchObject({ kind: "OFF" });
+    expect(refined.demands).toBe(input.demands);
+    expect(validateEscala(refined).valid).toBe(true);
+    expect(compareRosterCoverage(input, refined)).toMatchObject({ comparable: true, regressed: false, improved: true });
+    expect(input).toEqual(original);
+
+    const withoutSurplus = { ...input, demands: input.demands.map(demand =>
+      demand.date === donor ? { ...demand, minimum: 2 } : demand) };
+    expect(refineRoster(withoutSurplus)).toBe(withoutSurplus);
+
+    const locked = { ...input, assignments: input.assignments.map(day =>
+      day.date === target ? { ...day, locked: true } : day) };
+    expect(refineRoster(locked)).toBe(locked);
+
+    const closed = { ...input, policy: { ...input.policy, closedDates: [target] } };
+    expect(refineRoster(closed)).toBe(closed);
+  });
+
+  it("repairs a repeated weekday pair without discarding a saved roster", () => {
+    const input = fixture();
+    input.endDate = "2026-11-15";
+    input.restRulesVersion = 3;
+    const firstWeek = input.assignments.map(day => {
+      if (day.employeeId === "p1") return { ...day, locked: false };
+      if (day.date === "2026-11-06") return { ...day, kind: "OFF" as const, shiftId: undefined };
+      return day.date === "2026-11-07" ? { ...day, kind: "WORK" as const, shiftId: "day" } : day;
+    });
+    input.assignments = [...firstWeek, ...firstWeek.map(day => ({
+      ...day, date: `2026-11-${String(Number(day.date.slice(-2)) + 7).padStart(2, "0")}`,
+    }))];
+    expect(validateEscala(input).issues.filter(issue => issue.severity === "ERROR").map(issue => issue.code))
+      .toEqual(["VARIABLE_REST_PATTERN_FIXED"]);
+
+    const refined = refineRoster(input);
+    expect(validateEscala(refined).valid).toBe(true);
+    expect(compareRosterCoverage(input, refined)).toMatchObject({ comparable: true, regressed: false });
+    expect(refined.assignments.filter((day, index) => day !== input.assignments[index])).toHaveLength(2);
+    expect(refined.assignments.filter(day => day.employeeId === "p2")).toEqual(input.assignments.filter(day => day.employeeId === "p2"));
+    expect(refined.demands).toBe(input.demands);
+  });
+
   it("does not remove both shared sector leaders through independent exchanges in the same batch", () => {
     const input = fixture(), other = fixture();
     other.employees.forEach(person => { person.id += "-bakery"; person.registration += "-bakery"; person.sector = "Padaria"; });
@@ -105,7 +169,7 @@ describe("bounded roster refinement against fixed staffing references", () => {
     expect(validateEscala(input).valid).toBe(true);
     expect(refineRoster(input)).toBe(input);
   });
-  it("keeps Sundays and their staffing untouched even when a Sunday would offer a larger gain", () => {
+  it("does not create a consecutive rest pair merely to recover an unstaffed Sunday", () => {
     const input = fixture();
     input.assignments.filter(a => a.employeeId === "p1" && a.date === "2026-11-08").forEach(a => { a.locked = false; });
     input.demands.push({ id: "sun", date: "2026-11-08", sector: "Loja", start: 480, end: 1044, minimum: 4, estimated: true });

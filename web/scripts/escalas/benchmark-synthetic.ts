@@ -18,6 +18,7 @@ type Variant = "baseline" | "corrected" | "workers2" | "linearization1" | "symme
 type Scenario = { id: string; people: number; weeks: number; untimedLeaders?: boolean };
 const scenarios: Scenario[] = [
   { id: "team-10-week", people: 10, weeks: 1 },
+  { id: "team-12-four-weeks", people: 12, weeks: 4 },
   { id: "branch-50-four-weeks", people: 50, weeks: 4 },
   { id: "branch-115-six-weeks", people: 115, weeks: 6 },
   { id: "branch-115-six-weeks-untimed", people: 115, weeks: 6, untimedLeaders: true },

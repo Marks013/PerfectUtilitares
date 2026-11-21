@@ -78,6 +78,18 @@ class ContractTest(unittest.TestCase):
         reports = contract.verify(data, scenarios, 5)
         self.assertTrue(all(row["sourceComparison"] == "SAME_SOLVER_SOURCE" for row in reports))
 
+    def test_four_week_cross_role_scenario_requires_all_measured_samples(self):
+        data, scenarios = records()
+        for row in data:
+            if row["scenario"] == scenarios[0]:
+                row["scenario"] = "team-12-four-weeks"
+        reports = contract.verify(data, ["team-12-four-weeks", scenarios[1]], 5)
+        self.assertEqual(reports[0]["scenario"], "team-12-four-weeks")
+        self.assertFalse(reports[0]["p95Available"])
+        data.pop(0)
+        with self.assertRaisesRegex(ValueError, "Incomplete"):
+            contract.verify(data, ["team-12-four-weeks", scenarios[1]], 5)
+
     def test_duplicate_repetition_is_rejected(self):
         data, scenarios = records()
         data[1]["repetition"] = 0
