@@ -39,6 +39,7 @@ class ImprovementContext:
     rest_spacing: dict | None = None
     rest_spacing_groups: dict | None = None
     refinement_reserve_seconds: float = 0.0
+    prepare_sunday_balance: object = None
 
 
 class Snapshot:
@@ -436,6 +437,20 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
             proven = False
             break
         preparation_started = time.monotonic()
+        if name == 'SUNDAY_BALANCE' and context.prepare_sunday_balance:
+            # Add optional cross-role sector auxiliaries only AFTER higher
+            # priority COVERAGE and SUNDAY_COVERAGE searches have accepted
+            # their incumbents. Building them up front perturbs the bounded
+            # repair model even when they are not in the coverage objective.
+            objective = context.prepare_sunday_balance(model, values, control)
+            plans[index] = name, objective
+            variables = [model.get_int_var_from_proto_index(i)
+                         for i in range(len(model.proto.variables))]
+            if len(values) != len(variables):
+                raise ValueError('incomplete deferred Sunday incumbent')
+            # The builder records all new extrema/deficit values; keep hints
+            # consistent with the accepted higher-priority decisions.
+            _replace_hints(model, values)
         # Consecutive sector repairs reuse the exact same coverage expression.
         # Flatten its coefficients and domain floor once, not once per clone.
         if objective is not current_objective:
