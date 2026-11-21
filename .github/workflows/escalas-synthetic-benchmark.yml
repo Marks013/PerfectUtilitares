@@ -11,6 +11,10 @@ on:
           - branch-50-four-weeks
           - branch-115-six-weeks
         default: team-10-week
+      paired_seed:
+        description: 'Manual synthetic diagnostic: force the same feasibility seed in both variants'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/escalas-synthetic-benchmark.yml
@@ -37,6 +41,7 @@ jobs:
         working-directory: web
     env:
       SCENARIOS: ${{ github.event_name == 'pull_request' && 'team-10-week branch-50-four-weeks branch-115-six-weeks' || inputs.scenario || 'team-10-week' }}
+      PAIRED_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.paired_seed && 'true' || 'false' }}
       CI: "true"
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -74,7 +79,7 @@ jobs:
           # One job/runner for every PR scenario, so the hardware and image stay constant.
           # Workflow dispatch retains its original single-scenario selector.
           for scenario in $SCENARIOS; do
-            printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":5}\n' "$scenario" \
+            printf '{"scenarios":["%s"],"variants":["baseline","corrected"],"repeats":5,"pairedSeed":%s}\n' "$scenario" "$PAIRED_SEED" \
               | npm run benchmark:escalas | tee -a "$RUNNER_TEMP/escalas-benchmark.jsonl"
           done
       - name: Require independent validation and complete measurements
