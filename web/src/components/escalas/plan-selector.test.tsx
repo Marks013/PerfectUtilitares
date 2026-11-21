@@ -1,5 +1,8 @@
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import type { EscalaClientAccess } from "@/lib/escalas/access-view";
+import { EscalaAccessProvider } from "./access-context";
 import { PlanSelector, planPeriod, planSelection, selectPlan } from "./plan-selector";
 import type { WorkspaceSummary } from "./use-escalas-workspace";
 import { newInput } from "./workspace-model";
@@ -10,13 +13,30 @@ function plan(id: string, branch: string, month: string, revision = 1): Workspac
 const plans = () => [plan("08-dec", "08", "2026-12"), plan("11-nov", "11", "2026-11"), plan("08-next", "8", "2027-01"),
   plan("02-nov", "02", "2026-11"), plan("08-nov", "08", "2026-11"), plan("08-jan", "08", "2026-01"), plan("02-dec", "02", "2026-12")];
 
+const adminAccess: EscalaClientAccess = {
+  channel: "ACCOUNT", roleLabel: "Administrador", administrator: true, allBranches: true, branches: [],
+};
+
+function branchGrant(code: string, label: string): EscalaClientAccess["branches"][number] {
+  return { code, label, capabilities: ["workspace.read"] };
+}
+
+const operatorAccess: EscalaClientAccess = {
+  channel: "USERNAME", roleLabel: "Operador", administrator: false, allBranches: false,
+  branches: [branchGrant("08", "Centro")],
+};
+
+function renderSelector(props: ComponentProps<typeof PlanSelector>, access = adminAccess) {
+  return renderToStaticMarkup(<EscalaAccessProvider value={access}><PlanSelector {...props} /></EscalaAccessProvider>);
+}
+
 describe("hierarchical planning selection", () => {
   it("distinguishes a Sunday copy from its legacy original in the same month", () => {
     const sunday = plan("sunday", "06", "2026-12"), legacy = plan("legacy", "06", "2026-12");
     delete legacy.input.planningWeekStartsOn;
     legacy.input.startDate = "2026-11-30"; legacy.input.endDate = "2027-01-03";
     const before = structuredClone([sunday, legacy]);
-    const html = renderToStaticMarkup(<PlanSelector plans={[sunday, legacy]} selectedId="sunday" disabled={false} onSelect={vi.fn()} />);
+    const html = renderSelector({ plans: [sunday, legacy], selectedId: "sunday", disabled: false, onSelect: vi.fn() });
     expect(html).toContain('value="sunday" selected=""');
     expect(html).toContain("domingo a sábado");
     expect(html).toContain("segunda a domingo");
@@ -55,7 +75,7 @@ describe("hierarchical planning selection", () => {
   });
 
   it("renders three native controls with associated visible labels and the actual open context", () => {
-    const onSelect = vi.fn(), html = renderToStaticMarkup(<PlanSelector plans={plans()} selectedId="08-nov" disabled={false} onSelect={onSelect} />);
+    const onSelect = vi.fn(), html = renderSelector({ plans: plans(), selectedId: "08-nov", disabled: false, onSelect });
     expect(html.match(/<select\b/g)).toHaveLength(3);
     for (const label of ["Filial", "Ano", "Mês"]) expect(html).toMatch(new RegExp(`<label[^>]*for="([^"]+)"[^>]*>${label}</label>`));
     expect(html).toContain('value="08" selected=""');
@@ -71,14 +91,14 @@ describe("hierarchical planning selection", () => {
   it("keeps controls on the current workspace until opening is confirmed, and disables them while busy", () => {
     const requested = selectPlan(plans(), "08-nov", "branch", "02");
     expect(requested).toBe("02-nov");
-    const html = renderToStaticMarkup(<PlanSelector plans={plans()} selectedId="08-nov" disabled onSelect={vi.fn()} />);
+    const html = renderSelector({ plans: plans(), selectedId: "08-nov", disabled: true, onSelect: vi.fn() });
     expect(html).toMatch(/<fieldset[^>]*disabled=""/);
     expect(html).toContain('value="08" selected=""');
     expect(planSelection(plans(), "02-nov").period?.branch).toBe("02");
   });
 
   it("requires a store before enabling year and month without silently opening the first plan", () => {
-    const onSelect = vi.fn(), html = renderToStaticMarkup(<PlanSelector plans={plans()} disabled={false} onSelect={onSelect} />);
+    const onSelect = vi.fn(), html = renderSelector({ plans: plans(), disabled: false, onSelect });
     expect(html.match(/<select[^>]*disabled=""/g)).toHaveLength(2);
     expect(html).not.toContain("Planejamento aberto:");
     expect(onSelect).not.toHaveBeenCalled();
@@ -88,7 +108,7 @@ describe("hierarchical planning selection", () => {
     const input = [...plans(), { ...plan("08-nov-copy", "08", "2026-11", 3), status: "PUBLISHED" as const }];
     expect(planSelection(input, "08-nov").matching.map(entry => entry.id).sort()).toEqual(["08-nov", "08-nov-copy"]);
     expect(selectPlan(input, "08-nov", "month", "11")).toBe("08-nov");
-    const html = renderToStaticMarkup(<PlanSelector plans={input} selectedId="08-nov" disabled={false} onSelect={vi.fn()} />);
+    const html = renderSelector({ plans: input, selectedId: "08-nov", disabled: false, onSelect: vi.fn() });
     expect(html.match(/<select\b/g)).toHaveLength(4);
     expect(html).toContain(">Planejamento</label>");
     expect(html).toContain('value="08-nov" selected=""');
@@ -97,13 +117,55 @@ describe("hierarchical planning selection", () => {
     expect(html).toContain("revisão 3");
   });
 
+  it("uses the single grant even with a stale selection and lets the operator start by year", () => {
+    const onSelect = vi.fn();
+    const html = renderSelector({ plans: plans(), selectedId: "11-nov", disabled: false, onSelect }, operatorAccess);
+    expect(html).toContain("Filial 08 · Centro");
+    expect(html.match(/<select\b/g)).toHaveLength(2);
+    expect(html.match(/<select[^>]*disabled=""/g)).toHaveLength(1);
+    expect(html).toContain('value="2027"');
+    expect(html).toContain("Selecione o ano primeiro");
+    expect(html).not.toContain("Planejamento aberto:");
+    expect(html).not.toContain("Loja 11");
+    expect(selectPlan(plans(), undefined, "year", "2027", "08")).toBe("08-next");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("shows the fixed branch when there is no planning", () => {
+    const html = renderSelector({ plans: [], disabled: false, onSelect: vi.fn() }, operatorAccess);
+    expect(html).toContain("Filial 08 · Centro");
+    expect(html).toContain("Nenhum planejamento disponível nesta filial.");
+    expect(html).not.toContain("<select");
+  });
+
+  it("keeps branch choice for multiple grants and for an administrator with only one plan", () => {
+    const access = { ...operatorAccess, branches: [...operatorAccess.branches, branchGrant("02", "Norte")] };
+    const scoped = renderSelector({ plans: plans(), selectedId: "08-nov", disabled: false, onSelect: vi.fn() }, access);
+    expect(scoped).toContain('value="02"');
+    expect(scoped).toContain('value="08" selected=""');
+    expect(scoped).not.toContain('value="11">Filial');
+    const admin = renderSelector({ plans: [plan("one-plan", "08", "2026-11")], selectedId: "one-plan", disabled: false, onSelect: vi.fn() });
+    expect(admin).toContain(">Filial</label>");
+    expect(admin.match(/<select\b/g)).toHaveLength(3);
+  });
+
+  it("does not expose plans or select another branch without the access provider", () => {
+    const onSelect = vi.fn();
+    const html = renderToStaticMarkup(<PlanSelector plans={plans()} selectedId="08-nov" disabled={false} onSelect={onSelect} />);
+    expect(html).toContain("Não foi possível confirmar o acesso às filiais.");
+    expect(html).not.toContain("Planejamento aberto:");
+    expect(html).not.toContain("Loja 08");
+    expect(html).not.toContain("<select");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("infers old complete-month horizons like the roster, but exposes custom legacy intervals", () => {
     const monthly = plan("old-month", "08", "2026-11");
     delete monthly.input.visibleMonth;
     expect(planPeriod(monthly)).toMatchObject({ key: "2026-11", label: "Novembro de 2026" });
     const weekly = { ...monthly, id: "old-week", input: { ...monthly.input, startDate: "2026-11-02", endDate: "2026-11-08" } };
     expect(planPeriod(weekly)).toMatchObject({ key: "2026-11", label: "02/11/2026 a 08/11/2026" });
-    const html = renderToStaticMarkup(<PlanSelector plans={[monthly, weekly]} selectedId="old-week" disabled={false} onSelect={vi.fn()} />);
+    const html = renderSelector({ plans: [monthly, weekly], selectedId: "old-week", disabled: false, onSelect: vi.fn() });
     expect(html).toContain("02/11/2026 a 08/11/2026");
     expect(html).toContain('value="old-month"');
     expect(html).toContain('value="old-week" selected=""');

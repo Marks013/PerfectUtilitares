@@ -4,17 +4,21 @@ import { strFromU8, unzipSync } from "fflate";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import { effectiveWeeklyMinutes } from "../src/lib/escalas/labor-rules";
 import { loginAsAdmin } from "./admin-session";
+import { openEscalasArea, revealEscalasControl } from "./escalas-selection";
+import { applyReplacement, previewReplacement } from "./escalas-access-fixtures";
 
 // An optional user-owned file is supplied at runtime. No private fixture, trace or screenshot is retained.
 test.use({ trace: "off", screenshot: "off", video: "off" });
 test("private real FPRE136 imports, generates 42h, preserves every employee and downloads the actual monthly reports", async ({ page }) => {
   test.skip(process.env.E2E_MUTATION !== "1" || !process.env.E2E_REAL_CSV_PATH, "Requires a private runtime CSV and the disposable isolated database");
   test.setTimeout(180000);
-  const csv = await readFile(process.env.E2E_REAL_CSV_PATH!);
+  const csvPath = process.env.E2E_REAL_CSV_PATH;
+  if (!csvPath) throw new Error("The private CSV path must be supplied at runtime");
+  const csv = await readFile(csvPath);
   await loginAsAdmin(page);
   await page.goto("/escala");
   await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
-  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
+  await revealEscalasControl(page.getByLabel("Código da filial", { exact: true }));
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Validação privada isolada");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
@@ -27,16 +31,14 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
   await page.locator('button[aria-controls="escala-area-generate"]').click();
   await journey.selectOption("44");
   await page.locator('button[aria-controls="escala-area-team"]').click();
-  await page.getByLabel("Arquivo CSV ou XLSX", { exact: true }).setInputFiles({ name: "FPRE136.CSV", mimeType: "text/csv", buffer: csv });
-  const importing = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas/import"));
-  await page.getByRole("button", { name: "Conferir arquivo", exact: true }).click();
-  const importResponse = await importing;
-  expect(importResponse.status()).toBe(200);
-  const { preview } = await importResponse.json();
-  const originalEmployees: EscalaInput["employees"] = preview.employees;
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
+  const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "FPRE136.CSV", mimeType: "text/csv", buffer: csv });
+  expect(reviewed.preview.layout).toBe("FPRE136"); expect(reviewed.preview.blockers).toEqual([]); expect(reviewed.preview.canApply).toBe(true);
+  const imported = await applyReplacement(page, reviewed.panel, "EMPLOYEES");
+  const originalEmployees: EscalaInput["employees"] = imported.workspace.input.employees;
   expect(originalEmployees.length > 1).toBe(true);
-  expect(preview.issues.length).toBe(0);
-  await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
+  expect(reviewed.preview.counts.addedPeople).toBe(originalEmployees.length); expect(reviewed.preview.counts.removedPeople).toBe(0);
+  await openEscalasArea(page, "generate");
   await journey.selectOption("42");
   const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
@@ -65,12 +67,17 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
       expect(group.filter(item => item.kind === "WORK" || item.kind === "DUTY").length).toBe(5);
       expect(group.filter(item => item.kind === "OFF").length).toBe(2);
       if (person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED") continue;
-      const minutes = group.reduce((sum, item) => sum + (item.kind !== "WORK" ? 0 : proposed.shifts.find(shift => shift.id === item.shiftId)!.segments.reduce((paid, segment) => paid + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)), 0);
+      const minutes = group.reduce((sum, item) => {
+        if (item.kind !== "WORK") return sum;
+        const shift = proposed.shifts.find(shift => shift.id === item.shiftId);
+        if (!shift) throw new Error("A proposed workday has no real shift definition");
+        return sum + shift.segments.reduce((paid, segment) => paid + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);
+      }, 0);
       expect(minutes).toBe(effectiveWeeklyMinutes(person, group[0].date));
     }
   }
+  const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "APPLY_PROPOSAL");
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
-  const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
   await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await saving).status()).toBe(200);
   for (const format of ["PDF", "XLSX"] as const) {
@@ -94,7 +101,7 @@ test("private real FPRE136 imports, generates 42h, preserves every employee and 
       const allSheets = Object.entries(zip).filter(([name]) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)).map(([, bytes]) => strFromU8(bytes)).join(" ");
       expect(proposed.employees.every(person => allSheets.includes(">" + person.registration + "<"))).toBe(true);
       expect(proposed.employees.filter(person => learnerIds.has(person.id)).every(person => !main.includes(">" + person.registration + "<"))).toBe(true);
-      expect(strFromU8(zip["xl/workbook.xml"])).toContain("Desfalques");
+      expect(strFromU8(zip["xl/workbook.xml"])).not.toMatch(/name="(?:Capacidade|Desfalques|Analises|Análises)"/);
     }
     await download.delete();
   }

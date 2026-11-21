@@ -15,5 +15,5 @@ export function escalaFailure(error: unknown) {
   if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
     return jsonError(409, "ESCALA_ALREADY_EXISTS", "Já existe uma escala para esta filial e período. Abra a proposta existente.");
   }
-  throw error;
+  return jsonError(503, "ESCALA_ACCESS_UNAVAILABLE", "O planejamento está temporariamente indisponível. Seu rascunho foi preservado; tente novamente.");
 }

@@ -4,6 +4,7 @@ import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import { visibleDates } from "@/lib/escalas/dates";
 import { compareBranches } from "@/lib/escalas/order";
 import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
+import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
 import { controlClass, Field } from "./controls";
 import styles from "./escalas.module.css";
 import type { WorkspaceSummary } from "./use-escalas-workspace";
@@ -28,13 +29,15 @@ function newest(plans: readonly WorkspaceSummary[]) {
 }
 
 /** Choose only a real saved plan; opening still goes through the existing unsaved-change guard. */
-export function selectPlan(plans: readonly WorkspaceSummary[], selectedId: string | undefined, field: "branch" | "year" | "month", value: string): string | undefined {
+export function selectPlan(plans: readonly WorkspaceSummary[], selectedId: string | undefined, field: "branch" | "year" | "month", value: string, fixedBranch?: string): string | undefined {
+  if (fixedBranch && field === "branch") return undefined;
   const current = plans.find(plan => plan.id === selectedId), period = current && planPeriod(current);
+  const branch = period?.branch ?? fixedBranch;
   let candidates = plans.filter(plan => {
     const item = planPeriod(plan);
     if (field === "branch") return item.branch === value;
-    if (!period || item.branch !== period.branch) return false;
-    return field === "year" ? item.year === value : item.year === period.year && item.month === value;
+    if (!branch || item.branch !== branch) return false;
+    return field === "year" ? item.year === value : item.year === period?.year && item.month === value;
   });
   if (period && field === "branch") {
     const samePeriod = candidates.filter(plan => planPeriod(plan).key === period.key);
@@ -46,14 +49,15 @@ export function selectPlan(plans: readonly WorkspaceSummary[], selectedId: strin
   return candidates.find(plan => plan.id === selectedId)?.id ?? newest(candidates)[0]?.id;
 }
 
-export function planSelection(plans: readonly WorkspaceSummary[], selectedId?: string) {
+export function planSelection(plans: readonly WorkspaceSummary[], selectedId?: string, fixedBranch?: string) {
   const active = plans.find(plan => plan.id === selectedId), period = active && planPeriod(active);
   const branches = new Map<string, { branchCode: string; branchName: string }>();
   for (const plan of [...plans].sort((a, b) => compareBranches(a.input, b.input))) {
     const code = canonicalBranchCode(plan.input.branchCode);
     if (!branches.has(code)) branches.set(code, { branchCode: code, branchName: plan.input.branchName });
   }
-  const branchPlans = period ? plans.filter(plan => planPeriod(plan).branch === period.branch) : [];
+  const branch = period?.branch ?? fixedBranch;
+  const branchPlans = branch ? plans.filter(plan => planPeriod(plan).branch === branch) : [];
   const yearPlans = period ? branchPlans.filter(plan => planPeriod(plan).year === period.year) : [];
   return { active, period, branches: [...branches.values()].sort(compareBranches),
     years: [...new Set(branchPlans.map(plan => planPeriod(plan).year))].sort().reverse(),
@@ -61,33 +65,58 @@ export function planSelection(plans: readonly WorkspaceSummary[], selectedId?: s
     matching: period ? newest(yearPlans.filter(plan => planPeriod(plan).month === period.month)) : [] };
 }
 
-export function PlanSelector({ plans, selectedId, disabled, onSelect }: {
-  plans: readonly WorkspaceSummary[]; selectedId?: string; disabled: boolean; onSelect: (id: string) => void;
+export function PlanSelector({ plans, selectedId, disabled, onSelect, showSummary = true }: {
+  plans: readonly WorkspaceSummary[]; selectedId?: string; disabled: boolean; onSelect: (id: string) => void; showSummary?: boolean;
 }) {
-  const { active, period, branches, years, months, matching } = planSelection(plans, selectedId);
+  const access = useEscalaClientAccess();
+  const unrestricted = access?.channel === "ACCOUNT" && access.administrator && access.allBranches;
+  const readableGrants = unrestricted ? [] : (access?.branches.filter(grant =>
+    canDisplayEscalaAction(access, "workspace.read", grant.code)
+  ) ?? []);
+  const fixedGrant = readableGrants.length === 1 ? readableGrants[0] : undefined;
+  const fixedBranch = fixedGrant && canonicalBranchCode(fixedGrant.code);
+  const allowedPlans = plans.filter(plan => canDisplayEscalaAction(access, "workspace.read", plan.input.branchCode));
+  const { active, period, branches, years, months, matching } = planSelection(allowedPlans, selectedId, fixedBranch);
   const open = (field: "branch" | "year" | "month", value: string) => {
-    const id = selectPlan(plans, selectedId, field, value);
+    if (disabled) return;
+    const id = selectPlan(allowedPlans, selectedId, field, value, fixedBranch);
     if (id && id !== selectedId) onSelect(id);
   };
+  const fixedName = fixedGrant?.label.trim();
+  const fixedCodeLabel = fixedBranch && `Filial ${fixedBranch}`;
+  const branchIdentity = fixedGrant && <div className={styles.field}>
+    <span className={styles.fieldLabel}>Filial</span>
+    <p className={styles.branchIdentity}>{fixedName && fixedName !== fixedCodeLabel ? `${fixedCodeLabel} · ${fixedName}` : fixedCodeLabel}</p>
+  </div>;
+
+  if (!allowedPlans.length) return <div className={styles.stackSmall}>
+    {branchIdentity}
+    <p role="status" className={styles.muted}>{disabled
+      ? "Carregando planejamentos…"
+      : !access ? "Não foi possível confirmar o acesso às filiais."
+        : fixedBranch ? "Nenhum planejamento disponível nesta filial."
+          : "Nenhum planejamento disponível para este acesso."}</p>
+  </div>;
+
   return <div className={styles.stackSmall}>
     <fieldset disabled={disabled} className={`${styles.formGrid} ${styles.formGridWide}`}>
       <legend className="sr-only">Selecionar planejamento por filial, ano e mês</legend>
-      <Field label="Filial">{id => <select id={id} className={controlClass} value={period?.branch ?? ""} onChange={event => open("branch", event.target.value)}>
+      {branchIdentity ?? <Field label="Filial">{id => <select id={id} className={controlClass} value={period?.branch ?? ""} onChange={event => open("branch", event.target.value)}>
         <option value="" disabled>Selecione a filial</option>
         {branches.map(branch => <option key={branch.branchCode} value={branch.branchCode}>Filial {branch.branchCode} · {branch.branchName}</option>)}
-      </select>}</Field>
-      <Field label="Ano">{id => <select id={id} className={controlClass} disabled={!active} value={period?.year ?? ""} onChange={event => open("year", event.target.value)}>
-        {!active && <option value="">Selecione a filial primeiro</option>}
+      </select>}</Field>}
+      <Field label="Ano">{id => <select id={id} className={controlClass} disabled={!years.length} value={period?.year ?? ""} onChange={event => open("year", event.target.value)}>
+        {!active && <option value="" disabled>{fixedBranch ? "Selecione o ano" : "Selecione a filial primeiro"}</option>}
         {years.map(year => <option key={year} value={year}>{year}</option>)}
       </select>}</Field>
       <Field label="Mês">{id => <select id={id} className={controlClass} disabled={!active} value={period?.month ?? ""} onChange={event => open("month", event.target.value)}>
-        {!active && <option value="">Selecione a filial primeiro</option>}
+        {!active && <option value="">{fixedBranch ? "Selecione o ano primeiro" : "Selecione a filial primeiro"}</option>}
         {months.map(month => <option key={month} value={month}>{MONTHS[Number(month) - 1]}</option>)}
       </select>}</Field>
-      {matching.length > 1 && <Field label="Planejamento">{id => <select id={id} className={controlClass} value={selectedId} onChange={event => { if (matching.some(plan => plan.id === event.target.value) && event.target.value !== selectedId) onSelect(event.target.value); }}>
+      {matching.length > 1 && <Field label="Planejamento">{id => <select id={id} className={controlClass} value={selectedId} onChange={event => { if (!disabled && matching.some(plan => plan.id === event.target.value) && event.target.value !== selectedId) onSelect(event.target.value); }}>
         {matching.map((plan, index) => <option key={plan.id} value={plan.id}>{index + 1}. {planPeriod(plan).label} · {weekLabel(plan)} · {plan.status === "PUBLISHED" ? "Publicada" : "Rascunho"} · revisão {plan.revision}</option>)}
       </select>}</Field>}
     </fieldset>
-    {active && period && <p className={styles.muted}><strong>Planejamento aberto:</strong> Filial {period.branch} · {period.label} · {weekLabel(active)} · {active.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</p>}
+    {showSummary && active && period && <p className={styles.muted}><strong>Planejamento aberto:</strong> Filial {period.branch} · {period.label} · {weekLabel(active)} · {active.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</p>}
   </div>;
 }

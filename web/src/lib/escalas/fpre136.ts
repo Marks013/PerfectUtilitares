@@ -10,6 +10,7 @@ import { inferLeadership } from "./leadership";
 
 const cell = (value: unknown) => String(value ?? "").trim();
 const sectorPattern = /^(\d{2})\.\d+\s*,\s*([^,]+),\s*(.+)$/;
+const isPageHeader = (row: unknown[]) => cell(row[1]) === "-" && /^P[áa]g\.:$/i.test(cell(row[3]));
 
 /** Only this report signature enables heterogeneous records and Windows-1252. */
 export function isFpre136Text(text: string) {
@@ -21,7 +22,7 @@ export function isFpre136Text(text: string) {
 export function isFpre136Rows(rows: unknown[][]) {
   return rows.some((row) => cell(row[0]) === "Quadro de Horários")
     && rows.some((row) => cell(row[1]) === "Nome" && cell(row[2]) === "Cargo" && cell(row[3]) === "Horário")
-    && rows.some((row) => cell(row[1]) === "-" && cell(row[3]) === "Pág.:");
+    && rows.some(isPageHeader);
 }
 
 function required(value: unknown, max: number) {
@@ -35,27 +36,48 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
   const branchCode = normalizeBranch(options.branchCode);
   const selected: { row: unknown[]; line: number; sector: string; code: string; description: string; saturday?: unknown[] }[] = [];
   let context: { branchCode: string; branchName: string; sector: string } | undefined;
-  let code = "", description = "", branchName = "", sourceEmployees = 0;
+  const paginationIssues: NonNullable<NonNullable<EscalaImportPreview["replacement"]>["paginationIssues"]> = [];
+  const pageByCompany = new Map<string, number>();
+  let pageCompany: string | undefined, sectorCompany: string | undefined, scheduleCompany: string | undefined;
+  let code = "", description = "", branchName = "", sourceEmployees = 0, unrecognizedRows = 0;
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
     const sector = row.length === 1 ? sectorPattern.exec(cell(row[0])) : null;
-    if (sector) {
+    if (isPageHeader(row)) {
+      const company = cell(row[0]), pageText = cell(row[4]), page = Number(pageText);
+      pageCompany = /^\d{1,60}$/.test(company) ? company.replace(/^0+(?=\d)/, "") : undefined;
+      if (!pageCompany || !/^\d{1,9}$/.test(pageText) || page < 1 || row.slice(5).some(value => cell(value))) {
+        paginationIssues.push({ line: index + 1, code: "PAGE_HEADER", message: "Cabeçalho de página sem empresa ou número válido. Exporte o relatório completo." });
+      } else {
+        const expected = (pageByCompany.get(pageCompany) ?? 0) + 1;
+        if (page !== expected) paginationIssues.push({ line: index + 1, code: "PAGE_SEQUENCE", message: "Há recorte, lacuna ou repetição na sequência de páginas da empresa. Exporte o relatório completo." });
+        pageByCompany.set(pageCompany, page);
+      }
+    } else if (sector) {
       context = { branchCode: sector[1], branchName: sector[2].trim(), sector: sector[3].trim() };
+      sectorCompany = pageCompany; scheduleCompany = undefined;
       code = ""; description = "";
       if (context.branchCode === branchCode) branchName = context.branchName;
     } else if (cell(row[0]) === "Horário:") {
       code = cell(row[1]); description = cell(row[3]);
+      scheduleCompany = sectorCompany === pageCompany ? pageCompany : undefined;
     } else if (row.length === 10 && /^\d+$/.test(cell(row[0])) && cell(row[1]) === "-") {
+      if (!pageCompany || sectorCompany !== pageCompany || scheduleCompany !== pageCompany) paginationIssues.push({ line: index + 1, code: "PAGE_CONTEXT", message: "Não foi possível vincular filial e horário à empresa da página. Exporte o relatório completo." });
       sourceEmployees++;
       if (!context) throw new EscalaError(400, "ESCALA_IMPORT_LAYOUT", "Funcionário sem contexto de filial e setor no FPRE136.");
       if (context.branchCode !== branchCode) continue;
       selected.push({ row, line: index + 1, sector: context.sector, code, description,
         saturday: cell(rows[index + 1]?.[0]) === "Sábado:" ? rows[index + 1] : undefined });
+    } else if (row.some(value => cell(value)) && cell(row[0]) !== "Quadro de Horários" && cell(row[0]) !== "Sábado:"
+      && !(cell(row[1]) === "Nome" && cell(row[2]) === "Cargo" && cell(row[3]) === "Horário")
+      && !isPageHeader(row)) {
+      unrecognizedRows++;
     }
   }
   if (!branchName || !selected.length) throw new EscalaError(400, "ESCALA_IMPORT_BRANCH", "A filial selecionada não contém colaboradores neste FPRE136.");
   if (selected.length > 250) throw new EscalaError(400, "ESCALA_IMPORT_LIMIT", "A importação aceita até 250 colaboradores da filial por proposta.");
   const result: EscalaImportPreview = { employees: [], shifts: [], issues: [], totalRows: selected.length,
+    replacement: { rejectedRows: unrecognizedRows, invalidIdentityRows: 0, fieldsById: {}, paginationIssues },
     report: { format: "FPRE136", branchCode, branchName, sourceEmployees, otherBranchesExcluded: sourceEmployees - selected.length, missingSchedule: 0 } };
   // Count only records from the selected branch, excluding every repeated
   // registration rather than allowing its first occurrence through the preview.
@@ -69,6 +91,7 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
     try {
       const { row } = record;
       const registration = required(row[0], 60), name = required(row[2], 160), role = required(row[3], 120);
+      if (typeof row[0] !== "string" && result.replacement) result.replacement.invalidIdentityRows++;
       const sector = required(record.sector, 120);
       if ((registrationCounts.get(registration) ?? 0) > 1) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
       if (!record.saturday) throw new Error("Linha de sábado ausente no FPRE136.");
@@ -87,7 +110,11 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
       if (shift) shifts.set(shift.id, shift);
       if (classified.mode === "MISSING" && result.report) result.report.missingSchedule++;
       for (const message of classified.warnings) result.issues.push({ line: record.line, message });
-    } catch (error) { result.issues.push({ line: record.line, message: error instanceof Error ? error.message : "Linha FPRE136 inválida." }); }
+      if (result.replacement) result.replacement.fieldsById[id] = ["name", "sector", "role", "shiftIds", "scheduleMode", "sourceSchedule"];
+    } catch (error) {
+      if (result.replacement) result.replacement.rejectedRows++;
+      result.issues.push({ line: record.line, message: error instanceof Error ? error.message : "Linha FPRE136 inválida." });
+    }
   }
   result.employees = sortEmployees(result.employees.map(applyRestEligibility));
   result.shifts = [...shifts.values()];

@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant } from "./eligibility";
 import { importedShiftReference, preparedShiftSignature, prepareRoster } from "./preparation";
 import type { EscalaInput } from "./types";
 
@@ -8,8 +9,19 @@ export type ScheduleException = { employeeId: string; registration: string; name
 export function adaptCompatibleSchedules(input: EscalaInput, strategy: ScheduleStrategy) {
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const exceptions: ScheduleException[] = [];
+  const preservedShiftIds = new Set<string>();
   const employees = input.employees.map(person => {
-    if (person.planningEnabled === false || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED") return person;
+    if (!isEscalaPlanningParticipant(person)) {
+      const references = [
+        ...(person.manualShiftBaseIds ?? []),
+        ...Object.values(person.manualShiftByDate ?? {}),
+        ...(person.manualShiftOverrides ?? []).map(selection => selection.shiftId),
+        person.fixedImportedShiftId,
+      ];
+      for (const id of references) if (id) preservedShiftIds.add(id);
+      return person;
+    }
+    if (person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED") return person;
     const prepared = prepareRoster({ ...input, employees: [person], assignments: [] }, input.defaultWeeklyHours, "EXCLUDE", strategy);
     const candidate = prepared.employees[0];
     const locked = input.assignments.filter(day => day.employeeId === person.id && day.locked).flatMap(day => day.shiftId ? [day.shiftId] : []);
@@ -37,7 +49,7 @@ export function adaptCompatibleSchedules(input: EscalaInput, strategy: ScheduleS
     }
     return { ...person, ...candidate, shiftIds: allowed };
   });
-  const referenced = new Set([...employees.flatMap(person => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...input.assignments.flatMap(day => day.shiftId ? [day.shiftId] : []),
+  const referenced = new Set([...preservedShiftIds, ...employees.flatMap(person => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...input.assignments.flatMap(day => day.shiftId ? [day.shiftId] : []),
     ...employees.flatMap(person => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap(day => day.shiftId ? [day.shiftId] : []))]);
   const retained = [...shifts.values()].filter(shift => referenced.has(shift.id));
   if (retained.length > 120) throw new Error("As alternativas ultrapassam 120 horários. Reduza opções individuais antes de aplicar.");

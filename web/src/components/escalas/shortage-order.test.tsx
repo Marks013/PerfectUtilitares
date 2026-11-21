@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { describe, expect, it, vi } from "vitest";
 import { ValidationResults } from "./results";
 import { Coverage } from "./coverage-import";

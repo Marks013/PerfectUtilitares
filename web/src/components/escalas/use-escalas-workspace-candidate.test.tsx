@@ -5,6 +5,8 @@ import type { EscalaCandidateReceipt } from "@/lib/escalas/candidate-reference";
 import type { GeneratedProposal } from "./mass-generation";
 import { newEmployee, newInput } from "./workspace-model";
 import { useEscalasWorkspace } from "./use-escalas-workspace";
+import { EscalaAccessProvider } from "./access-context";
+import type { EscalaClientAccess } from "@/lib/escalas/access-view";
 
 // Run the real hook, queue, requests and generation helper with stateful hook primitives.
 // This exercises async lifecycles without installing a DOM/browser test dependency.
@@ -61,7 +63,7 @@ function candidate(source: EscalaWorkspace, sequence: number): GeneratedProposal
   if (proposalInput.generationMode !== "HOURS_ONLY") proposalInput.assignments = [{ employeeId: "person", date: "2026-12-01", kind: "WORK", shiftId: "day" }];
   const candidateReceipt: EscalaCandidateReceipt = { version: 1, workspaceId: source.id, revision: source.revision,
     issuedAt: Date.now(), expiresAt: Date.now() + 60_000, baseHash: "base", contextHash: "context", inputHash: "candidate-" + sequence, signature: "opaque-private-" + sequence };
-  return { result: { status: "FEASIBLE", assignments: proposalInput.assignments, message: "Proposta", wallTimeSeconds: 1 }, proposalInput, validation, candidateReceipt };
+  return { result: { status: "FEASIBLE", assignments: proposalInput.assignments, message: "Proposta", wallTimeSeconds: 1 }, proposalInput, validation, candidateReceipt, proposalProof: `opaque-application-proof-${sequence}` };
 }
 function deferred<T>() {
   let resolve: (value: T) => void = () => { throw new Error("Deferred not initialized"); };
@@ -76,6 +78,7 @@ let calls: Record<string, unknown>[];
 let generation: (body: Record<string, unknown>, sequence: number) => Promise<Reply>;
 let count: number;
 let pendingSave: Promise<Reply> | null;
+let access: EscalaClientAccess | null;
 
 function Harness() {
   current = useEscalasWorkspace();
@@ -83,7 +86,7 @@ function Harness() {
 }
 function render() {
   hooks.cursor = 0; hooks.changed = false;
-  renderToStaticMarkup(<Harness />);
+  renderToStaticMarkup(<EscalaAccessProvider value={access}><Harness /></EscalaAccessProvider>);
   const effects = hooks.effects.splice(0);
   for (const effect of effects) effect();
 }
@@ -93,10 +96,16 @@ async function settle() {
 }
 async function open(id = "plan-08") { current.open(id); await settle(); }
 async function generate() { current.generate(); await settle(); }
+async function remountAccessScope() {
+  for (const cleanup of hooks.cleanup) cleanup?.();
+  hooks.slots = []; hooks.deps = []; hooks.cleanup = []; hooks.effects = []; hooks.cursor = 0; hooks.changed = false;
+  render(); await settle();
+}
 function generations() { return calls.filter(body => body.action === "GENERATE"); }
 
 beforeEach(async () => {
   hooks.slots = []; hooks.deps = []; hooks.cleanup = []; hooks.effects = []; hooks.cursor = 0; hooks.changed = false;
+  access = { channel: "ACCOUNT", roleLabel: "Administrador", administrator: true, allBranches: true, branches: [] };
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-14T10:00:00Z"));
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("sessionStorage", { getItem: vi.fn(() => null), setItem: vi.fn(), removeItem: vi.fn() });
@@ -125,6 +134,10 @@ beforeEach(async () => {
           const saved = { ...previous, revision: previous.revision + 1, input: structuredClone(body.input as EscalaInput) };
           sources.set(saved.id, saved); reply = { status: 200, body: saved };
         }
+      } else if (body.action === "APPLY_PROPOSAL") {
+        const previous = sources.get(String(body.id)); if (!previous) throw new Error("Unknown synthetic workspace");
+        const saved = { ...previous, revision: previous.revision + 1, input: structuredClone(body.input as EscalaInput) };
+        sources.set(saved.id, saved); reply = { status: 200, body: saved };
       } else reply = { status: 200, body: { operationId: "a3dfb1bc-a1d3-4fe8-aab9-3d527490a62c", state: body.action === "CANCEL_GENERATION" ? "CANCELLED" : "CREATED", expiresAt: "2026-11-15T10:00:00Z" } };
     }
     return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, json: async () => structuredClone(reply.body) };
@@ -134,6 +147,150 @@ beforeEach(async () => {
 afterEach(() => {
   for (const cleanup of hooks.cleanup) cleanup?.();
   vi.unstubAllGlobals(); vi.useRealTimers();
+});
+
+describe("scoped preview and independent application authority", () => {
+  const previewAccess = (): EscalaClientAccess => ({ channel: "USERNAME", administrator: false, allBranches: false, roleLabel: "Filial",
+    branches: [{ code: "08", label: "Filial 08", capabilities: ["workspace.read", "schedule.generate"] }] });
+
+  it("generates twice from a clean saved revision without SAVE and sends its candidate receipt, without granting edit or apply", async () => {
+    const source = sources.get("plan-08"); if (!source) throw new Error("Workspace not found");
+    source.canEdit = false; source.canPublish = false; access = previewAccess(); await open();
+    const original = structuredClone(source);
+    expect(current.canEdit).toBe(false); expect(current.canGenerate).toBe(true);
+    await generate(); const first = current.generated; await generate();
+    expect(generations()).toHaveLength(2);
+    expect(generations()[1].comparisonReference).toEqual({ input: first?.proposalInput, receipt: first?.candidateReceipt });
+    current.applyGenerated(); current.save();
+    const attemptedEdit = structuredClone(source.input); attemptedEdit.employees[0].name = "Edição sem permissão";
+    current.update(attemptedEdit); await settle();
+    expect(current.dirty).toBe(false); expect(current.input).toEqual(original.input);
+    expect(sources.get("plan-08")).toEqual(original);
+    expect(calls.some(body => ["SAVE", "APPLY_PROPOSAL", "PUBLISH"].includes(String(body.action)))).toBe(false);
+  });
+
+  it("does not send a dirty draft after SAVE permission is removed", async () => {
+    const draft = structuredClone(current.input); if (!draft) throw new Error("Workspace not open");
+    draft.employees[0].name = "Rascunho autorizado antes da mudança"; current.update(draft); await settle();
+    access = previewAccess(); render(); await settle();
+    expect(current.dirty).toBe(true); expect(current.canGenerate).toBe(false);
+    current.generate(); current.save(); await settle();
+    await expect(current.flushDraft()).rejects.toMatchObject({ status: 403, code: "ESCALA_PROTECTED_INPUT" });
+    await vi.advanceTimersByTimeAsync(1100); await settle();
+    expect(calls.some(body => body.action === "SAVE" || body.action === "START_GENERATION")).toBe(false);
+  });
+
+  const noticeCases: { label: string; warnings: boolean; comparison?: GeneratedProposal["comparison"]; expected?: string }[] = [
+    { label: "simple", warnings: false },
+    { label: "simple with warnings", warnings: true },
+    { label: "retained", warnings: false, comparison: { admission: "ADMITTED", selection: "REFERENCE_RETAINED" }, expected: "mantida para preservar a cobertura" },
+    { label: "retained with warnings", warnings: true, comparison: { admission: "ADMITTED", selection: "REFERENCE_RETAINED" }, expected: "mantida para preservar a cobertura" },
+    { label: "expired", warnings: false, comparison: { admission: "EXPIRED", selection: "NOT_USED" }, expected: "comparação anterior expirou" },
+    { label: "expired with warnings", warnings: true, comparison: { admission: "EXPIRED", selection: "NOT_USED" }, expected: "comparação anterior expirou" },
+    { label: "changed", warnings: true, comparison: { admission: "SCENARIO_CHANGED", selection: "NOT_USED" }, expected: "não pôde ser usada neste cenário" },
+    { label: "incompatible", warnings: true, comparison: { admission: "INCOMPATIBLE", selection: "NOT_USED" }, expected: "não pôde ser usada neste cenário" },
+  ];
+  it.each((["preview", "apply"] as const).flatMap(authority => noticeCases.map(testCase => ({ ...testCase, authority }))))(
+    "gives $authority an available next action for $label", async ({ authority, warnings, comparison, expected }) => {
+      const source = sources.get("plan-08"); if (!source) throw new Error("Workspace not found");
+      if (authority === "preview") { source.canEdit = false; source.canPublish = false; access = previewAccess(); await open(); }
+      generation = async (_body, sequence) => {
+        const proposal = candidate(source, sequence);
+        if (warnings) proposal.validation = { ...proposal.validation, issues: [{ code: "SYNTHETIC_WARNING", message: "Aviso sintético", severity: "WARNING" }] };
+        if (comparison) proposal.comparison = comparison;
+        return { status: 200, body: proposal };
+      };
+      await generate();
+      expect(current.generated).not.toBeNull();
+      if (expected) expect(current.notice).toContain(expected);
+      if (warnings) expect(current.notice).toContain("concluída com avisos");
+      else expect(current.notice).not.toContain("concluída com avisos");
+      if (authority === "preview") {
+        expect(current.notice).toContain("Confira a proposta.");
+        expect(current.notice).toContain("pessoa autorizada nesta filial");
+        expect(current.notice).not.toMatch(/Confira e aplique|antes de aplicar/);
+      } else expect(current.notice).toMatch(/Confira e aplique|antes de aplicar/);
+      expect(current.notice).not.toMatch(/ótim|aprovad|opaque-private/i);
+      expect(calls.some(body => ["SAVE", "APPLY_PROPOSAL", "PUBLISH"].includes(String(body.action)))).toBe(false);
+    },
+  );
+
+  it.each(["workspace.save", "schedule.apply"] as const)("does not suggest application when %s is missing", async missing => {
+    access = { ...previewAccess(), branches: [{ code: "08", label: "Filial 08", capabilities: ["workspace.read", "schedule.generate", ...(missing === "workspace.save" ? ["schedule.apply" as const] : ["workspace.save" as const])] }] };
+    render(); await settle(); await generate();
+    expect(current.workspace?.canEdit).toBe(true);
+    expect(current.notice).toContain("Confira a proposta.");
+    expect(current.notice).not.toMatch(/Confira e aplique|antes de aplicar/);
+  });
+
+  it("uses current permissions for the notice when access changes while awaiting generation", async () => {
+    const pending = deferred<Reply>(); generation = () => pending.promise;
+    current.generate(); await settle();
+    access = previewAccess(); render(); await settle();
+    pending.resolve({ status: 200, body: candidate(workspace(), 1) }); await settle();
+    expect(current.generated).not.toBeNull(); expect(current.notice).toContain("Confira a proposta.");
+    expect(current.notice).not.toMatch(/Confira e aplique|antes de aplicar/);
+  });
+
+  it("discards a dirty draft after SAVE is removed by reading the saved revision, with only one plan and no write", async () => {
+    sources.delete("plan-07"); await remountAccessScope(); await open();
+    expect(current.workspaces).toHaveLength(1);
+    const draft = structuredClone(current.input); if (!draft) throw new Error("Workspace not open");
+    draft.employees[0].name = "Edição local ainda não salva"; current.update(draft); await settle();
+    access = previewAccess(); render(); await settle();
+    expect(current.dirty).toBe(true); expect(current.canGenerate).toBe(false);
+    const source = sources.get("plan-08"); if (!source) throw new Error("Workspace not found");
+    const saved = { ...source, revision: 3, canEdit: false, canPublish: false, input: structuredClone(source.input) };
+    saved.input.branchName = "Revisão salva no servidor"; sources.set(saved.id, saved);
+    calls = []; const before = vi.mocked(fetch).mock.calls.length;
+    current.discard(); await settle(); await vi.advanceTimersByTimeAsync(1100); await settle();
+    expect(current.workspace?.revision).toBe(3); expect(current.input).toEqual(saved.input);
+    expect(current.dirty).toBe(false); expect(current.generated).toBeNull(); expect(current.canGenerate).toBe(true);
+    expect(current.workspaces).toHaveLength(1); expect(calls).toEqual([]);
+    const requests = vi.mocked(fetch).mock.calls.slice(before);
+    expect(requests).toHaveLength(1); expect(requests[0][0]).toBe("/api/escalas?id=plan-08");
+    expect(requests[0][1]?.method).toBeUndefined();
+    expect(sources.get("plan-08")).toEqual(saved);
+  });
+
+  it("keeps the local draft when discard cannot read the saved revision, without writing", async () => {
+    const draft = structuredClone(current.input); if (!draft) throw new Error("Workspace not open");
+    draft.employees[0].name = "Edição local preservada"; current.update(draft); await settle();
+    access = previewAccess(); render(); await settle(); calls = [];
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ error: { code: "UNAVAILABLE", message: "Tente novamente." } }) } as Response);
+    current.discard(); await settle(); await vi.advanceTimersByTimeAsync(1100); await settle();
+    expect(current.dirty).toBe(true); expect(current.input).toEqual(draft); expect(current.workspace?.revision).toBe(2);
+    expect(current.error).not.toBe(""); expect(calls).toEqual([]);
+  });
+
+  it.each([{ status: 409, code: "ESCALA_CONFIG_REVOKED" }, { status: 409, code: "ESCALA_CONFIG_APPROVAL_REQUIRED" },
+    { status: 403, code: "ESCALA_ACCESS_REQUIRED" }, { status: 400, code: "ESCALA_COMPARISON_REFERENCE_INVALID" }])(
+    "never restores a prior applicable preview after $code with the same workspace revision", async ({ status, code }) => {
+      await generate(); expect(current.generated?.proposalProof).toBeTruthy();
+      generation = async () => ({ status, body: { error: { code, message: "Acesso ou configuração alterados." } } });
+      await generate(); expect(current.workspace?.revision).toBe(2); expect(current.generated).toBeNull();
+      current.applyGenerated(); await settle();
+      expect(calls.some(body => body.action === "APPLY_PROPOSAL" || body.action === "SAVE")).toBe(false);
+    });
+
+  it("clears both artifacts on lock and does not carry them into the boundary's fresh hook instance", async () => {
+    await generate(); expect(current.generated?.candidateReceipt).toBeTruthy();
+    window.dispatchEvent(new Event("escalas:unlock-required")); await settle();
+    expect(current.generated).toBeNull(); expect(current.canGenerate).toBe(false);
+    for (const cleanup of hooks.cleanup) cleanup?.();
+    hooks.slots = []; hooks.deps = []; hooks.cleanup = []; hooks.effects = []; hooks.cursor = 0; hooks.changed = false;
+    render(); await settle(); await open(); await generate();
+    expect(generations().at(-1)).not.toHaveProperty("comparisonReference");
+  });
+
+  it("applies the exact final input and r2 proof while never using the comparison receipt as application authority", async () => {
+    await generate(); const selected = structuredClone(current.generated); if (!selected) throw new Error("Candidate missing");
+    current.applyGenerated(); await settle();
+    expect(calls.find(body => body.action === "APPLY_PROPOSAL")).toEqual({ action: "APPLY_PROPOSAL", id: "plan-08", expectedRevision: 2,
+      input: selected.proposalInput, proposalProof: selected.proposalProof });
+    expect(current.workspace?.revision).toBe(3); expect(current.generated).toBeNull();
+    expect(calls.some(body => body.action === "SAVE")).toBe(false);
+  });
 });
 
 describe("trusted candidate lifecycle in the real workspace hook", () => {
@@ -392,7 +549,7 @@ describe("workspace access recovery", () => {
     fetcher.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: { code: "ESCALA_ACCESS_REQUIRED", message: "Acesso expirado" } }) } as Response);
     render(); await settle();
     expect(current.workspace).toBeNull(); expect(current.workspaces).toEqual([]); expect(current.canCreate).toBe(false);
-    window.dispatchEvent(new Event("escalas:unlocked")); await settle();
+    window.dispatchEvent(new Event("escalas:unlocked")); await remountAccessScope();
     expect(current.workspace).toBeNull();
     expect(current.workspaces.map(item => item.id)).toEqual(["plan-08", "plan-07"]);
     expect(current.canCreate).toBe(true); expect(current.busy).toBe(""); expect(current.error).toBe("");
@@ -404,7 +561,7 @@ describe("workspace access recovery", () => {
     window.dispatchEvent(new Event("escalas:unlock-required"));
     staleUpdate({ ...previous, branchName: "Rejected while locked" }); await settle();
     expect(current.canEdit).toBe(false); expect(current.dirty).toBe(false); expect(current.input).toEqual(previous);
-    window.dispatchEvent(new Event("escalas:unlocked")); await settle();
+    window.dispatchEvent(new Event("escalas:unlocked")); await remountAccessScope(); await open();
     expect(current.canEdit).toBe(true); expect(current.input).toEqual(previous);
   });
   it("does not queue a write for a read-only workspace even if a stale control invokes update", async () => {

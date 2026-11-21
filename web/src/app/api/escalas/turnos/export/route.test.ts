@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("@/lib/escalas/access", async original => {
+  const actual = await original<typeof import("@/lib/escalas/access")>();
+  return { ...actual, requireEscalaCapability: vi.fn(async (actor: { admin: boolean }) => {
+    if (!actor.admin) throw new actual.EscalaError(403, "ESCALA_ACTION_FORBIDDEN", "Ação administrativa não permitida.");
+  }) };
+});
 import { DELETE, GET, PATCH, POST } from "./route";
 
 const mocks = vi.hoisted(() => ({ guard: vi.fn(), rate: vi.fn(), download: vi.fn() }));

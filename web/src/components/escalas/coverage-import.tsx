@@ -1,13 +1,10 @@
 "use client";
 
 import { isAdministrativeEscalaSector } from "@/lib/escalas/eligibility";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { EscalaImportPreview } from "@/lib/escalas/import";
-import { ProcessingBar } from "./workspace-feedback";
+import { useEffect, useState } from "react";
 import type { EscalaInput } from "@/lib/escalas/types";
-import { compareSectors, sortEmployees } from "@/lib/escalas/order";
-import { ImportChanges } from "./import-changes";
-import { previewImportReconciliation, type ImportChoices } from "./import-reconciliation";
+import { compareSectors } from "@/lib/escalas/order";
+import { ImportReplacement, type ImportReplacementProps } from "./import-replacement";
 import { MovementPriorities } from "./movement-priorities";
 import { proposeAutomaticCoverage, summarizeAutomaticCoverage } from "@/lib/escalas/automatic-coverage";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
@@ -16,9 +13,7 @@ import {
   datesBetween,
   displayDate,
   errorMessage,
-  mergeImport,
   parseClock,
-  responseMessage,
   WEEKDAYS,
 } from "./workspace-model";
 
@@ -28,235 +23,8 @@ export function employeeImportScenarioKey(input: EscalaInput) {
     input.planningWeekStartsOn, input.defaultWeeklyHours, input.employees, input.shifts]);
 }
 
-export function ImportEmployees({
-  input,
-  disabled,
-  onChange,
-}: {
-  input: EscalaInput;
-  disabled: boolean;
-  onChange: (input: EscalaInput) => void;
-}) {
-  const [previewResult, setPreview] = useState<{ scenario: string; requestId: number; value: EscalaImportPreview } | null>(null);
-  const [choices, setChoices] = useState<ImportChoices>({ updateRegistrations: [], scheduleRegistrations: [] });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState("Selecione o arquivo para conferir a equipe.");
-  const scenario = employeeImportScenarioKey(input);
-  const current = useRef({ input, disabled, scenario, file, choices, previewResult, onChange });
-  current.current = { input, disabled, scenario, file, choices, previewResult, onChange };
-  const request = useRef(0);
-  const controller = useRef<AbortController | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const inFlight = useRef(false);
-  const previousContext = useRef({ scenario, disabled });
-  const preview = !disabled && previewResult?.scenario === scenario && previewResult.requestId === request.current ? previewResult.value : null;
-  const cancelRequest = useCallback(() => {
-    request.current += 1;
-    controller.current?.abort();
-    clearTimeout(timer.current);
-    inFlight.current = false;
-  }, []);
-  useEffect(() => {
-    if (previousContext.current.scenario === scenario && previousContext.current.disabled === disabled) return;
-    previousContext.current = { scenario, disabled };
-    cancelRequest();
-    setBusy(false);
-    setPreview(null);
-    setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
-    setError("");
-    setStatus(disabled ? "Conferência interrompida. Aguarde a liberação do acesso ou o fim da operação."
-      : "O planejamento ou o acesso mudou. Confira o arquivo novamente antes de aplicar.");
-  }, [scenario, disabled, cancelRequest]);
-  useEffect(() => () => { cancelRequest(); }, [cancelRequest]);
-  async function analyze() {
-    const snapshot = current.current;
-    if (!snapshot.file || inFlight.current || snapshot.disabled) return;
-    setPreview(null);
-    setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
-    if (!/\.(csv|xlsx)$/i.test(snapshot.file.name) || snapshot.file.size < 1 || snapshot.file.size > 512 * 1024) {
-      setError("Selecione um arquivo CSV ou XLSX de até 512 KB.");
-      setStatus("Arquivo não enviado. Confira o formato e o tamanho.");
-      return;
-    }
-    const id = ++request.current;
-    const operation = new AbortController();
-    controller.current = operation;
-    let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; operation.abort(); }, 60_000);
-    timer.current = timeout;
-    inFlight.current = true;
-    setBusy(true);
-    setStatus("Conferindo arquivo e selecionando a equipe da filial…");
-    setError("");
-    const active = () => id === request.current && snapshot.scenario === current.current.scenario && !current.current.disabled;
-    try {
-      const form = new FormData();
-      form.set("file", snapshot.file);
-      form.set("branchCode", snapshot.input.branchCode);
-      form.set("startDate", snapshot.input.startDate);
-      form.set("defaultWeeklyHours", String(snapshot.input.defaultWeeklyHours));
-      const response = await fetch("/api/escalas/import", { method: "POST", body: form, signal: operation.signal });
-      if (!active()) return;
-      // Authentication is conveyed by the status, even when an intermediary sends HTML or an empty body.
-      if (response.status === 401) {
-        window.dispatchEvent(new Event("escalas:unlock-required"));
-        throw new Error("O acesso expirou. Desbloqueie o módulo e confira o arquivo novamente.");
-      }
-      const body = await response.json().catch(() => { throw new Error("O servidor não conseguiu responder à conferência."); });
-      if (!active()) return;
-      if (!response.ok) throw new Error(responseMessage(body));
-      if (operation.signal.aborted) throw new Error("A conferência foi interrompida.");
-      const data: EscalaImportPreview = body?.preview;
-      if (!data || !Array.isArray(data.employees) || !Array.isArray(data.shifts) || !Array.isArray(data.issues))
-        throw new Error("A resposta não contém uma prévia de equipe válida.");
-      setPreview({ scenario: snapshot.scenario, requestId: id, value: data });
-      setStatus(data.issues.length ? "Arquivo pronto com avisos. Confira os registros aceitos antes de aplicar." : "Arquivo pronto. Equipe conferida e disponível para aplicar.");
-    } catch (cause) {
-      if (!active()) return;
-      setStatus("Não foi possível conferir o arquivo. Nenhum registro foi aplicado.");
-      setError(timedOut ? "A conferência demorou além do esperado. Seus dados foram preservados; confira a conexão e tente novamente." : errorMessage(cause));
-    } finally {
-      clearTimeout(timeout);
-      if (id === request.current) { inFlight.current = false; setBusy(false); }
-    }
-  }
-  return (
-    <details className={panelClass} open={!input.employees.length || undefined}>
-      <summary className="min-h-11 cursor-pointer py-2 font-semibold">Importar equipe com prévia</summary>
-      <p className="text-sm text-[color:var(--app-muted)]">
-        Use o FPRE136 em CSV (recomendado) ou XLSX. A equipe desta filial é separada automaticamente.
-        Não é necessário outro arquivo. Primeiro confira a prévia; depois aplique os registros aceitos.
-        Os horários originais e os colaboradores já cadastrados são preservados.
-      </p>
-      <details>
-        <summary className="min-h-11 cursor-pointer py-2 text-sm">Usar outro formato (opcional)</summary>
-        <a href="/api/escalas/import?template=csv" download className={buttonClass}>Baixar modelo CSV alternativo</a>
-      </details>
-      <Field label="Arquivo CSV ou XLSX">
-        {(id) => (
-          <input
-            id={id}
-            type="file"
-            accept=".csv,.xlsx"
-            disabled={disabled || busy}
-            className={controlClass}
-            onChange={(event) => {
-              cancelRequest();
-              setBusy(false);
-              setChoices({ updateRegistrations: [], scheduleRegistrations: [] });
-              setFile(event.target.files?.[0] ?? null);
-              setStatus(event.target.files?.[0] ? "Arquivo selecionado. Clique em Conferir arquivo." : "Selecione o arquivo para conferir a equipe.");
-              setPreview(null);
-              setError("");
-            }}
-          />
-        )}
-      </Field>
-      <button type="button" className={buttonClass} disabled={disabled || busy || !file} onClick={() => void analyze()}>
-        {busy ? "Conferindo arquivo…" : "Conferir arquivo"}
-      </button>
-      <p role="status" aria-live="polite" aria-atomic="true" className="text-sm text-[color:var(--app-muted)]">{status}</p>
-      {busy && <ProcessingBar label="Conferindo equipe do arquivo" />}
-      {previewResult && !preview && <p role="status" className="text-sm">O planejamento ou o acesso mudou. Confira o arquivo novamente antes de aplicar.</p>}
-      {error && (
-        <p role="alert" className="text-sm text-[color:var(--app-coral)]">
-          {error}
-        </p>
-      )}
-      {preview && (
-        <div className="space-y-3">
-          <p className="font-semibold">
-            Prévia: {preview.employees.length} colaboradores aceitos de {preview.totalRows} linhas.
-          </p>
-          <p className="text-sm">
-            A importação preserva os horários originais. A geração prepara alternativas válidas automaticamente; a prévia de horários continua disponível para ajustes opcionais.
-          </p>
-          {preview.report && <p className="text-sm">
-            FPRE136 · filial {preview.report.branchCode} — {preview.report.branchName}: {preview.report.sourceEmployees}
-            {" "}colaboradores na fonte; {preview.report.otherBranchesExcluded} de outras filiais ignorados;
-            {" "}{preview.employees.filter(person => person.scheduleMode === "UNTIMED").length} ENC sem horário controlado;
-            {" "}{preview.report.missingSchedule} referências de horário para conferir.
-          </p>}
-          <ImportChanges input={input} employees={preview.employees} shifts={preview.shifts} choices={choices} disabled={disabled || busy} onChange={setChoices} />
-          <p className="text-sm">Horários não informados não geram horas nem cobertura horária fictícias. Referências curtas são preservadas e sinalizadas para revisão, sem excluir a pessoa da proposta.</p>
-          {preview.issues.length > 0 && (
-            <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm">
-              {preview.issues.map((issue) => (
-                <li key={`${issue.line}-${issue.message}`}>
-                  Linha {issue.line}: {issue.message}
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="max-h-48 overflow-auto text-sm">
-            <table className="w-full text-left">
-              <caption className="sr-only">Colaboradores da prévia de importação</caption>
-              <thead>
-                <tr>
-                  <th scope="col" className="p-2">
-                    Matrícula
-                  </th>
-                  <th scope="col" className="p-2">
-                    Nome
-                  </th>
-                  <th scope="col" className="p-2">
-                    Setor / cargo
-                  </th>
-                  <th scope="col" className="p-2">
-                    Referência semanal
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortEmployees(preview.employees).map((employee) => (
-                  <tr key={employee.id}>
-                    <td className="p-2">{employee.registration}</td>
-                    <td className="p-2">
-                      {employee.name}
-                      {employee.sourceSchedule && <span className="block text-xs text-[color:var(--app-muted)]">
-                        Referência FPRE136: {employee.sourceSchedule.code} · {employee.sourceSchedule.description}
-                        {" · Dias úteis: "}{employee.sourceSchedule.weekday || "não informado"}
-                        {" · Sábado: "}{employee.sourceSchedule.saturday || "não informado"}
-                      </span>}
-                    </td>
-                    <td className="p-2">
-                      {employee.sector} / {employee.role}
-                    </td>
-                    <td className="p-2">{employee.scheduleMode === "MISSING" ? "Horário não informado · horas não apuradas" : employee.scheduleMode === "UNTIMED" ? "Sem horário fixo · horas não apuradas" : `${employee.weeklyHours}h · ${employee.weeklyHoursMode === "INDIVIDUAL" ? "carga informada no arquivo" : "cenário da filial; contrato não informado"}`}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button
-            type="button"
-            disabled={disabled || busy || preview.employees.length === 0 || previewImportReconciliation(input, preview.employees, preview.shifts).some(entry => entry.status === "CONFLICT")}
-            className={primaryClass}
-            onClick={() => {
-              if (current.current.disabled || inFlight.current || previewResult !== current.current.previewResult
-                  || previewResult?.requestId !== request.current || scenario !== current.current.scenario) return;
-              try {
-                const latest = current.current.input;
-                const approved = current.current.choices;
-                const added = previewImportReconciliation(latest, preview.employees, preview.shifts).filter(entry => entry.status === "NEW").length;
-                current.current.onChange(mergeImport(latest, preview.employees, preview.shifts, { ...approved, branchCode: preview.report?.branchCode }));
-                cancelRequest();
-                setStatus(`Importação aplicada: ${added} novos; ${approved.updateRegistrations.length} atualizações confirmadas. Demais registros e decisões preservados.${preview.issues.length ? ` Avisos do arquivo: ${preview.issues.length}.` : " Equipe pronta para gerar a proposta."}`);
-                setPreview(null);
-                setFile(null);
-              } catch (cause) {
-                setError(errorMessage(cause));
-              }
-            }}
-          >
-            Aplicar registros aceitos à proposta
-          </button>
-        </div>
-      )}
-    </details>
-  );
+export function ImportEmployees(props: ImportReplacementProps) {
+  return <ImportReplacement {...props} purpose="EMPLOYEES" />;
 }
 
 export function Coverage({

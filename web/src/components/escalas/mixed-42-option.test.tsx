@@ -20,7 +20,7 @@ describe("mixed 42-hour sector choice", () => {
     const input = fixture();
     const html = renderToStaticMarkup(<Mixed42Option input={input} disabled={false} onChange={vi.fn()} />);
     expect(mixed42EligibleSectors(input)).toEqual(["FRENTE DE CAIXA", "Mercearia"]);
-    expect(html).toContain("Jornada mista de 42h (opcional)");
+    expect(html).toContain("Alternar dias de 8h e 9h na semana de 42h");
     expect(html).toContain("3 dias de 8h e 2 dias de 9h");
     expect(html).toContain("intervalo fixo não trabalhado é de 3h");
     expect(html).toContain("Sugestões da sua equipe: FRENTE DE CAIXA");

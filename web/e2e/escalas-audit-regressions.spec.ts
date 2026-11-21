@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { selectEscalasWorkspace } from "./escalas-selection";
+import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
 import { unzipSync, strFromU8 } from "fflate";
@@ -47,29 +47,27 @@ test("revision confirmation, inactive panels, canonical identity and excluded-pe
 
     await page.goto("/escala");
     await selectEscalasWorkspace(page, workspace);
-    await page.getByRole("button", { name: /^Revisar e exportar/ }).click();
+    await openEscalasArea(page, "roster");
     const confirmation = page.getByRole("checkbox", { name: "Conferi esta revisão da filial " + branch, exact: true });
-    const approval = page.getByRole("button", { name: "Publicar proposta", exact: true });
-    if (!await confirmation.isVisible()) await page.getByText("Aprovação interna (opcional)", { exact: true }).click();
+    const approval = page.getByRole("button", { name: "Publicar escala conferida", exact: true });
+    await revealEscalasControl(confirmation);
     await confirmation.check(); await expect(approval).toBeEnabled();
 
     const review = async () => {
-      const button = page.getByRole("button", { name: "Revisão e suporte", exact: true });
-      if (!await button.isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
-      await button.click(); await expect(page.locator("#escala-area-review")).toBeVisible();
+      await openEscalasArea(page, "review");
     };
     await review();
     const gapView = page.getByRole("button", { name: /^Desfalques \(/ });
     await gapView.click();
-    await page.getByRole("button", { name: /^Escolher jornada e gerar/ }).click();
+    await openEscalasArea(page, "generate");
     await expect(page.locator("#escala-area-review")).toBeHidden();
     await review(); await expect(gapView).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: /^Revisar e exportar/ }).click();
+    await openEscalasArea(page, "roster");
     await expect(confirmation).toBeChecked();
 
     await page.getByRole("button", { name: /^Pessoa de verificação, 02\/11\/2026:/ }).click();
-    await page.getByRole("checkbox", { name: "Preservar esta decisão nas próximas gerações", exact: true }).check();
-    await page.getByRole("button", { name: "Conferir alteração", exact: true }).click();
+    await page.getByRole("checkbox", { name: "Manter este dia nas próximas gerações", exact: true }).check();
+    await page.getByRole("button", { name: "Ver efeito da alteração", exact: true }).click();
     const saving = page.waitForResponse(response => response.url().endsWith("/api/escalas") && response.request().method() === "POST" && response.request().postDataJSON()?.action === "SAVE");
     await page.getByRole("button", { name: "Confirmar alteração", exact: true }).click();
     await expect(confirmation).not.toBeChecked();
@@ -79,7 +77,7 @@ test("revision confirmation, inactive panels, canonical identity and excluded-pe
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
     await expect(confirmation).not.toBeChecked(); await expect(approval).toBeDisabled();
 
-    await page.getByRole("button", { name: /^Escolher jornada e gerar/ }).click();
+    await openEscalasArea(page, "generate");
     const calculating = page.waitForResponse(response => response.url().endsWith("/api/escalas") && response.request().method() === "POST" && response.request().postDataJSON()?.action === "GENERATE", { timeout: 60_000 });
     await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
     const generated = await calculating; expect(generated.status()).toBe(200);
@@ -87,7 +85,7 @@ test("revision confirmation, inactive panels, canonical identity and excluded-pe
     expect(["OPTIMAL", "FEASIBLE"]).toContain(proposal.result.status);
     expect(proposal.result.assignments.filter((day: { employeeId: string }) => day.employeeId === "audit-disabled")).toEqual([{ employeeId: "audit-disabled", date: "2026-11-03", kind: "ABSENCE" }]);
     expect(proposal.result.assignments.some((day: { employeeId: string; date: string; kind: string }) => day.employeeId !== "audit-disabled" && day.date === "2026-11-07" && day.kind === "WORK")).toBe(true);
-    const applying = page.waitForResponse(response => response.url().endsWith("/api/escalas") && response.request().method() === "POST" && response.request().postDataJSON()?.action === "SAVE");
+    const applying = page.waitForResponse(response => response.url().endsWith("/api/escalas") && response.request().method() === "POST" && response.request().postDataJSON()?.action === "APPLY_PROPOSAL");
     await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
     const applied = await applying; expect(applied.status()).toBe(200);
     const final: EscalaWorkspace = await applied.json(); owned.revision = final.revision;
@@ -116,7 +114,7 @@ test("revision confirmation, inactive panels, canonical identity and excluded-pe
         if (current.id === owned.id && current.input.branchCode === branch && current.input.branchName === "Verificação técnica — não publicar" && current.status === "DRAFT") {
           const removed = await page.request.delete("/api/escalas", { headers, data: { workspaceId: owned.id, expectedRevision: owned.revision } });
           expect(removed.status(), "Could not clean up the task-owned technical draft").toBe(200);
-        } else throw new Error("Technical draft changed unexpectedly; preserved for review instead of deleting");
+        } else expect(current, "Technical draft changed unexpectedly; preserved for review instead of deleting").toMatchObject({ id: owned.id, input: { branchCode: branch, branchName: "Verificação técnica — não publicar" }, status: "DRAFT" });
       }
     }
   }

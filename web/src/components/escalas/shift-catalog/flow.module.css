@@ -1,0 +1,15 @@
+.filters { min-inline-size: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: .75rem; }
+.filter { min-inline-size: 0; border-block-end: 1px solid var(--app-border); }
+.filterOptions { min-inline-size: 0; max-block-size: 16rem; overflow: auto; padding: .25rem; }
+.filterOptions label { align-items: flex-start; padding-block: .5rem; }
+.filterOptions span { min-inline-size: 0; overflow-wrap: anywhere; }
+.rows { list-style: none; margin: 0; padding: 0; min-inline-size: 0; }
+.row { min-inline-size: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; padding-block: 1rem; border-block-end: 1px solid var(--app-border); }
+.identity { min-inline-size: 0; overflow-wrap: anywhere; }
+.selection { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.preview { min-inline-size: 0; max-block-size: 28rem; overflow: auto; border: 1px solid var(--app-border); border-radius: .75rem; padding: .75rem; }
+.preview table { min-inline-size: 36rem; inline-size: 100%; border-collapse: collapse; text-align: start; font-size: .875rem; }
+.preview th, .preview td { padding: .75rem; border-block-end: 1px solid var(--app-border); }
+.scopeNote { max-inline-size: 72ch; color: var(--app-muted); font-size: .875rem; line-height: 1.55; }
+.filter summary:focus-visible, .preview:focus-visible { outline: 2px solid var(--app-action-blue); outline-offset: 3px; }
+@media (min-width: 48rem) { .row { grid-template-columns: minmax(0, 1fr) minmax(14rem, 1fr); } }

@@ -1,27 +1,26 @@
-import { compare } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
-import { createEscalaModuleSession, ESCALA_ACCESS_COOKIE, escalaSessionCookieOptions, getEscalaModuleSession, revokeEscalaModuleSessionCookie } from "@/lib/escalas/module-session";
+import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin, requireSession } from "@/lib/api/security";
+import { getEscalaAccountClientAccess } from "@/lib/escalas/account-access-view.server";
+import { ESCALA_ACCESS_COOKIE, escalaSessionCookieOptions, revokeEscalaModuleSessionCookie } from "@/lib/escalas/module-session";
+import { createEscalaScopedModuleSession } from "@/lib/escalas/operator-session-issuer";
+import { getEscalaScopedModuleSession, verifyEscalaScopedSessionCookie, escalaScopedClientAccess } from "@/lib/escalas/operator-session-store";
 
 export const runtime = "nodejs";
-const unlock = z.object({ password: z.string().min(1).max(72) }).strict();
-const bcryptHash = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
-function operationalHash() {
-  // Explicit Escalas configuration takes precedence. When absent, keep the
-  // legacy STANDARD-only password until an authorized operations migration.
-  // A present but malformed/blank dedicated value must NOT silently fall back.
-  const configured = process.env.ESCALAS_ACCESS_STANDARD_PASSWORD_HASH;
-  const hash = (configured === undefined ? process.env.UNIMED_ACCESS_STANDARD_PASSWORD_HASH : configured)?.trim();
-  return hash && bcryptHash.test(hash) ? hash : null;
-}
+const unlock = z.object({ username: z.string().min(1).max(256) }).strict();
 function access(expiresAt: Date) { return { role: "OPERATIONAL", expiresAt }; }
 function privateJson(value: unknown) { return NextResponse.json(value, { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } }); }
 
 export async function GET() {
   try {
-    const session = await getEscalaModuleSession();
-    return session ? privateJson({ access: access(session.expiresAt) }) : jsonError(401, "ESCALA_ACCESS_REQUIRED", "Informe a senha operacional para liberar Escalas.");
+    const account = await requireSession();
+    if (account.ok) {
+      const context = await getEscalaAccountClientAccess(account.session);
+      return context ? privateJson({ access: { role: "ACCOUNT" }, context }) : jsonError(403, "ESCALA_TENANT_REQUIRED", "É necessário um usuário ativo vinculado a uma empresa para acessar Escalas.");
+    }
+    if (account.response.status !== 401) return account.response;
+    const session = await getEscalaScopedModuleSession();
+    return session ? privateJson({ access: access(new Date(session.expiresAtMs)), context: escalaScopedClientAccess(session) }) : jsonError(401, "ESCALA_ACCESS_REQUIRED", "Informe seu nome cadastrado para entrar em Escalas.");
   } catch { return jsonError(503, "ESCALA_ACCESS_UNAVAILABLE", "Não foi possível conferir o acesso. Tente novamente sem fechar o planejamento."); }
 }
 export async function POST(request: Request) {
@@ -33,14 +32,20 @@ export async function POST(request: Request) {
   if (content) return content;
   const body = await readJsonBody(request);
   if (!body.ok) return body.response;
-  const parsed = unlock.safeParse(body.data);
-  if (!parsed.success || Buffer.byteLength(parsed.data.password, "utf8") > 72) return jsonError(400, "ESCALA_PASSWORD_INVALID", "Informe uma senha válida.");
-  const hash = operationalHash();
-  if (!hash) return jsonError(503, "ESCALA_ACCESS_NOT_CONFIGURED", "O acesso operacional ainda não está disponível. Use o acesso da sua conta ou consulte o administrador.");
   try {
-    if (!(await compare(parsed.data.password, hash))) return jsonError(401, "ESCALA_PASSWORD_INCORRECT", "Senha operacional incorreta. Confira a credencial de Escalas com o responsável e tente novamente.");
-    const session = await createEscalaModuleSession();
-    const response = privateJson({ access: access(session.expiresAt) });
+    const account = await requireSession();
+    if (account.ok) {
+      const context = await getEscalaAccountClientAccess(account.session);
+      return context ? privateJson({ access: { role: "ACCOUNT" }, context }) : jsonError(403, "ESCALA_TENANT_REQUIRED", "É necessário um usuário ativo vinculado a uma empresa.");
+    }
+    if (account.response.status !== 401) return account.response;
+    const parsed = unlock.safeParse(body.data);
+    if (!parsed.success) return jsonError(400, "ESCALA_INVALID_COMMAND", "Informe somente o nome cadastrado.");
+    const session = await createEscalaScopedModuleSession(parsed.data.username);
+    if (!session) return jsonError(401, "ESCALA_ACCESS_REQUIRED", "O nome não possui acesso operacional ativo. Consulte o administrador.");
+    const resolved = await verifyEscalaScopedSessionCookie(session.value);
+    if (!resolved) return jsonError(401, "ESCALA_ACCESS_REQUIRED", "O acesso mudou durante a entrada. Tente novamente.");
+    const response = privateJson({ access: access(session.expiresAt), context: escalaScopedClientAccess(resolved) });
     response.cookies.set(ESCALA_ACCESS_COOKIE, session.value, escalaSessionCookieOptions(session.maxAgeSeconds));
     return response;
   } catch { return jsonError(503, "ESCALA_ACCESS_UNAVAILABLE", "Não foi possível liberar o acesso agora. Tente novamente; nenhum planejamento foi alterado."); }

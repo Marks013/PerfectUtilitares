@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { describe, expect, it, vi } from "vitest";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { EscalasWorkspace } from "./escalas-workspace";
@@ -28,17 +28,17 @@ describe("workspace mode composition", () => {
       busy: "", notice: "", error: "", dirty: false, localBackup: true, saveState: "saved", validation });
     const html = renderToStaticMarkup(<EscalasWorkspace />);
     expect(html).toMatch(new RegExp(`<input(?=[^>]*value="${mode}")(?=[^>]*checked="")[^>]*>`));
-    expect(html).toContain("Jornada mista de 42h");
+    expect(html).toContain("Alternar dias de 8h e 9h na semana de 42h");
     if (mode === "REST_ONLY") expect(html).not.toContain("conferir ou ajustar manualmente");
     else expect(html).toContain("conferir ou ajustar manualmente");
-    if (mode === "HOURS_ONLY") expect(html).not.toContain('>Cobertura</button>');
-    else expect(html).toContain('>Cobertura</button>');
+    if (mode === "HOURS_ONLY") expect(html).not.toContain('>Pessoas por horário</button>');
+    else expect(html).toContain('>Pessoas por horário</button>');
     const files = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />);
     if (mode === "HOURS_ONLY") {
       expect(files).toContain('<option value="hours" selected="">Referências de horários</option>');
       expect(files).not.toContain('value="rest"');
       expect(files).not.toContain('value="both"');
-      expect(files).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta/);
+      expect(files).toMatch(/<button[^>]*disabled=""[^>]*>Publicar escala conferida/);
     } else {
       expect(files).toContain('value="rest"');
       expect(files).toContain('value="both"');

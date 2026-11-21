@@ -8,6 +8,7 @@ import { revealRecoveryElement, type EscalaRecoveryRequest } from "./recovery-na
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { indexEmployees, searchEmployees } from "./employee-search";
 import { validateEmployeeForm } from "./employee-form";
+import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
 import { BulkControls } from "./bulk-controls";
 import { FixedRestFields } from "./fixed-rest-fields";
 import { ExcludedEmployees } from "./excluded-employees";
@@ -153,6 +154,11 @@ export function EmployeeEditor({
   onSave: (employee: EscalaEmployee) => void;
   onCancel: () => void;
 }) {
+  const access = useEscalaClientAccess();
+  const administrative = canDisplayEscalaAction(access, "settings.manage", input.branchCode);
+  const canManage = canDisplayEscalaAction(access, "employee.manage", input.branchCode)
+    && canDisplayEscalaAction(access, "workspace.save", input.branchCode);
+  const existing = input.employees.find((item) => item.id === employee.id);
   const [draft, setDraft] = useState(employee);
   const [history, setHistory] = useState(employee.history);
   const [error, setError] = useState("");
@@ -170,9 +176,46 @@ export function EmployeeEditor({
     event.preventDefault();
     setError("");
     setAttempt(previous => previous + 1);
-    if (!checked.employee) return;
+    if (!canManage || !administrative || !checked.employee) return;
     try { onSave(checked.employee); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Confira o cadastro."); }
+  }
+  if (!canManage) return null;
+  if (!administrative) {
+    if (!existing) return null;
+    return (
+      <form id="escala-employee-editor" tabIndex={-1} aria-labelledby="escala-employee-editor-title"
+        className={panelClass} onSubmit={(event) => {
+          event.preventDefault();
+          const name = draft.name.trim();
+          if (!name) { setError("Informe o nome do colaborador."); return; }
+          setError("");
+          try {
+            onSave({
+              ...existing,
+              name,
+              ...(input.generationMode === "HOURS_ONLY" ? {} : { preferredOffDays: draft.preferredOffDays }),
+            });
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Não foi possível aplicar o cadastro. Confira os dados e tente novamente.");
+          }
+        }}>
+        <h3 id="escala-employee-editor-title" className="font-semibold">Editar colaborador</h3>
+        <p className={styles.muted}>Matrícula {existing.registration} · {existing.sector} · {existing.role}. A jornada e as regras são definidas pelo administrador.</p>
+        <Field label="Nome completo">
+          {(id, accessibility) => <input id={id} {...accessibility} className={controlClass} required maxLength={160}
+            value={draft.name} onChange={(event) => change("name", event.target.value)} />}
+        </Field>
+        {input.generationMode !== "HOURS_ONLY" && <DayChoices
+          label="Dias de folga preferidos (não obrigatórios)" values={draft.preferredOffDays}
+          change={(days) => change("preferredOffDays", days)} />}
+        {error && <p role="alert" className={styles.errorText}>{error}</p>}
+        <div className={styles.actions}>
+          <button type="submit" className={primaryClass}>Aplicar cadastro à proposta</button>
+          <button type="button" className={buttonClass} onClick={onCancel}>Cancelar edição</button>
+        </div>
+      </form>
+    );
   }
   return (
     <form ref={form} noValidate id="escala-employee-editor" tabIndex={-1} aria-labelledby="escala-employee-editor-title" onSubmit={submit} className={`${panelClass} border-[color:var(--app-teal)] focus:outline-2 focus:outline-[color:var(--app-action-blue)]`}>
@@ -437,18 +480,22 @@ export function Employees({
   onSwap?: (employee: EscalaEmployee) => void;
   swapDisabled?: boolean;
 }) {
+  const access = useEscalaClientAccess();
+  const administrative = canDisplayEscalaAction(access, "settings.manage", input.branchCode);
+  const canManage = !disabled && canDisplayEscalaAction(access, "employee.manage", input.branchCode)
+    && canDisplayEscalaAction(access, "workspace.save", input.branchCode);
   const [editing, setEditing] = useState<EscalaEmployee | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const reviewedRequest = useRef(0);
   useEffect(() => {
-    if (!review?.employeeId || reviewedRequest.current === review.request) return;
+    if (!canManage || !review?.employeeId || reviewedRequest.current === review.request) return;
     const employee = input.employees.find((person) => person.id === review.employeeId);
     if (!employee) return;
     reviewedRequest.current = review.request;
     setSearch("");
     setEditing(employee);
-  }, [input.employees, review]);
+  }, [canManage, input.employees, review]);
   useEffect(() => {
     if (!review?.employeeId || editing?.id !== review.employeeId) return;
     const editor = document.getElementById("escala-employee-editor");
@@ -459,17 +506,17 @@ export function Employees({
   const employees = useMemo(() => searchEmployees(employeeIndex, search), [employeeIndex, search]);
   const included = employees.filter(isEscalaPlanningParticipant);
   const excluded = employees.filter(employee => !isEscalaPlanningParticipant(employee));
-  const removingEmployee = input.employees.find((employee) => employee.id === removing);
+  const removingEmployee = administrative ? input.employees.find((employee) => employee.id === removing) : undefined;
   return (
     <section className={panelClass} aria-labelledby="escala-employees-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="escala-employees-title" className="text-lg font-bold">
           1. Equipe da filial
         </h2>
-        <button
+        {administrative && <button
           type="button"
           className={buttonClass}
-          disabled={disabled || input.employees.length >= 250}
+          disabled={!canManage || input.employees.length >= 250}
           onClick={() => {
             const initial = input.shifts
               .filter((shift) => /^turno-inicial(?:-|$)/.test(shift.id))
@@ -483,12 +530,14 @@ export function Employees({
           }}
         >
           Adicionar colaborador
-        </button>
+        </button>}
       </div>
-      <p className="text-sm text-[color:var(--app-muted)]">
-        A importação já prepara a equipe. Abra um cadastro somente para ajustar uma exceção. Alterações são salvas automaticamente.
-      </p>
-      <BulkControls input={input} disabled={disabled} onChange={onChange} />
+      {administrative ? <>
+        <p className="text-sm text-[color:var(--app-muted)]">
+          A importação já prepara a equipe. Abra um cadastro somente para ajustar uma exceção. Alterações são salvas automaticamente.
+        </p>
+        <BulkControls input={input} disabled={!canManage} onChange={onChange} />
+      </> : <p className={styles.muted}>Para adicionar um colaborador, use um modelo de jornada aprovado pelo administrador.</p>}
       <Field label="Localizar colaborador, matrícula, setor ou cargo">
         {(id) => (
           <input
@@ -504,7 +553,7 @@ export function Employees({
       {search && <button type="button" className={buttonClass} onClick={() => { setSearch(""); searchInput.current?.focus(); }}>Limpar busca de colaboradores</button>}
       <p role="status" className={styles.muted}>{employees.length} de {input.employees.length} colaborador(es) na consulta.</p>
       {!input.employees.length && (
-        <p className="text-sm">Nenhum colaborador cadastrado. Adicione a equipe ou importe o modelo abaixo.</p>
+        <p className="text-sm">{administrative ? "Nenhum colaborador cadastrado. Adicione a equipe ou importe o modelo abaixo." : "Nenhum colaborador cadastrado nesta filial."}</p>
       )}
       <section aria-label="Colaboradores incluídos" className="max-h-72 space-y-1 overflow-y-auto">
         {included.map((employee) => (
@@ -534,50 +583,54 @@ export function Employees({
               </p>}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={buttonClass} disabled={disabled} onClick={() => setEditing(employee)}>
+              <button type="button" className={buttonClass} disabled={!canManage} onClick={() => setEditing(employee)}>
                 Editar<span className="sr-only"> {employee.name}</span>
               </button>
               {onSwap && input.generationMode !== "REST_ONLY" && <button type="button" className={buttonClass} disabled={disabled || swapDisabled} onClick={() => onSwap(employee)}>
                 Trocar turno<span className="sr-only"> de {employee.name}</span>
               </button>}
-              <button
+              {administrative && <button
                 type="button"
                 className={buttonClass}
                 disabled={
-                  disabled ||
+                  !canManage ||
                   input.assignments.some((assignment) => assignment.employeeId === employee.id && assignment.locked)
                 }
                 onClick={() => setRemoving(employee.id)}
               >
                 Remover
                 <span className="sr-only"> {employee.name} da proposta</span>
-              </button>
+              </button>}
             </div>
 
           </div>
         ))}
       </section>
       {!included.length && input.employees.length > 0 && <p className="text-sm">Nenhum colaborador incluído corresponde à busca. Confira a relação de não incluídos abaixo.</p>}
-      <ExcludedEmployees employees={excluded} disabled={disabled} onEdit={setEditing} onRemove={(employee) => setRemoving(employee.id)} />
+      <ExcludedEmployees employees={excluded} disabled={!canManage} onEdit={setEditing} onRemove={administrative ? (employee) => setRemoving(employee.id) : undefined} />
       {removingEmployee && <div className={styles.feedback} role="alert">
         <p>Remover {removingEmployee.name} e suas atribuições desta proposta? Revisões já salvas serão preservadas.</p>
-        <div className={styles.actions}><button type="button" className={buttonClass} disabled={disabled || input.assignments.some((assignment) => assignment.employeeId === removingEmployee.id && assignment.locked)} onClick={() => {
+        <div className={styles.actions}><button type="button" className={buttonClass} disabled={!canManage || input.assignments.some((assignment) => assignment.employeeId === removingEmployee.id && assignment.locked)} onClick={() => {
+          if (!canManage || !administrative || input.assignments.some((assignment) => assignment.employeeId === removingEmployee.id && assignment.locked)) return;
           onChange({ ...input, employees: input.employees.filter((item) => item.id !== removingEmployee.id), assignments: input.assignments.filter((assignment) => assignment.employeeId !== removingEmployee.id) });
           if (editing?.id === removingEmployee.id) setEditing(null);
           setRemoving(null);
         }}>Confirmar remoção da proposta</button><button type="button" className={buttonClass} onClick={() => setRemoving(null)}>Manter colaborador</button></div>
       </div>}
       {editing && (
-        <fieldset disabled={disabled}>
+        <fieldset disabled={!canManage}>
           <EmployeeEditor
             key={editing.id}
             employee={editing}
             input={input}
             onCancel={() => setEditing(null)}
             onSave={(employee) => {
+              if (!canManage) return;
               onChange({
                 ...input,
-                employees: [...input.employees.filter((item) => item.id !== employee.id), employee],
+                employees: administrative
+                  ? [...input.employees.filter((item) => item.id !== employee.id), employee]
+                  : input.employees.map((item) => item.id === employee.id ? employee : item),
               });
               setEditing(null);
             }}

@@ -13,6 +13,12 @@ function preview(records = [row()], settings = options) {
 }
 
 describe("optional FPHI105 absence import", () => {
+  it("exposes numeric fallback and unknown lines as structured replacement metadata", () => {
+    const result = preview([row(), "truncated,record"]);
+    expect(result.replacement).toEqual({ unrecognizedRows: 1, numericMatches: [{ line: 3, employeeId: "p1" }] });
+    expect(preview([row("0001")]).replacement?.numericMatches).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain("MEDICAL");
+  });
   it("reads actual thirteen-column rows below the eleven-column report header, includes the termination and ignores admission/days/medical fields", () => {
     const result = preview();
     expect(result.assignments).toEqual([2, 3, 4].map((day) => ({ employeeId: "p1", date: `2026-11-0${day}`, kind: "ABSENCE" })));

@@ -1,4 +1,4 @@
-import { useId, type AriaAttributes, type ReactNode } from "react";
+import { cloneElement, isValidElement, useId, type AriaAttributes, type ReactNode } from "react";
 import styles from "./escalas.module.css";
 
 export const controlClass = styles.control;
@@ -19,14 +19,22 @@ export function Field({
 }) {
   const id = useId();
   const description = [hint ? `${id}-hint` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined;
+  const control = children(id, { "aria-describedby": description, "aria-invalid": error ? true : undefined });
+  // Assim, campos que ainda não repassam o segundo argumento conservam a ajuda.
+  const described = description && isValidElement<Pick<AriaAttributes, "aria-describedby" | "aria-invalid">>(control) && typeof control.type === "string"
+    ? cloneElement(control, {
+      "aria-describedby": [...new Set([control.props["aria-describedby"], description].filter(Boolean).join(" ").trim().split(/\s+/))].join(" "),
+      ...(error ? { "aria-invalid": true } : {}),
+    })
+    : control;
   return (
     <div className={styles.field}>
       <label className={styles.fieldLabel} htmlFor={id}>
         {label}
       </label>
-      {children(id, { "aria-describedby": description, "aria-invalid": error ? true : undefined })}
+      {described}
       {hint && <p id={`${id}-hint`} className={styles.fieldHint}>{hint}</p>}
-      {error && <p id={`${id}-error`} className={styles.errorText}>{error}</p>}
+      {error && <p id={`${id}-error`} role="alert" className={styles.errorText}>{error}</p>}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireEscalaAccess } from "@/lib/escalas/access.server";
+import { requireEscalaCapability } from "@/lib/escalas/access";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed } from "@/lib/api/security";
 import { escalaFailure } from "../../http";
 import { downloadTurnoExport } from "@/lib/escalas/shift-catalog/export";
@@ -22,9 +23,11 @@ export async function GET(request: Request) {
   });
   if (!parsed.success) return jsonError(400, "TURNO_INVALID_EXPORT", "Informe um manifesto e formato TXT válidos.");
   try {
+    await requireEscalaCapability(guard.actor, "export.integration");
     const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-turnos-download", limit: 12, windowMs: 60_000 });
     if (limited) return limited;
     const result = await downloadTurnoExport(guard.actor, parsed.data.manifestId, parsed.data.format, parsed.data.acceptOmissions === "true");
+    await requireEscalaCapability(guard.actor, "export.integration");
     return new Response(Buffer.from(result.bytes), { headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Content-Disposition": `attachment; filename="turnos-${result.year}-${String(result.month).padStart(2, "0")}-${parsed.data.format}.txt"`,

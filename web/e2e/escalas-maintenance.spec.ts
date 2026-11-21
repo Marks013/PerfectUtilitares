@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
-import { selectEscalasWorkspace } from "./escalas-selection";
+import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
+import { applyReplacement, previewReplacement } from "./escalas-access-fixtures";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
@@ -15,118 +16,132 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
   const branch = `E2E-${suffix}`;
   await page.goto("/escala");
   await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
-  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
+  await revealEscalasControl(page.getByLabel("Código da filial", { exact: true }));
   await page.getByLabel("Código da filial", { exact: true }).fill(branch);
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Filial sintética E2E");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
-  const creating = page.waitForResponse((response) => response.request().method() === "POST"
-    && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "CREATE");
+  const creating = page.waitForResponse(response => {
+    if (response.request().method() !== "POST" || !response.url().endsWith("/api/escalas")) return false;
+    const request = response.request().postDataJSON();
+    return request?.action === "CREATE" && request.input?.branchCode === branch && request.input?.visibleMonth === "2026-11";
+  });
   await page.getByRole("button", { name: "Iniciar planejamento", exact: true }).click();
   const created = await creating;
   expect(created.status()).toBe(201);
   const original: EscalaWorkspace = await created.json();
-  expect(original.input.visibleMonth).toBe("2026-11");
-  expect(original.input.planningWeekStartsOn).toBe("SUNDAY");
-  await expect(page.getByRole("heading", { name: `Filial ${branch} · Filial sintética E2E`, exact: true })).toBeVisible();
+  try {
+    expect(original.input.visibleMonth).toBe("2026-11");
+    expect(original.input.planningWeekStartsOn).toBe("SUNDAY");
+    await expect(page.getByRole("heading", { name: `Filial ${branch} · Filial sintética E2E`, exact: true })).toBeVisible();
 
-  const csv = [
-    "Matricula;Nome;Setor;Cargo;CargaSemanal;Horarios;Admissao;RegraDomingos",
-    "0001;Ana Sintética;Padaria;Atendente;40;08:00-12:00 / 13:00-17:00;2020-01-01;",
-    "0002;Bruno Sintético;Padaria;Atendente;40;08:00-12:00 / 13:00-17:00;2020-01-01;",
-  ].join("\r\n");
-  await page.getByLabel("Arquivo CSV ou XLSX", { exact: true }).setInputFiles({ name: "equipe-sintetica.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
-  await page.getByRole("button", { name: "Conferir arquivo", exact: true }).click();
-  await expect(page.getByText("Prévia: 2 colaboradores aceitos de 2 linhas.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
-  const savingImport = page.waitForResponse((response) => response.request().method() === "POST"
-    && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await expect(page.locator('[data-state="saved"]')).toBeVisible();
-  const importedResponse = await savingImport;
-  expect(importedResponse.status()).toBe(200);
-  const imported: EscalaWorkspace = await importedResponse.json();
-  expect(imported.input.employees).toHaveLength(2);
-  const ana = imported.input.employees.find((person) => person.registration === "0001");
-  const bruno = imported.input.employees.find((person) => person.registration === "0002");
-  expect(ana).toBeTruthy(); expect(bruno).toBeTruthy();
-  if (!ana || !bruno) throw new Error("Synthetic import did not preserve registrations");
-  const origin = new URL(page.url()).origin;
-  // A saved draft is seeded through the real API. No solver or authentication response is mocked.
-  const preparing = await page.request.post("/api/escalas", {
-    headers: { origin }, data: { action: "SAVE", id: imported.id, expectedRevision: imported.revision,
-      input: { ...imported.input,
-        demands: [{ id: "e2e-required", date: "2026-11-02", sector: "Padaria", start: 480, end: 600, minimum: 1 }],
-        assignments: [
-          { employeeId: ana.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0] },
-          { employeeId: bruno.id, date: "2026-11-02", kind: "OFF" },
-        ],
+    const csv = [
+      "Matricula;Nome;Setor;Cargo;CargaSemanal;Horarios;Admissao;RegraDomingos",
+      "0001;Ana Sintética;Padaria;Atendente;40;08:00-12:00 / 13:00-17:00;2020-01-01;",
+      "0002;Bruno Sintético;Padaria;Atendente;40;08:00-12:00 / 13:00-17:00;2020-01-01;",
+    ].join("\r\n");
+    const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "equipe-sintetica.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    expect(reviewed.preview.canApply).toBe(true); expect(reviewed.preview.blockers).toEqual([]);
+    expect(reviewed.preview.counts.addedPeople).toBe(2);
+    expect((await page.request.get("/api/escalas?id=" + original.id).then(response => response.json())).revision).toBe(original.revision);
+    const imported = (await applyReplacement(page, reviewed.panel, "EMPLOYEES")).workspace;
+    expect(imported.input.employees).toHaveLength(2);
+    const ana = imported.input.employees.find((person) => person.registration === "0001");
+    const bruno = imported.input.employees.find((person) => person.registration === "0002");
+    expect(ana).toBeTruthy(); expect(bruno).toBeTruthy();
+    if (!ana || !bruno) throw new Error("Synthetic import did not preserve registrations");
+    const origin = new URL(page.url()).origin;
+    // A saved draft is seeded through the real API. No solver or authentication response is mocked.
+    const preparing = await page.request.post("/api/escalas", {
+      headers: { origin }, data: { action: "SAVE", id: imported.id, expectedRevision: imported.revision,
+        input: { ...imported.input,
+          demands: [{ id: "e2e-required", date: "2026-11-02", sector: "Padaria", start: 480, end: 600, minimum: 1 }],
+          assignments: [
+            { employeeId: ana.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0] },
+            { employeeId: bruno.id, date: "2026-11-02", kind: "OFF" },
+          ],
+        },
       },
-    },
-  });
-  expect(preparing.status()).toBe(200);
-  await page.reload();
-  await selectEscalasWorkspace(page, imported);
-  await page.getByLabel("Visualização da escala", { exact: true }).selectOption("rest");
-  const roster = page.getByRole("region", { name: "Grade mensal da filial", exact: true });
-  await expect(roster).toBeVisible();
-  await expect(roster.getByRole("columnheader")).toHaveCount(31);
-  const periodHeader = roster.getByText(`Filial ${branch} · Filial sintética E2E. 01/11/2026 a 30/11/2026.`, { exact: false });
-  await expect(periodHeader).toHaveCount(1);
-  await expect(periodHeader).toBeVisible();
-  await expect(periodHeader).toContainText("01/11/2026 a 30/11/2026");
-  expect(await roster.locator('button[aria-label*="31/10/2026"]').count()).toBe(0);
-  expect(await roster.locator('button[aria-label*="01/12/2026"]').count()).toBe(0);
-  const anaCell = roster.getByRole("button", { name: /^Ana Sintética, 02\/11\/2026:/ });
-  const brunoCell = roster.getByRole("button", { name: /^Bruno Sintético, 02\/11\/2026:/ });
-  await expect(anaCell).toContainText(/^T\d+/);
-  const originalCode = await anaCell.locator("span").first().textContent();
-  await anaCell.click();
-  await page.getByLabel("Situação do dia", { exact: true }).selectOption("OFF");
-  await page.getByRole("button", { name: "Conferir alteração", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Impacto da alteração", exact: true })).toContainText("0 presente(s), mínimo 1");
-  await page.getByRole("button", { name: "Aplicar com conflitos ao rascunho", exact: true }).click();
-  await expect(anaCell.locator("span").first()).toHaveText("F");
-  await expect(roster.getByRole("link", { name: /02\/11\/2026:.*cobertura/ })).toBeVisible();
-  await roster.getByRole("button", { name: "Desfazer última alteração", exact: true }).click();
-  await expect(anaCell.locator("span").first()).toHaveText(originalCode ?? "");
-  await expect(page.locator('[data-state="saved"]')).toBeVisible();
+    });
+    expect(preparing.status()).toBe(200);
+    await page.reload();
+    await selectEscalasWorkspace(page, imported);
+    await page.getByLabel("Visualização da escala", { exact: true }).selectOption("rest");
+    const roster = page.getByRole("region", { name: "Grade mensal da filial", exact: true });
+    await expect(roster).toBeVisible();
+    await expect(roster.getByRole("columnheader")).toHaveCount(31);
+    const periodHeader = roster.getByText(`Filial ${branch} · Filial sintética E2E. 01/11/2026 a 30/11/2026.`, { exact: false });
+    await expect(periodHeader).toHaveCount(1);
+    await expect(periodHeader).toBeVisible();
+    await expect(periodHeader).toContainText("01/11/2026 a 30/11/2026");
+    expect(await roster.locator('button[aria-label*="31/10/2026"]').count()).toBe(0);
+    expect(await roster.locator('button[aria-label*="01/12/2026"]').count()).toBe(0);
+    const anaCell = roster.getByRole("button", { name: /^Ana Sintética, 02\/11\/2026:/ });
+    const brunoCell = roster.getByRole("button", { name: /^Bruno Sintético, 02\/11\/2026:/ });
+    await expect(anaCell).toContainText(/^T\d+/);
+    const originalCode = await anaCell.locator("span").first().textContent();
+    await anaCell.click();
+    await page.getByLabel("Situação do dia", { exact: true }).selectOption("OFF");
+    await page.getByRole("button", { name: "Ver efeito da alteração", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Impacto da alteração", exact: true })).toContainText("0 presente(s), mínimo 1");
+    await page.getByRole("button", { name: "Aplicar com conflitos ao rascunho", exact: true }).click();
+    await expect(anaCell.locator("span").first()).toHaveText("F");
+    await expect(roster.getByRole("link", { name: /02\/11\/2026:.*cobertura/ })).toBeVisible();
+    await roster.getByRole("button", { name: "Desfazer última alteração", exact: true }).click();
+    await expect(anaCell.locator("span").first()).toHaveText(originalCode ?? "");
+    await expect(page.locator('[data-state="saved"]')).toBeVisible();
 
-  await anaCell.click();
-  await page.getByText("Trocar este dia com outro colaborador ou outra data", { exact: true }).click();
-  await page.getByLabel("Colaborador para a troca", { exact: true }).selectOption(bruno.id);
-  await page.getByLabel("Data para a troca", { exact: true }).selectOption("2026-11-02");
-  await page.getByRole("button", { name: "Conferir troca", exact: true }).click();
-  await page.getByRole("button", { name: /^(Confirmar alteração|Aplicar com conflitos ao rascunho)$/ }).click();
-  await expect(anaCell.locator("span").first()).toHaveText("F");
-  await expect(brunoCell.locator("span").first()).toHaveText(originalCode ?? "");
-  const savingSwap = page.waitForResponse((response) => response.request().method() === "POST"
-    && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await expect(page.locator('[data-state="saved"]')).toBeVisible();
-  expect((await savingSwap).status()).toBe(200);
-  const persistedResponse = await page.request.get(`/api/escalas?id=${imported.id}`);
-  expect(persistedResponse.status()).toBe(200);
-  const persisted: EscalaWorkspace = await persistedResponse.json();
-  expect(persisted.input.assignments).toEqual(expect.arrayContaining([
-    expect.objectContaining({ employeeId: ana.id, date: "2026-11-02", kind: "OFF", locked: true }),
-    expect.objectContaining({ employeeId: bruno.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0], locked: true }),
-  ]));
-  await page.setViewportSize({ width: 375, height: 812 });
-  if (!await page.getByRole("button", { name: "Ajustes", exact: true }).isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
-  await page.getByRole("button", { name: "Ajustes", exact: true }).click();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
-  const confirmation = page.getByRole("dialog", { name: "Excluir este planejamento?", exact: true });
-  await expect(confirmation).toContainText(`Filial ${branch}`);
-  await expect(confirmation).toContainText("01/11/2026 a 30/11/2026");
-  await confirmation.getByRole("button", { name: "Manter planejamento", exact: true }).click();
-  expect((await page.request.get(`/api/escalas?id=${imported.id}`)).status()).toBe(200);
-  await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
-  const deleting = page.waitForResponse((response) => response.request().method() === "DELETE" && response.url().endsWith("/api/escalas"));
-  await confirmation.getByRole("button", { name: "Confirmar exclusão", exact: true }).click();
-  expect((await deleting).status()).toBe(200);
-  await expect(page.getByText("Planejamento e revisões excluídos. Os demais períodos foram preservados.", { exact: true })).toBeVisible();
-  expect((await page.request.get(`/api/escalas?id=${imported.id}`)).status()).toBe(404);
-  const list = await page.request.get("/api/escalas").then((response) => response.json());
-  expect(list.workspaces.some((workspace: { id: string }) => workspace.id === imported.id)).toBe(false);
+    await anaCell.click();
+    await page.getByText("Trocar este dia com outro colaborador ou outra data", { exact: true }).click();
+    await page.getByLabel("Colaborador para a troca", { exact: true }).selectOption(bruno.id);
+    await page.getByLabel("Data para a troca", { exact: true }).selectOption("2026-11-02");
+    await page.getByRole("button", { name: "Ver efeito da troca", exact: true }).click();
+    const savingSwap = page.waitForResponse((response) => response.request().method() === "POST"
+      && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE"
+      && response.request().postDataJSON()?.id === imported.id);
+    await page.getByRole("button", { name: /^(Confirmar alteração|Aplicar com conflitos ao rascunho)$/ }).click();
+    await expect(anaCell.locator("span").first()).toHaveText("F");
+    await expect(brunoCell.locator("span").first()).toHaveText(originalCode ?? "");
+    await expect(page.locator('[data-state="saved"]')).toBeVisible();
+    expect((await savingSwap).status()).toBe(200);
+    const persistedResponse = await page.request.get(`/api/escalas?id=${imported.id}`);
+    expect(persistedResponse.status()).toBe(200);
+    const persisted: EscalaWorkspace = await persistedResponse.json();
+    expect(persisted.input.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ employeeId: ana.id, date: "2026-11-02", kind: "OFF", locked: true }),
+      expect.objectContaining({ employeeId: bruno.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0], locked: true }),
+    ]));
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openEscalasArea(page, "adjustments");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
+    const confirmation = page.getByRole("dialog", { name: "Excluir este planejamento?", exact: true });
+    await expect(confirmation).toContainText(`Filial ${branch}`);
+    await expect(confirmation).toContainText("01/11/2026 a 30/11/2026");
+    await confirmation.getByRole("button", { name: "Manter planejamento", exact: true }).click();
+    expect((await page.request.get(`/api/escalas?id=${imported.id}`)).status()).toBe(200);
+    await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
+    const deleting = page.waitForResponse(response => response.request().method() === "DELETE"
+      && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.workspaceId === imported.id);
+    await confirmation.getByRole("button", { name: "Confirmar exclusão", exact: true }).click();
+    expect((await deleting).status()).toBe(200);
+    await expect(page.getByText("Planejamento e revisões excluídos. Os demais períodos foram preservados.", { exact: true })).toBeVisible();
+    expect((await page.request.get(`/api/escalas?id=${imported.id}`)).status()).toBe(404);
+    const list = await page.request.get("/api/escalas").then((response) => response.json());
+    expect(list.workspaces.some((workspace: { id: string }) => workspace.id === imported.id)).toBe(false);
+  } finally {
+    const response = await page.request.get(`/api/escalas?id=${original.id}`);
+    if (response.status() !== 404) {
+      expect(response.status()).toBe(200);
+      const current: EscalaWorkspace = await response.json();
+      expect(current.input.branchCode).toBe(branch);
+      expect(current.status).toBe("DRAFT");
+      const removed = await page.request.delete("/api/escalas", {
+        headers: { origin: new URL(page.url()).origin },
+        data: { workspaceId: current.id, expectedRevision: current.revision },
+      });
+      expect(removed.status()).toBe(200);
+    }
+  }
 });
 
 test("one journey controls a full FPRE136 simulation, stale outputs and actual PDF/XLSX downloads across screen sizes", async ({ page }) => {
@@ -138,11 +153,15 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   if (!branch) throw new Error("No unused two-digit branch is available for the isolated FPRE136 fixture");
   await page.goto("/escala");
   await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
-  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
+  await revealEscalasControl(page.getByLabel("Código da filial", { exact: true }));
   await page.getByLabel("Código da filial", { exact: true }).fill(branch);
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Supermercado sintético E2E");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
-  const creating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "CREATE");
+  const creating = page.waitForResponse(response => {
+    if (response.request().method() !== "POST" || !response.url().endsWith("/api/escalas")) return false;
+    const request = response.request().postDataJSON();
+    return request?.action === "CREATE" && request.input?.branchCode === branch && request.input?.visibleMonth === "2026-11";
+  });
   await page.getByRole("button", { name: "Iniciar planejamento", exact: true }).click();
   const createResponse = await creating;
   expect(createResponse.status()).toBe(201);
@@ -165,13 +184,14 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   }
   const csv = rows.map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(",")).join("\r\n");
   await page.locator('button[aria-controls="escala-area-team"]').click();
-  await page.getByLabel("Arquivo CSV ou XLSX", { exact: true }).setInputFiles({ name: "FPRE136-sintetico.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
-  await page.getByRole("button", { name: "Conferir arquivo", exact: true }).click();
-  await expect(page.getByText("Prévia: 5 colaboradores aceitos de 5 linhas.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
+  const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "FPRE136-sintetico.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  expect(reviewed.preview.layout).toBe("FPRE136"); expect(reviewed.preview.canApply).toBe(true); expect(reviewed.preview.blockers).toEqual([]); expect(reviewed.preview.counts.addedPeople).toBe(5);
+  await applyReplacement(page, reviewed.panel, "EMPLOYEES");
+  await openEscalasArea(page, "generate");
   await journey.selectOption("42");
   await expect(page.getByText("08:24", { exact: true })).toBeVisible();
-  const generating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
+  const generating = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE" && response.request().postDataJSON()?.id === created.id, { timeout: 40_000 });
   await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
   const generatedResponse = await generating;
   expect(generatedResponse.status()).toBe(200);
@@ -194,13 +214,25 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   expect(shortPerson.planningExclusionReason).toContain("até 6h, inclusive");
   expect(generated.proposalInput.assignments.filter((item: { employeeId: string }) => item.employeeId === shortPerson.id)).toEqual([]);
   await expect(page.getByRole("heading", { name: "Proposta pronta para revisão", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
-  const saving = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
+  const saving = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "APPLY_PROPOSAL" && response.request().postDataJSON()?.id === created.id);
+  await page.getByRole("region", { name: "Proposta pronta para revisão", exact: true })
+    .getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
   await expect(page.locator('[data-state="saved"]')).toBeVisible();
-  expect((await saving).status()).toBe(200);
+  const applied = await saving;
+  expect(applied.status()).toBe(200);
+  const saved: EscalaWorkspace = await applied.json();
   await expect(page.getByRole("region", { name: "Grade mensal da filial", exact: true })).toBeVisible();
   for (const format of ["PDF", "XLSX"] as const) {
+    const preparing = page.waitForResponse(response => {
+      const { pathname, searchParams } = new URL(response.url());
+      return response.request().method() === "GET" && pathname === "/api/escalas/export"
+        && searchParams.get("id") === saved.id && searchParams.get("revision") === String(saved.revision)
+        && searchParams.get("format") === format.toLowerCase() && searchParams.get("mode") === "both"
+        && searchParams.get("projection") === "BASIC_SCHEDULE";
+    });
     await page.getByRole("button", { name: `Gerar ${format}`, exact: true }).click();
+    const fileResponse = await preparing;
+    expect(fileResponse.status()).toBe(200);
     await expect(page.getByRole("link", { name: `Baixar ${format}`, exact: true })).toBeVisible();
     const downloading = page.waitForEvent("download");
     await page.getByRole("link", { name: `Baixar ${format}`, exact: true }).click();
@@ -213,6 +245,8 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
     const bytes = Buffer.concat(chunks);
     expect(bytes.length).toBeGreaterThan(500);
     expect(bytes.subarray(0, format === "PDF" ? 4 : 2).toString()).toBe(format === "PDF" ? "%PDF" : "PK");
+    expect(bytes.equals(await fileResponse.body())).toBe(true);
+    await download.delete();
     await expect(page.getByRole("article", { name: `Arquivo ${format}`, exact: true }).getByText("Pronto para baixar", { exact: true })).toBeVisible();
   }
   await page.locator('button[aria-controls="escala-area-generate"]').click();
@@ -227,8 +261,7 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(journey).toBeVisible();
   }
-  if (!await page.getByRole("button", { name: "Ajustes", exact: true }).isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
-  await page.getByRole("button", { name: "Ajustes", exact: true }).click();
+  await openEscalasArea(page, "adjustments");
   await page.getByRole("button", { name: "Excluir planejamento", exact: true }).click();
   await page.getByRole("dialog", { name: "Excluir este planejamento?", exact: true }).getByRole("button", { name: "Confirmar exclusão", exact: true }).click();
   await expect(page.getByText("Planejamento e revisões excluídos. Os demais períodos foram preservados.", { exact: true })).toBeVisible();
@@ -268,7 +301,8 @@ test("explicit Sunday upgrade preserves its legacy source and protected outer ab
     const action = page.getByRole("button", { name: "Usar semana de domingo a sábado", exact: true });
     await expect(action).toBeEnabled();
     const responsePromise = page.waitForResponse(response => response.request().method() === "POST"
-      && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "UPGRADE_CALENDAR");
+      && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "UPGRADE_CALENDAR"
+      && response.request().postDataJSON()?.id === original.id && response.request().postDataJSON()?.expectedRevision === original.revision);
     await action.click();
     const response = await responsePromise;
     expect(response.status()).toBe(201);

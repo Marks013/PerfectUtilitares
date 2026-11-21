@@ -9,6 +9,7 @@ import path from "node:path";
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import pg from "pg";
+import { cleanupPhase, listedCases, parseSuiteArguments, phaseEnvironment, selectedPhases, suitePhases } from "./e2e-suite-plan.mjs";
 import {
   assertPdfWorkerImageRevision, linkPdfWorkerHeartbeat, pdfWorkerContainerArguments,
   pdfWorkerPreflightArguments, unlinkPdfWorkerHeartbeat,
@@ -16,6 +17,7 @@ import {
 
 const { Client } = pg;
 const cwd = process.cwd();
+const suiteArguments = parseSuiteArguments(process.argv.slice(2));
 const productionBuild = process.env.E2E_PRODUCTION === "1";
 dotenv.config({ path: path.join(cwd, ".env"), quiet: true });
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
@@ -24,7 +26,7 @@ const sourceRevision = pdfWorkerImage
   ? process.env.SOURCE_REVISION || capture("git", ["rev-parse", "HEAD"]) : undefined;
 
 function capture(command, args, env = process.env) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8", env });
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0) {
     const detail = result.error?.message || result.stderr?.trim() || result.stdout?.trim() || "unknown error";
     throw new Error(`${command} failed: ${detail}`);
@@ -187,18 +189,31 @@ function start(command, args, env, workingDirectory = cwd) {
   };
   child.stdout.on("data", collect);
   child.stderr.on("data", collect);
+  // Keep spawn failures inside the wait/cleanup path instead of an unhandled
+  // EventEmitter error terminating the runner before finally can execute.
+  child.once("error", (error) => collect(error.message));
   return { child, output };
 }
 
 async function stop(current) {
   if (!current?.child?.pid || current.child.exitCode !== null) return;
-  try { process.kill(-current.child.pid, "SIGTERM"); } catch { return; }
+  try { process.kill(-current.child.pid, "SIGTERM"); } catch (error) {
+    if (error.code === "ESRCH") return;
+    throw error;
+  }
   await Promise.race([
     new Promise((resolve) => current.child.once("exit", resolve)),
     new Promise((resolve) => setTimeout(resolve, 5_000)),
   ]);
   if (current.child.exitCode === null) {
-    try { process.kill(-current.child.pid, "SIGKILL"); } catch {}
+    try { process.kill(-current.child.pid, "SIGKILL"); } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+    await Promise.race([
+      new Promise((resolve) => current.child.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    ]);
+    if (current.child.exitCode === null && current.child.signalCode === null) throw new Error("Owned E2E process did not stop");
   }
 }
 
@@ -242,13 +257,38 @@ async function waitForWorker(file, current) {
   throw new Error(`PDF worker heartbeat timeout.\n${current.output.join("")}`);
 }
 
-const name = `perfectutilitares_e2e_${process.pid}_${Date.now()}`;
+// Collect with the same selectors and phase config before allocating resources.
+// --list does not run hooks, tests or Playwright's webServer.
+const listings = {};
+for (const phase of suitePhases) {
+  const collectionEnv = { ...process.env, E2E_SUITE_PHASE: phase, E2E_EXTERNAL_URL: "http://127.0.0.1:1" };
+  delete collectionEnv.PLAYWRIGHT_JSON_OUTPUT_FILE;
+  delete collectionEnv.PLAYWRIGHT_JSON_OUTPUT_DIR;
+  delete collectionEnv.PLAYWRIGHT_JSON_OUTPUT_NAME;
+  // Empty individual phases are valid for a focused selector; the combined
+  // collection below must still contain at least one case.
+  listings[phase] = listedCases(JSON.parse(capture("npx", ["playwright", "test", ...suiteArguments.args, "--list", "--pass-with-no-tests", "--reporter=json"], collectionEnv)));
+}
+const phases = selectedPhases(listings);
+if (suiteArguments.list) {
+  for (const phase of phases) console.log(`[${phase}]\n${listings[phase].join("\n")}`);
+} else {
+  const runId = `${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
+  for (const phase of phases) await runPhase(phase, runId);
+}
+
+async function runPhase(phase, runId) {
+const artifactDirectory = path.resolve(cwd, "../outputs/escalas-e2e-harness", runId, phase);
+let artifactsCreated = false;
+let executionFailed = false;
+let executionError;
+let cleanupError;
+const name = `perfectutilitares_e2e_${phase}_${runId.replaceAll("-", "_")}`;
 const database = databaseHost();
 const adminUrl = databaseUrl("postgres", database);
 adminUrl.searchParams.delete("schema");
 const testUrl = databaseUrl(name, database);
-const temp = await mkdtemp(path.join(os.tmpdir(), "perfectutilitares-e2e-"));
-await mkdir(path.join(temp, "pdf-storage"), { recursive: true });
+let temp;
 const standaloneCwd = path.resolve(cwd, process.env.E2E_STANDALONE_DIR || ".next/standalone");
 const runtimeCwd = productionBuild ? standaloneCwd : cwd;
 const pdfWorkerHeartbeatPath = path.join(
@@ -257,18 +297,15 @@ const pdfWorkerHeartbeatPath = path.join(
   "pdf-jobs",
   `pdf-worker-heartbeat-${process.pid}-${randomBytes(6).toString("hex")}`,
 );
-await mkdir(path.dirname(pdfWorkerHeartbeatPath), { recursive: true });
-const nextDistDir = `.next-e2e-${process.pid}-${Date.now()}`;
+const nextDistDir = `.next-e2e-${phase}-${runId}`;
 const nextEnvPath = path.join(cwd, "next-env.d.ts");
-const originalNextEnv = await readFile(nextEnvPath, "utf8");
+let originalNextEnv;
 const tsconfigPath = path.join(cwd, "tsconfig.json");
-const originalTsconfig = await readFile(tsconfigPath, "utf8");
+let originalTsconfig;
 const adminPassword = randomBytes(24).toString("base64url");
 const standardPassword = randomBytes(18).toString("base64url");
 const unimedPassword = randomBytes(18).toString("base64url");
-const mail = await startMailServer();
-const port = await freePort();
-const internalUrl = `http://127.0.0.1:${port}`;
+let mail;
 let secureProxy;
 const databaseAdmin = new Client({ connectionString: adminUrl.toString() });
 let app;
@@ -276,12 +313,23 @@ let worker;
 let solverId;
 let pdfWorkerId;
 let pdfHeartbeatLink;
-const solverSecretPath = path.join(temp, "solver.secret");
-const solverContainerSecretPath = path.join(temp, "solver-container.secret");
-const recoverySecretPath = path.join(temp, "recovery.secret");
 let created = false;
 
 try {
+  await mkdir(artifactDirectory, { recursive: true });
+  artifactsCreated = true;
+  await writeFile(path.join(artifactDirectory, "selection.json"), JSON.stringify({ phase, cases: listings[phase] }, null, 2));
+  temp = await mkdtemp(path.join(os.tmpdir(), `perfectutilitares-e2e-${phase}-`));
+  await mkdir(path.join(temp, "pdf-storage"), { recursive: true });
+  await mkdir(path.dirname(pdfWorkerHeartbeatPath), { recursive: true });
+  originalNextEnv = await readFile(nextEnvPath, "utf8");
+  originalTsconfig = await readFile(tsconfigPath, "utf8");
+  mail = await startMailServer();
+  const port = await freePort();
+  const internalUrl = `http://127.0.0.1:${port}`;
+  const solverSecretPath = path.join(temp, "solver.secret");
+  const solverContainerSecretPath = path.join(temp, "solver-container.secret");
+  const recoverySecretPath = path.join(temp, "recovery.secret");
   if (pdfWorkerImage) {
     if (process.platform !== "linux") throw new Error("The container PDF E2E worker requires Linux host networking.");
     const imageRevision = capture("docker", ["image", "inspect", "--format",
@@ -322,8 +370,8 @@ try {
     bcrypt.hash(standardPassword, 4),
     bcrypt.hash(unimedPassword, 4),
   ]);
-  const env = {
-    ...process.env,
+  const composed = phaseEnvironment(process.env, phase, { runId, adminPassword });
+  const commonEnv = {
     ...(pdfWorkerImage ? { SOURCE_REVISION: sourceRevision } : {}),
     NEXT_DIST_DIR: productionBuild ? ".next" : nextDistDir,
     NODE_ENV: productionBuild ? "production" : "development",
@@ -332,10 +380,6 @@ try {
     AUTH_URL: appUrl,
     AUTH_TRUST_HOST: "true",
     AUTH_SECRET: randomBytes(48).toString("base64url"),
-    ADMIN_EMAIL: "e2e-admin@example.test",
-    ADMIN_NAME: "E2E Administrator",
-    ADMIN_PASSWORD: adminPassword,
-    DEFAULT_TENANT_SLUG: "principal",
     E2E_EXTERNAL_URL: appUrl,
     E2E_MUTATION: "1",
     // Playwright otherwise stores DOM text on assertion failure, even with trace/screenshot disabled.
@@ -361,9 +405,15 @@ try {
     SENTRY_DSN: "",
     SENTRY_AUTH_TOKEN: "",
   };
-  await run("npx", ["prisma", "generate"], env);
-  await run("npx", ["prisma", "migrate", "deploy"], env);
-  await run("npm", ["run", "prisma:seed"], env);
+  const seedEnv = { ...composed.seed, ...commonEnv };
+  const env = { ...composed.runtime, ...commonEnv,
+    E2E_ARTIFACT_DIR: artifactDirectory,
+    PLAYWRIGHT_JSON_OUTPUT_FILE: path.join(artifactDirectory, "report.json"),
+  };
+  // The fixture creates the nominal tenant by API (201). Never seed that slug.
+  await run("npx", ["prisma", "generate"], seedEnv);
+  await run("npx", ["prisma", "migrate", "deploy"], seedEnv);
+  await run("npm", ["run", "prisma:seed"], seedEnv);
   const queueDatabase = new Client({ connectionString: testUrl.toString() });
   try {
     await queueDatabase.connect();
@@ -417,46 +467,55 @@ try {
   }
   await waitForApp(`${internalUrl}/login`, app);
   await waitForWorker(pdfWorkerHeartbeatPath, worker);
-  await run("npx", ["playwright", "test", ...process.argv.slice(2)], env);
+  await run("npx", ["playwright", "test", ...suiteArguments.args], env);
 } catch (error) {
+  executionFailed = true;
+  executionError = error;
   if (app?.output?.length) console.error(app.output.join("").split(/\r?\n/).slice(-30).join("\n"));
   if (worker?.output?.length) console.error(worker.output.join("").split(/\r?\n/).slice(-30).join("\n"));
-  throw error;
 } finally {
-  if (pdfWorkerId) {
+  let cleanupFailed = false;
+  try {
+    await cleanupPhase([
+    ["PDF container", async () => {
+      if (pdfWorkerId) capture("docker", ["rm", "--force", pdfWorkerId]);
+    }],
+    ["application", () => stop(app)],
+    ["worker", () => stop(worker)],
+    ["solver", async () => { if (solverId) capture("docker", ["stop", "--time", "3", solverId]); }],
+    ["HTTPS proxy", async () => { await secureProxy?.close(); }],
+    ["mail capture", async () => { await mail?.close(); }],
+    ["database", async () => {
+      if (!created) return;
+      await databaseAdmin.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1", [name]);
+      await databaseAdmin.query(`DROP DATABASE IF EXISTS "${name}"`);
+    }],
+    ["database connection", () => databaseAdmin.end()],
+    ["heartbeat", async () => {
+      if (pdfHeartbeatLink) await unlinkPdfWorkerHeartbeat(pdfWorkerHeartbeatPath, pdfHeartbeatLink.target);
+      else if (!pdfWorkerImage) await rm(pdfWorkerHeartbeatPath, { force: true });
+    }],
+    ["temporary directory", async () => { if (temp) await rm(temp, { recursive: true, force: true }); }],
+    ["Next output", () => rm(path.join(cwd, nextDistDir), { recursive: true, force: true })],
+    ["Next declarations", async () => {
+      if (originalNextEnv !== undefined && (await readFile(nextEnvPath, "utf8")) !== originalNextEnv) await writeFile(nextEnvPath, originalNextEnv);
+    }],
+    ["TypeScript configuration", async () => {
+      if (originalTsconfig !== undefined && (await readFile(tsconfigPath, "utf8")) !== originalTsconfig) await writeFile(tsconfigPath, originalTsconfig);
+    }],
+    ]);
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupError = error;
+  } finally {
     try {
-      try {
-        capture("docker", ["stop", "--time", "5", pdfWorkerId]);
-      } finally {
-        capture("docker", ["rm", "--force", pdfWorkerId]);
-      }
-    } catch {
-      // Cleanup targets only the exact ID created by this run. Keep cleaning
-      // other owned resources, but fail instead of silently leaking a worker.
-      console.error("The E2E PDF worker container could not be removed.");
-      process.exitCode = 1;
-    }
+      if (artifactsCreated) await writeFile(path.join(artifactDirectory, "lifecycle.json"), JSON.stringify({
+        phase, executionFailed, cleanupFailed,
+      }, null, 2));
+    } catch (error) { cleanupError ??= error; }
   }
-  await Promise.all([stop(app), stop(worker)]);
-  if (solverId) capture("docker", ["stop", "--time", "3", solverId]);
-  await secureProxy?.close().catch(() => undefined);
-  await mail.close().catch(() => undefined);
-  if (created) {
-    await databaseAdmin.query(
-      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1",
-      [name],
-    );
-    await databaseAdmin.query(`DROP DATABASE IF EXISTS "${name}"`);
-  }
-  await databaseAdmin.end().catch(() => undefined);
-  await rm(temp, { recursive: true, force: true });
-  if (pdfHeartbeatLink) await unlinkPdfWorkerHeartbeat(pdfWorkerHeartbeatPath, pdfHeartbeatLink.target);
-  else if (!pdfWorkerImage) await rm(pdfWorkerHeartbeatPath, { force: true });
-  await rm(path.join(cwd, nextDistDir), { recursive: true, force: true });
-  if ((await readFile(nextEnvPath, "utf8")) !== originalNextEnv) {
-    await writeFile(nextEnvPath, originalNextEnv);
-  }
-  if ((await readFile(tsconfigPath, "utf8")) !== originalTsconfig) {
-    await writeFile(tsconfigPath, originalTsconfig);
-  }
+}
+if (executionError && cleanupError) throw new AggregateError([executionError, cleanupError], "E2E execution and cleanup failed");
+if (executionError) throw executionError;
+if (cleanupError) throw cleanupError;
 }

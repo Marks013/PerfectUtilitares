@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
-import { selectEscalasWorkspace } from "./escalas-selection";
+import { openEscalasArea, selectEscalasWorkspace } from "./escalas-selection";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { newLegacyInput } from "../src/lib/escalas/legacy-calendar-test-fixture";
 import { dateRange } from "../src/lib/escalas/dates";
@@ -36,9 +36,9 @@ async function removeFixture(page: Page, id: string) {
   const origin = new URL(page.url()).origin;
   expect((await page.request.delete("/api/escalas", { headers: { origin }, data: { workspaceId: id, expectedRevision: workspace.revision } })).status()).toBe(200);
 }
-async function generate(page: Page) {
-  await page.getByRole("navigation", { name: "Etapas do planejamento", exact: true }).getByRole("button", { name: /^Escolher jornada e gerar/ }).click();
-  const response = page.waitForResponse(value => value.request().method() === "POST" && value.url().endsWith("/api/escalas") && value.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
+async function generate(page: Page, workspaceId: string) {
+  await openEscalasArea(page, "generate");
+  const response = page.waitForResponse(value => value.request().method() === "POST" && value.url().endsWith("/api/escalas") && value.request().postDataJSON()?.action === "GENERATE" && value.request().postDataJSON()?.id === workspaceId, { timeout: 40_000 });
   await page.getByRole("button", { name: /^(Gerar escala e horários|Gerar nova proposta)$/ }).click();
   const value = await response;
   expect(value.status()).toBe(200);
@@ -49,7 +49,7 @@ test("real infeasible coverage explains the budget, opens the correct filters an
   const workspace = await fixture(page);
   expect(workspace.input).toMatchObject({ planningWeekStartsOn: "SUNDAY", startDate: "2026-11-01", endDate: "2026-12-05" });
   try {
-    const failed = await generate(page);
+    const failed = await generate(page, workspace.id);
     expect(failed.result.status).toBe("INFEASIBLE");
     expect(failed.result.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ code: "COVERAGE_WEEKLY_CAPACITY", target: "coverage", sector: "Loja" })]));
     await expect(page.getByText("Proposta não gerada.", { exact: true })).toBeVisible();
@@ -76,14 +76,15 @@ test("real infeasible coverage explains the budget, opens the correct filters an
     await page.getByRole("button", { name: "Voltar à cobertura automática", exact: true }).click();
     await page.getByRole("button", { name: "Confirmar uso de cobertura automática", exact: true }).click();
     await expect(page.getByText(/Cobertura automática selecionada no rascunho/)).toBeVisible();
-    const generated = await generate(page);
+    const generated = await generate(page, workspace.id);
     expect(["FEASIBLE", "OPTIMAL"]).toContain(generated.result.status);
     expect(generated.validation.valid).toBe(true);
     expect(generated.proposalInput.defaultWeeklyHours).toBe(40);
     expect(generated.proposalInput.demands.length > 0).toBe(true);
     expect(generated.proposalInput.demands.every((demand: { estimated?: boolean }) => demand.estimated === true)).toBe(true);
-    await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
-    const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
+    const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "APPLY_PROPOSAL" && response.request().postDataJSON()?.id === workspace.id);
+    await page.getByRole("region", { name: "Proposta pronta para revisão", exact: true })
+      .getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
     expect((await saving).status()).toBe(200);
     const saved: EscalaWorkspace = await page.request.get("/api/escalas?id=" + workspace.id).then(response => response.json());
@@ -98,7 +99,7 @@ test("Conferir equipe e restrições opens the actual employee editor after a ge
   expect(workspace.input.endDate).toBe("2026-12-06");
   expect(workspace.input.planningWeekStartsOn).toBeUndefined();
   try {
-    const failed = await generate(page);
+    const failed = await generate(page, workspace.id);
     expect(failed.result.status).toBe("INFEASIBLE");
     expect(failed.result.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LOCKED_WORK_ON_FIXED_REST", employeeId: "p1", date: "2026-10-31" })]));
     await page.getByRole("listitem").filter({ hasText: "Há trabalho bloqueado em 31/10/2026" }).getByRole("button", { name: "Conferir equipe e restrições", exact: true }).click();

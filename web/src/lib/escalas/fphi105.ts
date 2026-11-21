@@ -5,8 +5,10 @@ import type { EscalaAssignment } from "./types";
 export type AbsenceImportOptions = {
   startDate: string; endDate: string; visibleMonth?: string;
   employees: { id: string; registration: string }[];
+  onLayoutRecognized?: (layout: "FPHI105") => void;
 };
 export type AbsenceImportPreview = {
+  replacement?: { unrecognizedRows: number; numericMatches: { line: number; employeeId: string }[] };
   assignments: EscalaAssignment[];
   counts: { totalRows: number; matchedRows: number; unmatchedRows: number; ambiguousRows: number; outsidePeriodRows: number; invalidRows: number; openEndedRows: number; employees: number; days: number };
   issues: { line: number; code: string; message: string }[];
@@ -49,7 +51,9 @@ export function previewFphi105Import(buffer: Buffer, options: AbsenceImportOptio
   const rows = parse(text, { delimiter: ",", bom: true, skip_empty_lines: true, max_record_size: 8192, relax_column_count: true }) as string[][];
   if (rows.length > 5000) throw new EscalaError(400, "ESCALA_IMPORT_LIMIT", "O relatório excede o limite de 5.000 linhas.");
   if (!rows.some(isHeader)) throw new EscalaError(400, "ESCALA_ABSENCE_LAYOUT", "Envie o relatório FPHI105 em CSV, com as colunas de início e término dos afastamentos.");
-  const result: AbsenceImportPreview = { assignments: [], counts: { totalRows: 0, matchedRows: 0, unmatchedRows: 0, ambiguousRows: 0, outsidePeriodRows: 0, invalidRows: 0, openEndedRows: 0, employees: 0, days: 0 }, issues: [] };
+  options.onLayoutRecognized?.("FPHI105");
+  const result: AbsenceImportPreview = { assignments: [], counts: { totalRows: 0, matchedRows: 0, unmatchedRows: 0, ambiguousRows: 0, outsidePeriodRows: 0, invalidRows: 0, openEndedRows: 0, employees: 0, days: 0 }, issues: [],
+    replacement: { unrecognizedRows: 0, numericMatches: [] } };
   const issue = (line: number, code: string, message: string) => { result.issues.push({ line, code, message }); };
   const periods = rows.flatMap((row) => {
     const startDate = reportDate(row[1]), endDate = reportDate(row[3]);
@@ -62,6 +66,12 @@ export function previewFphi105Import(buffer: Buffer, options: AbsenceImportOptio
     if (month && (periods[0].startDate.slice(0, 7) !== month || periods[0].endDate.slice(0, 7) !== month)) issue(0, "REPORT_PERIOD_MISMATCH", "O período do relatório difere do mês da escala. Somente os dias dentro do planejamento serão considerados.");
   }
   const employeeRows = rows.map((row, index) => ({ row, line: index + 1 })).filter(({ row }) => row.length >= 3 && [0, 1, 2].every((index) => /^\d+$/.test(row[index]?.trim())));
+  for (const row of rows) {
+    if (isHeader(row) || row.every(value => !value.trim())) continue;
+    if ([0, 1, 2].every(index => /^\d+$/.test(row[index]?.trim()))) continue;
+    if (normalized(row[0]) === "periodo" && reportDate(row[1]) && reportDate(row[3])) continue;
+    if (result.replacement) result.replacement.unrecognizedRows++;
+  }
   const identities = new Map<string, Set<string>>();
   for (const { row } of employeeRows) {
     const key = numericRegistration(row[2].trim());
@@ -96,6 +106,7 @@ export function previewFphi105Import(buffer: Buffer, options: AbsenceImportOptio
     }
     if (end < options.startDate || start > options.endDate) { result.counts.outsidePeriodRows++; continue; }
     result.counts.matchedRows++;
+    if (!byExact.has(registration) && result.replacement) result.replacement.numericMatches.push({ line, employeeId: matches[0].id });
     if (openEnded) { result.counts.openEndedRows++; issue(line, "OPEN_ENDED_ABSENCE", "Sem término informado: a ausência será considerada somente até o fim deste planejamento. Confira antes de aplicar."); }
     const first = start < options.startDate ? options.startDate : start, last = end > options.endDate ? options.endDate : end;
     for (let value = Date.parse(first); value <= Date.parse(last); value += DAY) {

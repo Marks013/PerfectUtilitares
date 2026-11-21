@@ -14,8 +14,11 @@ import { validateEscala } from "@/lib/escalas/validation";
 import { exportedDurationMinutes } from "@/lib/escalas/export-test-utils";
 import { GET, POST } from "./route";
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, get: vi.fn(), limit: vi.fn(), capacity: vi.fn(), cache: null as unknown as ReturnType<typeof createEscalaExportCache> }));
-vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: vi.fn(async () => null) }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, get: vi.fn(), limit: vi.fn(), capacity: vi.fn(),
+  user: vi.fn(), policy: vi.fn(), grants: vi.fn(), cache: null as unknown as ReturnType<typeof createEscalaExportCache> }));
+vi.mock("@/lib/prisma", () => ({ prisma: { user: { findFirst: mocks.user }, escalaModuleAccessPolicy: { findUnique: mocks.policy },
+  escalaBranchAccess: { findMany: mocks.grants } } }));
+vi.mock("@/lib/escalas/operator-session-store", () => ({ getEscalaScopedModuleSession: vi.fn(async () => null) }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/escalas/service", () => ({ getEscala: mocks.get }));
 vi.mock("@/lib/api/security", async original => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.limit }));
@@ -36,6 +39,12 @@ beforeEach(() => {
   mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
   mocks.get.mockResolvedValue(workspace()); mocks.limit.mockResolvedValue(null); mocks.capacity.mockResolvedValue(undefined);
   mocks.cache = createEscalaExportCache();
+  mocks.policy.mockImplementation(async ({ where }) => ({ tenantId: where.tenantId, mode: "SCOPED", version: 1 }));
+  mocks.user.mockImplementation(async ({ where }) => {
+    const user = mocks.session?.user;
+    return user && where.id === user.id && where.tenantId === user.tenantId ? { ...user, securityVersion: 0 } : null;
+  });
+  mocks.grants.mockResolvedValue([]);
 });
 
 describe("/api/escalas/export references without a roster", () => {
@@ -182,7 +191,7 @@ describe("/api/escalas/export", () => {
     const current = workspace();
     current.input.demands = [{ id: "confirmed", date: "2026-10-26", sector: "Reposição", start: 480, end: 540, minimum: 3, estimated: false }];
     mocks.get.mockResolvedValue(current);
-    const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=pdf&mode=${mode}&revision=3&separateSectors=false`));
+    const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=pdf&mode=${mode}&revision=3&separateSectors=false&projection=ADMIN_FULL`));
     expect(response.status).toBe(200); expect(response.headers.get("content-type")).toBe("application/pdf");
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const loading = pdfjs.getDocument(pdfJsServerDocumentOptions(new Uint8Array(await response.arrayBuffer())));
@@ -220,6 +229,25 @@ describe("/api/escalas/export", () => {
 });
 
 describe("/api/escalas/export mode boundaries", () => {
+  it.each(["rest", "hours", "both"] as const)("serves ADMIN_FULL %s XLSX with only operational sheets and real typed data", async mode => {
+    const current = workspace(); current.input.demands = [{ id: "confirmed", date: "2026-10-26", sector: "Reposição", start: 480, end: 540, minimum: 3, estimated: false }];
+    mocks.get.mockResolvedValue(current);
+    const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=xlsx&mode=${mode}&revision=3&projection=ADMIN_FULL`));
+    expect(response.status).toBe(200); expect(response.headers.get("content-type")).toContain("spreadsheetml");
+    const bytes = Buffer.from(await response.arrayBuffer()), archive = unzipSync(bytes);
+    const names = [...strFromU8(archive["xl/workbook.xml"]).matchAll(/<sheet name="([^"]+)"/g)].map(match => match[1]);
+    expect(names).toEqual(mode === "rest" ? ["Escala"] : mode === "hours" ? ["Horarios"] : ["Escala", "Horarios"]);
+    for (const [name, xml] of Object.entries(archive)) if (name.endsWith(".xml")) expect(strFromU8(xml)).not.toMatch(/Capacidade|Desfalques|Nominal semanal/);
+    const rows = await readSheet(bytes, mode === "rest" ? "Escala" : "Horarios");
+    expect(rows.some(row => row[1] === "0001" && row[2] === "Ána Silva")).toBe(true);
+    if (mode !== "rest") expect(exportedDurationMinutes(rows.find(row => row[2] === "Ána Silva")?.[7])).toBe(504);
+    expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 3);
+  });
+  it.each(["&sector=Reposição", "&employeeId=e1", "&profile=admin", "&revision=3&revision=4"])("rejects unsupported or ambiguous scope instead of exporting an unfiltered file: %s", async extra => {
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=xlsx" + extra));
+    expect(response.status).toBe(400); expect(response.headers.get("content-type")).toContain("json");
+    expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.capacity).not.toHaveBeenCalled();
+  });
   it.each(["rest", "hours", "both"] as const)("exports real %s worksheets from the authorized revision", async (mode) => {
     const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=xlsx&revision=3&mode=" + mode));
     expect(response.status).toBe(200);
@@ -247,6 +275,93 @@ it("requires recalculation of legacy six-day reports instead of silently exporti
 });
 
 describe("export availability and authorization on cache reuse", () => {
+  it.each((["VIEWER", "PLANNER", "APPROVER"] as const).flatMap(role => (["pdf", "xlsx"] as const).map(format => ({ role, format }))))("allows basic $format but denies ADMIN_FULL for branch $role", async ({ role, format }) => {
+    mocks.session = { user: { id: "u1", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+    mocks.grants.mockResolvedValue([{ tenantId: "t1", userId: "u1", branchCode: "02", role }]);
+    const url = `http://localhost/api/escalas/export?id=w1&format=${format}&mode=both&revision=3`;
+    const response = await GET(new Request(url + "&projection=BASIC_SCHEDULE")); expect(response.status).toBe(200);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (format === "pdf") expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
+    else expect(strFromU8(unzipSync(bytes)["xl/workbook.xml"])).toContain('name="Horarios"');
+    expect((await GET(new Request(url + "&projection=ADMIN_FULL"))).status).toBe(403);
+    expect(mocks.capacity).toHaveBeenCalledTimes(1);
+  });
+  it.each(["ADMIN_FULL", "BASIC_SCHEDULE"] as const)("keeps real admin/basic PDF bytes isolated when %s is generated first", async first => {
+    const current = workspace(); current.input.demands = [{ id: "confirmed", date: "2026-10-26", sector: "Reposição", start: 480, end: 540, minimum: 3, estimated: false }];
+    mocks.get.mockResolvedValue(current);
+    const order = [first, first === "ADMIN_FULL" ? "BASIC_SCHEDULE" : "ADMIN_FULL", first] as const;
+    const seen = new Map<string, Uint8Array>();
+    for (const projection of order) {
+      mocks.session = { user: { id: "u1", tenantId: "t1", role: projection === "ADMIN_FULL" ? "ADMIN" : "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+      mocks.grants.mockResolvedValue([{ tenantId: "t1", userId: "u1", branchCode: "02", role: "VIEWER" }]);
+      const response = await GET(new Request(`http://localhost/api/escalas/export?id=w1&format=pdf&mode=both&revision=3&projection=${projection}`));
+      expect(response.status).toBe(200);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (seen.has(projection)) expect(bytes).toEqual(seen.get(projection));
+      seen.set(projection, Uint8Array.from(bytes));
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs"), task = pdfjs.getDocument(pdfJsServerDocumentOptions(bytes));
+      const document = await task.promise;
+      try {
+        const pages: string[] = [];
+        for (let i = 1; i <= document.numPages; i++) { const content = await (await document.getPage(i)).getTextContent(); pages.push(content.items.filter(item => "str" in item).map(item => item.str).join(" ")); }
+        const text = pages.join(" "); expect(text).toContain("Ána Silva");
+        if (projection === "ADMIN_FULL") { expect(text).toContain("Nominal semanal:"); expect(text).toContain("Desfalques de cobertura"); }
+        else { expect(text).not.toContain("Nominal semanal:"); expect(text).not.toContain("Desfalques de cobertura"); }
+      } finally { await task.destroy(); }
+    }
+    expect(mocks.capacity).toHaveBeenCalledTimes(2);
+    mocks.session = { user: { id: "u1", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+    expect((await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&projection=ADMIN_FULL"))).status).toBe(403);
+    expect(mocks.capacity).toHaveBeenCalledTimes(2);
+  });
+  it.each(["pdf", "xlsx"] as const)("withholds cached real %s bytes after final revocation", async format => {
+    mocks.session = { user: { id: "u1", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+    mocks.grants.mockResolvedValue([{ tenantId: "t1", userId: "u1", branchCode: "02", role: "VIEWER" }]);
+    const request = () => new Request(`http://localhost/api/escalas/export?id=w1&format=${format}&revision=3`);
+    expect((await GET(request())).status).toBe(200);
+    mocks.user.mockResolvedValueOnce({ ...mocks.session.user, securityVersion: 0 }).mockResolvedValueOnce({ ...mocks.session.user, status: "BLOCKED", securityVersion: 1 });
+    const denied = await GET(request()); expect(denied.status).toBe(403);
+    expect(denied.headers.get("content-type")).toContain("json"); expect(denied.headers.get("content-disposition")).toBeNull();
+    expect(mocks.capacity).toHaveBeenCalledTimes(1);
+  });
+  it("delivers real basic PDF and XLSX bytes to an allowed reader without analytic sections", async () => {
+    mocks.session = { user: { id: "u1", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+    mocks.grants.mockResolvedValue([{ tenantId: "t1", userId: "u1", branchCode: "02", role: "VIEWER" }]);
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&projection=BASIC_SCHEDULE"));
+    expect(response.status).toBe(200);
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const loading = pdfjs.getDocument(pdfJsServerDocumentOptions(new Uint8Array(await response.arrayBuffer())));
+    const document = await loading.promise;
+    try {
+      const pages: string[] = [];
+      for (let i = 1; i <= document.numPages; i++) {
+        const content = await (await document.getPage(i)).getTextContent();
+        pages.push(content.items.filter(item => "str" in item).map(item => item.str).join(" "));
+      }
+      const text = pages.join(" "); expect(text).toContain("Ána Silva");
+      expect(text).not.toContain("Nominal semanal:"); expect(text).not.toContain("Desfalques de cobertura");
+    } finally { await loading.destroy(); }
+    const spreadsheet = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=xlsx"));
+    expect(spreadsheet.status).toBe(200);
+    const archive = unzipSync(new Uint8Array(await spreadsheet.arrayBuffer()));
+    expect(strFromU8(archive["xl/workbook.xml"])).toContain('name="Horarios"');
+    for (const [name, bytes] of Object.entries(archive)) if (name.endsWith(".xml")) {
+      expect(strFromU8(bytes)).not.toContain("Nominal semanal:"); expect(strFromU8(bytes)).not.toContain("Desfalques de cobertura");
+    }
+    expect((await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf&projection=ADMIN_FULL"))).status).toBe(403);
+  });
+  it("denies another branch and rechecks a revocation after rendering before delivering bytes", async () => {
+    mocks.session = { user: { id: "u1", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+    mocks.grants.mockResolvedValue([{ tenantId: "t1", userId: "u1", branchCode: "03", role: "VIEWER" }]);
+    expect((await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"))).status).toBe(403);
+    expect(mocks.capacity).not.toHaveBeenCalled();
+    mocks.grants.mockResolvedValue([{ tenantId: "t1", userId: "u1", branchCode: "02", role: "VIEWER" }]);
+    mocks.user.mockResolvedValueOnce({ ...mocks.session.user, securityVersion: 0 })
+      .mockResolvedValueOnce({ ...mocks.session.user, status: "BLOCKED", securityVersion: 1 });
+    const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"));
+    expect(response.status).toBe(403); expect(response.headers.get("content-type")).toContain("json");
+    expect(mocks.capacity).toHaveBeenCalledTimes(1);
+  });
   it.each(["pdf", "xlsx"])("isolates real %s bytes from an obsolete generator version at the same revision", async format => {
     const suffix = ["t1", "w1", 3, "both", format, format === "pdf" ? true : null];
     const obsolete = new Uint8Array([1, 2, 3]);
@@ -259,13 +374,14 @@ describe("export availability and authorization on cache reuse", () => {
     const bytes = new Uint8Array(await first.arrayBuffer());
     expect(bytes).not.toEqual(obsolete);
     expect(new Uint8Array(await second.arrayBuffer())).toEqual(bytes);
-    expect(lookup.mock.calls.map(([key]) => JSON.parse(key)[0])).toEqual([ESCALA_EXPORT_CONTENT_VERSION, ESCALA_EXPORT_CONTENT_VERSION]);
+    expect(lookup.mock.calls.map(([key]) => JSON.parse(JSON.parse(key)[0])[2])).toEqual([ESCALA_EXPORT_CONTENT_VERSION, ESCALA_EXPORT_CONTENT_VERSION]);
+    expect(lookup.mock.calls.map(([key]) => JSON.parse(JSON.parse(key)[0])[9])).toEqual(["BASIC_SCHEDULE", "BASIC_SCHEDULE"]);
     expect(mocks.capacity).toHaveBeenCalledTimes(1);
     expect(mocks.get).toHaveBeenCalledTimes(2);
     if (format === "pdf") expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
     else expect(strFromU8(unzipSync(bytes)["xl/workbook.xml"])).toContain('name="Horarios"');
   });
-  it("defaults to grouped PDF, separates the compact cache and leaves XLSX unaffected", async () => {
+  it("uses the scoped compact layout consistently and leaves XLSX unaffected", async () => {
     const url = "http://localhost/api/escalas/export?id=w1&mode=rest";
     const grouped = await GET(new Request(url + "&format=pdf"));
     const explicit = await GET(new Request(url + "&format=pdf&separateSectors=true"));
@@ -273,14 +389,14 @@ describe("export availability and authorization on cache reuse", () => {
     expect([grouped.status, explicit.status, compact.status]).toEqual([200, 200, 200]);
     const bytes = Buffer.from(await grouped.arrayBuffer());
     expect(Buffer.from(await explicit.arrayBuffer())).toEqual(bytes);
-    expect((await PDFDocument.load(bytes)).getPageCount()).toBe(2);
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBe(1);
     expect((await PDFDocument.load(await compact.arrayBuffer())).getPageCount()).toBe(1);
-    expect(mocks.capacity).toHaveBeenCalledTimes(2);
+    expect(mocks.capacity).toHaveBeenCalledTimes(1);
     const xlsx = await GET(new Request(url + "&format=xlsx"));
     const xlsxFlag = await GET(new Request(url + "&format=xlsx&separateSectors=false"));
     expect([xlsx.status, xlsxFlag.status]).toEqual([200, 200]);
     expect(Buffer.from(await xlsx.arrayBuffer())).toEqual(Buffer.from(await xlsxFlag.arrayBuffer()));
-    expect(mocks.capacity).toHaveBeenCalledTimes(3);
+    expect(mocks.capacity).toHaveBeenCalledTimes(2);
     expect((await GET(new Request(url + "&format=pdf&separateSectors=1"))).status).toBe(400);
     expect(mocks.get).toHaveBeenCalledTimes(5);
   });

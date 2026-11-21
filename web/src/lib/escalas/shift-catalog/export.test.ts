@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTurnoExportManifest, downloadTurnoExport } from "./export";
+import { GET } from "../../../app/api/escalas/turnos/export/route";
 
 import type { EscalaWorkspace } from "../types";
 const state = vi.hoisted(() => ({
@@ -8,8 +9,12 @@ const state = vi.hoisted(() => ({
   queryRaw: vi.fn(),
   store: vi.fn(),
   read: vi.fn(),
+  user: vi.fn(), policy: vi.fn(),
 }));
-vi.mock("@/lib/prisma", () => ({ prisma: { $queryRaw: state.queryRaw } }));
+vi.mock("@/lib/prisma", () => ({ prisma: { $queryRaw: state.queryRaw, user: { findFirst: state.user }, escalaModuleAccessPolicy: { findUnique: state.policy } } }));
+vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/escalas/access.server", () => ({ requireEscalaAccess: async () => ({ ok: true, actor: { userId: "u1", tenantId: "t1", admin: true } }) }));
+vi.mock("@/lib/api/security", async original => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: async () => null }));
 vi.mock("../service", () => ({ getEscala: state.getEscala }));
 vi.mock("./catalog", () => ({ storeTurnoManifest: state.store, readTurnoManifest: state.read }));
 
@@ -41,6 +46,8 @@ const selections = [{ workspaceId: "w1", revision: 3, employees: [{ employeeId: 
 beforeEach(() => {
   vi.clearAllMocks();
   state.payload = null;
+  state.user.mockResolvedValue({ id: "u1", tenantId: "t1", status: "ACTIVE", role: "ADMIN", securityVersion: 0 });
+  state.policy.mockResolvedValue({ mode: "ADMIN_ONLY" });
   state.getEscala.mockImplementation(async (_actor, _id) => workspace());
   state.queryRaw.mockResolvedValue([{ code: 1500, firstIn: 480, firstOut: 720, secondIn: 840, secondOut: 1104 }]);
   state.store.mockImplementation(async (_actor, payload) => { state.payload = payload; return "manifest-1"; });
@@ -48,6 +55,28 @@ beforeEach(() => {
 });
 
 describe("turn TXT manifest", () => {
+  it.each(["TXT1", "TXT2"] as const)("delivers real %s bytes through HTTP with current authorization", async format => {
+    await createTurnoExportManifest(actor, { month: 12, year: 2026, selections });
+    const response = await GET(new Request(`http://localhost/api/escalas/turnos/export?manifestId=manifest-1&format=${format}`));
+    expect(response.status).toBe(200); expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.text()).toBe(format === "TXT1"
+      ? "0007,08:00,12:00,14:00,18:24\r\n0008,08:00,12:00,14:00,18:24\r\n"
+      : "1500,08:00 12:00 14:00 18:24,08:00,12:00,14:00,18:24\r\n");
+    expect(state.user).toHaveBeenCalledTimes(2);
+  });
+  it.each(["blocked", "demoted", "security-version"])("withholds real TXT after access becomes %s while rebuilding it", async change => {
+    await createTurnoExportManifest(actor, { month: 12, year: 2026, selections });
+    state.queryRaw.mockImplementationOnce(async () => {
+      state.user.mockResolvedValue({ id: "u1", tenantId: "t1", status: change === "blocked" ? "BLOCKED" : "ACTIVE",
+        role: change === "demoted" ? "OPERATOR" : "ADMIN", securityVersion: change === "security-version" ? 1 : 0 });
+      return [{ code: 1500, firstIn: 480, firstOut: 720, secondIn: 840, secondOut: 1104 }];
+    });
+    const response = await GET(new Request("http://localhost/api/escalas/turnos/export?manifestId=manifest-1&format=TXT1"));
+    expect(response.status).toBe(403); expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(await response.json()).toMatchObject({ error: { code: "ESCALA_ACCESS_REQUIRED" } });
+  });
   it.each([true, false])("uses UNTIMED for legacy four-zero omissions with an explicit selection: %s", async selected => {
     const value = workspace();
     value.input.employees[0].scheduleMode = "MISSING";

@@ -282,16 +282,16 @@ function wrapText(text: string, width: number, font: PDFFont, size: number): str
   return result;
 }
 
-type PdfLayout = { separateSectors?: boolean };
+type PdfLayout = { separateSectors?: boolean; projection?: "BASIC_SCHEDULE" | "ADMIN_FULL" };
 
-export async function exportEscalaPdf(raw: EscalaWorkspace, mode: EscalaExportMode = "both", { separateSectors = true }: PdfLayout = {}): Promise<Uint8Array> {
+export async function exportEscalaPdf(raw: EscalaWorkspace, mode: EscalaExportMode = "both", { separateSectors = true, projection = "ADMIN_FULL" }: PdfLayout = {}): Promise<Uint8Array> {
   const workspace = { ...raw, input: operationalEscalaInput(raw.input) };
   const referencesOnly = isHoursReferenceOnly(workspace.input);
   if (referencesOnly) mode = "hours";
   const document = await PDFDocument.create();
   const font = await document.embedFont(StandardFonts.Helvetica), bold = await document.embedFont(StandardFonts.HelveticaBold);
   const model = buildEscalaPresentation(workspace);
-  const analysis = referencesOnly || mode === "rest" ? null : analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", details: true });
+  const analysis = projection === "BASIC_SCHEDULE" || referencesOnly || mode === "rest" ? null : analyzeCoverage(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", details: true });
   const coverage = coverageReport(analysis ? buildCoverageReport(workspace.input, workspace.input, { referenceOrigin: "PERSISTED", context: { revision: workspace.revision, kind: "SAVED" } }) : null, workspace.input);
   const sectors = [...new Set([...(mode === "rest" ? model.restPeople : [...model.people, ...model.hoursPeople]).map(({ employee }) => employee.sector),
     ...model.excluded.map(({ employee }) => employee.sector), ...coverage.map(row => row.sector)])].sort(compareSectors);

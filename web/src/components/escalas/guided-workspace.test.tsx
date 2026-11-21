@@ -1,6 +1,9 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup as renderMarkup } from "react-dom/server";
+import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { EscalaClientAccess } from "@/lib/escalas/access-view";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
+import { EscalaAccessProvider } from "./access-context";
 import { EscalasWorkspace } from "./escalas-workspace";
 import { useEscalasWorkspace } from "./use-escalas-workspace";
 import { newEmployee, newInput } from "./workspace-model";
@@ -16,8 +19,11 @@ function state(workspace: EscalaWorkspace | null = null) {
     flushDraft: vi.fn(async () => workspace), workspaces: workspace ? [workspace] : [],
     canCreate: true, workspace, input: workspace?.input ?? null, validation: workspace?.validation ?? null,
     dirty: false, outdated: false, busy: "", error: "", problem: null, notice: "", generated: null,
-    pendingOpen: null, setPendingOpen: action, update: action, open: action, create: action, upgradeCalendar: action, save: action,
-    validate: action, generate: action, applyGenerated: action, undoRoster: action, publish: action,
+    pendingOpen: null, setPendingOpen: action, update: action, open: action, create: action, createApproved: action,
+    addEmployee: vi.fn(async () => false), replaceImport: vi.fn(async () => null), rebaseApproved: action,
+    upgradeCalendar: action, save: action,
+    validate: action, generate: action, canGenerate: Boolean(workspace?.canEdit), applyGenerated: action,
+    undoRoster: vi.fn(async () => false), publish: action,
     discard: action, deleteWorkspace: action, resetKey: 0, cancellable: false, cancelLabel: "Cancelar análise",
     cancelAnalysis: action, dismissProposals: action, canEdit: Boolean(workspace?.canEdit),
   } satisfies ReturnType<typeof useEscalasWorkspace>;
@@ -31,6 +37,8 @@ function plan(): EscalaWorkspace {
 }
 
 describe("guided scheduling workspace", () => {
+  beforeEach(() => vi.mocked(useEscalasWorkspace).mockReturnValue(state()));
+
   it("explains the active convention and offers an explicit copy only for editable legacy plans", () => {
     const workspace = plan();
     vi.mocked(useEscalasWorkspace).mockReturnValue(state(workspace));
@@ -49,8 +57,6 @@ describe("guided scheduling workspace", () => {
     expect(renderToStaticMarkup(<EscalasWorkspace />)).not.toContain("Usar semana de domingo a sábado");
   });
 
-  beforeEach(() => vi.mocked(useEscalasWorkspace).mockReturnValue(state()));
-
   it("starts with an open creation form and does not ask for advanced rules", () => {
     const html = renderToStaticMarkup(<EscalasWorkspace />);
     expect(html).toMatch(/<details[^>]*open=""[^>]*><summary[^>]*>Criar planejamento/);
@@ -65,34 +71,57 @@ describe("guided scheduling workspace", () => {
     const html = renderToStaticMarkup(<EscalasWorkspace />);
     const navigation = html.slice(html.indexOf('aria-label="Etapas do planejamento"'), html.indexOf("</nav>"));
     expect((navigation.match(/<button/g) ?? []).length).toBe(3);
-    expect(navigation).toContain("Importar equipe");
-    expect(navigation).toContain("Escolher jornada e gerar");
-    expect(navigation).toContain("Revisar e exportar");
+    expect(navigation).toContain("Equipe");
+    expect(navigation).toContain("Montar escala");
+    expect(navigation).toContain("Horários, folgas e arquivos");
     expect(navigation).toContain('aria-current="step"');
     expect(html).toMatch(/<section hidden="" inert="" id="escala-area-generate"/);
-    expect(html).toContain("Voltar para importar equipe");
+    expect(html).toContain("Conferir equipe");
     expect(html).toMatch(/<nav aria-label="Relatórios opcionais"[^>]*><button[^>]*aria-controls="escala-area-reports"[^>]*>Relatórios e gráficos PDF<\/button><\/nav>/);
     expect(html).not.toContain("Relatórios operacionais (opcional)");
-    expect(html).toContain("Ferramentas e ajustes opcionais");
+    expect(html).toContain("Conferências e configurações");
     expect(html).not.toContain("Conteúdo do PDF e XLSX");
-    expect(html).toContain("FPRE136 em CSV (recomendado) ou XLSX");
+    expect(html).toContain("Arquivo de equipe CSV ou XLSX");
+    expect(html).toMatch(/<input(?=[^>]*type="file")(?=[^>]*accept="\.csv,\.xlsx")[^>]*>/);
   });
 
   it("offers the next guided action for an imported team without requiring manual rules", () => {
     const workspace = plan();
-    workspace.input.employees = [{ ...newEmployee(42, "day"), id: "person", registration: "001", name: "Pessoa" }];
+    workspace.input.employees = [{ ...newEmployee(42, workspace.input.shifts[0].id), id: "person", registration: "001", name: "Pessoa" }];
     const model = state(workspace);
     vi.mocked(useEscalasWorkspace).mockReturnValue(model);
     const html = renderToStaticMarkup(<EscalasWorkspace />);
     expect(html).not.toContain("Selecione a filial e o mês para planejar.");
-    expect(html).toContain("1 colaboradores incluídos");
-    expect(html).toContain("Continuar para jornada e geração");
-    expect(html).toContain("Férias e afastamentos são opcionais");
+    expect(html).toContain("1 colaborador incluído");
+    expect(html).toContain("Continuar para montar escala");
+    expect(html).toContain("Confira os colaboradores e os afastamentos registrados");
     expect(html).toContain("08:24");
     expect(html).toContain("Fechamento da loja");
     expect(html).toMatch(/<input(?=[^>]*type="time")(?=[^>]*value="20:00")[^>]*>/);
-    expect(html).toContain("Ajustar pausas de jornadas curtas (opcional)");
+    expect(html).toContain("Equilibrar os dois períodos de trabalho em até 4h30 cada");
+    expect(html).toContain("Simular jornada de mais de 4h até 6h sem pausa de 15 min");
     expect(model.generate).not.toHaveBeenCalled();
     expect(model.update).not.toHaveBeenCalled();
+  });
+  it("guides the branch operator to generate without offering imports or administrative rules", () => {
+    const workspace = plan();
+    workspace.input.employees = [{ ...newEmployee(42, workspace.input.shifts[0].id), id: "branch-person", registration: "002", name: "Pessoa da filial" }];
+    const model = state(workspace);
+    vi.mocked(useEscalasWorkspace).mockReturnValue(model);
+    const access: EscalaClientAccess = {
+      channel: "USERNAME", roleLabel: "Operador", administrator: false, allBranches: false,
+      branches: [{ code: "07", label: "Hiper", capabilities: ["workspace.read", "workspace.save", "schedule.generate", "schedule.apply", "employee.manage"] }],
+    };
+
+    const html = renderMarkup(<EscalaAccessProvider value={access}><EscalasWorkspace /></EscalaAccessProvider>);
+
+    expect(html).toContain("Continuar para montar escala");
+    expect(html).toMatch(/<button(?![^>]*\sdisabled(?:=|\s|>))[^>]*>Gerar escala e horários<\/button>/);
+    expect(html).toContain("A jornada e as regras desta filial foram definidas pelo administrador");
+    expect(html).not.toContain("Importar ou atualizar arquivos da equipe");
+    expect(html).not.toContain("Equilibrar os dois períodos de trabalho em até 4h30 cada");
+    expect(html).not.toContain("Simular jornada de mais de 4h até 6h sem pausa de 15 min");
+    expect(html).not.toContain("Relatórios e gráficos PDF");
+    expect(model.generate).not.toHaveBeenCalled();
   });
 });

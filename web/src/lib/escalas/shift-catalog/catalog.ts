@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getEscala, parseEscalaInput } from "../service";
-import type { EscalaActor } from "../access";
+import { lockEscalaAccess, requireEscalaCapability, type EscalaActor } from "../access";
 import { isAdministrativeEscalaSector } from "../eligibility";
 import { EscalaError } from "../errors";
 import type { EscalaInput } from "../types";
 import type { TurnoCatalogEntryDto, TurnoCatalogPageDto, TurnoCatalogSyncRequest, TurnoCatalogSyncSource, TurnoCatalogSyncResult } from "./contracts";
 import { allocateInitialCatalog, appendCatalogEntries, clockMinutes, markingsFromShift, minutesClock, markingKey } from "./domain";
+import type { TurnoSelectionPayload } from "./selection-export";
 
 type CatalogRow = {
   code: number;
@@ -115,6 +116,7 @@ function administrativeOnlyShiftIds(input: EscalaInput): ReadonlySet<string> {
 }
 
 export async function syncTurnoCatalog(actor: EscalaActor, request: TurnoCatalogSyncRequest): Promise<TurnoCatalogSyncResult> {
+  await requireEscalaCapability(actor, "settings.manage");
   if (!request.confirm || request.sources.length === 0) {
     throw new EscalaError(400, "TURNO_CONFIRMATION_REQUIRED", "Confirme a inclusão explícita dos horários selecionados no catálogo da empresa.");
   }
@@ -126,6 +128,8 @@ export async function syncTurnoCatalog(actor: EscalaActor, request: TurnoCatalog
   }
 
   return withTransactionRetry(() => prisma.$transaction(async tx => {
+    await lockEscalaAccess(tx, actor.tenantId);
+    await requireEscalaCapability(actor, "settings.manage", undefined, tx);
     const lockedWorkspaces = await tx.$queryRaw<{ id: string; revision: number }[]>`
       SELECT "id", "revision"
       FROM "EscalaWorkspace"
@@ -218,7 +222,7 @@ export async function syncTurnoCatalog(actor: EscalaActor, request: TurnoCatalog
   }));
 }
 
-export type TurnoManifestPayload = {
+export type TurnoManifestPayload = TurnoSelectionPayload | {
   version: 1;
   month: number;
   year: number;

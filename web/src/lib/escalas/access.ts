@@ -1,12 +1,59 @@
 import type { AppSession } from "@/auth";
+import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { canonicalBranchCode } from "./branch-code";
 
 import { EscalaError } from "./errors";
+import { decideEscalaPermission, type EscalaCapability, type EscalaPermissionContext } from "./permissions";
+import { resolveEscalaPermissionScope } from "./permission-scope";
+import { resolveEscalaOperatorSession } from "./operator-session-policy";
 export { EscalaError } from "./errors";
 
-export type EscalaActor = { userId: string | null; tenantId: string; admin: boolean; moduleSessionId?: string; accountSessionId?: string };
+export type EscalaActor = { userId: string | null; tenantId: string; admin: boolean; moduleSessionId?: string; accountSessionId?: string; accountSecurityVersion?: number };
 export type EscalaPermission = { canEdit: boolean; canPublish: boolean };
+
+/** Serializes module policy/grant/session changes and final writes in the same tenant. */
+export async function lockEscalaAccess(tx: Prisma.TransactionClient, tenantId: string) {
+  const key = `escala-access:${tenantId}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+}
+
+export async function currentEscalaPermissionContext(actor: EscalaActor,
+  db: Prisma.TransactionClient = prisma): Promise<EscalaPermissionContext> {
+  const policy = await db.escalaModuleAccessPolicy.findUnique({ where: { tenantId: actor.tenantId } });
+  if (actor.userId) {
+    if (db !== prisma) await db.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${actor.userId} AND "tenantId" = ${actor.tenantId} FOR SHARE`;
+    const user = await db.user.findFirst({ where: { id: actor.userId, tenantId: actor.tenantId },
+      select: { id: true, tenantId: true, status: true, role: true, securityVersion: true } });
+    if (!user || user.id !== actor.userId || user.tenantId !== actor.tenantId || user.status !== "ACTIVE" || (actor.admin && user.role !== "ADMIN")
+      || (actor.accountSecurityVersion !== undefined && actor.accountSecurityVersion !== user.securityVersion)) {
+      throw new EscalaError(403, "ESCALA_ACCESS_REQUIRED", "O acesso da conta mudou. Entre novamente.");
+    }
+    actor.accountSecurityVersion = user.securityVersion;
+    const grants = user.role === "ADMIN" ? [] : await db.escalaBranchAccess.findMany({
+      where: { tenantId: actor.tenantId, userId: user.id },
+      select: { tenantId: true, userId: true, branchCode: true, role: true },
+    });
+    return { tenantId: actor.tenantId, mode: policy?.mode ?? "ADMIN_ONLY",
+      principal: { kind: "account", id: user.id, tenantId: actor.tenantId, status: user.status, role: user.role, branchGrants: grants } };
+  }
+  if (actor.moduleSessionId) {
+    const session = await db.escalaModuleSession.findFirst({ where: { id: actor.moduleSessionId, tenantId: actor.tenantId },
+      include: { operator: { include: { branchGrants: true } } } });
+    const resolved = resolveEscalaOperatorSession({ tenantId: actor.tenantId, now: new Date(), policy,
+      session, operator: session?.operator ?? null });
+    if (resolved.kind === "resolved") return { tenantId: actor.tenantId, mode: "SCOPED", principal: resolved.principal };
+  }
+  throw new EscalaError(401, "ESCALA_ACCESS_REQUIRED", "O acesso expirou ou foi revogado. Entre novamente.");
+}
+
+export async function requireEscalaCapability(actor: EscalaActor, capability: EscalaCapability,
+  branchCode?: string, db: Prisma.TransactionClient = prisma) {
+  const context = { ...await currentEscalaPermissionContext(actor, db), branchCode };
+  if (!decideEscalaPermission(context, capability).allowed) throw new EscalaError(403,
+    "ESCALA_ACTION_FORBIDDEN", "Este acesso não permite realizar esta ação nesta filial.");
+  return context;
+}
 
 export function escalaActor(session: AppSession): EscalaActor {
   if (session.user.status !== "ACTIVE" || !session.user.tenantId) {
@@ -16,37 +63,21 @@ export function escalaActor(session: AppSession): EscalaActor {
 }
 
 export async function branchPermission(actor: EscalaActor, branchCode: string): Promise<EscalaPermission> {
-  if (actor.moduleSessionId) return { canEdit: true, canPublish: false };
-  if (actor.admin) return { canEdit: true, canPublish: true };
-  if (!actor.userId) throw new EscalaError(403, "ESCALA_BRANCH_FORBIDDEN", "Este acesso não permite consultar a filial.");
-  const access = await prisma.escalaBranchAccess.findUnique({
-    where: { tenantId_userId_branchCode: { tenantId: actor.tenantId, userId: actor.userId, branchCode: canonicalBranchCode(branchCode) } },
-    select: { role: true },
-  });
-  if (!access || !["VIEWER", "PLANNER", "APPROVER"].includes(access.role)) {
-    throw new EscalaError(403, "ESCALA_BRANCH_FORBIDDEN", "Você não possui acesso a esta filial.");
-  }
-  return { canEdit: access.role !== "VIEWER", canPublish: access.role === "APPROVER" };
+  const context = { ...await currentEscalaPermissionContext(actor), branchCode: canonicalBranchCode(branchCode) };
+  if (!decideEscalaPermission(context, "workspace.read").allowed) throw new EscalaError(403, "ESCALA_BRANCH_FORBIDDEN", "Você não possui acesso a esta filial.");
+  return { canEdit: decideEscalaPermission(context, "workspace.save").allowed,
+    canPublish: decideEscalaPermission(context, "workspace.publish").allowed };
 }
 
-export async function allowedBranches(actor: EscalaActor): Promise<string[] | null> {
-  if (actor.moduleSessionId || actor.admin) return null;
-  if (!actor.userId) return [];
-  const grants = await prisma.escalaBranchAccess.findMany({
-    where: { tenantId: actor.tenantId, userId: actor.userId, role: { in: ["VIEWER", "PLANNER", "APPROVER"] } },
-    select: { branchCode: true },
-  });
-  return [...new Set(grants.map((grant) => canonicalBranchCode(grant.branchCode)))];
+export async function allowedBranches(actor: EscalaActor, capability: EscalaCapability = "workspace.read"): Promise<string[] | null> {
+  const scope = resolveEscalaPermissionScope(await currentEscalaPermissionContext(actor), capability);
+  return scope.kind === "all" ? null : scope.kind === "branches" ? [...scope.branchCodes] : [];
 }
 
-/** Capability discovery only; CREATE still checks the requested branch independently. */
+/** Discovery only; creating a workspace still authorizes its requested branch. */
 export async function canCreateEscala(actor: EscalaActor): Promise<boolean> {
-  if (actor.moduleSessionId || actor.admin) return true;
-  if (!actor.userId) return false;
-  return Boolean(await prisma.escalaBranchAccess.findFirst({
-    where: { tenantId: actor.tenantId, userId: actor.userId, role: { in: ["PLANNER", "APPROVER"] } },
-    select: { branchCode: true },
-  }));
+  const branches = await allowedBranches(actor, "workspace.create");
+  return branches === null || branches.length > 0;
 }
 
 export function requireEscalaPermission(permission: EscalaPermission, action: "edit" | "publish") {

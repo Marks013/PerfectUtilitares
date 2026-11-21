@@ -52,6 +52,15 @@ async function pdfText(bytes: Uint8Array): Promise<string> {
 }
 
 describe("central coverage analysis in real operational files", () => {
+  it.each(["rest", "hours", "both"] as const)("never calculates administrative analysis for a real basic %s PDF", async mode => {
+    const workspace = fixture(), before = structuredClone(workspace);
+    const analysisSpy = vi.spyOn(coverageAnalysis, "analyzeCoverage"), reportSpy = vi.spyOn(coverageReport, "buildCoverageReport");
+    try {
+      const text = await pdfText(await exportEscalaPdf(workspace, mode, { projection: "BASIC_SCHEDULE" }));
+      expect(text).toContain("Pessoa sintética a"); expect(text).not.toMatch(/Nominal semanal:|Desfalques de cobertura/);
+      expect(analysisSpy).not.toHaveBeenCalled(); expect(reportSpy).not.toHaveBeenCalled(); expect(workspace).toEqual(before);
+    } finally { analysisSpy.mockRestore(); reportSpy.mockRestore(); }
+  });
   it.each(["rest", "hours", "both"] as const)("omits analysis sheets and their calculations from the %s XLSX", mode => {
     const workspace = fixture(), before = structuredClone(workspace);
     const analysisSpy = vi.spyOn(coverageAnalysis, "analyzeCoverage"), reportSpy = vi.spyOn(coverageReport, "buildCoverageReport");

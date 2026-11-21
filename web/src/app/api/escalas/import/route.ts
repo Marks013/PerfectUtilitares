@@ -2,10 +2,12 @@ import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
 import { readMultipartBody } from "@/lib/api/multipart";
-import { branchPermission, requireEscalaPermission } from "@/lib/escalas/access";
+import { branchPermission, requireEscalaPermission, requireEscalaCapability } from "@/lib/escalas/access";
 import { isAbsenceImportDate, previewFphi105Import } from "@/lib/escalas/fphi105";
 import { ESCALA_IMPORT_TEMPLATE, previewEscalaImport } from "@/lib/escalas/import";
 import { XlsxSecurityError } from "@/lib/spreadsheets/xlsx-security";
+import { importSyncCommandSchema } from "@/lib/escalas/import-sync-contracts";
+import { applyAdminImport, previewAdminImport, type ImportSyncFile } from "@/lib/escalas/import-sync";
 import { escalaFailure, escalaJson } from "../http";
 
 export const runtime = "nodejs";
@@ -26,6 +28,7 @@ export async function GET() {
   const guard = await requireEscalaAccess();
   if (!guard.ok) return guard.response;
   try {
+    await requireEscalaCapability(guard.actor, "import.manage");
     return new Response(`\uFEFF${ESCALA_IMPORT_TEMPLATE}`, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="modelo-escalas.csv"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", Vary: "Cookie" } });
   } catch (error) { return escalaFailure(error); }
 }
@@ -41,6 +44,31 @@ export async function POST(request: Request) {
   if (limited) return limited;
   const body = await readMultipartBody(request, 1024 * 1024);
   if (!body.ok) return body.response;
+  if (body.data.has("command")) {
+    for (const name of body.data.keys()) if (!["file", "command"].includes(name) || body.data.getAll(name).length !== 1) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Envie somente um comando e um arquivo para confirmar a substituição.");
+    const encoded = body.data.get("command");
+    if (typeof encoded !== "string" || encoded.length > 8192) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Informe um comando de substituição válido.");
+    let metadata: unknown;
+    try { metadata = JSON.parse(encoded); }
+    catch { return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Não foi possível ler o comando de substituição."); }
+    const command = importSyncCommandSchema.safeParse(metadata);
+    if (!command.success) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Confira a finalidade, revisão, intervalo e confirmação da substituição.");
+    const upload = body.data.get("file");
+    if (!(upload instanceof File) || upload.size < 1 || upload.size > 512 * 1024) return jsonError(400, "ESCALA_IMPORT_FILE", "Envie um CSV ou XLSX de até 512 KB.");
+    const extension = upload.name.toLowerCase().endsWith(".xlsx") ? "xlsx" : upload.name.toLowerCase().endsWith(".csv") ? "csv" : null;
+    const mimeTypes = extension === "xlsx" ? ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", ""] : ["text/csv", "text/plain", "application/csv", "application/vnd.ms-excel", "application/octet-stream", ""];
+    if (!extension || !mimeTypes.includes(upload.type) || (command.data.purpose === "ABSENCES" && extension !== "csv")) return jsonError(415, "ESCALA_IMPORT_TYPE", "Confira o formato do arquivo para esta finalidade.");
+    try {
+      await requireEscalaCapability(guard.actor, "import.manage");
+      const file: ImportSyncFile = { buffer: Buffer.from(await upload.arrayBuffer()), extension };
+      const result = command.data.action === "PREVIEW_REPLACE"
+        ? { preview: await previewAdminImport(guard.actor, command.data, file) }
+        : await applyAdminImport(guard.actor, command.data, file);
+      await requireEscalaCapability(guard.actor, "import.manage");
+      return escalaJson(result);
+    } catch (error) { return escalaFailure(error); }
+  }
+  if (body.data.has("action")) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Envie a ação no comando de substituição.");
   const purpose = body.data.get("purpose") ?? "EMPLOYEES";
   if (purpose !== "EMPLOYEES" && purpose !== "ABSENCES") return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Selecione uma importação de equipe ou afastamentos.");
   let employees: unknown;
@@ -61,6 +89,7 @@ export async function POST(request: Request) {
   if (purpose === "ABSENCES" && extension !== "csv") return jsonError(415, "ESCALA_IMPORT_TYPE", "Envie o relatório FPHI105 em CSV.");
   try {
     const actor = guard.actor;
+    await requireEscalaCapability(actor, "import.manage");
     const branchCode = absences?.success ? absences.data.branchCode : parsed.success ? parsed.data.branchCode : "";
     requireEscalaPermission(await branchPermission(actor, branchCode), "edit");
     const buffer = Buffer.from(await file.arrayBuffer());

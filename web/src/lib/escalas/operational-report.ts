@@ -2,12 +2,12 @@ import { buildCoverageReport } from "./coverage-report";
 import type { CoverageReport, OperationalAnalysis } from "./coverage-report-contracts";
 import { analyzeOperational } from "./operational-analysis";
 import { buildCoveragePresence } from "./coverage-presence";
-import { monthBounds, visibleDates } from "./dates";
+import { dayOfWeek, monthBounds, visibleDates, weekStart } from "./dates";
 import { applyRestEligibility, operationalEscalaInput } from "./eligibility";
 import { EscalaError } from "./errors";
 import { isHoursReferenceOnly } from "./hours-reference";
 import { compareSectors, sortScheduleEntries } from "./order";
-import { buildEscalaPresentation } from "./presentation";
+import { buildEscalaPresentation, escalaDuration } from "./presentation";
 import { operationalReportOptionsSchema, validateOperationalReportSelection, type OperationalReportContext, type OperationalReportOptions } from "./operational-report-contracts";
 import type { EscalaShift, EscalaWorkspace } from "./types";
 import { planningWeekStartsOn } from "./planning-calendar";
@@ -100,14 +100,63 @@ export function buildOperationalReport(workspace: EscalaWorkspace, rawOptions: O
         (index.get(options.date + "\0" + employee.sector) ?? []).filter(interval => interval.employee.id === employee.id)
           .map(interval => ({ start: interval.start, end: interval.end, kind: kinds[i] })));
       presence.push({ employeeId: employee.id, sector: employee.sector, label: employee.registration + " - " + employee.name, role: employee.role,
-        state: cell?.description ?? "Sem atribuição", segments: segments.sort((a, b) => a.start - b.start || a.end - b.end) });
+        state: duty ? "Plantão (PL), sem horário informado" : cell?.description ?? "Sem atribuição", segments: segments.sort((a, b) => a.start - b.start || a.end - b.end) });
     }
   }
+  const assignments = new Map(input.assignments.map(day => [day.employeeId + "\0" + day.date, day]));
+  const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
+  const calendarPeople = referencesOnly ? [] : people.filter(person => person.employee.planningEnabled !== false).map(person => {
+    const cells = person.cells.map(cell => {
+      const assignment = assignments.get(person.employee.id + "\0" + cell.date);
+      const included = cell.code !== "FV" && cell.code !== "X";
+      const kind = included ? assignment?.kind ?? null : null;
+      const shift = kind === "WORK" && cell.shiftId ? shifts.get(cell.shiftId) : undefined;
+      const validClock = !!shift?.segments.length && shift.segments.every(segment => Number.isInteger(segment.start)
+        && Number.isInteger(segment.end) && segment.start >= 0 && segment.end <= 2880 && segment.end > segment.start);
+      const code = kind === "OFF" ? person.employee.offMode !== "VARIABLE" && person.employee.fixedOffDays.includes(dayOfWeek(cell.date)) ? "FF" : "FM"
+        : kind === "DUTY" ? "PL" : kind === "WORK" && !validClock ? person.employee.scheduleMode === "UNTIMED" ? "ENC" : "SH" : cell.code;
+      return { date: cell.date, code, kind, timedWorkMinutes: validClock ? shift.segments.reduce((sum, segment) => sum + (segment.kind === "WORK" ? segment.end - segment.start : 0), 0) : 0 };
+    });
+    const count = (predicate: (cell: typeof cells[number]) => boolean) => cells.filter(predicate).length;
+    return { employeeId: person.employee.id, fixedOffDays: person.employee.offMode === "VARIABLE" ? [] : [...person.employee.fixedOffDays], cells,
+      totals: { sundayOff: count(cell => cell.kind === "OFF" && dayOfWeek(cell.date) === 6),
+        saturdayOff: count(cell => cell.kind === "OFF" && dayOfWeek(cell.date) === 5),
+        worked: count(cell => cell.kind === "WORK" || cell.kind === "DUTY"), duty: count(cell => cell.kind === "DUTY"),
+        unassigned: count(cell => cell.code === "NP"), unknownSundays: count(cell => cell.code === "NP" && dayOfWeek(cell.date) === 6),
+        unknownSaturdays: count(cell => cell.code === "NP" && dayOfWeek(cell.date) === 5),
+        absence: count(cell => cell.kind === "ABSENCE"), holiday: count(cell => cell.kind === "HOLIDAY"),
+        timedWorkMinutes: cells.reduce((sum, cell) => sum + cell.timedWorkMinutes, 0) } };
+  });
+  const dates = referencesOnly ? [] : presentation.dates;
+  const calendar = { people: calendarPeople, weeks: [...new Set(dates.map(date => weekStart(date, input)))].map(start => ({ start, dates: dates.filter(date => weekStart(date, input) === start) })),
+    days: dates.map(date => {
+      const cells = calendarPeople.flatMap(person => person.cells.filter(cell => cell.date === date));
+      const count = (kind: typeof cells[number]["kind"]) => cells.filter(cell => cell.kind === kind).length;
+      const unassigned = cells.filter(cell => cell.code === "NP").length;
+      return { date, working: unassigned ? null : count("WORK") + count("DUTY"), knownWorking: count("WORK") + count("DUTY"),
+        duty: count("DUTY"), off: unassigned ? null : count("OFF"), knownOff: count("OFF"), absence: count("ABSENCE"), holiday: count("HOLIDAY"),
+        withoutClock: cells.filter(cell => cell.code === "ENC" || cell.code === "SH").length,
+        unassigned,
+        // Demands are simultaneous interval constraints, never distinct people per civil day.
+        minimum: null, balance: null };
+    }) };
+  const points = [...new Set([0, 1440, ...presence.flatMap(row => row.segments.flatMap(segment => [segment.start, segment.end]))])].sort((a, b) => a - b);
+  const presenceWindows = presence.length ? points.slice(0, -1).map((start, index) => ({ start, end: points[index + 1],
+    present: presence.filter(row => row.segments.some(segment => segment.kind === "WORK" && segment.start <= start && segment.end > start)).length,
+    pause: presence.filter(row => row.segments.some(segment => segment.kind !== "WORK" && segment.start <= start && segment.end > start)
+      && !row.segments.some(segment => segment.kind === "WORK" && segment.start <= start && segment.end > start)).length })) : [];
+  const presenceByEmployee = new Map(presence.map(row => [row.employeeId, row]));
+  const orderedPresence = sortScheduleEntries(people.flatMap(person => {
+    const row = presenceByEmployee.get(person.employee.id);
+    return row ? [{ employee: person.employee, row, schedule: row.segments.filter(segment => segment.kind === "WORK")
+      .map(segment => escalaDuration(segment.start) + "-" + escalaDuration(segment.end)).join(" / ") }] : [];
+  })).map(entry => entry.row);
   return { options, referencesOnly, branch: presentation.branch, revision: workspace.revision, status: presentation.state,
     planningWeekStartsOn: planningWeekStartsOn(input),
+    workspaceId: workspace.id, updatedAt: workspace.updatedAt, period: presentation.period, calendar, presenceWindows,
     dates: referencesOnly ? [] : presentation.dates, sectors: context.sectors.filter(sector => selected.has(sector)), people,
     excluded: presentation.excluded.filter(row => selected.has(row.employee.sector)),
     operations: { ...operations, days: operations.days.filter(day => selected.has(day.sector)) },
-    coverage: coverage ? { ...coverage, rows: coverage.rows.filter(row => selected.has(row.sector) && targeted.has(row.sector)) } : null, presence };
+    coverage: coverage ? { ...coverage, rows: coverage.rows.filter(row => selected.has(row.sector) && targeted.has(row.sector)) } : null, presence: orderedPresence };
 }
 export type OperationalReportModel = ReturnType<typeof buildOperationalReport>;

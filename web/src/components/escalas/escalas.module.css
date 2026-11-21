@@ -52,6 +52,7 @@
 .formGrid { display: grid; min-inline-size: 0; gap: 1rem; }
 .field { min-inline-size: 0; display: grid; gap: .375rem; }
 .fieldLabel { display: block; font-size: .875rem; font-weight: 650; line-height: 1.4; }
+.branchIdentity { min-block-size: 2.75rem; display: flex; align-items: center; margin: 0; padding-block: .5rem; font-size: 1rem; font-weight: 650; overflow-wrap: anywhere; }
 .fieldHint { color: var(--app-muted); font-size: .8125rem; line-height: 1.55; }
 .control { min-inline-size: 0; min-block-size: 2.75rem; inline-size: 100%; border: 1px solid var(--app-border-strong); border-radius: .75rem; padding: .625rem .75rem; background: var(--app-input); color: var(--app-fg); font-size: 1rem; line-height: 1.4; }
 .button { min-inline-size: 0; min-block-size: 2.75rem; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; border: 1px solid var(--app-border-strong); border-radius: .75rem; padding: .625rem 1rem; background: transparent; color: var(--app-fg); font-size: .875rem; font-weight: 650; line-height: 1.4; text-align: center; text-decoration: none; cursor: pointer; touch-action: manipulation; transition: background-color 140ms ease, border-color 140ms ease; }

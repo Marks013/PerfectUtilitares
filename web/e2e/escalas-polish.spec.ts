@@ -31,7 +31,7 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
     await page.goto("/escala");
     await selectEscalasWorkspace(page, created);
     await page.getByRole("button", { name: "Ajustar pausas de jornadas curtas (opcional)", exact: true }).click();
-    const pause = page.getByLabel("Simular jornadas de 4 a 6 horas sem pausa", { exact: true });
+    const pause = page.getByLabel("Simular jornada de mais de 4h até 6h sem pausa de 15 minutos", { exact: true });
     await expect(pause).toBeVisible();
     await pause.check();
     await pause.uncheck();

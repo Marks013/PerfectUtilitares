@@ -8,8 +8,11 @@ import { isFpre136Text, isFpre136Rows, previewFpre136Rows } from "./fpre136";
 
 export const ESCALA_IMPORT_TEMPLATE = "Matricula;Nome;Setor;Cargo;CargaSemanal;Horarios;Admissao;RegraDomingos\r\n0001;Nome completo;Reposição;Repositor;42;08:00-12:00 / 13:00-17:24;2020-01-01;\r\n";
 const headers = ["matricula", "nome", "setor", "cargo", "cargasemanal", "horarios", "admissao"];
-export type ImportOptions = { startDate: string; defaultWeeklyHours: WeeklyHours; branchCode?: string };
+export type ImportOptions = { startDate: string; defaultWeeklyHours: WeeklyHours; branchCode?: string;
+  onLayoutRecognized?: (layout: "ESCALA_TEMPLATE" | "FPRE136") => void };
 export type EscalaImportPreview = { employees: EscalaEmployee[]; shifts: EscalaShift[]; issues: { line: number; message: string }[]; totalRows: number;
+  replacement?: { rejectedRows: number; invalidIdentityRows: number; fieldsById: Record<string, string[]>;
+    paginationIssues?: { line: number; code: "PAGE_SEQUENCE" | "PAGE_HEADER" | "PAGE_CONTEXT"; message: string }[] };
   report?: { format: "FPRE136"; branchCode: string; branchName: string; sourceEmployees: number; otherBranchesExcluded: number; missingSchedule: number } };
 
 function normalized(value: unknown) { return String(value ?? "").trim().normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s/g, ""); }
@@ -46,12 +49,15 @@ function parseShift(value: string): EscalaShift {
 }
 
 export function previewEscalaRows(rows: unknown[][], options: ImportOptions): EscalaImportPreview {
-  if (isFpre136Rows(rows)) return previewFpre136Rows(rows, options, parseShift);
+  if (isFpre136Rows(rows)) { options.onLayoutRecognized?.("FPRE136"); return previewFpre136Rows(rows, options, parseShift); }
   if (rows.length > 251) throw new EscalaError(400, "ESCALA_IMPORT_LIMIT", "A importação aceita até 250 colaboradores por proposta.");
-  if (rows.length < 2 || headers.some((header, index) => normalized(rows[0]?.[index]) !== header)) {
+  if (headers.some((header, index) => normalized(rows[0]?.[index]) !== header)) {
     throw new EscalaError(400, "ESCALA_IMPORT_LAYOUT", "Use o modelo de Escalas com as colunas Matricula, Nome, Setor, Cargo, CargaSemanal, Horarios e Admissao. Relatórios de folha não contêm todos os dados necessários.");
   }
-  const result: EscalaImportPreview = { employees: [], shifts: [], issues: [], totalRows: rows.length - 1 };
+  options.onLayoutRecognized?.("ESCALA_TEMPLATE");
+  if (rows.length < 2) throw new EscalaError(400, "ESCALA_IMPORT_LAYOUT", "O modelo contém apenas o cabeçalho, sem colaboradores.");
+  const result: EscalaImportPreview = { employees: [], shifts: [], issues: [], totalRows: rows.length - 1,
+    replacement: { rejectedRows: 0, invalidIdentityRows: 0, fieldsById: {} } };
   // Fail closed for every occurrence of a repeated registration. Otherwise the
   // first row could remain importable even though later duplicates are warned about.
   const registrationCounts = new Map<string, number>();
@@ -66,6 +72,7 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
     const line = index + 2;
     try {
       const registration = bounded(row[0], 60), name = bounded(row[1], 160), sector = bounded(row[2], 120), role = bounded(row[3], 120);
+      if (typeof row[0] !== "string" && result.replacement) result.replacement.invalidIdentityRows++;
       if (!registration || !name || !sector || !role) throw new Error("Matrícula, nome, setor e cargo são obrigatórios; nenhuma classificação será inferida.");
       if ((registrationCounts.get(registration) ?? 0) > 1) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
       const hoursText = bounded(row[4], 10);
@@ -85,7 +92,12 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
         sundayRestRule: sundayRule === "COMMERCE" ? "COMMERCE" : sundayRule === "CLT_386" ? "CLT_386" : "UNREVIEWED",
         preferredOffDays: [], historyKnown: false, history: [] });
       shifts.set(shift.id, shift);
-    } catch (error) { result.issues.push({ line, message: error instanceof Error ? error.message : "Linha inválida." }); }
+      if (result.replacement) result.replacement.fieldsById[id] = ["name", "sector", "role", "shiftIds", "scheduleMode", "activeFrom",
+        ...(hoursText ? ["weeklyHours", "weeklyHoursMode"] : []), ...(sundayRule ? ["sundayRestRule", "maxConsecutiveSundays"] : [])];
+    } catch (error) {
+      if (result.replacement) result.replacement.rejectedRows++;
+      result.issues.push({ line, message: error instanceof Error ? error.message : "Linha inválida." });
+    }
   });
   result.shifts = [...shifts.values()];
   return result;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/prisma";
-import { branchPermission, EscalaError, requireEscalaPermission, type EscalaActor } from "./access";
-import { getEscala, generateEscala } from "./service";
+import { branchPermission, EscalaError, lockEscalaAccess, requireEscalaCapability, type EscalaActor } from "./access";
+import { getEscala, generateEscala, recheckEscalaGeneration } from "./service";
 import { EscalaSolverError } from "./solver-errors";
 import { cancelSolverOperation, solverCapability } from "./solver-transport";
 
@@ -35,7 +35,8 @@ async function owned(actor: EscalaActor, ownerKey: string, operationId: string) 
     select: { branchCode: true },
   });
   if (!workspace) throw new EscalaError(404, "ESCALA_NOT_FOUND", "Escala não encontrada.");
-  requireEscalaPermission(await branchPermission(actor, workspace.branchCode), "edit");
+  await branchPermission(actor, workspace.branchCode);
+  await requireEscalaCapability(actor, "schedule.generate", workspace.branchCode);
   return operation;
 }
 
@@ -43,19 +44,25 @@ async function cleanup(ownerKey: string, tenantId: string) {
   const now = new Date();
   // Expiry is much longer than the Python process deadline. A late result still loses its CAS below.
   await prisma.escalaSolveOperation.updateMany({ where: { tenantId, ownerKey, state: { in: [...active] }, expiresAt: { lt: now } }, data: { state: "TIMED_OUT", finishedAt: now } });
-  const expired = await prisma.escalaSolveOperation.findMany({ where: { tenantId, state: { in: [...final] }, expiresAt: { lt: new Date(Date.now() - 86_400_000) } }, select: { id: true }, take: 50 });
+  const expired = await prisma.escalaSolveOperation.findMany({ where: { tenantId, ownerKey, state: { in: [...final] }, expiresAt: { lt: new Date(Date.now() - 86_400_000) } }, select: { id: true }, take: 50 });
   if (expired.length) await prisma.escalaSolveOperation.deleteMany({ where: { id: { in: expired.map(value => value.id) }, state: { in: [...final] } } });
 }
 
 export async function startGenerationOperation(actor: EscalaActor, ownerKey: string, workspaceId: string, expectedRevision: number) {
   const workspace = await getEscala(actor, workspaceId);
-  requireEscalaPermission(workspace, "edit");
+  await requireEscalaCapability(actor, "schedule.generate", workspace.input.branchCode);
   if (workspace.revision !== expectedRevision) throw new EscalaError(409, "ESCALA_REVISION_CONFLICT", "A escala mudou. Atualize a proposta antes de calcular novamente.");
   await cleanup(ownerKey, actor.tenantId);
-  const existing = await prisma.escalaSolveOperation.count({ where: { tenantId: actor.tenantId, ownerKey, state: { in: [...active] }, expiresAt: { gt: new Date() } } });
-  if (existing) throw new EscalaSolverError("SOLVER_BUSY");
   try {
-    const operation = await prisma.escalaSolveOperation.create({ data: { tenantId: actor.tenantId, workspaceId, expectedRevision, ownerKey, expiresAt: new Date(Date.now() + 120_000) } });
+    const operation = await prisma.$transaction(async tx => {
+      await lockEscalaAccess(tx, actor.tenantId);
+      await requireEscalaCapability(actor, "schedule.generate", workspace.input.branchCode, tx);
+      const current = await tx.escalaWorkspace.findFirst({ where: { id: workspaceId, tenantId: actor.tenantId, revision: expectedRevision }, select: { revision: true } });
+      if (!current) throw new EscalaError(409, "ESCALA_REVISION_CONFLICT", "A revisão mudou antes do início do cálculo.");
+      const existing = await tx.escalaSolveOperation.count({ where: { tenantId: actor.tenantId, ownerKey, state: { in: [...active] }, expiresAt: { gt: new Date() } } });
+      if (existing) throw new EscalaSolverError("SOLVER_BUSY");
+      return tx.escalaSolveOperation.create({ data: { tenantId: actor.tenantId, workspaceId, expectedRevision, ownerKey, expiresAt: new Date(Date.now() + 120_000) } });
+    });
     return publicState(operation);
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") throw new EscalaSolverError("SOLVER_BUSY");
@@ -122,6 +129,9 @@ export async function runGenerationOperation(actor: EscalaActor, ownerKey: strin
     if (signal.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
     const completed = await prisma.escalaSolveOperation.updateMany({ where: { id: operationId, state: "RUNNING", expiresAt: { gt: new Date() } }, data: { state: "COMPLETED", finishedAt: new Date() } });
     if (!completed.count) throw new EscalaSolverError("SOLVER_CANCELLED");
+    await owned(actor, ownerKey, operationId);
+    // COMPLETED records calculation lifecycle, not permission to deliver its result.
+    await recheckEscalaGeneration(actor, workspaceId, expectedRevision);
     return proposal;
   } catch (error) {
     if (error instanceof EscalaSolverError && error.code === "SOLVER_CANCELLED") {

@@ -5,6 +5,13 @@ import { DELETE, GET, POST } from "./route";
 
 const mocks = vi.hoisted(() => ({ session: null as AppSession | null, rate: vi.fn(), grant: vi.fn() }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: vi.fn(async () => null) }));
+vi.mock("@/lib/escalas/operator-session-store", () => ({ getEscalaScopedModuleSession: vi.fn(async () => null) }));
+vi.mock("@/lib/escalas/access", async original => {
+  const actual = await original<typeof import("@/lib/escalas/access")>();
+  return { ...actual, requireEscalaCapability: vi.fn(async (actor: { admin: boolean }) => {
+    if (!actor.admin) throw new actual.EscalaError(403, "ESCALA_BRANCH_FORBIDDEN", "Importação restrita ao administrador.");
+  }), branchPermission: vi.fn(async () => ({ canEdit: true, canPublish: true })) };
+});
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaBranchAccess: { findUnique: mocks.grant } } }));
@@ -76,13 +83,15 @@ describe("/api/escalas/import", () => {
     const response = await POST(upload(csv));
     expect(response.status).toBe(200);
     const { preview } = await response.json() as { preview: { totalRows: number; employees: { registration: string }[];
-      shifts: unknown[]; issues: { line: number; message: string }[] } };
+      shifts: unknown[]; issues: { line: number; message: string }[]; replacement: { rejectedRows: number } } };
     expect(preview.totalRows).toBe(3);
+    expect(preview.replacement.rejectedRows).toBe(2);
     expect(preview.employees.map(person => person.registration)).toEqual(["0002"]);
     expect(preview.shifts).toHaveLength(1);
     expect(preview.issues.map(issue => issue.line)).toEqual([2, 3]);
     expect(preview.issues.every(issue => issue.message.includes("duplicada"))).toBe(true);
   });
+
   it("rejects operators without branch permission before processing personal cells", async () => {
     if (mocks.session) mocks.session.user.role = "OPERATOR";
     mocks.grant.mockResolvedValue(null);

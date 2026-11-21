@@ -1,8 +1,8 @@
 import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
-import { branchPermission, canCreateEscala, requireEscalaPermission } from "@/lib/escalas/access";
-import { createEscala, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
+import { allowedBranches, branchPermission, requireEscalaPermission, requireEscalaCapability } from "@/lib/escalas/access";
+import { createEscala, createEscalaApproved, addEscalaEmployee, rebaseEscalaApproval, validateEscalaOperational, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
 import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGenerationOperation, generationOperationStatus } from "@/lib/escalas/solve-operations";
 import { escalaFailure, escalaJson } from "./http";
@@ -14,8 +14,12 @@ const version = { id, expectedRevision: z.number().int().min(1).max(2_000_000_00
 const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("CREATE"), input: z.unknown() }).strict(),
   z.object({ action: z.literal("UPGRADE_CALENDAR"), ...version }).strict(),
+  z.strictObject({ action: z.literal("CREATE_APPROVED"), approvedPolicyVersionId: id }),
+  z.strictObject({ action: z.literal("APPLY_PROPOSAL"), ...version, input: z.unknown(), proposalProof: z.string().min(1).max(4096) }),
+  z.strictObject({ action: z.literal("ADD_EMPLOYEE"), ...version, regimeModelId: id, name: z.string().trim().min(1).max(160), registration: z.string().trim().min(1).max(160) }),
+  z.strictObject({ action: z.literal("ADMIN_REBASE"), ...version, approvedPolicyVersionId: id }),
   z.object({ action: z.literal("SAVE"), ...version, input: z.unknown() }).strict(),
-  z.object({ action: z.literal("VALIDATE"), input: z.unknown() }).strict(),
+  z.object({ action: z.literal("VALIDATE"), input: z.unknown(), id: id.optional(), expectedRevision: version.expectedRevision.optional() }).strict(),
   z.object({ action: z.literal("GENERATE"), ...version, operationId: z.uuid().optional(), comparisonReference: z.unknown().optional() }).strict(),
   z.object({ action: z.literal("START_GENERATION"), ...version }).strict(),
   z.object({ action: z.literal("CANCEL_GENERATION"), operationId: z.uuid() }).strict(),
@@ -33,7 +37,8 @@ export async function GET(request: Request) {
       if (!id.safeParse(requestedId).success) return jsonError(400, "ESCALA_INVALID_ID", "Identificador de escala inválido.");
       return escalaJson(await getEscala(actor, requestedId));
     }
-    return escalaJson({ workspaces: await listEscalas(actor), canCreate: await canCreateEscala(actor) });
+    const createScope = await allowedBranches(actor, "workspace.create");
+    return escalaJson({ workspaces: await listEscalas(actor), canCreate: createScope === null || createScope.length > 0 });
   } catch (error) { return escalaFailure(error); }
 }
 
@@ -58,9 +63,15 @@ export async function POST(request: Request) {
     switch (data.action) {
       case "CREATE": return escalaJson(await createEscala(actor, parseEscalaInput(data.input)), 201);
       case "UPGRADE_CALENDAR": return escalaJson(await upgradeEscalaCalendar(actor, data.id, data.expectedRevision), 201);
+      case "CREATE_APPROVED": return escalaJson(await createEscalaApproved(actor, data.approvedPolicyVersionId), 201);
+      case "APPLY_PROPOSAL": return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, parseEscalaInput(data.input), false, { proposalProof: data.proposalProof }));
+      case "ADD_EMPLOYEE": return escalaJson(await addEscalaEmployee(actor, data.id, data.expectedRevision, data));
+      case "ADMIN_REBASE": return escalaJson(await rebaseEscalaApproval(actor, data.id, data.expectedRevision, data.approvedPolicyVersionId));
       case "SAVE": return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, parseEscalaInput(data.input)));
       case "VALIDATE": {
         const input = parseEscalaInput(data.input);
+        if (data.id && data.expectedRevision) return escalaJson(await validateEscalaOperational(actor, data.id, data.expectedRevision, input));
+        await requireEscalaCapability(actor, "settings.manage");
         requireEscalaPermission(await branchPermission(actor, input.branchCode), "edit");
         return escalaJson(validateEscala(input));
       }

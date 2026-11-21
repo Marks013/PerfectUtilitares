@@ -1,10 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "./fixtures";
-import { selectEscalasWorkspace } from "./escalas-selection";
+import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
+import { applyReplacement, previewReplacement } from "./escalas-access-fixtures";
 import { parse } from "csv-parse/sync";
 import { pdfJsServerDocumentOptions } from "../src/lib/pdf/pdfjs-server";
 import { strFromU8, unzipSync } from "fflate";
-import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
+import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
 import { newInput } from "../src/components/escalas/workspace-model";
 
@@ -22,15 +23,17 @@ test.afterEach(async ({ page }) => {
   expect((await page.request.delete("/api/escalas", { headers: { origin }, data: { workspaceId: saved.id, expectedRevision: saved.revision } })).status()).toBe(200);
 });
 
-test("real FPRE136 and optional FPHI105 preserve independently checked vacation dates through generation, persistence and reports", async ({ page }) => {
+test("private FPRE136 and FPHI105 preserve independently checked absence dates through replacement, generation and reports", async ({ page }) => {
   test.skip(process.env.E2E_MUTATION !== "1" || !process.env.E2E_REAL_CSV_PATH || !process.env.E2E_REAL_ABSENCES_PATH, "Requires private runtime CSV files and the disposable isolated database");
   test.setTimeout(180_000);
-  const teamFile = await readFile(process.env.E2E_REAL_CSV_PATH!);
-  const absenceFile = await readFile(process.env.E2E_REAL_ABSENCES_PATH!);
+  const teamPath = process.env.E2E_REAL_CSV_PATH, absencePath = process.env.E2E_REAL_ABSENCES_PATH;
+  if (!teamPath || !absencePath) throw new Error("The private fixture paths must be supplied at runtime");
+  const teamFile = await readFile(teamPath);
+  const absenceFile = await readFile(absencePath);
   await loginAsAdmin(page);
   await page.goto("/escala");
   await page.getByLabel("Código da filial", { exact: true }).waitFor({ state: "attached" });
-  if (!await page.getByLabel("Código da filial", { exact: true }).isVisible()) await page.getByText("Criar planejamento", { exact: true }).click();
+  await revealEscalasControl(page.getByLabel("Código da filial", { exact: true }));
   await page.getByLabel("Código da filial", { exact: true }).fill("02");
   await page.getByLabel("Nome da filial (opcional)", { exact: true }).fill("Validação privada de férias");
   await page.getByLabel("Mês de referência", { exact: true }).fill("2026-11");
@@ -38,13 +41,10 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   await page.getByRole("button", { name: "Iniciar planejamento", exact: true }).click();
   const created: EscalaWorkspace = await (await creating).json();
   disposableId = created.id;
-  await page.getByLabel("Arquivo CSV ou XLSX", { exact: true }).setInputFiles({ name: "FPRE136.CSV", mimeType: "text/csv", buffer: teamFile });
-  const importing = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas/import"));
-  await page.getByRole("button", { name: "Conferir arquivo", exact: true }).click();
-  const importedResponse = await importing;
-  expect(importedResponse.status()).toBe(200);
-  const employees: EscalaInput["employees"] = (await importedResponse.json()).preview.employees;
-  await page.getByRole("button", { name: "Aplicar registros aceitos à proposta", exact: true }).click();
+  const team = await previewReplacement(page, "EMPLOYEES", { name: "FPRE136.CSV", mimeType: "text/csv", buffer: teamFile });
+  expect(team.preview.layout).toBe("FPRE136"); expect(team.preview.blockers).toEqual([]); expect(team.preview.canApply).toBe(true);
+  const employees = (await applyReplacement(page, team.panel, "EMPLOYEES")).workspace.input.employees;
+  await openEscalasArea(page, "generate");
   await page.getByLabel("Jornada semanal", { exact: true }).selectOption("42");
 
   // Independent date oracle: reads only the actual FPHI positions, never the product parser.
@@ -55,28 +55,29 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   const identities = new Map(employees.map(person => [person.registration.trim().replace(/^0+(?=\d)/, ""), person.id]));
   const expected = new Set<string>();
   const iso = (value: string) => value.trim().split("/").reverse().join("-");
+  const period = rows.find(row => row[0]?.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase() === "periodo");
+  if (!period?.[1] || !period[3]) throw new Error("The private absence report must declare its real coverage period");
+  const scope = { startDate: iso(period[1]) > created.input.startDate ? iso(period[1]) : created.input.startDate,
+    endDate: iso(period[3]) < created.input.endDate ? iso(period[3]) : created.input.endDate };
+  expect(scope.startDate <= scope.endDate).toBe(true);
   for (const row of rows) {
     if (row.length !== 13 || !/^\d+$/.test(row[0].trim()) || !/^\d+$/.test(row[2].trim())) continue;
     const id = identities.get(row[2].trim().replace(/^0+(?=\d)/, ""));
     if (!id) continue;
-    const first = Math.max(Date.parse(iso(row[6])), Date.parse(created.input.startDate));
-    const last = Math.min(Date.parse(iso(row[11])), Date.parse(created.input.endDate));
+    const first = Math.max(Date.parse(iso(row[6])), Date.parse(scope.startDate));
+    const last = Math.min(Date.parse(iso(row[11])), Date.parse(scope.endDate));
     for (let day = first; day <= last; day += 86_400_000) expected.add(id + ":" + new Date(day).toISOString().slice(0, 10));
   }
   expect(expected.size > 0).toBe(true);
-  await page.locator('button[aria-controls="escala-area-team"]').click();
-  await page.getByText("Importar afastamentos e férias (opcional)", { exact: true }).click();
-  await page.getByLabel("Arquivo de afastamentos CSV", { exact: true }).setInputFiles({ name: "FPHI105.CSV", mimeType: "text/csv", buffer: absenceFile });
-  const previewing = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas/import"));
-  await page.getByRole("button", { name: "Conferir afastamentos", exact: true }).click();
-  const previewResponse = await previewing;
-  expect(previewResponse.status()).toBe(200);
-  const preview = (await previewResponse.json()).preview;
-  const actual = new Set(preview.assignments.map((item: EscalaAssignment) => item.employeeId + ":" + item.date));
+  await expect(page.locator('[data-state="saved"]')).toBeVisible();
+  const absence = await previewReplacement(page, "ABSENCES", { name: "FPHI105.CSV", mimeType: "text/csv", buffer: absenceFile }, scope);
+  const preview = absence.preview;
+  expect(preview.layout).toBe("FPHI105"); expect(preview.canApply).toBe(true); expect(preview.blockers).toEqual([]);
+  const actual = new Set([...preview.impact.absences.added, ...preview.impact.absences.unchanged].filter(item => item.date >= scope.startDate && item.date <= scope.endDate).map(item => item.employeeId + ":" + item.date));
   expect(actual.size === expected.size && [...expected].every(key => actual.has(key))).toBe(true);
   // No medical field, source name or free-form source description may leak in preview.
-  expect(preview.assignments.every((item: EscalaAssignment) => item.kind === "ABSENCE" && Object.keys(item).every(key => ["employeeId", "date", "kind"].includes(key)))).toBe(true);
-  await page.getByRole("button", { name: "Aplicar afastamentos à proposta", exact: true }).click();
+  expect(preview.impact.absences.added.every(item => Object.keys(item).every(key => ["employeeId", "registration", "date"].includes(key)))).toBe(true);
+  await applyReplacement(page, absence.panel, "ABSENCES");
   await page.locator('button[aria-controls="escala-area-generate"]').click();
   const generating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
   await page.getByRole("button", { name: /^(Gerar escala e horários|Gerar nova proposta)$/ }).click();
@@ -93,8 +94,8 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
   expect(proposal.employees.filter(person => person.planningEnabled === false).map(person => person.id).sort()).toEqual([...learnerIds].sort());
   expect(proposal.assignments.filter(item => learnerIds.has(item.employeeId)).every(item => item.kind === "ABSENCE" || item.locked)).toBe(true);
   expect(generated.validation.issues.some((issue: { code: string }) => issue.code === "PARTIAL_WEEK_PENDING")).toBe(false);
+  const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "APPLY_PROPOSAL");
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
-  const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
   await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await saving).status()).toBe(200);
   const saved: EscalaWorkspace = await page.request.get("/api/escalas?id=" + created.id).then(response => response.json());
@@ -148,7 +149,7 @@ test("real FPRE136 and optional FPHI105 preserve independently checked vacation 
 });
 
 
-test("optional absence preview preserves existing absences and locked work before real generation and saving", async ({ page }) => {
+test("replacement blocks protected collisions, then preserves borders and locked work through real generation and saving", async ({ page }) => {
   test.skip(process.env.E2E_MUTATION !== "1", "Requires disposable isolated database");
   test.setTimeout(150_000);
   await loginAsAdmin(page);
@@ -158,6 +159,8 @@ test("optional absence preview preserves existing absences and locked work befor
   input.assignments = [
     { employeeId: "a", date: "2026-11-04", kind: "WORK", shiftId: input.shifts[0].id, locked: true },
     { employeeId: "b", date: "2026-11-10", kind: "ABSENCE", locked: true },
+    { employeeId: "b", date: "2026-10-31", kind: "ABSENCE", locked: true },
+    { employeeId: "b", date: "2026-12-01", kind: "ABSENCE", locked: true },
   ];
   const createdResponse = await page.request.post("/api/escalas", { headers: { origin }, data: { action: "CREATE", input } });
   expect(createdResponse.status()).toBe(201);
@@ -165,9 +168,6 @@ test("optional absence preview preserves existing absences and locked work befor
   disposableId = created.id;
   await page.goto("/escala");
   await selectEscalasWorkspace(page, created);
-  await page.locator('button[aria-controls="escala-area-team"]').click();
-  await page.locator('button[aria-controls="escala-area-team"]').click();
-  await page.getByText("Importar afastamentos e férias (opcional)", { exact: true }).click();
   const csvRows = [
     ["Período", "01/11/2026", "a", "30/11/2026"],
     ["Empresa", "Tipo", "Cadastro", "Nome", "Função", "Admissão", "Afastamento", "CID", "Situação", "Término", "Dias"],
@@ -175,22 +175,20 @@ test("optional absence preview preserves existing absences and locked work befor
     ["0001", "1", "0002", "Nome não utilizado", "Função não utilizada", "01/01/2020", "09/11/2026", "", "", "2", "Férias", "11/11/2026", "3"],
   ];
   const csv = csvRows.map(row => row.map(value => '"' + value.replaceAll('"', '""') + '"').join(",")).join("\r\n");
-  await page.getByLabel("Arquivo de afastamentos CSV", { exact: true }).setInputFiles({ name: "FPHI105-sintetico.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
-  const previewing = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas/import"));
-  await page.getByRole("button", { name: "Conferir afastamentos", exact: true }).click();
-  const previewResponse = await previewing;
-  expect(previewResponse.status()).toBe(200);
-  const body = await previewResponse.json();
-  expect(body.preview.assignments).toHaveLength(7);
-  expect(JSON.stringify(body)).not.toContain("MEDICAL-DO-NOT-KEEP");
-  await expect(page.getByText("1 dias bloqueados serão preservados.", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Aplicar afastamentos à proposta", exact: true }).click();
-  await expect(page.getByText("5 dias de afastamento aplicados à proposta.", { exact: false })).toBeVisible();
-  const savingAbsences = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
-  await expect(page.locator('[data-state="saved"]')).toBeVisible();
-  const staleResponse = await savingAbsences;
-  expect(staleResponse.status()).toBe(200);
-  const stale: EscalaWorkspace = await staleResponse.json();
+  const scope = { startDate: "2026-11-01", endDate: "2026-11-30" };
+  const blocked = await previewReplacement(page, "ABSENCES", { name: "FPHI105-conflito.csv", mimeType: "text/csv", buffer: Buffer.from(csv) }, scope);
+  expect(blocked.preview.canApply).toBe(false);
+  expect(blocked.preview.blockers.some(problem => problem.code === "PROTECTED_ASSIGNMENT")).toBe(true);
+  expect(JSON.stringify(blocked.preview)).not.toContain("MEDICAL-DO-NOT-KEEP");
+  await expect(blocked.panel.getByRole("checkbox", { name: /^Confirmo substituir/ })).toBeDisabled();
+  expect((await page.request.get("/api/escalas?id=" + created.id).then(response => response.json())).input).toEqual(created.input);
+  const safeRows = [...csvRows.slice(0, 2), [...csvRows[2].slice(0, 11), "03/11/2026", "1"], [...csvRows[2].slice(0, 6), "05/11/2026", ...csvRows[2].slice(7)], csvRows[3]];
+  const safeCsv = safeRows.map(row => row.map(value => JSON.stringify(value)).join(",")).join("\r\n");
+  const reviewed = await previewReplacement(page, "ABSENCES", { name: "FPHI105-sem-colisao.csv", mimeType: "text/csv", buffer: Buffer.from(safeCsv) }, scope);
+  expect(reviewed.preview.canApply).toBe(true); expect(reviewed.preview.blockers).toEqual([]);
+  expect(reviewed.preview.counts.addedAbsenceDays).toBe(5);
+  const stale = (await applyReplacement(page, reviewed.panel, "ABSENCES")).workspace;
+  expect(stale.input.assignments).toEqual(expect.arrayContaining(input.assignments));
   expect(stale.input.needsRegeneration).toBe(true);
   expect((await page.request.get("/api/escalas/export?id=" + stale.id + "&revision=" + stale.revision + "&format=xlsx")).status()).toBe(409);
   await page.reload();
@@ -210,10 +208,9 @@ test("optional absence preview preserves existing absences and locked work befor
   const proposal: EscalaInput = generated.proposalInput;
   const absent = new Set(proposal.assignments.filter(item => item.kind === "ABSENCE").map(item => item.employeeId + ":" + item.date));
   expect(expected.every(key => absent.has(key))).toBe(true);
-  expect(proposal.assignments).toContainEqual(expect.objectContaining(input.assignments[0]));
-  expect(proposal.assignments).toContainEqual(expect.objectContaining(input.assignments[1]));
+  expect(proposal.assignments).toEqual(expect.arrayContaining(input.assignments));
+  const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "APPLY_PROPOSAL");
   await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
-  const saving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE");
   await expect(page.locator('[data-state="saved"]')).toBeVisible();
   expect((await saving).status()).toBe(200);
   const saved: EscalaWorkspace = await page.request.get("/api/escalas?id=" + created.id).then(response => response.json());

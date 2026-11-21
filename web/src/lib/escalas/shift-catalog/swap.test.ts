@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyTurnoSwap, previewTurnoSwap } from "./swap";
 import type { EscalaAssignment } from "../types";
+vi.mock("../access", async original => ({ ...await original<typeof import("../access")>(), requireEscalaCapability: async () => undefined }));
 
 const state = vi.hoisted(() => ({ get: vi.fn(), parse: vi.fn(), save: vi.fn(), entry: vi.fn(), oldCode: vi.fn(), validate: vi.fn() }));
 vi.mock("../service", () => ({ getEscala: state.get, parseEscalaInput: state.parse, saveEscala: state.save }));
@@ -101,7 +102,7 @@ describe("employee turn swap", () => {
     expect(state.save.mock.calls[0][3].assignments).toEqual(value.input.assignments);
     expect(state.save.mock.calls[0][3].employees[0].shiftIds).toEqual(["old"]);
   });
-  it("uses an explicit 42h branch scenario for a converted 44h CSV reference", async () => {
+  it("preserves the configured workload while selecting a catalog clock", async () => {
     const source = { report: "FPRE136", code: "X", description: "Original 44h", weekday: "08:00-12:00 / 13:00-17:48", saturday: "08:00-12:00" };
     const value = current(source, []);
     state.get.mockResolvedValue({ ...value, input: { ...value.input, defaultWeeklyHours: 42,
@@ -110,7 +111,7 @@ describe("employee turn swap", () => {
     const preview = await previewTurnoSwap(actor, request);
     expect(preview.canApply).toBe(true);
     await applyTurnoSwap(actor, { ...request, previewId: preview.previewId, confirm: true });
-    expect(state.save.mock.calls[0][3].employees[0]).toMatchObject({ weeklyHours: 42, weeklyHoursMode: "BRANCH", sourceSchedule: source });
+    expect(state.save.mock.calls[0][3].employees[0]).toMatchObject({ weeklyHours: 44, weeklyHoursMode: "BRANCH", sourceSchedule: source });
     expect(state.save.mock.calls[0][3].assignments).toEqual([]);
   });
   it("uses the independent real validator to block short inter-shift rest", async () => {

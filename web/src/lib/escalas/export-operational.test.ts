@@ -56,7 +56,7 @@ describe("lean operational files", () => {
     const source = scenario();
     source.input.demands.push({ id: "other", date: "2026-11-02", sector: "Açougue", start: 480, end: 1080, minimum: 1, estimated: true });
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const task = pdfjs.getDocument(pdfJsServerDocumentOptions(await exportEscalaPdf(source, mode)));
+    const task = pdfjs.getDocument(pdfJsServerDocumentOptions(await exportEscalaPdf(source, mode, { separateSectors: true })));
     const document = await task.promise;
     try {
       expect(document.numPages).toBe(2);
@@ -87,7 +87,7 @@ describe("lean operational files", () => {
       source.input.employees.push({ ...person, id, registration: String(100 + index), name: `Pessoa ${index}` });
     }
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const task = pdfjs.getDocument(pdfJsServerDocumentOptions(await exportEscalaPdf(source, "rest")));
+    const task = pdfjs.getDocument(pdfJsServerDocumentOptions(await exportEscalaPdf(source, "rest", { separateSectors: true })));
     const document = await task.promise;
     try {
       expect(document.numPages).toBeGreaterThan(3);
@@ -196,7 +196,7 @@ describe("lean operational files", () => {
   it("keeps the compact sector peak in PDF while omitting analysis worksheets", async () => {
     const source = scenario(), archive = unzipSync(exportEscalaXlsx(source));
     expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/Capacidade|Desfalques/);
-    const text = await pdfText(await exportEscalaPdf(source));
+    const text = await pdfText(await exportEscalaPdf(source, "both", { separateSectors: true }));
     expect(text.match(/Desfalques de cobertura/g)).toHaveLength(1);
     expect(text).toMatch(exportedPdfRowPattern(["Padaria", "Estimada", "02/11/2026", "12:00-13:00", 0, 1, 1, "01:00", 1, "01:36"]));
     expect(text).not.toContain("Faixa analisada:");

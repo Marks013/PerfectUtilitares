@@ -27,7 +27,7 @@ export function ShortMealSimulation({ input, onChange }: Props) {
     <summary className={styles.disclosureTrigger}>Intervalos de jornadas curtas{policy.allowShortMealSimulation ? " · opção ativa" : " · opcional"}</summary>
     <fieldset className={styles.stackSmall}>
       <legend className="sr-only">Simulação de jornadas curtas</legend>
-      <Check label="Simular jornadas de 4 a 6 horas sem pausa" checked={policy.allowShortMealSimulation ?? false}
+      <Check label="Simular jornada de mais de 4h até 6h sem pausa de 15 minutos" checked={policy.allowShortMealSimulation ?? false}
         onChange={value => onChange({ ...input, simulation: true, needsRegeneration: input.needsRegeneration || input.assignments.length > 0,
           policy: { ...policy, allowShortMealSimulation: value } })} />
       <p className={styles.muted}>Permite testar jornadas acima de 4h e até 6h sem os 15 minutos de pausa. Não autoriza dispensar pausas no trabalho real. Jornadas maiores mantêm o intervalo de refeição. Gere novamente após mudar esta opção.</p>

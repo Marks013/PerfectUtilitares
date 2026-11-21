@@ -180,6 +180,7 @@ model User {
   presenceEventsCreated  PresenceEvent[]     @relation("PresenceEventsCreatedBy")
   presenceActivities     PresenceActivity[]  @relation("PresenceActivitiesActor")
   escalaAccesses         EscalaBranchAccess[]
+  escalaPoliciesApproved EscalaBranchPolicyVersion[] @relation("EscalaPolicyApprover")
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
 
@@ -217,7 +218,11 @@ model Tenant {
   unimedEmailEvents       UnimedEmailEvent[]
   presenceEvents          PresenceEvent[]
   escalaModuleSessions    EscalaModuleSession[]
+  escalaOperators         EscalaOperator[]
+  escalaOperatorGrants    EscalaOperatorBranchGrant[]
+  escalaModuleAccessPolicy EscalaModuleAccessPolicy?
   escalaWorkspaces        EscalaWorkspace[]
+  escalaApprovedPolicies  EscalaBranchPolicyVersion[]
   escalaAccesses          EscalaBranchAccess[]
   shiftCatalogSequence    ShiftCatalogSequence?
   shiftCatalogEntries     ShiftCatalogEntry[]
@@ -286,10 +291,40 @@ model EscalaRevision {
   createdById String?
   accessChannel String @default("ACCOUNT")
   moduleSessionId String?
+  approvedPolicyVersionId String?
+  approvedPolicyVersion EscalaBranchPolicyVersion? @relation("EscalaRevisionPolicy", fields: [tenantId, approvedPolicyVersionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  policyOrigins EscalaBranchPolicyVersion[] @relation("EscalaPolicyOrigin")
   createdAt   DateTime @default(now())
 
   @@unique([tenantId, workspaceId, revision])
   @@index([tenantId, workspaceId, createdAt])
+  @@index([tenantId, approvedPolicyVersionId], map: "EscalaRevision_approved_policy_idx")
+}
+
+// SQL checks and immutable-content trigger: migration 20261114072100_escalas_scoped_access.
+model EscalaBranchPolicyVersion {
+  id                    String @id @default(cuid())
+  tenantId              String
+  tenant                Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branchCode            String
+  startDate             String
+  endDate               String
+  visibleMonth          String?
+  version               Int
+  snapshotSchemaVersion Int
+  snapshot              Json
+  snapshotHash          String @db.VarChar(64)
+  approvedById          String
+  approvedBy            User @relation("EscalaPolicyApprover", fields: [tenantId, approvedById], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  approvedAt            DateTime
+  originWorkspaceId     String?
+  originRevision        Int?
+  origin                EscalaRevision? @relation("EscalaPolicyOrigin", fields: [tenantId, originWorkspaceId, originRevision], references: [tenantId, workspaceId, revision], onDelete: Restrict, onUpdate: Restrict)
+  revisions             EscalaRevision[] @relation("EscalaRevisionPolicy")
+  revokedAt             DateTime?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, branchCode, startDate, endDate, version], map: "EscalaPolicy_tenant_branch_period_version_key")
 }
 
 model EscalaBranchAccess {
@@ -1193,6 +1228,50 @@ model UnimedDocumentTemplate {
   @@index([tenantId, kind, active])
 }
 
+// Scoped access SQL: migration 20261114072100_escalas_scoped_access; no automatic access backfill.
+model EscalaOperator {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  usernameNormalized String   @db.VarChar(64)
+  displayName        String   @db.VarChar(120)
+  active             Boolean  @default(false)
+  permissionVersion  Int      @default(1)
+  branchGrants       EscalaOperatorBranchGrant[]
+  sessions           EscalaModuleSession[]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, usernameNormalized])
+  @@index([tenantId, active])
+}
+
+model EscalaOperatorBranchGrant {
+  id           String         @id @default(cuid())
+  tenantId     String
+  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  operatorId   String
+  operator     EscalaOperator @relation(fields: [tenantId, operatorId], references: [tenantId, id], onDelete: Restrict)
+  branchCode   String
+  active       Boolean        @default(false)
+  capabilities String[]       @default([])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([tenantId, operatorId, branchCode], map: "EscalaOperatorGrant_tenant_operator_branch_key")
+  @@index([tenantId, branchCode])
+}
+
+model EscalaModuleAccessPolicy {
+  tenantId  String   @id
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mode      String   @default("ADMIN_ONLY")
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model EscalaModuleSession {
   id        String   @id @default(cuid())
   tenantId  String
@@ -1201,7 +1280,13 @@ model EscalaModuleSession {
   expiresAt DateTime
   revokedAt DateTime?
   createdAt DateTime @default(now())
+  // Legacy sessions remain unbound; no backfill or automatic username admission.
+  operatorId          String?
+  operator            EscalaOperator? @relation(fields: [tenantId, operatorId], references: [tenantId, id], onDelete: Restrict)
+  permissionVersion   Int?
+  accessPolicyVersion Int?
 
   @@index([tenantId, expiresAt])
   @@index([expiresAt, revokedAt])
+  @@index([tenantId, operatorId, revokedAt, expiresAt], map: "EscalaModuleSession_operator_access_idx")
 }

@@ -3,28 +3,47 @@ import type { AppSession } from "@/auth";
 import { EscalaError } from "@/lib/escalas/access";
 import { EscalaSolverError } from "@/lib/escalas/solver-client";
 import { DELETE, GET, PATCH, POST } from "./route";
-
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
-const candidateDb = vi.hoisted(() => ({ row: vi.fn(), revision: vi.fn(), peers: vi.fn(), solver: vi.fn(), creationGrant: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: { escalaBranchAccess: { findFirst: candidateDb.creationGrant }, escalaWorkspace: { findFirst: candidateDb.row, findMany: candidateDb.peers }, escalaRevision: { findUnique: candidateDb.revision } } }));
+
+const candidateDb = vi.hoisted(() => ({ row: vi.fn(), revision: vi.fn(), peers: vi.fn(), solver: vi.fn(), user: vi.fn(), policy: vi.fn(),
+  findOperation: vi.fn(), updateOperation: vi.fn(), createOperation: vi.fn(), countOperation: vi.fn() }));
+vi.mock("@/lib/prisma", () => {
+  const db = { escalaWorkspace: { findFirst: candidateDb.row, findMany: candidateDb.peers }, escalaRevision: { findUnique: candidateDb.revision },
+    user: { findFirst: candidateDb.user }, escalaModuleAccessPolicy: { findUnique: candidateDb.policy },
+    escalaSolveOperation: { findFirst: candidateDb.findOperation, findUniqueOrThrow: candidateDb.findOperation, updateMany: candidateDb.updateOperation,
+      create: candidateDb.createOperation, count: candidateDb.countOperation, findMany: vi.fn(async () => []), deleteMany: vi.fn() },
+    $executeRaw: vi.fn(), $queryRaw: vi.fn() };
+  return { prisma: { ...db, $transaction: async (callback: (tx: typeof db) => unknown) => callback(db) } };
+});
 vi.mock("@/lib/escalas/solver-client", async original => ({ ...await original<typeof import("@/lib/escalas/solver-client")>(), solveEscala: candidateDb.solver }));
 vi.mock("@/lib/escalas/solver-transport", async original => {
   const crypto = await import("node:crypto");
-  return { ...await original<typeof import("@/lib/escalas/solver-transport")>(), candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "route-synthetic-receipt-key").update(payload).digest("hex") };
+  return { ...await original<typeof import("@/lib/escalas/solver-transport")>(), solverCapability: () => "synthetic-route-cancel-token",
+    candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "route-synthetic-receipt-key").update(payload).digest("hex") };
 });
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
+
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, createScope: null as string[] | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), recheck: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
+vi.mock("@/lib/escalas/access", async original => ({ ...await original<typeof import("@/lib/escalas/access")>(),
+  allowedBranches: async (actor: { admin: boolean }, capability?: string) => capability === "workspace.create" ? mocks.createScope : actor.admin ? null : ["02"] }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
+vi.mock("@/lib/escalas/operator-session-store", () => ({ getEscalaScopedModuleSession: async () => {
+  const value = await mocks.module();
+  return value ? { sessionId: value.id, principal: { tenantId: value.tenantId } } : null;
+} }));
 vi.mock("@/lib/escalas/solve-operations", () => ({ solveOwner: () => "session-owner", startGenerationOperation: mocks.startOperation, runGenerationOperation: mocks.runOperation, cancelGenerationOperation: mocks.cancelOperation, generationOperationStatus: mocks.operationStatus }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
-vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, upgradeEscalaCalendar: mocks.upgrade, saveEscala: mocks.save, generateEscala: mocks.generate, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
+vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, createEscalaApproved: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
+  addEscalaEmployee: vi.fn(), rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
 const workspace = { id: "w1", revision: 1, status: "DRAFT", input, canEdit: true, canPublish: true };
 const command = (body: unknown, headers: HeadersInit = { origin: "http://localhost", "content-type": "application/json" }) => new Request("http://localhost/api/escalas", { method: "POST", headers, body: JSON.stringify(body) });
 beforeEach(() => {
   vi.clearAllMocks();
-  candidateDb.creationGrant.mockResolvedValue(null);
+  mocks.recheck.mockReset();
+  mocks.createScope = null;
+  for (const operation of [mocks.startOperation, mocks.runOperation, mocks.cancelOperation, mocks.operationStatus]) operation.mockReset();
   mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
   mocks.list.mockResolvedValue([workspace]); mocks.get.mockResolvedValue(workspace); mocks.create.mockResolvedValue(workspace); mocks.save.mockResolvedValue({ ...workspace, revision: 2 });
   mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input, validation: { valid: true }, preparation: { adjustedEmployeeIds: [], excludedEmployeeIds: [], generatedCoverageSlots: 7, includedEmployees: 81, untimedEmployees: 12 } });
@@ -32,45 +51,95 @@ beforeEach(() => {
 });
 
 describe("/api/escalas", () => {
-  it.each([false, true])("lists authorized workspaces and derives operator creation from editable grants=%s", async editable => {
+  it.each([false, true])("derives creation availability from the current capability scope=%s", async allowed => {
     mocks.session = { user: { id: "planner", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
-    candidateDb.creationGrant.mockResolvedValue(editable ? { branchCode: "07" } : null);
+    mocks.createScope = allowed ? ["02"] : [];
     const response = await GET(new Request("http://localhost/api/escalas"));
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ workspaces: [workspace], canCreate: editable });
+    expect(await response.json()).toEqual({ workspaces: [workspace], canCreate: allowed });
     expect(response.headers.get("cache-control")).toContain("no-store");
-    expect(candidateDb.creationGrant).toHaveBeenCalledWith({ where: { tenantId: "t1", userId: "planner", role: { in: ["PLANNER", "APPROVER"] } }, select: { branchCode: true } });
-    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1", userId: "planner", admin: false }));
   });
-  it("successfully round-trips a real service-produced receipt through GENERATE and rejects tampering before the solver", async () => {
+  it("preserves explicit Sunday upgrade and refuses a stale source without SAVE", async () => {
+    const upgraded = { ...workspace, id: "sunday-draft", input: { ...input, planningWeekStartsOn: "SUNDAY", planningCalendarSource: { workspaceId: "w1", revision: 1 } } };
+    mocks.upgrade.mockResolvedValue(upgraded);
+    const response = await POST(command({ action: "UPGRADE_CALENDAR", id: "w1", expectedRevision: 1 }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual(upgraded);
+    expect(mocks.upgrade).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1", userId: "u1" }), "w1", 1);
+    expect(mocks.save).not.toHaveBeenCalled();
+    mocks.upgrade.mockRejectedValue(new EscalaError(409, "ESCALA_STALE_REVISION", "A versão mudou."));
+    expect((await POST(command({ action: "UPGRADE_CALENDAR", id: "w1", expectedRevision: 1 }))).status).toBe(409);
+  });
+  it.each(["direct", "job"] as const)("round-trips real service receipt and application proof through %s GENERATE and rejects tampering", async channel => {
+    vi.stubEnv("UNIMED_ACCESS_COOKIE_SECRET", "synthetic-route-proposal-material-0000000");
     const value = newInput("02", "Synthetic", "2026-11", 42);
     value.startDate = "2026-11-02"; value.endDate = "2026-11-08"; delete value.visibleMonth;
-    value.planningWeekStartsOn = "MONDAY"; // Existing receipt contract uses this exact legacy week.
+    value.planningWeekStartsOn = "MONDAY";
     value.simulation = true; value.restRulesVersion = 2; value.policy.calendarMode = "MANUAL";
     value.shifts = [{ id: "day", name: "Day", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }];
     value.employees = [{ ...newEmployee(42, "day"), id: "a", registration: "a", name: "Synthetic", sector: "Store", role: "Operator", activeFrom: "2020-01-01" }];
     value.assignments = Array.from({ length: 7 }, (_, day) => ({ employeeId: "a", date: `2026-11-0${day + 2}`,
       ...([3, 6].includes(day) ? { kind: "OFF" as const } : { kind: "WORK" as const, shiftId: "day" }) }));
     value.demands = [];
+    mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099", escalaSessionId: "route-login" };
+    candidateDb.user.mockImplementation(async ({ where }) => ({ id: where.id, tenantId: where.tenantId, status: "ACTIVE", role: "ADMIN", securityVersion: 1 }));
+    candidateDb.policy.mockResolvedValue({ tenantId: "t1", mode: "ADMIN_ONLY", version: 1 });
     candidateDb.row.mockResolvedValue({ id: "w1", tenantId: "t1", branchCode: "02", branchName: "Synthetic", startDate: value.startDate, endDate: value.endDate, revision: 1, status: "DRAFT", updatedAt: new Date("2026-11-01") });
-    candidateDb.revision.mockResolvedValue({ input: value, revision: 1, status: "DRAFT", createdAt: new Date("2026-11-01") }); candidateDb.peers.mockResolvedValue([]);
+    candidateDb.revision.mockResolvedValue({ input: value, revision: 1, status: "DRAFT", createdAt: new Date("2026-11-01") });
+    candidateDb.peers.mockResolvedValue([]);
     candidateDb.solver.mockImplementation(async context => ({ status: "FEASIBLE", assignments: context.assignments, wallTimeSeconds: 1, message: "Synthetic processor" }));
+    type Operation = { id: string; tenantId: string; ownerKey: string; state: string; expiresAt: Date; workspaceId: string; expectedRevision: number };
+    const operations: Operation[] = [];
+    const matches = (entry: Operation, where: Record<string, unknown>) => Object.entries(where).every(([key, expected]) => {
+      if (key === "expiresAt") return entry.expiresAt > (expected as { gt: Date }).gt;
+      if (key === "state" && typeof expected === "object") return (expected as { in: string[] }).in.includes(entry.state);
+      return entry[key as keyof Operation] === expected;
+    });
+    candidateDb.createOperation.mockImplementation(async ({ data }) => {
+      const entry = { ...data, id: `4ea6210f-fb9a-449f-b6f4-${String(operations.length + 1).padStart(12, "0")}`, state: "CREATED" };
+      operations.push(entry); return { ...entry };
+    });
+    candidateDb.findOperation.mockImplementation(async ({ where }) => {
+      const entry = operations.find(item => matches(item, where)); return entry ? { ...entry } : null;
+    });
+    candidateDb.updateOperation.mockImplementation(async ({ where, data }) => {
+      const entries = operations.filter(item => matches(item, where)); entries.forEach(item => { Object.assign(item, data); }); return { count: entries.length };
+    });
+    candidateDb.countOperation.mockImplementation(async ({ where }) => operations.filter(item => matches(item, where)).length);
     const real = await vi.importActual<typeof import("@/lib/escalas/service")>("@/lib/escalas/service");
-    mocks.generate.mockImplementation(real.generateEscala);
-    const first = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
-    expect(first.status).toBe(200);
-    const initial = await first.json();
-    expect(initial.validation.valid).toBe(true); expect(initial.candidateReceipt.signature).toMatch(/^[a-f0-9]{64}$/);
-    const second = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1, comparisonReference: { input: initial.proposalInput, receipt: initial.candidateReceipt } }));
-    expect(second.status).toBe(200);
-    expect(await second.json()).toMatchObject({ comparison: { admission: "ADMITTED" }, validation: { valid: true } });
-    const altered = structuredClone(initial.proposalInput); altered.shifts[0].segments[0].start++;
-    candidateDb.solver.mockClear();
-    const rejected = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1, comparisonReference: { input: altered, receipt: initial.candidateReceipt } }));
-    expect(rejected.status).toBe(400);
-    expect(await rejected.json()).toMatchObject({ error: { code: "ESCALA_COMPARISON_REFERENCE_INVALID" } });
-    expect(candidateDb.solver).not.toHaveBeenCalled();
+    const jobs = await vi.importActual<typeof import("@/lib/escalas/solve-operations")>("@/lib/escalas/solve-operations");
+    mocks.generate.mockImplementation(real.generateEscala); mocks.get.mockImplementation(real.getEscala);
+    mocks.recheck.mockImplementation(real.recheckEscalaGeneration);
+    mocks.startOperation.mockImplementation(jobs.startGenerationOperation); mocks.runOperation.mockImplementation(jobs.runGenerationOperation);
+    const generate = async (comparisonReference?: unknown) => {
+      let operationId: string | undefined;
+      if (channel === "job") {
+        const start = await POST(command({ action: "START_GENERATION", id: "w1", expectedRevision: 1 }));
+        expect(start.status).toBe(201); operationId = (await start.json()).operationId;
+      }
+      return POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1, ...(operationId ? { operationId } : {}), ...(comparisonReference === undefined ? {} : { comparisonReference }) }));
+    };
+    try {
+      const first = await generate(); expect(first.status).toBe(200);
+      const initial = await first.json();
+      expect(initial.validation.valid).toBe(true); expect(initial.candidateReceipt.signature).toMatch(/^[a-f0-9]{64}$/);
+      expect(initial.proposalProof).toEqual(expect.any(String));
+      const second = await generate({ input: initial.proposalInput, receipt: initial.candidateReceipt });
+      expect(second.status).toBe(200);
+      expect(await second.json()).toMatchObject({ comparison: { admission: "ADMITTED" }, validation: { valid: true }, proposalProof: expect.any(String) });
+      const altered = structuredClone(initial.proposalInput); altered.shifts[0].segments[0].start++;
+      candidateDb.solver.mockClear();
+      const rejected = await generate({ input: altered, receipt: initial.candidateReceipt });
+      expect(rejected.status).toBe(400); expect(await rejected.json()).toMatchObject({ error: { code: "ESCALA_COMPARISON_REFERENCE_INVALID" } });
+      expect(candidateDb.solver).not.toHaveBeenCalled();
+      expect(mocks.save).not.toHaveBeenCalled();
+      expect(mocks.recheck).toHaveBeenCalledTimes(channel === "job" ? 2 : 0);
+      if (channel === "job") expect(mocks.recheck).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({ tenantId: "t1", userId: "u1", accountSessionId: "route-login" }), "w1", 1);
+      if (channel === "job") expect(JSON.stringify(operations)).not.toMatch(/candidateReceipt|comparisonReference|proposalProof|cancelToken/);
+    } finally { vi.unstubAllEnvs(); }
   });
+
   it("returns a saved REST_ONLY scenario and generates that persisted mode without hiding it in exports", async () => {
     const restInput = { ...input, generationMode: "REST_ONLY" };
     mocks.save.mockResolvedValue({ ...workspace, revision: 2, input: restInput });
@@ -130,17 +199,6 @@ describe("/api/escalas", () => {
     expect(mocks.list).toHaveBeenCalledWith({ userId: "u1", tenantId: "t1", admin: true });
     expect((await GET(new Request("http://localhost/api/escalas?id=w1"))).status).toBe(200);
     expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1");
-  });
-  it("creates a Sunday draft through the explicit upgrade action without saving the legacy source", async () => {
-    const upgraded = { ...workspace, id: "sunday-draft", input: { ...input, planningWeekStartsOn: "SUNDAY", planningCalendarSource: { workspaceId: "w1", revision: 1 } } };
-    mocks.upgrade.mockResolvedValue(upgraded);
-    const response = await POST(command({ action: "UPGRADE_CALENDAR", id: "w1", expectedRevision: 1 }));
-    expect(response.status).toBe(201);
-    expect(await response.json()).toEqual(upgraded);
-    expect(mocks.upgrade).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1", userId: "u1" }), "w1", 1);
-    expect(mocks.save).not.toHaveBeenCalled();
-    mocks.upgrade.mockRejectedValue(new EscalaError(409, "ESCALA_STALE_REVISION", "A versão mudou."));
-    expect((await POST(command({ action: "UPGRADE_CALENDAR", id: "w1", expectedRevision: 1 }))).status).toBe(409);
   });
   it("creates, saves and publishes through versioned services", async () => {
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(201);
@@ -206,7 +264,7 @@ it("uses a verified module company for successful query/create/save/generate, ig
   const actor = { userId: null, tenantId: "default-company", admin: false, moduleSessionId: "module-1" };
   const listing = await GET(new Request("http://localhost/api/escalas?tenantId=foreign"));
   expect(listing.status).toBe(200); expect(await listing.json()).toMatchObject({ canCreate: true }); expect(mocks.list).toHaveBeenLastCalledWith(actor);
-  expect((await POST(command({ action: "CREATE", input }))).status).toBe(201); expect(mocks.create).toHaveBeenLastCalledWith(actor, input);
+  expect((await POST(command({ action: "CREATE_APPROVED", approvedPolicyVersionId: "approval" }))).status).toBe(201); expect(mocks.create).toHaveBeenLastCalledWith(actor, "approval");
   expect((await POST(command({ action: "SAVE", id: "w1", expectedRevision: 1, input }))).status).toBe(200); expect(mocks.save).toHaveBeenLastCalledWith(actor, "w1", 1, input);
   expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(200); expect(mocks.generate).toHaveBeenLastCalledWith(actor, "w1", 1, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });

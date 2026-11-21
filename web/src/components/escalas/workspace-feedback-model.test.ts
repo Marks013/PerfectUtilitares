@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { EscalaRequestError, responseCode, solverProblem, toEscalaProblem } from "./workspace-feedback-model";
 
 describe("plain language planning recovery", () => {
+  it("explains missing and revoked administrative approval without sending the operator to edit protected rules", () => {
+    for (const code of ["ESCALA_CONFIG_APPROVAL_REQUIRED", "ESCALA_CONFIG_REVOKED"]) {
+      const problem = toEscalaProblem(new EscalaRequestError(code, 409, "private"));
+      expect(problem.explanation).toContain("administrador");
+      expect(problem.action).not.toBe("reload");
+      expect(problem.action).not.toBe("rules");
+      expect(problem.message).not.toContain("outra aba");
+    }
+  });
   it("does not call a published continuity dependency a concurrent editing conflict", () => {
     const problem = toEscalaProblem(new EscalaRequestError("ESCALA_DELETE_DEPENDENCY", 409, "raw"));
     expect(problem.message).toContain("continuidade");

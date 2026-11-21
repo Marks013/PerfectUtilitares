@@ -95,7 +95,7 @@ test("short-journey pause flexibility requires an explicit scenario choice, surv
     await openWorkspace(page, workspace);
     await page.locator('button[aria-controls="escala-area-generate"]').click();
     await page.getByRole("button",{name:"Ajustar pausas de jornadas curtas (opcional)",exact:true}).click();
-    const toggle=page.getByRole("checkbox",{name:"Simular jornadas de 4 a 6 horas sem pausa",exact:true});
+    const toggle=page.getByRole("checkbox",{name:"Simular jornada de mais de 4h até 6h sem pausa de 15 minutos",exact:true});
     await expect(toggle).not.toBeChecked();
     const saving=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/api/escalas")&&r.request().postDataJSON()?.action==="SAVE");
     await toggle.check();

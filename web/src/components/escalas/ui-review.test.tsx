@@ -1,4 +1,6 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup as renderWithContext } from "react-dom/server";
+import { EscalaAccessProvider } from "./access-context";
+import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { describe, expect, it, vi } from "vitest";
 import { visibleDates } from "@/lib/escalas/dates";
 import { coverageBasis } from "@/lib/escalas/automatic-coverage";
@@ -61,7 +63,17 @@ describe("Escalas readable operational review", () => {
 
   it("preserves excluded records in a separate actionable relation and exposes the recorded reason", () => {
     const {input} = sample();
-    const html = renderToStaticMarkup(<Employees input={input} disabled={false} onChange={vi.fn()} />);
+    const html = renderWithContext(
+      <EscalaAccessProvider value={{
+        channel: "USERNAME",
+        roleLabel: "Operador da filial",
+        administrator: false,
+        allBranches: false,
+        branches: [{ code: input.branchCode, label: input.branchName, capabilities: ["employee.manage", "workspace.save"] }],
+      }}>
+        <Employees input={input} disabled={false} onChange={vi.fn()} />
+      </EscalaAccessProvider>,
+    );
     const mainStart = html.indexOf('aria-label="Colaboradores incluídos"');
     const excludedStart = html.indexOf("Não incluídos no planejamento (1)");
     expect(mainStart).toBeGreaterThan(-1); expect(excludedStart).toBeGreaterThan(mainStart);
@@ -71,6 +83,10 @@ describe("Escalas readable operational review", () => {
     expect(relation).toContain("Reposição / Repositor");
     expect(relation).toContain("Exclusão manual: não participa desta proposta de teste.");
     expect(relation).toContain("Revisar cadastro");
+    const reviewButtons = [...relation.matchAll(/<button\b([^>]*)>Revisar cadastro(?=<|$)/g)];
+    expect(reviewButtons).toHaveLength(1);
+    expect(reviewButtons[0][1]).not.toMatch(/\sdisabled(?:=|\s|$)/);
+    expect(relation).not.toMatch(/<button\b[^>]*>Remover da proposta(?=<|$)/);
     expect(input.employees).toHaveLength(3);
   });
 

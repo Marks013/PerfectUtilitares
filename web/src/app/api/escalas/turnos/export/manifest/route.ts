@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireEscalaAccess } from "@/lib/escalas/access.server";
+import { requireEscalaCapability } from "@/lib/escalas/access";
 import {
   enforcePersistentRateLimit,
   jsonError,
@@ -11,6 +12,8 @@ import {
 } from "@/lib/api/security";
 import { escalaFailure, escalaJson } from "../../../http";
 import { createTurnoExportManifest } from "@/lib/escalas/shift-catalog/export";
+import { turnoSelectionManifestSchema } from "@/lib/escalas/shift-catalog/flow-contracts";
+import { createTurnoSelectionManifest } from "@/lib/escalas/shift-catalog/selection-export";
 
 export const runtime = "nodejs";
 const id = z.string().min(1).max(100);
@@ -33,12 +36,21 @@ export async function POST(request: Request) {
   if (contentError) return contentError;
   const body = await readJsonBody(request);
   if (!body.ok) return body.response;
+  const selection = turnoSelectionManifestSchema.safeParse(body.data);
   const parsed = bodySchema.safeParse(body.data);
-  if (!parsed.success) return jsonError(400, "TURNO_INVALID_MANIFEST", "Informe o mês, os planejamentos e as referências de colaborador válidos.");
+  if (!parsed.success && !selection.success) return jsonError(400, "TURNO_INVALID_MANIFEST", "Informe o mês, os planejamentos e as referências de colaborador válidos.");
   try {
+    await requireEscalaCapability(guard.actor, "export.integration");
     const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-turnos-manifest", limit: 12, windowMs: 60_000 });
     if (limited) return limited;
-    return escalaJson(await createTurnoExportManifest(guard.actor, parsed.data), 201);
+    let manifest: Awaited<ReturnType<typeof createTurnoSelectionManifest>> | Awaited<ReturnType<typeof createTurnoExportManifest>>;
+    if (selection.success) manifest = await createTurnoSelectionManifest(guard.actor, selection.data);
+    else {
+      if (!parsed.success) return jsonError(400, "TURNO_INVALID_MANIFEST", "Confira os dados da seleção.");
+      manifest = await createTurnoExportManifest(guard.actor, parsed.data);
+    }
+    await requireEscalaCapability(guard.actor, "export.integration");
+    return escalaJson(manifest, 201);
   } catch (error) {
     return escalaFailure(error);
   }

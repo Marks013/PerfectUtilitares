@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { selectEscalasWorkspace } from "./escalas-selection";
+import { openEscalasArea, selectEscalasWorkspace } from "./escalas-selection";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { loginAsAdmin } from "./admin-session";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
@@ -23,6 +23,7 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
   try {
     await page.goto("/escala");
     await selectEscalasWorkspace(page, created);
+    await openEscalasArea(page, "generate");
     const started = page.waitForResponse(result => result.url().endsWith("/api/escalas") && result.request().method() === "POST" && result.request().postDataJSON()?.action === "START_GENERATION");
     await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
     const registration = await started;
@@ -57,7 +58,7 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     }
-    await page.getByRole("navigation", { name: "Etapas do planejamento", exact: true }).getByRole("button", { name: /^Escolher jornada e gerar/ }).click();
+    await page.getByRole("navigation", { name: "Etapas do planejamento", exact: true }).getByRole("button", { name: /^Montar escala/ }).click();
     const thirdRegistration = page.waitForResponse(result => result.url().endsWith("/api/escalas") && result.request().method() === "POST" && result.request().postDataJSON()?.action === "START_GENERATION");
     await page.getByRole("button", { name: "Gerar escala e horários", exact: true }).click();
     operationId = (await (await thirdRegistration).json()).operationId;
@@ -72,32 +73,5 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
   }
 });
 
-test("another operational session cannot query or cancel a private generation operation", async ({ page, browser }) => {
-  test.skip(process.env.E2E_MUTATION !== "1", "Requires the disposable isolated database");
-  await loginAsAdmin(page);
-  const origin = new URL(page.url()).origin;
-  const post = (data: Record<string, unknown>) => page.request.post("/api/escalas", { headers: { origin }, data });
-  const input = newInput("OWNER-" + Date.now().toString(36), "Controle de operação", "2026-11", 42);
-  const created = await post({ action: "CREATE", input }); expect(created.status()).toBe(201);
-  const workspace: EscalaWorkspace = await created.json();
-  const other = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true });
-  try {
-    const started = await post({ action: "START_GENERATION", id: workspace.id, expectedRevision: workspace.revision });
-    expect(started.status()).toBe(201);
-    const { operationId } = await started.json();
-    const unlocked = await other.request.post("/api/escalas/access/session", { headers: { origin }, data: { password: process.env.E2E_UNIMED_STANDARD_PASSWORD } });
-    expect(unlocked.status()).toBe(200);
-    for (const action of ["CANCEL_GENERATION", "GENERATION_STATUS"]) {
-      const denied = await other.request.post("/api/escalas", { headers: { origin }, data: { action, operationId } });
-      expect(denied.status()).toBe(404);
-    }
-    expect(await (await post({ action: "GENERATION_STATUS", operationId })).json()).toMatchObject({ state: "CREATED" });
-    const duplicate = await post({ action: "START_GENERATION", id: workspace.id, expectedRevision: workspace.revision });
-    expect(duplicate.status()).toBe(429);
-    expect(await (await post({ action: "CANCEL_GENERATION", operationId })).json()).toMatchObject({ state: "CANCELLED" });
-    expect(await (await post({ action: "CANCEL_GENERATION", operationId })).json()).toMatchObject({ state: "CANCELLED" });
-  } finally {
-    await other.close();
-    expect((await page.request.delete("/api/escalas", { headers: { origin }, data: { workspaceId: workspace.id, expectedRevision: workspace.revision } })).status()).toBe(200);
-  }
-});
+// Cross-session query/cancellation privacy is exercised with real nominal sessions
+// in escalas-scoped-access.spec.ts, in its exclusively owned configured tenant.

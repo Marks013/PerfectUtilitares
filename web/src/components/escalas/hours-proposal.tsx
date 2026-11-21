@@ -3,6 +3,8 @@
 import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { useState } from "react";
 import styles from "./escalas.module.css";
+import { escalaCatalogActions } from "@/lib/escalas/access-contracts";
+import { useEscalaClientAccess } from "./access-context";
 import { effectiveWeeklyMinutes } from "@/lib/escalas/labor-rules";
 import { dateRange } from "@/lib/escalas/dates";
 import { sortEmployees } from "@/lib/escalas/order";
@@ -20,7 +22,7 @@ export function ContinuousWorkOption({ input, disabled, onChange }: { input: Esc
     return shift && requiresWorkBlockBalance(shift);
   });
   return <div className={styles.stackSmall}>
-    <div><Check label="Limitar cada bloco a 4h30" checked={enabled} disabled={disabled} onChange={checked => onChange(changeContinuousWorkLimit(input, checked))} /><p className={styles.muted}>Redistribui os dois períodos de trabalho, mantendo a jornada e a duração do intervalo.</p></div>
+    <div><Check label="Equilibrar os dois períodos de trabalho em até 4h30 cada" checked={enabled} disabled={disabled} onChange={checked => onChange(changeContinuousWorkLimit(input, checked))} /><p className={styles.muted}>Nas propostas automáticas com dois períodos de trabalho, redistribui o tempo antes e depois do intervalo, mantendo a jornada e a duração do intervalo. Não reduz a jornada diária para 4h30 e não retira a pausa.</p></div>
     {longLocked && <p role="status" className={styles.muted}>Este horário está bloqueado e foi mantido. Desbloqueie o dia se quiser ajustar os períodos de trabalho.</p>}
   </div>;
 }
@@ -77,7 +79,15 @@ export function hoursProposalGroups(input: EscalaInput, proposed: EscalaInput) {
   return [...groups].map(([key, group]) => ({ key, ...group }));
 }
 
-export function HoursProposal({ input, disabled, onChange }: { input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void }) {
+type HoursProposalProps = { input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void };
+
+export function HoursProposal(props: HoursProposalProps) {
+  const access = useEscalaClientAccess();
+  if (!access || !escalaCatalogActions(access, props.input.branchCode).canDefine) return null;
+  return <ManualHoursProposal {...props} />;
+}
+
+function ManualHoursProposal({ input, disabled, onChange }: HoursProposalProps) {
   const [anchor, setAnchor] = useState<Anchor>("both");
   const [exceptions, setExceptions] = useState<ScheduleException[]>([]);
   const [error, setError] = useState("");
@@ -86,6 +96,7 @@ export function HoursProposal({ input, disabled, onChange }: { input: EscalaInpu
   const mixed = input.defaultWeeklyHours === 42 && Boolean(input.mixed42Sectors?.length);
   const timed = input.employees.some(person => isEscalaPlanningParticipant(person) && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING");
   function apply(strategy: Anchor) {
+    if (disabled || mixed || !timed) return;
     setError(""); setNotice("");
     try {
       const prepared = adaptCompatibleSchedules(input, strategy === "arrival" ? "PRESERVE_START" : strategy === "departure" ? "PRESERVE_END" : "BOTH");

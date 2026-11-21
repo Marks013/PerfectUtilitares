@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { describe, expect, it } from "vitest";
 import { visibleDates } from "@/lib/escalas/dates";
 import { ValidationResults } from "./results";

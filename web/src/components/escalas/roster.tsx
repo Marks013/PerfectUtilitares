@@ -1,6 +1,8 @@
 "use client";
 
 import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
+import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
+
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import { dayOfWeek, visibleDates } from "@/lib/escalas/dates";
@@ -24,6 +26,8 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   review?: EscalaRecoveryRequest; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onReviewEmployee?: (employeeId: string) => void; onReviewCoverage?: () => void; onUndo?: (previous: EscalaInput, applied: EscalaInput) => Promise<boolean>; active?: boolean;
 }) {
   const input = useActiveSnapshot(nextInput, active);
+  const access = useEscalaClientAccess();
+  const analytics = canDisplayEscalaAction(access, "report.analytics", input.branchCode);
   const hoursOnly = input.generationMode === "HOURS_ONLY";
   const [localMode, setLocalMode] = useState<EscalaExportMode>(() => hoursOnly ? "hours" : input.generationMode === "REST_ONLY" ? "rest" : "both");
   const view = hoursOnly ? "hours" : mode ?? localMode;
@@ -32,6 +36,11 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   const [sector, setSector] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<RosterDay | null>(null);
+  const rosterElement = useRef<HTMLElement>(null);
+  const rosterHeading = useRef<HTMLHeadingElement>(null);
+  const editorOrigin = useRef<HTMLButtonElement | null>(null);
+  const focusFrame = useRef(0);
+  useEffect(() => () => window.cancelAnimationFrame(focusFrame.current), []);
   const [undo, setUndo] = useState<{ previous: EscalaInput; applied: EscalaInput } | null>(null);
   const [notice, setNotice] = useState("");
   const dates = useMemo(() => visibleDates(input), [input]);
@@ -42,9 +51,10 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   const codes = useMemo(() => escalaShiftCodes(input), [input]);
   const coverageCache = useRef<{ input: EscalaInput; dates: string[]; sector: string; value: ReturnType<typeof rosterCoverageIssues> } | null>(null);
   const coverage = useMemo(() => {
+    if (!analytics) return [];
     if (active && (coverageCache.current?.input !== input || coverageCache.current.dates !== dates || coverageCache.current.sector !== sector)) coverageCache.current = { input, dates, sector, value: rosterCoverageIssues(input, dates, sector) };
     return coverageCache.current?.value ?? [];
-  }, [input, dates, sector, active]);
+  }, [input, dates, sector, active, analytics]);
   const matches = (person: EscalaInput["employees"][number]) => (!sector || person.sector === sector)
     && [person.name, person.registration, person.role].join(" ").toLocaleLowerCase("pt-BR").includes(filter.toLocaleLowerCase("pt-BR"));
   const restEmployees = sortScheduleEntries(presentation.restPeople.map(person => ({ employee: person.employee, schedule: person.proposedSchedule })))
@@ -60,6 +70,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
     if (!active || !review?.employeeId || !review.date || reviewedRequest.current === review.request || !input.employees.some(person => person.id === review.employeeId && isEscalaPlanningParticipant(person))) return;
     if (review.date < input.startDate || review.date > input.endDate) return;
     reviewedRequest.current = review.request;
+    editorOrigin.current = null;
     setFilter("");
     setSector("");
     setSelected({ employeeId: review.employeeId, date: review.date });
@@ -68,24 +79,47 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   const selectedEmployee = selected ? input.employees.find((person) => person.id === selected.employeeId) : undefined;
   const canUndo = useMemo(() => Boolean(undo && isCurrentRosterChange(undo.applied, input)), [undo, input]);
   const missingCoverage = !input.demands.some((demand) => !isAdministrativeEscalaSector(demand.sector) && dates.includes(demand.date) && (!sector || demand.sector === sector));
+  function openEditor(day: RosterDay, origin: HTMLButtonElement) {
+    window.cancelAnimationFrame(focusFrame.current);
+    editorOrigin.current = origin;
+    setSelected(day);
+  }
+  function closeEditor() {
+    setSelected(null);
+    window.cancelAnimationFrame(focusFrame.current);
+    focusFrame.current = window.requestAnimationFrame(() => {
+      const roster = rosterElement.current;
+      if (!roster?.isConnected || roster.closest("[hidden], [inert]") || !roster.getClientRects().length) return;
+      const origin = editorOrigin.current;
+      editorOrigin.current = null;
+      const target = origin?.isConnected && roster.contains(origin) && !origin.matches(":disabled")
+        && !origin.closest("[hidden], [inert]") && origin.getClientRects().length ? origin : rosterHeading.current;
+      const scrollRegion = target?.closest<HTMLElement>('[tabindex="0"]');
+      const scrollLeft = scrollRegion?.scrollLeft;
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (scrollRegion && scrollLeft !== undefined) scrollRegion.scrollLeft = scrollLeft;
+    });
+  }
   function apply(next: EscalaInput) {
     setUndo({ previous: input, applied: next });
     onChange(next);
-    setSelected(null);
+    closeEditor();
     setNotice("Alteração aplicada ao rascunho. A cobertura foi atualizada. Você pode desfazer antes de outra alteração ou salvamento.");
   }
   let lastSector = "";
   let lastHoursSector = "";
-  return <section className={`${panelClass} ${styles.roster}`} aria-label="Grade mensal da filial">
+  return <section ref={rosterElement} className={`${panelClass} ${styles.roster}`} aria-label="Grade mensal da filial">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 id="escala-roster-title" className={styles.sectionTitle}>{hoursOnly ? "Escala de horários" : "Escala de folgas e horários"}</h2>
+      <h2 ref={rosterHeading} id="escala-roster-title" tabIndex={-1} className={`${styles.sectionTitle} ${styles.feedbackFocus}`}>{hoursOnly ? "Escala de horários" : "Escala de folgas e horários"}</h2>
       <button type="button" className={buttonClass} disabled={disabled || !canUndo} onClick={() => {
         if (!undo || !isCurrentRosterChange(undo.applied, input)) return;
         if (onUndo) { void onUndo(undo.previous, undo.applied).then(restored => { if (restored) { setUndo(null); setSelected(null); setNotice("Última alteração desfeita e salva. A proposta anterior foi restaurada."); } }); return; }
         onChange(undo.previous); setUndo(null); setSelected(null); setNotice("Última alteração desfeita. A proposta anterior foi restaurada.");
       }}>Desfazer última alteração</button>
     </div>
-    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Setores de A–Z. Nas folgas e nos horários: cargo, horário completo crescente e nome. Selecione um dia para revisar.</p>
+    <p className={styles.muted}>Filial {input.branchCode} · {input.branchName}. {displayDate(dates[0])} a {displayDate(dates.at(-1) ?? dates[0])}. Selecione um dia para revisar.</p>
+    <details><summary className={styles.disclosureTrigger}>Como consultar a grade</summary><p className={styles.muted}>Use a rolagem dentro da tabela para consultar todos os dias. Setores de A–Z. Nas folgas e nos horários: cargo, horário completo crescente e nome.</p></details>
     <div className={styles.formGrid}>
       <Field label="Visualização da escala">{(id) => <select id={id} className={controlClass} value={view} onChange={(event) => { const next = event.target.value as EscalaExportMode; setLocalMode(next); onModeChange?.(next); }}>
         {!hoursOnly && <option value="rest">Somente folgas</option>}<option value="hours">Somente horários</option>{!hoursOnly && <option value="both">Folgas e horários</option>}
@@ -100,8 +134,8 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
     <p className={styles.muted}>{ROSTER_COLOR_LEGEND}</p>
     <p className={styles.muted}>{presentation.calendarLabel}</p>
     {presentation.holidayNotes.length > 0 && <p className={styles.muted}>Feriados: {presentation.holidayNotes.join("; ")}</p>}
-    {missingCoverage ? <p className={styles.muted}>Cobertura por horário não verificada: a necessidade deste setor ou período ainda não foi informada. Presença diária não equivale a cobertura horária.</p>
-      : <p className="text-sm">{coverage.length ? `${coverage.length} faixa(s) de cobertura precisam de conferência. Os dias estão destacados na grade.` : "Nenhuma falta nas faixas de cobertura informadas."} Somente faixas declaradas são verificadas; estimativas não são mínimos confirmados.</p>}
+    {analytics && (missingCoverage ? <p className={styles.muted}>Cobertura por horário não verificada: a necessidade deste setor ou período ainda não foi informada. Presença diária não equivale a cobertura horária.</p>
+      : <p className="text-sm">{coverage.length ? `${coverage.length} faixa(s) de cobertura precisam de conferência. Os dias estão destacados na grade.` : "Nenhuma falta nas faixas de cobertura informadas."} Somente faixas declaradas são verificadas; estimativas não são mínimos confirmados.</p>)}
     {view !== "hours" && <><h3 className={styles.sectionTitle}>Escala de folgas</h3>
     <section className={styles.rosterScroll}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: The monthly table must remain keyboard-scrollable in read-only mode.
@@ -147,7 +181,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
                 const gap = coverage.some((issue) => issue.sector === employee.sector && issue.date === date);
                 return <td key={date} className={styles.dayCell}>
                   {employee.planningEnabled === false || inactive || assignment?.kind === "HOLIDAY" ? <span className={styles.inactiveCell} style={rosterCellColors(label.code)} title={label.description}><span aria-hidden="true">{label.code}</span><span className="sr-only">{employee.name}, {displayDate(date)}: {label.description}</span></span>
-                    : <button type="button" disabled={disabled} onClick={() => setSelected({ employeeId: employee.id, date })}
+                    : <button type="button" disabled={disabled} onClick={event => openEditor({ employeeId: employee.id, date }, event.currentTarget)}
                       className={styles.cellButton} style={rosterCellColors(label.code)} data-kind={assignment?.kind ?? "PENDING"} data-code={label.code} data-locked={Boolean(assignment?.locked)}
                       title={`${label.description}${gap ? ". Setor com cobertura a conferir" : ""}`}
                       aria-label={`${employee.name}, ${displayDate(date)}: ${label.description}${assignment?.locked ? ", bloqueado" : ""}. Editar`}>
@@ -160,19 +194,21 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
         })}</tbody>
       </table>
     </section></>}
-    {view !== "rest" && <section aria-labelledby="escala-hours-title" className="space-y-3">
+    {view !== "rest" && <section aria-labelledby="escala-hours-title" className={styles.stackSmall}>
       <h3 id="escala-hours-title" className={styles.sectionTitle}>Escala de horários</h3>
       <Field label="Dia dos horários propostos">{(id) => <select id={id} className={controlClass} value={currentDate} onChange={(event) => { setHoursDate(event.target.value); setSelected(null); }}>{dates.map((date) => <option key={date} value={date}>{displayDate(date)}</option>)}</select>}</Field>
       <p className={styles.muted}>Horários exatos da proposta neste dia. Pausas, folgas, afastamentos e pessoas sem horário fixo não entram na contagem por hora.</p>
-      <div className="overflow-x-auto"><table className={styles.hoursTable}><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Colaboradores por setor, cargo, horário completo crescente e nome. Mesmos colaboradores e filtros da escala de folgas.</caption>
-        <thead><tr><th scope="col" className="p-2">Colaborador / função</th><th scope="col" className="p-2">Horário proposto</th><th scope="col" className="p-2">Intervalo</th><th scope="col" className="p-2">Total / situação</th></tr></thead>
+      <section className={styles.tableScroll}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to scroll the hours table independently.
+        tabIndex={0} aria-label="Horários da equipe, com rolagem horizontal"><table className={styles.hoursTable}><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Colaboradores por setor, cargo, horário completo crescente e nome. Mesmos colaboradores e filtros da escala de folgas.</caption>
+        <thead><tr><th scope="col" className={styles.hoursIdentity} style={{ background: "var(--app-input)", fontWeight: 700, zIndex: 2 }}>Colaborador / função</th><th scope="col" className="p-2">Horário proposto</th><th scope="col" className="p-2">Intervalo</th><th scope="col" className="p-2">Total / situação</th></tr></thead>
         <tbody>{displayedHours.flatMap((employee) => {
           const heading = employee.sector !== lastHoursSector; lastHoursSector = employee.sector;
           const cell = scheduleByEmployee.get(employee.id)?.cells.find((item) => item.date === currentDate);
-          return [...(heading ? [<tr key={"hours-sector-" + employee.sector}><th scope="rowgroup" colSpan={4} className={styles.sectorHeading}>{employee.sector || "Sem setor informado"}</th></tr>] : []), <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className="p-2 font-normal"><span className="block">{employee.registration} · {employee.name}</span><span className="block text-xs">{employee.sector} · {employee.role}</span></th>
-            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia ainda sem definição"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span>{hoursOnly ? onReviewEmployee && <button type="button" className={buttonClass} disabled={disabled} onClick={() => onReviewEmployee(employee.id)}>Conferir horários do colaborador</button> : <button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV" || cell?.code === "FE"} onClick={() => setSelected({ employeeId: employee.id, date: currentDate })}>Revisar dia</button>}</td></tr>];
+            return [...(heading ? [<tr key={"hours-sector-" + employee.sector}><th scope="rowgroup" colSpan={4} className={styles.sectorHeading}>{employee.sector || "Sem setor informado"}</th></tr>] : []), <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className={styles.hoursIdentity}><span className="block">{employee.registration} · {employee.name}</span><span className="block text-xs">{employee.sector} · {employee.role}</span>{hoursOnly ? onReviewEmployee && <button type="button" className={buttonClass} disabled={disabled} onClick={() => onReviewEmployee(employee.id)}>Conferir horários do colaborador</button> : <button type="button" className={buttonClass} disabled={disabled || cell?.code === "FV" || cell?.code === "FE"} onClick={event => openEditor({ employeeId: employee.id, date: currentDate }, event.currentTarget)}>Revisar dia</button>}</th>
+            <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia ainda sem definição"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span></td></tr>];
         })}</tbody>
-      </table></div>
+      </table></section>
     </section>}
     {!employees.length && <p className="text-sm">Nenhum colaborador corresponde aos filtros.</p>}
     {pages > 1 && <div className={styles.actions}>
@@ -190,7 +226,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
     {!hoursOnly && selected && selectedEmployee && assignments.get(`${selected.employeeId}:${selected.date}`)?.kind !== "HOLIDAY" && <fieldset disabled={disabled} className="space-y-3">
       <CellEditor key={`${selected.employeeId}:${selected.date}:${assignments.get(`${selected.employeeId}:${selected.date}`)?.locked}`} employee={selectedEmployee} date={selected.date}
         assignment={assignments.get(`${selected.employeeId}:${selected.date}`)} input={input} canUnlock={canUnlock}
-        onCancel={() => setSelected(null)} onApply={(assignment) => apply(applyRosterChanges(input, [assignment], canUnlock))} />
+        onCancel={closeEditor} onApply={(assignment) => apply(applyRosterChanges(input, [assignment], canUnlock))} />
       <SwapEditor key={`${selected.employeeId}:${selected.date}`} input={input} first={selected} dates={dates} onApply={apply} />
     </fieldset>}
   </section>;

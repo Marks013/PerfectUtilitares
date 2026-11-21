@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { describe, expect, it, vi } from "vitest";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { GenerationModeOption, hasHourReferences } from "./generation-mode-option";
@@ -26,7 +26,7 @@ describe("hours-only scope and relevant controls", () => {
     const html = renderToStaticMarkup(<GenerationModeOption input={input} disabled={false} onChange={vi.fn()} />);
     expect(html).toMatch(new RegExp(`<input(?=[^>]*value="${mode}")(?=[^>]*checked="")[^>]*>`));
     const mixed = renderToStaticMarkup(<Mixed42Option input={input} disabled={false} onChange={vi.fn()} />);
-    if (hours === 42) expect(mixed).toContain("Jornada mista de 42h");
+    if (hours === 42) expect(mixed).toContain("Alternar dias de 8h e 9h na semana de 42h");
     else expect(mixed).toBe("");
     expect(input).toEqual(original);
   });
@@ -60,7 +60,7 @@ describe("hours-only scope and relevant controls", () => {
     expect(html).toContain('<option value="hours" selected="">Referências de horários</option>');
     expect(html).not.toContain('value="rest"'); expect(html).not.toContain('value="both"');
     expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>Gerar PDF<\/button>/);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar escala conferida<\/button>/);
     expect(html).toContain("Não representa presença diária nem cobertura garantida");
   });
   it("does not call zero clocks an exportable hourly reference", () => {

@@ -1,5 +1,6 @@
 import { isEscalaPlanningParticipant, operationalEscalaInput } from "./eligibility";
 import type { Prisma } from "@/generated/prisma/client";
+import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { canonicalBranchCode } from "./branch-code";
 import { allowedBranches, branchPermission, EscalaError, requireEscalaPermission, type EscalaActor, type EscalaPermission } from "./access";
@@ -15,21 +16,27 @@ import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-u
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
-import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
-import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
-import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes, workAfterStoreClosing } from "./store-hours";
 import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
 import { isOperationallyReusable } from "./roster-quality";
 import type { EscalaCandidateResponse } from "./candidate-reference";
+import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
+import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
+import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes, workAfterStoreClosing } from "./store-hours";
 
 import { manualAssignmentIssues, manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
+import { lockEscalaAccess, requireEscalaCapability } from "./access";
+import { loadEscalaApproval, inputFromEscalaApproval } from "./approved-policy-service";
+import { addEmployeeFromEscalaApprovedModel } from "./approved-policy";
+import { assertEscalaOperationalInput, assertEscalaProtectedAssignments, stableEscalaJson } from "./operational-input-policy";
+import { ESCALA_CAPABILITIES, decideEscalaPermission } from "./permissions";
+import { signEscalaProposal, verifyEscalaProposal, type EscalaProposalScope } from "./proposal-proof";
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
   startDate: string; endDate: string; revision: number; status: string; updatedAt: Date;
 };
 
 function actorProvenance(actor: EscalaActor) {
-  return actor.moduleSessionId ? { accessChannel: "ESCALAS_MODULE_PASSWORD", moduleSessionId: actor.moduleSessionId } : {};
+  return actor.moduleSessionId ? { accessChannel: "ESCALAS_USERNAME_ONLY", moduleSessionId: actor.moduleSessionId } : {};
 }
 
 function snapshotJson(input: EscalaInput): Prisma.InputJsonValue {
@@ -39,11 +46,7 @@ function snapshotJson(input: EscalaInput): Prisma.InputJsonValue {
 export function parseEscalaInput(value: unknown): EscalaInput {
   const parsed = escalaInputSchema.safeParse(value);
   if (!parsed.success) throw new EscalaError(400, "ESCALA_INVALID_INPUT", parsed.error.issues.slice(0, 8).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
-  if (!parsed.data.employees.some(person => person.manualShiftOverrides?.length)) return parsed.data;
-  const materialized = materializeManualShiftOverrides(parsed.data);
-  const checked = escalaInputSchema.safeParse(materialized);
-  if (!checked.success) throw new EscalaError(400, "ESCALA_INVALID_INPUT", checked.error.issues.slice(0, 8).map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
-  return checked.data;
+  return parsed.data;
 }
 
 async function assertManualCatalogSelections(actor: EscalaActor, input: EscalaInput, previous?: EscalaInput) {
@@ -94,7 +97,7 @@ export async function listEscalas(actor: EscalaActor) {
   }); });
 }
 
-export async function getEscala(actor: EscalaActor, id: string, revision?: number): Promise<EscalaWorkspace> {
+export async function getEscala(actor: EscalaActor, id: string, revision?: number): Promise<EscalaWorkspace & { approvedPolicyVersionId: string | null }> {
   const row = await prisma.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId } });
   if (!row) throw new EscalaError(404, "ESCALA_NOT_FOUND", "Escala não encontrada.");
   const permission = await branchPermission(actor, row.branchCode);
@@ -102,32 +105,45 @@ export async function getEscala(actor: EscalaActor, id: string, revision?: numbe
     tenantId_workspaceId_revision: { tenantId: actor.tenantId, workspaceId: row.id, revision: revision ?? row.revision },
   } });
   if (!version) throw new EscalaError(404, "ESCALA_REVISION_NOT_FOUND", "Versão da escala não encontrada.");
+  if (!actor.admin && !version.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "O planejamento precisa de aprovação administrativa antes do acesso operacional.");
   const input = parseEscalaInput(version.input);
-  return view({ ...row, revision: version.revision, status: version.status, updatedAt: version.createdAt }, input, permission);
+  return { ...view({ ...row, revision: version.revision, status: version.status, updatedAt: version.createdAt }, input, permission),
+    approvedPolicyVersionId: version.approvedPolicyVersionId };
 }
 
-export async function createEscala(actor: EscalaActor, input: EscalaInput, origin?: EscalaWorkspace): Promise<EscalaWorkspace> {
+export async function createEscala(actor: EscalaActor, input: EscalaInput, approvedPolicyVersionId?: string, origin?: EscalaWorkspace): Promise<EscalaWorkspace & { approvedPolicyVersionId: string | null }> {
   if (input.planningCalendarSource && (!origin || input.planningCalendarSource.workspaceId !== origin.id
     || input.planningCalendarSource.revision !== origin.revision))
     throw new EscalaError(400, "ESCALA_CALENDAR_SOURCE_INVALID", "Use a ação de atualização da semana para criar uma proposta com origem conferida.");
   input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
   const permission = await branchPermission(actor, input.branchCode);
-  requireEscalaPermission(permission, "edit");
+  await requireEscalaCapability(actor, "workspace.create", input.branchCode);
+  if (!actor.admin && !approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Selecione uma configuração aprovada pelo administrador.");
   input = materializeManualShiftOverrides(input);
   await assertManualCatalogSelections(actor, input);
   // Coverage provenance belongs to each row; legacy global review never promotes estimates.
   input = preserveCalendarSourceContext(input, publishedPlanningContext(input, []));
   const row = await prisma.$transaction(async (tx) => {
+    await lockEscalaAccess(tx, actor.tenantId);
+    await requireEscalaCapability(actor, "workspace.create", input.branchCode, tx);
     if (origin) {
       const latest = await tx.escalaWorkspace.findFirst({ where: { id: origin.id, tenantId: actor.tenantId, revision: origin.revision } });
       if (!latest || latest.revision !== origin.revision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento original mudou. Recarregue antes de atualizar a semana.");
+    }
+    if (approvedPolicyVersionId) {
+      const approved = await loadEscalaApproval(actor, approvedPolicyVersionId, tx);
+      const expected = parseEscalaInput({ ...approved.snapshot.configuration, ...approved.snapshot.seed });
+      if (stableEscalaJson(publishedPlanningContext(materializeManualShiftOverrides(expected), [])) !== stableEscalaJson(input)) {
+        throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "A criação deve usar a configuração aprovada exata.");
+      }
     }
     const created = await tx.escalaWorkspace.create({ data: {
       tenantId: actor.tenantId, branchCode: input.branchCode, branchName: input.branchName,
       startDate: input.startDate, endDate: input.endDate,
     } });
+    input = await planningContext(actor, created.id, input, tx);
     await tx.escalaRevision.create({ data: { tenantId: actor.tenantId, workspaceId: created.id, revision: 1,
-      status: "DRAFT", input: snapshotJson(input), createdById: actor.userId, ...actorProvenance(actor) } });
+      status: "DRAFT", input: snapshotJson(input), createdById: actor.userId, approvedPolicyVersionId: approvedPolicyVersionId ?? null, ...actorProvenance(actor) } });
     await tx.auditLog.create({ data: { userId: actor.userId, action: "CREATE", entity: "EscalaWorkspace", entityId: created.id,
       metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision: 1, employeeCount: input.employees.length } } });
     return created;
@@ -141,7 +157,11 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput, origi
     }
     throw error;
   });
-  return view(row, input, permission);
+  return { ...view(row, input, permission), approvedPolicyVersionId: approvedPolicyVersionId ?? null };
+}
+
+export async function createEscalaApproved(actor: EscalaActor, approvedPolicyVersionId: string) {
+  return createEscala(actor, await inputFromEscalaApproval(actor, approvedPolicyVersionId), approvedPolicyVersionId);
 }
 
 /** Explicit upgrade creates another revision history; the source is never overwritten. */
@@ -150,7 +170,75 @@ export async function upgradeEscalaCalendar(actor: EscalaActor, id: string, expe
   requireEscalaPermission(current, "edit");
   assertRevision(current, expectedRevision);
   const draft = parseEscalaInput(sundayCalendarDraft(current.input, { workspaceId: id, revision: expectedRevision }));
-  return createEscala(actor, draft, current);
+  return createEscala(actor, draft, undefined, current);
+}
+
+async function proposalScope(actor: EscalaActor, current: EscalaWorkspace & { approvedPolicyVersionId: string | null }, db: Prisma.TransactionClient = prisma): Promise<EscalaProposalScope> {
+  if (!actor.moduleSessionId && !actor.accountSessionId) throw new EscalaError(401, "ESCALA_ACCESS_REQUIRED", "Entre novamente para obter uma proposta vinculada à sua sessão.");
+  const context = await requireEscalaCapability(actor, "schedule.generate", current.input.branchCode, db);
+  const policy = await db.escalaModuleAccessPolicy.findUnique({ where: { tenantId: actor.tenantId }, select: { version: true } });
+  if (current.approvedPolicyVersionId) await loadEscalaApproval(actor, current.approvedPolicyVersionId, db, current.input);
+  const principal = context.principal;
+  return { tenantId: actor.tenantId, principal: `${principal?.kind}:${principal?.id}`,
+    session: actor.moduleSessionId ?? actor.accountSessionId ?? "", workspaceId: current.id, revision: current.revision,
+    approvalId: current.approvedPolicyVersionId, accessVersion: createHash("sha256").update(stableEscalaJson({ context,
+      policyVersion: policy?.version ?? 0, accountSecurityVersion: actor.accountSecurityVersion })).digest("hex") };
+}
+
+/** Reauthorize generation delivery independently of its status or proof. */
+export async function recheckEscalaGeneration(actor: EscalaActor, id: string, expectedRevision: number): Promise<EscalaProposalScope> {
+  const latest = await getEscala(actor, id);
+  try { assertRevision(latest, expectedRevision); }
+  catch (error) { logSolverRejection("service-recheck", "RECHECK_FAILED"); throw error; }
+  return proposalScope(actor, latest);
+}
+
+export async function addEscalaEmployee(actor: EscalaActor, id: string, expectedRevision: number,
+  enrollment: { regimeModelId: string; name: string; registration: string }) {
+  const current = await getEscala(actor, id);
+  assertRevision(current, expectedRevision);
+  await requireEscalaCapability(actor, "employee.manage", current.input.branchCode);
+  if (!current.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Selecione uma aprovação administrativa.");
+  const approved = await loadEscalaApproval(actor, current.approvedPolicyVersionId, prisma, current.input);
+  const personId = randomUUID();
+  const seedResult = addEmployeeFromEscalaApprovedModel(approved.row.snapshot, approved.row.snapshotHash, {
+    id: personId, regimeModelId: enrollment.regimeModelId, name: enrollment.name, registration: enrollment.registration,
+    activeFrom: "", preferredOffDays: [],
+  });
+  if (!seedResult.ok) throw new EscalaError(422, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Modelo ou matrícula não permitido nesta aprovação.");
+  const person = seedResult.value.employees.find(employee => employee.id === personId);
+  if (!person) throw new EscalaError(422, "ESCALA_INVALID_INPUT", "O cadastro não pôde ser preparado.");
+  const input = parseEscalaInput({ ...current.input, employees: [...current.input.employees, person] });
+  return saveEscala(actor, id, expectedRevision, input, false, { serverEnrollment: { employeeId: personId, regimeModelId: enrollment.regimeModelId } });
+}
+
+export async function rebaseEscalaApproval(actor: EscalaActor, id: string, expectedRevision: number, approvalId: string) {
+  const current = await getEscala(actor, id);
+  await requireEscalaCapability(actor, "settings.manage");
+  const approved = await loadEscalaApproval(actor, approvalId);
+  const protectedPeople = (people: EscalaInput["employees"]) => people.map(person => {
+    const copy = structuredClone(person) as Partial<typeof person>;
+    delete copy.name; delete copy.preferredOffDays; delete copy.planningHistory; delete copy.planningFuture;
+    return copy;
+  });
+  if (stableEscalaJson(protectedPeople(current.input.employees)) !== stableEscalaJson(protectedPeople(approved.snapshot.seed.employees))) {
+    throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "A aprovação precisa incluir os dados protegidos da equipe atual antes da vinculação.");
+  }
+  const input = parseEscalaInput({ ...approved.snapshot.configuration, employees: current.input.employees,
+    shifts: current.input.shifts, assignments: current.input.assignments, needsRegeneration: true });
+  return saveEscala(actor, id, expectedRevision, input, false, { rebaseId: approvalId });
+}
+
+export async function validateEscalaOperational(actor: EscalaActor, id: string, expectedRevision: number, input: EscalaInput) {
+  const current = await getEscala(actor, id);
+  assertRevision(current, expectedRevision);
+  const context = await requireEscalaCapability(actor, "workspace.save", current.input.branchCode);
+  if (!actor.admin) {
+    if (!current.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária aprovação administrativa.");
+    await loadEscalaApproval(actor, current.approvedPolicyVersionId, prisma, current.input);
+    assertEscalaOperationalInput(current.input, input, ESCALA_CAPABILITIES.filter(capability => decideEscalaPermission(context, capability).allowed));
+  }
+  return validateEscala(materializeManualShiftOverrides(input));
 }
 
 function assignmentKey(item: EscalaAssignment) { return `${item.employeeId}\0${item.date}`; }
@@ -233,8 +321,8 @@ function assertPublishedBoundary(input: EscalaInput, baseline: EscalaInput) {
   if (issue) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", `A proposta rompe a continuidade de uma escala publicada${issue.date ? ` em ${issue.date}` : ""}: ${issue.message}`);
 }
 
-async function planningContext(actor: EscalaActor, id: string, input: EscalaInput) {
-  const rows = await prisma.escalaWorkspace.findMany({
+async function planningContext(actor: EscalaActor, id: string, input: EscalaInput, db: Prisma.TransactionClient = prisma) {
+  const rows = await db.escalaWorkspace.findMany({
     where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id }, startDate: { lte: addDays(input.endDate, 21) }, endDate: { gte: addDays(input.startDate, -21) } },
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
     select: { revisions: { where: { tenantId: actor.tenantId, status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
@@ -263,13 +351,52 @@ export function preserveLockedAssignments(previous: EscalaInput, next: EscalaInp
   }
 }
 
-export async function saveEscala(actor: EscalaActor, id: string, expectedRevision: number, input: EscalaInput, publish = false) {
+/** Server-created intent only; no HTTP SAVE command accepts this object or its callback. */
+export type AdminImportSaveIntent = {
+  removedAbsenceKeys: readonly string[]; invalidatesApproval: boolean;
+  verify: (tx: Prisma.TransactionClient, current: EscalaWorkspace & { approvedPolicyVersionId: string | null }, rawInput: EscalaInput) => Promise<void>;
+  audit: { purpose: "EMPLOYEES" | "ABSENCES"; fileHash: string; impactHash: string; startDate: string; endDate: string;
+    addedPeople: number; removedPeople: number; addedAbsenceDays: number; removedAbsenceDays: number };
+};
+
+export async function saveEscala(actor: EscalaActor, id: string, expectedRevision: number, input: EscalaInput, publish = false,
+  options: { proposalProof?: string; catalogIntent?: boolean; serverEnrollment?: { employeeId: string; regimeModelId: string }; rebaseId?: string; adminImport?: AdminImportSaveIntent } = {}) {
   input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, publish ? "publish" : "edit");
   assertRevision(current, expectedRevision);
   if (JSON.stringify(input.planningCalendarSource) !== JSON.stringify(current.input.planningCalendarSource))
     throw new EscalaError(409, "ESCALA_CALENDAR_SOURCE_CHANGED", "A origem da atualização da semana não pode ser alterada. Recarregue o rascunho atual.");
+  const context = await requireEscalaCapability(actor, publish ? "workspace.publish" : "workspace.save", current.input.branchCode);
+  if (options.proposalProof) await requireEscalaCapability(actor, "schedule.apply", current.input.branchCode);
+  if (options.adminImport) {
+    if (!actor.admin || publish || options.proposalProof || options.catalogIntent || options.serverEnrollment || options.rebaseId
+      || typeof options.adminImport.verify !== "function") throw new EscalaError(403, "ESCALA_IMPORT_INTENT_INVALID", "A importação exige confirmação administrativa própria.");
+    await requireEscalaCapability(actor, "import.manage");
+  }
+  let approvalId = options.rebaseId ?? current.approvedPolicyVersionId;
+  if (options.adminImport?.invalidatesApproval) approvalId = null;
+  const rawInput = structuredClone(input);
+  const lockedKeys = new Set(current.input.assignments.filter(day => day.locked === true).map(assignmentKey));
+  const requiresUnlockAuthority = !publish && !options.proposalProof
+    && rawInput.assignments.some(day => day.locked === false && lockedKeys.has(assignmentKey(day)));
+  if (options.rebaseId) await requireEscalaCapability(actor, "settings.manage");
+  if (!actor.admin) {
+    if (!approvalId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária aprovação administrativa.");
+    await loadEscalaApproval(actor, approvalId, prisma, current.input);
+    if (options.proposalProof) verifyEscalaProposal(options.proposalProof, await proposalScope(actor, current), input);
+    if (!options.serverEnrollment) assertEscalaOperationalInput(current.input, input,
+      ESCALA_CAPABILITIES.filter(capability => decideEscalaPermission(context, capability).allowed), Boolean(options.proposalProof), options.catalogIntent,
+      !publish && !options.proposalProof && current.canPublish);
+  } else if (options.proposalProof) verifyEscalaProposal(options.proposalProof, await proposalScope(actor, current), input);
+  else if (approvalId && !options.rebaseId && !options.serverEnrollment) {
+    // An administrator may edit rules/data, but an old approval must not certify the new regime.
+    try { assertEscalaOperationalInput(current.input, input, ESCALA_CAPABILITIES, false, false, !publish && current.canPublish); }
+    catch (error) {
+      if (!(error instanceof EscalaError) || error.code !== "ESCALA_PROTECTED_INPUT") throw error;
+      approvalId = null;
+    }
+  }
   if (input.branchCode !== current.input.branchCode || input.startDate !== current.input.startDate || input.endDate !== current.input.endDate) {
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
@@ -279,7 +406,18 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   if (manualReferenceIssue) throw new EscalaError(422, manualReferenceIssue.code, manualReferenceIssue.message);
   const manualAssignmentIssue = manualAssignmentIssues(input)[0];
   if (manualAssignmentIssue) throw new EscalaError(422, manualAssignmentIssue.code, manualAssignmentIssue.message);
-  preserveLockedAssignments(current.input, input, !publish && current.canPublish);
+  const removedAbsences = new Set(options.adminImport?.removedAbsenceKeys ?? []);
+  if (removedAbsences.size) {
+    const intent = options.adminImport;
+    const nextKeys = new Set(input.assignments.map(assignmentKey));
+    if (intent?.audit.purpose !== "ABSENCES" || [...removedAbsences].some(key =>
+      nextKeys.has(key) || !current.input.assignments.some(day => assignmentKey(day) === key && day.kind === "ABSENCE"
+        && day.date >= intent.audit.startDate && day.date <= intent.audit.endDate))) {
+      throw new EscalaError(403, "ESCALA_IMPORT_INTENT_INVALID", "O delta de afastamentos não corresponde à confirmação.");
+    }
+  }
+  preserveLockedAssignments(removedAbsences.size ? { ...current.input,
+    assignments: current.input.assignments.filter(day => !removedAbsences.has(assignmentKey(day))) } : current.input, input, !publish && current.canPublish);
   const scenarioChanged = generationScenarioBasis(current.input) !== generationScenarioBasis(input);
   const preparedProposal = !input.needsRegeneration && matchesGenerationScenarioBasis(input);
   if ((scenarioChanged || current.input.needsRegeneration) && !preparedProposal) {
@@ -312,6 +450,23 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   const revision = expectedRevision + 1;
   const updatedAt = new Date();
   await prisma.$transaction(async (tx) => {
+    await lockEscalaAccess(tx, actor.tenantId);
+    await requireEscalaCapability(actor, publish ? "workspace.publish" : "workspace.save", current.input.branchCode, tx);
+    if (options.adminImport) {
+      await requireEscalaCapability(actor, "import.manage", undefined, tx);
+      await options.adminImport.verify(tx, current, rawInput);
+    }
+    if (requiresUnlockAuthority) await requireEscalaCapability(actor, "workspace.publish", current.input.branchCode, tx);
+    if (options.proposalProof) await requireEscalaCapability(actor, "schedule.apply", current.input.branchCode, tx);
+    if (options.proposalProof) verifyEscalaProposal(options.proposalProof, await proposalScope(actor, current, tx), rawInput);
+    if (options.serverEnrollment) await requireEscalaCapability(actor, "employee.manage", current.input.branchCode, tx);
+    if (options.catalogIntent) await requireEscalaCapability(actor, "shift.manage", current.input.branchCode, tx);
+    if (options.rebaseId) await requireEscalaCapability(actor, "settings.manage", undefined, tx);
+    if (approvalId) {
+      const approved = await loadEscalaApproval(actor, approvalId, tx, input);
+      if (approved.row.branchCode !== input.branchCode || approved.row.startDate !== input.startDate || approved.row.endDate !== input.endDate
+        || approved.row.visibleMonth !== (input.visibleMonth ?? null)) throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "Configuração de outro período.");
+    }
     if (publish) {
       input = await preservePublishedContinuity(tx, actor, id, input);
       validation = validateEscala(input);
@@ -328,12 +483,15 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     });
     if (updated.count !== 1) throw new EscalaError(409, "ESCALA_STALE_REVISION", "Esta escala foi alterada por outra pessoa. Recarregue a versão atual antes de continuar.");
     await tx.escalaRevision.create({ data: { tenantId: actor.tenantId, workspaceId: id, revision, status,
-      input: snapshotJson(input), createdById: actor.userId, ...actorProvenance(actor) } });
+      input: snapshotJson(input), createdById: actor.userId, approvedPolicyVersionId: approvalId, ...actorProvenance(actor) } });
     await tx.auditLog.create({ data: { userId: actor.userId, action: publish ? "PUBLISH" : "UPDATE", entity: "EscalaWorkspace", entityId: id,
-      metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision, previousRevision: expectedRevision, employeeCount: input.employees.length } } });
+      metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision, previousRevision: expectedRevision, employeeCount: input.employees.length,
+        approvedPolicyVersionId: approvalId, approvalInvalidated: Boolean(current.approvedPolicyVersionId && !approvalId),
+        ...(options.adminImport ? { adminImport: options.adminImport.audit } : {}),
+        ...(options.serverEnrollment ? { employeeId: options.serverEnrollment.employeeId, regimeModelId: options.serverEnrollment.regimeModelId } : {}) } } });
   }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
   if (alreadyPublished) return current;
-  return { ...current, revision, status, input, validation, updatedAt: updatedAt.toISOString() } as EscalaWorkspace;
+  return { ...current, revision, status, input, validation, approvedPolicyVersionId: approvalId, updatedAt: updatedAt.toISOString() } as EscalaWorkspace;
 }
 
 function assertRevision(workspace: EscalaWorkspace, expectedRevision: number) {
@@ -358,8 +516,12 @@ function requireSolverSetup(input: EscalaInput) {
 export async function generateEscala(actor: EscalaActor, id: string, expectedRevision: number, options?: import("./solver-transport").SolverOptions & { comparisonReference?: unknown }) {
   const { comparisonReference, ...solverOptions } = options ?? {};
   const current = await getEscala(actor, id);
-  requireEscalaPermission(current, "edit");
   assertRevision(current, expectedRevision);
+  await requireEscalaCapability(actor, "schedule.generate", current.input.branchCode);
+  if (!actor.admin) {
+    if (!current.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária aprovação administrativa.");
+    await loadEscalaApproval(actor, current.approvedPolicyVersionId, prisma, current.input);
+  }
   if (current.input.generationMode === "HOURS_ONLY" && !isHoursReferenceOnly(current.input)) {
     const existing = new Set(current.input.assignments.map(day => `${day.employeeId}\0${day.date}`));
     const incomplete = current.input.employees.some(person => isEscalaPlanningParticipant(person)
@@ -372,17 +534,17 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const prepared = prepareGeneration(current.input);
   if (isHoursReferenceOnly(prepared.input)) {
     const proposalInput = parseEscalaInput({ ...prepared.input, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared.input) });
-    try { preserveLockedAssignments(current.input, proposalInput); }
+    try { preserveLockedAssignments(current.input, proposalInput); if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true); }
     catch (error) { logSolverRejection("service-preservation", "LOCK_CHANGED"); throw error; }
     if (!matchesHoursOnlyAssignments(current.input, proposalInput)) { logSolverRejection("service-preservation", "HOURS_ONLY_CHANGED"); throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
     const validation = validateEscala(proposalInput);
     if (!validation.valid) { logSolverRejection("service-validation", "RULES_INVALID", { issues: validation.issues }); throw new EscalaError(422, "ESCALA_HOURS_REFERENCE_INVALID", "Alguns horários não atendem às regras do cenário. Confira entrada, intervalo, saída e fechamento; nenhum dia de trabalho ou folga foi criado."); }
-    const latest = await getEscala(actor, id);
-    try { assertRevision(latest, expectedRevision); }
-    catch (error) { logSolverRejection("service-recheck", "RECHECK_FAILED"); throw error; }
+    const finalScope = await recheckEscalaGeneration(actor, id, expectedRevision);
     const admission = admitCandidateReference(comparisonReference, scope, qualityReference, prepared.input);
     return { result: { status: "FEASIBLE" as const, assignments: proposalInput.assignments, wallTimeSeconds: 0,
-      message: "Referências de horários preparadas. Nenhuma presença diária, folga ou cobertura foi gerada." }, proposalInput, validation, preparation: prepared.preparation, comparison: admission.comparison, candidateReceipt: undefined };
+      message: "Referências de horários preparadas. Nenhuma presença diária, folga ou cobertura foi gerada." }, proposalInput, validation, preparation: prepared.preparation,
+      comparison: admission.comparison, candidateReceipt: undefined,
+      proposalProof: signEscalaProposal(finalScope, proposalInput) };
   }
   requireSolverSetup(prepared.input);
   const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
@@ -408,12 +570,9 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
       throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
     }
   }
-  try { preserveLockedAssignments(current.input, proposalInput); }
+  try { preserveLockedAssignments(current.input, proposalInput); if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true); }
   catch (error) { logSolverRejection("service-preservation", "LOCK_CHANGED"); throw error; }
   if (!matchesHoursOnlyAssignments(current.input, proposalInput)) { logSolverRejection("service-preservation", "HOURS_ONLY_CHANGED"); throw new EscalaSolverError("SOLVER_INVALID_RESPONSE"); }
-  const latest = await getEscala(actor, id);
-  try { assertRevision(latest, expectedRevision); }
-  catch (error) { logSolverRejection("service-recheck", "RECHECK_FAILED"); throw error; }
   let validation = validateEscala(proposalInput);
   if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && (!validation.valid || validation.issues.some((issue) => issue.code === "DAY_PENDING") || !matchesRestOnlyReferences(contextual, result.assignments))) {
     logSolverRejection("service-validation", !validation.valid || validation.issues.some(issue => issue.code === "DAY_PENDING") ? "RULES_INVALID" : "REST_ONLY_CHANGED", { issues: validation.issues });
@@ -426,31 +585,37 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
     if (comparison.selection === "REFERENCE_RETAINED") {
       proposalInput = parseEscalaInput(selected.input);
       preserveLockedAssignments(current.input, proposalInput);
+      // Admission authenticates comparison; it does not replace operational protection.
+      if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true);
       validation = validateEscala(proposalInput);
       if (!isOperationallyReusable(validation) || !matchesHoursOnlyAssignments(current.input, proposalInput)
         || !matchesRestOnlyReferences(contextual, proposalInput.assignments)
         || manualAssignmentIssues(proposalInput, contextual.assignments).length) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
-      // Processor phase telemetry belongs to C, not to the complete retained reference V.
       result = { status: "FEASIBLE", assignments: proposalInput.assignments, wallTimeSeconds: result.wallTimeSeconds,
         message: "A nova alternativa perderia uma condição protegida. A proposta anterior verificada foi mantida integralmente. Confira a qualidade operacional antes de aplicar." };
     }
   }
+  // Recheck after selection, even for a terminal result with no proposal proof.
+  const finalScope = await recheckEscalaGeneration(actor, id, expectedRevision);
   const extra: EscalaCandidateResponse = { comparison };
-  // Preparation describes the shared signed S -> contextual transition, never the discarded processor candidate.
   if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && isOperationallyReusable(validation)) {
     extra.candidateReceipt = issueCandidateReceipt(scope, qualityReference, contextual, proposalInput);
   }
-  return { result, proposalInput, validation, preparation: prepared.preparation, ...extra };
+  return { result, proposalInput, validation, preparation: prepared.preparation, ...extra,
+    ...((result.status === "FEASIBLE" || result.status === "OPTIMAL") ? { proposalProof: signEscalaProposal(finalScope, proposalInput) } : {}) };
 }
 
 /** Explicit deletion; FK Restrict requires removing the exact revisions in the same transaction. */
 export async function deleteEscala(actor: EscalaActor, id: string, expectedRevision: number) {
+  await requireEscalaCapability(actor, "workspace.delete");
   const row = await prisma.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId } });
   if (!row) throw new EscalaError(404, "ESCALA_NOT_FOUND", "Planejamento não encontrado nesta empresa.");
   const permission = await branchPermission(actor, row.branchCode);
   requireEscalaPermission(permission, "edit");
   if (row.revision !== expectedRevision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento mudou. Recarregue antes de excluir.");
   await prisma.$transaction(async (tx) => {
+    await lockEscalaAccess(tx, actor.tenantId);
+    await requireEscalaCapability(actor, "workspace.delete", undefined, tx);
     const lockKey = "escalas-publication:" + JSON.stringify([actor.tenantId, row.branchCode]);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
     const current = await tx.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId } });
@@ -467,6 +632,8 @@ export async function deleteEscala(actor: EscalaActor, id: string, expectedRevis
       }, select: { id: true } });
       if (dependencies.length) throw new EscalaError(409, "ESCALA_DELETE_DEPENDENCY", "Há planejamentos publicados próximos que podem depender dos dias compartilhados ou do histórico desta filial. Revise essa continuidade antes de excluir; nenhuma revisão foi removida.");
     }
+    const approvalOrigins = await tx.escalaBranchPolicyVersion.count({ where: { tenantId: actor.tenantId, originWorkspaceId: id } });
+    if (approvalOrigins) throw new EscalaError(409, "ESCALA_DELETE_DEPENDENCY", "Este planejamento é origem de uma aprovação administrativa. O histórico deve ser preservado.");
     await tx.escalaRevision.deleteMany({ where: { tenantId: actor.tenantId, workspaceId: id } });
     const deleted = await tx.escalaWorkspace.deleteMany({ where: { tenantId: actor.tenantId, id, revision: expectedRevision } });
     if (deleted.count !== 1) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento mudou durante a exclusão. Nenhum dado foi removido.");

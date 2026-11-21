@@ -8,6 +8,14 @@ const header = ["Matricula", "Nome", "Setor", "Cargo", "CargaSemanal", "Horarios
 const row = () => ["0001", "Ana Silva", "Reposição", "Repositor", "42", "08:00-12:00 / 13:00-17:24", "2020-01-01"];
 
 describe("Escalas import preview", () => {
+  it("exposes replacement completeness and only fields actually supplied", () => {
+    const valid = row(); valid[4] = "";
+    const numeric: unknown[] = row(); numeric[0] = 7;
+    const result = previewEscalaRows([header, valid, numeric, ["truncated"]], options);
+    expect(result.replacement).toMatchObject({ rejectedRows: 1, invalidIdentityRows: 1 });
+    const fields = result.replacement?.fieldsById[result.employees[0].id];
+    expect(fields).toContain("activeFrom"); expect(fields).not.toContain("weeklyHours"); expect(fields).not.toContain("sundayRestRule");
+  });
   it("preserves registration text, requires organization, separates meal from work and keeps history unknown", async () => {
     const preview = await previewEscalaImport(Buffer.from(`\uFEFF${header.join(";")}\n${row().join(";")}`), "csv", options);
     expect(preview.issues).toEqual([]);
@@ -17,7 +25,7 @@ describe("Escalas import preview", () => {
   });
   it("never guesses admission from the scheduling period or hides missing sector", () => {
     const missing = row(); missing[6] = "";
-    const sector = row(); sector[0] = "0002"; sector[2] = "";
+    const sector = row(); sector[2] = "";
     const preview = previewEscalaRows([header, missing, sector], options);
     expect(preview.employees).toEqual([]);
     expect(preview.issues).toHaveLength(2);
@@ -33,6 +41,7 @@ describe("Escalas import preview", () => {
     expect(preview.totalRows).toBe(3);
     expect(preview.employees.map(person => person.registration)).toEqual(["0002"]);
     expect(preview.shifts).toHaveLength(1);
+    expect(preview.replacement?.rejectedRows).toBe(2);
     expect(preview.issues.map(issue => issue.line)).toEqual([2, 4]);
     expect(preview.issues.every(issue => issue.message.includes("duplicada"))).toBe(true);
   });

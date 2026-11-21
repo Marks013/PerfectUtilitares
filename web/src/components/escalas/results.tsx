@@ -24,6 +24,7 @@ import type {
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { inactiveViewPropsEqual, useActiveSnapshot } from "./view-activity";
 import { addDate, clock, displayDate } from "./workspace-model";
+import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
 import { groupValidationIssues, isReviewInformation, reviewNoticeText, type ReviewTarget } from "./validation-guidance";
 
 function changesBetween(previous: EscalaAssignment[], next: EscalaAssignment[]) {
@@ -216,6 +217,8 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
   disabled: boolean; onGenerated: () => void; onDismiss: () => void; active?: boolean;
 }) {
   const { input, generated } = useActiveSnapshot({ input: nextInput, generated: nextGenerated }, active);
+  const access = useEscalaClientAccess();
+  const analytics = canDisplayEscalaAction(access, "report.analytics", input.branchCode);
   const diagnostics = useActiveDiagnostics(generated?.proposalInput ?? input, generated?.validation.issues, active);
   const emptySectors = useMemo(() => generated && active ? sectorPresenceGaps(generated.proposalInput) : [], [generated, active]);
   if (!generated || !diagnostics) return null;
@@ -224,7 +227,7 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
     <LeadershipSummary counts={generated.result.optimization?.leadership} />
     <RestDistributionSummary input={generated.proposalInput} previousInput={input} search={generated.result.restQuality?.search} />
-    {generated.proposalInput.employees.length > 0 && !isHoursReferenceOnly(generated.proposalInput) && <details><summary className={styles.disclosureTrigger}>Conferir capacidade e desfalques por setor</summary><div className={styles.reviewScroller}><CoverageGaps input={generated.proposalInput} rows={diagnostics.coverageGroups} emptySectors={emptySectors} referenceOrigin="PREPARED" /></div></details>}
+    {analytics && generated.proposalInput.employees.length > 0 && !isHoursReferenceOnly(generated.proposalInput) && <details><summary className={styles.disclosureTrigger}>Conferir capacidade e desfalques por setor</summary><div className={styles.reviewScroller}><CoverageGaps input={generated.proposalInput} rows={diagnostics.coverageGroups} emptySectors={emptySectors} referenceOrigin="PREPARED" /></div></details>}
     {diagnostics.notices.length > 0 && <p className="text-sm text-[color:var(--app-muted)]">{diagnostics.notices.length} assunto(s) de revisão. Os limites da simulação aparecem no resumo, sem repetir avisos por pessoa.</p>}
     <Changes input={input} assignments={generated.proposalInput.assignments} />
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryClass} disabled={disabled || !generated.validation.valid} onClick={onGenerated}>Aplicar proposta à grade</button><button type="button" className={buttonClass} disabled={disabled} onClick={onDismiss}>Descartar sugestão</button></div>
@@ -236,6 +239,8 @@ export type ReviewSection = "errors" | "reviews" | "coverage" | "information";
 export const ValidationResults = memo(function ValidationResults({ input: nextInput, validation: nextValidation, onResolve, section, onSectionChange, active = true }: { input: EscalaInput; validation: EscalaValidation | null; onResolve?: ResolveReview; section?: ReviewSection; onSectionChange?: (section: ReviewSection) => void; active?: boolean }) {
   const [selectedView, setView] = useState<ReviewSection>();
   const { input, validation } = useActiveSnapshot({ input: nextInput, validation: nextValidation }, active);
+  const access = useEscalaClientAccess();
+  const analytics = canDisplayEscalaAction(access, "report.analytics", input.branchCode);
   const diagnostics = useActiveDiagnostics(input, validation?.issues, active);
   const emptySectors = useMemo(() => active && input.assignments.some(record => record.kind === "WORK" || record.kind === "DUTY") ? sectorPresenceGaps(input) : [], [input, active]);
   const sundayCounts = useMemo(() => monthlySundays(input), [input]);
@@ -247,9 +252,10 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
   const reservations = validation.boundaryReservations ?? [];
   const employees = sortEmployees(input.employees.filter(isEscalaPlanningParticipant));
   const coverageCount = new Set([...diagnostics.coverageGroups.map(row => row.sector), ...emptySectors.map(row => row.sector)]).size;
-  const view = section ?? selectedView ?? (errors.length ? "errors" : diagnostics.coverageGroups.length ? "coverage" : reviews.length ? "reviews" : information.length ? "information" : "errors");
+  const requestedView = section ?? selectedView ?? (errors.length ? "errors" : analytics && diagnostics.coverageGroups.length ? "coverage" : reviews.length ? "reviews" : information.length ? "information" : "errors");
+  const view = requestedView === "coverage" && !analytics ? "errors" : requestedView;
   const notices = view === "errors" ? errors : view === "reviews" ? reviews : information;
-  const menus = [{ id: "errors", label: "Erros", count: errors.length }, { id: "reviews", label: "Avisos", count: reviews.length }, { id: "coverage", label: "Desfalques", count: coverageCount }, { id: "information", label: "Informações", count: information.length }] as const;
+  const menus = ([{ id: "errors", label: "Erros", count: errors.length }, { id: "reviews", label: "Avisos", count: reviews.length }, { id: "coverage", label: "Desfalques", count: coverageCount }, { id: "information", label: "Informações", count: information.length }] as const).filter(menu => analytics || menu.id !== "coverage");
   return <section className={panelClass} aria-labelledby="escala-validation-title">
     <div className={styles.header}><h2 id="escala-validation-title" className={styles.sectionTitle}>Central de revisão</h2><span className={styles.muted}>{errors.length} erro(s) · {reviews.length} aviso(s)</span></div>
     <p className="text-sm">{errors.length ? "Há impedimentos técnicos. Escolha uma ocorrência para conferir a correção sugerida." : "Nenhum impedimento técnico detectado. Avisos e estimativas ficam separados para consulta opcional."}</p>

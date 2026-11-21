@@ -2,7 +2,8 @@ import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { sameDraft } from "./draft-persistence";
 import { buildCoveragePresence } from "@/lib/escalas/coverage-presence";
 import { addDays, isDate } from "@/lib/escalas/dates";
-import type { EscalaAssignment, EscalaInput, EscalaIssue } from "@/lib/escalas/types";
+import { manualShiftAt } from "@/lib/escalas/shift-catalog/manual-override";
+import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaIssue } from "@/lib/escalas/types";
 import { validateEscala } from "@/lib/escalas/validation";
 import { validateCoverage } from "@/lib/escalas/validation-time";
 
@@ -13,6 +14,16 @@ const key = (day: RosterDay) => `${day.employeeId}:${day.date}`;
 /** A confirmed edit remains undoable across autosave acknowledgements; real scenario changes invalidate it. */
 export function isCurrentRosterChange(applied: EscalaInput, current: EscalaInput): boolean {
   return sameDraft({ ...applied, needsRegeneration: false }, { ...current, needsRegeneration: false });
+}
+
+export function rosterShiftOptions(shifts: EscalaInput["shifts"], employee: EscalaEmployee, date: string) {
+  const manual = employee.manualShiftByDate?.[date] ?? manualShiftAt(employee, date);
+  const allowed = manual ? [manual] : employee.manualShiftBaseIds ?? employee.shiftIds;
+  return shifts.filter((shift) => allowed.includes(shift.id));
+}
+
+export function canEditBranchRosterDay(assignment: EscalaAssignment) {
+  return assignment.locked === false && assignment.kind !== "ABSENCE" && assignment.kind !== "HOLIDAY";
 }
 
 /** A confirmed edit never changes another cell or bypasses a previously locked decision. */
@@ -34,7 +45,9 @@ export function applyRosterChanges(input: EscalaInput, changes: EscalaAssignment
     const untimed = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
     if (untimed && next.kind === "WORK") throw new Error("Colaborador sem horário definido: planeje presença diária sem atribuir horas fictícias.");
     if (!untimed && next.kind === "DUTY") throw new Error("Selecione um horário permitido para este colaborador.");
-    if (next.kind === "WORK" && (!next.shiftId || !person.shiftIds.includes(next.shiftId))) {
+    const unlockOnly = canUnlock && previous?.locked === true && next.locked === false
+      && previous.kind === next.kind && previous.shiftId === next.shiftId;
+    if (next.kind === "WORK" && !unlockOnly && !rosterShiftOptions(input.shifts, person, next.date).some(shift => shift.id === next.shiftId)) {
       throw new Error("A troca exige um horário permitido para o colaborador de destino. Escolha outro turno ou ajuste as alternativas da equipe.");
     }
     assignments.set(key(next), { ...next, ...(next.kind === "WORK" ? {} : { shiftId: undefined }) });
@@ -43,7 +56,8 @@ export function applyRosterChanges(input: EscalaInput, changes: EscalaAssignment
 }
 
 /** Both directions are checked before a swap is applied; no partial exchange is possible. */
-export function swapRosterDays(input: EscalaInput, first: RosterDay, second: RosterDay): EscalaInput {
+export function swapRosterDays(input: EscalaInput, first: RosterDay, second: RosterDay,
+  { branchScoped = false }: { branchScoped?: boolean } = {}): EscalaInput {
   if (key(first) === key(second)) throw new Error("Escolha outro colaborador ou outra data para trocar.");
   const assignments = new Map(input.assignments.map((day) => [key(day), day]));
   const before = assignments.get(key(first));
@@ -51,9 +65,12 @@ export function swapRosterDays(input: EscalaInput, first: RosterDay, second: Ros
   if (!before || !after) throw new Error("Defina os dois dias antes de realizar a troca.");
   if (before.kind === "ABSENCE" || after.kind === "ABSENCE") throw new Error("Ausências não são transferidas entre colaboradores. Ajuste a informação individualmente quando houver correção real.");
   if (before.locked || after.locked) throw new Error("Uma das decisões está bloqueada. Desbloqueie e salve antes de trocar.");
+  if (branchScoped && (!canEditBranchRosterDay(before) || !canEditBranchRosterDay(after))) {
+    throw new Error("Escolha dois dias registrados e liberados para edição pela filial.");
+  }
   return applyRosterChanges(input, [
-    { ...after, ...first, locked: true },
-    { ...before, ...second, locked: true },
+    { ...after, ...first, locked: branchScoped ? before.locked : true },
+    { ...before, ...second, locked: branchScoped ? after.locked : true },
   ]);
 }
 

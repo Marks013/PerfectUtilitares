@@ -8,7 +8,7 @@ describe("optional continuous-work limit", () => {
     const input = newInput("07", "Hiper", "2026-11", 42);
     delete input.policy.limitContinuousWorkBlocks;
     const render = () => renderToStaticMarkup(<ContinuousWorkOption input={input} disabled={false} onChange={vi.fn()} />);
-    expect(render()).toContain("Limitar cada bloco a 4h30");
+    expect(render()).toContain("Equilibrar os dois períodos de trabalho em até 4h30 cada");
     expect(render()).not.toContain('checked=""');
     input.policy.limitContinuousWorkBlocks = true;
     expect(render()).toContain('checked=""');

@@ -18,6 +18,7 @@ import type {
 import { clockMinutes, markingsFromShift, renderTurnoTxt, type TurnoTxtRow } from "./domain";
 import type { TurnoUnrepresentableReason } from "./domain";
 import { readTurnoManifest, storeTurnoManifest, type TurnoManifestPayload } from "./catalog";
+import { downloadTurnoSelection } from "./selection-export";
 
 type CatalogCodeRow = { code: number; firstIn: number; firstOut: number; secondIn: number; secondOut: number };
 type SelectedWorkspace = { workspace: EscalaWorkspace; selection: TurnoExportSelection };
@@ -186,6 +187,7 @@ export async function createTurnoExportManifest(actor: EscalaActor, request: Tur
 
 export async function downloadTurnoExport(actor: EscalaActor, manifestId: string, format: "TXT1" | "TXT2", acceptOmissions: boolean) {
   const payload = await readTurnoManifest(actor, manifestId);
+  if (payload.version === 2) return downloadTurnoSelection(actor, payload, format, acceptOmissions);
   const { rows, omissions } = await buildExportRows(actor, payload.month, payload.year, payload.selections);
   if (hashRows(rows) !== payload.rowsHash) throw new EscalaError(409, "TURNO_MANIFEST_STALE", "O recorte da exportação mudou. Gere uma nova prévia.");
   if (rows.length === 0) throw new EscalaError(409, "TURNO_EXPORT_EMPTY", "Não há horários válidos para exportar.");

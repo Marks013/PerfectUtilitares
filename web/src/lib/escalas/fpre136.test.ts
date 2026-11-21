@@ -11,6 +11,23 @@ const rows = () => [...header, ["02.01 , ICARAIMA, ADMINISTRATIVO"], ["Horário:
 const csv = (data: unknown[][]) => data.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
 
 describe("FPRE136 single report import", () => {
+  it.each([[2], [1, 3], [1, 1], [2, 1], [0], [1, 0]])("classifies incomplete or invalid page sequence %j independently of valid legacy rows", (...pages) => {
+    const data = pages.flatMap((page, index) => [["0001", "-", "Empresa", "Pág.:", String(page)], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"], ["02.01 , ICARAIMA, LOJA"], ["Horário:", "0026", "-", "Diurno"], ...person(String(index + 1))]);
+    const result = previewEscalaRows(data, options);
+    expect(result.employees).toHaveLength(pages.length); expect(result.issues).toEqual([]);
+    expect(result.replacement?.paginationIssues?.length).toBeGreaterThan(0);
+  });
+  it("continues page numbers per company and accepts the existing unaccented page-header variant", async () => {
+    const section = (company: string, page: string, registration: string) => [[company, "-", "Empresa", "Pag.:", page], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"], ["02.01 , ICARAIMA, LOJA"], ["Horário:", "0026", "-", "Diurno"], ...person(registration)];
+    const result = await previewEscalaImport(Buffer.from(csv([...section("0001", "001", "001"), ...section("0002", "1", "002"), ...section("1", "2", "003")])), "csv", options);
+    expect(result.employees.map(person => person.registration)).toEqual(["001", "002", "003"]); expect(result.replacement?.paginationIssues).toEqual([]);
+  });
+  it("marks truncated rows for replacement while preserving legacy valid preview", () => {
+    const result = previewEscalaRows([...rows(), ["004", "-", "Truncado"]], options);
+    expect(result.employees).toHaveLength(2); expect(result.replacement?.rejectedRows).toBe(1);
+    const fields = result.replacement?.fieldsById[result.employees[0].id];
+    expect(fields).toContain("sourceSchedule"); expect(fields).not.toContain("activeFrom"); expect(fields).not.toContain("weeklyHours");
+  });
   it("filters branch, preserves page context and source hours without inventing admission, classification or history", () => {
     const preview = previewEscalaRows(rows(), options);
     expect(preview.issues).toEqual([]);
@@ -43,12 +60,24 @@ describe("FPRE136 single report import", () => {
     const duplicates = previewEscalaRows(data, options);
     expect(duplicates.employees.map(employee => employee.registration)).toEqual(["002"]);
     expect(duplicates.shifts).toEqual([]);
+    expect(duplicates.replacement?.rejectedRows).toBe(2);
     expect(duplicates.issues.filter(issue => issue.message.includes("duplicada")).map(issue => issue.line)).toEqual([6, 8]);
     const invalid = rows(); invalid[5][4] = "24:00";
     expect(previewEscalaRows(invalid, options).issues).toHaveLength(1);
     const noSaturday = rows(); noSaturday.splice(6, 1);
     expect(previewEscalaRows(noSaturday, options).issues[0].message).toContain("sábado ausente");
   });
+  it("counts registration conflicts inside the selected branch only", () => {
+    const data = rows();
+    const otherBranchRegistration = data.find(row => row[0] === "003");
+    if (!otherBranchRegistration) throw new Error("Expected the other-branch record.");
+    otherBranchRegistration[0] = "001";
+    const preview = previewEscalaRows(data, options);
+    expect(preview.employees.map(person => person.registration)).toEqual(["001", "002"]);
+    expect(preview.report?.otherBranchesExcluded).toBe(1);
+    expect(preview.replacement?.rejectedRows).toBe(0);
+  });
+
   it("imports a single paid period with a zero second period and preserves the original source", () => {
     const data = rows(); data[5][7] = "00:00"; data[5][9] = "00:00";
     const preview = previewEscalaRows(data, options);

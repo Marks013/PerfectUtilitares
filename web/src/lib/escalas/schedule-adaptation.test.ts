@@ -22,6 +22,34 @@ describe("explicit compatible schedule adaptation", () => {
     expect(result.input.assignments).toEqual(input.assignments); expect(result.input.employees[0].shiftIds).toContain("original");
     expect(result.input.shifts).toContainEqual(input.shifts[0]); expect(result.input.needsRegeneration).toBe(true); expect(result.input.employees[0].planningEnabled).not.toBe(false);
   });
+  it("adapts the operating team without changing an administrative record or pruning its referenced clocks", () => {
+    const input = sample();
+    const original = input.shifts[0];
+    const lockedShift = { ...original, id: "s2", name: "Horário legado bloqueado" };
+    const manualBase = { ...original, id: "legacy-base", name: "Referência manual" };
+    input.shifts.push(lockedShift, manualBase);
+    const administrative = {
+      ...newEmployee(42, original.id), id: "administrative", registration: "2", name: "Afastado", sector: "Afastados",
+      scheduleMode: "TIMED" as const, planningEnabled: true, activeFrom: input.startDate,
+      manualShiftBaseIds: [manualBase.id],
+      manualShiftOverrides: [{ catalogCode: 1500, shiftId: lockedShift.id, markings: ["07:00", "11:00", "13:00", "16:20"] as const,
+        effectiveFrom: "2026-11-03", effectiveUntil: "2026-11-03" }],
+      manualShiftByDate: { "2026-11-03": lockedShift.id },
+      history: [{ employeeId: "administrative", date: "2026-10-25", kind: "WORK" as const, shiftId: lockedShift.id, locked: true }],
+    };
+    input.employees.push(administrative);
+    input.assignments.push({ employeeId: administrative.id, date: "2026-11-02", kind: "WORK", shiftId: lockedShift.id, locked: true });
+
+    const result = adaptCompatibleSchedules(input, "PRESERVE_START");
+    const [operating, preserved] = result.input.employees;
+    const adaptedShift = result.input.shifts.find(shift => shift.id === operating.shiftIds[0]);
+    expect(adaptedShift?.segments.at(-1)?.end).toBe(1044);
+    expect(preserved).toBe(administrative);
+    expect(preserved.shiftIds).toEqual([original.id]);
+    expect(result.input.assignments).toEqual(input.assignments);
+    expect(result.input.shifts).toEqual(expect.arrayContaining([original, lockedShift, manualBase]));
+    expect(result.exceptions).toEqual([]);
+  });
   it("keeps an incompatible person included and identifies them instead of silently removing them", () => {
     // A real incompatibility: the exact paid target and minimum meal cannot fit before closing.
     const input = sample(); input.simulation = false; input.storeClosingMinutes = 540;

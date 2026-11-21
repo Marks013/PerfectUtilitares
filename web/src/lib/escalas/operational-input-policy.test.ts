@@ -1,0 +1,45 @@
+import { describe, expect, it } from "vitest";
+import { assertEscalaOperationalInput } from "./operational-input-policy";
+import type { EscalaInput } from "./types";
+const fixture = () => ({ schemaVersion: 1, branchCode: "02", startDate: "2026-11-30", endDate: "2027-01-03",
+  policy: { weeklyLimit: 42 }, shifts: [{ id: "s", segments: [] }],
+  employees: [{ id: "p", name: "Nome", weeklyHours: 40, preferredOffDays: [], shiftIds: ["s"], history: [], historyKnown: false }],
+  assignments: [{ employeeId: "p", date: "2026-12-01", kind: "WORK", shiftId: "s", locked: false },
+    { employeeId: "p", date: "2026-12-02", kind: "ABSENCE", locked: false }],
+}) as unknown as EscalaInput;
+describe("raw operational field comparison", () => {
+  it("permits a name/preference edit with explicit capability and an unchanged individual contract", () => {
+    const old = fixture(), next = structuredClone(old);
+    next.employees[0].name = "Atualizado"; next.employees[0].preferredOffDays = [3];
+    expect(() => assertEscalaOperationalInput(old, next, ["employee.manage"])).not.toThrow();
+    expect(() => assertEscalaOperationalInput(old, next, [])).toThrow();
+  });
+  it.each(["weeklyHours", "historyKnown", "sourceSchedule", "activeFrom", "scheduleMode", "planningEnabled", "manualShiftOverrides"])("protects employee %s", field => {
+    const old = fixture(), next = structuredClone(old);
+    Object.assign(next.employees[0], { [field]: "browser-authority" });
+    expect(() => assertEscalaOperationalInput(old, next, ["employee.manage", "shift.manage", "schedule.apply"])).toThrow();
+  });
+  it("protects rules, fingerprints, shift definitions and roster removal", () => {
+    const old = fixture();
+    for (const next of [{ ...old, generationBasis: "generation-v1:0123456789abcdef" },
+      { ...old, policy: { ...old.policy, weeklyLimit: 44 as const } }, { ...old, shifts: [] }, { ...old, employees: [] }]) {
+      expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply", "employee.manage", "shift.manage"])).toThrow();
+    }
+  });
+  it("allows manual assignment only with apply and preserves absences and unknown locks", () => {
+    const old = fixture(), next = structuredClone(old);
+    next.assignments[0] = { ...next.assignments[0], kind: "OFF", shiftId: undefined };
+    expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"])).not.toThrow();
+    expect(() => assertEscalaOperationalInput(old, next, [])).toThrow();
+    next.assignments.pop();
+    expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"])).toThrow();
+    delete old.assignments[0].locked;
+    next.assignments = [{ ...old.assignments[0], locked: false }, old.assignments[1]];
+    expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"])).toThrow();
+  });
+  it("signed proposals still preserve protected assignments and require apply", () => {
+    const old = fixture(), next = structuredClone(old);
+    next.assignments[1].kind = "OFF";
+    expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"], true)).toThrow();
+  });
+});

@@ -13,7 +13,92 @@ function fixture(): EscalaWorkspace {
   input.assignments = input.employees.map(person => ({ employeeId: person.id, date: "2026-12-01", kind: "WORK" as const, shiftId: "day" }));
   return { id: "synthetic", revision: 19, status: "DRAFT", input, canEdit: true, canPublish: false, updatedAt: "2026-12-01", validation: { valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: null } };
 }
+
+async function extractPages(bytes: Uint8Array) {
+  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loading = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true });
+  const document = await loading.promise;
+  try {
+    const pages = [];
+    for (let number = 1; number <= document.numPages; number++) {
+      const page = await document.getPage(number), content = await page.getTextContent();
+      const items = content.items.filter((item): item is import("pdfjs-dist/types/src/display/api").TextItem => "str" in item);
+      pages.push({ text: items.map(item => item.str).join(" ").replace(/\s+/g, " "), items, view: page.view });
+    }
+    return pages;
+  } finally { await loading.destroy(); }
+}
 describe("optional operational PDF", () => {
+  it("uses Brazilian Portuguese without exposing programming labels or internal identifiers", async () => {
+    const workspace = fixture();
+    workspace.input.employees = workspace.input.employees.slice(0, 2);
+    workspace.input.assignments = workspace.input.assignments.slice(0, 2);
+    workspace.updatedAt = "2026-12-01T13:30:00Z";
+    const options = operationalReportOptionsSchema.parse({ workspaceId: workspace.id, revision: workspace.revision, month: "2026-12",
+      sections: ["summary", "calendar", "journeys", "variants", "presence", "coverage"], date: "2026-12-01" });
+    const pages = await extractPages(await exportOperationalReportPdf(buildOperationalReport(workspace, options)));
+    const text = pages.map(page => page.text).join(" ");
+    expect(text).toContain("dezembro de 2026");
+    expect(text).toContain("01/12/2026 às 10:30");
+    expect(text).toContain("01/12/2026 a 31/12/2026");
+    expect(text).toContain("Colaboradores trabalhando");
+    expect(text).not.toContain(workspace.id);
+    expect(text).not.toMatch(/\b(?:WORK|DUTY|OFF|HOLIDAY|ABSENCE|UNTIMED|PAID_BREAK|BREAK)\b/);
+    expect(text).not.toMatch(/OpenAI|ChatGPT|Codex|inteligência artificial|\bAPI\b|\bJSON\b|\d{4}-\d{2}-\d{2}T/i);
+  });
+  it.each([["2026-02", 28], ["2028-02", 29], ["2026-11", 30], ["2026-12", 31]] as const)("extracts one coherent monthly grid with real weeks and totals in %s", async (month, days) => {
+    const workspace = fixture(), previous = workspace.input;
+    workspace.input = { ...newInput("06", "Loja sintética", month, 42), visibleMonth: month,
+      shifts: previous.shifts, employees: previous.employees.slice(0, 2), assignments: [] };
+    workspace.input.employees[0].name = "AlphaCalendar";
+    workspace.input.employees[1].name = "BetaCalendar"; workspace.input.employees[1].sector = "Setor B";
+    workspace.input.assignments = workspace.input.employees.map(person => ({ employeeId: person.id, date: month + "-01", kind: "WORK", shiftId: "day" }));
+    const options = operationalReportOptionsSchema.parse({ workspaceId: "synthetic", revision: 19, month, sections: ["calendar"] });
+    const model = buildOperationalReport(workspace, options), before = structuredClone(model);
+    const pages = await extractPages(await exportOperationalReportPdf(model));
+    expect(pages).toHaveLength(1);
+    expect(pages[0].text).toContain("AlphaCalendar"); expect(pages[0].text).toContain("BetaCalendar");
+    expect(pages[0].text).toContain("Setor A"); expect(pages[0].text).toContain("Setor B");
+    expect(pages[0].text).toContain("Mínimo e saldo diários não apurados");
+    expect(pages[0].text.match(/Mínimo e saldo diários/g)).toHaveLength(1);
+    expect(pages[0].text).toContain("folga fixa configurada"); expect(pages[0].text).toContain("férias ou outro motivo não informado");
+    // PDF.js may merge neighboring cells into one text item; restrict to the calendar columns.
+    expect(pages[0].items.some(item => item.transform[4] > 240 && item.str.includes("T01"))).toBe(true);
+    for (const weekday of ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]) expect(pages[0].items.some(item => item.transform[4] > 240 && item.str.includes(weekday))).toBe(true);
+    expect(model.calendar.weeks.flatMap(week => week.dates)).toHaveLength(days);
+    for (const page of pages) for (const item of page.items) {
+      expect(item.transform[4]).toBeGreaterThanOrEqual(24);
+      expect(item.transform[4] + item.width).toBeLessThanOrEqual(822);
+      expect(item.transform[5]).toBeGreaterThanOrEqual(16);
+      expect(item.transform[5]).toBeLessThan(580);
+    }
+    expect(model).toEqual(before);
+  });
+  it("repeats civil-week headers and retains a very long identification across real PDF pages", async () => {
+    const workspace = fixture();
+    workspace.input.employees = workspace.input.employees.slice(0, 1);
+    workspace.input.employees[0].name = "Identificação " + "completa ".repeat(140) + "FimIdentificacao";
+    const options = operationalReportOptionsSchema.parse({ workspaceId: "synthetic", revision: 19, month: "2026-12", sections: ["calendar"] });
+    const pages = await extractPages(await exportOperationalReportPdf(buildOperationalReport(workspace, options)));
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.every(page => page.text.includes("Calendário mensal") && page.text.includes("Semana 1") && page.text.includes("Mínimo e saldo diários"))).toBe(true);
+    expect(pages.map(page => page.text).join(" ")).toContain("FimIdentificacao");
+    expect(pages.flatMap(page => page.items).every(item => item.transform[5] >= 16)).toBe(true);
+  });
+  it("extracts exact daily markings and explicit duty without crediting pauses as presence", async () => {
+    const workspace = fixture(); workspace.input.employees = workspace.input.employees.slice(0, 2);
+    workspace.input.employees[0].name = "AlphaPresence"; workspace.input.employees[1].name = "BetaDuty";
+    workspace.input.assignments = [{ employeeId: "0", date: "2026-12-01", kind: "WORK", shiftId: "day" },
+      { employeeId: "1", date: "2026-12-01", kind: "DUTY" }];
+    const options = operationalReportOptionsSchema.parse({ workspaceId: "synthetic", revision: 19, month: "2026-12", sections: ["presence"], date: "2026-12-01" });
+    const pages = await extractPages(await exportOperationalReportPdf(buildOperationalReport(workspace, options)));
+    const text = pages.map(page => page.text).join(" ");
+    expect(text).toContain("AlphaPresence"); expect(text).toContain("BetaDuty");
+    expect(text).toContain("08:00-12:00"); expect(text).toContain("12:00-15:00"); expect(text).toContain("15:00-20:00");
+    expect(text).toContain("Plantão sem horário definido");
+    expect(text).toContain("09:00 de equipe"); expect(text).toContain("Nenhuma pausa conta como presença");
+    expect(pages.flatMap(page => page.items).every(item => item.transform[5] >= 16)).toBe(true);
+  });
 
   it("keeps calendar membership unchanged when excluded timed references are selected with journeys", async () => {
     const workspace = fixture();
@@ -61,7 +146,7 @@ describe("optional operational PDF", () => {
       expect(document.getPages().every(page => page.getWidth() === 842 && page.getHeight() === 595)).toBe(true);
       expect(drawn.filter(item => item.y < 16)).toEqual([]);
       const text = drawn.map(item => item.text).join(" ").replace(/\s+/g, " ");
-      expect(text).toContain("Previsto na grade"); expect(text).toContain("08:00-12:00"); expect(text).toContain("12:00-15:00");
+      expect(text).toContain("Planejamento da equipe"); expect(text).toContain("08:00-12:00"); expect(text).toContain("12:00-15:00");
       for (let i = 0; i < 40; i++) expect(text).toContain("completa " + i);
     } finally { spy.mockRestore(); }
   });

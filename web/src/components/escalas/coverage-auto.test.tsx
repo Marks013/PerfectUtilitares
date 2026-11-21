@@ -2,6 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { Coverage, ImportEmployees } from "./coverage-import";
 import { newInput } from "./workspace-model";
+import type { EscalaWorkspace } from "@/lib/escalas/types";
+import type { EscalaClientAccess } from "@/lib/escalas/access-view";
+import { EscalaAccessProvider } from "./access-context";
+
+const administrator: EscalaClientAccess = {
+  channel: "ACCOUNT", roleLabel: "Administrador", administrator: true, allBranches: true, branches: [],
+};
 
 function fixture() {
   const input = newInput("02", "Filial de teste", "2026-11", 42);
@@ -35,10 +42,22 @@ describe("automatic coverage screen", () => {
     expect(html).not.toContain("Confirmar uso de cobertura automática");
   });
 
-  it("shows a truthful initial import status without invented progress", () => {
-    const html = renderToStaticMarkup(<ImportEmployees input={fixture()} disabled={false} onChange={vi.fn()} />);
-    expect(html).toContain('role="status"');
-    expect(html).toContain("Selecione o arquivo para conferir a equipe");
+  it("requires selecting the team file before preview without inventing progress", () => {
+    const workspace: EscalaWorkspace = {
+      id: "coverage-plan", revision: 3, status: "DRAFT", input: fixture(),
+      validation: { valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: 0 },
+      canEdit: true, canPublish: true, updatedAt: "2026-11-20T00:00:00Z",
+    };
+    const replaceImport = vi.fn(async () => null);
+    const html = renderToStaticMarkup(
+      <EscalaAccessProvider value={administrator}>
+        <ImportEmployees workspace={workspace} disabled={false} replaceImport={replaceImport} />
+      </EscalaAccessProvider>,
+    );
+    expect(html).toContain("Arquivo de equipe CSV ou XLSX");
+    expect(html.match(/<button[^>]*>Conferir substituição de equipe<\/button>/)?.[0]).toContain("disabled");
+    expect(html).not.toContain("Confirmar e salvar substituição");
     expect(html).not.toContain("100%");
+    expect(replaceImport).not.toHaveBeenCalled();
   });
 });

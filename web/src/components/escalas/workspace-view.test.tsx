@@ -11,6 +11,23 @@ import { EscalasStatus } from "./escalas-workspace";
 import { Proposals, Publication, ValidationResults } from "./results";
 import { CellEditor, Roster } from "./roster";
 import { newEmployee, newInput } from "./workspace-model";
+import type { EscalaClientAccess } from "@/lib/escalas/access-view";
+import { EscalaAccessProvider } from "./access-context";
+import { applyRosterChanges, canEditBranchRosterDay, rosterShiftOptions, swapRosterDays } from "./roster-model";
+import { addDays } from "@/lib/escalas/dates";
+import { assertEscalaOperationalInput } from "@/lib/escalas/operational-input-policy";
+
+const administrator: EscalaClientAccess = {
+  channel: "ACCOUNT", roleLabel: "Administrador", administrator: true, allBranches: true, branches: [],
+};
+const branchOperator: EscalaClientAccess = {
+  channel: "USERNAME", roleLabel: "Operador", administrator: false, allBranches: false,
+  branches: [{ code: "02", label: "Centro", capabilities: ["workspace.read", "employee.manage", "workspace.save", "schedule.apply"] }],
+};
+const publicationViewer: EscalaClientAccess = {
+  channel: "USERNAME", roleLabel: "Consulta", administrator: false, allBranches: false,
+  branches: [{ code: "02", label: "Centro", capabilities: ["workspace.read", "export.schedule.pdf", "export.schedule.xlsx"] }],
+};
 
 
 function sample() {
@@ -61,7 +78,7 @@ function sample() {
 describe("Escalas practical accessibility and publication states", () => {
   it("defaults to a clearly labeled PDF-only sector separation", () => {
     const { workspace, validation } = sample();
-    const html = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />);
+    const html = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} /></EscalaAccessProvider>);
     expect(html).toMatch(/<label[^>]*><input(?=[^>]*type="checkbox")(?=[^>]*checked="")[^>]*\/><span>Separar setores por página<\/span><\/label>/);
     expect(html).toContain("Só no PDF. Desmarque para reunir setores em menos páginas.");
     expect(html).toContain("Gerar XLSX");
@@ -76,9 +93,11 @@ describe("Escalas practical accessibility and publication states", () => {
 
   it("blocks stale exports with a direct regeneration action instead of exporting a previous 44h result", () => {
     const { workspace, validation } = sample();
-    const html = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} outdated onPublish={vi.fn()} onRegenerate={vi.fn()} />);
+    const html = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><Publication workspace={workspace} validation={validation} dirty={false} busy={false} outdated onPublish={vi.fn()} onRegenerate={vi.fn()} /></EscalaAccessProvider>);
     expect(html).toContain("A grade está desatualizada");
     expect(html).toContain("Gerar proposta atualizada");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Gerar PDF/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Gerar XLSX/);
     expect(html).not.toContain("/api/escalas/export?");
   });
   it("includes untimed managers in the day-off rotation and renders DUTY without inventing credited hours", () => {
@@ -107,9 +126,9 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).toContain("Folgas planejadas · sem horário fixo");
     expect(html).toContain("presença diária planejada sem horário informado");
     expect(html).not.toContain("42h por semana");
-    const editor = renderToStaticMarkup(<CellEditor employee={input.employees[0]} date={visibleDates(input)[0]} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
+    const editor = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><CellEditor employee={input.employees[0]} date={visibleDates(input)[0]} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} /></EscalaAccessProvider>);
     expect(editor).toContain("não entra na contagem por hora");
-    expect(editor).not.toContain("Turno autorizado");
+    expect(editor).not.toContain("Horário de trabalho neste dia");
   });
 
   it("identifies the exact planning and warns about irreversible deletion without deleting during rendering", () => {
@@ -128,23 +147,23 @@ describe("Escalas practical accessibility and publication states", () => {
 
   it("offers DUTY only for untimed day editing and keeps timed shift controls for timed employees", () => {
     const { input } = sample();
-    const renderEditor = (untimed: boolean) => renderToStaticMarkup(<CellEditor
+    const renderEditor = (untimed: boolean) => renderToStaticMarkup(<EscalaAccessProvider value={administrator}><CellEditor
       employee={{ ...input.employees[0], ...(untimed ? { scheduleMode: "UNTIMED" as const, shiftIds: [] } : {}) }}
-      date={input.startDate} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} />);
+      date={input.startDate} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} /></EscalaAccessProvider>);
     const untimed = renderEditor(true);
     expect(untimed).toContain('value="DUTY" selected=""');
     expect(untimed).toContain("ENC — Sem horário fixo");
     expect(untimed).not.toContain('value="WORK"');
-    expect(untimed).not.toContain("Turno autorizado");
+    expect(untimed).not.toContain("Horário de trabalho neste dia");
     const timed = renderEditor(false);
     expect(timed).not.toContain('value="DUTY"');
-    expect(timed).toContain("Turno autorizado");
+    expect(timed).toContain("Horário de trabalho neste dia");
   });
 
   it("makes timed shifts optional for untimed employee registration and preserves optional admission", () => {
     const { input } = sample();
     const employee = { ...input.employees[0], activeFrom: "", scheduleMode: "UNTIMED" as const, shiftIds: [] };
-    const html = renderToStaticMarkup(<EmployeeEditor employee={employee} input={input} onSave={vi.fn()} onCancel={vi.fn()} />);
+    const html = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><EmployeeEditor employee={employee} input={input} onSave={vi.fn()} onCancel={vi.fn()} /></EscalaAccessProvider>);
     expect(html).toContain("Sem horário fixo");
     expect(html).toContain("Incluído no rodízio 5×2");
     expect(html).toContain('value="DUTY"');
@@ -153,25 +172,112 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).not.toMatch(/<input[^>]*required[^>]*type="date"/);
   });
 
-  it("offers one-file FPRE136 import and optional bulk configuration without classifying people by sex", () => {
-    const { input } = sample();
+  it("offers administrative file replacement and optional bulk configuration without classifying people by sex", () => {
+    const { input, workspace } = sample();
     input.employees[0].sundayRestRule = "UNREVIEWED";
     input.employees[0].planningEnabled = false;
     input.employees[0].sourceSchedule = {
       report: "FPRE136", code: "0000", description: "Não subordinado a horário",
       weekday: "00:00", saturday: "00:00",
     };
-    const team = renderToStaticMarkup(<Employees input={input} disabled={false} onChange={vi.fn()} />);
+    const team = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><Employees input={input} disabled={false} onChange={vi.fn()} /></EscalaAccessProvider>);
     expect(team).toContain("Configurar equipe em lote");
     expect(team).toContain("Aplicar configuração à equipe");
     expect(team).toContain("Admissão e histórico são opcionais");
     expect(team).toContain("fora do planejamento");
     expect(team).toContain("Referência FPRE136");
+    expect(team).toMatch(/<button[^>]*>Remover da proposta/);
     expect(team).not.toContain("enquadramento pendente");
-    const upload = renderToStaticMarkup(<ImportEmployees input={input} disabled={false} onChange={vi.fn()} />);
-    expect(upload).toContain("FPRE136 em CSV (recomendado) ou XLSX");
-    expect(upload).toContain("Não é necessário outro arquivo");
-    expect(upload).toContain("Baixar modelo CSV alternativo");
+    const replaceImport = vi.fn(async () => null);
+    const upload = renderToStaticMarkup(<EscalaAccessProvider value={administrator}>
+      <ImportEmployees workspace={workspace} disabled={false} replaceImport={replaceImport} />
+    </EscalaAccessProvider>);
+    expect(upload).toContain("Arquivo de equipe CSV ou XLSX");
+    expect(upload).toContain('accept=".csv,.xlsx"');
+    expect(upload).toContain("revisão 4");
+    expect(upload).toContain("Declaro que o arquivo cobre integralmente");
+    expect(upload.match(/<button[^>]*>Conferir substituição de equipe<\/button>/)?.[0]).toContain("disabled");
+    expect(replaceImport).not.toHaveBeenCalled();
+    expect(renderToStaticMarkup(<EscalaAccessProvider value={branchOperator}>
+      <ImportEmployees workspace={workspace} disabled={false} replaceImport={replaceImport} />
+    </EscalaAccessProvider>)).toBe("");
+  });
+
+  it("allows a branch to review an excluded employee without offering removal", () => {
+    const { input } = sample();
+    input.employees[0].planningEnabled = false;
+    const html = renderToStaticMarkup(<EscalaAccessProvider value={branchOperator}>
+      <Employees input={input} disabled={false} onChange={vi.fn()} />
+    </EscalaAccessProvider>);
+    const review = html.match(/<button[^>]*>Revisar cadastro[^<]*/)?.[0];
+    expect(review).toBeDefined();
+    expect(review).not.toContain("disabled");
+    expect(html).not.toContain("Remover da proposta");
+
+    input.employees[0].planningEnabled = true;
+    const withoutExcluded = renderToStaticMarkup(<EscalaAccessProvider value={branchOperator}>
+      <Employees input={input} disabled={false} onChange={vi.fn()} />
+    </EscalaAccessProvider>);
+    expect(withoutExcluded).not.toContain("Não incluídos no planejamento (");
+  });
+
+  it.each([undefined, false, true])("requires explicit unlocked state for a recorded branch day (%s)", (locked) => {
+    const { input } = sample();
+    const employee = input.employees[0];
+    const assignment = { employeeId: employee.id, date: input.startDate, kind: "OFF" as const, ...(locked === undefined ? {} : { locked }) };
+    const html = renderToStaticMarkup(<EscalaAccessProvider value={branchOperator}>
+      <CellEditor employee={employee} date={input.startDate} assignment={assignment} input={input}
+        canUnlock={false} onApply={vi.fn()} onCancel={vi.fn()} />
+    </EscalaAccessProvider>);
+    expect(canEditBranchRosterDay(assignment)).toBe(locked === false);
+    expect(html.match(/<fieldset[^>]*>/)?.[0]?.includes("disabled")).toBe(locked !== false);
+  });
+
+  it("uses the effective manual shift in the editor and validates both swap destinations", () => {
+    const { input } = sample();
+    const [first, second] = input.employees;
+    const start = addDays(input.startDate, 1);
+    const end = addDays(input.startDate, 2);
+    input.shifts.push({
+      id: "manual", name: "Turno manual", segments: [
+        { start: 480, end: 600, kind: "WORK" },
+        { start: 600, end: 615, kind: "PAID_BREAK" },
+        { start: 615, end: 740, kind: "WORK" },
+      ],
+    });
+    first.manualShiftByDate = { [start]: "manual", [end]: "manual" };
+    second.manualShiftByDate = { [start]: "manual" };
+    const options = (day: string) => rosterShiftOptions(input.shifts, first, day).map(shift => shift.id);
+    expect(options(input.startDate)).toEqual(["turno-inicial"]);
+    expect(options(start)).toEqual(["manual"]);
+    expect(options(end)).toEqual(["manual"]);
+    expect(options(addDays(end, 1))).toEqual(["turno-inicial"]);
+    const html = renderToStaticMarkup(<EscalaAccessProvider value={branchOperator}>
+      <CellEditor employee={first} date={start} input={input} canUnlock={false} onApply={vi.fn()} onCancel={vi.fn()} />
+    </EscalaAccessProvider>);
+    expect(html).toContain('value="manual" selected=""');
+    expect(html).toContain("pausa remunerada");
+    expect(html).not.toContain('value="turno-inicial"');
+
+    const source = { employeeId: first.id, date: start };
+    const destination = { employeeId: second.id, date: start };
+    const work = { ...source, kind: "WORK" as const, shiftId: "manual", locked: false };
+    const off = { ...destination, kind: "OFF" as const, locked: false };
+    input.assignments = [work, off];
+    expect(() => applyRosterChanges(input, [{ ...work, shiftId: "turno-inicial" }])).toThrow();
+    expect(applyRosterChanges(input, [work]).assignments).toContainEqual(work);
+    expect(swapRosterDays(input, source, destination).assignments).toContainEqual({ ...work, employeeId: second.id, locked: true });
+    const swapped = swapRosterDays(input, source, destination, { branchScoped: true });
+    expect(swapped.assignments).toContainEqual({ ...work, employeeId: second.id, locked: false });
+    expect(() => assertEscalaOperationalInput(input, swapped, ["schedule.apply"])).not.toThrow();
+
+    input.assignments = [work, { employeeId: off.employeeId, date: off.date, kind: "OFF" }];
+    expect(() => swapRosterDays(input, source, destination, { branchScoped: true })).toThrow("dois dias registrados e liberados");
+    input.assignments = [{ ...work, locked: true }, off];
+    expect(() => swapRosterDays(input, source, destination, { branchScoped: true })).toThrow("decisões está bloqueada");
+    input.assignments = [work, off];
+    second.manualShiftByDate = { [end]: "manual" };
+    expect(() => swapRosterDays(input, source, destination, { branchScoped: true })).toThrow();
   });
 
   it("offers automatic coverage without a mandatory administrative review or a fictitious daily staffing floor", () => {
@@ -197,8 +303,9 @@ describe("Escalas practical accessibility and publication states", () => {
     expect(html).not.toContain("HISTORY_UNKNOWN");
     expect(html).not.toContain("Referência técnica:");
     expect(html).not.toContain("Pendente ·");
-    const publication = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />);
-    expect(publication).toContain("Publicar proposta");
+    const publication = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} /></EscalaAccessProvider>);
+    expect(publication).toContain("Conferi esta revisão da filial 02");
+    expect(publication).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta/);
     expect(publication).toContain("O salvamento automático não publica");
   });
 
@@ -290,23 +397,33 @@ describe("Escalas practical accessibility and publication states", () => {
   ])("requires current saved validation and approval permission: %j", ({ dirty, canPublish, ready }) => {
     const { workspace, validation } = sample();
     const html = renderToStaticMarkup(
-      <Publication
-        workspace={{ ...workspace, canPublish }}
-        validation={{ ...validation, readyToPublish: ready }}
-        dirty={dirty}
-        busy={false}
-        onPublish={vi.fn()}
-      />,
+      <EscalaAccessProvider value={administrator}>
+        <Publication
+          workspace={{ ...workspace, canPublish }}
+          validation={{ ...validation, readyToPublish: ready }}
+          dirty={dirty}
+          busy={false}
+          onPublish={vi.fn()}
+        />
+      </EscalaAccessProvider>,
     );
-    expect(html).toMatch(/<input[^>]*disabled=""/);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta/);
+    if (canPublish) {
+      expect(html).toMatch(/<label[^>]*><input(?=[^>]*disabled="")[^>]*\/><span>Conferi esta revisão da filial/);
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta/);
+    } else {
+      expect(html).not.toContain("Conferi esta revisão da filial");
+      expect(html).not.toContain("Publicar proposta");
+      expect(html).toContain("Seu acesso permite consultar, mas não aprovar a publicação desta filial.");
+    }
     if (dirty) expect(html).not.toContain("/api/escalas/export");
   });
 
   it("exports the exact saved revision with separate PDF and XLSX controls", () => {
     const { workspace, validation } = sample();
     const html = renderToStaticMarkup(
-      <Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />,
+      <EscalaAccessProvider value={administrator}>
+        <Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} />
+      </EscalaAccessProvider>,
     );
     expect(html).toContain("revisão salva 4");
     expect(html).toContain("Gerar PDF");
@@ -319,14 +436,21 @@ describe("Escalas practical accessibility and publication states", () => {
   it("identifies the saved export while a candidate waits for explicit application", () => {
     const { workspace, validation } = sample();
     const apply = vi.fn();
-    const html = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} candidatePending canUseCandidate onUseCandidate={apply} />);
+    const html = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} candidatePending canUseCandidate onUseCandidate={apply} /></EscalaAccessProvider>);
     expect(html).toContain("Exportação da grade atual salva · revisão 4");
-    expect(html).toContain("PDF e XLSX abaixo usam a grade atual");
+    expect(html).toContain("PDF e XLSX usam a revisão salva da grade atual.");
+    expect(html).toContain("Para exportar a candidata, aplique-a à grade e depois gere o arquivo.");
     expect(html).toContain("Usar proposta na grade");
     expect(apply).not.toHaveBeenCalled();
-    const invalid = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} candidatePending canUseCandidate={false} onUseCandidate={apply} />);
-    expect(invalid).toMatch(/<button[^>]*disabled=""[^>]*>Usar proposta na grade/);
-    const dirty = renderToStaticMarkup(<Publication workspace={workspace} validation={validation} dirty busy={false} onPublish={vi.fn()} />);
+    const invalid = renderToStaticMarkup(<EscalaAccessProvider value={publicationViewer}><Publication workspace={workspace} validation={validation} dirty={false} busy={false} onPublish={vi.fn()} candidatePending canUseCandidate={false} onUseCandidate={apply} /></EscalaAccessProvider>);
+    expect(invalid).toContain("aguarde a atualização da grade por uma pessoa autorizada");
+    expect(invalid).toContain("Gerar PDF");
+    expect(invalid).toContain("Gerar XLSX");
+    expect(invalid).not.toContain("Usar proposta na grade");
+    expect(invalid).not.toContain("Publicar proposta");
+    expect(invalid).not.toContain("Conferi esta revisão da filial");
+    expect(apply).not.toHaveBeenCalled();
+    const dirty = renderToStaticMarkup(<EscalaAccessProvider value={administrator}><Publication workspace={workspace} validation={validation} dirty busy={false} onPublish={vi.fn()} /></EscalaAccessProvider>);
     expect(dirty).toContain("o salvamento será confirmado antes de gerar o arquivo");
   });
 

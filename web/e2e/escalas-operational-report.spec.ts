@@ -187,7 +187,8 @@ test("a delayed PDF from the previous workspace never starts a download", async 
       await expectSavedReferencePdf(await pending, workspaces[0]);
       await selectEscalasWorkspace(page, workspaces[1]);
     } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
-    await new Promise(resolve => setTimeout(resolve, 1000)); expect(downloads).toBe(0);
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(downloads).toBe(0);
     await expect(page.getByText("PDF preparado para download.")).toHaveCount(0);
   } finally {
     for (const workspace of workspaces) {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { requireEscalaAccess } from "@/lib/escalas/access.server";
+import { EscalaError, requireEscalaCapability } from "@/lib/escalas/access";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, requireSameOrigin } from "@/lib/api/security";
 import { resourceCapacityErrorResponse } from "@/lib/api/resource-capacity";
 import { assertResourceCapacity } from "@/lib/system/resource-capacity";
@@ -22,6 +23,7 @@ export async function GET(request: Request) {
   const parsed = parseOperationalReportQuery(new URL(request.url).searchParams);
   if (!parsed.success) return jsonError(400, "ESCALA_INVALID_OPERATIONAL_QUERY", "Confira a revisão, mês, seções, setores e data do PDF operacional.");
   try {
+    await requireEscalaCapability(guard.actor, "report.analytics");
     const owner = createHash("sha256").update(JSON.stringify([guard.actor.tenantId, guard.actor.userId, guard.actor.moduleSessionId])).digest("hex").slice(0, 24);
     const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-operational-report:" + owner, limit: 10, windowMs: 60_000 });
     if (limited) return limited;
@@ -44,14 +46,15 @@ export async function GET(request: Request) {
     } else if (workspace.input.needsRegeneration || !workspace.validation.valid) return jsonError(409, "ESCALA_REPORT_REVIEW_REQUIRED", "Confira e salve uma grade válida antes de emitir o PDF operacional.");
     await assertResourceCapacity({ inputBytes: Buffer.byteLength(JSON.stringify(workspace.input)), multiplier: 6 });
     const bytes = await exportOperationalReportPdf(buildOperationalReport(workspace, parsed.data));
+    await requireEscalaCapability(guard.actor, "report.analytics");
     return new Response(Buffer.from(bytes), { headers: { "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="operacional-${workspace.input.branchCode.replace(/[^a-zA-Z0-9_-]/g, "_")}-${parsed.data.month}-r${workspace.revision}.pdf"`,
       "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", Vary: "Cookie" } });
   } catch (error) {
     const capacity = resourceCapacityErrorResponse(error);
     if (capacity) return capacity;
-    try { return escalaFailure(error); }
-    catch { return jsonError(500, "ESCALA_OPERATIONAL_REPORT_FAILED", "Não foi possível emitir o PDF operacional."); }
+    if (error instanceof EscalaError) return escalaFailure(error);
+    return jsonError(500, "ESCALA_OPERATIONAL_REPORT_FAILED", "Não foi possível emitir o PDF operacional.");
   }
 }
 export function POST() { return methodNotAllowed(["GET"]); }

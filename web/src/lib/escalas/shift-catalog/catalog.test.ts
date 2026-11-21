@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readTurnoManifest, storeTurnoManifest, syncTurnoCatalog } from "./catalog";
+vi.mock("../access", async original => ({ ...await original<typeof import("../access")>(),
+  requireEscalaCapability: async (actor: { admin: boolean }) => {
+    if (!actor.admin) { const { EscalaError } = await import("../errors"); throw new EscalaError(403, "ESCALA_ACTION_FORBIDDEN", "Somente administrador define turnos."); }
+  }, lockEscalaAccess: async () => undefined }));
 
 const state = vi.hoisted(() => ({
   entries: new Map<string, { code: number; firstIn: number; firstOut: number; secondIn: number; secondOut: number }[]>(),

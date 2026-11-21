@@ -1,23 +1,42 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isValidElement, type ReactElement, type ReactNode } from "react";
-import type { EscalaInput } from "@/lib/escalas/types";
-import { AbsenceImport, AbsenceImportReview } from "./absence-import";
+import { Fragment, isValidElement, type ReactElement, type ReactNode } from "react";
+import type { ImportSyncCommand, ImportSyncPreview, ImportSyncPurpose } from "@/lib/escalas/import-sync-contracts";
+import type { EscalaWorkspace } from "@/lib/escalas/types";
+import { AbsenceImport } from "./absence-import";
 import { ImportEmployees } from "./coverage-import";
 import { Field } from "./controls";
+import { ImportReplacement, type ImportReplacementProps } from "./import-replacement";
+import { requestImportReplacement, type ImportReplacementResult, type ReplaceImport } from "./import-replacement-client";
 import { newEmployee, newInput } from "./workspace-model";
 
 // Exercise the real component handlers with stateful hooks; browser coverage remains in E2E.
-const hooks = vi.hoisted(() => ({ slots: [] as unknown[], deps: [] as (readonly unknown[] | undefined)[],
-  cursor: 0, changed: false, effects: [] as (() => void)[], cleanup: [] as ((() => void) | undefined)[] }));
+const createHooks = vi.hoisted(() => () => ({ slots: [] as unknown[], deps: [] as (readonly unknown[] | undefined)[],
+  cursor: 0, layout: [] as (() => void)[], effects: [] as (() => void)[], cleanup: [] as ((() => void) | undefined)[] }));
+let hooks = createHooks();
+let changed = false;
 vi.mock("react", async importOriginal => {
   const actual = await importOriginal<typeof import("react")>();
+  function queueEffect(queue: 'effects' | 'layout', effect: () => unknown, deps?: readonly unknown[]) {
+    const current = hooks;
+    const slot = current.cursor++;
+    if (deps && current.deps[slot]?.length === deps.length && deps.every((value, i) => Object.is(value, current.deps[slot]?.[i]))) return;
+    current.deps[slot] = deps;
+    current[queue].push(() => {
+      current.cleanup[slot]?.();
+      const cleanup = effect();
+      current.cleanup[slot] = typeof cleanup === "function" ? cleanup as () => void : undefined;
+    });
+  }
   return { ...actual,
     useState<T>(initial: T | (() => T)) {
       const slot = hooks.cursor++;
       if (!(slot in hooks.slots)) hooks.slots[slot] = typeof initial === "function" ? (initial as () => T)() : initial;
-      return [hooks.slots[slot] as T, (next: T | ((previous: T) => T)) => {
-        hooks.slots[slot] = typeof next === "function" ? (next as (value: T) => T)(hooks.slots[slot] as T) : next;
-        hooks.changed = true;
+      const current = hooks;
+      return [current.slots[slot] as T, (next: T | ((previous: T) => T)) => {
+        const previous = current.slots[slot] as T;
+        const value = typeof next === "function" ? (next as (value: T) => T)(previous) : next;
+        if (!Object.is(previous, value)) { current.slots[slot] = value; changed = true; }
       }];
     },
     useRef<T>(initial: T) { const slot = hooks.cursor++; if (!(slot in hooks.slots)) hooks.slots[slot] = { current: initial }; return hooks.slots[slot]; },
@@ -29,23 +48,28 @@ vi.mock("react", async importOriginal => {
       }
       return hooks.slots[slot];
     },
-    useEffect(effect: () => unknown, deps?: readonly unknown[]) {
-      const slot = hooks.cursor++;
-      if (!deps || !hooks.deps[slot] || deps.length !== hooks.deps[slot]?.length || deps.some((value, i) => !Object.is(value, hooks.deps[slot]?.[i]))) {
-        hooks.deps[slot] = deps;
-        hooks.effects.push(() => { hooks.cleanup[slot]?.(); const cleanup = effect(); hooks.cleanup[slot] = typeof cleanup === "function" ? cleanup as () => void : undefined; });
-      }
-    },
+    useEffect(effect: () => unknown, deps?: readonly unknown[]) { queueEffect("effects", effect, deps); },
+    useLayoutEffect(effect: () => unknown, deps?: readonly unknown[]) { queueEffect("layout", effect, deps); },
   };
 });
 
-type Props = { input: EscalaInput; disabled: boolean; onChange: (input: EscalaInput) => void };
-type NodeProps = { children?: ReactNode | ((id: string) => ReactNode); type?: string; disabled?: boolean;
-  onClick?: () => void; onChange?: (event: { target: { files: File[] } }) => void; onApply?: () => void; role?: string };
-let props: Props, component: (props: Props) => ReactNode, tree: ReactNode;
-function nodes(node: ReactNode): ReactElement<NodeProps>[] {
+
+const access = vi.hoisted(() => ({ channel: "ACCOUNT", administrator: true, allBranches: true }));
+vi.mock("./access-context", () => ({ useEscalaClientAccess: () => access }));
+
+type ControlProps = {
+  children?: ReactNode | ((id: string) => ReactNode);
+  type?: string;
+  disabled?: boolean;
+  onClick?: () => void;
+  onChange?: (event: { target: { files?: File[]; checked?: boolean } }) => void;
+};
+let props: ImportReplacementProps, component: typeof ImportEmployees | typeof AbsenceImport, tree: ReactNode;
+let parent: ReturnType<typeof createHooks>, child: ReturnType<typeof createHooks> | undefined, childKey: ReactElement["key"];
+
+function nodes(node: ReactNode): ReactElement<ControlProps>[] {
   if (Array.isArray(node)) return node.flatMap(value => nodes(value));
-  if (!isValidElement<NodeProps>(node)) return [];
+  if (!isValidElement<ControlProps>(node)) return [];
   const children = node.type === Field && typeof node.props.children === "function" ? node.props.children("synthetic-file") : node.props.children;
   return [node, ...nodes(typeof children === "function" ? null : children)];
 }
@@ -54,140 +78,311 @@ function text(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   return isValidElement<{ children?: ReactNode }>(node) ? text(node.props.children) : "";
 }
-function button(label: string) { const found = nodes(tree).find(node => node.type === "button" && text(node) === label); if (!found) throw new Error(`Button absent: ${label}`); return found.props; }
-function render() { hooks.cursor = 0; hooks.changed = false; tree = component(props); for (const effect of hooks.effects.splice(0)) effect(); }
-async function settle() { for (let i = 0; i < 30; i++) { if (hooks.changed) render(); await Promise.resolve(); } if (hooks.changed) render(); }
-async function select(file = new File(["synthetic"], "team.csv", { type: "text/csv" })) {
-  const input = nodes(tree).find(node => node.type === "input" && node.props.type === "file");
-  if (!input?.props.onChange) throw new Error("File input absent");
-  input.props.onChange({ target: { files: [file] } }); await settle();
+function button(prefix: string) {
+  return nodes(tree).find(node => node.type === "button" && text(node).startsWith(prefix))?.props;
 }
-function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
-function teamReply() { return Response.json({ preview: { employees: [{ ...newEmployee(42), id: "new-person", registration: "0002", name: "Synthetic imported", sector: "Store", role: "Clerk", scheduleMode: "MISSING" }], shifts: [], issues: [], totalRows: 1 } }); }
-function absenceReply() { return Response.json({ preview: { assignments: [{ employeeId: "existing", date: "2026-12-01", kind: "ABSENCE" }], issues: [], counts: { employees: 1, days: 1, matchedRows: 1, unmatchedRows: 0, outsidePeriodRows: 0 } } }); }
-function apply() { return nodes(tree).find(node => node.type === AbsenceImportReview)?.props.onApply; }
+const checkPreview = () => button("Conferir substituição");
+const apply = () => button("Confirmar e salvar substituição");
 
-beforeEach(() => {
-  hooks.slots = []; hooks.deps = []; hooks.cursor = 0; hooks.changed = false; hooks.effects = []; hooks.cleanup = [];
-  vi.useFakeTimers(); vi.stubGlobal("window", new EventTarget());
+function unmountChild() {
+  for (const cleanup of child?.cleanup ?? []) cleanup?.();
+  child = undefined;
+}
+function render() {
+  changed = false;
+  const entry = component(props);
+  if (!isValidElement<Parameters<typeof ImportReplacement>[0]>(entry) || entry.type !== ImportReplacement) throw new Error("Import entry absent");
+  hooks = parent;
+  parent.cursor = 0;
+  const boundary = ImportReplacement(entry.props);
+  tree = null;
+  if (!boundary) unmountChild();
+  else {
+    if (boundary.type !== Fragment) throw new Error("Replacement session boundary absent");
+    const session: unknown = boundary.props.children;
+    if (!isValidElement<Parameters<typeof ImportReplacement>[0]>(session) || typeof session.type !== "function") throw new Error("Replacement session absent");
+    if (!child || childKey !== boundary.key) {
+      unmountChild();
+      child = createHooks();
+      childKey = boundary.key;
+    }
+    hooks = child;
+    child.cursor = 0;
+    tree = (session.type as (sessionProps: Parameters<typeof ImportReplacement>[0]) => ReactNode)(session.props);
+    for (const effect of child.layout.splice(0)) effect();
+    for (const effect of child.effects.splice(0)) effect();
+  }
+  for (const effect of parent.effects.splice(0)) effect();
+}
+async function settle() {
+  for (let i = 0; i < 30; i++) {
+    if (changed) render();
+    await Promise.resolve();
+  }
+  if (changed) render();
+}
+function control(type: string, index = 0) {
+  const found = nodes(tree).filter(node => node.type === "input" && node.props.type === type)[index]?.props;
+  if (!found?.onChange || found.disabled) throw new Error("Import control unavailable");
+  return found.onChange;
+}
+async function select(file = new File(["synthetic"], "team.csv", { type: "text/csv" })) {
+  control("file")({ target: { files: [file] } });
+  await settle();
+  control("checkbox")({ target: { checked: true } });
+  await settle();
+}
+async function click(action: ControlProps | undefined) {
+  if (!action?.onClick || action.disabled) throw new Error("Import action unavailable");
+  action.onClick();
+  await settle();
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+function preview(workspace: EscalaWorkspace, command: ImportSyncCommand, blockers: ImportSyncPreview["blockers"] = [], fileHash = "0".repeat(64)): ImportSyncPreview {
+  const { purpose, startDate, endDate, completeScopeConfirmed } = command;
+  const { branchCode, startDate: workspaceStartDate, endDate: workspaceEndDate, visibleMonth } = workspace.input;
+  const added = purpose === "EMPLOYEES" ? [{ id: "new-person", registration: "0002", name: "Synthetic imported", fields: [] }] : [];
+  const absences = purpose === "ABSENCES" && !blockers.length ? [{ employeeId: "existing", date: startDate, registration: "0001" }] : [];
+  return {
+    contractVersion: 1, purpose, layout: purpose === "ABSENCES" ? "FPHI105" : "ESCALA_TEMPLATE",
+    context: { workspaceId: workspace.id, revision: workspace.revision, branchCode, workspaceStartDate, workspaceEndDate, visibleMonth: visibleMonth ?? null, status: workspace.status },
+    scope: { startDate, endDate },
+    coverage: { completeScopeConfirmed, sourcePeriod: null, basis: "ADMIN_DECLARATION" },
+    fileHash, expectedImpactHash: "1".repeat(64), canApply: completeScopeConfirmed && !blockers.length,
+    impact: { people: { added, updated: [], removed: [], unchanged: [] }, absences: { added: absences, removed: [], unchanged: [] }, assignments: [], references: [] },
+    blockers, warnings: [],
+    counts: { addedPeople: added.length, updatedPeople: 0, removedPeople: 0, unchangedPeople: 0, addedAbsenceDays: absences.length, removedAbsenceDays: 0, unchangedAbsenceDays: 0, assignmentChanges: 0, blockers: blockers.length },
+    effect: { nextStatus: "DRAFT", needsRegeneration: true, approvalInvalidated: false, approvedPolicyVersionIdBefore: null, approvedPolicyVersionIdAfter: null },
+  };
+}
+function replaceWith(replacement: ReplaceImport = async (_file, command) => {
+  const summary = preview(props.workspace, command);
+  if (command.action === "PREVIEW_REPLACE") return { preview: summary };
+  return { summary, workspace: { ...props.workspace, revision: command.expectedRevision + 1 } };
+}) {
+  const replaceImport = vi.fn(replacement);
+  props = { ...props, replaceImport };
+  render();
+  return replaceImport;
+}
+function useHttp(fetcher: (...args: [string, RequestInit]) => Promise<Response>) {
+  vi.stubGlobal("fetch", fetcher);
+  return replaceWith((file, command, signal) => requestImportReplacement(file, command, props.workspace, signal));
+}
+function setWorkspace(workspace: EscalaWorkspace) {
+  props = { ...props, workspace };
+  render();
+  return settle();
+}
+
+beforeEach(async () => {
+  parent = createHooks();
+  child = undefined;
+  childKey = null;
+  vi.useFakeTimers();
+  vi.stubGlobal("window", new EventTarget());
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
+  vi.stubGlobal("crypto", { randomUUID, subtle: { digest: async () => new ArrayBuffer(32) } });
   const input = newInput("06", "Synthetic", "2026-12", 42);
   input.employees = [{ ...newEmployee(42), id: "existing", registration: "0001", name: "Synthetic existing", sector: "Store", role: "Clerk", scheduleMode: "MISSING" }];
-  props = { input, disabled: false, onChange: vi.fn() }; component = ImportEmployees; render();
+  props = {
+    disabled: false, replaceImport: vi.fn<ReplaceImport>(),
+    workspace: { id: "plan-06", revision: 4, status: "DRAFT", input, canEdit: true, canPublish: true,
+      updatedAt: "2026-11-21T00:00:00Z", validation: { valid: true, issues: [], summaries: [], readyToPublish: true, minimumCoverageMargin: 0 } },
+  };
+  component = ImportEmployees;
+  render();
+  await settle();
 });
-afterEach(() => { for (const cleanup of hooks.cleanup) cleanup?.(); vi.useRealTimers(); vi.unstubAllGlobals(); });
-
-describe("employee import lifecycle", () => {
-  it("[regression] aborts an old scenario and never revives it after switching away and back", async () => {
-    const old = deferred<Response>(), recent = deferred<Response>();
-    const fetcher = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(recent.promise); vi.stubGlobal("fetch", fetcher);
-    await select(); button("Conferir arquivo").onClick?.(); await settle();
-    const original = props.input;
-    props = { ...props, input: { ...original, branchCode: "07" } }; render(); await settle();
-    expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
-    props = { ...props, input: original }; render(); await settle();
-    button("Conferir arquivo").onClick?.(); await settle();
-    old.resolve(teamReply()); await settle();
-    expect(text(tree)).not.toContain("Prévia: 1");
-    expect(button("Conferindo arquivo…").disabled).toBe(true);
-    recent.resolve(teamReply()); await settle();
-    button("Aplicar registros aceitos à proposta").onClick?.(); await settle();
-    expect(props.onChange).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(props.onChange).mock.calls[0][0].branchCode).toBe("06");
-  });
-  it("[regression] handles an empty unauthorized response before parsing JSON", async () => {
-    const unlock = vi.fn(); window.addEventListener("escalas:unlock-required", unlock);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
-    await select(); button("Conferir arquivo").onClick?.(); await settle();
-    expect(unlock).toHaveBeenCalledTimes(1); expect(text(tree)).not.toContain("Prévia:"); expect(props.onChange).not.toHaveBeenCalled();
-  });
-  it("[regression] rejects invalid files locally without a network request", async () => {
-    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
-    for (const file of [new File([], "empty.csv"), new File(["x"], "file.exe"), new File([new Uint8Array(512 * 1024 + 1)], "large.xlsx")]) {
-      await select(file); button("Conferir arquivo").onClick?.(); await settle();
-      expect(text(tree)).toContain("até 512 KB");
-    }
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-  it("[regression] prevents a stale apply callback from changing a locked or different context", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => teamReply()));
-    await select(); button("Conferir arquivo").onClick?.(); await settle();
-    const oldApply = button("Aplicar registros aceitos à proposta").onClick;
-    props = { ...props, disabled: true }; render(); await settle(); oldApply?.(); await settle();
-    expect(props.onChange).not.toHaveBeenCalled();
-    props = { ...props, disabled: false }; render(); await settle(); oldApply?.(); await settle();
-    expect(props.onChange).not.toHaveBeenCalled(); expect(text(tree)).not.toContain("Prévia:");
-  });
-  it("[regression] invalidates a ready preview when team or end date changes", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => teamReply()));
-    await select(); button("Conferir arquivo").onClick?.(); await settle();
-    props = { ...props, input: { ...props.input, endDate: "2027-01-09" } }; render(); await settle();
-    expect(text(tree)).not.toContain("Prévia:");
-    button("Conferir arquivo").onClick?.(); await settle();
-    props = { ...props, input: { ...props.input, employees: props.input.employees.map(person => ({ ...person, name: "Updated independently" })) } }; render(); await settle();
-    expect(text(tree)).not.toContain("Prévia:");
-  });
-  it("[regression] aborts pending work and clears its timer on unmount", async () => {
-    const response = deferred<Response>(); const fetcher = vi.fn().mockReturnValue(response.promise); vi.stubGlobal("fetch", fetcher);
-    await select(); button("Conferir arquivo").onClick?.(); await settle();
-    for (const cleanup of hooks.cleanup) cleanup?.(); hooks.cleanup = [];
-    expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true); expect(vi.getTimerCount()).toBe(0);
-    response.resolve(teamReply()); await settle(); expect(props.onChange).not.toHaveBeenCalled();
-  });
-  it("[regression] applies against latest protected assignments rather than an old input snapshot", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => teamReply()));
-    await select(); button("Conferir arquivo").onClick?.(); await settle();
-    const oldApply = button("Aplicar registros aceitos à proposta").onClick;
-    props = { ...props, input: { ...props.input, assignments: [{ employeeId: "existing", date: "2026-12-01", kind: "OFF", locked: true }] } }; render(); await settle();
-    oldApply?.(); oldApply?.(); await settle();
-    expect(props.onChange).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(props.onChange).mock.calls[0][0].assignments).toEqual(props.input.assignments);
-  });
-  it("allows a retry after a timeout and does not apply the failed request", async () => {
-    const fetcher = vi.fn((_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
-      options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
-    })); vi.stubGlobal("fetch", fetcher);
-    await select(); button("Conferir arquivo").onClick?.(); await settle(); await vi.advanceTimersByTimeAsync(60_000); await settle();
-    expect(text(tree)).toContain("demorou além do esperado"); expect(button("Conferir arquivo").disabled).toBe(false);
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => teamReply())); button("Conferir arquivo").onClick?.(); await settle();
-    expect(text(tree)).toContain("Prévia: 1"); expect(props.onChange).not.toHaveBeenCalled();
-  });
-  it("ignores a stale unauthorized reply instead of locking a newer request", async () => {
-    const response = deferred<Response>(), unlock = vi.fn(); window.addEventListener("escalas:unlock-required", unlock);
-    vi.stubGlobal("fetch", vi.fn().mockReturnValue(response.promise)); await select(); button("Conferir arquivo").onClick?.(); await settle();
-    props = { ...props, input: { ...props.input, branchCode: "07" } }; render(); await settle();
-    response.resolve(new Response(null, { status: 401 })); await settle(); expect(unlock).not.toHaveBeenCalled();
-  });
-  it("does not expose a malformed successful response for application", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ preview: {} })));
-    await select(); button("Conferir arquivo").onClick?.(); await settle();
-    expect(text(tree)).not.toContain("Prévia:"); expect(text(tree)).toContain("prévia de equipe válida"); expect(props.onChange).not.toHaveBeenCalled();
-  });
+afterEach(() => {
+  unmountChild();
+  for (const cleanup of parent.cleanup) cleanup?.();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
-describe("absence import recovery", () => {
-  beforeEach(() => { hooks.slots = []; hooks.deps = []; hooks.effects = []; hooks.cleanup = []; component = AbsenceImport; render(); });
-  it("[regression] handles an empty unauthorized response without parsing it first", async () => {
-    const unlock = vi.fn(); window.addEventListener("escalas:unlock-required", unlock);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
-    await select(); button("Conferir afastamentos").onClick?.(); await settle(); expect(unlock).toHaveBeenCalledTimes(1);
+describe.each([
+  { purpose: "EMPLOYEES" as ImportSyncPurpose, entry: ImportEmployees },
+  { purpose: "ABSENCES" as ImportSyncPurpose, entry: AbsenceImport },
+])("replacement lifecycle ($purpose)", ({ purpose, entry }) => {
+  beforeEach(async () => { component = entry; render(); await settle(); });
+
+  it("aborts work on a different planning context and applies only the newer revision", async () => {
+    const previous = deferred<ImportReplacementResult>(), recent = deferred<ImportReplacementResult>();
+    const replace = replaceWith().mockReturnValueOnce(previous.promise).mockReturnValueOnce(recent.promise);
+    const original = props.workspace;
+    await select();
+    await click(checkPreview());
+    const oldCommand = replace.mock.calls[0][1];
+    await setWorkspace({ ...original, id: "plan-07", input: { ...original.input, branchCode: "07" } });
+    expect(replace.mock.calls[0][2].aborted).toBe(true);
+    await setWorkspace({ ...original, revision: 5 });
+    await select();
+    await click(checkPreview());
+    previous.resolve({ preview: preview(original, oldCommand) });
+    await settle();
+    expect(apply()).toBeUndefined();
+    expect(checkPreview()?.disabled).toBe(true);
+    const command = replace.mock.calls[1][1];
+    const reviewed = preview(props.workspace, command);
+    recent.resolve({ preview: reviewed });
+    await settle();
+    expect(text(tree)).toContain("filial 06 · revisão 5");
+    expect(apply()?.disabled).toBe(true);
+    control("checkbox", 1)({ target: { checked: true } });
+    await settle();
+    await click(apply());
+    expect(replace.mock.calls.map(([, command]) => command.action)).toEqual(["PREVIEW_REPLACE", "PREVIEW_REPLACE", "APPLY_REPLACE"]);
+    expect(replace.mock.calls[2][1]).toMatchObject({ purpose, workspaceId: original.id, expectedRevision: 5, expectedImpactHash: reviewed.expectedImpactHash });
+    expect(text(tree)).toContain("Substituição salva na revisão 6");
   });
-  it("[regression] refuses a stale apply callback after changing files", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => absenceReply()));
-    await select(); button("Conferir afastamentos").onClick?.(); await settle(); const previousApply = apply();
-    await select(new File(["different synthetic source"], "other.csv")); previousApply?.(); await settle();
-    expect(props.onChange).not.toHaveBeenCalled();
+
+  it("clears the preview on file replacement and after locking and unlocking", async () => {
+    const replace = replaceWith();
+    await select();
+    await click(checkPreview());
+    expect(apply()?.disabled).toBe(true);
+    await select(new File(["different synthetic source"], "other.csv"));
+    expect(apply()).toBeUndefined();
+    await click(checkPreview());
+    expect(apply()?.disabled).toBe(true);
+    window.dispatchEvent(new Event("escalas:unlock-required"));
+    await settle();
+    expect(tree).toBeNull();
+    window.dispatchEvent(new Event("escalas:unlocked"));
+    await settle();
+    expect(apply()).toBeUndefined();
+    expect(checkPreview()?.disabled).toBe(true);
+    expect(replace.mock.calls.every(([, command]) => command.action === "PREVIEW_REPLACE")).toBe(true);
   });
-  it("[regression] clears a completed preview on lock, and cannot revive it on unlock", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => absenceReply()));
-    await select(); button("Conferir afastamentos").onClick?.(); await settle(); expect(apply()).toBeDefined();
-    props = { ...props, disabled: true }; render(); await settle();
-    props = { ...props, disabled: false }; render(); await settle();
-    expect(apply()).toBeUndefined(); expect(props.onChange).not.toHaveBeenCalled();
+
+  it("handles the import API's unauthorized response and requests unlock once", async () => {
+    const unlock = vi.fn();
+    window.addEventListener("escalas:unlock-required", unlock);
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { message: "Acesso encerrado" } }, { status: 401 }));
+    const replace = useHttp(fetcher);
+    await select();
+    await click(checkPreview());
+    expect(unlock).toHaveBeenCalledTimes(1);
+    expect(tree).toBeNull();
+    expect(replace).toHaveBeenCalledTimes(1);
   });
-  it("preserves a newly locked date when applying a compatible preview", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => absenceReply()));
-    await select(); button("Conferir afastamentos").onClick?.(); await settle();
-    props = { ...props, input: { ...props.input, assignments: [{ employeeId: "existing", date: "2026-12-01", kind: "OFF", locked: true }] } }; render(); await settle();
-    apply()?.(); await settle(); expect(props.onChange).not.toHaveBeenCalled(); expect(text(tree)).toContain("dias bloqueados foram preservados");
+
+  it("requires a fresh review after an updated saved revision and displays protected-day blockers", async () => {
+    const replace = replaceWith();
+    await select();
+    await click(checkPreview());
+    control("checkbox", 1)({ target: { checked: true } });
+    await settle();
+    expect(apply()?.disabled).toBe(false);
+    const { workspace } = props;
+    const date = workspace.input.startDate;
+    await setWorkspace({ ...workspace, revision: 5, input: { ...workspace.input, assignments: [{ employeeId: "existing", date, kind: "OFF", locked: true }] } });
+    expect(apply()).toBeUndefined();
+    expect(replace).toHaveBeenCalledTimes(1);
+    replace.mockImplementationOnce(async (_file, command) => ({
+      preview: preview(props.workspace, command, [{ code: "PROTECTED_ASSIGNMENT", date, message: "O dia bloqueado foi preservado." }]),
+    }));
+    await click(checkPreview());
+    expect(replace.mock.calls[1][1]).toMatchObject({ expectedRevision: 5, action: "PREVIEW_REPLACE" });
+    expect(text(tree)).toContain("O dia bloqueado foi preservado.");
+    expect(apply()?.disabled).toBe(true);
+    expect(props.workspace.input.assignments[0]).toMatchObject({ date, kind: "OFF", locked: true });
+  });
+});
+
+describe("replacement request feedback", () => {
+  it("disables apply for a rejected source and reports why", async () => {
+    const replace = replaceWith(async (_file, command) => ({
+      preview: preview(props.workspace, command, [{ code: "SOURCE_INVALID", message: "Formato de arquivo inválido." }]),
+    }));
+    await select(new File(["invalid"], "invalid.csv"));
+    await click(checkPreview());
+    expect(text(tree)).toContain("Formato de arquivo inválido.");
+    expect(apply()?.disabled).toBe(true);
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears a ready review on save gating and changes to the period", async () => {
+    replaceWith();
+    await select();
+    await click(checkPreview());
+    expect(apply()?.disabled).toBe(true);
+    props = { ...props, pendingSave: true };
+    render();
+    await settle();
+    expect(apply()).toBeUndefined();
+    expect(checkPreview()?.disabled).toBe(true);
+    props = { ...props, pendingSave: false };
+    render();
+    await settle();
+    await click(checkPreview());
+    const { workspace } = props;
+    await setWorkspace({ ...workspace, input: { ...workspace.input, endDate: workspace.input.startDate } });
+    expect(apply()).toBeUndefined();
+  });
+
+  it("aborts the request and clears its timeout on unmount", async () => {
+    const response = deferred<Response>();
+    const fetcher = vi.fn((_url: string, _options: RequestInit) => response.promise);
+    const replace = useHttp(fetcher);
+    await select();
+    await click(checkPreview());
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    unmountChild();
+    await settle();
+    expect(fetcher.mock.calls[0][1].signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    response.resolve(Response.json({ preview: {} }));
+    await settle();
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers another review after timeout, with no replacement attempted", async () => {
+    const pending = deferred<Response>();
+    const fetcher = vi.fn((_url: string, _options: RequestInit) => pending.promise);
+    const replace = useHttp(fetcher);
+    await select();
+    await click(checkPreview());
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settle();
+    expect(text(tree)).toContain("A espera excedeu o prazo.");
+    expect(checkPreview()?.disabled).toBe(false);
+    expect(apply()).toBeUndefined();
+    replace.mockImplementationOnce(async (_file, command) => ({ preview: preview(props.workspace, command) }));
+    await click(checkPreview());
+    expect(apply()?.disabled).toBe(true);
+    expect(replace.mock.calls.map(([, command]) => command.action)).toEqual(["PREVIEW_REPLACE", "PREVIEW_REPLACE"]);
+  });
+
+  it("ignores an unauthorized reply from a previous planning context", async () => {
+    const response = deferred<Response>(), unlock = vi.fn();
+    window.addEventListener("escalas:unlock-required", unlock);
+    const fetcher = vi.fn((_url: string, _options: RequestInit) => response.promise);
+    useHttp(fetcher);
+    await select();
+    await click(checkPreview());
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const { workspace } = props;
+    await setWorkspace({ ...workspace, id: "plan-07", input: { ...workspace.input, branchCode: "07" } });
+    response.resolve(Response.json({}, { status: 401 }));
+    await settle();
+    expect(unlock).not.toHaveBeenCalled();
+    expect(text(tree)).toContain("Filial 07");
+  });
+
+  it("does not expose an invalid success response for application", async () => {
+    const replace = useHttp(vi.fn().mockResolvedValue(Response.json({ preview: {} })));
+    await select();
+    await click(checkPreview());
+    expect(apply()).toBeUndefined();
+    expect(text(tree)).toContain("A resposta não corresponde à conferência desta filial.");
+    expect(text(tree)).toContain("Nenhuma substituição foi solicitada.");
+    expect(replace.mock.calls.map(([, command]) => command.action)).toEqual(["PREVIEW_REPLACE"]);
   });
 });

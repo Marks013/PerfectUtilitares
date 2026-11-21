@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { readShiftSegments, type ShiftFieldError } from "./shift-editor-validation";
+import { useEscalaClientAccess } from "./access-context";
+import { escalaCatalogActions } from "@/lib/escalas/access-contracts";
 import { isDate } from "@/lib/escalas/dates";
 import { applyLocalHolidayCalendar, holidayCalendarFor } from "@/lib/escalas/calendar";
 import { effectiveWorkDayLimit } from "@/lib/escalas/labor-rules";
 import styles from "./escalas.module.css";
 import type { EscalaInput, EscalaPolicy, EscalaShift } from "@/lib/escalas/types";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
-import { clock, parseClock } from "./workspace-model";
+import { clock } from "./workspace-model";
 import { LaborPolicyFields, ShortMealSimulation } from "./labor-policy-fields";
 import { ShiftSummary } from "./shift-summary";
 
@@ -88,6 +91,9 @@ function ShiftEditor({
   onSave: (shift: EscalaShift) => void;
   onCancel: () => void;
 }) {
+  const form = useRef<HTMLFormElement>(null);
+  const errorId = useId();
+  const [fieldError, setFieldError] = useState<ShiftFieldError | null>(null);
   const [name, setName] = useState(shift.name);
   const [segments, setSegments] = useState<SegmentDraft[]>(
     shift.segments.map((segment) => ({
@@ -98,6 +104,7 @@ function ShiftEditor({
     })),
   );
   const [error, setError] = useState("");
+  useEffect(() => { if (fieldError) form.current?.querySelector<HTMLInputElement>('[aria-invalid="true"]')?.focus(); }, [fieldError]);
   function change(index: number, patch: Partial<SegmentDraft>) {
     setSegments((previous) =>
       previous.map((segment, position) => (position === index ? { ...segment, ...patch } : segment)),
@@ -105,25 +112,16 @@ function ShiftEditor({
   }
   return (
     <form
+      ref={form}
       className="space-y-4 border-t border-[color:var(--app-border)] pt-4"
       onSubmit={(event) => {
         event.preventDefault();
         try {
           if (!name.trim()) throw new Error("Informe o nome do turno.");
-          const parsed = segments.map((segment) => ({
-            start: parseClock(segment.start),
-            end: parseClock(segment.end),
-            kind: segment.kind,
-          }));
-          if (!parsed.length || !parsed.some((segment) => segment.kind === "WORK"))
-            throw new Error("Informe ao menos um período de trabalho.");
-          if (
-            parsed.some(
-              (segment, index) => segment.end <= segment.start || (index > 0 && segment.start < parsed[index - 1].end),
-            )
-          )
-            throw new Error("Os períodos devem estar em ordem, sem sobreposição e com fim posterior ao início.");
-          onSave({ ...shift, name: name.trim(), segments: parsed });
+          const parsed = readShiftSegments(segments);
+          if ("error" in parsed) { setFieldError(parsed.error); setError(parsed.error.message); return; }
+          setFieldError(null); setError("");
+          onSave({ ...shift, name: name.trim(), segments: parsed.segments });
         } catch (cause) {
           setError(cause instanceof Error ? cause.message : "Confira os horários.");
         }
@@ -173,11 +171,14 @@ function ShiftEditor({
                 inputMode="numeric"
                 maxLength={5}
                 value={segment.start}
+                aria-invalid={fieldError?.index === index && fieldError.field === "start"}
+                aria-describedby={fieldError?.index === index && fieldError.field === "start" ? `${errorId}-${index}-start` : undefined}
                 onChange={(event) => change(index, { start: event.target.value })}
                 className={controlClass}
               />
             )}
           </Field>
+          {fieldError?.index === index && fieldError.field === "start" && <p id={`${errorId}-${index}-start`} role="alert" className={styles.errorText}>{fieldError.message}</p>}
           <Field label={`Fim ${index + 1}`}>
             {(id) => (
               <input
@@ -186,11 +187,14 @@ function ShiftEditor({
                 inputMode="numeric"
                 maxLength={5}
                 value={segment.end}
+                aria-invalid={fieldError?.index === index && fieldError.field === "end"}
+                aria-describedby={fieldError?.index === index && fieldError.field === "end" ? `${errorId}-${index}-end` : undefined}
                 onChange={(event) => change(index, { end: event.target.value })}
                 className={controlClass}
               />
             )}
           </Field>
+          {fieldError?.index === index && fieldError.field === "end" && <p id={`${errorId}-${index}-end`} role="alert" className={styles.errorText}>{fieldError.message}</p>}
           <button
             type="button"
             className={buttonClass}
@@ -200,7 +204,7 @@ function ShiftEditor({
           </button>
         </div>
       ))}
-      {error && (
+      {error && !fieldError && (
         <p role="alert" className={styles.errorText}>
           {error}
         </p>
@@ -237,6 +241,8 @@ export function Shifts({
   onChange: (input: EscalaInput) => void;
 }) {
   const [editing, setEditing] = useState<EscalaShift | null>(null);
+  const access = useEscalaClientAccess();
+  if (!access || !escalaCatalogActions(access, input.branchCode).canDefine) return null;
   return (
     <section className={panelClass} aria-labelledby="escala-shifts-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
