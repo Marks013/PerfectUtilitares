@@ -74,7 +74,7 @@ function workspace(id: string, shifts = [shift("a", 480, 720), shift("b", 540, 7
     revision: 3,
     status: "DRAFT",
     canEdit: true,
-    input: { visibleMonth: "2026-12", startDate: "2026-11-30", endDate: "2027-01-03", shifts },
+    input: { visibleMonth: "2026-12", startDate: "2026-11-30", endDate: "2027-01-03", shifts, employees: [] as { id: string; sector: string; shiftIds: string[] }[], assignments: [] },
   };
 }
 const sync = (workspaceId: string, localShiftIds: string[]) => syncTurnoCatalog(actor("t1"), {
@@ -118,6 +118,22 @@ describe("turn catalog registration", () => {
       [1501, ["09:00", "13:00", "00:00", "00:00"]],
     ]);
     expect(result.createdCount).toBe(2);
+  });
+
+  it("does not register shifts exclusive to AFASTADOS and keeps shared codes immutable", async () => {
+    const value = workspace("w1", [shift("shared", 480, 720), shift("admin", 540, 780)]);
+    value.input.employees.push({ id: "ignored", sector: " afastados ", shiftIds: ["admin", "shared"] },
+      { id: "operational", sector: "Caixa", shiftIds: ["shared"] });
+    state.revisions.set("w1", { revision: value.revision, input: value.input });
+    const before = structuredClone(value.input);
+    await expect(sync("w1", ["admin"])).rejects.toMatchObject({ code: "TURNO_EMPTY_SELECTION" });
+    expect(state.nextCodes.has("t1")).toBe(false);
+    const first = await sync("w1", ["admin", "shared"]);
+    const second = await sync("w1", ["shared"]);
+    expect(first.entries.map(entry => entry.code)).toEqual([1500]);
+    expect(second.entries).toEqual(first.entries);
+    expect(state.entries.get("t1")).toHaveLength(1);
+    expect(value.input).toEqual(before);
   });
 
   it("continues from the stored counter if the catalog rows have gaps", async () => {

@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { sameDraft } from "./draft-persistence";
 import { buildCoveragePresence } from "@/lib/escalas/coverage-presence";
 import { addDays, isDate } from "@/lib/escalas/dates";
@@ -20,7 +21,7 @@ export function applyRosterChanges(input: EscalaInput, changes: EscalaAssignment
   const employees = new Map(input.employees.map((person) => [person.id, person]));
   for (const next of changes) {
     const person = employees.get(next.employeeId);
-    if (!person || person.planningEnabled === false) throw new Error("Selecione um colaborador incluído no planejamento.");
+    if (!person || !isEscalaPlanningParticipant(person)) throw new Error("Selecione um colaborador incluído no planejamento.");
     if (!isDate(next.date) || next.date < input.startDate || next.date > input.endDate
       || (person.activeFrom && next.date < person.activeFrom) || (person.activeUntil && next.date > person.activeUntil)) {
       throw new Error("O dia precisa pertencer ao período de planejamento e ao vínculo do colaborador.");

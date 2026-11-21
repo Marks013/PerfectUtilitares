@@ -24,6 +24,19 @@ function swap(input: EscalaInput): EscalaInput {
     : record.employeeId === "a" && record.date === "2026-11-04" ? { employeeId: record.employeeId, date: record.date, kind: "OFF" as const } : record) };
 }
 describe("independent incumbent quality acceptance", () => {
+  it("does not compare AFASTADOS demand or rank administrative attendance, but keeps the saved records", () => {
+    const input = fixture();
+    input.employees.push({ ...input.employees[0], id: "admin", registration: "admin", sector: "  Afastádos  " });
+    input.assignments.push({ employeeId: "admin", date: "2026-11-03", kind: "WORK", shiftId: "day" });
+    input.demands.push({ id: "admin", date: "2026-11-03", sector: "AFASTADOS", start: 480, end: 600, minimum: 9 });
+    const proposal = { ...input, assignments: input.assignments.filter(day => day.employeeId !== "admin") };
+    expect(coverageQuality(input).daily.size).toBe(0);
+    expect(compareRosterCoverage(input, proposal)).toEqual({ comparable: true, improved: false, regressed: false, reason: "ACCEPTED" });
+    const decisions: string[] = [];
+    expect(selectVerifiedRoster(input, proposal, reason => decisions.push(reason))).toEqual({ input, retainedReference: true });
+    expect(decisions).toEqual(["PROTECTED_ASSIGNMENT"]);
+  });
+
   it("does not empty a staffed sector day merely because no hourly minimum was entered", () => {
     const input = fixture(); input.employees = input.employees.slice(0, 1);
     input.assignments = input.assignments.filter(record => record.employeeId === "a");

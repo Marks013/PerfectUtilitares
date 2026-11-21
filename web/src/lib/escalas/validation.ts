@@ -4,6 +4,7 @@ import { isHoursReferenceOnly, validateHoursReferences } from "./hours-reference
 import { absoluteMinute, dateRange, visibleDates, weekStart } from "./dates";
 import { escalaInputSchema } from "./schema";
 import { sortEmployees } from "./order";
+import { operationalEscalaInput } from "./eligibility";
 import { fixedBoundaryReservations } from "./boundary";
 import { validateEmployee } from "./validation-employee";
 import { validateCoverage, validateJourney, validateUntimedDuty, workJourney, type WorkJourney } from "./validation-time";
@@ -24,7 +25,8 @@ export function validateEscala(rawInput: EscalaInput, options: { publishedSnapsh
     valid: false, readyToPublish: false, summaries: [], minimumCoverageMargin: null,
     issues: parsed.error.issues.slice(0, 50).map((entry) => ({ code: "INPUT_INVALID", severity: "ERROR", message: `${entry.path.join(".")}: ${entry.message}` })),
   };
-  const input = options.publishedSnapshot ? parsed.data : applyBranchRestCalendar(parsed.data);
+  const operational = operationalEscalaInput(parsed.data);
+  const input = options.publishedSnapshot ? operational : applyBranchRestCalendar(operational);
   if (isHoursReferenceOnly(input)) return validateHoursReferences(input);
   const issues: EscalaIssue[] = options.publishedSnapshot ? [] : variableRestIssues(input);
   if (!options.publishedSnapshot) for (const day of workAfterStoreClosing(input)) issues.push({

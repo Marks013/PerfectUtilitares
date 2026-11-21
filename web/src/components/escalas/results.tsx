@@ -1,5 +1,6 @@
 "use client";
 
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { memo, useMemo, useRef, useState } from "react";
 import { buildEscalaDiagnostics, type EscalaDiagnosticNotice } from "@/lib/escalas/diagnostics";
 import { analyzeCoverage, type CoverageAnalysisSlice, type CoverageDemandMetrics } from "@/lib/escalas/coverage-analysis";
@@ -244,7 +245,7 @@ export const ValidationResults = memo(function ValidationResults({ input: nextIn
   const reviews = diagnostics.notices.filter(notice => notice.severity === "PENDING" && !isReviewInformation(notice.code, notice.severity));
   const information = diagnostics.notices.filter(notice => notice.severity === "WARNING" || isReviewInformation(notice.code, notice.severity));
   const reservations = validation.boundaryReservations ?? [];
-  const employees = sortEmployees(input.employees.filter(person => person.planningEnabled !== false));
+  const employees = sortEmployees(input.employees.filter(isEscalaPlanningParticipant));
   const coverageCount = new Set([...diagnostics.coverageGroups.map(row => row.sector), ...emptySectors.map(row => row.sector)]).size;
   const view = section ?? selectedView ?? (errors.length ? "errors" : diagnostics.coverageGroups.length ? "coverage" : reviews.length ? "reviews" : information.length ? "information" : "errors");
   const notices = view === "errors" ? errors : view === "reviews" ? reviews : information;

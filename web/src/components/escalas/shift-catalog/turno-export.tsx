@@ -1,5 +1,6 @@
 "use client";
 
+import { isAdministrativeEscalaSector } from "@/lib/escalas/eligibility";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import type { TurnoExportManifestDto, TurnoExportSelection, TurnoCatalogSyncResult } from "@/lib/escalas/shift-catalog/contracts";
@@ -14,7 +15,7 @@ import { canSyncCatalogReferences } from "./sync-access";
 type Format = "TXT1" | "TXT2";
 const keyFor = (workspaceId: string, employeeId: string) => JSON.stringify([workspaceId, employeeId]);
 const eligible = (person: EscalaWorkspace["input"]["employees"][number]) =>
-  person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING";
+  !isAdministrativeEscalaSector(person.sector) && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING";
 const optionsFor = (workspace: EscalaWorkspace, person: EscalaWorkspace["input"]["employees"][number]) =>
   employeeReferenceShiftChoices(workspace.input, person);
 
@@ -168,7 +169,7 @@ export function TurnoExport({ plans, disabled }: { plans: WorkspaceSummary[]; di
     <button type="button" className={buttonClass} disabled={disabled || Boolean(busy) || !period || selectedPlans.length === 0 || selectedPlans.length > 50} onClick={() => void prepareReferences()}>Conferir referências selecionadas</button>
     {current && <div className={styles.stackSmall}>
       <p>Confira as pessoas e escolha uma referência quando houver mais de uma opção.</p>
-      {loaded.map(workspace => <details key={workspace.id}><summary>Filial {workspace.input.branchCode} · revisão {workspace.revision}</summary><ul>{workspace.input.employees.map(person => {
+      {loaded.map(workspace => <details key={workspace.id}><summary>Filial {workspace.input.branchCode} · revisão {workspace.revision}</summary><ul>{workspace.input.employees.filter(person => !isAdministrativeEscalaSector(person.sector)).map(person => {
         const variants = optionsFor(workspace, person);
         return <li key={person.id} className="py-1"><span>{person.registration} · {person.name}: </span>{!eligible(person) ? person.scheduleMode === "UNTIMED" ? "sem horário fixo; será omitido" : "horário não informado; será omitido" : variants.length === 0 ? "sem turno informado; será omitido" : variants.length === 1 ? variants[0].label : <Field label={"Referência de " + person.registration}>{id => <select id={id} className={controlClass} value={choices[keyFor(workspace.id, person.id)] ?? ""} disabled={disabled || Boolean(busy)} onChange={event => { setChoices(previous => ({ ...previous, [keyFor(workspace.id, person.id)]: event.target.value })); clearResult(); }}><option value="">Escolha uma referência</option>{variants.map(variant => <option key={variant.shiftId} value={variant.shiftId}>{variant.label}</option>)}</select>}</Field>}</li>;
       })}</ul></details>)}

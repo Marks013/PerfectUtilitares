@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { escalaEmployeeSchema } from "@/lib/escalas/schema";
 import { currentLeadership } from "@/lib/escalas/leadership";
 import type { EscalaEmployee } from "@/lib/escalas/types";
@@ -15,7 +16,7 @@ export function validateEmployeeForm(draft: EscalaEmployee, team: EscalaEmployee
   }
   if (team.some(person => person.id !== draft.id && person.registration.trim() === draft.registration.trim()))
     errors.registration = "Essa matrícula já está cadastrada nesta filial.";
-  if (draft.planningEnabled !== false && draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && !draft.shiftIds.length)
+  if (isEscalaPlanningParticipant(draft) && draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && !draft.shiftIds.length)
     errors.shiftIds = "Escolha ao menos um turno autorizado para quem tem horário informado.";
   return { employee: result.success && !Object.keys(errors).length ? result.data : null, errors };
 }

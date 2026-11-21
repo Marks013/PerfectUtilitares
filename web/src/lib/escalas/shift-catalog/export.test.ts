@@ -108,6 +108,26 @@ describe("turn TXT manifest", () => {
     expect(state.store).toHaveBeenCalledWith(actor, expect.objectContaining({ month: 12, year: 2026, rowsHash: expect.any(String) }), expect.any(Date));
   });
 
+  it("ignores AFASTADOS even from old explicit selections and neither lists nor exports their clocks", async () => {
+    const value = workspace();
+    value.input.employees[0].sector = " Afástados ";
+    value.input.employees[0].shiftIds = ["admin-clock"];
+    value.input.shifts.push({ id: "admin-clock", name: "Private", segments: [{ start: 420, end: 600, kind: "WORK" }] });
+    value.input.assignments.push({ employeeId: "e1", date: "2026-12-01", kind: "WORK", shiftId: "admin-clock", locked: true });
+    const before = structuredClone(value);
+    state.getEscala.mockResolvedValue(value);
+    const manifest = await createTurnoExportManifest(actor, { month: 12, year: 2026, selections: [{ ...selections[0],
+      employees: [{ employeeId: "e1", localShiftId: "admin-clock" }, selections[0].employees[1]] }] });
+    expect(manifest.rowCount).toBe(1);
+    expect(manifest.omissions).toEqual([]);
+    expect(state.payload).toMatchObject({ selections: [{ employees: [selections[0].employees[1]] }] });
+    const txt1 = await downloadTurnoExport(actor, manifest.manifestId, "TXT1", false);
+    const txt2 = await downloadTurnoExport(actor, manifest.manifestId, "TXT2", false);
+    expect(new TextDecoder().decode(txt1.bytes)).toBe("0008,08:00,12:00,14:00,18:24\r\n");
+    expect(new TextDecoder().decode(txt2.bytes)).toBe("1500,08:00 12:00 14:00 18:24,08:00,12:00,14:00,18:24\r\n");
+    expect(value).toEqual(before);
+  });
+
   it("reports every unselected collaborator instead of silently inventing or flattening a reference", async () => {
     const manifest = await createTurnoExportManifest(actor, { month: 12, year: 2026, selections: [{ ...selections[0], employees: [] }] });
     expect(manifest.rowCount).toBe(0);

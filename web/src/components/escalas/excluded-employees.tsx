@@ -1,5 +1,6 @@
 "use client";
 
+import { isAdministrativeEscalaSector } from "@/lib/escalas/eligibility";
 import { exclusionPresentation } from "@/lib/escalas/presentation";
 import type { EscalaEmployee } from "@/lib/escalas/types";
 import { buttonClass } from "./controls";
@@ -15,7 +16,9 @@ export function ExcludedEmployees({ employees, disabled, onEdit, onRemove }: {
     <p className={styles.muted}>Relação separada da escala gráfica. Estas pessoas não entram na disponibilidade nem na cobertura. Os cadastros foram preservados.</p>
     <ul className={styles.teamList}>
       {employees.map((employee) => {
-        const exclusion = exclusionPresentation(employee);
+        const exclusion = isAdministrativeEscalaSector(employee.sector)
+          ? { reason: "Cadastro no setor administrativo Afastados.", guidance: "No retorno ao trabalho, confira o cadastro e indique o setor de trabalho." }
+          : exclusionPresentation(employee);
         return <li key={employee.id} className={styles.teamRow}>
           <div className={styles.teamIdentity}><strong>{employee.registration} · {employee.name}</strong><span>{employee.sector} / {employee.role}</span><span className={styles.statusTag}>X · fora do planejamento</span></div>
           <div className={styles.exclusionReason}><p><strong>Motivo:</strong> {exclusion.reason}</p><p><strong>Como revisar:</strong> {exclusion.guidance}</p></div>

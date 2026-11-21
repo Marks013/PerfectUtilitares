@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newEmployee, newInput } from "../../components/escalas/workspace-model";
-import { generationScenarioBasis, matchesHoursOnlyAssignments, validateHoursReferences } from "./hours-reference";
+import { generationScenarioBasis, isHoursReferenceOnly, matchesHoursOnlyAssignments, validateHoursReferences } from "./hours-reference";
 import { prepareGeneration } from "./generation";
 
 function fixture() {
@@ -11,6 +11,19 @@ function fixture() {
   return value;
 }
 describe("reference-only and fixed-day contracts", () => {
+  it("ignores legacy assignments of administrative employees without mutating their records", () => {
+    const value = fixture(); value.simulation = true; value.needsRegeneration = false;
+    value.policy.compensationAuthorized = true;
+    const basis = generationScenarioBasis(value);
+    value.employees.push({ ...value.employees[0], id: "leave", registration: "2", sector: "  afástados ", shiftIds: [] });
+    value.assignments.push({ employeeId: "leave", date: "2026-11-02", kind: "WORK", shiftId: "day", locked: true });
+    value.generationBasis = basis;
+    const original = structuredClone(value);
+    expect(isHoursReferenceOnly(value)).toBe(true);
+    expect(generationScenarioBasis(value)).toBe(basis);
+    expect(validateHoursReferences(value).valid).toBe(true);
+    expect(value).toEqual(original);
+  });
   it.each([true, false])("warns about missing individual clocks and requires at least one real timed reference: %s", hasTimed => {
     const value = fixture(); value.simulation = true; value.needsRegeneration = false;
     value.policy.compensationAuthorized = true;

@@ -6,6 +6,7 @@ import { getEscala } from "../service";
 import { EscalaError } from "../errors";
 import { canonicalBranchCode } from "../branch-code";
 import { effectiveScheduleMode } from "../fpre136-schedule";
+import { operationalEscalaInput } from "../eligibility";
 import type { EscalaActor } from "../access";
 import type { EscalaWorkspace } from "../types";
 import type {
@@ -65,7 +66,9 @@ async function selectedWorkspaces(actor: EscalaActor, month: number, year: numbe
     if ([...employeeIds].some(employeeId => !knownEmployeeIds.has(employeeId))) {
       throw new EscalaError(400, "TURNO_EMPLOYEE_NOT_FOUND", "A seleção contém um colaborador que não pertence ao planejamento.");
     }
-    selected.push({ workspace, selection });
+    const input = operationalEscalaInput(workspace.input);
+    const includedIds = new Set(input.employees.map(employee => employee.id));
+    selected.push({ workspace: { ...workspace, input }, selection: { ...selection, employees: selection.employees.filter(employee => includedIds.has(employee.employeeId)) } });
   }
   if (selected.length === 0) throw new EscalaError(400, "TURNO_EMPTY_EXPORT", "Selecione ao menos um planejamento.");
   return selected.sort((a, b) => a.workspace.input.branchCode.localeCompare(b.workspace.input.branchCode));

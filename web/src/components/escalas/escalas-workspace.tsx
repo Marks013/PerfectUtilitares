@@ -1,5 +1,6 @@
 "use client";
 
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { CalendarDays } from "lucide-react";
 import styles from "./escalas.module.css";
 import { useEffect, useRef, useState } from "react";
@@ -148,11 +149,13 @@ export function EscalasWorkspace() {
     if (action === "login") { window.dispatchEvent(new Event("escalas:unlock-required")); return; }
     resolve(action, context);
   }
-  const included = input?.employees.filter((person) => person.planningEnabled !== false).length ?? 0;
+  const includedIds = new Set(input?.employees.filter(isEscalaPlanningParticipant).map(person => person.id));
+  const included = includedIds.size;
   const latestModel = useRef(model); latestModel.current = model;
-  const swapEmployee = input?.employees.find(person => person.id === swapId);
-  const hasRoster = Boolean(input?.assignments.length);
-  const hasCalculatedRoster = Boolean(input?.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY" || day.kind === "OFF"));
+  const swapEmployee = input?.employees.find(person => person.id === swapId && !isAdministrativeEscalaSector(person.sector));
+  const administrativeIds = new Set(input?.employees.filter(person => isAdministrativeEscalaSector(person.sector)).map(person => person.id));
+  const hasRoster = Boolean(input?.assignments.some(day => !administrativeIds.has(day.employeeId)));
+  const hasCalculatedRoster = Boolean(input?.assignments.some(day => includedIds.has(day.employeeId) && (day.kind === "WORK" || day.kind === "DUTY" || day.kind === "OFF")));
   return <div className={styles.workspace}>
     <header className={styles.header}>
       <div className={styles.brand}>

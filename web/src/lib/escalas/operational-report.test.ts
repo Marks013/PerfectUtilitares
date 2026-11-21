@@ -14,6 +14,26 @@ function fixture(): EscalaWorkspace {
   return { id: "synthetic", revision: 19, status: "DRAFT", input, canEdit: true, canPublish: false, updatedAt: "2026-12-01", validation: { valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: null } };
 }
 describe("read-only operational report adapter", () => {
+  it("ignores legacy administrative assignments and mandatory demand without changing a saved revision", () => {
+    const control = fixture(), workspace = structuredClone(control);
+    const date = "2026-12-01";
+    workspace.input.employees.push({ ...workspace.input.employees[0], id: "admin", sector: " afastados " });
+    workspace.input.assignments.push({ employeeId: "admin", date, kind: "WORK", shiftId: "day", locked: true });
+    workspace.input.demands.push({ id: "admin-demand", date, sector: "AFASTADOS", start: 480, end: 540, minimum: 1, estimated: false });
+    const before = structuredClone(workspace);
+    const options = operationalReportOptionsSchema.parse({ workspaceId: "synthetic", revision: 19, month: "2026-12",
+      sections: ["journeys", "variants", "calendar", "summary", "presence", "coverage"], date });
+    expect(operationalReportContext(workspace)).toEqual(operationalReportContext(control));
+    expect(buildOperationalReport(workspace, options)).toEqual(buildOperationalReport(control, options));
+    expect(workspace).toEqual(before);
+
+    workspace.input.assignments = workspace.input.assignments.filter(day => day.employeeId === "admin");
+    expect(operationalReportContext(workspace).hasRoster).toBe(false);
+    const result = buildOperationalReport(workspace, { ...options, sections: ["journeys"] });
+    expect(result.referencesOnly).toBe(true);
+    expect(result.dates).toEqual([]);
+  });
+
   it("exposes a manual period and excluded TIMED references without operational attendance", () => {
     const workspace = fixture(); workspace.input.assignments = [];
     workspace.input.shifts.push({ id: "manual", name: "Selected", segments: [{ start: 420, end: 660, kind: "WORK" }, { start: 660, end: 720, kind: "BREAK" }, { start: 720, end: 984, kind: "WORK" }] });

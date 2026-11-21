@@ -1,8 +1,8 @@
-import { coverageBasis } from "./automatic-coverage";
+import { coverageBasis, matchesCoverageBasis } from "./automatic-coverage";
 import { canonicalBranchCode } from "./branch-code";
 import { buildCoveragePresence, coverageTimeline, type CoveragePresence } from "./coverage-presence";
 import { dateRange, visibleDates, weekStart } from "./dates";
-import { applyRestEligibility } from "./eligibility";
+import { applyRestEligibility, isAdministrativeEscalaSector, operationalEscalaInput } from "./eligibility";
 import { fpre136WeekdayMinutes } from "./fpre136-schedule";
 import { isHoursReferenceOnly } from "./hours-reference";
 import { effectiveWeeklyMinutes } from "./labor-rules";
@@ -342,18 +342,21 @@ function attachSectorNominal(rows: CoverageSectorMetrics[], reference: EscalaInp
 const targetSignature = (input: EscalaInput) => JSON.stringify(input.demands.map(d => JSON.stringify([d.date, d.sector, d.role ?? "", d.start, d.end, d.minimum, d.estimated === true])).sort(compare));
 
 /** Analyze a prepared, fixed target against known assignments. This function never prepares targets, generates rosters, or mutates an input. */
-export function analyzeCoverage(reference: EscalaInput, candidate: EscalaInput, options: CoverageAnalysisOptions = {}): CoverageAnalysis {
+export function analyzeCoverage(rawReference: EscalaInput, rawCandidate: EscalaInput, options: CoverageAnalysisOptions = {}): CoverageAnalysis {
+  const reference = operationalEscalaInput(rawReference), candidate = operationalEscalaInput(rawCandidate);
+  const administrativeIds = options.comparableEmployeeIds
+    ? new Set(rawReference.employees.filter(person => isAdministrativeEscalaSector(person.sector)).map(person => person.id)) : undefined;
+  const comparableEmployeeIds = options.comparableEmployeeIds?.filter(id => !administrativeIds?.has(id));
   const commonStart = reference.startDate > candidate.startDate ? reference.startDate : candidate.startDate;
   const commonEnd = reference.endDate < candidate.endDate ? reference.endDate : candidate.endDate;
   const candidateVisible = new Set(visibleDates(candidate));
   const requested = [...new Set(options.dates ?? visibleDates(reference).filter(date => candidateVisible.has(date)))].sort(compare);
   const inRange = new Set(commonStart <= commonEnd ? dateRange(commonStart, commonEnd) : []);
   const dates = requested.filter(date => inRange.has(date)), omittedDates = requested.filter(date => !inRange.has(date));
-  const cohort = comparableCohort(reference, candidate, dates, options.comparableEmployeeIds);
+  const cohort = comparableCohort(reference, candidate, dates, comparableEmployeeIds);
   const hasEstimates = reference.demands.some(d => d.estimated === true);
-  const fingerprint = hasEstimates ? coverageBasis(reference) : null;
   const basis: CoverageAnalysis["basis"] = { origin: options.referenceOrigin ?? "PREPARED",
-    status: !hasEstimates ? "NOT_REQUIRED" : !reference.coverageBasis ? "MISSING" : reference.coverageBasis === fingerprint ? "VALID" : "STALE",
+    status: !hasEstimates ? "NOT_REQUIRED" : !reference.coverageBasis ? "MISSING" : matchesCoverageBasis(rawReference) ? "VALID" : "STALE",
     fingerprint: reference.coverageBasis ?? null, needsRegeneration: reference.needsRegeneration === true };
   const estimatesValid = basis.status === "VALID" || basis.status === "NOT_REQUIRED";
   const limitations: string[] = [];
@@ -371,7 +374,7 @@ export function analyzeCoverage(reference: EscalaInput, candidate: EscalaInput, 
   const sectors = unavailable ? [] : attachSectorNominal(analyzeSectors(reference, candidate, dates, estimatesValid, options.details === true),
     reference, candidate, dates, cohort, options);
   if (sectors.some(row => row.withoutClockPeople > 0)) limitations.push("UNTIMED_PEOPLE_REPORTED_SEPARATELY");
-  const original = options.originalInput;
+  const original = options.originalInput && operationalEscalaInput(options.originalInput);
   const originalComparable = original && sameBranch && canonicalBranchCode(original.branchCode) === canonicalBranchCode(reference.branchCode)
     && dates.length > 0 && dates.every(date => date >= original.startDate && date <= original.endDate);
   const originalAvailability = originalComparable ? analyzeSectors({ ...reference, demands: [] }, original, dates, true, false)
@@ -379,7 +382,7 @@ export function analyzeCoverage(reference: EscalaInput, candidate: EscalaInput, 
       ({ sector, scope, status, unknownPersonDays, withoutClockPeople, withoutClockPersonDays, knownWorkPersonMinutes, availablePersonMinutes, creditedPersonMinutes })) : null;
   let previous: CoverageAnalysis["previous"] = { status: "NOT_PROVIDED", reason: null, sectors: null };
   if (options.previousInput) {
-    const before = options.previousInput;
+    const before = operationalEscalaInput(options.previousInput);
     const compatible = !unavailable && estimatesValid && before.assignments.length > 0 && sectors.every(row => row.status === "READY")
       && canonicalBranchCode(before.branchCode) === canonicalBranchCode(reference.branchCode)
       && before.startDate === reference.startDate && before.endDate === reference.endDate
@@ -387,7 +390,7 @@ export function analyzeCoverage(reference: EscalaInput, candidate: EscalaInput, 
       && targetSignature(before) === targetSignature(reference)
       && (!hasEstimates || before.coverageBasis === reference.coverageBasis);
     const previousSectors = compatible ? attachSectorNominal(analyzeSectors(reference, before, dates, estimatesValid, false),
-      reference, before, dates, comparableCohort(reference, before, dates, options.comparableEmployeeIds), options) : null;
+      reference, before, dates, comparableCohort(reference, before, dates, comparableEmployeeIds), options) : null;
     previous = previousSectors?.every(row => row.status === "READY") ? { status: "COMPARABLE", reason: null, sectors: previousSectors }
       : { status: "NOT_COMPARABLE", reason: "COHORT_RULES_TARGET_OR_KNOWN_ROSTER_CHANGED", sectors: null };
   }

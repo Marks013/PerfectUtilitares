@@ -1,3 +1,4 @@
+import { operationalEscalaInput } from "./eligibility";
 import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
 import { dailyMinuteCeiling, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import type { EscalaGenerationConflict, EscalaInput } from "./types";
@@ -21,7 +22,8 @@ function requiredMinutes(demands: EscalaDemand[]): number {
 }
 
 /** Necessary-condition proof only. It never changes settings or claims to identify every possible conflict. */
-export function findGenerationConflicts(input: EscalaInput): EscalaGenerationConflict[] {
+export function findGenerationConflicts(rawInput: EscalaInput): EscalaGenerationConflict[] {
+  const input = operationalEscalaInput(rawInput);
   const individual: EscalaGenerationConflict[] = [];
   const employees = new Map(input.employees.map((person) => [person.id, person]));
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));

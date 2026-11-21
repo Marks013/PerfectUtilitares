@@ -3,7 +3,9 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getEscala, parseEscalaInput } from "../service";
 import type { EscalaActor } from "../access";
+import { isAdministrativeEscalaSector } from "../eligibility";
 import { EscalaError } from "../errors";
+import type { EscalaInput } from "../types";
 import type { TurnoCatalogEntryDto, TurnoCatalogPageDto, TurnoCatalogSyncRequest, TurnoCatalogSyncSource, TurnoCatalogSyncResult } from "./contracts";
 import { allocateInitialCatalog, appendCatalogEntries, clockMinutes, markingsFromShift, minutesClock, markingKey } from "./domain";
 
@@ -91,6 +93,27 @@ export async function findTurnoCatalogCode(actor: EscalaActor, markings: TurnoCa
   return row?.code ?? null;
 }
 
+function administrativeOnlyShiftIds(input: EscalaInput): ReadonlySet<string> {
+  const administrative = new Set<string>(), usable = new Set<string>();
+  const people = new Map(input.employees.map(person => [person.id, person]));
+  for (const person of people.values()) {
+    const set = isAdministrativeEscalaSector(person.sector) ? administrative : usable;
+    for (const id of [...person.shiftIds, ...(person.originalShiftIds ?? []), ...(person.manualShiftBaseIds ?? []),
+      ...(person.manualShiftOverrides ?? []).map(choice => choice.shiftId), ...Object.values(person.manualShiftByDate ?? {}),
+      person.fixedImportedShiftId]) {
+      if (id) set.add(id);
+    }
+  }
+  for (const day of input.assignments) {
+    const person = people.get(day.employeeId);
+    if (person && day.kind === "WORK" && day.shiftId) {
+      (isAdministrativeEscalaSector(person.sector) ? administrative : usable).add(day.shiftId);
+    }
+  }
+  // Explicit standalone references and references shared with an operational sector remain available.
+  return new Set([...administrative].filter(id => !usable.has(id)));
+}
+
 export async function syncTurnoCatalog(actor: EscalaActor, request: TurnoCatalogSyncRequest): Promise<TurnoCatalogSyncResult> {
   if (!request.confirm || request.sources.length === 0) {
     throw new EscalaError(400, "TURNO_CONFIRMATION_REQUIRED", "Confirme a inclusão explícita dos horários selecionados no catálogo da empresa.");
@@ -129,11 +152,13 @@ export async function syncTurnoCatalog(actor: EscalaActor, request: TurnoCatalog
       });
       if (!version) throw new EscalaError(404, "ESCALA_REVISION_NOT_FOUND", "A revisão selecionada não existe nesta empresa.");
       const input = parseEscalaInput(version.input);
-      sourceMonths.push(input.visibleMonth ?? input.startDate.slice(0, 7));
       const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
       const selected = new Set(source.localShiftIds);
       if (selected.size !== source.localShiftIds.length) throw new EscalaError(400, "TURNO_INVALID_SELECTION", "A seleção contém um turno repetido.");
-      for (const id of selected) {
+      const ignored = administrativeOnlyShiftIds(input);
+      const allowed = [...selected].filter(id => !ignored.has(id));
+      if (allowed.length) sourceMonths.push(input.visibleMonth ?? input.startDate.slice(0, 7));
+      for (const id of allowed) {
         const shift = shifts.get(id);
         if (!shift) throw new EscalaError(404, "TURNO_REFERENCE_NOT_FOUND", "Um dos horários selecionados não pertence à revisão.");
         const result = markingsFromShift(shift);

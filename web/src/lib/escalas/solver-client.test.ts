@@ -51,6 +51,31 @@ function expectViableWorkerResult(input: EscalaInput) {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("isolated schedule processor client", () => {
+  it("keeps the administrative sector off the private processor payload and restores unchanged saved records", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const data = fixture();
+    data.employees.push({ ...structuredClone(data.employees[0]), id: "admin", registration: "02", sector: "afástados" });
+    const administrativeDays: EscalaInput["assignments"] = [
+      { employeeId: "admin", date: data.startDate, kind: "WORK", shiftId: "day", locked: true },
+      { employeeId: "admin", date: "2026-11-03", kind: "ABSENCE" },
+      { employeeId: "admin", date: "2026-11-04", kind: "WORK", shiftId: "day" },
+    ];
+    data.assignments = [...completeAssignments(), ...administrativeDays];
+    data.demands = [{ id: "invalid-minimum", date: data.startDate, sector: " AFASTADOS ", start: 480, end: 600, minimum: 8 }];
+    expect(validateEscala(data).valid).toBe(true);
+    const worker = vi.fn(async (_url: URL, options: RequestInit) => {
+      const { input } = JSON.parse(String(options.body)) as { input: EscalaInput };
+      expect(input.employees.map(person => person.id)).toEqual(["p1"]);
+      expect(input.assignments.every(day => day.employeeId === "p1")).toBe(true);
+      expect(input.demands).toEqual([]);
+      return Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Synthetic", wallTimeSeconds: 1 });
+    });
+    vi.stubGlobal("fetch", worker);
+    const result = await solveEscala(data);
+    expect(worker).toHaveBeenCalledTimes(1);
+    expect(result.assignments.filter(day => day.employeeId === "admin")).toEqual(administrativeDays);
+  });
+
   it.each(["FEASIBLE", "UNKNOWN"])("preserves a valid Python SUNDAY_PEAK phase with status %s after SUNDAY_COVERAGE", async status => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const input = fixture(); expectViableWorkerResult(input);

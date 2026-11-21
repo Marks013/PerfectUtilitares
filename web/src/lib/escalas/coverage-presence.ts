@@ -2,6 +2,7 @@ import { absoluteMinute, addDays, visibleDates } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 import { compareSectors } from "./order";
 import { effectiveScheduleMode } from "./fpre136-schedule";
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "./eligibility";
 
 type PresenceInterval = { start: number; end: number; employee: EscalaEmployee };
 export type CoveragePresence = Map<string, PresenceInterval[]>;
@@ -27,18 +28,18 @@ function shiftCoverage(date: string, shift: EscalaShift) {
 
 /** Civil-minute attendance only. Neither paid pauses nor administrative presence guarantee service. */
 export function buildCoveragePresence(input: EscalaInput): CoveragePresence {
-  const people = new Map(input.employees.map(person => [person.id, person]));
+  const people = new Map(input.employees.filter(isEscalaPlanningParticipant).map(person => [person.id, person]));
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const records = new Map<string, EscalaAssignment>();
-  for (const person of input.employees) for (const record of [...(person.planningHistory ?? []), ...person.history, ...(person.planningFuture ?? [])]) records.set(key(record.date, record.employeeId), record);
-  for (const record of input.assignments) records.set(key(record.date, record.employeeId), record);
+  for (const person of people.values()) for (const record of [...(person.planningHistory ?? []), ...person.history, ...(person.planningFuture ?? [])]) records.set(key(record.date, record.employeeId), record);
+  for (const record of input.assignments) if (people.has(record.employeeId)) records.set(key(record.date, record.employeeId), record);
   const index: CoveragePresence = new Map();
   const coverageByShiftDate = new Map<string, ReturnType<typeof shiftCoverage>>();
   const midnights = new Map<string, number>();
   for (const record of records.values()) {
     const person = people.get(record.employeeId), shift = shifts.get(record.shiftId ?? "");
     const mode = person ? effectiveScheduleMode(person) : undefined;
-    if (!person || !shift || record.kind !== "WORK" || person.planningEnabled === false || mode === "MISSING" || mode === "UNTIMED" || !active(person, record.date)) continue;
+    if (!person || !shift || record.kind !== "WORK" || mode === "MISSING" || mode === "UNTIMED" || !active(person, record.date)) continue;
     try {
       const shiftDate = key(record.date, shift.id);
       let coverage = coverageByShiftDate.get(shiftDate);
@@ -68,6 +69,7 @@ export function buildCoveragePresence(input: EscalaInput): CoveragePresence {
 }
 
 export function coverageAt(index: CoveragePresence, date: string, sector: string, minute: number, role?: string): EscalaEmployee[] {
+  if (isAdministrativeEscalaSector(sector)) return [];
   return [...new Map((index.get(key(date, sector)) ?? []).filter(interval => interval.start <= minute && interval.end > minute && (!role || interval.employee.role === role))
     .map(interval => [interval.employee.id, interval.employee])).values()];
 }
@@ -81,7 +83,7 @@ export function sectorPresenceGaps(input: EscalaInput, index = buildCoveragePres
   const groups = new Map<string, EscalaEmployee[]>();
   for (const person of input.employees) {
     const mode = effectiveScheduleMode(person);
-    if (person.planningEnabled === false || mode === "MISSING" || mode === "UNTIMED" || !person.sector) continue;
+    if (!isEscalaPlanningParticipant(person) || mode === "MISSING" || mode === "UNTIMED" || !person.sector) continue;
     const members = groups.get(person.sector) ?? [];
     members.push(person);
     groups.set(person.sector, members);
@@ -125,6 +127,7 @@ function timelineForDemands(
 }
 
 export function coverageTimeline(input: EscalaInput, date: string, sector: string, index = buildCoveragePresence(input)) {
+  if (isAdministrativeEscalaSector(sector)) return [];
   return timelineForDemands(
     date,
     sector,
@@ -145,7 +148,7 @@ export function sectorCoverageGaps(input: EscalaInput, index = buildCoveragePres
   const groups = new Map<string, EscalaInput["demands"]>();
   const groupsWithMinimum = new Set<EscalaInput["demands"]>();
   for (const demand of input.demands) {
-    if (!dates.has(demand.date)) continue;
+    if (!dates.has(demand.date) || isAdministrativeEscalaSector(demand.sector)) continue;
     const groupKey = key(demand.date, demand.sector);
     const group = groups.get(groupKey) ?? [];
     group.push(demand);

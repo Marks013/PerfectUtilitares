@@ -2,7 +2,7 @@ import { addDays } from "./dates";
 import { proposeAutomaticCoverage } from "./automatic-coverage";
 import { effectiveWeeklyHours, maximumMealMinutes, minimumMealMinutes, usesMixed42 } from "./labor-rules";
 import { fitProposalToClosing, fitsStoreClosing, storeClosingMinutes } from "./store-hours";
-import { applyRestEligibility } from "./eligibility";
+import { applyRestEligibility, isAdministrativeEscalaSector, operationalEscalaInput } from "./eligibility";
 import type { EscalaEmployee, EscalaInput, EscalaShift, WeeklyHours } from "./types";
 
 import { selectMonthlyClockReferences, type MonthlyClockChoice } from "./monthly-clock-selection";
@@ -242,7 +242,8 @@ function longMixedShifts(source: EscalaShift, strategy: "BOTH" | "PRESERVE_START
 
 /** One explicit branch action, without claiming imported schedules or contracts were confirmed. */
 export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSchedule: "EXCLUDE" | "BRANCH_DEFAULT" = "EXCLUDE", strategy: "BOTH" | "PRESERVE_START" | "PRESERVE_END" = "BOTH", deferMonthlySelection = false): EscalaInput {
-  if (input.assignments.some((assignment) => assignment.locked)) throw new Error("A proposta tem dias bloqueados. Preserve a revisão ou peça a um aprovador para desbloquear antes de reaplicar a configuração em lote.");
+  const administrativeIds = new Set(input.employees.filter(person => isAdministrativeEscalaSector(person.sector)).map(person => person.id));
+  if (input.assignments.some(assignment => assignment.locked && !administrativeIds.has(assignment.employeeId))) throw new Error("A proposta tem dias bloqueados. Preserve a revisão ou peça a um aprovador para desbloquear antes de reaplicar a configuração em lote.");
   const closing = storeClosingMinutes(input);
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const register = (shift: EscalaShift) => {
@@ -252,6 +253,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
   };
   const monthlyChoices: MonthlyClockChoice[] = [];
   let employees = input.employees.map((person): EscalaEmployee => {
+    if (administrativeIds.has(person.id)) return person;
     const eligible = applyRestEligibility(person);
     if (eligible.planningEnabled === false) return eligible;
     if ((person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return { ...person, planningEnabled: true, planningExclusionReason: undefined, shiftIds: [] };
@@ -316,7 +318,7 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
       planningExclusionReason: shiftIds.length ? undefined : "Horário noturno ou sem adaptação diurna compatível" };
   });
   if (!deferMonthlySelection) {
-    const selected = selectMonthlyClockReferences({ ...input, employees }, monthlyChoices).references;
+    const selected = selectMonthlyClockReferences(operationalEscalaInput({ ...input, employees }), monthlyChoices).references;
     employees = employees.map(person => {
       const references = selected.get(person.id);
       if (!references) return person;
@@ -326,11 +328,12 @@ export function prepareRoster(input: EscalaInput, hours: WeeklyHours, missingSch
     });
   }
   // Reference text remains on each imported employee; only keep referenced shift definitions.
-  const used = new Set([...employees.flatMap((person) => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
+  const assignments = input.assignments.filter(day => administrativeIds.has(day.employeeId) || day.kind === "OFF" || day.kind === "ABSENCE" || day.kind === "HOLIDAY");
+  const used = new Set([...employees.flatMap((person) => [...person.shiftIds, ...(person.originalShiftIds ?? [])]),
+    ...assignments.flatMap(day => day.shiftId ? [day.shiftId] : []), ...employees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
   const retained = [...shifts.values()].filter((shift) => used.has(shift.id));
   if (retained.length > 120) throw new Error("A configuração gerou mais de 120 horários. Reduza as opções de horários da filial antes de aplicar.");
-  return materializeManualShiftOverrides({ ...input, defaultWeeklyHours: hours, employees, shifts: retained,
-    assignments: input.assignments.filter((assignment) => assignment.kind === "OFF" || assignment.kind === "ABSENCE" || assignment.kind === "HOLIDAY"),
+  return materializeManualShiftOverrides({ ...input, defaultWeeklyHours: hours, employees, shifts: retained, assignments,
     policy: { ...input.policy, ...(input.policy.coverageReview ? { coverageReview: "SUGGESTED" as const } : {}) } });
 }
 

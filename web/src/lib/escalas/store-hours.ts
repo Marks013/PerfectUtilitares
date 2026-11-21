@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant } from "./eligibility";
 import { canonicalBranchCode } from "./branch-code";
 import type { EscalaInput, EscalaShift } from "./types";
 
@@ -24,7 +25,7 @@ export function workAfterStoreClosing(input: EscalaInput): EscalaInput["assignme
     const person = people.get(day.employeeId);
     const shift = shifts.get(day.shiftId ?? "");
     return day.kind === "WORK" && day.date >= input.startDate && day.date <= input.endDate
-      && person && person.planningEnabled !== false && day.date >= person.activeFrom
+      && person && isEscalaPlanningParticipant(person) && day.date >= person.activeFrom
       && (!person.activeUntil || day.date <= person.activeUntil)
       && shift && !fitsStoreClosing(shift, closing);
   });

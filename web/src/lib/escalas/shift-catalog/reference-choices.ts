@@ -1,4 +1,5 @@
 import { addDays, visibleDates } from "../dates";
+import { isAdministrativeEscalaSector } from "../eligibility";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "../types";
 
 export type EmployeeReferenceShiftChoice = { shiftId: string; label: string; source: "BASE" | "MANUAL" | "WORK" };
@@ -21,7 +22,7 @@ function clocks(shift: EscalaShift): string {
 
 /** Effective clock references only. Dates in labels never create daily attendance. */
 export function employeeReferenceShiftChoices(input: EscalaInput, employee: EscalaEmployee): EmployeeReferenceShiftChoice[] {
-  if (employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING") return [];
+  if (isAdministrativeEscalaSector(employee.sector) || employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING") return [];
   const dates = visibleDates(input).filter(date => date >= employee.activeFrom && (!employee.activeUntil || date <= employee.activeUntil));
   const visible = new Set(dates), shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const work = input.assignments.filter(day => day.employeeId === employee.id && day.kind === "WORK" && visible.has(day.date));

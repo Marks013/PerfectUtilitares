@@ -23,6 +23,17 @@ function fixture(count = 1): EscalaInput {
 const sector = (input: EscalaInput, candidate = input) => analyzeCoverage(input, candidate).sectors[0];
 
 describe("derived coverage analysis", () => {
+  it("keeps the legacy administrative sector out of all operational totals and cohorts", () => {
+    const input = fixture();
+    input.employees.push({ ...person("admin"), sector: "  aFaStÁdOs  " });
+    input.assignments.push({ employeeId: "admin", date: day, kind: "WORK", shiftId: "work" });
+    input.demands.push({ id: "admin", date: day, sector: "AFASTADOS", start: 540, end: 600, minimum: 20 });
+    const result = analyzeCoverage(input, input, { comparableEmployeeIds: ["0", "admin"] });
+    expect(result.sectors.map(row => row.sector)).toEqual(["Reposição"]);
+    expect(result.sectors[0]).toMatchObject({ knownWorkPersonMinutes: 60, confirmed: { requiredPersonMinutes: 60, deficitPersonMinutes: 0 } });
+    expect(result.cohort).toMatchObject({ comparablePeople: 1, excludedByReason: {} });
+  });
+
   it("integrates partial presence and keeps simultaneous peaks separate from person-minutes", () => {
     const input = fixture(2);
     input.shifts.push({ id: "partial", name: "Parcial", segments: [{ start: 570, end: 600, kind: "WORK" }] });

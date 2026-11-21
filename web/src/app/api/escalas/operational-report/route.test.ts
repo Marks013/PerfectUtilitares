@@ -102,6 +102,27 @@ describe("GET optional operational PDF", () => {
     expect(response.headers.get("content-disposition")).toBeNull();
     expect(mocks.capacity).not.toHaveBeenCalled(); expect(current).toEqual(before);
   });
+  it("returns the real reference PDF even when an administrative record has a stale shift", async () => {
+    const current = await mocks.get();
+    current.input.generationMode = "HOURS_ONLY"; current.input.needsRegeneration = true;
+    current.input.employees.push({ ...current.input.employees[0], id: "admin", name: "Cadastro administrativo",
+      sector: "  Afástados  ", shiftIds: ["old-reference"] });
+    current.input.assignments = [{ employeeId: "admin", date: "2026-12-01", kind: "WORK", shiftId: "day", locked: true }];
+    const before = structuredClone(current), response = await GET(request());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const task = pdfjs.getDocument(pdfJsServerDocumentOptions(new Uint8Array(await response.arrayBuffer())));
+    const document = await task.promise;
+    try {
+      const content = await (await document.getPage(1)).getTextContent();
+      const text = content.items.filter(item => "str" in item).map(item => item.str).join(" ");
+      expect(text).toContain("Pessoa sintética");
+      expect(text).toContain("sem grade diária");
+      expect(text).not.toContain("Cadastro administrativo");
+    } finally { await task.destroy(); }
+    expect(current).toEqual(before);
+  });
   it("rejects invalid reference clocks without requiring a monthly roster", async () => {
     const current = await mocks.get(); current.input.assignments = []; current.input.needsRegeneration = true;
     current.input.shifts[0].segments[2].end = 1260; current.validation = validateEscala(current.input);

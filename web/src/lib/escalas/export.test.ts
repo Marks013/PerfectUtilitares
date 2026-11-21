@@ -60,6 +60,29 @@ async function pdfContent(bytes: Uint8Array) {
   } finally { await loading.destroy(); }
 }
 
+it("leaves legacy AFASTADOS data out of all exported rows and preserves the working roster", async () => {
+  const control = fixture(), workspace = structuredClone(control);
+  const [worker, , disabled] = workspace.input.employees;
+  workspace.input.employees.push({ ...worker, id: "absence-admin", name: "Cadastro administrativo",
+    sector: "  Afástados  " }, { ...disabled, id: "absence-disabled", name: "Outro cadastro administrativo",
+    sector: "AFASTADOS" });
+  workspace.input.assignments.push({ employeeId: "absence-admin", date: "2026-11-02", kind: "WORK", shiftId: "day", locked: true },
+    { employeeId: "absence-disabled", date: "2026-11-02", kind: "ABSENCE", locked: true });
+  workspace.input.demands.push({ id: "legacy-admin-demand", date: "2026-11-02", sector: "AFASTADOS",
+    role: "Referência administrativa", start: 480, end: 540, minimum: 1, estimated: false });
+  const original = structuredClone(workspace);
+
+  const workbook = Buffer.from(exportEscalaXlsx(workspace)), expectedWorkbook = Buffer.from(exportEscalaXlsx(control));
+  for (const sheetName of ["Escala", "Horarios", "Excluidos"]) {
+    expect(await readSheet(workbook, sheetName)).toEqual(await readSheet(expectedWorkbook, sheetName));
+  }
+  const textualPages = async (source: EscalaWorkspace) =>
+    (await pdfContent(await exportEscalaPdf(source))).map(page => page.map(item => item.str));
+  expect(await textualPages(workspace)).toEqual(await textualPages(control));
+  expect(buildEscalaSchedule(workspace.input).people.find(row => row.employee.id === worker.id)?.cells.find(day => day.shiftId)?.code).toBe("T02");
+  expect(workspace).toEqual(original);
+});
+
 describe("hours references without daily attendance", () => {
   it.each([false, true])("exports only real references with protected absence=%s", async (withAbsence) => {
     const workspace = fixture();

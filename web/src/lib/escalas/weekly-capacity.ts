@@ -1,5 +1,5 @@
 import { dateRange } from "./dates";
-import { isRestPlanningExcludedRole } from "./eligibility";
+import { isEscalaPlanningParticipant, isRestPlanningExcludedRole } from "./eligibility";
 import { effectiveWeeklyHours } from "./labor-rules";
 import { compareSectors } from "./order";
 import { planningWeeklyHours } from "./preparation";
@@ -39,7 +39,7 @@ export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[]
   const shifts = new Set(input.shifts.map(shift => shift.id));
   const sectors = new Map<string, { row: WeeklySectorCapacity; current: number[] }>();
   for (const person of input.employees) {
-    if (person.planningEnabled === false || isRestPlanningExcludedRole(person.role) || person.activeFrom > input.endDate
+    if (!isEscalaPlanningParticipant(person) || isRestPlanningExcludedRole(person.role) || person.activeFrom > input.endDate
       || person.activeUntil && person.activeUntil < input.startDate) continue;
     let sector = sectors.get(person.sector);
     if (!sector) {

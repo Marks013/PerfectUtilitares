@@ -3,7 +3,7 @@ import type { CoverageReport, OperationalAnalysis } from "./coverage-report-cont
 import { analyzeOperational } from "./operational-analysis";
 import { buildCoveragePresence } from "./coverage-presence";
 import { monthBounds, visibleDates } from "./dates";
-import { applyRestEligibility } from "./eligibility";
+import { applyRestEligibility, operationalEscalaInput } from "./eligibility";
 import { EscalaError } from "./errors";
 import { isHoursReferenceOnly } from "./hours-reference";
 import { compareSectors, sortScheduleEntries } from "./order";
@@ -13,7 +13,7 @@ import type { EscalaShift, EscalaWorkspace } from "./types";
 import { planningWeekStartsOn } from "./planning-calendar";
 
 export function operationalReportContext(workspace: EscalaWorkspace): OperationalReportContext {
-  const input = workspace.input, months = [...new Set(visibleDates(input).map(date => date.slice(0, 7)))];
+  const input = operationalEscalaInput(workspace.input), months = [...new Set(visibleDates(input).map(date => date.slice(0, 7)))];
   const visible = new Set(visibleDates(input));
   const inferred = months.length === 1 ? months[0] : null, bounds = inferred ? monthBounds(inferred) : null;
   const month = input.visibleMonth ?? (bounds && visible.has(bounds.startDate) && visible.has(bounds.endDate) ? inferred : null);
@@ -62,7 +62,8 @@ export function buildOperationalReport(workspace: EscalaWorkspace, rawOptions: O
   const issues = validateOperationalReportSelection(options, context);
   if (issues.length) throw new EscalaError(issues.some(issue => issue.field === "revision") ? 409 : 400,
     "ESCALA_INVALID_OPERATIONAL_SELECTION", issues.map(issue => issue.message).join(". "));
-  const input = { ...workspace.input, employees: workspace.input.employees.map(person => applyRestEligibility(person)) };
+  const operational = operationalEscalaInput(workspace.input);
+  const input = { ...operational, employees: operational.employees.map(applyRestEligibility) };
   const referencesOnly = !context.hasRoster, selected = new Set(options.sectors.length ? options.sectors : context.sectors);
   // A reference-only view never turns configured clocks into attendance, in any generation mode.
   const presentation = buildEscalaPresentation({ ...workspace, input: referencesOnly ? { ...input, generationMode: "HOURS_ONLY",

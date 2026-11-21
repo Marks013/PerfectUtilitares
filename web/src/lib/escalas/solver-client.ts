@@ -4,6 +4,7 @@ import { requestSolver, type SolverOptions } from "./solver-transport";
 export { EscalaSolverError } from "./solver-errors";
 import { escalaInputSchema } from "./schema";
 import { dateRange } from "./dates";
+import { isAdministrativeEscalaSector, operationalEscalaInput } from "./eligibility";
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
 import { restPairSummary } from "./rest-quality";
@@ -100,10 +101,14 @@ export async function solveEscala(
   options?: SolverOptions & { qualityReference?: EscalaInput },
 ): Promise<EscalaSolveResult> {
   const started = performance.now();
-  const parsed = escalaInputSchema.parse(input);
+  const saved = escalaInputSchema.parse(input);
+  const parsed = operationalEscalaInput(saved);
+  const administrativeIds = new Set(saved.employees.filter(person => isAdministrativeEscalaSector(person.sector)).map(person => person.id));
+  const administrativeDays = saved.assignments.filter(day => administrativeIds.has(day.employeeId));
+  const withAdministrativeDays = (days: EscalaInput["assignments"]) => administrativeDays.length ? [...days, ...administrativeDays] : days;
   // This private snapshot is never sent to the processor or written into the prepared demands.
   const { qualityReference: rawQualityReference, ...transportOptions } = options ?? {};
-  const qualityReference = rawQualityReference ? escalaInputSchema.parse(rawQualityReference) : parsed;
+  const qualityReference = rawQualityReference ? operationalEscalaInput(escalaInputSchema.parse(rawQualityReference)) : parsed;
   // Cheap verified day exchanges seed the bounded optimizer without changing its staffing target.
   if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   let refined: EscalaInput;
@@ -261,16 +266,17 @@ export async function solveEscala(
         requestSeconds: Math.round((performance.now() - started)) / 1000,
       };
       // Diagnostics describe the returned processor candidate, never a different retained incumbent.
+      const assignmentsWithAdministrativeDays = withAdministrativeDays(finalInput.assignments);
       if (selected.retainedReference) return {
-        status: "FEASIBLE", assignments: finalInput.assignments, wallTimeSeconds: result.wallTimeSeconds, restQuality,
+        status: "FEASIBLE", assignments: assignmentsWithAdministrativeDays, wallTimeSeconds: result.wallTimeSeconds, restQuality,
         message: "A alternativa calculada piorou uma condição protegida. Mantivemos a melhor grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos." + (comparisonNotice ? " " + comparisonNotice : ""),
       };
       if (comparisonNotice) return {
         ...result, status: finalMerit.comparable && finalMerit.regressed ? "FEASIBLE" : result.status,
-        assignments: finalInput.assignments, restQuality,
+        assignments: assignmentsWithAdministrativeDays, restQuality,
         message: result.message + " " + comparisonNotice,
       };
-      return { ...result, assignments: finalInput.assignments, restQuality };
+      return { ...result, assignments: assignmentsWithAdministrativeDays, restQuality };
     }
     return result;
   } catch (error) {

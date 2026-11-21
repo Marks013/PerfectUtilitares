@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import { strToU8, zipSync } from "fflate";
 import { holidayLabel } from "./calendar";
 import { effectiveScheduleMode } from "./fpre136-schedule";
+import { operationalEscalaInput } from "./eligibility";
 import type { EscalaInput, EscalaWorkspace } from "./types";
 import { compareSectors, sortScheduleEntries } from "./order";
 import { analyzeCoverage, type CoverageAnalysis, type CoverageSectorAnalysis } from "./coverage-analysis";
@@ -151,7 +152,8 @@ function mixed42ExportNotice(input: EscalaInput): string {
   return "SIMULAÇÃO / NEGOCIAÇÃO: 3 × 8h + 2 × 9h nos setores selecionados; intervalo de 3h nos dias de 9h. Não é autorização operacional.";
 }
 
-export function exportEscalaXlsx(workspace: EscalaWorkspace, mode: EscalaExportMode = "both"): Uint8Array {
+export function exportEscalaXlsx(raw: EscalaWorkspace, mode: EscalaExportMode = "both"): Uint8Array {
+  const workspace = { ...raw, input: operationalEscalaInput(raw.input) };
   const referencesOnly = isHoursReferenceOnly(workspace.input);
   if (referencesOnly) mode = "hours";
   const model = buildEscalaPresentation(workspace);
@@ -282,7 +284,8 @@ function wrapText(text: string, width: number, font: PDFFont, size: number): str
 
 type PdfLayout = { separateSectors?: boolean };
 
-export async function exportEscalaPdf(workspace: EscalaWorkspace, mode: EscalaExportMode = "both", { separateSectors = true }: PdfLayout = {}): Promise<Uint8Array> {
+export async function exportEscalaPdf(raw: EscalaWorkspace, mode: EscalaExportMode = "both", { separateSectors = true }: PdfLayout = {}): Promise<Uint8Array> {
+  const workspace = { ...raw, input: operationalEscalaInput(raw.input) };
   const referencesOnly = isHoursReferenceOnly(workspace.input);
   if (referencesOnly) mode = "hours";
   const document = await PDFDocument.create();

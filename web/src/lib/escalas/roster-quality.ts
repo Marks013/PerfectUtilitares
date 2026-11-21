@@ -1,5 +1,6 @@
 import { buildCoveragePresence, coverageAt, sectorCoverageGaps, type SectorCoverageGap } from "./coverage-presence";
 import { dateRange, dayOfWeek, visibleDates } from "./dates";
+import { isAdministrativeEscalaSector, operationalEscalaInput } from "./eligibility";
 import { currentLeadership } from "./leadership";
 import { movementLevel } from "./movement";
 import { preservesRestDistribution } from "./rest-quality";
@@ -145,9 +146,11 @@ function roleTimeQuality(reference: EscalaInput, proposal: EscalaInput, coverage
 }
 
 /** Merit can be measured on an invalid old roster without ever returning it as a usable solution. */
-export function compareRosterCoverage(reference: EscalaInput, proposal: EscalaInput, coverageReference = reference): {
+export function compareRosterCoverage(rawReference: EscalaInput, rawProposal: EscalaInput, rawCoverageReference = rawReference): {
   comparable: boolean; regressed: boolean; improved: boolean; reason: RosterSelectionReason;
 } {
+  const reference = operationalEscalaInput(rawReference), proposal = operationalEscalaInput(rawProposal);
+  const coverageReference = rawCoverageReference === rawReference ? reference : operationalEscalaInput(rawCoverageReference);
   const result = (reason: RosterSelectionReason, regressed = false, improved = false, comparable = true) => ({ comparable, regressed, improved, reason });
   if (!comparableRoster(reference, proposal) || !comparableRoster(coverageReference, proposal)) return result("REFERENCE_NOT_COMPARABLE", false, false, false);
   const before = coverageQuality({ ...reference, demands: coverageReference.demands });
@@ -176,25 +179,29 @@ export function isOperationallyReusable(validation: EscalaValidation): boolean {
   return validation.valid && !validation.issues.some(issue => issue.code === "DAY_PENDING" || issue.code === "MEAL_INTERVAL_EXCESSIVE");
 }
 export function isReusableRoster(input: EscalaInput): boolean {
-  return input.assignments.length > 0 && isOperationallyReusable(validateEscala(input));
+  return operationalEscalaInput(input).assignments.length > 0 && isOperationallyReusable(validateEscala(input));
 }
 
 /** Reject an inferior complete candidate; never assemble unverified sector fragments. */
 export type RosterSelectionReason = "REFERENCE_NOT_COMPARABLE" | "ROLE_TIME_COVERAGE" | "ROLE_TIME_PRESENCE" | "REFERENCE_UNVERIFIED" | "PROPOSAL_INVALID" | "PROTECTED_ASSIGNMENT"
   | "SECTOR_COVERAGE" | "SECTOR_PEAK" | "CLOSING_COVERAGE" | "DAILY_PRESENCE" | "PRIORITY_LEADERSHIP"
   | "OPERATIONAL_IMPROVEMENT" | "REST_DISTRIBUTION" | "REST_WINDOW" | "SATURDAY_BALANCE" | "SUNDAY_BALANCE" | "ACCEPTED";
-export function selectVerifiedRoster(reference: EscalaInput, proposal: EscalaInput,
-  onDecision?: (reason: RosterSelectionReason) => void, coverageReference = reference): { input: EscalaInput; retainedReference: boolean } {
+export function selectVerifiedRoster(rawReference: EscalaInput, rawProposal: EscalaInput,
+  onDecision?: (reason: RosterSelectionReason) => void, coverageReference = rawReference): { input: EscalaInput; retainedReference: boolean } {
   const decision = (retainedReference: boolean, reason: RosterSelectionReason) => {
     onDecision?.(reason);
-    return { input: retainedReference ? reference : proposal, retainedReference };
+    return { input: retainedReference ? rawReference : rawProposal, retainedReference };
   };
+  const reference = operationalEscalaInput(rawReference), proposal = operationalEscalaInput(rawProposal);
   // First-time generation or an invalid old draft has no verified comparison incumbent.
   if (!isReusableRoster(reference)) return decision(false, "REFERENCE_UNVERIFIED");
   if (!isReusableRoster(proposal)) return decision(true, "PROPOSAL_INVALID");
-  const assignments = new Map(proposal.assignments.map(record => [`${record.employeeId}\0${record.date}`, record]));
-  for (const old of reference.assignments) {
+  const assignments = new Map(rawProposal.assignments.map(record => [`${record.employeeId}\0${record.date}`, record]));
+  const administrativeIds = new Set(rawReference.employees.filter(person => isAdministrativeEscalaSector(person.sector)).map(person => person.id));
+  for (const old of rawReference.assignments) {
     const next = assignments.get(`${old.employeeId}\0${old.date}`);
+    if (administrativeIds.has(old.employeeId) && (old.kind !== next?.kind || old.shiftId !== next.shiftId || old.locked !== next.locked))
+      return decision(true, "PROTECTED_ASSIGNMENT");
     if ((old.locked || old.kind === "ABSENCE" || old.kind === "HOLIDAY")
       && (old.kind !== next?.kind || old.locked && (old.shiftId !== next.shiftId || !next.locked))) return decision(true, "PROTECTED_ASSIGNMENT");
   }

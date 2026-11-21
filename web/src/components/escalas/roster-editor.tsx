@@ -1,5 +1,6 @@
 "use client";
 
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { useEffect, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput } from "@/lib/escalas/types";
@@ -77,7 +78,7 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
 }
 
 export function SwapEditor({ input, first, dates, onApply }: { input: EscalaInput; first: RosterDay; dates: string[]; onApply: (next: EscalaInput) => void }) {
-  const [employeeId, setEmployeeId] = useState(input.employees.find((person) => person.id !== first.employeeId && person.planningEnabled !== false)?.id ?? first.employeeId);
+  const [employeeId, setEmployeeId] = useState(input.employees.find((person) => person.id !== first.employeeId && isEscalaPlanningParticipant(person))?.id ?? first.employeeId);
   const [date, setDate] = useState(first.date);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState("");
@@ -92,7 +93,7 @@ export function SwapEditor({ input, first, dates, onApply }: { input: EscalaInpu
     }}>
       <fieldset disabled={Boolean(current)} className="grid gap-3 sm:grid-cols-2">
         <Field label="Colaborador para a troca">{(id) => <select id={id} value={employeeId} className={controlClass} onChange={(event) => setEmployeeId(event.target.value)}>
-          {input.employees.filter((person) => person.planningEnabled !== false).map((person) => <option key={person.id} value={person.id}>{person.name} · {person.registration} · {person.sector}</option>)}
+          {input.employees.filter(isEscalaPlanningParticipant).map((person) => <option key={person.id} value={person.id}>{person.name} · {person.registration} · {person.sector}</option>)}
         </select>}</Field>
         <Field label="Data para a troca">{(id) => <select id={id} value={date} className={controlClass} onChange={(event) => setDate(event.target.value)}>
           {dates.map((day) => <option key={day} value={day}>{displayDate(day)}</option>)}

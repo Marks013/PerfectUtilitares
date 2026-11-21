@@ -1,5 +1,6 @@
 "use client";
 
+import { isAdministrativeEscalaSector } from "@/lib/escalas/eligibility";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EscalaImportPreview } from "@/lib/escalas/import";
 import { ProcessingBar } from "./workspace-feedback";
@@ -289,7 +290,7 @@ export function Coverage({
     setFilterDate(review.date ?? "");
     setPage(0);
   }, [review]);
-  const demands = [...input.demands].sort(
+  const demands = input.demands.filter(demand => !isAdministrativeEscalaSector(demand.sector)).sort(
     (a, b) =>
       a.date.localeCompare(b.date) ||
       compareSectors(a.sector, b.sector) ||
@@ -305,6 +306,7 @@ export function Coverage({
     event.preventDefault();
     setError("");
     try {
+      if (isAdministrativeEscalaSector(sector)) throw new Error("Afastados não é um setor da escala. Escolha um setor de trabalho.");
       const from = parseClock(start);
       const until = parseClock(end);
       if (
@@ -496,14 +498,14 @@ export function Coverage({
             </Field>
           </div>
           <datalist id="escala-sectors">
-            {[...new Set(input.employees.map((employee) => employee.sector))]
+            {[...new Set(input.employees.filter(person => !isAdministrativeEscalaSector(person.sector)).map(person => person.sector))]
               .sort(compareSectors)
               .map((value) => (
                 <option key={value} value={value} />
               ))}
           </datalist>
           <datalist id="escala-roles">
-            {[...new Set(input.employees.map((employee) => employee.role))]
+            {[...new Set(input.employees.filter(person => !isAdministrativeEscalaSector(person.sector)).map(person => person.role))]
               .sort((a, b) => a.localeCompare(b, "pt-BR"))
               .map((value) => (
                 <option key={value} value={value} />

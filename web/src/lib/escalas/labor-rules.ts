@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant } from "./eligibility";
 import { addDays, isDate, weekStart } from "./dates";
 import type { EscalaEmployee, EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "./types";
 import type { PlanningCalendar } from "./planning-calendar";
@@ -48,7 +49,7 @@ export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">
 export function usesMixed42(input: EscalaInput, person: EscalaEmployee): boolean {
   return input.defaultWeeklyHours === 42
     && person.weeklyHours === 42 && person.simulationDailyMinutes === undefined
-    && person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"
+    && isEscalaPlanningParticipant(person) && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"
     && input.mixed42Sectors?.includes(person.sector) === true;
 }
 
