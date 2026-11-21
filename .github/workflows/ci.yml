@@ -73,6 +73,11 @@ jobs:
           npm run security:python
       - name: Deploy database migrations
         run: npm run prisma:generate && npm run db:deploy
+      - name: Verify synthetic Escalas upgrade and recovery
+        timeout-minutes: 6
+        env:
+          ESCALAS_CI_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: node scripts/verify-escalas-upgrade-ci.mjs
       - name: Record exact source identity for quality diagnostics
         working-directory: .
         run: |

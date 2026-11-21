@@ -84,7 +84,7 @@ export function EscalaAccessBoundary({ children, initialAccess, initialExpiresAt
   const [accessEpoch, setAccessEpoch] = useState(0);
   const usernameField = useRef<HTMLInputElement>(null);
   const accountRecovery = useRef<HTMLHeadingElement>(null);
-  const workspaceElement = useRef<HTMLDivElement>(null);
+  const workspaceElement = useRef<HTMLElement>(null);
   const initial = useRef({ access: initialAccess, context: initialContext, expiresAt: initialExpiresAt });
   const incoming = useRef(initial.current);
   if (incoming.current.access !== initialAccess || incoming.current.context !== initialContext || incoming.current.expiresAt !== initialExpiresAt) {
@@ -195,6 +195,6 @@ export function EscalaAccessBoundary({ children, initialAccess, initialExpiresAt
     </section>}
     {!locked && access === "MODULE" && <div className={styles.accessBar}><p>{context?.roleLabel ?? "Acesso da filial"} · somente filiais autorizadas</p><button type="button" className={buttonClass} disabled={busy} onClick={lockModule}>{busy ? "Bloqueando…" : "Bloquear Escalas"}</button></div>}
     {!locked && error && <p role="alert" className={styles.error}>{error}</p>}
-    {mounted && !locked && context && initial.current === incoming.current && validCurrent && <div key={accessEpoch} ref={workspaceElement} tabIndex={-1} aria-label="Planejamento de escalas"><EscalaAccessProvider value={context}>{children}</EscalaAccessProvider></div>}
+    {mounted && !locked && context && initial.current === incoming.current && validCurrent && <section key={accessEpoch} ref={workspaceElement} tabIndex={-1} aria-label="Planejamento de escalas"><EscalaAccessProvider value={context}>{children}</EscalaAccessProvider></section>}
   </div>;
 }

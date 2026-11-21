@@ -998,9 +998,11 @@ def _feasibility_hints(model, employees, dates, off, work, choices, active, base
                        initial_assignments=None, estimated_demands=()):
     """Hint a preferred seed, saved sectors or a rebuilt saved rest pattern.
 
-    Return whether any saved reference was reused, so a rejected candidate can
-    retry without it. This is not proof that the original roster is comparable
-    or feasible; CP-SAT verifies the complete candidate before using its guards.
+    Return whether any reference decisions were reused, including a preferred
+    initial roster, so a rejected candidate can retry without them. This is not
+    proof that the roster is feasible or that its estimated coverage is good.
+    CP-SAT verifies the complete candidate; optimization can then repair an
+    empty sector without discarding a valid fallback.
     """
     hours_only = policy.get('_generationMode') == 'HOURS_ONLY'
     if hours_only and not prefer_baseline:

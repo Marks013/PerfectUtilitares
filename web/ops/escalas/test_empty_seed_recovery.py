@@ -1,10 +1,10 @@
-"""Regression: a complete but synchronized seed must not bypass rest balancing."""
+"""A synchronized seed can be feasible without serving every estimated demand."""
 import copy
 import unittest
 from datetime import date, timedelta
 
-from hints import _compatible
-from solver import _feasibility_hints, instant, shift_metrics, sunday_limit
+from solver import _feasibility_hints, days_between, shift_metrics, solve
+from test_solver import fixture
 
 
 class HintCollector:
@@ -64,48 +64,83 @@ def run_hints(parts, **kwargs):
     return reused, model
 
 
-def entries_from_hints(parts, model, pid):
-    _, dates, off, work, choices, _, baseline, _, _, _ = parts
-    entries = {}
+def assert_original_hints(test, parts, collector, source):
+    _, _, off, work, choices, _, _, _, _, _ = parts
+    for key, entry in source.items():
+        test.assertEqual(collector.values[off[key]], int(entry['kind'] == 'OFF'))
+        test.assertEqual(collector.values[work[key]], int(entry['kind'] == 'WORK'))
+        for sid, variable in choices[key].items():
+            test.assertEqual(collector.values[variable], int(entry.get('shiftId') == sid))
+
+
+def recovery_fixture(mode, optional_seed=False, locked_target=False):
+    data = fixture(40, people=3, start_date='2026-12-06')
+    data.update(generationMode=mode, planningWeekStartsOn='SUNDAY', restRulesVersion=2,
+                visibleMonth='2026-12', simulation=True)
+    dates = days_between(data['startDate'], data['endDate'])
+    target = '2026-12-11'
+    for person in data['employees']:
+        for day in dates:
+            off = day in (data['startDate'], target)
+            entry = {'employeeId': person['id'], 'date': day, 'kind': 'OFF' if off else 'WORK'}
+            if not off:
+                entry['shiftId'] = 'day'
+            if locked_target and day == target:
+                entry['locked'] = True
+            data['assignments'].append(entry)
     for day in dates:
-        key = pid, day
-        if baseline[key]['kind'] in ('ABSENCE', 'HOLIDAY'):
-            kind = baseline[key]['kind']
-        elif model.values[work[key]]:
-            kind = 'WORK'
-        else:
-            kind = 'OFF'
-        entry = {'kind': kind}
-        if kind == 'WORK':
-            entry['shiftId'] = next(sid for sid, variable in choices[key].items()
-                                   if model.values[variable])
-        entries[day] = entry
-    return entries
+        if day == data['startDate']:
+            continue
+        demand = {'sector': 'Reposição', 'date': day, 'start': 480, 'end': 720}
+        data['demands'].append({**demand, 'minimum': 1 if day == target else 2,
+                                'estimated': day == target})
+    if optional_seed:
+        data['_initialAssignments'] = copy.deepcopy(data['assignments'])
+    return data, target
 
 
 class EmptySeedRecoveryTests(unittest.TestCase):
-    def test_complete_empty_sector_is_rebalanced_in_day_changing_modes(self):
+    def test_complete_seed_is_reused_before_estimated_coverage_optimization(self):
         for mode in ('REST_ONLY', 'DAYS_AND_HOURS'):
             with self.subTest(mode=mode):
                 parts = scenario(mode)
                 before = copy.deepcopy(parts)
                 reused, collector = run_hints(parts)
-                people, dates, _, _, _, _, _, metrics, policy, _ = parts
-                entries = [entries_from_hints(parts, collector, person['id']) for person in people]
-                self.assertFalse(reused)
+                self.assertTrue(reused)
+                assert_original_hints(self, parts, collector, parts[6])
                 self.assertEqual(parts, before)
-                self.assertGreater(len({tuple(day for day, item in calendar.items()
-                                              if item['kind'] == 'OFF') for calendar in entries}), 1)
-                for day in dates:
-                    if day not in policy['closedDates']:
-                        self.assertTrue(any(calendar[day]['kind'] == 'WORK' for calendar in entries), day)
-                for person, calendar in zip(people, entries):
-                    self.assertTrue(_compatible(person, calendar, {}, metrics, policy,
-                                                instant, sunday_limit, True, baseline=parts[6]))
-                    for index in range(0, len(dates), 7):
-                        kinds = [calendar[day]['kind'] for day in dates[index:index + 7]]
-                        self.assertEqual(kinds.count('OFF'), 2)
-                        self.assertEqual(kinds.count('WORK'), 5 - kinds.count('HOLIDAY'))
+
+    def test_final_solution_recovers_empty_sector_without_sacrificing_mandatory_coverage(self):
+        for mode, optional_seed, locked in (('REST_ONLY', False, False),
+                                            ('DAYS_AND_HOURS', False, False),
+                                            ('REST_ONLY', True, False),
+                                            ('REST_ONLY', True, True)):
+            with self.subTest(mode=mode, optional_seed=optional_seed, locked=locked):
+                data, target = recovery_fixture(mode, optional_seed, locked)
+                before = copy.deepcopy(data)
+                self.assertFalse(any(a['date'] == target and a['kind'] == 'WORK'
+                                     for a in data['assignments']))
+                result = solve(data)
+                self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'), result)
+                entries = {(a['employeeId'], a['date']): a for a in result['assignments']}
+                self.assertEqual(len(entries), 21)
+                for person in data['employees']:
+                    duties = [a for (pid, _), a in entries.items() if pid == person['id']]
+                    self.assertEqual(len(duties), 7)
+                    self.assertEqual(sum(a.get('shiftId') == 'day' and a['kind'] == 'WORK'
+                                         for a in duties), 5)
+                    self.assertEqual(sum(a['kind'] == 'OFF' for a in duties), 2)
+                for demand in data['demands']:
+                    present = sum(day == demand['date'] and a['kind'] == 'WORK'
+                                  for (_, day), a in entries.items())
+                    if demand['estimated'] and locked:
+                        self.assertEqual(present, 0)
+                    else:
+                        self.assertGreaterEqual(present, demand['minimum'])
+                for entry in data['assignments']:
+                    if entry.get('locked'):
+                        self.assertEqual(entries[entry['employeeId'], entry['date']], entry)
+                self.assertEqual(data, before)
 
     def test_hours_only_never_redistributes_even_an_empty_sector(self):
         parts = scenario('HOURS_ONLY')
@@ -131,27 +166,25 @@ class EmptySeedRecoveryTests(unittest.TestCase):
                     self.assertEqual(collector.values[parts[2][key]], int(old['kind'] == 'OFF'))
 
     def test_complete_staffed_sector_remains_exactly_unchanged(self):
-        parts = scenario()
-        _, collector = run_hints(parts)
-        for person in parts[0]:
-            calendar = entries_from_hints(parts, collector, person['id'])
-            for day, entry in calendar.items():
-                parts[6][person['id'], day] = {'employeeId': person['id'], 'date': day, **entry}
+        parts = list(scenario())
+        parts[-1] = [demand for demand in parts[-1] if demand['date'] == '2026-12-03']
         before = copy.deepcopy(parts)
-        reused, second = run_hints(parts)
+        reused, collector = run_hints(parts)
         self.assertTrue(reused)
-        for key, old in parts[6].items():
-            self.assertEqual(second.values[parts[2][key]], int(old['kind'] == 'OFF'))
-            self.assertEqual(second.values[parts[3][key]], int(old['kind'] == 'WORK'))
+        assert_original_hints(self, parts, collector, parts[6])
         self.assertEqual(parts, before)
 
-    def test_optional_initial_assignments_do_not_hide_an_empty_sector(self):
+    def test_preferred_initial_assignments_are_hints_not_the_saved_roster(self):
         parts = scenario()
-        initial = list(copy.deepcopy(parts[6]).values())
-        reused, collector = run_hints(parts, initial_assignments=initial)
-        self.assertFalse(reused)
-        self.assertTrue(any(collector.values[parts[3][person['id'], '2026-12-04']]
-                            for person in parts[0]))
+        before = copy.deepcopy(parts)
+        initial = copy.deepcopy(parts[6])
+        initial['p00', '2026-12-02'].update(kind='OFF')
+        del initial['p00', '2026-12-02']['shiftId']
+        initial['p00', '2026-12-04'].update(kind='WORK', shiftId='T')
+        reused, collector = run_hints(parts, initial_assignments=list(initial.values()))
+        self.assertTrue(reused)
+        assert_original_hints(self, parts, collector, initial)
+        self.assertEqual(parts, before)
 
     def test_absence_holiday_and_individual_locks_are_not_rewritten(self):
         parts = scenario()

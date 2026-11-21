@@ -289,13 +289,14 @@ export function EscalasWorkspace() {
         {model.dirty && !canSaveDraft && <div className={styles.stackSmall}>
           <p role="status" className={styles.muted}>A prévia está bloqueada porque há alterações locais e seu acesso não permite salvá-las. Você pode descartar essas alterações e conferir a última revisão salva.</p>
           <div className={styles.actions}><button ref={discardButton} type="button" className={buttonClass} disabled={Boolean(model.busy) || model.saveState === "saving"} aria-expanded={discardTarget?.id === workspace.id && discardTarget.revision === workspace.revision} aria-controls="escala-confirm-discard" onClick={() => setDiscardTarget({ id: workspace.id, revision: workspace.revision })}>Descartar alterações locais</button></div>
-          {discardTarget?.id === workspace.id && discardTarget.revision === workspace.revision && <div id="escala-confirm-discard" role="group" aria-label="Confirmar descarte das alterações locais" className={styles.stackSmall}>
+          {discardTarget?.id === workspace.id && discardTarget.revision === workspace.revision && <fieldset id="escala-confirm-discard" className={`${styles.stackSmall} min-w-0 border-0 p-0`}>
+            <legend className="sr-only">Confirmar descarte das alterações locais</legend>
             <p>Descartar as alterações locais deste planejamento e carregar a última revisão salva? O descarte não salva o rascunho nem altera a revisão no servidor.</p>
             <div className={styles.actions}>
               <button type="button" className={buttonClass} onClick={() => { setDiscardTarget(null); discardButton.current?.focus(); }}>Manter alterações locais</button>
               <button type="button" className={buttonClass} disabled={Boolean(model.busy) || model.saveState === "saving"} onClick={confirmDiscard}>Confirmar descarte e carregar revisão salva</button>
             </div>
-          </div>}
+          </fieldset>}
         </div>}
         {!manageSettings && <p className={styles.muted}>A jornada e as regras desta filial foram definidas pelo administrador. Você pode montar a escala com essas configurações.</p>}
         {!included && <div className={styles.nextStep}><p>{importTeam ? "Importe a equipe da filial antes de montar a escala." : "A equipe ainda não foi preparada. Peça ao administrador para importar os colaboradores desta filial."}</p><button type="button" className={buttonClass} onClick={() => setArea("team")}>Conferir equipe</button></div>}

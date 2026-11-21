@@ -213,9 +213,10 @@ describe("username navigation session HTTP", () => {
     const cookie = response.headers.get("set-cookie")?.split(";")[0].split("=")[1];
     if (!cookie) throw new Error("Expected a signed session cookie");
     const token = fixture.cookies.decodeEscalaSessionCookie(cookie);
+    if (!token) throw new Error("Expected a verified session token");
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(fixture.session()).toMatchObject({ tenantId: "private-tenant", operatorId: "private-operator", permissionVersion: 3, accessPolicyVersion: 7 });
-    expect(fixture.session().tokenHash).toBe(fixture.cookies.hashEscalaSessionToken(token!));
+    expect(fixture.session().tokenHash).toBe(fixture.cookies.hashEscalaSessionToken(token));
     expect(fixture.session().tokenHash).not.toBe(token);
     for (const flag of ["HttpOnly", "Secure", "SameSite=strict"]) expect(response.headers.get("set-cookie")).toContain(flag);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
