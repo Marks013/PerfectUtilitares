@@ -96,6 +96,92 @@ def sunday_distribution(model, groups, employees, days, work, baseline, policy, 
     return spreads, presence, untimed_spreads
 
 
+
+def sector_sunday_distribution(model, groups, employees, days, work, baseline, policy,
+                               values, excluded_sectors=(), control=None):
+    """Secondary cross-cohort Sunday rate spreads, never an operational minimum.
+
+    Only compare a sector containing distinct already-approved role/clock
+    cohorts. Skip untimed or overnight sectors: an origin-day WORK boolean
+    cannot verify their civil-Sunday staffing. A deficit variable makes any
+    loss of the incumbent's aggregate eligible Sunday presence visible to
+    the soft objective, without making a new hard staffing requirement.
+    """
+    sundays = [day for day in days if date.fromisoformat(day).weekday() == 6]
+    if len(sundays) < 2:
+        return [], [], 0
+    cohort = {pid: index for index, members in enumerate(groups.values())
+              for pid in members}
+    excluded = set(excluded_sectors)
+    sectors = {}
+    for person in employees:
+        sectors.setdefault(person['sector'], []).append(person)
+    spreads, deficits, maximum_presence_deficit = [], [], 0
+    for index, (sector, people) in enumerate(sorted(sectors.items())):
+        if control is not None:
+            control.checkpoint()
+        if (sector in excluded or len(people) < 2
+                or any(person.get('scheduleMode') in ('UNTIMED', 'MISSING')
+                       or not person.get('shiftIds') for person in people)
+                or len({cohort.get(person['id']) for person in people}) < 2):
+            continue
+        opportunities = {person['id']: set(available_weekends(person, sundays, baseline, policy))
+                         for person in people}
+        per_day = [[work[person['id'], day] for person in people
+                    if day in opportunities[person['id']] and (person['id'], day) in work]
+                   for day in sundays]
+        eligible_days = [entry for entry in per_day if entry]
+        if len(eligible_days) < 2:
+            continue
+        present = [variable for entry in eligible_days for variable in entry]
+        incumbent = sum(values[variable.index] for variable in present)
+        if incumbent == 0:
+            continue  # No reference presence: do not invent a staffing target.
+        rates, starting = [], []
+        for day_index, eligible in enumerate(per_day):
+            if not eligible:
+                continue
+            initial = sum(values[variable.index] for variable in eligible) * 10000 // len(eligible)
+            rate = model.new_int_var(0, 10000, f'sector-sunday-rate:{index}:{day_index}')
+            model.add_division_equality(rate, sum(eligible) * 10000, len(eligible))
+            remember(model, values, rate, initial)
+            rates.append(rate)
+            starting.append(initial)
+        maximum = model.new_int_var(0, 10000, f'sector-sunday-max:{index}')
+        minimum = model.new_int_var(0, 10000, f'sector-sunday-min:{index}')
+        spread = model.new_int_var(0, 10000, f'sector-sunday-spread:{index}')
+        model.add_max_equality(maximum, rates)
+        model.add_min_equality(minimum, rates)
+        model.add(spread == maximum - minimum)
+        remember(model, values, maximum, max(starting))
+        remember(model, values, minimum, min(starting))
+        remember(model, values, spread, max(starting) - min(starting))
+        # Soft loss budget, not a new minimum: earlier coverage optimization
+        # may legally reduce incumbent Sunday presence if it must.
+        deficit = model.new_int_var(0, incumbent, f'sector-sunday-presence-loss:{index}')
+        model.add(deficit >= incumbent - sum(present))
+        remember(model, values, deficit, 0)
+        spreads.append(spread)
+        deficits.append(deficit)
+        maximum_presence_deficit += incumbent
+    return spreads, deficits, maximum_presence_deficit
+
+
+def sector_sunday_tie_break(personal_spreads, sector_spreads, presence_losses,
+                            max_presence_loss):
+    """Lexicographic weights: personal fairness, presence, then sector spread.
+
+    The weights are bounded by the variable ranges and the actual incumbent.
+    A lower sector spread cannot purchase a worse personal fairness score or
+    a reduction in existing Sunday presence when fairness is unchanged.
+    """
+    spread_bound = 10000 * len(sector_spreads)
+    presence_weight = spread_bound + 1
+    personal_weight = max_presence_loss * presence_weight + spread_bound + 1
+    return (personal_weight * sum(personal_spreads)
+            + presence_weight * sum(presence_losses) + sum(sector_spreads))
+
+
 def preserve_sunday_presence(model, employees, days, work, values, control=None):
     """Do not empty a sector that is staffed in the feasible Sunday reference.
 
