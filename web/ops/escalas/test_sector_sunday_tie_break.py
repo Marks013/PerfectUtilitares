@@ -194,10 +194,18 @@ class SectorSundayTieBreakTests(unittest.TestCase):
         self.assertEqual(outcome[exchange.index], 1)
         self.assertEqual(outcome[rest.index], 0)
         self.assertFalse(proven)
-        # The first search must not add an everlasting spread <= 5000 bound
-        # to the model; the later rest refinement legally needs spread=10000.
-        baseline = model.proto.variables
-        self.assertEqual(baseline[-1].name, 'sector-sunday-spread:0')
+        # Prove the NO-REGRESSION property with a fresh CP-SAT solve rather
+        # than holding a borrowed view into the mutable native proto. The
+        # earlier soft sector objective had spread=5000, while this legal
+        # operational improvement requires spread=10000. A leaked bound
+        # would make this probe infeasible.
+        model.add(exchange == 1)
+        engine = cp_model.CpSolver()
+        engine.parameters.num_workers = 1
+        engine.parameters.max_time_in_seconds = 1
+        self.assertEqual(engine.solve(model), cp_model.OPTIMAL)
+        self.assertEqual(engine.value(exchange), 1)
+        self.assertEqual(engine.value(rest), 0)
 
     def test_legacy_only_sunday_goal_keeps_its_full_search_reserve(self):
         model = cp_model.CpModel()
