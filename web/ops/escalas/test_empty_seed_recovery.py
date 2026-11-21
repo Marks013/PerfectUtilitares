@@ -110,29 +110,20 @@ class EmptySeedRecoveryTests(unittest.TestCase):
                         self.assertEqual(kinds.count('OFF'), 2)
                         self.assertEqual(kinds.count('WORK'), 5 - kinds.count('HOLIDAY'))
 
-    def test_complete_seed_is_only_a_hint_before_independent_solver_validation(self):
+    def test_complete_empty_estimated_seed_is_rebalanced_before_refinement(self):
         for mode in ('REST_ONLY', 'DAYS_AND_HOURS'):
             with self.subTest(mode=mode):
                 parts = scenario(mode)
                 original = copy.deepcopy(parts)
                 reused, collector = run_hints(parts)
-                # The preferred branch may retain the exact draft; 'reused'
-                # does NOT certify the proposed roster's feasibility or
-                # satisfy the estimated Sunday demand.
-                self.assertTrue(reused)
-                for key, saved in parts[6].items():
-                    self.assertEqual(collector.values[parts[2][key]],
-                                     int(saved['kind'] == 'OFF'))
-                    self.assertEqual(collector.values[parts[3][key]],
-                                     int(saved['kind'] == 'WORK'))
-                self.assertFalse(any(collector.values[parts[3][person['id'], '2026-12-04']]
-                                     for person in parts[0]))
-                # A rejected first feasibility pass must have a distinct,
-                # permitted recovery path; never silently keep everyone OFF.
-                retry_reused, retry = run_hints(parts, prefer_baseline=False)
-                self.assertFalse(retry_reused)
-                self.assertTrue(any(retry.values[parts[3][person['id'], '2026-12-04']]
-                                    for person in parts[0]))
+                # Exact saved OFF days are valid hints for fixed clocks but
+                # must not freeze a sector with positive estimated demand
+                # and no eligible timed service on its operating days.
+                self.assertFalse(reused)
+                for day in ('2026-12-04', '2026-12-06'):
+                    self.assertTrue(any(
+                        collector.values[parts[3][person['id'], day]]
+                        for person in parts[0]), day)
                 self.assertEqual(parts, original)
 
     def test_hours_only_never_redistributes_even_an_empty_sector(self):
@@ -173,20 +164,21 @@ class EmptySeedRecoveryTests(unittest.TestCase):
             self.assertEqual(second.values[parts[3][key]], int(old['kind'] == 'WORK'))
         self.assertEqual(parts, before)
 
-    def test_initial_assignments_reuse_as_hint_but_rejected_retry_reopens_sector(self):
+    def test_initial_assignments_cannot_hide_empty_estimated_sector(self):
         parts = scenario()
         initial = list(copy.deepcopy(parts[6]).values())
         reused, collector = run_hints(parts, initial_assignments=initial)
-        self.assertTrue(reused)
-        self.assertFalse(any(collector.values[parts[3][person['id'], '2026-12-04']]
-                             for person in parts[0]))
-        # After an independent fixed-hint rejection, the fallback ignores
-        # the previous complete roster and offers a nonempty sector again.
+        self.assertFalse(reused)
+        self.assertTrue(any(
+            collector.values[parts[3][person['id'], '2026-12-04']]
+            for person in parts[0]))
+        # A fallback must not depend on accepting an incomplete sector first.
         retry_reused, retry = run_hints(
             parts, initial_assignments=initial, prefer_baseline=False)
         self.assertFalse(retry_reused)
-        self.assertTrue(any(retry.values[parts[3][person['id'], '2026-12-04']]
-                            for person in parts[0]))
+        self.assertTrue(any(
+            retry.values[parts[3][person['id'], '2026-12-04']]
+            for person in parts[0]))
 
     def test_absence_holiday_and_individual_locks_are_not_rewritten(self):
         parts = scenario()
