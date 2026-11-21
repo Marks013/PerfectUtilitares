@@ -90,7 +90,7 @@ jobs:
           set -euo pipefail
           # The normal strict benchmark is unchanged. Diagnose the 115/6 case
           # from one common synthetic feasibility roster in the same runner.
-          printf '{"scenarios":["branch-115-six-weeks"],"variants":["baseline","corrected"],"repeats":5,"pairedSeed":true}\\n' \\
+          printf '{"scenarios":["branch-115-six-weeks"],"variants":["baseline","corrected"],"repeats":5,"pairedSeed":true}\n' \
             | npm run benchmark:escalas | tee "$RUNNER_TEMP/escalas-paired-seed.jsonl"
       - name: Require independent validation and complete measurements
         shell: bash
