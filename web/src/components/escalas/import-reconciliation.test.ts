@@ -102,3 +102,58 @@ describe("confirmed import reconciliation", () => {
     expect(input.assignments[0].kind).toBe("WORK");
   });
 });
+
+
+describe("duplicate registrations in imported previews", () => {
+  it("marks every imported duplicate as conflicting regardless of row order and never changes saved data", () => {
+    const input = newInput("08", "Filial sintética", "2026-11", 42);
+    const saved = { ...newEmployee(42, input.shifts[0].id), id: "saved", registration: "005", name: "Cadastro salvo",
+      sector: "Setor", role: "Operador" };
+    input.employees = [saved];
+    const first = { ...saved, id: "incoming-1", name: "Primeiro nome importado" };
+    const second = { ...saved, id: "incoming-2", name: "Segundo nome importado" };
+    const original = structuredClone(input);
+    for (const imported of [[first, second], [second, first]]) {
+      const untouched = structuredClone(imported);
+      const entries = previewImportReconciliation(input, imported, input.shifts);
+      expect(entries.map(entry => entry.status)).toEqual(["CONFLICT", "CONFLICT"]);
+      expect(entries.every(entry => entry.scheduleBlocked && entry.message?.includes("Matrícula repetida"))).toBe(true);
+      expect(() => reconcileImport(input, imported, input.shifts, { updateRegistrations: ["005"] }))
+        .toThrow("matrícula já cadastrada mais de uma vez");
+      expect(imported).toEqual(untouched);
+    }
+    expect(input).toEqual(original);
+  });
+
+  it("rejects an ambiguous historical registration without matching by name", () => {
+    const input = newInput("08", "Filial sintética", "2026-11", 42);
+    const first = { ...newEmployee(42, input.shifts[0].id), id: "first", registration: "005",
+      name: "Pessoa A", sector: "Caixas", role: "Operador" };
+    input.employees = [first, { ...first, id: "second", name: "Pessoa B" }];
+    const incoming = [{ ...first, id: "imported", name: "Pessoa A" }];
+    const original = structuredClone(input);
+    expect(previewImportReconciliation(input, incoming, input.shifts)).toContainEqual(expect.objectContaining({
+      status: "CONFLICT", scheduleBlocked: true,
+    }));
+    expect(() => reconcileImport(input, incoming, input.shifts, { updateRegistrations: ["005"] }))
+      .toThrow("correspondência ambígua");
+    expect(input).toEqual(original);
+  });
+
+  it("continues to allow a unique new registration and a separately approved change", () => {
+    const input = newInput("08", "Filial sintética", "2026-11", 42);
+    const current = { ...newEmployee(42, input.shifts[0].id), id: "saved", registration: "005",
+      name: "Nome salvo", sector: "Setor", role: "Operador" };
+    input.employees = [current];
+    const changed = { ...current, id: "imported", name: "Nome atualizado" };
+    const added = { ...current, id: "new", registration: "006", name: "Pessoa nova" };
+    expect(previewImportReconciliation(input, [changed, added], input.shifts).map(entry => entry.status))
+      .toEqual(["CHANGED", "NEW"]);
+    const original = structuredClone(input);
+    const next = reconcileImport(input, [changed, added], input.shifts, { updateRegistrations: ["005"] });
+    expect(next.employees.map(person => [person.registration, person.name]))
+      .toEqual([["005", "Nome atualizado"], ["006", "Pessoa nova"]]);
+    expect(next.needsRegeneration).toBe(true);
+    expect(input).toEqual(original);
+  });
+});
