@@ -49,23 +49,31 @@ vi.mock("react", async importOriginal => {
     },
   };
 });
+const captureIntrinsic = vi.hoisted(() => (type: unknown, raw: unknown, key?: Key) => {
+  if (!raw || typeof raw !== "object") return;
+  const props = raw as { children?: unknown; id?: string; "aria-label"?: string; disabled?: boolean; ref?: { current: unknown }; onClick?: () => void | Promise<void>; onChange?: (event: { target: { value: string } }) => void; onSubmit?: (event: { preventDefault: () => void }) => Promise<void> };
+  if (type === "button" && typeof props.children === "string") hooks.buttons.set(props.children, props);
+  if (type === "input" && props.id === "escala-access-username" && props.onChange) {
+    hooks.input = { onChange: props.onChange }; hooks.inputDisabled = Boolean(props.disabled);
+    if (props.ref) props.ref.current = { focus: () => hooks.focusName({ disabled: Boolean(props.disabled) }) };
+  }
+  if (type === "form" && props.onSubmit) hooks.form = props.onSubmit;
+  if (type === "section" && props["aria-label"] === "Planejamento de escalas") hooks.protectedKey = key ?? null;
+});
 vi.mock("react/jsx-runtime", async importOriginal => {
   const actual = await importOriginal<typeof import("react/jsx-runtime")>();
   const capture = (factory: typeof actual.jsx) => (...args: Parameters<typeof actual.jsx>) => {
-    const [type, raw, key] = args;
-    if (raw && typeof raw === "object") {
-      const props = raw as { children?: unknown; id?: string; "aria-label"?: string; disabled?: boolean; ref?: { current: unknown }; onClick?: () => void | Promise<void>; onChange?: (event: { target: { value: string } }) => void; onSubmit?: (event: { preventDefault: () => void }) => Promise<void> };
-      if (type === "button" && typeof props.children === "string") hooks.buttons.set(props.children, props);
-      if (type === "input" && props.id === "escala-access-username" && props.onChange) {
-        hooks.input = { onChange: props.onChange }; hooks.inputDisabled = Boolean(props.disabled);
-        if (props.ref) props.ref.current = { focus: () => hooks.focusName({ disabled: Boolean(props.disabled) }) };
-      }
-      if (type === "form" && props.onSubmit) hooks.form = props.onSubmit;
-      if (type === "div" && props["aria-label"] === "Planejamento de escalas") hooks.protectedKey = key ?? null;
-    }
+    captureIntrinsic(...args);
     return factory(...args);
   };
   return { ...actual, jsx: capture(actual.jsx), jsxs: capture(actual.jsxs) };
+});
+vi.mock("react/jsx-dev-runtime", async importOriginal => {
+  const actual = await importOriginal<typeof import("react/jsx-dev-runtime")>();
+  return { ...actual, jsxDEV: (...args: Parameters<typeof actual.jsxDEV>) => {
+    captureIntrinsic(args[0], args[1], args[2]);
+    return actual.jsxDEV(...args);
+  } };
 });
 vi.mock("@/auth", () => ({ auth: mocks.account }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaBranchAccess: { findMany: mocks.grants } } }));

@@ -11,10 +11,20 @@ vi.mock("./use-escalas-workspace", () => ({ useEscalasWorkspace: vi.fn() }));
 
 // Capture real screen callbacks and keep its hook primitives between static renders.
 // Effects, DOM focus and browser navigation are deliberately outside this harness.
-const ui = vi.hoisted(() => ({
-  slots: [] as unknown[], cursor: 0,
-  buttons: new Map<string, { disabled?: boolean; onClick?: () => void }>(),
-}));
+const ui = vi.hoisted(() => {
+  type Button = { children?: unknown; "aria-controls"?: string; disabled?: boolean; onClick?: () => void };
+  const buttons = new Map<string, Button>();
+  return {
+    slots: [] as unknown[], cursor: 0, buttons,
+    capture(type: unknown, raw: unknown) {
+      if (type !== "button" || !raw || typeof raw !== "object") return;
+      const props = raw as Button;
+      const control = props["aria-controls"];
+      if (control) buttons.set(`#${control}`, props);
+      if (typeof props.children === "string") buttons.set(props.children, props);
+    },
+  };
+});
 vi.mock("react", async importOriginal => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual,
@@ -36,15 +46,17 @@ vi.mock("react", async importOriginal => {
 vi.mock("react/jsx-runtime", async importOriginal => {
   const actual = await importOriginal<typeof import("react/jsx-runtime")>();
   const capture = (factory: typeof actual.jsx) => (...args: Parameters<typeof actual.jsx>) => {
-    const [type, raw] = args;
-    if (type === "button" && raw && typeof raw === "object") {
-      const props = raw as { children?: unknown; "aria-controls"?: string; disabled?: boolean; onClick?: () => void };
-      const label = typeof props.children === "string" ? props.children : props["aria-controls"] ? "#" + props["aria-controls"] : null;
-      if (label) ui.buttons.set(label, props);
-    }
+    ui.capture(args[0], args[1]);
     return factory(...args);
   };
   return { ...actual, jsx: capture(actual.jsx), jsxs: capture(actual.jsxs) };
+});
+vi.mock("react/jsx-dev-runtime", async importOriginal => {
+  const actual = await importOriginal<typeof import("react/jsx-dev-runtime")>();
+  return { ...actual, jsxDEV: (...args: Parameters<typeof actual.jsxDEV>) => {
+    ui.capture(args[0], args[1]);
+    return actual.jsxDEV(...args);
+  } };
 });
 
 const previewAccess: EscalaClientAccess = {
@@ -167,6 +179,13 @@ describe("saved-revision preview in the real scheduling screen", () => {
 
   it("offers confirmed discard in the current plan after SAVE is lost, with only one plan", () => {
     const state = model(); state.dirty = true; state.canGenerate = false;
+    state.discard = vi.fn();
+    state.save = vi.fn();
+    state.saveAndOpen = vi.fn();
+    state.update = vi.fn();
+    state.generate = vi.fn();
+    state.applyGenerated = vi.fn();
+    state.publish = vi.fn();
     if (!state.workspace) throw new Error("Workspace missing");
     state.workspace.canEdit = true; state.canEdit = true;
     let html = markup(state);
@@ -178,14 +197,15 @@ describe("saved-revision preview in the real scheduling screen", () => {
     expect(generationButton(html)).toContain('disabled=""');
     expect(html).toContain("Descartar alterações locais");
     expect(html).not.toContain("Confirmar descarte e carregar revisão salva");
-    click("Descartar alterações locais"); html = markup(state);
+    click("#escala-confirm-discard"); html = markup(state);
     expect(state.discard).not.toHaveBeenCalled();
-    expect(html).toContain('role="group" aria-label="Confirmar descarte das alterações locais"');
+    expect(html).toMatch(/<fieldset id="escala-confirm-discard"[^>]*>\s*<legend[^>]*>Confirmar descarte das alterações locais<\/legend>/);
+    expect(html).toContain('aria-expanded="true" aria-controls="escala-confirm-discard"');
     expect(html).toContain("O descarte não salva o rascunho");
     click("Manter alterações locais"); html = markup(state);
     expect(state.discard).not.toHaveBeenCalled();
     expect(html).not.toContain("Confirmar descarte e carregar revisão salva");
-    click("Descartar alterações locais"); markup(state);
+    click("#escala-confirm-discard"); markup(state);
     click("Confirmar descarte e carregar revisão salva");
     expect(state.discard).toHaveBeenCalledTimes(1);
     expect(state.save).not.toHaveBeenCalled(); expect(state.saveAndOpen).not.toHaveBeenCalled();
@@ -211,10 +231,14 @@ describe("saved-revision preview in the real scheduling screen", () => {
       state.workspace.canEdit = true;
     }
     const html = markup(state, access);
-    expect(html).toContain("Proposta concluída com avisos.");
-    if (detail) expect(html).toContain(detail);
-    expect(html).toContain(instruction);
-    if (authority === "preview") expect(html).not.toMatch(/Confira e aplique|antes de aplicar/);
+    const notice = html.match(/<section[^>]*role="status"[^>]*>\s*<p[^>]*>(Proposta concluída com avisos\.[^<]*)<\/p>/)?.[1];
+    expect(notice).toBeDefined();
+    if (detail) expect(notice).toContain(detail);
+    expect(notice).toContain(instruction);
+    if (authority === "preview") {
+      expect(notice).not.toMatch(/Confira e aplique|antes de aplicar/);
+      expect(html).not.toContain(">Aplicar proposta à grade<");
+    }
     expect(state.applyGenerated).not.toHaveBeenCalled(); expect(state.save).not.toHaveBeenCalled();
   });
 

@@ -38,7 +38,7 @@ describe("workspace mode composition", () => {
       expect(files).toContain('<option value="hours" selected="">Referências de horários</option>');
       expect(files).not.toContain('value="rest"');
       expect(files).not.toContain('value="both"');
-      expect(files).toMatch(/<button[^>]*disabled=""[^>]*>Publicar escala conferida/);
+      expect(files).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
     } else {
       expect(files).toContain('value="rest"');
       expect(files).toContain('value="both"');

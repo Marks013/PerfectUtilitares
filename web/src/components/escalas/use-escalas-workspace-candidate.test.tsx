@@ -53,6 +53,7 @@ vi.mock("react", async importOriginal => {
 const validation = { valid: true, readyToPublish: false, issues: [], summaries: [], minimumCoverageMargin: null };
 function workspace(id = "plan-08", branch = "08"): EscalaWorkspace {
   const input = newInput(branch, "Filial sintética", "2026-12", 42);
+  input.policy.limitContinuousWorkBlocks = false;
   input.employees = [{ ...newEmployee(42, "day"), id: "person", registration: "1", name: "Pessoa sintética", sector: "Caixa", role: "Operador", activeFrom: "2020-01-01" }];
   input.shifts = [{ id: "day", name: "Dia", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 840, kind: "BREAK" }, { start: 840, end: 1104, kind: "WORK" }] }];
   input.assignments = [{ employeeId: "person", date: "2026-12-01", kind: "OFF" }];
@@ -256,10 +257,12 @@ describe("scoped preview and independent application authority", () => {
   it("keeps the local draft when discard cannot read the saved revision, without writing", async () => {
     const draft = structuredClone(current.input); if (!draft) throw new Error("Workspace not open");
     draft.employees[0].name = "Edição local preservada"; current.update(draft); await settle();
+    expect(current.input).toEqual({ ...draft, needsRegeneration: true });
+    const pendingDraft = structuredClone(current.input);
     access = previewAccess(); render(); await settle(); calls = [];
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ error: { code: "UNAVAILABLE", message: "Tente novamente." } }) } as Response);
     current.discard(); await settle(); await vi.advanceTimersByTimeAsync(1100); await settle();
-    expect(current.dirty).toBe(true); expect(current.input).toEqual(draft); expect(current.workspace?.revision).toBe(2);
+    expect(current.dirty).toBe(true); expect(current.input).toEqual(pendingDraft); expect(current.workspace?.revision).toBe(2);
     expect(current.error).not.toBe(""); expect(calls).toEqual([]);
   });
 
@@ -421,7 +424,14 @@ describe("trusted candidate lifecycle in the real workspace hook", () => {
   it.each(["edit", "period", "mode", "hours", "save", "branch"])("invalidates the previous comparison after %s", async action => {
     await generate();
     if (action === "save") { current.save(); await settle(); }
-    else if (action === "branch") await open("plan-07");
+    else if (action === "branch") {
+      const previous = current.generated;
+      await open("plan-07");
+      expect(current.pendingOpen).toBe("plan-07");
+      expect(current.workspace?.id).toBe("plan-08");
+      expect(current.generated).toBe(previous);
+      current.open("plan-07", true); await settle();
+    }
     else {
       const input = structuredClone(current.input);
       if (!input) throw new Error("Workspace not open");

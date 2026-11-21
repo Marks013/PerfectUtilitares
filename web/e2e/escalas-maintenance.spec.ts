@@ -81,7 +81,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     const originalCode = await anaCell.locator("span").first().textContent();
     await anaCell.click();
     await page.getByLabel("Situação do dia", { exact: true }).selectOption("OFF");
-    await page.getByRole("button", { name: "Ver efeito da alteração", exact: true }).click();
+    await page.getByRole("button", { name: "Conferir alteração", exact: true }).click();
     await expect(page.getByRole("region", { name: "Impacto da alteração", exact: true })).toContainText("0 presente(s), mínimo 1");
     await page.getByRole("button", { name: "Aplicar com conflitos ao rascunho", exact: true }).click();
     await expect(anaCell.locator("span").first()).toHaveText("F");
@@ -94,7 +94,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     await page.getByText("Trocar este dia com outro colaborador ou outra data", { exact: true }).click();
     await page.getByLabel("Colaborador para a troca", { exact: true }).selectOption(bruno.id);
     await page.getByLabel("Data para a troca", { exact: true }).selectOption("2026-11-02");
-    await page.getByRole("button", { name: "Ver efeito da troca", exact: true }).click();
+    await page.getByRole("button", { name: "Conferir troca", exact: true }).click();
     const savingSwap = page.waitForResponse((response) => response.request().method() === "POST"
       && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE"
       && response.request().postDataJSON()?.id === imported.id);

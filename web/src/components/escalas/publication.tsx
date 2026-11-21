@@ -12,7 +12,7 @@ import styles from "./escalas.module.css";
 import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
 
 type Format = "pdf" | "xlsx";
-type FileState = { url: string; filename: string; workspaceId: string; revision: number; mode: EscalaExportMode; separateSectors?: boolean };
+type FileState = { url: string; filename: string; workspaceId: string; revision: number; mode: EscalaExportMode };
 const CONTENT = { rest: "Folgas", hours: "Horários", both: "Folgas e horários" };
 
 export function Publication({ workspace, validation, dirty, busy, outdated = false, mode, onModeChange, onPublish, onRegenerate, onPrepare, isCurrent, candidatePending = false, canUseCandidate = false, onUseCandidate }: {
@@ -24,7 +24,6 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
   const referencesOnly = hoursOnly && !workspace.input.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY");
   const [localMode, setLocalMode] = useState<EscalaExportMode>(() => mode ?? (hoursOnly ? "hours" : workspace.input.generationMode === "REST_ONLY" ? "rest" : "both"));
   const selectedMode = hoursOnly ? "hours" : mode ?? localMode;
-  const [separateSectors, setSeparateSectors] = useState(true);
   const access = useEscalaClientAccess();
   const branchCode = workspace.input.branchCode;
   const canDownload = (format: Format) => canDisplayEscalaAction(access, `export.schedule.${format}`, branchCode);
@@ -44,8 +43,8 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
   const urls = useRef(new Set<string>());
   const [error, setError] = useState("");
   const inFlight = useRef(false);
-  const latest = useRef({ workspace, dirty, outdated, selectedMode, separateSectors, access });
-  latest.current = { workspace, dirty, outdated, selectedMode, separateSectors, access };
+  const latest = useRef({ workspace, dirty, outdated, selectedMode, access });
+  latest.current = { workspace, dirty, outdated, selectedMode, access };
   useEffect(() => {
     const owned = urls.current;
     return () => { owned.forEach(url => { URL.revokeObjectURL(url); }); owned.clear(); };
@@ -68,18 +67,17 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
 
   const isDownloadCurrent = (file: FileState | undefined, format: Format) => Boolean(canDownload(format) && file
     && file.workspaceId === workspace.id && file.revision === workspace.revision && file.mode === selectedMode
-    && (file.separateSectors === undefined || file.separateSectors === separateSectors) && !dirty && !outdated);
+    && !dirty && !outdated);
 
   async function prepare(format: Format) {
     if (!canDownload(format) || blocked || inFlight.current) return;
     inFlight.current = true; setExporting(format); setError("");
-    const capturedMode = selectedMode, capturedSeparation = format === "pdf" ? separateSectors : undefined;
+    const capturedMode = selectedMode;
     try {
       const snapshot = onPrepare ? await onPrepare() : dirty ? null : workspace;
       if (!snapshot) throw new Error("O rascunho ainda não foi salvo. Use Tentar salvar e gere o arquivo após a confirmação.");
       if (snapshot.input.branchCode !== branchCode || !canDisplayEscalaAction(latest.current.access, `export.schedule.${format}`, branchCode)) throw new Error("A filial ou o acesso mudou. Confira a revisão antes de gerar o arquivo.");
       const params = new URLSearchParams({ id: snapshot.id, revision: String(snapshot.revision), format, mode: capturedMode, projection: "BASIC_SCHEDULE" });
-      if (capturedSeparation !== undefined) params.set("separateSectors", String(capturedSeparation));
       const response = await fetch("/api/escalas/export?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(60_000) });
       if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
       if (!response.ok) {
@@ -93,11 +91,11 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
       const current = latest.current;
       if ((isCurrent ? !isCurrent(snapshot) : current.workspace.id !== snapshot.id || current.workspace.revision !== snapshot.revision || current.dirty)
         || current.workspace.input.branchCode !== branchCode || !canDisplayEscalaAction(current.access, `export.schedule.${format}`, branchCode)
-        || current.outdated || current.selectedMode !== capturedMode || (capturedSeparation !== undefined && current.separateSectors !== capturedSeparation)) throw new Error("O cenário mudou enquanto o arquivo era gerado. Gere novamente para baixar a revisão atual.");
+        || current.outdated || current.selectedMode !== capturedMode) throw new Error("O cenário mudou enquanto o arquivo era gerado. Gere novamente para baixar a revisão atual.");
       const url = URL.createObjectURL(blob); urls.current.add(url);
       const old = files[format]; if (old) { URL.revokeObjectURL(old.url); urls.current.delete(old.url); }
       const filename = "escala-" + snapshot.input.branchCode.replace(/[^a-zA-Z0-9_-]/g, "-") + "-" + (snapshot.input.visibleMonth ?? snapshot.input.startDate) + "-r" + snapshot.revision + "-" + capturedMode + "." + format;
-      setFiles(previous => ({ ...previous, [format]: { url, filename, workspaceId: snapshot.id, revision: snapshot.revision, mode: capturedMode, separateSectors: capturedSeparation } }));
+      setFiles(previous => ({ ...previous, [format]: { url, filename, workspaceId: snapshot.id, revision: snapshot.revision, mode: capturedMode } }));
     } catch (cause) { setError(cause instanceof Error && cause.name !== "TimeoutError" ? cause.message : "A geração demorou além do esperado. O rascunho foi preservado; tente novamente."); }
     finally { inFlight.current = false; setExporting(null); }
   }
@@ -114,8 +112,6 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
     {allowedFormats.length > 0 && <>
       <Field label="Conteúdo do PDF e XLSX">{id => <select id={id} className={controlClass} disabled={Boolean(exporting) || hoursOnly} value={selectedMode} onChange={event => { const value = event.target.value as EscalaExportMode; if (onModeChange) onModeChange(value); else setLocalMode(value); }}>{!hoursOnly && <option value="rest">Somente escala de folgas</option>}<option value="hours">{referencesOnly ? "Referências de horários" : "Somente escala de horários"}</option>{!hoursOnly && <option value="both">Folgas e horários</option>}</select>}</Field>
       {referencesOnly && <p className={styles.muted}>Arquivo de referências: ainda não há distribuição completa dos dias. Não representa presença diária nem cobertura garantida.</p>}
-      {allowedFormats.includes("pdf") && <div className={styles.stackSmall}><Check label="Separar setores por página" checked={separateSectors} disabled={exporting === "pdf"} onChange={setSeparateSectors} />
-        <p className={styles.muted}>Só no PDF. Desmarque para reunir setores em menos páginas.</p></div>}
       <div className={styles.fileGrid}>{allowedFormats.map(format => {
         const file = files[format];
         const current = file && isDownloadCurrent(file, format);

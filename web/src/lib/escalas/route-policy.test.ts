@@ -93,6 +93,23 @@ describe("Escalas route authorization contract, before handler integration", () 
     expect(classifyEscalaRoute({ ...shift("SYNC"), purpose: "MANUAL" }).kind).toBe("denied");
   });
 
+  it("limits shift alternatives to users with shift permissions in the selected branch", () => {
+    const request = { route: `${root}/turnos/opcoes`, method: "GET" };
+    expect(policy(request)).toMatchObject({ scope: "workspace", requiredChecks: expect.arrayContaining(["canonical-resource", "current-revision"]) });
+    expect(hasCapabilities(request, operator(["workspace.read", "shift.manage"]))).toBe(true);
+    expect(hasCapabilities(request, operator(["workspace.read"]))).toBe(false);
+    expect(hasCapabilities(request, operator(), "02")).toBe(false);
+    expect(hasCapabilities(request, administrator, "01", "tenant-b")).toBe(false);
+  });
+
+  it("authorizes calendar upgrade only for the administrator of the workspace company", () => {
+    const request = command("UPGRADE_CALENDAR");
+    expect(policy(request)).toMatchObject({ scope: "workspace", requiredChecks: expect.arrayContaining(["canonical-resource", "current-revision"]) });
+    expect(hasCapabilities(request)).toBe(false);
+    expect(hasCapabilities(request, administrator)).toBe(true);
+    expect(hasCapabilities(request, administrator, "01", "tenant-b")).toBe(false);
+  });
+
   it("requires all fixed capabilities for applying a swap and retains conditional diff checks", () => {
     expect(hasCapabilities(shift("PREVIEW_SWAP"), operator(["shift.manage"]))).toBe(true);
     expect(hasCapabilities(shift("APPLY_SWAP"), operator(["shift.manage", "workspace.save"]))).toBe(true);
@@ -181,7 +198,8 @@ describe("closed inventory of the current route files and literal action schemas
   });
 
   it("classifies every literal action of the two discriminated command schemas", () => {
-    const expected = ["CREATE", "CREATE_APPROVED", "APPLY_PROPOSAL", "ADD_EMPLOYEE", "ADMIN_REBASE", "SAVE", "VALIDATE", "GENERATE", "START_GENERATION", "CANCEL_GENERATION", "GENERATION_STATUS", "PUBLISH"].sort();
+    const expected = ["CREATE", "CREATE_APPROVED", "APPLY_PROPOSAL", "ADD_EMPLOYEE", "ADMIN_REBASE", "UPGRADE_CALENDAR",
+      "SAVE", "VALIDATE", "GENERATE", "START_GENERATION", "CANCEL_GENERATION", "GENERATION_STATUS", "PUBLISH"].sort();
     expect(actions(source(""))).toEqual(expected);
     expect(actions(source("turnos"))).toEqual(["APPLY_SWAP", "PREVIEW_SWAP", "SYNC"]);
     for (const action of expected) expect(classifyEscalaRoute(command(action)).kind).toBe("resource");
@@ -194,6 +212,7 @@ describe("closed inventory of the current route files and literal action schemas
       ["access/session", ["GET", "POST", "DELETE"], ["PATCH"]],
       ["import", ["GET", "POST"], ["DELETE"]],
       ["turnos", ["GET", "POST"], ["PATCH", "DELETE"]],
+      ["turnos/opcoes", ["GET"], ["POST", "PATCH", "DELETE"]],
       ["export", ["GET"], ["POST"]],
       ["operational-report", ["GET"], ["POST", "HEAD", "PUT", "PATCH", "DELETE"]],
       ["turnos/export/manifest", ["POST"], ["GET", "PATCH", "DELETE"]],

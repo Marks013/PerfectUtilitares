@@ -74,17 +74,20 @@ describe("branch-scoped display permissions", () => {
     const workspace = plan(), before = JSON.stringify(workspace), onPublish = vi.fn();
     const html = contextMarkup(operator, <Publication workspace={workspace} validation={workspace.validation} dirty={false} busy={false} onPublish={onPublish} />);
     expect(html).toContain("Gerar PDF"); expect(html).toContain("Gerar XLSX");
-    expect(html).not.toContain("Publicar escala conferida"); expect(html).not.toContain("Separar setores");
+    expect(html).not.toContain(">Publicar proposta<"); expect(html).not.toContain("Separar setores");
+    expect(html).not.toContain("Conferi esta revisão da filial");
     expect(onPublish).not.toHaveBeenCalled(); expect(JSON.stringify(workspace)).toBe(before);
     const other = contextMarkup({ ...operator, branches: [] }, <Publication workspace={workspace} validation={workspace.validation} dirty={false} busy={false} onPublish={onPublish} />);
-    expect(other).not.toContain("Gerar PDF"); expect(other).toContain("não está liberada");
+    expect(other).not.toContain("Gerar PDF"); expect(other).not.toContain("Gerar XLSX");
   });
   it("keeps files independently granted and restores publication for an authorized administrator", () => {
     const workspace = plan();
     const pdfOnly: EscalaClientAccess = { ...operator, branches: [{ ...operator.branches[0], capabilities: ["workspace.read", "export.schedule.pdf"] }] };
     const files = contextMarkup(pdfOnly, <Publication workspace={workspace} validation={workspace.validation} dirty={false} busy={false} onPublish={vi.fn()} />);
     expect(files).toContain("Gerar PDF"); expect(files).not.toContain("Gerar XLSX");
-    expect(contextMarkup(administrator, <Publication workspace={workspace} validation={workspace.validation} dirty={false} busy={false} onPublish={vi.fn()} />)).toContain("Publicar escala conferida");
+    const adminFiles = contextMarkup(administrator, <Publication workspace={workspace} validation={workspace.validation} dirty={false} busy={false} onPublish={vi.fn()} />);
+    expect(adminFiles).toContain("Gerar PDF");
+    expect(adminFiles).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
   });
   it("shows task navigation and operational guidance without imports or administrative options", () => {
     const workspace = plan();
@@ -104,7 +107,9 @@ describe("branch-scoped display permissions", () => {
     const workspace = plan(), input = workspace.input, employee = input.employees[0], onSave = vi.fn();
     const editor = contextMarkup(operator, <EmployeeEditor input={input} employee={employee} onSave={onSave} onCancel={vi.fn()} />);
     expect(editor).toContain("Dias de folga preferidos (não obrigatórios)");
-    expect(editor).toMatch(/<fieldset hidden="" disabled=""/);
+    expect(editor).toContain("Nome completo");
+    expect(editor).toContain("A jornada e as regras são definidas pelo administrador");
+    for (const administrativeField of ["Horário de trabalho", "Turnos autorizados", "Histórico anterior e continuidade"]) expect(editor).not.toContain(administrativeField);
     expect(onSave).not.toHaveBeenCalled();
     const day = contextMarkup(operator, <CellEditor input={input} employee={employee} date="2026-12-01" assignment={{ employeeId: employee.id, date: "2026-12-01", kind: "ABSENCE", locked: true }} canUnlock={false} onApply={vi.fn()} onCancel={vi.fn()} />);
     expect(day).toContain("Afastamentos e feriados registrados são preservados");

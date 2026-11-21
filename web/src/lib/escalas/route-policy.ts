@@ -3,13 +3,13 @@ import type { EscalaCapability, EscalaExportProjection } from "./permissions";
 export const ESCALA_POLICY_ROUTES = Object.freeze([
   "/api/escalas", "/api/escalas/access/session", "/api/escalas/import", "/api/escalas/turnos",
   "/api/escalas/export", "/api/escalas/operational-report",
-  "/api/escalas/turnos/export/manifest", "/api/escalas/turnos/export",
+  "/api/escalas/turnos/export/manifest", "/api/escalas/turnos/export", "/api/escalas/turnos/opcoes",
   "/api/escalas/access/admin", "/api/escalas/approved-policy",
 ] as const);
 
 type Scope = "branch-collection" | "workspace" | "approved-configuration" | "operation"
   | "tenant-catalog" | "workspace-selection" | "own-manifest" | "tenant" | "branch-context" | "input-baseline";
-type Check = "current-session" | "active-operator" | "scoped-mode" | "own-session"
+type Check = "administrator" | "current-session" | "active-operator" | "scoped-mode" | "own-session"
   | "filtered-branches" | "canonical-resource" | "current-revision" | "approved-period-policy"
   | "protected-input-diff" | "diff-capabilities" | "canonical-input-baseline" | "owned-operation"
   | "optional-owned-operation" | "authorization-recheck" | "shift-policy-and-locks"
@@ -49,6 +49,8 @@ const workspaceCommands = new Map<string, EscalaResourcePolicy>([
     ["canonical-resource", "current-revision", "approved-period-policy", "authorization-recheck"])],
   ["ADMIN_REBASE", resource("workspace.admin-rebase", ["settings.manage", "workspace.save"], "workspace",
     ["canonical-resource", "current-revision", "approved-period-policy", "authorization-recheck"])],
+  ["UPGRADE_CALENDAR", resource("workspace.upgrade-calendar", ["workspace.read", "workspace.save", "workspace.create", "settings.manage"], "workspace",
+    ["administrator", "canonical-resource", "current-revision", "authorization-recheck"])],
   ["SAVE", resource("workspace.save", ["workspace.save"], "workspace",
     ["canonical-resource", "current-revision", "protected-input-diff", "diff-capabilities", "shift-policy-and-locks"])],
   // Baseline may be a persisted workspace/revision or an approved configuration for an unsaved draft.
@@ -77,6 +79,7 @@ const shiftCommands = new Map<string, EscalaResourcePolicy>([
 const selectors = ["action", "purpose", "format", "projection", "workspaceId"] as const;
 function expectedSelectors(request: EscalaRouteRequest): readonly typeof selectors[number][] {
   if (request.route === "/api/escalas") return request.method === "POST" ? ["action"] : request.method === "GET" ? ["workspaceId"] : [];
+  if (request.route === "/api/escalas/turnos/opcoes" && request.method === "GET") return ["workspaceId"];
   if (request.route === "/api/escalas/turnos" && request.method === "POST") return ["action"];
   if (["/api/escalas/access/admin", "/api/escalas/approved-policy"].includes(request.route) && request.method === "POST") return ["action"];
   if (request.route === "/api/escalas/import" && request.method === "POST") return ["purpose"];
@@ -133,6 +136,10 @@ export function classifyEscalaRoute(request: EscalaRouteRequest): EscalaRoutePol
       ? resource("import.employees", ["import.manage"], "tenant", ["upload-boundary"])
       : resource("import.absences", ["import.manage"], "branch-context", ["canonical-input-baseline", "upload-boundary"]);
   }
+  if (request.route === "/api/escalas/turnos/opcoes") return request.method === "GET"
+    ? resource("shift.catalog-options", ["workspace.read", "shift.manage"], "workspace",
+      ["canonical-resource", "current-revision", "approved-period-policy", "authorization-recheck"])
+    : denied("UNKNOWN_METHOD");
   if (request.route === "/api/escalas/turnos") {
     if (request.method === "GET") return resource("catalog.read", ["workspace.read"], "tenant-catalog", ["filtered-branches"]);
     if (request.method === "POST") return typeof request.action === "string"

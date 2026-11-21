@@ -1,4 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderAsAdministrator } from "./access-test-support";
+import { EscalaAccessProvider } from "./access-context";
 import { describe, expect, it, vi } from "vitest";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { Publication } from "./publication";
@@ -22,12 +24,15 @@ function fixture(): EscalaWorkspace {
 }
 
 function render(options: { workspace?: EscalaWorkspace; dirty?: boolean; busy?: boolean; outdated?: boolean;
-  candidatePending?: boolean; canUseCandidate?: boolean } = {}) {
+  candidatePending?: boolean; canUseCandidate?: boolean; anonymous?: boolean } = {}) {
   const workspace = options.workspace ?? fixture();
-  return renderToStaticMarkup(<Publication workspace={workspace} validation={workspace.validation}
+  const publication = <Publication workspace={workspace} validation={workspace.validation}
     dirty={options.dirty ?? false} busy={options.busy ?? false} outdated={options.outdated ?? false}
     onPublish={vi.fn()} candidatePending={options.candidatePending}
-    canUseCandidate={options.canUseCandidate} onUseCandidate={vi.fn()} />);
+    canUseCandidate={options.canUseCandidate} onUseCandidate={vi.fn()} />;
+  return options.anonymous
+    ? renderToStaticMarkup(<EscalaAccessProvider value={null}>{publication}</EscalaAccessProvider>)
+    : renderAsAdministrator(publication);
 }
 
 function approval(html: string) {
@@ -48,8 +53,16 @@ describe("internal publication UI preserves permissions and explicit review", ()
     const workspace = fixture();
     workspace.canPublish = false;
     const area = approval(render({ workspace }));
-    expect(area).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""/);
-    expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
+    expect(area).not.toContain('type="checkbox"');
+    expect(area).not.toContain(">Publicar proposta<");
+    expect(area).toContain("não aprovar a publicação");
+  });
+
+  it("does not infer authority from a saved workspace when the access context is absent", () => {
+    const html = render({ anonymous: true });
+    expect(approval(html)).not.toContain(">Publicar proposta<");
+    expect(html).not.toContain(">Gerar PDF<");
+    expect(html).not.toContain(">Gerar XLSX<");
   });
 
   it.each([
@@ -71,8 +84,10 @@ describe("internal publication UI preserves permissions and explicit review", ()
   it("explains a pending candidate is not the saved roster being exported", () => {
     const html = render({ candidatePending: true, canUseCandidate: false });
     expect(html).toContain("Há uma proposta candidata ainda não aplicada");
-    expect(html).toContain("PDF e XLSX abaixo usam a grade atual");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Usar proposta na grade<\/button>/);
+    expect(html).toContain("PDF e XLSX usam a revisão salva da grade atual");
+    expect(html).not.toContain(">Usar proposta na grade<");
+    expect(html).toContain("aguarde a atualização da grade por uma pessoa autorizada");
+    expect(render({ candidatePending: true, canUseCandidate: true })).toContain(">Usar proposta na grade<");
   });
 
   it("does not present HOURS_ONLY references as a publishable daily roster", () => {

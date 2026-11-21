@@ -15,12 +15,15 @@ import {
   pdfWorkerPreflightArguments, unlinkPdfWorkerHeartbeat,
 } from "./e2e-pdf-runtime.mjs";
 
+import { releaseTestDatabase, releaseTestDatabaseUrl, releaseTestPostgresId } from "./release-test-postgres.mjs";
+
 const { Client } = pg;
 const cwd = process.cwd();
 const suiteArguments = parseSuiteArguments(process.argv.slice(2));
 const productionBuild = process.env.E2E_PRODUCTION === "1";
-dotenv.config({ path: path.join(cwd, ".env"), quiet: true });
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
+const releasePg = releaseTestPostgresId();
+if (!releasePg) dotenv.config({ path: path.join(cwd, ".env"), quiet: true });
+if (!releasePg && !process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
 const pdfWorkerImage = process.env.E2E_PDF_WORKER_IMAGE?.trim();
 const sourceRevision = pdfWorkerImage
   ? process.env.SOURCE_REVISION || capture("git", ["rev-parse", "HEAD"]) : undefined;
@@ -35,6 +38,7 @@ function capture(command, args, env = process.env) {
 }
 
 function databaseHost() {
+  if (releasePg) return releaseTestDatabase();
   // No GitHub Actions o PostgreSQL é um service container, não um serviço
   // iniciado pelo Docker Compose deste projeto. Nesse ambiente a conexão
   // oficial já é fornecida por DATABASE_URL.
@@ -83,6 +87,7 @@ function databaseHost() {
 }
 
 function databaseUrl(name, database) {
+  if (releasePg) return releaseTestDatabaseUrl(database, name);
   const url = new URL(process.env.DATABASE_URL);
   url.hostname = database.address;
   url.username = database.username;

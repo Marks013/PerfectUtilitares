@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderAsAdministrator } from "./access-test-support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HoursProposal, hoursArePrepared, hoursProposalGroups, prepareHoursProposal } from "./hours-proposal";
 import { groupValidationIssues } from "./validation-guidance";
@@ -85,10 +86,14 @@ describe("explicit branch hours selection before mass days off", () => {
 
   it("renders an explicit preview selection without silently applying schedule changes", () => {
     const input = reference();
-    const html = renderToStaticMarkup(<HoursProposal input={input} disabled={false} onChange={vi.fn()} />);
+    const onChange = vi.fn();
+    const proposal = <HoursProposal input={input} disabled={false} onChange={onChange} />;
+    expect(renderToStaticMarkup(proposal)).toBe("");
+    const html = renderAsAdministrator(proposal);
     expect(html).toContain("Ajustar horários no rascunho");
     expect(html).toContain("Manter entrada e intervalo, ajustar a saída");
     expect(html).not.toContain("Escolher estes horários e continuar");
+    expect(onChange).not.toHaveBeenCalled();
     expect(input.employees[0].shiftIds).toEqual(["source"]);
   });
 

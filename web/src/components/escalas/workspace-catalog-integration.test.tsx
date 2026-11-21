@@ -60,7 +60,7 @@ describe("workspace catalog entry", () => {
     expect(catalogCount(html)).toBe(0);
     expect(html).not.toContain("Criar ou alterar definições de turnos");
     expect(html).toContain("Pessoa sintética");
-    expect(html).toContain("Trocar horário");
+    expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>Trocar turno<span[^>]*> de Pessoa sintética<\/span>/);
   });
   it("fails closed for missing context and an account that has only scoped grants", () => {
     mocked.model.mockReturnValue(state(plan()));

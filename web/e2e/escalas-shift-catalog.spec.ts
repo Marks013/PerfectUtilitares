@@ -137,7 +137,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     await expect(teamToggle).toBeVisible();
     await teamToggle.click();
     await expect(team).toHaveAttribute("open", "");
-    await team.getByRole("button", { name: "Trocar horário de Pessoa de teste", exact: true }).click();
+    await team.getByRole("button", { name: "Trocar turno de Pessoa de teste", exact: true }).click();
     const swap = page.getByRole("region", { name: "Atribuir turno cadastrado a Pessoa de teste", exact: true });
     async function chooseAndPreview(code: number, partial = false) {
       if (partial) { await swap.getByLabel("Aplicar a partir de", { exact: true }).fill("2026-12-10"); await swap.getByLabel("Aplicar até", { exact: true }).fill("2026-12-20"); }
@@ -172,8 +172,8 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     const lines = await expectTxt(page, exportPanel, manualResult, "TXT1");
     expect(lines.find(line => line[0] === "0001")?.slice(1)).toEqual(["09:19", "13:19", "14:19", "18:43"]);
     expect(lines.find(line => line[0] === "0002")?.slice(1)).toEqual(["07:17", "11:17", "12:17", "16:41"]);
-    await expect(team.getByRole("button", { name: "Trocar horário de Pessoa de teste", exact: true })).toBeEnabled();
-    await team.getByRole("button", { name: "Trocar horário de Pessoa de teste", exact: true }).click();
+    await expect(team.getByRole("button", { name: "Trocar turno de Pessoa de teste", exact: true })).toBeEnabled();
+    await team.getByRole("button", { name: "Trocar turno de Pessoa de teste", exact: true }).click();
     await chooseAndPreview(firstCode);
     const saved = await page.request.post("/api/escalas", { headers, data: { action: "SAVE", id: workspace.id, expectedRevision: afterSwap.revision, input: { ...afterSwap.input, branchName: "Catálogo sintético atualizado" } } });
     expect(saved.status()).toBe(200);
@@ -252,7 +252,7 @@ test("global initial catalog is atomic and stale pagination cannot pollute a new
     await expect(teamToggle).toBeVisible();
     await teamToggle.click();
     await expect(team).toHaveAttribute("open", "");
-    await team.getByRole("button", { name: "Trocar horário de Pessoa 0", exact: true }).click();
+    await team.getByRole("button", { name: "Trocar turno de Pessoa 0", exact: true }).click();
     const swap = page.getByRole("region", { name: "Atribuir turno cadastrado a Pessoa 0", exact: true });
     await expect(swap.getByRole("button", { name: "Carregar mais turnos permitidos" })).toBeVisible();
     let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });

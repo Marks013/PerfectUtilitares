@@ -60,7 +60,7 @@ describe("hours-only scope and relevant controls", () => {
     expect(html).toContain('<option value="hours" selected="">Referências de horários</option>');
     expect(html).not.toContain('value="rest"'); expect(html).not.toContain('value="both"');
     expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>Gerar PDF<\/button>/);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar escala conferida<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
     expect(html).toContain("Não representa presença diária nem cobertura garantida");
   });
   it("does not call zero clocks an exportable hourly reference", () => {

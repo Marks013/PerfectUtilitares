@@ -27,7 +27,7 @@ vi.mock("@/components/theme-toggle", () => ({
   ThemeToggle: () => <button type="button">Tema</button>,
 }));
 
-vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: state.module }));
+vi.mock("@/lib/escalas/operator-session-store", () => ({ getEscalaScopedModuleSession: state.module }));
 vi.mock("next/navigation", () => ({ usePathname: () => state.pathname }));
 import { AppShell } from "./app-shell";
 
@@ -95,15 +95,20 @@ describe("AppShell Jornada navigation", () => {
 
 describe("Escalas canonical navigation and operational access", () => {
   beforeEach(() => { state.session = null; state.module.mockReset().mockResolvedValue(null); state.pathname = "/escala"; });
-  it("shows only the module link for a verified shared session, without account or administrative privileges", async () => {
-    state.module.mockResolvedValue({ id: "verified", tenantId: "default-private-tenant" });
+  const nominalSession = {
+    kind: "resolved", sessionId: "verified", expiresAtMs: Date.parse("2099-01-01T00:00:00Z"), permissionVersion: 1, accessPolicyVersion: 1,
+    principal: { kind: "operator", id: "synthetic-operator", tenantId: "default-private-tenant", active: true,
+      branchGrants: [{ tenantId: "default-private-tenant", operatorId: "synthetic-operator", branchCode: "02", active: true, capabilities: ["workspace.read"] }] },
+  };
+  it("shows only the module link for a verified nominal session, without account or administrative privileges", async () => {
+    state.module.mockResolvedValue(nominalSession);
     const html = await renderShell();
     expect(html).toMatch(/<a(?=[^>]*href="\/escala")(?=[^>]*aria-current="page")[^>]*>/);
     expect(html).not.toContain('href="/conta"'); expect(html).not.toContain('href="/admin/'); expect(html).not.toContain("default-private-tenant");
   });
-  it.each([{ status: "BLOCKED" as const, tenantId: "tenant-test" }, { status: "ACTIVE" as const, tenantId: undefined }])("does not fall back to shared access for a denied account: %j", value => {
+  it.each([{ status: "BLOCKED" as const, tenantId: "tenant-test" }, { status: "ACTIVE" as const, tenantId: undefined }])("does not fall back to nominal access for a denied account: %j", value => {
     state.session = { user: { id: "u1", name: "Conta", email: "user@example.test", role: "USER", ...value } };
-    state.module.mockResolvedValue({ id: "verified", tenantId: "default-private-tenant" });
+    state.module.mockResolvedValue(nominalSession);
     return renderShell().then(html => { expect(html).not.toContain('href="/escala"'); expect(state.module).not.toHaveBeenCalled(); });
   });
   it("keeps public navigation available without exposing the protected module on a session-store failure", async () => {

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { releaseTestDatabase, releaseTestDatabaseUrl, releaseTestPostgresId } from "./release-test-postgres.mjs";
 
 const steps = ["quality:code", "test:e2e:isolated"];
 const codeChecks = ["prisma:validate", "typecheck", "lint", "test:ops", "test:coverage", "quality:dead-code", "quality:module-size", "quality:route-tests"];
@@ -67,8 +68,10 @@ export function qualityProfile(env = process.env, args = []) {
       || /^(E2E_PRODUCTION|E2E_STANDALONE_DIR|E2E_EXTERNAL_URL)$/i.test(key);
   });
   if (forbidden.length) throw new Error(`Perfil de quality limitado ou externo: ${forbidden.sort().join(", ")}`);
+  const releasePg = releaseTestPostgresId(env);
   return {
     mode: "complete-isolated-development-v1",
+    ...(releasePg ? { isolatedPostgres: digest(releasePg) } : {}),
     privateCsv: Boolean(env.E2E_REAL_CSV_PATH), privateAbsences: Boolean(env.E2E_REAL_ABSENCES_PATH),
     privatePdf: Boolean(env.PDF_REGRESSION_SOURCE), emptyCatalog: env.E2E_EMPTY_TURNO_CATALOG === "1",
     ci: Boolean(env.CI), events: env.EVENTS_ENABLED === "true",
@@ -112,7 +115,9 @@ export function sourceSnapshot(cwd = process.cwd(), env = process.env, run = exe
   const profile = qualityProfile(env);
   const npm = run("npm", ["--version"], { cwd, env, capture: true });
   const installedLock = path.join(cwd, "node_modules", ".package-lock.json");
-  return { contentHash: hash.digest("hex"), fileCount: count,
+  const revision = profile.isolatedPostgres ? run("git", ["rev-parse", "HEAD"], { cwd: root, env, capture: true }) : undefined;
+  if (profile.isolatedPostgres && !/^[a-f0-9]{40}$/.test(revision ?? "")) throw new Error("Release commit could not be verified.");
+  return { contentHash: hash.digest("hex"), fileCount: count, ...(revision ? { revision } : {}),
     runtimeHash: digest(JSON.stringify({ node: process.versions, platform: process.platform, arch: process.arch, npm,
       installedLock: existsSync(installedLock) ? digest(readFileSync(installedLock)) : null, profile })), profile };
 }
@@ -137,10 +142,14 @@ export function runReleaseQuality({ cwd = process.cwd(), env = process.env, run 
   const file = receiptPath(cwd, env, run);
   rmSync(file, { force: true }); // A failed or filtered rerun never leaves an old approval.
   qualityProfile(env, args);
+  const selected = releaseTestPostgresId(env);
+  const checkEnv = selected
+    ? { ...env, DATABASE_URL: releaseTestDatabaseUrl(releaseTestDatabase(env)).toString() }
+    : env;
   const before = sourceSnapshot(cwd, env, run);
   const completed = [];
   for (const name of steps) {
-    run("npm", ["run", name], { cwd, env });
+    run("npm", ["run", name], { cwd, env: checkEnv });
     completed.push({ name, exit: 0 });
   }
   const after = sourceSnapshot(cwd, env, run);

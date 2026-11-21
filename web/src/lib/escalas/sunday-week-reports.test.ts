@@ -94,7 +94,7 @@ describe("Sunday planning calendar in the generated files", () => {
       const bytes = await exportOperationalReportPdf(model);
       expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
       expect(drawn.join(" ")).toContain("Semana: domingo a sábado");
-      expect(drawn.filter(line => line.startsWith("Semanas civis:")).join(" ")).toContain("29/11, 06/12, 13/12, 20/12, 27/12");
+      expect(drawn.filter(line => line.startsWith("Semanas iniciadas em ")).join(" ")).toContain("29/11, 06/12, 13/12, 20/12, 27/12");
       expect(await pdfText(bytes)).toContain("Pessoa sintética");
     } finally { spy.mockRestore(); }
   });

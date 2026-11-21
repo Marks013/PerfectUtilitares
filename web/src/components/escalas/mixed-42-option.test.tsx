@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderAsAdministrator } from "./access-test-support";
 import { describe, expect, it, vi } from "vitest";
 import { HoursProposal } from "./hours-proposal";
 import { Mixed42Option } from "./mixed-42-option";
@@ -64,7 +65,7 @@ describe("mixed 42-hour sector choice", () => {
 
   it("keeps the uniform manual action available only when the mixed option is inactive", () => {
     const input = fixture();
-    const render = (current: typeof input) => renderToStaticMarkup(<HoursProposal input={current} disabled={false} onChange={vi.fn()} />);
+    const render = (current: typeof input) => renderAsAdministrator(<HoursProposal input={current} disabled={false} onChange={vi.fn()} />);
     expect(render(input)).toContain("Ajustar horários no rascunho");
     const mixed = render(changeMixed42Sectors(input, ["FRENTE DE CAIXA"]));
     expect(mixed).toContain("use Gerar escala e horários");

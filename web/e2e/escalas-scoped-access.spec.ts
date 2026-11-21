@@ -35,7 +35,7 @@ async function editName(page: Page, previous: string, next: string) {
   await revealEscalasControl(edit); await edit.click();
   const form = page.getByRole("form", { name: "Editar colaborador", exact: true });
   await form.getByLabel("Nome completo", { exact: true }).fill(next);
-  await form.getByRole("button", { name: "Confirmar dados do colaborador", exact: true }).click();
+  await form.getByRole("button", { name: "Aplicar cadastro à proposta", exact: true }).click();
 }
 
 test("nominal access owns its scope, preserves admin configuration, operates the roster and revokes stale contexts and downloads", async ({ browser, page }) => {
@@ -114,12 +114,14 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect((await page.request.get(`/api/escalas?id=${adminOnlyWorkspace.id}`)).status()).toBe(403);
     expect((await post({ action: "GENERATE", id: adminOnlyWorkspace.id, expectedRevision: adminOnlyWorkspace.revision })).status()).toBe(403);
     await openEscalasArea(page, "generate");
-    await expect(page.getByLabel("Jornada semanal", { exact: true })).toHaveCount(0);
+    const weeklyHours = page.getByLabel("Jornada semanal", { exact: true });
+    await expect(weeklyHours).toHaveValue("40");
+    await expect(weeklyHours).toBeDisabled();
     await expect(page.getByText(/^Alternar dias de 8h e 9h/)).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Relatórios e gráficos PDF", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Relatórios e gráficos PDF", exact: true, includeHidden: true })).toHaveCount(0);
     await expect(page.getByText("Turnos e arquivos de integração", { exact: true })).toHaveCount(0);
     await openEscalasArea(page, "team");
-    await expect(page.getByText("Importar e substituir equipe", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Importar ou atualizar arquivos da equipe", { exact: true })).toHaveCount(0);
 
     // Administrative definitions are denied by real routes, with a valid input/revision baseline.
     const alterations: EscalaInput[] = [
@@ -149,7 +151,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     const synced = await scope.admin.request.post("/api/escalas/turnos", { headers, data: { action: "SYNC", confirm: true, sources: [{ workspaceId: workspace.id, expectedRevision: workspace.revision, localShiftIds: ["day"] }] } });
     expect(synced.status()).toBe(201); const catalog = await synced.json() as TurnoCatalogSyncResult;
     expect(catalog.entries).toHaveLength(1); expect(catalog.entries[0].code).toBeGreaterThanOrEqual(1500);
-    const swapButton = page.getByRole("button", { name: "Trocar horário de Pessoa nominal", exact: true, includeHidden: true });
+    const swapButton = page.getByRole("button", { name: "Trocar turno de Pessoa nominal", exact: true, includeHidden: true });
     await revealEscalasControl(swapButton); await swapButton.click();
     const swap = page.getByRole("region", { name: "Atribuir turno cadastrado a Pessoa nominal", exact: true });
     await swap.getByRole("radio", { name: new RegExp(`^${catalog.entries[0].code} ·`) }).check();
@@ -182,7 +184,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
       const generating = page.waitForResponse(response => response.request().method() === "POST"
         && new URL(response.url()).pathname === "/api/escalas" && response.request().postDataJSON()?.action === "GENERATE"
         && response.request().postDataJSON()?.id === workspace.id, { timeout: 60_000 });
-      await page.getByRole("button", { name: calculation === 0 ? "Gerar escala e horários" : "Gerar nova proposta", exact: true }).click();
+      await page.getByRole("button", { name: "Gerar nova proposta", exact: true }).click();
       const response = await generating; expect(response.status()).toBe(200); const proposal = await response.json();
       expect(["FEASIBLE", "OPTIMAL"]).toContain(proposal.result.status); expect(proposal.validation.valid).toBe(true); expect(proposal.proposalProof).toBeTruthy();
       expect(proposal.proposalInput.assignments).toEqual(expect.arrayContaining(input.assignments));
@@ -200,9 +202,9 @@ test("nominal access owns its scope, preserves admin configuration, operates the
         await openEscalasArea(page, "roster");
         await page.getByRole("button", { name: new RegExp(`^Pessoa autorizada, ${editable.date.split("-").reverse().join("/")}:`) }).click();
         const editor = page.locator("#escala-day-editor");
-        await expect(editor.getByRole("checkbox", { name: "Manter este dia nas próximas gerações", exact: true })).toHaveCount(0);
+        await expect(editor.getByRole("checkbox", { name: "Preservar esta decisão nas próximas gerações", exact: true, includeHidden: true })).toHaveCount(0);
         await editor.getByLabel("Situação do dia", { exact: true }).selectOption("OFF");
-        await editor.getByRole("button", { name: "Ver efeito da alteração", exact: true }).click();
+        await editor.getByRole("button", { name: "Conferir alteração", exact: true }).click();
         const saving = page.waitForResponse(response => response.request().method() === "POST"
           && new URL(response.url()).pathname === "/api/escalas" && response.request().postDataJSON()?.action === "SAVE"
           && response.request().postDataJSON()?.id === workspace.id);

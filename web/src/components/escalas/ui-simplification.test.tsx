@@ -39,7 +39,7 @@ describe("guided draft defaults", () => {
   it("always offers the optional short-meal simulation without requiring a pre-existing short shift", () => {
     const input = newInput("02", "Centro", "2026-11", 42);
     const html = renderToStaticMarkup(<ShortMealSimulation input={input} onChange={vi.fn()} />);
-    expect(html).toContain("Simular jornada acima de 4h e até 6h sem pausa de 15 min");
+    expect(html).toContain("Simular jornada de mais de 4h até 6h sem pausa de 15 minutos");
     expect(html).toContain("escala-short-meal");
     expect(html).toContain("Não autoriza dispensar pausas no trabalho real");
     expect(html).not.toContain('checked=""');
