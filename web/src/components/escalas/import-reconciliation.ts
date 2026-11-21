@@ -13,15 +13,16 @@ function clocks(person: EscalaEmployee, shifts: EscalaShift[]) {
 
 /** A preview never mutates the proposal, and ambiguous historical registrations are not matched by name. */
 export function previewImportReconciliation(input: EscalaInput, employees: EscalaEmployee[], shifts: EscalaShift[]): ReconciliationEntry[] {
-  const incomingRegistrations = new Set<string>();
+  // Classify every occurrence of an incoming duplicate, including the first one:
+  // reconcileImport already rejects the entire batch, so the preview must not suggest it is safe.
+  const incomingCounts = new Map<string, number>();
+  for (const person of employees) incomingCounts.set(person.registration, (incomingCounts.get(person.registration) ?? 0) + 1);
   return employees.map(employee => {
     const matches = input.employees.filter(current => current.registration === employee.registration);
-    if (incomingRegistrations.has(employee.registration) || matches.length > 1) {
-      incomingRegistrations.add(employee.registration);
+    if ((incomingCounts.get(employee.registration) ?? 0) > 1 || matches.length > 1) {
       return { employee, status: "CONFLICT", changes: [], scheduleChanged: false, scheduleBlocked: true,
         message: "Matrícula repetida ou com mais de um vínculo. Confira os registros; nenhum vínculo será unido automaticamente." };
     }
-    incomingRegistrations.add(employee.registration);
     const current = matches[0];
     if (!current) return { employee, status: "NEW", changes: [], scheduleChanged: false, scheduleBlocked: false };
     const changes = ([ ["name", "nome"], ["sector", "setor"], ["role", "cargo"] ] as const)
