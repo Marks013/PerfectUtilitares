@@ -46,6 +46,37 @@ function legacyContinuousReference(hours: 40 | 42, blocks: boolean): EscalaInput
 }
 
 describe("legacy automatic meal repair and excluded-record retention", () => {
+  it("excludes the administrative sector without altering its staffing records or operational minimum", () => {
+    const value = input(); value.storeClosingMinutes = 1200;
+    value.employees[0].role = "AFASTADOS"; // A role label never classifies an employee.
+    const admin = { ...structuredClone(value.employees[0]), id: "admin", registration: "admin", sector: "  afástados  ",
+      shiftIds: ["after-close"], planningEnabled: true };
+    value.employees.push(admin);
+    value.shifts.push({ id: "after-close", name: "Referência administrativa", segments: [{ start: 1170, end: 1290, kind: "WORK" }] });
+    value.demands = [
+      { id: "real", date: value.startDate, sector: "Setor", start: 480, end: 600, minimum: 1 },
+      { id: "admin", date: value.startDate, sector: "AFASTADOS", start: 480, end: 600, minimum: 10 },
+    ];
+    value.movementPriorities = [
+      { startDate: value.startDate, endDate: value.startDate, sector: "AFASTADOS", level: "HIGH" },
+      { startDate: value.startDate, endDate: value.startDate, sector: "Setor", level: "HIGH" },
+    ];
+    value.assignments = [
+      { employeeId: "admin", date: value.startDate, kind: "WORK", shiftId: "after-close", locked: true },
+      { employeeId: "admin", date: addDays(value.startDate, 1), kind: "ABSENCE" },
+      { employeeId: "admin", date: addDays(value.startDate, 2), kind: "WORK", shiftId: "after-close" },
+    ];
+    const original = structuredClone(value), { input: prepared, preparation } = prepareGeneration(value);
+    expect(preparation.includedEmployees).toBe(1);
+    expect(prepared.employees[1]).toEqual(admin);
+    expect(prepared.assignments).toEqual(original.assignments);
+    expect(prepared.demands.filter(d => !d.estimated)).toEqual([original.demands[0]]);
+    expect(prepared.demands.every(d => d.sector === "Setor")).toBe(true);
+    expect(prepared.movementPriorities).toEqual([original.movementPriorities?.[1]]);
+    expect(validateEscala(prepared).issues.every(issue => issue.employeeId !== admin.id)).toBe(true);
+    expect(value).toEqual(original);
+  });
+
   it.each([
     ["flex", 450, 750, 930, 1134],
     ["prep", 561, 771, 906, 1200],

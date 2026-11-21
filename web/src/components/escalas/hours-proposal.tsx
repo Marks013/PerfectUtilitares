@@ -1,5 +1,6 @@
 "use client";
 
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { useState } from "react";
 import styles from "./escalas.module.css";
 import { effectiveWeeklyMinutes } from "@/lib/escalas/labor-rules";
@@ -35,7 +36,7 @@ function shiftText(shift: EscalaShift) {
 export function hoursArePrepared(input: EscalaInput) {
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const weeks = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
-  return input.employees.filter((person) => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")
+  return input.employees.filter((person) => isEscalaPlanningParticipant(person) && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")
     .every((person) => weeks.every((start) => {
       const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
       const target = effectiveWeeklyMinutes({ ...person, ...reference }, start, input) / 5;
@@ -55,6 +56,7 @@ export function hoursProposalGroups(input: EscalaInput, proposed: EscalaInput) {
   const afterShifts = new Map(proposed.shifts.map((shift) => [shift.id, shift]));
   const groups = new Map<string, { sector: string; role: string; original: string; proposal: string[]; people: string[] }>();
   for (const person of sortEmployees(proposed.employees)) {
+    if (isAdministrativeEscalaSector(person.sector)) continue;
     const previous = before.get(person.id);
     const original = person.sourceSchedule?.weekday || previous?.shiftIds.map((id) => {
       const shift = beforeShifts.get(id);
@@ -82,7 +84,7 @@ export function HoursProposal({ input, disabled, onChange }: { input: EscalaInpu
   const [notice, setNotice] = useState("");
   const groups = hoursProposalGroups(input, input);
   const mixed = input.defaultWeeklyHours === 42 && Boolean(input.mixed42Sectors?.length);
-  const timed = input.employees.some(person => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING");
+  const timed = input.employees.some(person => isEscalaPlanningParticipant(person) && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING");
   function apply(strategy: Anchor) {
     setError(""); setNotice("");
     try {

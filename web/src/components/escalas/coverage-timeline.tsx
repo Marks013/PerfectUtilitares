@@ -1,5 +1,6 @@
 "use client";
 
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
 import { compareSectors } from "@/lib/escalas/order";
@@ -12,7 +13,7 @@ import type { EscalaRecoveryRequest } from "./recovery-navigation";
 
 export function CoverageTimeline({ input, review }: { input: EscalaInput; review?: EscalaRecoveryRequest }) {
   const dates = useMemo(() => visibleDates(input), [input]);
-  const sectors = useMemo(() => [...new Set(input.employees.filter(person => person.planningEnabled !== false).map(person => person.sector).filter(Boolean))].sort(compareSectors), [input]);
+  const sectors = useMemo(() => [...new Set(input.employees.filter(isEscalaPlanningParticipant).map(person => person.sector).filter(Boolean))].sort(compareSectors), [input]);
   const [selectedDate, setSelectedDate] = useState(""), [selectedSector, setSelectedSector] = useState(""), [selectedStart, setSelectedStart] = useState<number | null>(null);
   const reviewedRequest = useRef(0);
   useEffect(() => {

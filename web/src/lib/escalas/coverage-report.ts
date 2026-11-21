@@ -1,5 +1,5 @@
 import { analyzeCoverage } from "./coverage-analysis";
-import { applyRestEligibility } from "./eligibility";
+import { applyRestEligibility, isEscalaPlanningParticipant, operationalEscalaInput } from "./eligibility";
 import { analyzeOperational } from "./operational-analysis";
 import { storeClosingMinutes } from "./store-hours";
 import type { CoverageReport, CoverageReportOptions } from "./coverage-report-contracts";
@@ -16,7 +16,7 @@ function supplyAt(reference: EscalaInput, candidate: EscalaInput, sector: string
   const possible = new Map<string, number>(); let total = 0, unknown = false;
   for (const raw of reference.employees) {
     const person = applyRestEligibility(raw);
-    if (person.sector !== sector || person.planningEnabled === false || person.activeFrom > peak.date || person.activeUntil && person.activeUntil < peak.date
+    if (person.sector !== sector || !isEscalaPlanningParticipant(person) || person.activeFrom > peak.date || person.activeUntil && person.activeUntil < peak.date
       || person.scheduleMode === "UNTIMED") continue;
     if (person.scheduleMode === "MISSING") { unknown = true; continue; }
     const record = dayRecords.get(person.id);
@@ -42,7 +42,7 @@ export function buildCoverageReport(reference: EscalaInput, candidate: EscalaInp
   const { context, ...analysisOptions } = options;
   const analysis = analyzeCoverage(reference, candidate, { ...analysisOptions, details: true });
   const peakDates = [...new Set(analysis.sectors.flatMap(sector => [sector.confirmed?.peakWindow?.date, sector.estimated?.peakWindow?.date].filter((date): date is string => !!date)))];
-  const operations = peakDates.length ? analyzeOperational(candidate, { dates: peakDates, details: true }) : null;
+  const operations = peakDates.length ? analyzeOperational(operationalEscalaInput(candidate), { dates: peakDates, details: true }) : null;
   const report: CoverageReport = { status: analysis.status,
     context: { branchCode: candidate.branchCode, visibleMonth: candidate.visibleMonth ?? null, revision: context?.revision ?? null,
       runtime: context?.runtime ?? null, kind: context?.kind ?? "UNKNOWN", restRulesVersion: candidate.restRulesVersion ?? 1,

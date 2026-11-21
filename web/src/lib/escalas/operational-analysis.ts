@@ -1,6 +1,6 @@
 import { buildCoveragePresence, coverageAt, type CoveragePresence } from "./coverage-presence";
 import { addDays, visibleDates } from "./dates";
-import { applyRestEligibility } from "./eligibility";
+import { applyRestEligibility, operationalEscalaInput } from "./eligibility";
 import { isHoursReferenceOnly } from "./hours-reference";
 import { compareSectors } from "./order";
 import type { OperationalAnalysis, OperationalAnalysisOptions, OperationalCounts, OperationalDay, OperationalWindow } from "./coverage-report-contracts";
@@ -15,7 +15,8 @@ const emptyCounts = (): OperationalCounts => ({ workTimed: 0, workWithoutClock: 
   holiday: 0, excluded: 0, unassigned: 0, unknownClock: 0, presentTimed: 0, pause: 0, workOutsideWindow: 0 });
 
 /** A view of existing assignments and canonical attendance indexes, never a generator or demand model. */
-export function analyzeOperational(raw: EscalaInput, options: OperationalAnalysisOptions = {}): OperationalAnalysis {
+export function analyzeOperational(source: EscalaInput, options: OperationalAnalysisOptions = {}): OperationalAnalysis {
+  const raw = operationalEscalaInput(source);
   const visible = new Set(visibleDates(raw)), requested = [...new Set(options.dates ?? [...visible])].sort();
   const dates = requested.filter(date => visible.has(date)), omittedDates = requested.filter(date => !visible.has(date));
   const people = [...new Map(raw.employees.map(person => [person.id, applyRestEligibility(person)])).values()];

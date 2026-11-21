@@ -1,5 +1,6 @@
 "use client";
 
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import { dayOfWeek, visibleDates } from "@/lib/escalas/dates";
@@ -56,7 +57,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   const displayedHours = hoursEmployees.slice(currentPage * 20, currentPage * 20 + 20);
   const reviewedRequest = useRef(0);
   useEffect(() => {
-    if (!active || !review?.employeeId || !review.date || reviewedRequest.current === review.request || !input.employees.some(person => person.id === review.employeeId && person.planningEnabled !== false)) return;
+    if (!active || !review?.employeeId || !review.date || reviewedRequest.current === review.request || !input.employees.some(person => person.id === review.employeeId && isEscalaPlanningParticipant(person))) return;
     if (review.date < input.startDate || review.date > input.endDate) return;
     reviewedRequest.current = review.request;
     setFilter("");
@@ -66,7 +67,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   }, [review, input.employees, input.startDate, input.endDate, active]);
   const selectedEmployee = selected ? input.employees.find((person) => person.id === selected.employeeId) : undefined;
   const canUndo = useMemo(() => Boolean(undo && isCurrentRosterChange(undo.applied, input)), [undo, input]);
-  const missingCoverage = !input.demands.some((demand) => dates.includes(demand.date) && (!sector || demand.sector === sector));
+  const missingCoverage = !input.demands.some((demand) => !isAdministrativeEscalaSector(demand.sector) && dates.includes(demand.date) && (!sector || demand.sector === sector));
   function apply(next: EscalaInput) {
     setUndo({ previous: input, applied: next });
     onChange(next);
@@ -91,7 +92,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
       </select>}</Field>
       <Field label="Filtrar setor">{(id) => <select id={id} value={sector} className={controlClass} onChange={(event) => { setSector(event.target.value); setPage(0); setSelected(null); }}>
         <option value="">Todos os setores</option>
-        {[...new Set(input.employees.map((person) => person.sector))].sort((a, b) => a.localeCompare(b, "pt-BR")).map((value) => <option key={value} value={value}>{value || "Sem setor informado"}</option>)}
+        {[...new Set(input.employees.filter(person => !isAdministrativeEscalaSector(person.sector)).map(person => person.sector))].sort((a, b) => a.localeCompare(b, "pt-BR")).map((value) => <option key={value} value={value}>{value || "Sem setor informado"}</option>)}
       </select>}</Field>
       <Field label="Buscar nome, matrícula ou cargo">{(id) => <input id={id} type="search" value={filter} className={controlClass} onChange={(event) => { setFilter(event.target.value); setPage(0); setSelected(null); }} />}</Field>
     </div>

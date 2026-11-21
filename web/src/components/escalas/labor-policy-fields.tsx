@@ -1,5 +1,6 @@
 "use client";
 
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import type { EscalaInput } from "@/lib/escalas/types";
 import { Check } from "./controls";
 import styles from "./escalas.module.css";
@@ -14,7 +15,7 @@ export function LaborPolicyFields({ input }: Props) {
 
 export function ShortMealSimulation({ input, onChange }: Props) {
   const policy = input.policy;
-  const allowed = new Set(input.employees.filter(person => person.planningEnabled !== false).flatMap(person => person.shiftIds));
+  const allowed = new Set(input.employees.filter(isEscalaPlanningParticipant).flatMap(person => person.shiftIds));
   const affectedShortShifts = input.shifts.filter(shift => {
     if (!allowed.has(shift.id)) return false;
     const paid = shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0);

@@ -2,7 +2,7 @@ import { visibleDates } from "./dates";
 import { effectiveScheduleMode } from "./fpre136-schedule";
 import { holidayCalendarFor, holidayLabel } from "./calendar";
 import { compareProposedSchedules, sortEmployees, sortHoursEmployees } from "./order";
-import { applyRestEligibility, isRestPlanningExcludedRole, isShortFpre136Schedule } from "./eligibility";
+import { applyRestEligibility, isRestPlanningExcludedRole, isShortFpre136Schedule, operationalEscalaInput } from "./eligibility";
 import { isHoursReferenceOnly } from "./hours-reference";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, EscalaWorkspace } from "./types";
 
@@ -53,7 +53,8 @@ function scheduleText(shift: EscalaShift, breaks: boolean) {
 }
 
 /** Exact schedule interpretation shared by screen, PDF and Excel; no clock rounding or role inference. */
-export function buildEscalaSchedule(input: EscalaInput) {
+export function buildEscalaSchedule(raw: EscalaInput) {
+  const input = operationalEscalaInput(raw);
   const referencesOnly = isHoursReferenceOnly(input);
   const dates = referencesOnly ? [] : visibleDates(input), codes = escalaShiftCodes(input);
   const calendarLabel = referencesOnly ? "" : input.policy.calendarMode !== "LOCAL" ? "Calendário: manual" : `Calendário: ${holidayCalendarFor(input).label}`;

@@ -27,6 +27,18 @@ function selected(hours: 42 | 44 = 42) {
   return materializeManualShiftOverrides(value);
 }
 describe("dated catalog selection on real-shaped CSV references", () => {
+  it("leaves old administrative selections and protected assignments intact without validating them as work", () => {
+    const value = selected();
+    value.employees[0].sector = "  Afastados ";
+    value.assignments = [{ employeeId: "e", date: "2026-11-03", kind: "WORK", shiftId: "source", locked: true }];
+    value.shifts = value.shifts.filter(shift => shift.id !== choice.shiftId);
+    const before = structuredClone(value);
+    expect(materializeManualShiftOverrides(value)).toEqual(before);
+    expect(manualShiftIssues(value)).toEqual([]);
+    expect(manualAssignmentIssues(value, [])).toEqual([]);
+    expect(value).toEqual(before);
+  });
+
   it.each(["ABSENCE", "HOLIDAY", "OFF"] as const)("does not reject preserved %s for an inadmissible conditional clock", kind => {
     const value = fixture();
     value.employees[0] = withManualShiftOverride(value.employees[0], { ...choice, shiftId: "late-conditional", markings: ["14:00", "18:00", "19:00", "23:00"] });

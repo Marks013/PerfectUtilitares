@@ -1,9 +1,11 @@
 import { dateRange, visibleDates } from "./dates";
 import { buildCoveragePresence, coverageAt, coverageTimeline } from "./coverage-presence";
+import { operationalEscalaInput } from "./eligibility";
 import type { EscalaInput, EscalaIssue } from "./types";
 
 /** Coverage and staffing references are independent of journey validation. */
-export function validateCoverage(input: EscalaInput, presence = buildCoveragePresence(input)): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
+export function validateCoverage(rawInput: EscalaInput, presence = buildCoveragePresence(rawInput)): { issues: EscalaIssue[]; minimumCoverageMargin: number | null } {
+  const input = operationalEscalaInput(rawInput);
   const issues: EscalaIssue[] = [];
   let minimumCoverageMargin: number | null = null;
   const visible = new Set(visibleDates(input));

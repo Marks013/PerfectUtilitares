@@ -7,6 +7,7 @@ import { getEscala } from "@/lib/escalas/service";
 import { buildOperationalReport, operationalReportContext } from "@/lib/escalas/operational-report";
 import { exportOperationalReportPdf } from "@/lib/escalas/operational-report-pdf";
 import { validateHoursReferences } from "@/lib/escalas/hours-reference";
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { parseOperationalReportQuery, validateOperationalReportSelection } from "@/lib/escalas/operational-report-contracts";
 import { escalaFailure } from "../http";
 
@@ -33,7 +34,7 @@ export async function GET(request: Request) {
       // Selection already permits only journeys/variants. Monthly preparation is not a clock-validity gate.
       // Ignore only its stale marker; do not clear needsRegeneration or change any persisted validation.
       const references = validateHoursReferences(workspace.input), shifts = new Set(workspace.input.shifts.map(shift => shift.id));
-      const missingClock = workspace.input.employees.some(person => person.planningEnabled !== false
+      const missingClock = workspace.input.employees.some(person => isEscalaPlanningParticipant(person)
         && person.activeFrom <= workspace.input.endDate && (!person.activeUntil || person.activeUntil >= workspace.input.startDate)
         && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"
         && person.shiftIds.some(id => !shifts.has(id)));

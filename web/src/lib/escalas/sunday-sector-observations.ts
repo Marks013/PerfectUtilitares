@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant } from "./eligibility";
 import { buildCoveragePresence } from "./coverage-presence";
 import { dayOfWeek, visibleDates } from "./dates";
 import { compareSectors } from "./order";
@@ -30,7 +31,7 @@ export function sundaySectorObservations(input: EscalaInput): SundaySectorObserv
 
   const bySector = new Map<string, EscalaEmployee[]>();
   for (const person of current.employees) {
-    if (person.planningEnabled === false || !person.sector) continue;
+    if (!isEscalaPlanningParticipant(person) || !person.sector) continue;
     const team = bySector.get(person.sector) ?? [];
     team.push(person);
     bySector.set(person.sector, team);

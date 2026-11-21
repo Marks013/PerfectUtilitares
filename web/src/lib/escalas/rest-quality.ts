@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant } from "./eligibility";
 import { addDays, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
 import { effectiveSundayLimit, effectiveWeeklyHours } from "./labor-rules";
 import type { EscalaEmployee, EscalaInput } from "./types";
@@ -33,7 +34,7 @@ function personPairs(input: EscalaInput, person: EscalaEmployee) {
 /** Each pair belongs to the calendar period containing its second regular OFF. */
 export function restPairSummary(input: EscalaInput): RestPairSummary {
   const visible = new Set(visibleDates(input));
-  const people = input.employees.filter(person => person.planningEnabled !== false).map(person => {
+  const people = input.employees.filter(isEscalaPlanningParticipant).map(person => {
     const pairs = personPairs(input, person).filter(pair => visible.has(pair.after));
     const totalPairs = pairs.length, imposedPairs = pairs.filter(pair => !pair.adjustable).length;
     const adjustablePairs = totalPairs - imposedPairs;
@@ -60,7 +61,7 @@ function groups(input: EscalaInput, summary: RestPairSummary) {
   const days = dateRange(input.startDate, input.endDate);
   const result = new Map<string, number>();
   for (const person of input.employees) {
-    if (person.planningEnabled === false) continue;
+    if (!isEscalaPlanningParticipant(person)) continue;
     const noClock = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
     const key = JSON.stringify([noClock, person.sector, effectiveSundayLimit(person),
       noClock ? [] : days.filter((_, index) => index % 7 === 0).map(day => effectiveWeeklyHours(person, day, input))]);
@@ -79,7 +80,7 @@ export function preservesRestDistribution(input: EscalaInput, proposal: EscalaIn
   if (before.correctableExcess === after.correctableExcess && before.adjustablePairs === after.adjustablePairs
     && after.concentration > before.concentration) return false;
   const visible = new Set(visibleDates(input));
-  const boundaryPairs = (value: EscalaInput) => value.employees.filter(person => person.planningEnabled !== false)
+  const boundaryPairs = (value: EscalaInput) => value.employees.filter(isEscalaPlanningParticipant)
     .flatMap(person => personPairs(value, person).filter(pair => pair.adjustable && !visible.has(pair.after))
       .map(pair => `${person.id}\0${pair.after.slice(0, 7)}`)).reduce((counts, key) => counts.set(key, (counts.get(key) ?? 0) + 1), new Map<string, number>());
   const boundaryBefore = boundaryPairs(input);

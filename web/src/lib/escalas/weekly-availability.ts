@@ -1,5 +1,5 @@
 import { dateRange, dayOfWeek } from "./dates";
-import { isRestPlanningExcludedRole } from "./eligibility";
+import { isEscalaPlanningParticipant, isRestPlanningExcludedRole } from "./eligibility";
 import { dailyMinuteCeiling, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import { planningWeeklyHours } from "./preparation";
 import type { EscalaInput } from "./types";
@@ -17,7 +17,7 @@ export function weeklySectorAvailability(input: EscalaInput): Map<string, Availa
   const closed = new Set(input.policy.closedDates);
   const sectors = new Map<string, { weekly: number[]; row: Availability }>();
   for (const person of input.employees) {
-    if (person.planningEnabled === false || isRestPlanningExcludedRole(person.role) || person.activeFrom > input.endDate
+    if (!isEscalaPlanningParticipant(person) || isRestPlanningExcludedRole(person.role) || person.activeFrom > input.endDate
       || person.activeUntil && person.activeUntil < input.startDate) continue;
     const group = sectors.get(person.sector) ?? { weekly: weeks.map(() => 0), row: {
       availableHoursMin: 0, availableHoursMax: 0, scheduledHours: 0, timedPeopleDays: 0, untimedPeopleDays: 0,

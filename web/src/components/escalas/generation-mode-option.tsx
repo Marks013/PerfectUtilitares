@@ -1,5 +1,6 @@
 "use client";
 
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { useId } from "react";
 import type { EscalaInput } from "@/lib/escalas/types";
 import { changeGenerationMode } from "./workspace-model";
@@ -7,7 +8,7 @@ import styles from "./escalas.module.css";
 
 export function hasHourReferences(input: EscalaInput) {
   const shifts = new Set(input.shifts.filter(shift => shift.segments.some(segment => segment.kind === "WORK")).map(shift => shift.id));
-  return input.employees.some(person => person.planningEnabled !== false && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"
+  return input.employees.some(person => isEscalaPlanningParticipant(person) && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"
     && person.shiftIds.some(id => shifts.has(id)));
 }
 

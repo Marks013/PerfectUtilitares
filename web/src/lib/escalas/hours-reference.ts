@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant, operationalEscalaInput } from "./eligibility";
 import { dateRange, dayOfWeek } from "./dates";
 import { effectiveScheduleMode } from "./fpre136-schedule";
 import { effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
@@ -8,7 +9,7 @@ import { validateJourney, workJourney } from "./validation-time";
 
 import { manualShiftAt, manualShiftIssues } from "./shift-catalog/manual-override";
 /** Stable calculation inputs only: display labels and trusted published context do not invalidate proposals. */
-export function generationScenarioBasis(input: EscalaInput): string {
+function scenarioFingerprint(input: EscalaInput): string {
   const policy = Object.fromEntries(Object.entries(input.policy).filter(([key]) => !["source", "reviewedBy", "reviewed"].includes(key)));
   const scenario = {
     mode: input.generationMode ?? "DAYS_AND_HOURS", hours: input.defaultWeeklyHours,
@@ -35,6 +36,17 @@ export function generationScenarioBasis(input: EscalaInput): string {
   return `generation-v1:${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
 }
 
+export function generationScenarioBasis(input: EscalaInput): string {
+  return scenarioFingerprint(operationalEscalaInput(input));
+}
+
+/** Exact legacy fingerprints remain usable without re-generating unchanged references. */
+export function matchesGenerationScenarioBasis(input: EscalaInput): boolean {
+  const operational = operationalEscalaInput(input);
+  return input.generationBasis === scenarioFingerprint(operational)
+    || operational !== input && input.generationBasis === scenarioFingerprint(input);
+}
+
 /** HOURS_ONLY can change only the clock of an unlocked WORK cell, never its existence or classification. */
 export function matchesHoursOnlyAssignments(previous: EscalaInput, next: EscalaInput): boolean {
   if (previous.generationMode !== "HOURS_ONLY") return true;
@@ -53,7 +65,7 @@ export function matchesHoursOnlyAssignments(previous: EscalaInput, next: EscalaI
 /** References are not attendance: absence-only inputs must not acquire fictitious workdays. */
 export function isHoursReferenceOnly(input: EscalaInput): boolean {
   if (input.generationMode !== "HOURS_ONLY") return false;
-  const included = new Set(input.employees.filter(person => person.planningEnabled !== false).map(person => person.id));
+  const included = new Set(input.employees.filter(isEscalaPlanningParticipant).map(person => person.id));
   return !input.assignments.some(day => included.has(day.employeeId) && ["WORK", "DUTY", "OFF"].includes(day.kind));
 }
 
@@ -94,7 +106,8 @@ function referenceCanMeetWeek(input: EscalaInput, person: EscalaEmployee, days: 
 }
 
 /** Validate permitted clocks, without claiming daily presence or a published monthly roster. */
-export function validateHoursReferences(input: EscalaInput): EscalaValidation {
+export function validateHoursReferences(rawInput: EscalaInput): EscalaValidation {
+  const input = operationalEscalaInput(rawInput);
   const issues: EscalaIssue[] = manualShiftIssues(input), shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const calendarDays = dateRange(input.startDate, input.endDate);
   const dates = calendarDays.filter((_, index) => index % 7 === 0);
@@ -103,7 +116,7 @@ export function validateHoursReferences(input: EscalaInput): EscalaValidation {
     .map(day => `${day.employeeId}\0${day.date}`));
   const calendarCodes = new Set(["CLOSED_DATE", "HOLIDAY_WORK", "CCT_SUNDAY_CERTIFICATE", "CCT_HOLIDAY_CERTIFICATE", "CCT_NIGHT_CERTIFICATE"]);
   const included = input.employees.filter(person => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
-  if (input.needsRegeneration || input.generationBasis !== generationScenarioBasis(input)) issues.push({ code: "SCENARIO_OUTDATED", severity: "ERROR", message: "Prepare novamente as referências após alterar modo, jornada ou equipe antes de exportar." });
+  if (input.needsRegeneration || !matchesGenerationScenarioBasis(rawInput)) issues.push({ code: "SCENARIO_OUTDATED", severity: "ERROR", message: "Prepare novamente as referências após alterar modo, jornada ou equipe antes de exportar." });
   if (!included.some(person => effectiveScheduleMode(person) !== "UNTIMED" && effectiveScheduleMode(person) !== "MISSING" && person.shiftIds.some(id => shifts.has(id)))) {
     issues.push({ code: "HOURS_REFERENCE_PENDING", severity: "ERROR", message: "Não há horários reais preparados para exportar. Informe uma referência para a equipe com jornada controlada." });
   }

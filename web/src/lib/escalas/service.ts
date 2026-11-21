@@ -1,3 +1,4 @@
+import { isEscalaPlanningParticipant, operationalEscalaInput } from "./eligibility";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { canonicalBranchCode } from "./branch-code";
@@ -7,7 +8,7 @@ import { EscalaSolverError, solveEscala } from "./solver-client";
 import { validateEscala } from "./validation";
 import { logSolverRejection } from "./solver-diagnostics";
 import { findGenerationConflicts } from "./generation-conflicts";
-import { generationScenarioBasis, isHoursReferenceOnly, matchesHoursOnlyAssignments } from "./hours-reference";
+import { generationScenarioBasis, isHoursReferenceOnly, matchesGenerationScenarioBasis, matchesHoursOnlyAssignments } from "./hours-reference";
 import { compareBranches } from "./order";
 import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./dates";
 import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
@@ -66,7 +67,7 @@ function view(row: WorkspaceRow, input: EscalaInput, permission: EscalaPermissio
   if (row.status !== "PUBLISHED" && !input.needsRegeneration && input.assignments.length) {
     const closing = storeClosingMinutes(input);
     const late = new Set(input.shifts.filter(shift => !fitsStoreClosing(shift, closing)).map(shift => shift.id));
-    const included = new Set(input.employees.filter(person => person.planningEnabled !== false).map(person => person.id));
+    const included = new Set(input.employees.filter(isEscalaPlanningParticipant).map(person => person.id));
     if (late.size && input.assignments.some(day => day.kind === "WORK" && included.has(day.employeeId) && late.has(day.shiftId ?? ""))) {
       input = { ...input, needsRegeneration: true };
     }
@@ -159,7 +160,8 @@ function sameAssignment(a: EscalaAssignment, b: EscalaAssignment | undefined) {
 
 type PublishedDay = { date: string; signature: string; scheduled: boolean };
 
-function publishedDayIndex(input: EscalaInput, firstDate: string, lastDate: string) {
+function publishedDayIndex(rawInput: EscalaInput, firstDate: string, lastDate: string) {
+  const input = operationalEscalaInput(rawInput);
   const employees = new Map(input.employees.map((person) => [person.id, person]));
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
   const records = new Map<string, PublishedDay>();
@@ -279,7 +281,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   if (manualAssignmentIssue) throw new EscalaError(422, manualAssignmentIssue.code, manualAssignmentIssue.message);
   preserveLockedAssignments(current.input, input, !publish && current.canPublish);
   const scenarioChanged = generationScenarioBasis(current.input) !== generationScenarioBasis(input);
-  const preparedProposal = !input.needsRegeneration && input.generationBasis === generationScenarioBasis(input);
+  const preparedProposal = !input.needsRegeneration && matchesGenerationScenarioBasis(input);
   if ((scenarioChanged || current.input.needsRegeneration) && !preparedProposal) {
     input = { ...input, needsRegeneration: true, generationBasis: undefined };
   }
@@ -339,7 +341,7 @@ function assertRevision(workspace: EscalaWorkspace, expectedRevision: number) {
 }
 
 function requireSolverSetup(input: EscalaInput) {
-  const included = input.employees.filter((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
+  const included = input.employees.filter((person) => isEscalaPlanningParticipant(person) && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
   const timed = included.filter((person) => (person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING"));
   if (!included.length || (timed.length > 0 && (!input.shifts.length || timed.some((person) => !person.shiftIds.length)))) throw new EscalaError(422, "ESCALA_SETUP_REQUIRED", "Inclua pelo menos um colaborador e defina horários para quem tem jornada controlada. Pessoas sem horário fixo participam do rodízio de folgas sem turno fictício.");
   if (input.policy.normativeProfile === SUPERMARKET_CCT && input.policy.holidayRestAllowed) throw new EscalaError(422, "ESCALA_CCT_HOLIDAY_REST", "A CCT de supermercados veda compensar o DSR em feriado. Corrija a configuração antes de gerar.");
@@ -360,7 +362,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   assertRevision(current, expectedRevision);
   if (current.input.generationMode === "HOURS_ONLY" && !isHoursReferenceOnly(current.input)) {
     const existing = new Set(current.input.assignments.map(day => `${day.employeeId}\0${day.date}`));
-    const incomplete = current.input.employees.some(person => person.planningEnabled !== false
+    const incomplete = current.input.employees.some(person => isEscalaPlanningParticipant(person)
       && dateRange(current.input.startDate, current.input.endDate).some(date => date >= person.activeFrom
         && (!person.activeUntil || date <= person.activeUntil) && !existing.has(`${person.id}\0${date}`)));
     if (incomplete) throw new EscalaError(422, "ESCALA_HOURS_BASELINE_INCOMPLETE", "A grade está incompleta. Complete os dias ou gere folgas e horários antes de ajustar somente os horários; nenhum dia foi inventado.");

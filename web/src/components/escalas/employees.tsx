@@ -1,5 +1,6 @@
 "use client";
 
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import styles from "./escalas.module.css";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -356,11 +357,11 @@ export function EmployeeEditor({
         {input.generationMode === "HOURS_ONLY" ? "Os dias já registrados são mantidos; sem grade, não são criadas presenças ou folgas." : "Incluído no rodízio 5×2 e descanso quinzenal protetivo, com no máximo cinco dias seguidos de trabalho."}
         Os dias de trabalho não recebem turno nem horas fictícias. A carga semanal é apenas uma referência cadastral.
       </p>}
-      <Check
+      {isAdministrativeEscalaSector(draft.sector) ? <p className={styles.muted}>Setor administrativo: o cadastro fica salvo, mas não entra na escala nem na cobertura.</p> : <Check
         label="Incluir colaborador no planejamento desta proposta"
         checked={draft.planningEnabled !== false}
         onChange={(checked) => setDraft((previous) => ({ ...previous, planningEnabled: checked, planningExclusionReason: checked ? undefined : "Não incluído manualmente nesta proposta." }))}
-      />
+      />}
       {draft.planningEnabled === false && <Field label="Motivo da não inclusão" hint="Explique a decisão ou a informação que precisa ser corrigida. O cadastro permanece na equipe.">{(id, accessibility) => <input id={id} {...accessibility} maxLength={240} value={draft.planningExclusionReason ?? ""} onChange={(event) => change("planningExclusionReason", event.target.value)} className={controlClass} />}</Field>}
       {draft.scheduleMode !== "UNTIMED" && draft.scheduleMode !== "MISSING" && <fieldset>
         <legend className="text-sm font-semibold">Turnos autorizados</legend>
@@ -456,8 +457,8 @@ export function Employees({
   const searchInput = useRef<HTMLInputElement>(null);
   const employeeIndex = useMemo(() => indexEmployees(input.employees), [input.employees]);
   const employees = useMemo(() => searchEmployees(employeeIndex, search), [employeeIndex, search]);
-  const included = employees.filter((employee) => employee.planningEnabled !== false);
-  const excluded = employees.filter((employee) => employee.planningEnabled === false);
+  const included = employees.filter(isEscalaPlanningParticipant);
+  const excluded = employees.filter(employee => !isEscalaPlanningParticipant(employee));
   const removingEmployee = input.employees.find((employee) => employee.id === removing);
   return (
     <section className={panelClass} aria-labelledby="escala-employees-title">

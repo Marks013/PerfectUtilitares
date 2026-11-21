@@ -1,5 +1,6 @@
 import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
 import { closedHolidayDates } from "./calendar";
+import { operationalEscalaInput } from "./eligibility";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import { storeClosingMinutes } from "./store-hours";
 import { validateEscala } from "./validation";
@@ -69,7 +70,14 @@ function roundedTargets(expected: number[], group: Group, monday: string, days: 
 
 /** Browser-safe invalidation only: this fingerprint does not certify or authenticate demand. */
 export function coverageBasis(input: EscalaInput): string {
-  return coverageFingerprint(input, 2);
+  return coverageFingerprint(operationalEscalaInput(input), 2);
+}
+
+/** A previously valid saved ruler may still contain the administrative sector in its fingerprint. */
+export function matchesCoverageBasis(input: EscalaInput): boolean {
+  const operational = operationalEscalaInput(input);
+  return input.coverageBasis === coverageFingerprint(operational, 2)
+    || operational !== input && input.coverageBasis === coverageFingerprint(input, 2);
 }
 
 /** The old fingerprint can retain an old ruler, never identify newly calculated estimates. */
@@ -138,25 +146,32 @@ function completeRoster(input: EscalaInput): boolean {
  * Both fingerprint versions must observe real input changes before targets can be retained.
  */
 export function retainCoverageReference(previous: EscalaInput, prepared: EscalaInput, allowLegacy = false): EscalaInput | undefined {
-  if (previous.needsRegeneration || prepared.needsRegeneration || !previous.demands.some(demand => demand.estimated === true)
-    || !completeRoster(previous) || !completeRoster(prepared)) return undefined;
-  const current = coverageBasis(prepared);
-  const basis = previous.coverageBasis?.startsWith("coverage-v2:") ? current
-    : previous.coverageBasis?.startsWith("coverage-v1:") || allowLegacy ? coverageFingerprint(prepared, 1) : undefined;
-  if (!basis || coverageBasis(previous) !== current) return undefined;
-  if (previous.coverageBasis ? previous.coverageBasis !== basis : coverageFingerprint(previous, 1) !== basis) return undefined;
+  const before = operationalEscalaInput(previous), after = operationalEscalaInput(prepared);
+  if (previous.needsRegeneration || prepared.needsRegeneration || !before.demands.some(demand => demand.estimated === true)
+    || !completeRoster(before) || !completeRoster(after)) return undefined;
+  const current = coverageFingerprint(after, 2);
+  const version = previous.coverageBasis?.startsWith("coverage-v2:") ? 2
+    : previous.coverageBasis?.startsWith("coverage-v1:") || allowLegacy ? 1 : undefined;
+  if (!version || coverageFingerprint(before, 2) !== current) return undefined;
+  const basis = version === 2 ? current : coverageFingerprint(after, 1);
+  if (previous.coverageBasis ? previous.coverageBasis !== basis
+    && !(before !== previous && previous.coverageBasis === coverageFingerprint(previous, version))
+    : coverageFingerprint(before, 1) !== basis) return undefined;
   // Repairing rest placement, including the v2 Saturday upgrade, must not move the coverage ruler.
   // These scheduling conflicts remain errors in the independent result validator.
   const validation = validateEscala(previous);
   if (validation.issues.some(issue => issue.severity === "ERROR"
     && issue.code !== "CONSECUTIVE_REST_LIMIT" && issue.code !== "SATURDAY_REST_FORBIDDEN")) return undefined;
-  return { ...prepared, demands: previous.demands, coverageBasis: basis };
+  return { ...prepared, demands: before.demands, coverageBasis: basis,
+    ...(after.movementPriorities ? { movementPriorities: after.movementPriorities } : {}),
+    ...(after.mixed42Sectors ? { mixed42Sectors: after.mixed42Sectors } : {}) };
 }
 
 /** Recalculate soft staffing objectives. Explicit operational minima remain unchanged. */
-export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
-  const retained = retainCoverageReference(input, input);
+export function proposeAutomaticCoverage(rawInput: EscalaInput): EscalaInput {
+  const retained = retainCoverageReference(rawInput, rawInput);
   if (retained) return retained;
+  const input = operationalEscalaInput(rawInput);
   const basis = coverageBasis(input);
   const explicit = input.demands.filter((demand) => demand.estimated !== true).map((demand) => ({ ...demand }));
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
@@ -299,13 +314,16 @@ export function proposeAutomaticCoverage(input: EscalaInput): EscalaInput {
   }
   const demands = [...explicit, ...estimates];
   if (demands.length > 12000) throw new Error("A equipe gerou mais de 12.000 faixas de cobertura. Reduza as alternativas de horários para recalcular a proposta.");
-  const { coverageBasis: _previousBasis, ...base } = input;
+  const { coverageBasis: _previousBasis, ...base } = rawInput;
   return { ...base, demands, ...(estimates.length ? { coverageBasis: basis } : {}),
+    ...(input.movementPriorities ? { movementPriorities: input.movementPriorities } : {}),
+    ...(input.mixed42Sectors ? { mixed42Sectors: input.mixed42Sectors } : {}),
     policy: { ...input.policy, ...(estimates.length ? { coverageReview: "SUGGESTED" as const } : {}) } };
 }
 
 /** Small view model; it never creates or confirms staffing requirements. */
-export function summarizeAutomaticCoverage(input: EscalaInput) {
+export function summarizeAutomaticCoverage(rawInput: EscalaInput) {
+  const input = operationalEscalaInput(rawInput);
   const groups = new Map<string, { sector: string; role: string; timed: number; missing: number; minimum: number | null; maximum: number | null }>();
   for (const person of input.employees) {
     if (person.planningEnabled === false || person.activeFrom > input.endDate || (person.activeUntil && person.activeUntil < input.startDate)) continue;

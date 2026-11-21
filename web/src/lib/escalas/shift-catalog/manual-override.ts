@@ -1,4 +1,5 @@
 import { addDays, dateRange, isDate, weekStart } from "../dates";
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "../eligibility";
 import { EscalaError } from "../errors";
 import { effectiveWeeklyHours, usesMixed42Week } from "../labor-rules";
 import { referenceNotices } from "../reference-notices";
@@ -61,7 +62,7 @@ export function materializeManualShiftOverrides(input: EscalaInput): EscalaInput
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const signature = (shift: EscalaShift) => JSON.stringify(shift.segments.map(({ start, end, kind }) => ({ start, end, kind })));
   const employees = input.employees.map(person => {
-    if (!person.manualShiftOverrides?.length) return person;
+    if (isAdministrativeEscalaSector(person.sector) || !person.manualShiftOverrides?.length) return person;
     const base = person.manualShiftBaseIds ?? person.shiftIds;
     const selections = [...person.manualShiftOverrides].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
     const byDate: Record<string, string> = {};
@@ -87,7 +88,7 @@ export function manualShiftIssues(input: EscalaInput, flexibleDays = false): Esc
   const issues: EscalaIssue[] = [];
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   for (const person of input.employees) {
-    if (person.planningEnabled === false) continue;
+    if (!isEscalaPlanningParticipant(person)) continue;
     for (const choice of person.manualShiftOverrides ?? []) {
       const issue = (code: string, message: string, date?: string) => issues.push({ code, message, severity: "ERROR", employeeId: person.id, ...(date ? { date } : {}) });
       if (person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED") {
@@ -130,7 +131,7 @@ export function manualAssignmentIssues(input: EscalaInput, previous: readonly Es
   const people = new Map(input.employees.map(person => [person.id, person]));
   for (const day of input.assignments) {
     const person = people.get(day.employeeId);
-    if (!person?.manualShiftOverrides?.length || person.planningEnabled === false || day.kind !== "WORK") continue;
+    if (!person?.manualShiftOverrides?.length || !isEscalaPlanningParticipant(person) || day.kind !== "WORK") continue;
     const selected = manualShiftAt(person, day.date);
     const locked = locks.get(`${person.id}\0${day.date}`);
     if (day.locked && !(locked?.kind === day.kind && locked.shiftId === day.shiftId)) issues.push({

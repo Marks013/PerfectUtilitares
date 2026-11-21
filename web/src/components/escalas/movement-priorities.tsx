@@ -1,4 +1,5 @@
 "use client";
+import { isAdministrativeEscalaSector } from "@/lib/escalas/eligibility";
 import { useId, useState } from "react";
 import type { EscalaInput } from "@/lib/escalas/types";
 import { compareSectors } from "@/lib/escalas/order";
@@ -16,7 +17,9 @@ export function MovementPriorities({ input, disabled, onChange }: { input: Escal
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
   const feedbackId = useId();
   const priorities = input.movementPriorities ?? [];
-  const sectors = [...new Set(input.employees.map(person => person.sector))].filter(Boolean).sort(compareSectors);
+  const operationalPriority = (entry: NonNullable<EscalaInput["movementPriorities"]>[number]) => !entry.sector || !isAdministrativeEscalaSector(entry.sector);
+  const priorityCount = priorities.filter(operationalPriority).length;
+  const sectors = [...new Set(input.employees.map(person => person.sector))].filter(value => value && !isAdministrativeEscalaSector(value)).sort(compareSectors);
   const labels = { LOW: "Menor movimento", NORMAL: "Movimento habitual", HIGH: "Maior movimento" };
   const weekLabels = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
   function update(next: NonNullable<EscalaInput["movementPriorities"]>, message: string) {
@@ -30,7 +33,7 @@ export function MovementPriorities({ input, disabled, onChange }: { input: Escal
     update(result.priorities, `Indicação incluída para ${result.dates} dia(s) no rascunho. Salve e gere novamente para aplicar ao planejamento.`);
   }
   return <details className="space-y-3">
-    <summary className="min-h-11 cursor-pointer py-2 font-semibold">Movimento da loja (opcional){priorities.length ? ` · ${priorities.length} indicação(ões)` : ""}</summary>
+    <summary className="min-h-11 cursor-pointer py-2 font-semibold">Movimento da loja (opcional){priorityCount ? ` · ${priorityCount} indicação(ões)` : ""}</summary>
     <p className="text-sm text-[color:var(--app-muted)]">Informe os dias mais ou menos movimentados de cada setor, conforme sua operação. O algoritmo prioriza a presença da equipe e dos responsáveis nos dias informados, sem garantir atendimento nem criar mínimos obrigatórios. Sem informação, não presume movimento maior no fim de semana.</p>
     <form onSubmit={add} aria-describedby={feedbackId}>
       <fieldset disabled={disabled} className="space-y-3">
@@ -51,13 +54,13 @@ export function MovementPriorities({ input, disabled, onChange }: { input: Escal
       </fieldset>
     </form>
     <div id={feedbackId}>{error && <p role="alert" className="text-sm text-[color:var(--app-coral)]">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}</div>
-    {priorities.length > 0 && <ul className="max-h-64 space-y-2 overflow-y-auto text-sm" aria-label="Movimento informado por setor e data">
-      {movementRows(priorities).map(({ priority, index }) => <li key={index} className="flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--app-border)] py-2">
+    {priorityCount > 0 && <ul className="max-h-64 space-y-2 overflow-y-auto text-sm" aria-label="Movimento informado por setor e data">
+      {movementRows(priorities).filter(({ priority }) => operationalPriority(priority)).map(({ priority, index }) => <li key={index} className="flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--app-border)] py-2">
         <span className="min-w-0 break-words"><strong className="font-medium">{priority.sector || "Toda a filial"}</strong> · {displayDate(priority.startDate)}{priority.endDate !== priority.startDate ? `–${displayDate(priority.endDate)}` : ""} · {labels[priority.level]}</span>
         <button type="button" className={buttonClass} disabled={disabled} aria-label={`Remover indicação de ${priority.sector || "toda a filial"} em ${displayDate(priority.startDate)}`} onClick={() => update(
           priorities.filter((_, position) => position !== index), "Indicação removida do rascunho. Salve e gere novamente para atualizar o planejamento.")}>Remover</button>
       </li>)}
     </ul>}
-    {priorities.length > 0 && <p className="text-xs text-[color:var(--app-muted)]">Nas mesmas datas, o movimento do setor prevalece sobre o da filial. A indicação orienta a distribuição da equipe, não representa demanda de pessoal medida. Alterações exigem nova geração.</p>}
+    {priorityCount > 0 && <p className="text-xs text-[color:var(--app-muted)]">Nas mesmas datas, o movimento do setor prevalece sobre o da filial. A indicação orienta a distribuição da equipe, não representa demanda de pessoal medida. Alterações exigem nova geração.</p>}
   </details>;
 }

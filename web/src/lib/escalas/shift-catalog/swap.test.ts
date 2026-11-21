@@ -69,6 +69,17 @@ describe("dated swap compatibility", () => {
 });
 
 describe("employee turn swap", () => {
+  it("does not preview or save a dated shift change for an administrative-sector record", async () => {
+    const value = current();
+    value.input.employees[0].sector = "AFASTADOS";
+    const before = structuredClone(value);
+    state.get.mockResolvedValue(value);
+    await expect(previewTurnoSwap(actor, request)).rejects.toMatchObject({ code: "MANUAL_SHIFT_SCHEDULE_MODE" });
+    await expect(applyTurnoSwap(actor, { ...request, previewId: "old-preview", confirm: true }))
+      .rejects.toMatchObject({ code: "MANUAL_SHIFT_SCHEDULE_MODE" });
+    expect(state.save).not.toHaveBeenCalled();
+    expect(value).toEqual(before);
+  });
   it("preserves ambiguous legacy work instead of globally declaring it automatic", async () => {
     const source = { report: "FPRE136", code: "X", description: "Legacy CSV", weekday: "08:00-12:00 / 13:00-17:00", saturday: "08:00-12:00" };
     const value = current(source, [{ employeeId: "e1", date: "2026-12-07", kind: "WORK", shiftId: "old" }]);

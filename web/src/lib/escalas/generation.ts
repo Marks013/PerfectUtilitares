@@ -4,7 +4,7 @@ import { fixedRestConfigurationError } from "./fixed-rest";
 import { applyLocalHolidayCalendar, assertHolidayLocks } from "./calendar";
 import { isHoursReferenceOnly } from "./hours-reference";
 import { retainCoverageReference } from "./automatic-coverage";
-import { applyRestEligibility, isRestPlanningExcludedRole, isShortFpre136Schedule } from "./eligibility";
+import { applyRestEligibility, isAdministrativeEscalaSector, isEscalaPlanningParticipant, isRestPlanningExcludedRole, isShortFpre136Schedule, operationalEscalaInput } from "./eligibility";
 import { effectiveScheduleMode } from "./fpre136-schedule";
 import { addDays, dateRange } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, maximumMealMinutes, minimumMealMinutes, usesMixed42 } from "./labor-rules";
@@ -20,11 +20,12 @@ export { matchesRestOnlyReferences } from "./generation-references";
 /** Prepare a preview, without approving documents, inventing attendance or overwriting branch decisions. */
 export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; preparation: EscalaGenerationPreparation } {
   const input: EscalaInput = applyBranchRestCalendar(applyLocalHolidayCalendar({ ...rawInput, restRulesVersion: 3, simulation: true, policy: { ...rawInput.policy, maxConsecutiveWorkDays: effectiveWorkDayLimit(rawInput.policy) } }));
-  for (const person of input.employees) {
+  const operational = operationalEscalaInput(input);
+  for (const person of operational.employees) {
     const error = fixedRestConfigurationError(person);
     if (error) throw new EscalaError(422, "ESCALA_FIXED_REST_CONFIG", error);
   }
-  const holidayLock = assertHolidayLocks(input);
+  const holidayLock = assertHolidayLocks(operational);
   if (holidayLock) throw new EscalaError(422, "ESCALA_HOLIDAY_LOCK_CONFLICT", `Há um dia bloqueado em ${holidayLock}, quando a loja fecha por feriado. Confira e desbloqueie esse dia antes de gerar; nenhum bloqueio ou afastamento foi alterado.`);
   const closing = storeClosingMinutes(input);
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
@@ -55,6 +56,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     monthlyChoices.push(choice);
   };
   let adjustedEmployees = input.employees.map((original) => {
+    if (isAdministrativeEscalaSector(original.sector)) return original;
     const person: EscalaEmployee = { ...applyRestEligibility(original), scheduleMode: effectiveScheduleMode(original), fixedImportedShiftId: undefined,
       shiftIds: original.manualShiftBaseIds ?? original.shiftIds };
     if (isRestPlanningExcludedRole(person.role) || isShortFpre136Schedule(person)) excludedEmployeeIds.push(person.id);
@@ -209,7 +211,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     if (shiftIds.length > 12) throw new EscalaError(422, "ESCALA_SHIFT_OPTIONS_LIMIT", "Os horários propostos e os dias bloqueados excedem 12 alternativas por pessoa. Confira os bloqueios antes de gerar.");
     return { ...person, ...reference, planningEnabled: true, simulationDailyMinutes: candidate.simulationDailyMinutes, originalShiftIds: candidate.originalShiftIds, fixedImportedShiftId: candidate.fixedImportedShiftId, shiftIds };
   });
-  const selected = selectMonthlyClockReferences({ ...input, employees: adjustedEmployees }, monthlyChoices).references;
+  const selected = selectMonthlyClockReferences(operationalEscalaInput({ ...input, employees: adjustedEmployees }), monthlyChoices).references;
   adjustedEmployees = adjustedEmployees.map(person => {
     const references = selected.get(person.id), choice = monthlyChoices.find(item => item.employeeId === person.id);
     if (!references || !choice) return person;
@@ -223,10 +225,11 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     return { ...person, shiftIds, fixedImportedShiftId: person.fixedImportedShiftId && baseline.has(person.fixedImportedShiftId)
       ? references[0]?.id : person.fixedImportedShiftId };
   });
+  const administrativeIds = new Set(adjustedEmployees.filter(person => isAdministrativeEscalaSector(person.sector)).map(person => person.id));
   const excluded = new Set([...excludedEmployeeIds, ...adjustedEmployees.filter(person => person.planningEnabled === false).map(person => person.id)]);
   // Existing work also reserves space until the final allowed clocks are known.
   const eligibleAssignments = input.generationMode === "HOURS_ONLY" ? input.assignments
-    : input.assignments.filter((item) => !excluded.has(item.employeeId) || item.locked || item.kind === "ABSENCE" || item.kind === "HOLIDAY");
+    : input.assignments.filter((item) => administrativeIds.has(item.employeeId) || !excluded.has(item.employeeId) || item.locked || item.kind === "ABSENCE" || item.kind === "HOLIDAY");
   // Reserve mandatory references before spending the shared limit on optional clocks.
   const used = new Set([...adjustedEmployees.flatMap((person) => [...person.shiftIds, ...(person.originalShiftIds ?? [])]), ...eligibleAssignments.flatMap((item) => item.shiftId ? [item.shiftId] : []),
     ...adjustedEmployees.flatMap((person) => [...person.history, ...(person.planningHistory ?? []), ...(person.planningFuture ?? [])].flatMap((item) => item.shiftId ? [item.shiftId] : []))]);
@@ -234,7 +237,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   // Capacity optimization does not authorize extra arrival, departure or meal variants.
   const alternatives = adjustedEmployees.map(person => {
     const automaticClockMode = input.generationMode === "DAYS_AND_HOURS" || input.generationMode === "HOURS_ONLY" || adaptedOptions.has(person.id);
-    if (!automaticClockMode || input.generationMode === "REST_ONLY" || person.planningEnabled === false || person.fixedImportedShiftId
+    if (!automaticClockMode || input.generationMode === "REST_ONLY" || !isEscalaPlanningParticipant(person) || person.fixedImportedShiftId
       || person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED" || usesMixed42(input, person)) return person;
     const proposed = new Map(person.shiftIds.map(id => [id, shifts.get(id)]).filter((entry): entry is [string, EscalaShift] => Boolean(entry[1])));
     const durations = new Set<number>();
@@ -259,7 +262,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     return { ...person, shiftIds: [...proposed.keys()] };
   });
   const employees = (input.generationMode === "REST_ONLY"
-    ? alternatives.map(person => restOnlyReferences(person, shifts)) : alternatives).map(person => person.manualShiftOverrides?.length
+    ? alternatives.map(person => administrativeIds.has(person.id) ? person : restOnlyReferences(person, shifts)) : alternatives).map(person => !administrativeIds.has(person.id) && person.manualShiftOverrides?.length
       ? { ...person, manualShiftBaseIds: [...person.shiftIds] } : person);
   // A changed option does not invalidate work that still uses an unchanged permitted clock.
   // HOURS_ONLY keeps the saved work/rest cells; the processor may replace only their clocks.
@@ -287,14 +290,17 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
   const retained = [...shifts.values()].filter((shift) => retainedIds.has(shift.id));
   if (retained.length > 120) throw new EscalaError(422, "ESCALA_SHIFT_LIMIT", "A adaptação exige mais de 120 horários. Reduza o período ou as alternativas da filial antes de gerar.");
   const prepared = materializeManualShiftOverrides({ ...input, employees, shifts: retained, assignments });
-  const manualIssue = manualShiftIssues(prepared, true)[0];
+  const preparedOperational = operationalEscalaInput(prepared);
+  const manualIssue = manualShiftIssues(preparedOperational, true)[0];
   if (manualIssue) throw new EscalaError(422, manualIssue.code, manualIssue.message);
-  const covered = isHoursReferenceOnly(prepared)
-    ? { ...prepared, coverageBasis: undefined, demands: prepared.demands.filter(demand => !demand.estimated) }
+  const covered = isHoursReferenceOnly(preparedOperational)
+    ? { ...prepared, coverageBasis: undefined, demands: preparedOperational.demands.filter(demand => !demand.estimated),
+      ...(preparedOperational.movementPriorities ? { movementPriorities: preparedOperational.movementPriorities } : {}),
+      ...(preparedOperational.mixed42Sectors ? { mixed42Sectors: preparedOperational.mixed42Sectors } : {}) }
     : retainCoverageReference(rawInput, prepared, true) ?? proposeCoverage(prepared);
   const generatedCoverageSlots = covered.demands.filter((demand) => demand.estimated === true).length;
   const proposal = covered;
-  const included = employees.filter((person) => person.planningEnabled !== false && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
+  const included = employees.filter((person) => isEscalaPlanningParticipant(person) && person.activeFrom <= input.endDate && (!person.activeUntil || person.activeUntil >= input.startDate));
   return { input: proposal, preparation: { adjustedEmployeeIds, excludedEmployeeIds, generatedCoverageSlots,
     includedEmployees: included.length, untimedEmployees: included.filter((person) => (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")).length } };
 }

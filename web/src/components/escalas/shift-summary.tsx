@@ -1,5 +1,6 @@
 "use client";
 
+import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { visibleDates } from "@/lib/escalas/dates";
 import { escalaDuration, escalaShiftCodes } from "@/lib/escalas/presentation";
 import type { EscalaInput, EscalaShift } from "@/lib/escalas/types";
@@ -11,7 +12,7 @@ export function ShiftSummary({ input, usedOnly = false, disabled = false, onEdit
   input: EscalaInput; usedOnly?: boolean; disabled?: boolean; onEdit?: (shift: EscalaShift) => void;
 }) {
   const codes = escalaShiftCodes(input);
-  const people = input.employees.filter((person) => person.planningEnabled !== false);
+  const people = input.employees.filter(isEscalaPlanningParticipant);
   const peopleById = new Map(people.map((person) => [person.id, person]));
   const visible = new Set(visibleDates(input));
   const usedByShift = new Map<string, Set<string>>();

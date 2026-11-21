@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
 import { weeklyCapacityCaveat, weeklyCapacityText, weeklySectorCapacity } from "./weekly-capacity";
+import { weeklySectorAvailability } from "./weekly-availability";
 import type { WeeklyHours } from "./types";
 
 function fixture(hours: WeeklyHours = 42, month = "2026-11") {
@@ -45,6 +46,17 @@ describe("nominal weekly sector capacity", () => {
     const input = fixture(); input.assignments = input.employees.map(person => ({ employeeId: person.id, date: "2026-11-02", kind: "ABSENCE" }));
     expect(weeklySectorCapacity(input)[0]).toMatchObject({ people: 10, currentHours: 420 });
     expect(weeklyCapacityCaveat).toContain("antes de afastamentos, feriados e disponibilidade no mês");
+  });
+  it("ignores administrative headcount and saved work without changing other sectors", () => {
+    const control = fixture(), input = structuredClone(control);
+    const employee = { ...input.employees[0], id: "admin", sector: "  Afástados " };
+    input.employees.push(employee);
+    input.assignments.push({ employeeId: employee.id, date: input.startDate, kind: "WORK",
+      shiftId: employee.shiftIds[0], locked: true });
+    const before = structuredClone(input);
+    expect(weeklySectorAvailability(input)).toEqual(weeklySectorAvailability(control));
+    expect(weeklySectorCapacity(input)).toEqual(weeklySectorCapacity(control));
+    expect(input).toEqual(before);
   });
   it("separates available capacity from nominal hours, actual scheduled work and untimed daily presence", () => {
     const input = fixture();

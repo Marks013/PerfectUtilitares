@@ -1,5 +1,6 @@
 "use client";
 
+import { operationalEscalaInput } from "@/lib/escalas/eligibility";
 import { useEffect, useRef, useState } from "react";
 import { OPERATIONAL_REPORT_CONTENT_TYPE, OPERATIONAL_REPORT_PATH, OPERATIONAL_REPORT_PRESETS, OPERATIONAL_REPORT_SECTION_LABELS, OPERATIONAL_REPORT_SECTIONS, operationalReportCapabilities, operationalReportOptionsSchema, serializeOperationalReportQuery, validateOperationalReportSelection, type OperationalReportSection } from "@/lib/escalas/operational-report-contracts";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
@@ -7,7 +8,7 @@ import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./co
 import styles from "./escalas.module.css";
 
 export function OperationalReports({ workspace, disabled }: { workspace: EscalaWorkspace; disabled: boolean }) {
-  const input = workspace.input;
+  const input = operationalEscalaInput(workspace.input);
   const month = input.visibleMonth ?? "";
   const mode = input.generationMode ?? "DAYS_AND_HOURS";
   const hasRoster = input.assignments.some(day => day.kind === "WORK" || day.kind === "DUTY" || day.kind === "OFF");

@@ -1,3 +1,4 @@
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "./eligibility";
 import { canonicalBranchCode } from "./branch-code";
 import { createHash } from "node:crypto";
 import { EscalaError } from "./errors";
@@ -6,7 +7,7 @@ import { addDays } from "./dates";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 
 function active(person: EscalaEmployee, date: string) {
-  return person.planningEnabled !== false && person.activeFrom <= date && (!person.activeUntil || person.activeUntil >= date);
+  return isEscalaPlanningParticipant(person) && person.activeFrom <= date && (!person.activeUntil || person.activeUntil >= date);
 }
 
 function shiftSignature(shift: EscalaShift) {
@@ -42,6 +43,7 @@ export function publishedPlanningContext(input: EscalaInput, published: EscalaIn
   const bySegments = new Map(retained.map((shift) => [shiftSignature(shift), shift.id]));
   const copied = new Map<string, EscalaShift>();
   const employees = input.employees.map((person) => {
+    if (isAdministrativeEscalaSector(person.sector)) return person;
     const { planningHistory: _untrusted, planningFuture: _untrustedFuture, ...clean } = person;
     const records = new Map<string, EscalaAssignment>();
     const signatures = new Map<string, string>();
@@ -86,6 +88,7 @@ export function preservePublishedDays(input: EscalaInput, published: EscalaInput
   const assignments = new Map(input.assignments.map(item => [JSON.stringify([item.employeeId, item.date]), item]));
   const commitments = new Map<string, string>();
   const employees = input.employees.map(person => {
+    if (isAdministrativeEscalaSector(person.sector)) return person;
     const allowed = new Set(person.shiftIds);
     for (const peer of peers) {
       if (peer.branchCode !== branchCode) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "A referência publicada pertence a outra filial.");
