@@ -5,7 +5,6 @@ import { auth } from "@/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppNavigation } from "@/components/app-navigation";
 import { AppNavLink } from "@/components/app-nav-link";
-import { getEscalaScopedModuleSession } from "@/lib/escalas/operator-session-store";
 import { isEventsEnabled } from "@/lib/presence/feature";
 
 const publicNavItems = [
@@ -13,16 +12,14 @@ const publicNavItems = [
   { href: "/pdf", label: "Manutenção de PDFs" },
   { href: "/unimed", label: "Unimed" },
   { href: "/reajuste-salarial", label: "Reajuste" },
+  { href: "/escala", label: "Escalas 5×2 · Acesso restrito" },
 ];
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
   const session = await auth();
   const activeSession = session?.user.status !== "ACTIVE" ? null : session;
-  // Never let a module cookie override a blocked or tenant-less account.
-  const moduleAccess = session ? null : await getEscalaScopedModuleSession().catch(() => null);
   const navItems = [
     ...publicNavItems,
-    ...(activeSession?.user.tenantId || moduleAccess ? [{ href: "/escala", label: "Escalas 5×2" }] : []),
     ...(activeSession ? [{ href: "/conta", label: "Conta" }] : []),
     ...(activeSession?.user.role === "ADMIN"
       ? [

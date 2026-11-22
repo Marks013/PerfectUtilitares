@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   BadgeDollarSign,
+  CalendarDays,
   CheckCircle2,
   Clock3,
   FileSpreadsheet,
@@ -58,6 +59,16 @@ const moduleCards = [
       { icon: CheckCircle2, label: "Resposta imediata" },
       { icon: ShieldCheck, label: "Regras ativas" },
     ],
+  },
+  {
+    href: "/escala",
+    eyebrow: "Acesso restrito",
+    title: "Escalas 5×2",
+    description: "Acesse o planejamento de escalas das filiais liberadas para você.",
+    cta: "Acessar Escalas",
+    tone: "journey",
+    icon: CalendarDays,
+    details: [],
   },
 ] as const;
 
@@ -123,8 +134,8 @@ export default async function DashboardPage() {
           <h1>Escolha o modulo e va direto ao trabalho.</h1>
         </div>
         <p>
-          Jornada, Fotos 3x4 e PDF estão disponíveis sem cadastro. Entre apenas
-          quando quiser manter seu histórico de validações.
+          Jornada, Fotos 3x4 e PDF estão disponíveis sem cadastro. Entre na sua
+          conta para manter o histórico de validações.
         </p>
       </section>
 
@@ -152,7 +163,7 @@ export default async function DashboardPage() {
                   {card.description}
                 </span>
               </span>
-              <span className="module-card__details">
+              {card.details.length > 0 && <span className="module-card__details">
                 {card.details.map((detail) => {
                   const DetailIcon = detail.icon;
                   return (
@@ -162,7 +173,7 @@ export default async function DashboardPage() {
                     </span>
                   );
                 })}
-              </span>
+              </span>}
               <span className="module-card__cta">
                 {card.cta}
                 <ArrowRight className="size-5" aria-hidden="true" />
@@ -177,7 +188,7 @@ export default async function DashboardPage() {
           <h2>Quer guardar suas validações?</h2>
           <p>
             Entre na sua conta para consultar e exportar o histórico de
-            Jornadas. As ferramentas continuam públicas mesmo sem login.
+            Jornadas. As ferramentas públicas continuam disponíveis sem login.
           </p>
           <Link href="/login" className="empty-access-panel__action">
             Entrar na conta

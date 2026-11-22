@@ -96,6 +96,17 @@ describe("current persisted authorization", () => {
     await expect(requireEscalaCapability(operator, "settings.manage", "02")).rejects.toMatchObject({ status: 403 });
     await expect(branchPermission(operator, "03")).rejects.toMatchObject({ status: 403 });
   });
+  it("allows a read-only nominal grant for branch 07 without opening branch 08", async () => {
+    const row = session();
+    row.operator.branchGrants[0].branchCode = "007";
+    row.operator.branchGrants[0].capabilities = ["workspace.read"];
+    db.session.mockResolvedValue(row);
+
+    expect(await allowedBranches(operator)).toEqual(["07"]);
+    expect(await branchPermission(operator, "07")).toEqual({ canEdit: false, canPublish: false });
+    await expect(branchPermission(operator, "08")).rejects.toMatchObject({ status: 403, code: "ESCALA_BRANCH_FORBIDDEN" });
+    await expect(requireEscalaCapability(operator, "access.manage", "07")).rejects.toMatchObject({ status: 403 });
+  });
   it("does not trust caller admin or tenant fields", async () => {
     await expect(requireEscalaCapability({ ...admin, tenantId: "foreign" }, "access.manage")).rejects.toMatchObject({ status: 403 });
     db.user.mockResolvedValue({ id: "a", tenantId: "t", status: "ACTIVE", role: "OPERATOR" });

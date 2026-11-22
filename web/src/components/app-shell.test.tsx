@@ -55,7 +55,10 @@ describe("AppShell Jornada navigation", () => {
     expect(html).not.toContain('href="/jornada/codigos"');
     expect(html).not.toContain('href="/jornada/historico"');
     expect(html).not.toContain('href="/admin/ferias"');
-    expect(html).not.toContain('href="/escala"');
+    expect(html).toContain('href="/escala"');
+    expect(html).toContain("Escalas 5×2 · Acesso restrito");
+    expect(html).not.toContain('href="/conta"');
+    expect(state.module).not.toHaveBeenCalled();
   });
 
   it("keeps administrative navigation while Jornada options live inside the module", async () => {
@@ -100,19 +103,31 @@ describe("Escalas canonical navigation and operational access", () => {
     principal: { kind: "operator", id: "synthetic-operator", tenantId: "default-private-tenant", active: true,
       branchGrants: [{ tenantId: "default-private-tenant", operatorId: "synthetic-operator", branchCode: "02", active: true, capabilities: ["workspace.read"] }] },
   };
-  it("shows only the module link for a verified nominal session, without account or administrative privileges", async () => {
+  it("keeps the public Escalas link current without loading nominal session data", async () => {
     state.module.mockResolvedValue(nominalSession);
     const html = await renderShell();
     expect(html).toMatch(/<a(?=[^>]*href="\/escala")(?=[^>]*aria-current="page")[^>]*>/);
-    expect(html).not.toContain('href="/conta"'); expect(html).not.toContain('href="/admin/'); expect(html).not.toContain("default-private-tenant");
+    expect(html).toContain("Acesso restrito");
+    expect(html).not.toContain('href="/conta"');
+    expect(html).not.toContain('href="/admin/');
+    expect(html).not.toContain("default-private-tenant");
+    expect(state.module).not.toHaveBeenCalled();
   });
-  it.each([{ status: "BLOCKED" as const, tenantId: "tenant-test" }, { status: "ACTIVE" as const, tenantId: undefined }])("does not fall back to nominal access for a denied account: %j", value => {
+  it.each([{ status: "BLOCKED" as const, tenantId: "tenant-test" }, { status: "ACTIVE" as const, tenantId: undefined }])("shows the same restricted public link for a denied account: %j", async value => {
     state.session = { user: { id: "u1", name: "Conta", email: "user@example.test", role: "USER", ...value } };
     state.module.mockResolvedValue(nominalSession);
-    return renderShell().then(html => { expect(html).not.toContain('href="/escala"'); expect(state.module).not.toHaveBeenCalled(); });
+    const html = await renderShell();
+    expect(html).toContain('href="/escala"');
+    expect(html).toContain("Acesso restrito");
+    if (value.status === "BLOCKED") expect(html).not.toContain('href="/conta"');
+    expect(state.module).not.toHaveBeenCalled();
   });
-  it("keeps public navigation available without exposing the protected module on a session-store failure", async () => {
+  it("keeps public navigation independent of the nominal session store", async () => {
     state.module.mockRejectedValue(new Error("private internal failure"));
-    const html = await renderShell(); expect(html).toContain('href="/pdf"'); expect(html).not.toContain('href="/escala"'); expect(html).not.toContain("private internal failure");
+    const html = await renderShell();
+    expect(html).toContain('href="/pdf"');
+    expect(html).toContain('href="/escala"');
+    expect(html).not.toContain("private internal failure");
+    expect(state.module).not.toHaveBeenCalled();
   });
 });
