@@ -1,5 +1,5 @@
-import { expect, test } from "./fixtures";
-import type { Page } from "@playwright/test";
+import { expect, test as base } from "./fixtures";
+import type { BrowserContext, Page } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
 import { strFromU8, unzipSync } from "fflate";
 import { newEmployee, newInput, changeMixed42Sectors } from "../src/components/escalas/workspace-model";
@@ -9,10 +9,64 @@ import { pdfJsServerDocumentOptions } from "../src/lib/pdf/pdfjs-server";
 import { downloadBytes, employeeCsv, nominalEntry, operationalCapabilities, ownedAccountScope, prepareBasicExport, readWorkspace, responseWorkspace, syntheticBranch } from "./escalas-access-fixtures";
 import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
 
+type OwnedScope = Awaited<ReturnType<typeof ownedAccountScope>>;
+type NominalInfrastructure = { scope: OwnedScope; foreign: OwnedScope; second: BrowserContext; other: Page };
+
+function usesIsolatedNominalProfile() {
+  return process.env.E2E_MUTATION === "1" && process.env.E2E_SUITE_PHASE === "nominal";
+}
+
+async function warmDevelopmentRoutes(admin: Page) {
+  if (process.env.E2E_PRODUCTION === "1") return;
+  // Warm route compilation only. The invalid GET never reaches the export cache or touches a workspace.
+  for (const [path, status] of [["/escala", 200], ["/api/escalas/export", 400]] as const) {
+    const response = await admin.request.get(path, { maxRedirects: 0, timeout: 40_000 });
+    try { expect(response.status(), "Development warmup " + path).toBe(status); }
+    finally { await response.dispose(); }
+  }
+}
+
+const test = base.extend<{ nominalInfrastructure: NominalInfrastructure }>({
+  nominalInfrastructure: [async ({ browser }, use) => {
+    const slug = process.env.E2E_EXCLUSIVE_SCOPED_TENANT_SLUG;
+    if (!usesIsolatedNominalProfile() || !slug || !/^e2e-[a-z0-9]+-[a-f0-9]{16}$/.test(slug) || process.env.DEFAULT_TENANT_SLUG !== slug) {
+      throw new Error("Set a fresh E2E_EXCLUSIVE_SCOPED_TENANT_SLUG and the same DEFAULT_TENANT_SLUG before server boot; never reuse principal");
+    }
+    const scope = await ownedAccountScope(browser, slug);
+    let foreign: OwnedScope | undefined;
+    let second: BrowserContext | undefined;
+    const failures: unknown[] = [];
+    try {
+      const [external, secondary, warmup] = await Promise.allSettled([
+        ownedAccountScope(browser).then(value => { foreign = value; return value; }),
+        (async () => {
+          second = await scope.newContext();
+          return { second, other: await second.newPage() };
+        })(),
+        warmDevelopmentRoutes(scope.admin),
+      ]);
+      if (external.status === "rejected" || secondary.status === "rejected" || warmup.status === "rejected") {
+        throw new AggregateError([external, secondary, warmup].flatMap(result => result.status === "rejected" ? [result.reason] : []),
+          "Nominal infrastructure setup failed.");
+      }
+      await use({ scope, foreign: external.value, ...secondary.value });
+    } catch (cause) {
+      failures.push(cause);
+    } finally {
+      for (const cleanup of [() => second?.close(), () => foreign?.cleanup(), () => scope.cleanup()]) {
+        try { await cleanup(); } catch (cause) { failures.push(cause); }
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length) throw new AggregateError(failures, "Nominal infrastructure setup or cleanup failed.");
+  }, { scope: "test", timeout: 120_000 }],
+});
+
 // One scenario owns the configured nominal tenant. A serial describe cannot isolate other workers.
 // The isolated nominal phase reserves this tenant/source IP before server boot.
+test.skip(() => !usesIsolatedNominalProfile(), "Requires an explicitly authorized disposable nominal database");
 test.use({ trace: "off", screenshot: "off", video: "off" });
-test.describe.configure({ retries: 0 });
+test.describe.configure({ retries: 0, timeout: 240_000 });
 
 async function pdfText(bytes: Buffer) {
   expect(bytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
@@ -64,16 +118,8 @@ async function editName(page: Page, previous: string, next: string) {
   await form.getByRole("button", { name: "Aplicar cadastro à proposta", exact: true }).click();
 }
 
-test("nominal access owns its scope, preserves admin configuration, operates the roster and revokes stale contexts and downloads", async ({ browser, page }) => {
-  test.skip(process.env.E2E_MUTATION !== "1", "Requires an explicitly authorized disposable E2E database");
-  test.setTimeout(240_000);
-  const slug = process.env.E2E_EXCLUSIVE_SCOPED_TENANT_SLUG;
-  if (process.env.E2E_SUITE_PHASE !== "nominal" || !slug || !/^e2e-[a-z0-9-]+$/.test(slug) || process.env.DEFAULT_TENANT_SLUG !== slug) {
-    throw new Error("Set a fresh E2E_EXCLUSIVE_SCOPED_TENANT_SLUG and the same DEFAULT_TENANT_SLUG before server boot; never reuse principal");
-  }
-  const scope = await ownedAccountScope(browser, slug);
-  const foreign = await ownedAccountScope(browser);
-  const second = await scope.newContext(); const other = await second.newPage();
+test("nominal access owns its scope, preserves admin configuration, operates the roster and revokes stale contexts and downloads", async ({ page, nominalInfrastructure }) => {
+  const { scope, foreign, second, other } = nominalInfrastructure;
   const headers = scope.headers;
   const post = (data: Record<string, unknown>) => page.request.post("/api/escalas", { headers, data });
   let heldRelease = () => {};
@@ -117,7 +163,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     await expect(username).toBeFocused();
     await scope.setMode("SCOPED");
     // Admission #2: the browser supplies only the registered name, never a password or role.
-    const access = await nominalEntry(page, operator.username);
+    const access = await nominalEntry(page, operator.username, { reuseOpenForm: true });
     expect(access.access.role).toBe("OPERATIONAL"); expect(access.context.administrator).toBe(false); expect(access.context.allBranches).toBe(false);
     expect(access.context.branches.map(branch => branch.code)).toEqual([input.branchCode]);
     const cookie = (await page.context().cookies()).find(value => value.name === "perfectutilitares.escalas-access");
@@ -238,7 +284,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     await expect(page.getByLabel("Nome cadastrado", { exact: true })).toBeVisible();
     expect((await readWorkspace(scope.admin, workspace.id)).revision).toBe(workspace.revision);
     // Admission #4. No hidden replay after a fresh scope is issued.
-    await nominalEntry(page, operator.username); await selectEscalasWorkspace(page, workspace);
+    await nominalEntry(page, operator.username, { reuseOpenForm: true }); await selectEscalasWorkspace(page, workspace);
     const recovery = page.getByRole("alert", { name: "Rascunho recuperável", exact: true }); await expect(recovery).toBeVisible();
     expect((await readWorkspace(scope.admin, workspace.id)).revision).toBe(workspace.revision);
     await recovery.getByRole("button", { name: `Restaurar meu rascunho sobre a revisão ${workspace.revision}`, exact: true }).click();
@@ -288,10 +334,16 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     const exportUrl = (format: "pdf" | "xlsx", projection = "BASIC_SCHEDULE") => `/api/escalas/export?id=${workspace.id}&revision=${workspace.revision}&format=${format}&mode=both&projection=${projection}`;
     // Warm the full administrative PDF first; a later basic request must not receive analytical cached bytes.
     const full = await scope.admin.request.get(exportUrl("pdf", "ADMIN_FULL")); expect(full.status()).toBe(200);
-    expect(await pdfText(await full.body())).toContain("Desfalques de cobertura");
-    expect((await page.request.get(exportUrl("pdf", "ADMIN_FULL"))).status()).toBe(403);
-    expect((await page.request.get(`/api/escalas/operational-report?workspaceId=${workspace.id}&revision=${workspace.revision}&month=2026-12&section=journeys`)).status()).toBe(403);
-    expect((await page.request.post("/api/escalas/turnos/export/manifest", { headers, data: { month: 12, year: 2026, selections: [{ workspaceId: workspace.id, revision: workspace.revision, employees: [{ employeeId: "person", localShiftId: "day" }] }] } })).status()).toBe(403);
+    const [fullText, deniedFull, deniedReport, deniedManifest] = await Promise.all([
+      full.body().then(pdfText),
+      page.request.get(exportUrl("pdf", "ADMIN_FULL")),
+      page.request.get(`/api/escalas/operational-report?workspaceId=${workspace.id}&revision=${workspace.revision}&month=2026-12&section=journeys`),
+      page.request.post("/api/escalas/turnos/export/manifest", { headers, data: { month: 12, year: 2026, selections: [{ workspaceId: workspace.id, revision: workspace.revision, employees: [{ employeeId: "person", localShiftId: "day" }] }] } }),
+    ]);
+    expect(fullText).toContain("Desfalques de cobertura");
+    expect(deniedFull.status()).toBe(403);
+    expect(deniedReport.status()).toBe(403);
+    expect(deniedManifest.status()).toBe(403);
     await expectBasicDownloads(page, workspace, "Pessoa autorizada");
 
     // Revoke between the visible preparation click and the real request reaching the server; no bytes/download may escape.
@@ -309,7 +361,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     await page.unrouteAll({ behavior: "wait" }); expect(downloads).toBe(0);
     await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
     // Admission #5 opens B only; A and its recovery must never be silently sent under B's context.
-    await nominalEntry(page, operator.username); await selectEscalasWorkspace(page, adminOnlyWorkspace);
+    await nominalEntry(page, operator.username, { reuseOpenForm: true }); await selectEscalasWorkspace(page, adminOnlyWorkspace);
     expect((await page.request.get(`/api/escalas?id=${workspace.id}`)).status()).toBe(403);
     await expect(page.getByRole("alert", { name: "Rascunho recuperável", exact: true })).toHaveCount(0);
     expect((await readWorkspace(scope.admin, workspace.id)).revision).toBe(workspace.revision);
@@ -320,5 +372,8 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect((await page.request.get("/api/escalas/access/session")).status()).toBe(401);
     await scope.setMode("ADMIN_ONLY");
     expect((await other.request.get("/api/escalas/access/session")).status()).toBe(401);
-  } finally { heldRelease(); await page.unrouteAll({ behavior: "wait" }); await second.close(); try { await foreign.cleanup(); } finally { await scope.cleanup(); } }
+  } finally {
+    heldRelease();
+    if (!page.isClosed()) await page.unrouteAll({ behavior: "ignoreErrors" });
+  }
 });

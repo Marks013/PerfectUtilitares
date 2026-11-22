@@ -552,6 +552,41 @@ describe("trusted candidate lifecycle in the real workspace hook", () => {
 
 
 describe("workspace access recovery", () => {
+  it("never recreates a confirmed recovery or overwrites a newer backup from a delayed timer", async () => {
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    const saveBackup = vi.mocked(sessionStorage.setItem);
+    const pendingBackup = () => {
+      const callback = timer.mock.calls.slice().reverse().find(([, milliseconds]) => milliseconds === 250)?.[0];
+      if (typeof callback !== "function") throw new Error("No backup timer was scheduled");
+      return callback;
+    };
+    try {
+      if (!current.input) throw new Error("Workspace not loaded");
+      current.update({ ...current.input, branchName: "Edição já confirmada" });
+      await settle();
+      // Model a callback already queued by the browser despite effect cleanup.
+      const delayed = pendingBackup();
+      const saved = await current.flushDraft();
+      await settle();
+      expect(saved?.revision).toBe(3);
+      expect(current.dirty).toBe(false);
+      delayed();
+      await settle();
+      expect(saveBackup).not.toHaveBeenCalled();
+
+      if (!current.input) throw new Error("Saved workspace not loaded");
+      const newer = { ...current.input, branchName: "Nova edição ainda pendente" };
+      current.update(newer);
+      await settle();
+      pendingBackup()();
+      delayed();
+      await settle();
+      expect(saveBackup).toHaveBeenCalledOnce();
+      const [, stored] = saveBackup.mock.calls[0];
+      expect(JSON.parse(stored)).toMatchObject({ baseRevision: 3, input: { branchName: newer.branchName } });
+    } finally { timer.mockRestore(); }
+  });
+
   it("reloads the initial list after unlocking without a previously selected workspace", async () => {
     for (const cleanup of hooks.cleanup) cleanup?.();
     hooks.slots = []; hooks.deps = []; hooks.cleanup = []; hooks.effects = []; hooks.cursor = 0; hooks.changed = false;

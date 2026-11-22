@@ -41,14 +41,22 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
     ...(["localhost", "127.0.0.1", "[::1]"].includes(host) ? { "x-real-ip": `198.18.${hash[0]}.${hash[1]}` } : {}) };
   const newContext = () => browser.newContext({ baseURL, extraHTTPHeaders, ignoreHTTPSErrors: test.info().project.use.ignoreHTTPSErrors ?? process.env.E2E_PRODUCTION === "1" });
   const rootContext = await newContext();
-  const root = await rootContext.newPage();
-  await loginAsAdmin(root);
-  const tenantResponse = await root.request.post("/api/admin/tenants", { headers, data: { name: "E2E exclusivo", slug: tenantSlug } });
-  expect(tenantResponse.status(), "The tenant must be newly created, never reused").toBe(201);
-  const tenant = await tenantResponse.json() as { id: string; slug: string };
-  expect(tenant.slug).toBe(tenantSlug);
-  const identities: string[] = [];
   const contexts: import("@playwright/test").BrowserContext[] = [];
+  async function setupFailed(cause: unknown): Promise<never> {
+    await Promise.allSettled([...contexts, rootContext].map(context => context.close()));
+    throw cause;
+  }
+  async function provisionTenant() {
+    const root = await rootContext.newPage();
+    await loginAsAdmin(root);
+    const tenantResponse = await root.request.post("/api/admin/tenants", { headers, data: { name: "E2E exclusivo", slug: tenantSlug } });
+    expect(tenantResponse.status(), "The tenant must be newly created, never reused").toBe(201);
+    const tenant = await tenantResponse.json() as { id: string; slug: string };
+    expect(tenant.slug).toBe(tenantSlug);
+    return { root, tenant };
+  }
+  const { root, tenant } = await provisionTenant().catch(setupFailed);
+  const identities: string[] = [];
   const workspaces: EscalaWorkspace[] = [];
   const policies: string[] = [];
   const operators: string[] = [];
@@ -79,7 +87,7 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
     await expect(page).toHaveURL(/\/dashboard$/);
     return { page, context, id: user.id };
   }
-  const owner = await createUser("ADMIN");
+  const owner = await createUser("ADMIN").catch(setupFailed);
   const admin = owner.page;
   const post = (data: Record<string, unknown>) => admin.request.post("/api/escalas", { headers, data });
   async function administration(command?: EscalaOperatorAdminHttpCommand): Promise<EscalaAdministrationView> {
@@ -145,9 +153,17 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
     trackWorkspace: (workspace: EscalaWorkspace) => { workspaces.push(workspace); return workspace; }, cleanup };
 }
 
-export async function nominalEntry(page: Page, username: string) {
-  await page.goto("/escala");
-  await page.getByLabel("Nome cadastrado", { exact: true }).fill(username);
+export async function nominalEntry(page: Page, username: string, { reuseOpenForm = false } = {}) {
+  const field = page.getByLabel("Nome cadastrado", { exact: true });
+  if (reuseOpenForm) {
+    const baseURL = test.info().project.use.baseURL;
+    if (!baseURL) throw new Error("Playwright baseURL is required");
+    const current = new URL(page.url());
+    expect(current.origin).toBe(new URL(baseURL).origin);
+    expect(current.pathname).toBe("/escala");
+    await expect(field).toBeVisible();
+  } else await page.goto("/escala");
+  await field.fill(username);
   await page.getByRole("button", { name: /^(Liberar planejamento|Entrar e abrir um novo acesso|Tentar novamente)$/ }).click();
   await expect(page.getByRole("button", { name: "Bloquear Escalas", exact: true })).toBeVisible();
   const session = await page.request.get("/api/escalas/access/session"); expect(session.status()).toBe(200);

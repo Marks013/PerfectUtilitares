@@ -102,10 +102,12 @@ export function useEscalasWorkspace() {
   });
 
   const saveQueue = saver.current;
-
   useEffect(() => {
     if (!dirty || !input || !workspace?.canEdit || recovery || busy || !canDisplayEscalaAction(access, "workspace.save", input.branchCode)) return;
-    const recoveryTimer = setTimeout(() => setLocalBackup(saveRecovery(workspace, input)), 250);
+    const recoveryTimer = setTimeout(() => {
+      if (mounted.current && !accessLocked.current && !unresolvedRecovery.current && saveQueue.hasChanges
+        && latestWorkspace.current === workspace && latestInput.current === input) setLocalBackup(saveRecovery(workspace, input));
+    }, 250);
     const timer = setTimeout(() => {
       if (!working.current && !recovery && !sessionLocked && saveState === "pending") void saveQueue.flush().catch(cause => {
         if (mounted.current) { const next = toEscalaProblem(cause); setProblem(next); setError(next.message); }
