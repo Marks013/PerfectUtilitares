@@ -19,6 +19,7 @@ def records(repeats=5, same_source=True):
                 data.append({"kind": "measurement", "scenario": scenario, "variant": variant,
                              "repetition": i, "sourceHash": sha, "status": "FEASIBLE", "errors": [],
                              "image": "sha256:" + "c" * 64, "hostLoad1m": 0.5,
+                             "initialSeedHash": "d" * 64,
                              "resources": dict(contract.RESOURCE_PROFILE),
                              "seconds": 10 + i / 100, "maxRssKiB": 100 + i,
                              "shortagePersonMinutes": i, "comparableOffSpread": 0,
@@ -49,6 +50,21 @@ class ContractTest(unittest.TestCase):
         data, scenarios = records(20, same_source=False)
         reports = contract.verify(data, scenarios, 20)
         self.assertTrue(reports[0]["p95Available"])
+        self.assertEqual(reports[0]["sourceComparison"], "DISTINCT_SOLVER_SOURCE")
+
+    def test_every_measurement_requires_an_anonymous_initial_seed_fingerprint(self):
+        for value in (None, "", "invalid", "x" * 64):
+            with self.subTest(value=value):
+                data, scenarios = records()
+                data[0]["initialSeedHash"] = value
+                with self.assertRaisesRegex(ValueError, "initial feasibility fingerprint"):
+                    contract.verify(data, scenarios, 5)
+
+    def test_different_unpaired_initial_seeds_are_recorded_not_rejected(self):
+        data, scenarios = records(same_source=False)
+        data[0]["initialSeedHash"] = "e" * 64
+        reports = contract.verify(data, scenarios, 5)
+        self.assertEqual(len(reports), len(scenarios))
         self.assertEqual(reports[0]["sourceComparison"], "DISTINCT_SOLVER_SOURCE")
 
     def test_distinct_source_regressions_are_rejected_without_weakening_integrity(self):

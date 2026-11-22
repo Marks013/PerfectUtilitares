@@ -98,6 +98,12 @@ def verify(records: list[dict], scenarios: list[str], repeats: int) -> list[dict
             for row in rows:
                 require(row.get("status") in ("FEASIBLE", "OPTIMAL") and row.get("errors") == [],
                         f"Solver infeasible or independent validation failed: {key}")
+                # A synthetically derived SHA identifies which initial CP-SAT
+                # incumbent led to each measurement. Do not require equal
+                # unpaired seeds: their variability is what is being studied.
+                seed_hash = row.get("initialSeedHash")
+                require(type(seed_hash) is str and re.fullmatch(r"[0-9a-f]{64}", seed_hash),
+                        f"Missing or invalid initial feasibility fingerprint: {key}")
                 require(number(row.get("seconds"), positive=True)
                         and number(row.get("maxRssKiB"), positive=True)
                         and number(row.get("shortagePersonMinutes")),

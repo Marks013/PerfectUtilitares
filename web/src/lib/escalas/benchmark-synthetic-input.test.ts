@@ -5,7 +5,7 @@ import { fingerprintSyntheticRoster, requireSharedSyntheticSeed, syntheticInput 
 import { benchmarkPython } from "../../../scripts/escalas/benchmark-runtime";
 
 describe("synthetic solver benchmark calendar", () => {
-  it("fingerprints only the FIRST feasible roster, never the refined final output", () => {
+  it.each([true, false])("fingerprints the FIRST feasible roster in pairedSeed=%s, never the refined output", pairedSeed => {
     // Mock CP-SAT imports so we can execute the exact Python benchmark wrapper
     // without external dependencies, databases or any real scheduling input.
     const shim = String.raw`
@@ -32,7 +32,7 @@ def solve(_data):
 `;
     const outcome = spawnSync("python3", ["-c", shim + "\n" + benchmarkPython], {
       encoding: "utf8", timeout: 5000,
-      input: JSON.stringify({ sources: { solver: solverSource }, resources: {}, input: {}, pairedSeed: true }),
+      input: JSON.stringify({ sources: { solver: solverSource }, resources: {}, input: {}, pairedSeed }),
     });
     expect(outcome.status).toBe(0);
     const actual = JSON.parse(outcome.stdout) as { initialSeedHash: string };

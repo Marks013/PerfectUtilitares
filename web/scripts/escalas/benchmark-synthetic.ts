@@ -154,6 +154,9 @@ async function main() {
           "-B", "-c", benchmarkPython], JSON.stringify({ ...snapshot, input: solveInput, pairedSeed }));
         activeContainer = undefined;
         const solved = JSON.parse(output) as { result: EscalaSolveResult; calls: object[]; maxRssKiB: number; initialSeedHash?: string };
+        if (!/^[0-9a-f]{64}$/.test(solved.initialSeedHash ?? "")) {
+          throw new Error("BENCHMARK_INITIAL_SEED_MISSING");
+        }
         if (pairedSeed && repetition >= 0) {
           requireSharedSyntheticSeed(sharedSeedHash, solved.initialSeedHash);
         }
@@ -182,7 +185,8 @@ async function main() {
           resources: { workers, cpus: workers, memoryMiB: 1536, linearization, symmetry }, hostLoad1m: loadavg()[0],
           status: solved.result.status, seconds: solved.result.wallTimeSeconds, maxRssKiB: solved.maxRssKiB,
           calls: solved.calls.length, phases: solved.result.optimization?.phases,
-          ...(pairedSeed ? { pairedSeed: true, initialSeedHash: solved.initialSeedHash, sharedSeedHash } : {}),
+          initialSeedHash: solved.initialSeedHash,
+          ...(pairedSeed ? { pairedSeed: true, sharedSeedHash } : {}),
           shortagePersonMinutes: deficits?.total ?? null, shortageBySector: deficits?.bySector,
           ...(feasible ? { ...weekendMetrics(proposal), ...operational } : {}),
           errors: [...new Set(errors)] }));
