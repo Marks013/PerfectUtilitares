@@ -716,10 +716,7 @@ export function useEscalasWorkspace() {
     cancellable,
     cancelLabel,
     cancelAnalysis,
-    dismissProposals: () => {
-      generatedReference.current = null;
-      setGenerated(null);
-    },
+    dismissProposals: () => { generatedReference.current = null; setGenerated(null); },
     canEdit: Boolean(workspace?.canEdit && !busy && !recovery && !sessionLocked),
   };
 }
