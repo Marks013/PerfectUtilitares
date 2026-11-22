@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from "./fixtures";
 import { selectEscalasWorkspace } from "./escalas-selection";
+import { downloadBytes, prepareBasicExport } from "./escalas-access-fixtures";
 import { PDFDocument } from "pdf-lib";
 import { strFromU8, unzipSync } from "fflate";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
@@ -51,15 +52,6 @@ async function read(page: Page, id: string) {
   const response = await page.request.get("/api/escalas?id=" + id);
   expect(response.status()).toBe(200);
   return response.json() as Promise<EscalaWorkspace>;
-}
-function waitForBasicExport(page: Page, workspace: EscalaWorkspace, format: "PDF" | "XLSX") {
-  return page.waitForResponse(response => {
-    const { pathname, searchParams } = new URL(response.url());
-    return response.request().method() === "GET" && pathname === "/api/escalas/export"
-      && searchParams.get("id") === workspace.id && searchParams.get("revision") === String(workspace.revision)
-      && searchParams.get("format") === format.toLowerCase() && searchParams.get("mode") === "both"
-      && searchParams.get("projection") === "BASIC_SCHEDULE";
-  });
 }
 async function cleanup(page: Page, id: string) {
   const current = await read(page, id);
@@ -221,19 +213,16 @@ test("the main workspace prepares real files for the exact saved revision and in
     await open(page, workspace, "roster");
     await expect(page.getByRole("link", { name: "Baixar PDF", exact: true })).toHaveCount(0);
     for (const format of ["PDF", "XLSX"] as const) {
-      const preparing = waitForBasicExport(page, workspace, format);
-      await page.getByRole("button", { name: "Gerar " + format, exact: true }).click();
-      const fileResponse = await preparing;
-      expect(fileResponse.status()).toBe(200);
+      const expected = await prepareBasicExport(page, workspace, format);
       const link = page.getByRole("link", { name: "Baixar " + format, exact: true }); await expect(link).toBeVisible();
-      const downloading = page.waitForEvent("download"); await link.click(); const download = await downloading;
-      expect(await download.failure()).toBeNull(); expect(download.suggestedFilename()).toContain("-r" + workspace.revision + "-both.");
-      const stream = await download.createReadStream(); if (!stream) throw new Error("Actual download stream missing");
-      const chunks: Buffer[] = []; for await (const chunk of stream) chunks.push(Buffer.from(chunk)); const bytes = Buffer.concat(chunks);
-      expect(bytes.equals(await fileResponse.body())).toBe(true);
-      if (format === "PDF") expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
-      else { const files = unzipSync(bytes), book = strFromU8(files["xl/workbook.xml"]); expect(book).toContain('name="Escala"'); expect(book).toContain('name="Horarios"'); expect(book).not.toMatch(/name="(?:Conferencia|Turnos|Jornadas)"/); }
-      await download.delete();
+      const [download] = await Promise.all([page.waitForEvent("download", { timeout: 15_000 }), link.click()]);
+      try {
+        expect(download.suggestedFilename()).toContain("-r" + workspace.revision + "-both.");
+        const bytes = await downloadBytes(download);
+        expect(bytes.equals(expected), "Downloaded " + format + " must match the export response").toBe(true);
+        if (format === "PDF") expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
+        else { const files = unzipSync(bytes), book = strFromU8(files["xl/workbook.xml"]); expect(book).toContain('name="Escala"'); expect(book).toContain('name="Horarios"'); expect(book).not.toMatch(/name="(?:Conferencia|Turnos|Jornadas)"/); }
+      } finally { await download.delete(); }
     }
     await selectStep(page, "generate");
     await page.getByLabel("Jornada semanal", { exact: true }).selectOption("40");
@@ -255,20 +244,13 @@ test("the main workspace prepares real files for the exact saved revision and in
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
     const saved = await read(page, workspace.id); expect(saved.input.defaultWeeklyHours).toBe(40); expect(saved.status).toBe("DRAFT");
     await selectStep(page, "roster");
-    const preparing = waitForBasicExport(page, saved, "PDF");
-    await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
-    const fileResponse = await preparing;
-    expect(fileResponse.status()).toBe(200);
-    const downloading = page.waitForEvent("download");
-    await page.getByRole("link", { name: "Baixar PDF", exact: true }).click();
-    const download = await downloading;
-    expect(download.suggestedFilename()).toContain("-r" + saved.revision + "-both.pdf");
-    const stream = await download.createReadStream();
-    if (!stream) throw new Error("Actual PDF download stream missing");
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    expect(Buffer.concat(chunks).equals(await fileResponse.body())).toBe(true);
-    await download.delete();
+    const expected = await prepareBasicExport(page, saved, "PDF");
+    const link = page.getByRole("link", { name: "Baixar PDF", exact: true });
+    const [download] = await Promise.all([page.waitForEvent("download", { timeout: 15_000 }), link.click()]);
+    try {
+      expect(download.suggestedFilename()).toContain("-r" + saved.revision + "-both.pdf");
+      expect((await downloadBytes(download)).equals(expected), "Regenerated PDF must match the export response").toBe(true);
+    } finally { await download.delete(); }
   } finally { await cleanup(page, workspace.id); }
 });
 

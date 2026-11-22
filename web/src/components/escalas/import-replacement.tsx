@@ -2,12 +2,12 @@
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ImportSyncPreview, ImportSyncPurpose } from "@/lib/escalas/import-sync-contracts";
-import { importSyncCommandSchema } from "@/lib/escalas/import-sync-contracts";
+import { importSyncCommandSchema, isImportSyncFileSizeAllowed } from "@/lib/escalas/import-sync-contracts";
 import { isDate } from "@/lib/escalas/dates";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { useEscalaClientAccess } from "./access-context";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
-import type { ReplaceImport } from "./import-replacement-client";
+import { importReplacementFileSizeMessage, type ReplaceImport } from "./import-replacement-client";
 import styles from "./escalas.module.css";
 import local from "./import-replacement.module.css";
 
@@ -82,6 +82,7 @@ function ReplacementSession({ workspace, purpose, disabled: permanentlyDisabled,
   async function execute(apply: boolean) {
     if (active.current || disabled || pendingSave) return;
     if (!file) { fileRef.current?.focus(); return; }
+    if (!isImportSyncFileSizeAllowed(file.size)) { setError(importReplacementFileSizeMessage); return; }
     if (!datesValid()) return;
     if (apply && (!preview?.canApply || preview.blockers.length || !confirmed || !coverage)) return;
     const current = new AbortController(), snapshot = context, checked = preview;

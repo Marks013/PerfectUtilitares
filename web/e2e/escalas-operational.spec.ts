@@ -4,7 +4,7 @@ import { newEmployee, newInput } from "../src/components/escalas/workspace-model
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import type { Page } from "@playwright/test";
 import { loginAsAdmin } from "./admin-session";
-import { selectEscalasWorkspace } from "./escalas-selection";
+import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
 
 async function openWorkspace(page: Page, workspace: EscalaWorkspace) {
   await page.goto("/escala");
@@ -38,8 +38,7 @@ test("exact operational clocks, excluded relation, responsive graph and all thre
     await expect(grade).toBeVisible();
     await expect(grade).not.toContainText("Pessoa fora da proposta");
     await expect(grade).toContainText("09:36-14:00 / 16:00-20:00");
-    if (!await page.getByRole("button", { name: "Cobertura", exact: true }).isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
-    await page.getByRole("button",{name:"Cobertura",exact:true}).click();
+    await openEscalasArea(page, "coverage");
     await page.getByLabel("Data da cobertura",{exact:true}).selectOption("2026-11-02");
     await page.getByLabel("Setor no gráfico",{exact:true}).selectOption("Reposição");
     await expect(page.getByRole("img",{name:/Presença por horário/})).toBeVisible();
@@ -55,7 +54,7 @@ test("exact operational clocks, excluded relation, responsive graph and all thre
       await expect(live).not.toContainText("Horário não informado");
     }
     for(const width of [375,768,1280]) {await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}
-    await page.locator('button[aria-controls="escala-area-roster"]').click();
+    await openEscalasArea(page, "roster");
     for(const mode of ["rest","hours","both"]) {
       await page.getByLabel("Conteúdo do PDF e XLSX",{exact:true}).selectOption(mode);
       await expect(page.getByLabel("Visualização da escala",{exact:true})).toHaveValue(mode);
@@ -93,9 +92,12 @@ test("short-journey pause flexibility requires an explicit scenario choice, surv
     const generate=async()=>{const response=await page.request.post("/api/escalas",{headers:{origin},data:{action:"GENERATE",id:workspace.id,expectedRevision:workspace.revision}});expect(response.status()).toBe(200);return response;};
     expect((await (await generate()).json()).result.status).toBe("INFEASIBLE");
     await openWorkspace(page, workspace);
-    await page.locator('button[aria-controls="escala-area-generate"]').click();
-    await page.getByRole("button",{name:"Ajustar pausas de jornadas curtas (opcional)",exact:true}).click();
+    await openEscalasArea(page, "generate");
+    const pauseShortcut = page.getByRole("button", { name: "Simular jornada de mais de 4h até 6h sem pausa de 15 min", exact: true, includeHidden: true });
+    await revealEscalasControl(pauseShortcut);
+    await pauseShortcut.click();
     const toggle=page.getByRole("checkbox",{name:"Simular jornada de mais de 4h até 6h sem pausa de 15 minutos",exact:true});
+    await expect(toggle).toBeVisible();
     await expect(toggle).not.toBeChecked();
     const saving=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/api/escalas")&&r.request().postDataJSON()?.action==="SAVE");
     await toggle.check();

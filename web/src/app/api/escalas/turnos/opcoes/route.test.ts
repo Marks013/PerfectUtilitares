@@ -49,6 +49,42 @@ describe("contextual catalog options with real access and services", () => {
     expect(state.catalog).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "t", code: { gt: 0 }, OR: [{ firstIn: 480, firstOut: 720, secondIn: 780, secondOut: 1020 }] } }));
     expect(POST().status).toBe(405);
   });
+  it("returns only approved options for a legacy controlled shift without a persisted schedule mode", async () => {
+    const revision = await state.revision();
+    delete revision.input.employees[0].scheduleMode;
+    const before = structuredClone(revision.input);
+    state.catalog.mockResolvedValue([
+      { code: 1500, firstIn: 480, firstOut: 720, secondIn: 780, secondOut: 1020 },
+      { code: 1501, firstIn: 420, firstOut: 660, secondIn: 0, secondOut: 0 },
+    ]);
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ context: { workspaceId: "w1", revision: 1, employeeId: "e1",
+      effectiveFrom: query.effectiveFrom, effectiveUntil: query.effectiveUntil }, entries: [
+      { code: 1500, markings: ["08:00", "12:00", "13:00", "17:00"], name: "08:00 12:00 13:00 17:00" },
+    ], nextCursor: null, pageSize: 1 });
+    expect(state.catalog).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "t", code: { gt: 0 },
+      OR: [{ firstIn: 480, firstOut: 720, secondIn: 780, secondOut: 1020 }] } }));
+    expect(revision.input).toEqual(before);
+  });
+  it.each(["UNTIMED", "MISSING", "NO_SHIFT", "LEGACY_ZERO_CLOCK"] as const)(
+    "withholds options for %s without broadening scope", async kind => {
+      const revision = await state.revision();
+      const employee = (revision.input as EscalaInput).employees[0];
+      if (kind === "NO_SHIFT") {
+        delete employee.scheduleMode;
+        employee.shiftIds = [];
+      } else if (kind === "LEGACY_ZERO_CLOCK") {
+        delete employee.scheduleMode;
+        employee.sourceSchedule = { report: "FPRE136", code: "zero", description: "Sem horário",
+          weekday: "00:00-00:00 / 00:00-00:00", saturday: "00:00-00:00 / 00:00-00:00" };
+      } else employee.scheduleMode = kind;
+      const response = await GET(request());
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ entries: [], nextCursor: null });
+      expect(state.catalog).not.toHaveBeenCalled();
+    },
+  );
   it("returns an empty page instead of global fallback when no approved tuple matches", async () => {
     state.catalog.mockResolvedValue([{ code: 1501, firstIn: 420, firstOut: 660, secondIn: 0, secondOut: 0 }]);
     expect((await listTurnoCatalogOptions(state.actor, query)).entries).toEqual([]);

@@ -1,6 +1,14 @@
 import { addDays, visibleDates } from "../dates";
-import { isAdministrativeEscalaSector } from "../eligibility";
+import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "../eligibility";
+import { effectiveScheduleMode } from "../fpre136-schedule";
 import type { EscalaEmployee, EscalaInput, EscalaShift } from "../types";
+
+/** Saved allowed shifts identify a controlled clock for legacy records without a mode. */
+export function canAssignCatalogShift(person: EscalaEmployee): boolean {
+  const mode = effectiveScheduleMode(person);
+  return isEscalaPlanningParticipant(person) && person.shiftIds.length > 0
+    && (mode === "TIMED" || mode === undefined);
+}
 
 export type EmployeeReferenceShiftChoice = { shiftId: string; label: string; source: "BASE" | "MANUAL" | "WORK" };
 const clock = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;

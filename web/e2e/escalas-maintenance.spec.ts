@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
 import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
-import { applyReplacement, previewReplacement } from "./escalas-access-fixtures";
+import { applyReplacement, downloadBytes, prepareBasicExport, previewReplacement } from "./escalas-access-fixtures";
 import type { EscalaWorkspace } from "../src/lib/escalas/types";
 import { loginAsAdmin } from "./admin-session";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
@@ -223,30 +223,16 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   const saved: EscalaWorkspace = await applied.json();
   await expect(page.getByRole("region", { name: "Grade mensal da filial", exact: true })).toBeVisible();
   for (const format of ["PDF", "XLSX"] as const) {
-    const preparing = page.waitForResponse(response => {
-      const { pathname, searchParams } = new URL(response.url());
-      return response.request().method() === "GET" && pathname === "/api/escalas/export"
-        && searchParams.get("id") === saved.id && searchParams.get("revision") === String(saved.revision)
-        && searchParams.get("format") === format.toLowerCase() && searchParams.get("mode") === "both"
-        && searchParams.get("projection") === "BASIC_SCHEDULE";
-    });
-    await page.getByRole("button", { name: `Gerar ${format}`, exact: true }).click();
-    const fileResponse = await preparing;
-    expect(fileResponse.status()).toBe(200);
-    await expect(page.getByRole("link", { name: `Baixar ${format}`, exact: true })).toBeVisible();
-    const downloading = page.waitForEvent("download");
-    await page.getByRole("link", { name: `Baixar ${format}`, exact: true }).click();
-    const download = await downloading;
-    expect(await download.failure()).toBeNull();
-    const stream = await download.createReadStream();
-    if (!stream) throw new Error("No downloaded file stream");
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    const bytes = Buffer.concat(chunks);
-    expect(bytes.length).toBeGreaterThan(500);
-    expect(bytes.subarray(0, format === "PDF" ? 4 : 2).toString()).toBe(format === "PDF" ? "%PDF" : "PK");
-    expect(bytes.equals(await fileResponse.body())).toBe(true);
-    await download.delete();
+    const expected = await prepareBasicExport(page, saved, format);
+    const link = page.getByRole("link", { name: "Baixar " + format, exact: true });
+    await expect(link).toBeVisible();
+    const [download] = await Promise.all([page.waitForEvent("download", { timeout: 15_000 }), link.click()]);
+    try {
+      const bytes = await downloadBytes(download);
+      expect(bytes.length).toBeGreaterThan(500);
+      expect(bytes.subarray(0, format === "PDF" ? 4 : 2).toString()).toBe(format === "PDF" ? "%PDF" : "PK");
+      expect(bytes.equals(expected), "Downloaded " + format + " must match the export response").toBe(true);
+    } finally { await download.delete(); }
     await expect(page.getByRole("article", { name: `Arquivo ${format}`, exact: true }).getByText("Pronto para baixar", { exact: true })).toBeVisible();
   }
   await page.locator('button[aria-controls="escala-area-generate"]').click();

@@ -10,7 +10,7 @@ import { assertEscalaOperationalInput, stableEscalaJson } from "./operational-in
 import { ESCALA_CAPABILITIES } from "./permissions";
 import { getEscala, parseEscalaInput, saveEscala } from "./service";
 import { manualAssignmentIssues, manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
-import { importSyncCommandSchema, type ImportSyncCommand, type ImportSyncApplyResult, type ImportSyncPreview,
+import { importSyncCommandSchema, isImportSyncFileSizeAllowed, type ImportSyncCommand, type ImportSyncApplyResult, type ImportSyncPreview,
   type ImportSyncProblem, type ImportSyncPersonChange } from "./import-sync-contracts";
 import type { EscalaAssignment, EscalaEmployee, EscalaWorkspace } from "./types";
 
@@ -27,7 +27,7 @@ async function reconcile(actor: EscalaActor, command: ImportSyncCommand, file: I
   await requireEscalaCapability(actor, "workspace.save", current.input.branchCode, db);
   if (!actor.admin) throw new EscalaError(403, "ESCALA_IMPORT_ADMIN_REQUIRED", "A substituição exige acesso administrativo.");
   if (current.revision !== command.expectedRevision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "A proposta mudou. Refaça a conferência.");
-  if (!file.buffer.length || file.buffer.length > 512 * 1024 || !["csv", "xlsx"].includes(file.extension)) throw new EscalaError(400, "ESCALA_IMPORT_FILE", "Envie um CSV ou XLSX de até 512 KB.");
+  if (!isImportSyncFileSizeAllowed(file.buffer.length) || !["csv", "xlsx"].includes(file.extension)) throw new EscalaError(400, "ESCALA_IMPORT_FILE", "Envie um CSV ou XLSX de até 512 KB.");
   const input = current.input, candidate = structuredClone(input);
   const blockers: ImportSyncProblem[] = [], warnings: ImportSyncPreview["warnings"] = [];
   const block = (code: ImportSyncProblem["code"], message: string, extra: Partial<ImportSyncProblem> = {}) => blockers.push({ code, message, ...extra });

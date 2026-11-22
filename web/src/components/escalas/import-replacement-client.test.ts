@@ -56,6 +56,32 @@ describe("administrative replacement boundary", () => {
     p.fileHash = "0".repeat(64);
     await expect(requestImportReplacement(file, command, workspace, new AbortController().signal)).rejects.toThrow();
   });
+  it("rejects a missing payload and caps uploads at 512 KiB before reaching fetch", async () => {
+    const fetcher = vi.fn(async () => Response.json({}, { status: 409 }));
+    vi.stubGlobal("fetch", fetcher);
+    for (const size of [0, 512 * 1024 + 1]) {
+      const invalid = new File([new Uint8Array(size)], "origem.csv", { type: "text/csv" });
+      await expect(requestImportReplacement(invalid, command, workspace, new AbortController().signal)).rejects.toThrow("até 512 KB");
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+    await expect(requestImportReplacement(new File([new Uint8Array(512 * 1024)], "limite.csv"), command, workspace,
+      new AbortController().signal)).rejects.toThrow("A revisão mudou");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it.each([
+    ["sem corpo", () => new Response(null, { status: 401 }), "Confira o acesso e tente novamente."],
+    ["com JSON", () => Response.json({ error: { message: "Acesso encerrado" } }, { status: 401 }), "Acesso encerrado"],
+  ] as const)("requests unlock once for HTTP 401 %s without replaying the replacement", async (_, response, message) => {
+    const events = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent: events });
+    const fetcher = vi.fn(async () => response());
+    vi.stubGlobal("fetch", fetcher);
+    const apply: ImportSyncCommand = { ...command, action: "APPLY_REPLACE", completeScopeConfirmed: true,
+      confirm: true, expectedImpactHash: "b".repeat(64) };
+    await expect(requestImportReplacement(file, apply, workspace, new AbortController().signal)).rejects.toThrow(message);
+    expect(events).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: "escalas:unlock-required" }));
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it("bounds noncooperative transport and never processes its late unauthorized response", async () => {
     vi.useFakeTimers(); const events = vi.fn(); vi.stubGlobal("window", { dispatchEvent: events });
     let resolve: (value: Response) => void = () => undefined;

@@ -1,12 +1,12 @@
 import { expect, test } from "./fixtures";
-import type { Page, Route } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
 import { strFromU8, unzipSync } from "fflate";
 import { newEmployee, newInput, changeMixed42Sectors } from "../src/components/escalas/workspace-model";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import type { TurnoCatalogSyncResult, TurnoSwapPreviewDto } from "../src/lib/escalas/shift-catalog/contracts";
 import { pdfJsServerDocumentOptions } from "../src/lib/pdf/pdfjs-server";
-import { downloadBytes, employeeCsv, nominalEntry, operationalCapabilities, ownedAccountScope, readWorkspace, responseWorkspace, syntheticBranch } from "./escalas-access-fixtures";
+import { downloadBytes, employeeCsv, nominalEntry, operationalCapabilities, ownedAccountScope, prepareBasicExport, readWorkspace, responseWorkspace, syntheticBranch } from "./escalas-access-fixtures";
 import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
 
 // One scenario owns the configured nominal tenant. A serial describe cannot isolate other workers.
@@ -32,45 +32,22 @@ async function pdfText(bytes: Buffer) {
 async function expectBasicDownloads(page: Page, workspace: EscalaWorkspace, employeeName: string) {
   await openEscalasArea(page, "roster");
   for (const format of ["pdf", "xlsx"] as const) {
-    const matches = ({ pathname, searchParams }: URL) => pathname === "/api/escalas/export"
-      && searchParams.get("id") === workspace.id && searchParams.get("revision") === String(workspace.revision)
-      && searchParams.get("format") === format && searchParams.get("mode") === "both"
-      && searchParams.get("projection") === "BASIC_SCHEDULE";
-    const capture: { bytes?: Buffer } = {};
-    // Read the real response before relaying it. Chromium's trace body may be empty for binary fetches.
-    const relay = async (route: Route) => {
-      if (route.request().method() !== "GET") return route.continue();
-      const upstream = await route.fetch({ maxRedirects: 0 });
-      try {
-        capture.bytes = await upstream.body();
-        await route.fulfill({ response: upstream, body: capture.bytes });
-      } finally { await upstream.dispose(); }
-    };
-    await page.route(matches, relay);
+    const expected = await prepareBasicExport(page, workspace, format === "pdf" ? "PDF" : "XLSX");
+    const link = page.getByRole("link", { name: `Baixar ${format.toUpperCase()}`, exact: true });
+    await expect(link).toHaveAttribute("download", new RegExp(`-r${workspace.revision}-both\\.${format}$`));
+    const [download] = await Promise.all([page.waitForEvent("download", { timeout: 15_000 }), link.click()]);
     try {
-      const [response] = await Promise.all([
-        page.waitForResponse(response => response.request().method() === "GET" && matches(new URL(response.url()))),
-        page.getByRole("button", { name: `Gerar ${format.toUpperCase()}`, exact: true }).click(),
-      ]);
-      expect(response.status()).toBe(200);
-      const link = page.getByRole("link", { name: `Baixar ${format.toUpperCase()}`, exact: true });
-      await expect(link).toHaveAttribute("download", new RegExp(`-r${workspace.revision}-both\\.${format}$`));
-      const [download] = await Promise.all([page.waitForEvent("download", { timeout: 15_000 }), link.click()]);
-      try {
-        const bytes = await downloadBytes(download);
-        const expected = capture.bytes;
-        if (!expected?.length) throw new Error(`A resposta real de ${format} voltou vazia.`);
-        expect(bytes.equals(expected), `Arquivo ${format}: ${bytes.length} baixados, ${expected.length} enviados`).toBe(true);
-        if (format === "pdf") {
-          const text = await pdfText(bytes);
-          expect(text).toContain(employeeName);
-          expect(text).not.toMatch(/Desfalques de cobertura|Capacidade semanal/);
-        } else {
-          const archive = unzipSync(bytes);
-          expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/Capacidade|Desfalques|Análises|Analises/);
-        }
-      } finally { await download.delete(); }
-    } finally { await page.unroute(matches, relay); }
+      const bytes = await downloadBytes(download);
+      expect(bytes.equals(expected), `Arquivo ${format}: ${bytes.length} baixados, ${expected.length} enviados`).toBe(true);
+      if (format === "pdf") {
+        const text = await pdfText(bytes);
+        expect(text).toContain(employeeName);
+        expect(text).not.toMatch(/Desfalques de cobertura|Capacidade semanal/);
+      } else {
+        const archive = unzipSync(bytes);
+        expect(strFromU8(archive["xl/workbook.xml"])).not.toMatch(/Capacidade|Desfalques|Análises|Analises/);
+      }
+    } finally { await download.delete(); }
   }
 }
 
@@ -239,9 +216,35 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect((await post({ action: "START_GENERATION", id: workspace.id, expectedRevision: workspace.revision })).status()).toBe(429);
     for (let index = 0; index < 2; index++) expect(await (await post({ action: "CANCEL_GENERATION", operationId })).json()).toMatchObject({ state: "CANCELLED" });
 
+    // Recover the protected edit before solving: editing the roster makes a previously generated schedule stale.
+    // A real account takes precedence over a valid module cookie and cannot borrow its grants.
+    const noGrant = await scope.createUser("OPERATOR");
+    if (!cookie) throw new Error("The nominal module credential is missing");
+    await noGrant.context.addCookies([cookie]);
+    const accountSession = await noGrant.page.request.get("/api/escalas/access/session"); expect(accountSession.status()).toBe(200);
+    expect(await accountSession.json()).toMatchObject({ access: { role: "ACCOUNT" }, context: { administrator: false, branches: [] } });
+    expect((await noGrant.page.request.get(`/api/escalas?id=${workspace.id}`)).status()).toBe(403);
+    await scope.admin.context().addCookies([cookie]);
+    expect(await (await scope.admin.request.get("/api/escalas/access/session")).json()).toMatchObject({ access: { role: "ACCOUNT" }, context: { administrator: true, allBranches: true } });
+    expect((await scope.admin.request.delete("/api/escalas/access/session", { headers })).status()).toBe(200);
+    expect((await scope.admin.request.get("/api/auth/session").then(response => response.json())).user.role).toBe("ADMIN");
+
+    // Expiry is observed on a real protected SAVE. A new access may recover only after an explicit choice.
+    // Use the second session's still-live cookie: deleting the admin's copied token revoked the first one.
+    await page.context().addCookies((await second.cookies()).filter(item => item.name === "perfectutilitares.escalas-access"));
+    const live = (await page.context().cookies()).find(item => item.name === "perfectutilitares.escalas-access"); if (!live) throw new Error("Module cookie missing");
+    await page.context().addCookies([{ ...live, expires: Math.floor(Date.now() / 1000) - 10 }]);
     await editName(page, "Pessoa nominal", "Pessoa autorizada");
+    await expect(page.getByLabel("Nome cadastrado", { exact: true })).toBeVisible();
+    expect((await readWorkspace(scope.admin, workspace.id)).revision).toBe(workspace.revision);
+    // Admission #4. No hidden replay after a fresh scope is issued.
+    await nominalEntry(page, operator.username); await selectEscalasWorkspace(page, workspace);
+    const recovery = page.getByRole("alert", { name: "Rascunho recuperável", exact: true }); await expect(recovery).toBeVisible();
+    expect((await readWorkspace(scope.admin, workspace.id)).revision).toBe(workspace.revision);
+    await recovery.getByRole("button", { name: `Restaurar meu rascunho sobre a revisão ${workspace.revision}`, exact: true }).click();
     await expect.poll(async () => (await readWorkspace(scope.admin, workspace.id)).input.employees[0].name).toBe("Pessoa autorizada");
     workspace = await readWorkspace(scope.admin, workspace.id);
+
     for (let calculation = 0; calculation < 2; calculation++) {
       await openEscalasArea(page, "generate");
       const generating = page.waitForResponse(response => response.request().method() === "POST"
@@ -281,6 +284,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
       }
     }
 
+    expect(workspace.input.needsRegeneration).not.toBe(true);
     const exportUrl = (format: "pdf" | "xlsx", projection = "BASIC_SCHEDULE") => `/api/escalas/export?id=${workspace.id}&revision=${workspace.revision}&format=${format}&mode=both&projection=${projection}`;
     // Warm the full administrative PDF first; a later basic request must not receive analytical cached bytes.
     const full = await scope.admin.request.get(exportUrl("pdf", "ADMIN_FULL")); expect(full.status()).toBe(200);
@@ -289,34 +293,6 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect((await page.request.get(`/api/escalas/operational-report?workspaceId=${workspace.id}&revision=${workspace.revision}&month=2026-12&section=journeys`)).status()).toBe(403);
     expect((await page.request.post("/api/escalas/turnos/export/manifest", { headers, data: { month: 12, year: 2026, selections: [{ workspaceId: workspace.id, revision: workspace.revision, employees: [{ employeeId: "person", localShiftId: "day" }] }] } })).status()).toBe(403);
     await expectBasicDownloads(page, workspace, "Pessoa autorizada");
-
-    // A real account takes precedence over a valid module cookie and cannot borrow its grants.
-    const noGrant = await scope.createUser("OPERATOR");
-    if (!cookie) throw new Error("The nominal module credential is missing");
-    await noGrant.context.addCookies([cookie]);
-    const accountSession = await noGrant.page.request.get("/api/escalas/access/session"); expect(accountSession.status()).toBe(200);
-    expect(await accountSession.json()).toMatchObject({ access: { role: "ACCOUNT" }, context: { administrator: false, branches: [] } });
-    expect((await noGrant.page.request.get(`/api/escalas?id=${workspace.id}`)).status()).toBe(403);
-    await scope.admin.context().addCookies([cookie]);
-    expect(await (await scope.admin.request.get("/api/escalas/access/session")).json()).toMatchObject({ access: { role: "ACCOUNT" }, context: { administrator: true, allBranches: true } });
-    expect((await scope.admin.request.delete("/api/escalas/access/session", { headers })).status()).toBe(200);
-    expect((await scope.admin.request.get("/api/auth/session").then(response => response.json())).user.role).toBe("ADMIN");
-
-    // Expiry is observed on a real protected SAVE. A new access may recover only after an explicit choice.
-    // Use the second session's still-live cookie: deleting the admin's copied token revoked the first one.
-    await page.context().addCookies((await second.cookies()).filter(item => item.name === "perfectutilitares.escalas-access"));
-    const live = (await page.context().cookies()).find(item => item.name === "perfectutilitares.escalas-access"); if (!live) throw new Error("Module cookie missing");
-    await page.context().addCookies([{ ...live, expires: Math.floor(Date.now() / 1000) - 10 }]);
-    await editName(page, "Pessoa autorizada", "Rascunho preservado");
-    await expect(page.getByLabel("Nome cadastrado", { exact: true })).toBeVisible();
-    expect((await readWorkspace(scope.admin, workspace.id)).revision).toBe(workspace.revision);
-    // Admission #4. No hidden replay after a fresh scope is issued.
-    await nominalEntry(page, operator.username); await selectEscalasWorkspace(page, workspace);
-    const recovery = page.getByRole("alert", { name: "Rascunho recuperável", exact: true }); await expect(recovery).toBeVisible();
-    expect((await readWorkspace(scope.admin, workspace.id)).revision).toBe(workspace.revision);
-    await recovery.getByRole("button", { name: `Restaurar meu rascunho sobre a revisão ${workspace.revision}`, exact: true }).click();
-    await expect.poll(async () => (await readWorkspace(scope.admin, workspace.id)).input.employees[0].name).toBe("Rascunho preservado");
-    workspace = await readWorkspace(scope.admin, workspace.id);
 
     // Revoke between the visible preparation click and the real request reaching the server; no bytes/download may escape.
     await openEscalasArea(page, "roster");

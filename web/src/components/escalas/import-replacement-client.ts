@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { importSyncCommandSchema, importSyncLayoutSchema, IMPORT_SYNC_BLOCKER_CODES, type ImportSyncCommand, type ImportSyncPreview, type ImportSyncApplyResult, type ImportSyncPreviewResult } from "@/lib/escalas/import-sync-contracts";
+import { importSyncCommandSchema, importSyncLayoutSchema, IMPORT_SYNC_BLOCKER_CODES, isImportSyncFileSizeAllowed, type ImportSyncCommand, type ImportSyncPreview, type ImportSyncApplyResult, type ImportSyncPreviewResult } from "@/lib/escalas/import-sync-contracts";
 import { isDate } from "@/lib/escalas/dates";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { parseSavedWorkspace } from "./draft-persistence";
@@ -26,6 +26,7 @@ const previewSchema = z.object({
 export type ImportReplacementResult = ImportSyncPreviewResult | ImportSyncApplyResult;
 export type ReplaceImport = (file: File, command: ImportSyncCommand, signal: AbortSignal) => Promise<ImportReplacementResult | null>;
 export const IMPORT_REPLACEMENT_TIMEOUT = 60_000;
+export const importReplacementFileSizeMessage = "Selecione um arquivo não vazio de até 512 KB.";
 const invalid = () => new Error("A resposta não corresponde à conferência desta filial. Confira o arquivo novamente.");
 
 export function validateImportPreview(value: unknown, command: ImportSyncCommand, workspace: EscalaWorkspace): ImportSyncPreview {
@@ -54,6 +55,8 @@ export function validateImportPreview(value: unknown, command: ImportSyncCommand
 }
 
 export async function requestImportReplacement(file: File, rawCommand: ImportSyncCommand, workspace: EscalaWorkspace, signal: AbortSignal): Promise<ImportReplacementResult> {
+  signal.throwIfAborted();
+  if (!isImportSyncFileSizeAllowed(file.size)) throw new Error(importReplacementFileSizeMessage);
   const command = importSyncCommandSchema.parse(rawCommand);
   const timeout = new AbortController(), combined = AbortSignal.any([signal, timeout.signal]);
   const timer = setTimeout(() => timeout.abort(new Error("A espera excedeu o prazo.")), IMPORT_REPLACEMENT_TIMEOUT);
@@ -67,11 +70,13 @@ export async function requestImportReplacement(file: File, rawCommand: ImportSyn
       const form = new FormData(); form.set("file", file); form.set("command", JSON.stringify(command));
       const response = await fetch("/api/escalas/import", { method: "POST", cache: "no-store", body: form, signal: combined });
       combined.throwIfAborted();
-      const body = await response.json(); combined.throwIfAborted();
       if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        combined.throwIfAborted();
         if (response.status === 401) window.dispatchEvent(new Event("escalas:unlock-required"));
         throw new Error(response.status === 409 ? "A revisão mudou. Recarregue o planejamento e confira o arquivo novamente." : typeof body?.error?.message === "string" ? body.error.message : "Não foi possível confirmar a importação. Confira o acesso e tente novamente.");
       }
+      const body = await response.json(); combined.throwIfAborted();
       if (command.action === "PREVIEW_REPLACE") {
         const preview = validateImportPreview(body?.preview, command, workspace);
         if (preview.fileHash !== fileHash) throw invalid();

@@ -4,7 +4,7 @@ import { getEscala, parseEscalaInput, saveEscala } from "../service";
 import { EscalaError, requireEscalaCapability, type EscalaActor } from "../access";
 import { loadEscalaApproval } from "../approved-policy-service";
 import { stableEscalaJson } from "../operational-input-policy";
-import { isEscalaPlanningParticipant } from "../eligibility";
+import { canAssignCatalogShift } from "./reference-choices";
 import { validateEscala } from "../validation";
 import { findTurnoCatalogCode, getTurnoCatalogEntry } from "./catalog";
 import type { TurnoSwapPreviewDto, TurnoSwapRequest, TurnoSwapPreviewRequest, TurnoSwapApplyRequest, TurnoSwapAffectedDayDto, TurnoSwapPreservedDayDto } from "./contracts";
@@ -43,7 +43,7 @@ async function computeSwap(actor: EscalaActor, request: TurnoSwapRequest): Promi
   }
   const employee = workspace.input.employees.find(person => person.id === request.employeeId);
   if (!employee) throw new EscalaError(404, "TURNO_EMPLOYEE_NOT_FOUND", "O colaborador não pertence a esta revisão.");
-  if (!isEscalaPlanningParticipant(employee) || employee.scheduleMode === "UNTIMED" || employee.scheduleMode === "MISSING" || !employee.shiftIds.length) {
+  if (!canAssignCatalogShift(employee)) {
     throw new EscalaError(422, "MANUAL_SHIFT_SCHEDULE_MODE", "A troca exige uma referência de horário controlado incluída no planejamento. Não foi criado horário para ENC ou pessoa excluída.");
   }
 

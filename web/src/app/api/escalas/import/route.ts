@@ -6,7 +6,7 @@ import { branchPermission, requireEscalaPermission, requireEscalaCapability } fr
 import { isAbsenceImportDate, previewFphi105Import } from "@/lib/escalas/fphi105";
 import { ESCALA_IMPORT_TEMPLATE, previewEscalaImport } from "@/lib/escalas/import";
 import { XlsxSecurityError } from "@/lib/spreadsheets/xlsx-security";
-import { importSyncCommandSchema } from "@/lib/escalas/import-sync-contracts";
+import { importSyncCommandSchema, isImportSyncFileSizeAllowed } from "@/lib/escalas/import-sync-contracts";
 import { applyAdminImport, previewAdminImport, type ImportSyncFile } from "@/lib/escalas/import-sync";
 import { escalaFailure, escalaJson } from "../http";
 
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     const command = importSyncCommandSchema.safeParse(metadata);
     if (!command.success) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Confira a finalidade, revisão, intervalo e confirmação da substituição.");
     const upload = body.data.get("file");
-    if (!(upload instanceof File) || upload.size < 1 || upload.size > 512 * 1024) return jsonError(400, "ESCALA_IMPORT_FILE", "Envie um CSV ou XLSX de até 512 KB.");
+    if (!(upload instanceof File) || !isImportSyncFileSizeAllowed(upload.size)) return jsonError(400, "ESCALA_IMPORT_FILE", "Envie um CSV ou XLSX de até 512 KB.");
     const extension = upload.name.toLowerCase().endsWith(".xlsx") ? "xlsx" : upload.name.toLowerCase().endsWith(".csv") ? "csv" : null;
     const mimeTypes = extension === "xlsx" ? ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", ""] : ["text/csv", "text/plain", "application/csv", "application/vnd.ms-excel", "application/octet-stream", ""];
     if (!extension || !mimeTypes.includes(upload.type) || (command.data.purpose === "ABSENCES" && extension !== "csv")) return jsonError(415, "ESCALA_IMPORT_TYPE", "Confira o formato do arquivo para esta finalidade.");
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
   const parsed = options.safeParse({ branchCode: body.data.get("branchCode"), startDate: body.data.get("startDate"), defaultWeeklyHours: body.data.get("defaultWeeklyHours") ?? 42 });
   if (!parsed.success && !absences?.success) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Informe filial, início do período e carga semanal válidos.");
   const file = body.data.get("file");
-  if (!(file instanceof File) || file.size < 1 || file.size > 512 * 1024) return jsonError(400, "ESCALA_IMPORT_FILE", "Envie um arquivo CSV ou XLSX de até 512 KB.");
+  if (!(file instanceof File) || !isImportSyncFileSizeAllowed(file.size)) return jsonError(400, "ESCALA_IMPORT_FILE", "Envie um arquivo CSV ou XLSX de até 512 KB.");
   const extension = file.name.toLowerCase().endsWith(".xlsx") ? "xlsx" : file.name.toLowerCase().endsWith(".csv") ? "csv" : null;
   const mimeTypes = extension === "xlsx" ? ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", ""] : ["text/csv", "text/plain", "application/csv", "application/vnd.ms-excel", "application/octet-stream", ""];
   if (!extension || !mimeTypes.includes(file.type)) return jsonError(415, "ESCALA_IMPORT_TYPE", "O arquivo deve ser CSV ou XLSX, com conteúdo compatível.");

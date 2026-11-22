@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { selectEscalasWorkspace } from "./escalas-selection";
+import { openEscalasArea, revealEscalasControl, selectEscalasWorkspace } from "./escalas-selection";
 import { newInput } from "../src/components/escalas/workspace-model";
 import { loginAsAdmin } from "./admin-session";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
@@ -30,12 +30,15 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
   try {
     await page.goto("/escala");
     await selectEscalasWorkspace(page, created);
-    await page.getByRole("button", { name: "Ajustar pausas de jornadas curtas (opcional)", exact: true }).click();
+    await openEscalasArea(page, "generate");
+    const pauseShortcut = page.getByRole("button", { name: "Simular jornada de mais de 4h até 6h sem pausa de 15 min", exact: true, includeHidden: true });
+    await revealEscalasControl(pauseShortcut);
+    await pauseShortcut.click();
     const pause = page.getByLabel("Simular jornada de mais de 4h até 6h sem pausa de 15 minutos", { exact: true });
     await expect(pause).toBeVisible();
     await pause.check();
     await pause.uncheck();
-    await page.locator('button[aria-controls="escala-area-generate"]').click();
+    await openEscalasArea(page, "generate");
     const generated = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "GENERATE", { timeout: 40_000 });
     await page.getByRole("button", { name: /^(Gerar escala e horários|Gerar nova proposta)$/ }).click();
     const response = await generated;
@@ -46,7 +49,7 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
     expect(result.proposalInput.assignments.some((item: { employeeId: string }) => item.employeeId === "5")).toBe(false);
     await page.getByRole("button", { name: "Aplicar proposta à grade", exact: true }).click();
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
-    await page.locator('button[aria-controls="escala-area-roster"]').click();
+    await openEscalasArea(page, "roster");
     const roster = page.getByRole("region", { name: "Grade mensal da filial", exact: true });
     await page.getByLabel("Visualização da escala", { exact: true }).selectOption("rest");
     await expect(roster.getByRole("row").filter({ hasText: "Aprendiz Teste" })).toHaveCount(0);
@@ -98,9 +101,9 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
     for (const width of [375, 768, 1280]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-      await page.locator('button[aria-controls="escala-area-generate"]').click();
+      await openEscalasArea(page, "generate");
       await expect(page.getByRole("button", { name: "Gerar nova proposta", exact: true })).toBeVisible();
-      await page.locator('button[aria-controls="escala-area-roster"]').click();
+      await openEscalasArea(page, "roster");
     }
     if (process.env.E2E_VISUAL_REVIEW === "1") {
       await roster.scrollIntoViewIfNeeded();
@@ -117,8 +120,7 @@ test("guided controls, hours ordering, ENC and apprentice exclusion work in the 
       console.log("SYNTHETIC_PDF:" + Buffer.concat(chunks).toString("base64"));
       await download.delete();
     }
-    if (!await page.getByRole("button", { name: "Revisão e suporte", exact: true }).isVisible()) await page.getByText("Ferramentas e ajustes opcionais", { exact: true }).click();
-    await page.getByRole("button", { name: "Revisão e suporte", exact: true }).click();
+    await openEscalasArea(page, "review");
     await expect(page.getByRole("heading", { name: "Central de revisão", exact: true })).toBeVisible();
     await page.getByRole("button", { name: /^Desfalques \(/ }).click();
     await expect(page.getByRole("heading", { name: "Capacidade e desfalques por setor", exact: true })).toBeVisible();

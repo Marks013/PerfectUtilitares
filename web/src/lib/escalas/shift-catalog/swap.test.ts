@@ -84,6 +84,16 @@ describe("employee turn swap", () => {
     expect(state.save).not.toHaveBeenCalled();
     expect(value).toEqual(before);
   });
+  it("rejects direct preview and apply for a legacy zero clock even with a stale allowed shift", async () => {
+    const value = current({ report: "FPRE136", code: "zero", description: "Sem horário",
+      weekday: "00:00-00:00 / 00:00-00:00", saturday: "00:00-00:00 / 00:00-00:00" });
+    state.get.mockResolvedValue(value);
+    await expect(previewTurnoSwap(actor, request)).rejects.toMatchObject({ code: "MANUAL_SHIFT_SCHEDULE_MODE" });
+    await expect(applyTurnoSwap(actor, { ...request, previewId: "old-preview", confirm: true }))
+      .rejects.toMatchObject({ code: "MANUAL_SHIFT_SCHEDULE_MODE" });
+    expect(state.entry).not.toHaveBeenCalled();
+    expect(state.save).not.toHaveBeenCalled();
+  });
   it("preserves ambiguous legacy work instead of globally declaring it automatic", async () => {
     const source = { report: "FPRE136", code: "X", description: "Legacy CSV", weekday: "08:00-12:00 / 13:00-17:00", saturday: "08:00-12:00" };
     const value = current(source, [{ employeeId: "e1", date: "2026-12-07", kind: "WORK", shiftId: "old" }]);

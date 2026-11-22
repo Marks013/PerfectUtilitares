@@ -4,8 +4,7 @@ import { requireEscalaCapability, type EscalaActor } from "../access";
 import { loadEscalaApproval } from "../approved-policy-service";
 import { stableEscalaJson } from "../operational-input-policy";
 import { EscalaError } from "../errors";
-import { effectiveScheduleMode } from "../fpre136-schedule";
-import { isEscalaPlanningParticipant } from "../eligibility";
+import { canAssignCatalogShift } from "./reference-choices";
 import { clockMinutes, markingKey, markingsFromShift, minutesClock } from "./domain";
 import { turnoCatalogOptionsSchema, type TurnoCatalogOptionsRequest, type TurnoCatalogOptionsDto } from "./flow-contracts";
 import type { TurnoCatalogEntryDto } from "./contracts";
@@ -35,7 +34,7 @@ async function eligibleContext(actor: EscalaActor, request: TurnoCatalogOptionsR
       return ids.has(shift.id) && result.ok ? [markingKey(result.markings)] : [];
     }));
   }
-  if (!isEscalaPlanningParticipant(employee) || effectiveScheduleMode(employee) !== "TIMED" || !employee.shiftIds.length) permitted = new Set();
+  if (!canAssignCatalogShift(employee)) permitted = new Set();
   return { workspace, permitted };
 }
 

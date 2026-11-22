@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { APIResponse, Browser, Download, Locator, Page, Response } from "@playwright/test";
+import type { APIResponse, Browser, Download, Locator, Page, Response, Route } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { loginAsAdmin } from "./admin-session";
 import { openEscalasArea, revealEscalasControl } from "./escalas-selection";
@@ -219,6 +219,36 @@ export async function applyReplacement(page: Page, panel: Locator, purpose: Impo
   expect(result.workspace.revision).toBe(result.summary.context.revision + 1);
   await expect(page.locator('[data-state="saved"]')).toBeVisible();
   return result;
+}
+
+/** Capture the actual export before relaying it; Chromium can expose an empty observer body for binary fetches. */
+export async function prepareBasicExport(
+  page: Page, workspace: Pick<EscalaWorkspace, "id" | "revision">, format: "PDF" | "XLSX",
+): Promise<Buffer> {
+  const matches = ({ pathname, searchParams }: URL) => pathname === "/api/escalas/export"
+    && searchParams.get("id") === workspace.id && searchParams.get("revision") === String(workspace.revision)
+    && searchParams.get("format") === format.toLowerCase() && searchParams.get("mode") === "both"
+    && searchParams.get("projection") === "BASIC_SCHEDULE";
+  const capture: { bytes?: Buffer } = {};
+  const relay = async (route: Route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const upstream = await route.fetch({ maxRedirects: 0 });
+    try {
+      capture.bytes = await upstream.body();
+      await route.fulfill({ response: upstream, body: capture.bytes });
+    } finally { await upstream.dispose(); }
+  };
+  await page.route(matches, relay);
+  try {
+    const [response] = await Promise.all([
+      page.waitForResponse(response => response.request().method() === "GET" && matches(new URL(response.url()))),
+      page.getByRole("button", { name: "Gerar " + format, exact: true }).click(),
+    ]);
+    expect(response.status()).toBe(200);
+    const bytes = capture.bytes;
+    if (!bytes?.length) throw new Error("A resposta real de " + format + " voltou vazia.");
+    return bytes;
+  } finally { await page.unroute(matches, relay); }
 }
 
 export async function downloadBytes(download: Download) {

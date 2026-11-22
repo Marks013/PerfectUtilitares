@@ -2,6 +2,9 @@ import { z } from "zod";
 import { isDate } from "./dates";
 import type { EscalaAssignment, EscalaWorkspace } from "./types";
 
+const maxFileBytes = 512 * 1024;
+export const isImportSyncFileSizeAllowed = (bytes: number) => bytes > 0 && bytes <= maxFileBytes;
+
 const id = z.string().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u);
 const date = z.string().refine(isDate, "Informe uma data real no formato AAAA-MM-DD.");
 const common = {
