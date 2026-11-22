@@ -20,6 +20,10 @@ vi.mock("@/lib/prisma", () => ({ prisma: { user: { findFirst: mocks.user }, esca
   escalaBranchAccess: { findMany: mocks.grants } } }));
 vi.mock("@/lib/escalas/operator-session-store", () => ({ getEscalaScopedModuleSession: vi.fn(async () => null) }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
+vi.mock("next/headers", async (original) => ({
+  ...await original<typeof import("next/headers")>(),
+  headers: async () => new Headers(),
+}));
 vi.mock("@/lib/escalas/service", () => ({ getEscala: mocks.get }));
 vi.mock("@/lib/api/security", async original => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.limit }));
 vi.mock("@/lib/system/resource-capacity", async original => ({ ...await original<typeof import("@/lib/system/resource-capacity")>(), assertResourceCapacity: mocks.capacity }));

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin, requireSession } from "@/lib/api/security";
+import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
+import { requireEscalaAccountSession } from "@/lib/escalas/account-precedence.server";
 import { getEscalaAccountClientAccess } from "@/lib/escalas/account-access-view.server";
 import { ESCALA_ACCESS_COOKIE, escalaSessionCookieOptions, revokeEscalaModuleSessionCookie } from "@/lib/escalas/module-session";
 import { createEscalaScopedModuleSession } from "@/lib/escalas/operator-session-issuer";
@@ -13,7 +14,7 @@ function privateJson(value: unknown) { return NextResponse.json(value, { headers
 
 export async function GET() {
   try {
-    const account = await requireSession();
+    const account = await requireEscalaAccountSession();
     if (account.ok) {
       const context = await getEscalaAccountClientAccess(account.session);
       return context ? privateJson({ access: { role: "ACCOUNT" }, context }) : jsonError(403, "ESCALA_TENANT_REQUIRED", "É necessário um usuário ativo vinculado a uma empresa para acessar Escalas.");
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
   const body = await readJsonBody(request);
   if (!body.ok) return body.response;
   try {
-    const account = await requireSession();
+    const account = await requireEscalaAccountSession();
     if (account.ok) {
       const context = await getEscalaAccountClientAccess(account.session);
       return context ? privateJson({ access: { role: "ACCOUNT" }, context }) : jsonError(403, "ESCALA_TENANT_REQUIRED", "É necessário um usuário ativo vinculado a uma empresa.");

@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { encode } from "next-auth/jwt";
+vi.mock("@/lib/auth/site-session-secret", () => ({ siteSessionSecret: "synthetic-f08-site-cookie-test-key-795" }));
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), grants: vi.fn(), policy: vi.fn(), rate: vi.fn(), create: vi.fn(),
-  get: vi.fn(), verify: vi.fn(), revoke: vi.fn(), cookieOptions: vi.fn(), cookieValue: undefined as string | undefined }));
+  get: vi.fn(), verify: vi.fn(), revoke: vi.fn(), cookieOptions: vi.fn(), cookieValue: undefined as string | undefined, siteCookie: "" }));
 const storage = vi.hoisted(() => ({ transaction: vi.fn(), tenant: vi.fn(), operator: vi.fn(), operatorLock: vi.fn(), accessLock: vi.fn(),
   list: vi.fn(), insert: vi.fn(), update: vi.fn(), read: vi.fn(), audit: vi.fn() }));
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => mocks.cookieValue ? { value: mocks.cookieValue } : undefined }) }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ cookie: mocks.siteCookie }),
+  cookies: async () => ({ get: () => mocks.cookieValue ? { value: mocks.cookieValue } : undefined }),
+}));
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaBranchAccess: { findMany: mocks.grants },
   escalaModuleAccessPolicy: { findUnique: mocks.policy }, $transaction: storage.transaction } }));
@@ -22,7 +27,7 @@ const request = (body: unknown, origin = "http://localhost") => new Request("htt
   { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
 beforeEach(() => {
   vi.resetAllMocks(); mocks.auth.mockResolvedValue(null); mocks.get.mockResolvedValue(null);
-  mocks.cookieValue = undefined;
+  mocks.cookieValue = undefined; mocks.siteCookie = "";
   mocks.cookieOptions.mockImplementation((maxAge: number) => ({ httpOnly: true, secure: true, sameSite: "strict", path: "/", maxAge }));
   storage.transaction.mockRejectedValue(new Error("Persistence must be explicitly configured by the real-route fixture"));
   mocks.rate.mockResolvedValue(null); mocks.policy.mockResolvedValue({ mode: "SCOPED" }); mocks.grants.mockResolvedValue([]);
@@ -355,5 +360,55 @@ describe("username navigation session HTTP", () => {
     expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(response.headers.get("set-cookie")).not.toContain("unimed-access");
     expect(PATCH().status).toBe(405);
+  });
+});
+
+describe("invalidated site account precedence", () => {
+  const name = "authjs.session-token";
+  async function setSiteCookie(maxAge = 3600) {
+    vi.stubEnv("AUTH_URL", "http://localhost");
+    const token = await encode({ salt: name, secret: "synthetic-f08-site-cookie-test-key-795",
+      token: { id: "synthetic-former-account" }, maxAge });
+    mocks.siteCookie = `${name}=${token}`;
+  }
+
+  it("denies both nominal restoration and named admission for an invalidated site account", async () => {
+    await setSiteCookie();
+    mocks.get.mockResolvedValue(scope());
+
+    expect((await GET()).status).toBe(403);
+    expect((await POST(request({ username: "Operador sintético" }))).status).toBe(403);
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps nominal logout available and accepts fresh named admission after site logout", async () => {
+    await setSiteCookie();
+    const response = await DELETE(new Request("http://localhost/api/escalas/access/session", {
+      method: "DELETE", headers: { origin: "http://localhost" },
+    }));
+    expect(await response.json()).toEqual({ revoked: true });
+    expect(mocks.revoke).toHaveBeenCalledOnce();
+    mocks.siteCookie = "";
+    const admitted = scope();
+    admitted.principal.branchGrants[0].branchCode = "007";
+    admitted.principal.branchGrants[0].capabilities = ["workspace.read"];
+    mocks.verify.mockResolvedValue(admitted);
+    const admission = await POST(request({ username: "Operador sintético" }));
+    expect(admission.status).toBe(200);
+    expect(await admission.json()).toMatchObject({
+      context: { administrator: false, branches: [{ code: "07", capabilities: ["workspace.read"] }] },
+    });
+  });
+
+  it("accepts anonymous named admission after a genuine site-cookie expiry", async () => {
+    await setSiteCookie(-60);
+    expect((await POST(request({ username: "Operador sintético" }))).status).toBe(200);
+  });
+
+  it("does not treat an unverifiable cookie as site-session evidence", async () => {
+    vi.stubEnv("AUTH_URL", "http://localhost");
+    mocks.siteCookie = `${name}=invalid-synthetic-value`;
+    expect((await POST(request({ username: "Operador sintético" }))).status).toBe(200);
   });
 });

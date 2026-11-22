@@ -36,10 +36,14 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
   const headers = { origin };
   // Match the existing fixtures.ts isolation for every explicit context, including the second nominal session.
   const host = process.env.E2E_EXTERNAL_URL ? new URL(process.env.E2E_EXTERNAL_URL).hostname : "";
-  const hash = createHash("sha256").update(test.info().testId).digest();
-  const extraHTTPHeaders = { ...test.info().project.use.extraHTTPHeaders,
-    ...(["localhost", "127.0.0.1", "[::1]"].includes(host) ? { "x-real-ip": `198.18.${hash[0]}.${hash[1]}` } : {}) };
-  const newContext = () => browser.newContext({ baseURL, extraHTTPHeaders, ignoreHTTPSErrors: test.info().project.use.ignoreHTTPSErrors ?? process.env.E2E_PRODUCTION === "1" });
+  const newContext = (rateLimitScope?: string) => {
+    const source = createHash("sha256").update(test.info().testId);
+    if (rateLimitScope) source.update("\0" + rateLimitScope);
+    const hash = source.digest();
+    const extraHTTPHeaders = { ...test.info().project.use.extraHTTPHeaders,
+      ...(["localhost", "127.0.0.1", "[::1]"].includes(host) ? { "x-real-ip": `198.18.${hash[0]}.${hash[1]}` } : {}) };
+    return browser.newContext({ baseURL, extraHTTPHeaders, ignoreHTTPSErrors: test.info().project.use.ignoreHTTPSErrors ?? process.env.E2E_PRODUCTION === "1" });
+  };
   const rootContext = await newContext();
   const contexts: import("@playwright/test").BrowserContext[] = [];
   async function setupFailed(cause: unknown): Promise<never> {
@@ -62,7 +66,7 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
   const operators: string[] = [];
   const retainedApprovers = new Set<string>();
 
-  async function createUser(role: "ADMIN" | "OPERATOR") {
+  async function createUser(role: "ADMIN" | "OPERATOR", rateLimitScope?: string) {
     const email = `e2e-${randomUUID()}@example.invalid`, password = `E2e!${randomUUID()}`;
     const invitation = await root.request.post("/api/admin/invitations", { headers, data: { tenantId: tenant.id, name: "Conta sintética", email, role } });
     expect(invitation.status()).toBe(201);
@@ -79,7 +83,7 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
     expect(accepted.status()).toBe(201);
     const user = await accepted.json() as { id: string; tenantId: string; role: string };
     expect(user).toMatchObject({ tenantId: tenant.id, role }); identities.push(user.id);
-    const context = await newContext(); contexts.push(context);
+    const context = await newContext(rateLimitScope); contexts.push(context);
     const page = await context.newPage();
     await page.goto("/login");
     await page.locator('input[name="email"]').fill(email); await page.locator('input[name="password"]').fill(password);
@@ -89,6 +93,12 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
   }
   const owner = await createUser("ADMIN").catch(setupFailed);
   const admin = owner.page;
+  async function blockOwnedAccount(id: string) {
+    if (id === owner.id || !identities.includes(id)) throw new Error("Only an owned non-owner fixture may be blocked");
+    const response = await root.request.patch(`/api/admin/users/${id}`, { headers, data: { status: "BLOCKED" } });
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({ id, status: "BLOCKED" });
+  }
   const post = (data: Record<string, unknown>) => admin.request.post("/api/escalas", { headers, data });
   async function administration(command?: EscalaOperatorAdminHttpCommand): Promise<EscalaAdministrationView> {
     const response = command ? await admin.request.post("/api/escalas/access/admin", { headers, data: command }) : await admin.request.get("/api/escalas/access/admin");
@@ -149,7 +159,7 @@ export async function ownedAccountScope(browser: Browser, tenantSlug = `e2e-${ra
     // Public APIs cannot remove tenants/catalog/audit records. Dispose the owned test database afterwards.
     if (failures.length) throw new AggregateError(failures, `Owned fixture cleanup failed for ${failures.length} resource(s)`);
   }
-  return { admin, origin, headers, tenantId: tenant.id, tenantSlug, newContext, createUser, post, administration, setMode, createOperator, approve,
+  return { admin, origin, headers, tenantId: tenant.id, tenantSlug, newContext, createUser, blockOwnedAccount, post, administration, setMode, createOperator, approve,
     trackWorkspace: (workspace: EscalaWorkspace) => { workspaces.push(workspace); return workspace; }, cleanup };
 }
 

@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/auth/email";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 import { getSecurityStamp } from "@/lib/auth/security-stamp";
+import { siteSessionSecret } from "@/lib/auth/site-session-secret";
 import { checkSharedRateLimit, getClientIp, getHashedRateLimitKey } from "@/lib/api/rate-limit";
 
 type AppRole = "ADMIN" | "OPERATOR";
@@ -50,18 +51,12 @@ const credentialsSchema = z.object({
   password: z.string().min(1).max(BCRYPT_PASSWORD_MAX_LENGTH),
 });
 
-const authSecret = process.env.AUTH_SECRET;
-
-if (process.env.NODE_ENV === "production" && !authSecret) {
-  throw new Error("AUTH_SECRET obrigatório em produção");
-}
-
 // Valid cost-12 hash for equivalent bcrypt work when no active account exists.
 // This value is not an account credential and is never accepted for login.
 const DUMMY_PASSWORD_HASH = "$2b$12$9.Gr/l7nnkQ8zLyDDU7.8OdefMiA02tk3ugaiDv29H0aZalB/HVgm";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  secret: authSecret ?? "dev-only-change-this-secret-before-production-deploy",
+  secret: siteSessionSecret,
   session: {
     strategy: "jwt",
   },

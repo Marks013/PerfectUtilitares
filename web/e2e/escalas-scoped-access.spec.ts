@@ -264,12 +264,80 @@ test("nominal access owns its scope, preserves admin configuration, operates the
 
     // Recover the protected edit before solving: editing the roster makes a previously generated schedule stale.
     // A real account takes precedence over a valid module cookie and cannot borrow its grants.
-    const noGrant = await scope.createUser("OPERATOR");
+    const logoutRateLimitScope = "nominal-site-logout";
+    const noGrant = await scope.createUser("OPERATOR", logoutRateLimitScope);
     if (!cookie) throw new Error("The nominal module credential is missing");
     await noGrant.context.addCookies([cookie]);
     const accountSession = await noGrant.page.request.get("/api/escalas/access/session"); expect(accountSession.status()).toBe(200);
     expect(await accountSession.json()).toMatchObject({ access: { role: "ACCOUNT" }, context: { administrator: false, branches: [] } });
     expect((await noGrant.page.request.get(`/api/escalas?id=${workspace.id}`)).status()).toBe(403);
+
+    await test.step("blocked site account cannot use an old nominal session and real site logout permits scoped re-entry", async () => {
+      const recoveryPage = noGrant.page;
+      const moduleCookie = "perfectutilitares.escalas-access";
+      const hasSiteCookie = async () => (await noGrant.context.cookies(scope.origin))
+        .some(({ name }) => /^(?:__Secure-)?authjs\.session-token(?:\.\d+)?$/.test(name));
+      const hasNominalCookie = async () => (await noGrant.context.cookies(scope.origin))
+        .some(({ name }) => name === moduleCookie);
+
+      // Use a separately issued session so this regression can revoke it without affecting the main scenario.
+      const carrier = await scope.newContext(logoutRateLimitScope);
+      try {
+        const prior = await carrier.request.post("/api/escalas/access/session", {
+          headers,
+          data: { username: operator.username },
+        });
+        expect(prior.status()).toBe(200);
+        const oldNominal = (await carrier.cookies(scope.origin)).find(({ name }) => name === moduleCookie);
+        if (!oldNominal) throw new Error("The owned nominal fixture did not issue a session cookie");
+        await noGrant.context.addCookies([oldNominal]);
+      } finally {
+        await carrier.close();
+      }
+
+      expect(await hasSiteCookie()).toBe(true);
+      expect(await hasNominalCookie()).toBe(true);
+      await scope.blockOwnedAccount(noGrant.id);
+
+      await recoveryPage.goto("/escala");
+      await expect(recoveryPage.getByRole("heading", { name: "Acesso a Escalas indisponível para esta conta", exact: true })).toBeVisible();
+      await expect(recoveryPage.getByLabel("Nome cadastrado", { exact: true })).toHaveCount(0);
+      await expect(recoveryPage.getByRole("button", { name: "Bloquear Escalas", exact: true })).toHaveCount(0);
+      expect(await hasSiteCookie()).toBe(true);
+      expect(await hasNominalCookie()).toBe(true);
+      const denied = [
+        await recoveryPage.request.get("/api/escalas/access/session"),
+        await recoveryPage.request.post("/api/escalas/access/session", { headers, data: { username: operator.username } }),
+        await recoveryPage.request.get(`/api/escalas?id=${workspace.id}`),
+      ];
+      for (const response of denied) {
+        expect(response.status()).toBe(403);
+        expect(await response.json()).toMatchObject({ error: { code: "ESCALA_ACCOUNT_REAUTH_REQUIRED" } });
+      }
+
+      await recoveryPage.getByRole("button", { name: "Encerrar sessão do site", exact: true }).click();
+      await expect(recoveryPage).toHaveURL(/\/dashboard$/);
+      expect(await hasSiteCookie()).toBe(false);
+      expect(await hasNominalCookie()).toBe(true);
+
+      // End only this fixture's prior nominal session so the next access must submit the name again.
+      const revocation = await recoveryPage.request.delete("/api/escalas/access/session", { headers });
+      expect(revocation.status()).toBe(200);
+      expect(await revocation.json()).toEqual({ revoked: true });
+      expect(await hasNominalCookie()).toBe(false);
+
+      const reentered = await nominalEntry(recoveryPage, operator.username);
+      expect(reentered.access.role).toBe("OPERATIONAL");
+      expect(reentered.context).toMatchObject({ channel: "USERNAME", administrator: false, allBranches: false });
+      expect(reentered.context.branches.map(branch => branch.code)).toEqual([workspace.input.branchCode]);
+      const allowed = await readWorkspace(recoveryPage, workspace.id);
+      expect(allowed.input.visibleMonth).toBe("2026-12");
+      expect(allowed.input.branchCode).toBe(workspace.input.branchCode);
+      const otherBranch = await recoveryPage.request.get(`/api/escalas?id=${adminOnlyWorkspace.id}`);
+      expect(otherBranch.status()).toBe(403);
+      expect(await otherBranch.json()).toMatchObject({ error: { code: "ESCALA_BRANCH_FORBIDDEN" } });
+    });
+
     await scope.admin.context().addCookies([cookie]);
     expect(await (await scope.admin.request.get("/api/escalas/access/session")).json()).toMatchObject({ access: { role: "ACCOUNT" }, context: { administrator: true, allBranches: true } });
     expect((await scope.admin.request.delete("/api/escalas/access/session", { headers })).status()).toBe(200);

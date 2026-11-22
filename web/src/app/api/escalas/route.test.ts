@@ -32,6 +32,10 @@ vi.mock("@/lib/escalas/operator-session-store", () => ({ getEscalaScopedModuleSe
 } }));
 vi.mock("@/lib/escalas/solve-operations", () => ({ solveOwner: () => "session-owner", startGenerationOperation: mocks.startOperation, runGenerationOperation: mocks.runOperation, cancelGenerationOperation: mocks.cancelOperation, generationOperationStatus: mocks.operationStatus }));
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
+vi.mock("next/headers", async (original) => ({
+  ...await original<typeof import("next/headers")>(),
+  headers: async () => new Headers(),
+}));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, createEscalaApproved: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
   addEscalaEmployee: vi.fn(), rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));

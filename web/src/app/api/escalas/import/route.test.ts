@@ -13,6 +13,10 @@ vi.mock("@/lib/escalas/access", async original => {
   }), branchPermission: vi.fn(async () => ({ canEdit: true, canPublish: true })) };
 });
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => mocks.session) }));
+vi.mock("next/headers", async (original) => ({
+  ...await original<typeof import("next/headers")>(),
+  headers: async () => new Headers(),
+}));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaBranchAccess: { findUnique: mocks.grant } } }));
 function upload(content = ESCALA_IMPORT_TEMPLATE, name = "base.csv", type = "text/csv", fields: Record<string, string> = { branchCode: "2", startDate: "2026-10-26", defaultWeeklyHours: "42" }) {

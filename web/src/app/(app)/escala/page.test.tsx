@@ -1,10 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Key, ReactElement } from "react";
+import { encode } from "next-auth/jwt";
+vi.mock("@/lib/auth/site-session-secret", () => ({ siteSessionSecret: "synthetic-f08-site-cookie-test-key-795" }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EscalaClientAccess } from "@/lib/escalas/access-view";
 import type { EscalaSessionResponse } from "@/lib/escalas/access-contracts";
 
-const mocks = vi.hoisted(() => ({ account: vi.fn(), module: vi.fn(), policy: vi.fn(), grants: vi.fn(), workspace: vi.fn() }));
+const mocks = vi.hoisted(() => ({ account: vi.fn(), module: vi.fn(), policy: vi.fn(), grants: vi.fn(), workspace: vi.fn(), siteCookie: "" }));
 const hooks = vi.hoisted(() => ({
   slots: [] as unknown[], deps: [] as (readonly unknown[] | undefined)[], cleanup: [] as ((() => void) | undefined)[],
   effects: [] as (() => void)[], cursor: 0, changed: false,
@@ -76,6 +78,8 @@ vi.mock("react/jsx-dev-runtime", async importOriginal => {
   } };
 });
 vi.mock("@/auth", () => ({ auth: mocks.account }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers({ cookie: mocks.siteCookie }) }));
+vi.mock("@/app/login/actions", () => ({ logoutAction: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaBranchAccess: { findMany: mocks.grants } } }));
 vi.mock("@/lib/escalas/operator-session-store", async original => ({
   ...await original<typeof import("@/lib/escalas/operator-session-store")>(), getEscalaScopedModuleSession: mocks.module,
@@ -160,6 +164,7 @@ function boundary(context: EscalaClientAccess = operatorContext(), expiry = expi
 beforeEach(() => {
   vi.resetAllMocks(); hooks.slots = []; hooks.deps = []; hooks.cleanup = []; hooks.effects = []; hooks.cursor = 0; hooks.changed = false; hooks.inputDisabled = false;
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
+  mocks.siteCookie = "";
   mocks.account.mockResolvedValue(null); mocks.module.mockResolvedValue(null); mocks.policy.mockResolvedValue({ mode: "SCOPED" }); mocks.grants.mockResolvedValue([]);
   vi.stubGlobal("window", Object.assign(new EventTarget(), { setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) }));
   vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
@@ -168,7 +173,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   for (const cleanup of hooks.cleanup) cleanup?.();
-  await Promise.resolve(); vi.unstubAllGlobals(); vi.useRealTimers();
+  await Promise.resolve(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers();
 });
 
 describe("real entry page with scoped context", () => {
@@ -179,6 +184,24 @@ describe("real entry page with scoped context", () => {
     expect(html).not.toContain("Planejamento protegido"); expect(html).not.toContain("Senha operacional"); expect(mocks.workspace).not.toHaveBeenCalled();
     expect(dynamic).toBe("force-dynamic"); expect(metadata).toEqual({ robots: { index: false, follow: false }, title: "Escalas 5×2" });
   });
+  it("offers site-session recovery without restoring nominal access after site-account invalidation", async () => {
+    vi.stubEnv("AUTH_URL", "https://synthetic.example.test");
+    const name = "__Secure-authjs.session-token";
+    const token = await encode({ salt: name, secret: "synthetic-f08-site-cookie-test-key-795",
+      token: { id: "synthetic-invalidated-account" } });
+    mocks.siteCookie = `${name}=${token}`;
+    mocks.module.mockResolvedValue(scope());
+
+    await mount(await EscalaPage());
+
+    expect(html).toContain("Acesso a Escalas indisponível para esta conta");
+    expect(html).toContain("Entrar na conta do site");
+    expect(html).toContain("Encerrar sessão do site");
+    expect(html).not.toContain("Nome cadastrado");
+    expect(mocks.module).not.toHaveBeenCalled();
+    expect(mocks.workspace).not.toHaveBeenCalled();
+  });
+
   it("preserves the authenticated administrator and never reads or unions the nominal cookie", async () => {
     mocks.account.mockResolvedValue({ user: { id: "admin", tenantId: "account-tenant", status: "ACTIVE", role: "ADMIN" } });
     mocks.module.mockResolvedValue(scope()); await mount(await EscalaPage());
