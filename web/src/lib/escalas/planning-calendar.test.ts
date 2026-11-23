@@ -13,6 +13,7 @@ describe("planning calendar in the standard quality gate", () => {
     expect(planningWeekEnd("2026-12-13", sunday)).toBe("2026-12-19");
     expect(planningWeeks({ startDate: "2026-12-07", endDate: "2026-12-13" })).toHaveLength(1);
     expect(planningMonthPeriod("2026-12")).toEqual({ startDate: "2026-11-30", endDate: "2027-01-03" });
+    expect(planningWeeks({ startDate: "2026-11-29", endDate: "2027-01-02", ...sunday }).map(week => week.dates.length)).toEqual([7, 7, 7, 7, 7]);
     expect(planningWeekStartsOn(Object.create(null))).toBe("MONDAY");
   });
 
@@ -26,7 +27,6 @@ describe("planning calendar in the standard quality gate", () => {
   });
 
   it.each([
-    ["2026-12", "2026-11-29", "2027-01-02", 5],
     ["2027-01", "2026-12-27", "2027-02-06", 6],
     ["2026-02", "2026-02-01", "2026-02-28", 4],
   ] as const)("expands %s without shifting employee dates", (month, startDate, endDate, count) => {

@@ -128,7 +128,7 @@ describe("Escalas workspace model", () => {
     expect(escalaInputSchema.safeParse(input).success).toBe(true);
   });
 
-  it("creates explicit Sunday–Saturday weeks, including both month boundaries", () => {
+  it("aligns normal months and clips the December 2026 transition", () => {
     expect(monthPeriod("2026-10")).toEqual({
       startDate: "2026-09-27",
       endDate: "2026-10-31",
@@ -140,7 +140,7 @@ describe("Escalas workspace model", () => {
     expect(datesBetween("2026-07-26", "2026-09-05")).toHaveLength(42);
     const input = newInput("06", "Loja sintética", "2026-12", 42);
     expect(input.planningWeekStartsOn).toBe("SUNDAY");
-    expect([input.startDate, input.endDate]).toEqual(["2026-11-29", "2027-01-02"]);
+    expect([input.startDate, input.endDate]).toEqual(["2026-12-01", "2026-12-31"]);
     const legacy = { ...input, planningWeekStartsOn: "MONDAY" as const };
     expect(scenarioDefinitionChanged(legacy, input)).toBe(true);
     expect(coverageDefinitionChanged(legacy, input)).toBe(true);

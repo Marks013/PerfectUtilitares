@@ -6,7 +6,7 @@ import styles from "./escalas.module.css";
 import { escalaCatalogActions } from "@/lib/escalas/access-contracts";
 import { useEscalaClientAccess } from "./access-context";
 import { effectiveWeeklyMinutes } from "@/lib/escalas/labor-rules";
-import { dateRange } from "@/lib/escalas/dates";
+import { planningWeekDates } from "@/lib/escalas/dates";
 import { sortEmployees } from "@/lib/escalas/order";
 import { planningWeeklyHours, requiresWorkBlockBalance } from "@/lib/escalas/preparation";
 import { adaptCompatibleSchedules, type ScheduleException } from "@/lib/escalas/schedule-adaptation";
@@ -37,7 +37,7 @@ function shiftText(shift: EscalaShift) {
 
 export function hoursArePrepared(input: EscalaInput) {
   const shifts = new Map(input.shifts.map((shift) => [shift.id, shift]));
-  const weeks = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
+  const weeks = planningWeekDates(input).map(week => week[0]);
   return input.employees.filter((person) => isEscalaPlanningParticipant(person) && person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING")
     .every((person) => weeks.every((start) => {
       const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);

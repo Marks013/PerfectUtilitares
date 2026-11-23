@@ -8,6 +8,9 @@ MESSAGES = {
     "DAYS_WORKED": "Não é possível distribuir os cinco dias de trabalho com as folgas e os bloqueios atuais.",
     "WEEKLY_MINUTES": "Os horários permitidos não conseguem completar a jornada semanal escolhida.",
     "COVERAGE": "A cobertura mínima obrigatória não pode ser atendida com a equipe disponível.",
+    "COVERAGE_SAVED_DAY": "As condições impedem conservar o piso por data da referência salva.",
+    "COVERAGE_SERVICE": "As condições impedem conservar a presença com horário por dia ou cargo/faixa.",
+    "COVERAGE_COMPARISON": "As condições impedem conservar o limite de desfalque por setor, período ou cargo/faixa.",
     "REST": "As condições atuais não permitem preservar os descansos e, na regra variável, evitar dois dias repetidos em todas as semanas comparáveis. Confira bloqueios e folgas fixas explícitas; nenhuma regra foi relaxada.",
 }
 
@@ -55,4 +58,5 @@ class ConflictRegistry:
             return []
         families = sorted({by_literal[index] for index in engine.sufficient_assumptions_for_infeasibility()
                            if index in by_literal})
-        return [{"family": family, "message": MESSAGES[family]} for family in families]
+        return [{"family": "COVERAGE" if family.startswith("COVERAGE_") else family,
+                 "message": MESSAGES[family]} for family in families]

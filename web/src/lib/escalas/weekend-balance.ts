@@ -1,4 +1,4 @@
-import { addDays, dateRange, dayOfWeek } from "./dates";
+import { addDays, dateRange, dayOfWeek, planningWeekDates } from "./dates";
 import { effectiveSundayLimit, effectiveWeeklyHours } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput } from "./types";
 
@@ -6,6 +6,7 @@ import type { EscalaAssignment, EscalaInput } from "./types";
 export function weekendBalance(input: EscalaInput, weekday: 5 | 6, assignments = input.assignments): Map<string, number> {
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const days = dateRange(input.startDate, input.endDate);
+  const weeks = planningWeekDates(input);
   const original = new Map(input.assignments.map(record => [`${record.employeeId}\0${record.date}`, record]));
   const current = new Map<string, EscalaAssignment[]>();
   for (const record of assignments) {
@@ -29,7 +30,7 @@ export function weekendBalance(input: EscalaInput, weekday: 5 | 6, assignments =
     if (person.planningEnabled === false) continue;
     const noClock = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
     const group = JSON.stringify([noClock, person.sector, effectiveSundayLimit(person),
-      noClock ? [] : days.filter((_, index) => index % 7 === 0).map(day => effectiveWeeklyHours(person, day, input))]);
+      noClock ? [] : weeks.map(week => effectiveWeeklyHours(person, week[0], input))]);
     const rates = groups.get(group) ?? []; groups.set(group, rates);
     const available = days.filter(day => dayOfWeek(day) === weekday && day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil))
       .filter(day => {

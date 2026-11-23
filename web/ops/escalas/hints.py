@@ -6,6 +6,15 @@ from datetime import date, timedelta
 from itertools import combinations
 from rest_quality import visible_month
 from rest_configuration import repeated_variable_pattern
+from planning_calendar import is_december_cutover, planning_weeks
+
+
+def _calendar_blocks(dates, policy):
+    calendar = {'startDate': dates[0], 'endDate': dates[-1],
+                'planningWeekStartsOn': policy.get('_planningWeekStartsOn', 'MONDAY')} if dates else {}
+    if calendar and is_december_cutover(calendar):
+        return [week['dates'] for week in planning_weeks(calendar)]
+    return [dates[index:index + 7] for index in range(0, len(dates), 7)]
 
 
 def paid_holiday_dates(policy):
@@ -99,7 +108,7 @@ def _protected_calendar_slots(pid, days, baseline, closed_holidays):
 
 def _week_candidates(person, group, baseline, choices, metrics, policy, selected,
                      weekdays, closed_holidays, preserve_rest_pattern=False,
-                     mixed=False, known_rests=None):
+                     mixed=False, known_rests=None, cutover_first=False):
     """Build or validate a weekly mask using the same recipient rules."""
     pid = person['id']
     fixed = set(person['fixedOffDays'])
@@ -121,7 +130,7 @@ def _week_candidates(person, group, baseline, choices, metrics, policy, selected
         forbidden.update(set(group) - saved_rests)
     complete = len(group) == 7 and not absent
     rest_target = max(0, 2 - closed_sundays)
-    sizes = (rest_target,) if complete else range(min(rest_target, len(group)), -1, -1)
+    sizes = (rest_target,) if complete or (cutover_first and not absent) else range(min(rest_target, len(group)), -1, -1)
     masks = (known_rests,) if known_rests is not None else (
         pair for size in sizes for pair in combinations([d for d in group if d not in forbidden], size))
     for mask in masks:
@@ -176,17 +185,20 @@ def _rematerialize_calendar(person, dates, active_days, mask, baseline, choices,
     weekdays = {day: date.fromisoformat(day).weekday() for day in dates}
     rests = {day for day, bit in zip(ordered, mask) if bit is True}
     entries = {}
-    for week in range(0, len(dates), 7):
+    weeks = _calendar_blocks(dates, policy)
+    for week in weeks:
         if control is not None:
             control.checkpoint()
         if deadline is not None and time.monotonic() >= deadline:
             return None
-        group = [day for day in dates[week:week + 7] if day in active_days]
+        group = [day for day in week if day in active_days]
         if not group:
             continue
         candidate = next(_week_candidates(person, group, baseline, choices, metrics, policy,
                          selected, weekdays, closed, preserve_rest_pattern,
-                         known_rests=rests.intersection(group)), None)
+                         known_rests=rests.intersection(group),
+                         cutover_first=len(weeks[0]) == 5 and week == weeks[0] and len(group) == 5
+                         and dates[0] == '2026-12-01' and dates[-1] == '2026-12-31'), None)
         if candidate is None:
             return None
         # A protected marker is never interpreted as WORK or regular OFF.
@@ -372,8 +384,8 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
                     continue
                 count('candidatesValid')
                 item = (0.0, {}, history_rests)
-                for week in range(0, len(dates), 7):
-                    group = {day: entries[day] for day in dates[week:week + 7] if day in entries}
+                for week in _calendar_blocks(dates, policy):
+                    group = {day: entries[day] for day in week if day in entries}
                     rests = {day for day, entry in group.items() if entry['kind'] == 'OFF'}
                     item = extend_candidate(*item, rests, group)
                 beam.append(item)
@@ -383,17 +395,20 @@ def balanced_rest_hints(employees, dates, active, baseline, choices, metrics, po
             count('beamPeople')
             # Check each selected week against preceding work and Sunday rotation.
             beam = [(0.0, {}, history_rests)]
-            for week in range(0, len(dates), 7):
+            weeks = _calendar_blocks(dates, policy)
+            for week in weeks:
                 if control is not None:
                     control.checkpoint()
                 if deadline is not None and time.monotonic() >= deadline:
                     return result
-                group = [day for day in dates[week:week + 7] if day in available]
+                group = [day for day in week if day in available]
                 if not group:
                     continue
                 candidates = list(_week_candidates(
                     person, group, baseline, choices, metrics, policy, selected, weekdays,
-                    closed_holidays, preserve_rest_pattern, pid in mixed_people))
+                    closed_holidays, preserve_rest_pattern, pid in mixed_people,
+                    cutover_first=len(weeks[0]) == 5 and week == weeks[0] and len(group) == 5
+                    and dates[0] == '2026-12-01' and dates[-1] == '2026-12-31'))
                 next_beam = []
                 # Final means this recipient's last active week, not the store's
                 # last calendar week. Do not borrow an unknown future rest.

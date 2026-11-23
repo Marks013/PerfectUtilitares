@@ -26,7 +26,7 @@ class PlanningCalendarTests(unittest.TestCase):
                 planning_week_start(value, SUNDAY)
 
     def test_months_are_expanded_not_shifted(self):
-        cases = [('2026-12', '2026-11-29', '2027-01-02', 5),
+        cases = [('2026-11', '2026-11-01', '2026-12-05', 5),
                  ('2027-01', '2026-12-27', '2027-02-06', 6),
                  ('2026-02', '2026-02-01', '2026-02-28', 4)]
         for month, first, last, count in cases:
@@ -34,6 +34,14 @@ class PlanningCalendarTests(unittest.TestCase):
                 period = planning_month_period(month, SUNDAY)
                 self.assertEqual(period, {'startDate': first, 'endDate': last})
                 self.assertEqual(len(planning_weeks({**period, **SUNDAY})), count)
+
+    def test_december_2026_sunday_cutover_is_an_exact_civil_month(self):
+        period = planning_month_period('2026-12', SUNDAY)
+        self.assertEqual(period, {'startDate': '2026-12-01', 'endDate': '2026-12-31'})
+        weeks = planning_weeks({**period, **SUNDAY})
+        self.assertEqual([len(week['dates']) for week in weeks], [5, 7, 7, 7, 5])
+        self.assertEqual(planning_month_period('2026-12'),
+                         {'startDate': '2026-11-30', 'endDate': '2027-01-03'})
 
     def test_each_sunday_belongs_only_to_the_week_it_starts(self):
         weeks = planning_weeks({**planning_month_period('2026-12', SUNDAY), **SUNDAY})
@@ -120,15 +128,20 @@ class PlanningCalendarTests(unittest.TestCase):
                         continue
                     weeks = planning_weeks({**period, **calendar})
                     days = [day for week in weeks for day in week['dates']]
-                    self.assertIn(len(days), (28, 35, 42))
+                    if value == '2026-12' and convention == 'SUNDAY':
+                        self.assertEqual(len(days), 31)
+                    else:
+                        self.assertIn(len(days), (28, 35, 42))
                     self.assertEqual(len(days), len(set(days)))
                     self.assertLessEqual(period['startDate'], value + '-01')
                     self.assertGreaterEqual(period['endDate'][:7], value)
                     for week in weeks:
-                        self.assertEqual(date.fromisoformat(week['startDate']).weekday(), weekday)
+                        civil_start = planning_week_start(week['startDate'], calendar)
+                        self.assertEqual(week['startDate'], max(civil_start, period['startDate']))
+                        self.assertEqual(date.fromisoformat(civil_start).weekday(), weekday)
                         for offset, day in enumerate(week['dates']):
                             self.assertEqual(day, (date.fromisoformat(week['startDate']) + timedelta(days=offset)).isoformat())
-                            self.assertEqual(planning_week_start(day, calendar), week['startDate'])
+                            self.assertEqual(planning_week_start(day, calendar), civil_start)
                     checked += 1
         self.assertEqual(checked, 2396)
 

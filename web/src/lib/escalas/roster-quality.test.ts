@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { newEmployee } from "../../components/escalas/workspace-model";
 import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
-import { selectVerifiedRoster, coverageQuality, compareRosterCoverage, isOperationallyReusable, isReusableRoster } from "./roster-quality";
+import { alignPersistedCoverageTarget, selectVerifiedRoster, coverageQuality, compareRosterCoverage, frozenCoverageComparison, isOperationallyReusable, isReusableRoster } from "./roster-quality";
+import { buildCoveragePresence, coverageAt } from "./coverage-presence";
+import { frozenCoverageService } from "./coverage-protection";
 import { validateEscala } from "./validation";
 import type { EscalaAssignment, EscalaInput } from "./types";
-import { addDays } from "./dates";
+import { addDays, dateRange } from "./dates";
 import { weekendBalance } from "./weekend-balance";
 
 function fixture(): EscalaInput {
@@ -23,6 +25,114 @@ function swap(input: EscalaInput): EscalaInput {
   return { ...input, assignments: input.assignments.map(record => record.employeeId === "a" && record.date === "2026-11-03" ? { ...record, kind: "WORK" as const, shiftId: "day" }
     : record.employeeId === "a" && record.date === "2026-11-04" ? { employeeId: record.employeeId, date: record.date, kind: "OFF" as const } : record) };
 }
+
+function frozenFixture() {
+  const saved = fixture(), prepared = structuredClone(saved);
+  const mandatory = { id: "hard", date: "2026-11-04", sector: "Loja", start: 480, end: 540, minimum: 1 };
+  saved.demands = [mandatory, { ...mandatory, id: "persisted", date: "2026-11-03", estimated: true }];
+  saved.coverageBasis = "coverage-v1:0123456789abcdef";
+  prepared.demands = [mandatory, { ...mandatory, id: "recalculated", date: "2026-11-05", estimated: true }];
+  prepared.coverageBasis = "coverage-v2:fedcba9876543210";
+  prepared.restRulesVersion = 3;
+  prepared.assignments = prepared.assignments.slice(1); // Preparation may discard obsolete clock assignments.
+  return { saved, prepared };
+}
+
+const twoSundays = ["2026-11-08", "2026-11-15"] as const;
+function sundayCoverageFixture(schedules: ReadonlyArray<readonly [boolean, boolean]>): EscalaInput {
+  const input = fixture();
+  input.endDate = twoSundays[1];
+  input.employees = schedules.map((_, index) => ({ ...input.employees[0], id: "person-" + index, registration: String(index),
+    maxConsecutiveSundays: 2, sundayRestRule: "COMMERCE" }));
+  input.assignments = input.employees.flatMap((person, index) => dateRange(input.startDate, input.endDate).map((date, day): EscalaAssignment => {
+    const weekday = day % 7;
+    const work = index === 0 ? [0, 1, 3, 4, 6].includes(weekday)
+      : [0, 1, 4, 5, schedules[index][Math.floor(day / 7)] ? 6 : 3].includes(weekday);
+    return { employeeId: person.id, date, kind: work ? "WORK" : "OFF", ...(work ? { shiftId: "day" } : {}) };
+  }));
+  input.demands = twoSundays.map(date => ({ id: date, date, sector: "Loja", role: "Operador",
+    start: 480, end: 540, minimum: schedules.length, estimated: true }));
+  return input;
+}
+
+describe("authoritative frozen staffing target", () => {
+  it("optimizes on the saved estimates even with an incomplete preparation, without changing its stale basis", () => {
+    const { saved, prepared } = frozenFixture();
+    expect(compareRosterCoverage(saved, prepared).comparable).toBe(false);
+    const aligned = alignPersistedCoverageTarget(saved, prepared);
+    expect(aligned).toEqual({ ...prepared, demands: saved.demands, coverageBasis: saved.coverageBasis });
+    expect(prepared.demands.map(demand => demand.id)).toEqual(["hard", "recalculated"]);
+  });
+
+  it.each([
+    ["changed minimum", (input: EscalaInput) => { input.demands[0] = { ...input.demands[0], minimum: 2 }; }],
+    ["changed calendar", (input: EscalaInput) => { input.planningWeekStartsOn = "SUNDAY"; }],
+    ["changed cohort", (input: EscalaInput) => { input.employees[0].role = "Outro cargo"; }],
+    ["changed protected date", (input: EscalaInput) => { input.assignments[0].locked = true; }],
+    ["changed scenario mode", (input: EscalaInput) => { input.generationMode = "HOURS_ONLY"; }],
+    ["changed reference policy", (input: EscalaInput) => { input.policy.minMealMinutes = 90; }],
+    ["unreviewed scenario", (input: EscalaInput) => { input.needsRegeneration = true; }],
+  ] as const)("keeps the prepared ruler for %s", (_label, change) => {
+    const { saved, prepared } = frozenFixture();
+    change(prepared);
+    expect(alignPersistedCoverageTarget(saved, prepared)).toBe(prepared);
+  });
+});
+
+describe("frozen Sunday comparator parity", () => {
+  function staffing(input: EscalaInput) {
+    const presence = buildCoveragePresence(input);
+    return twoSundays.map(date => coverageAt(presence, date, "Loja", 480, "Operador").length);
+  }
+
+  it("rotates an unchanged deficit across two staffed Sundays without imposing the saved per-date floor", () => {
+    const reference = sundayCoverageFixture([[true, true], [true, false]]);
+    const proposal = sundayCoverageFixture([[true, true], [false, true]]);
+    const original = structuredClone(reference);
+    expect(validateEscala(reference).valid).toBe(true);
+    expect(validateEscala(proposal).valid).toBe(true);
+    expect(reference.demands.map(demand => demand.minimum)).toEqual([2, 2]);
+    const previousFloor = staffing(reference), rotated = staffing(proposal);
+    expect(previousFloor).toEqual([2, 1]);
+    expect(rotated).toEqual([1, 2]);
+    expect(rotated.every((present, index) => present >= previousFloor[index])).toBe(false);
+    expect([...coverageQuality(proposal).present].sort()).toEqual([...coverageQuality(reference).present].sort());
+    expect(frozenCoverageService(proposal)).toEqual(frozenCoverageService(reference));
+    expect(compareRosterCoverage(reference, proposal)).toEqual({ comparable: true, regressed: false, improved: false, reason: "ACCEPTED" });
+
+    const limits = frozenCoverageComparison(reference);
+    expect(limits?.sectors).toEqual([{ sector: "Loja", horizon: 60, month: 60, sundays: 60, monthSundays: 60, closing: 0, peak: 1 }]);
+    expect(limits?.bands).toHaveLength(8);
+    for (const scope of ["HORIZON", "MONTH", "SUNDAYS", "MONTH_SUNDAYS"]) {
+      for (const role of [null, "Operador"]) {
+        expect(limits?.bands).toContainEqual({ scope, sector: "Loja", role, start: 480, end: 540, maximum: 1, peak: 1 });
+      }
+    }
+    expect(frozenCoverageComparison(proposal)).toEqual(limits);
+    expect(reference).toEqual(original);
+  });
+
+  it("rejects a real increase in Sunday deficit against the saved ruler, even if the candidate removes estimates", () => {
+    const reference = sundayCoverageFixture([[true, true], [true, false]]);
+    const proposal = { ...sundayCoverageFixture([[true, true], [false, false]]), demands: [] };
+    expect(staffing(proposal)).toEqual([1, 1]);
+    expect(compareRosterCoverage(reference, proposal)).toMatchObject({ comparable: true, regressed: true, reason: "SECTOR_COVERAGE",
+      regression: { sector: "Loja", scope: "HORIZON", metric: "DEFICIT_PERSON_MINUTES", before: 60, after: 120, delta: 60 } });
+  });
+
+  it("rejects a worse peak when Sunday deficit, service and presence are unchanged", () => {
+    const reference = sundayCoverageFixture([[true, true], [true, true], [true, false], [false, true]]);
+    const proposal = sundayCoverageFixture([[true, true], [true, true], [true, false], [true, false]]);
+    expect(staffing(reference)).toEqual([3, 3]);
+    expect(staffing(proposal)).toEqual([4, 2]);
+    const limits = frozenCoverageComparison(reference);
+    expect(limits?.sectors).toEqual([{ sector: "Loja", horizon: 120, month: 120, sundays: 120, monthSundays: 120, closing: 0, peak: 1 }]);
+    expect(limits?.bands).toContainEqual({ scope: "MONTH_SUNDAYS", sector: "Loja", role: "Operador", start: 480, end: 540, maximum: 2, peak: 1 });
+    expect(compareRosterCoverage(reference, proposal)).toMatchObject({ comparable: true, regressed: true, reason: "SECTOR_PEAK",
+      regression: { sector: "Loja", scope: "HORIZON", metric: "PEAK_MISSING", before: 1, after: 2, delta: 1 } });
+  });
+});
+
 describe("independent incumbent quality acceptance", () => {
   it("does not compare AFASTADOS demand or rank administrative attendance, but keeps the saved records", () => {
     const input = fixture();
@@ -99,7 +209,8 @@ describe("independent incumbent quality acceptance", () => {
     expect(validateEscala(proposal).valid).toBe(true);
     const total = (value: EscalaInput) => [...coverageQuality(value).daily.values()].reduce((sum, count) => sum + count, 0);
     expect([total(input), total(proposal)]).toEqual([480, 300]);
-    expect(compareRosterCoverage(input, proposal)).toMatchObject({ comparable: true, regressed: true, reason: "ROLE_TIME_COVERAGE" });
+    expect(compareRosterCoverage(input, proposal)).toMatchObject({ comparable: true, regressed: true, reason: "ROLE_TIME_COVERAGE",
+      regression: { sector: "Loja", role: "Zelador", metric: "DEFICIT_PERSON_MINUTES", start: 480, end: 540, before: 0, after: 60, delta: 60 } });
     expect(selectVerifiedRoster(input, proposal)).toEqual({ input, retainedReference: true });
     expect(input).toEqual(original);
   });

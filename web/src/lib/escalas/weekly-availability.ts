@@ -1,4 +1,5 @@
-import { dateRange, dayOfWeek } from "./dates";
+import { dateRange, dayOfWeek, planningWeekDates } from "./dates";
+import { isDecember2026Cutover } from "./planning-calendar";
 import { isEscalaPlanningParticipant, isRestPlanningExcludedRole } from "./eligibility";
 import { dailyMinuteCeiling, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import { planningWeeklyHours } from "./preparation";
@@ -9,7 +10,8 @@ type Availability = { availableHoursMin: number; availableHoursMax: number; sche
 /** An upper bound from known availability, not guaranteed coverage or a new weekly contract. */
 export function weeklySectorAvailability(input: EscalaInput): Map<string, Availability> {
   const days = dateRange(input.startDate, input.endDate);
-  const weeks = days.filter((_, index) => index % 7 === 0);
+  const cutover = isDecember2026Cutover(input);
+  const weeks = planningWeekDates(input);
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const paid = new Map(input.shifts.map(shift => [shift.id,
     shift.segments.reduce((sum, segment) => sum + (segment.kind === "BREAK" ? 0 : segment.end - segment.start), 0)]));
@@ -36,7 +38,9 @@ export function weeklySectorAvailability(input: EscalaInput): Map<string, Availa
     if (!timed || person.simulationDailyMinutes !== undefined || !person.shiftIds.some(id => shifts.has(id))) continue;
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
     weeks.forEach((week, index) => {
-      const capacities = days.slice(index * 7, index * 7 + 7).flatMap(day => {
+      const opening = cutover && index === 0 && week.every(day => active(day) && assignments.get(`${person.id}\0${day}`)?.kind !== "ABSENCE");
+      const maxWorkDays = opening ? 3 - week.filter(day => closed.has(day)).length : 5;
+      const capacities = week.flatMap(day => {
         const entry = assignments.get(`${person.id}\0${day}`);
         if (!active(day) || closed.has(day) || entry?.kind === "ABSENCE" || entry?.locked && entry.kind === "OFF"
           || person.offMode !== "VARIABLE" && person.fixedOffDays.includes(dayOfWeek(day))) return [];
@@ -48,8 +52,8 @@ export function weeklySectorAvailability(input: EscalaInput): Map<string, Availa
           return Math.min(paid.get(id) ?? 0, maximum);
         }));
         return [longest];
-      }).sort((a, b) => b - a).slice(0, 5);
-      group.weekly[index] += Math.min(effectiveWeeklyMinutes(reference, week, input),
+      }).sort((a, b) => b - a).slice(0, Math.max(0, maxWorkDays));
+      group.weekly[index] += Math.min(effectiveWeeklyMinutes(reference, week[0], input),
         input.policy.weeklyLimit * 60, capacities.reduce((sum, value) => sum + value, 0)) / 60;
     });
   }

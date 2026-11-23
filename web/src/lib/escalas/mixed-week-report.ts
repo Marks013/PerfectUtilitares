@@ -1,4 +1,5 @@
-import { addDays, dayOfWeek, visibleDates, weekStart } from "./dates";
+import { dayOfWeek, visibleDates, weekStart } from "./dates";
+import { planningWeekEnd } from "./planning-calendar";
 import { usesMixed42Week } from "./labor-rules";
 import type { EscalaEmployee, EscalaInput } from "./types";
 
@@ -10,12 +11,12 @@ export function mixedWeeklyApplication(input: EscalaInput, employee: EscalaEmplo
   if (!visibleDates(input).some(date => usesMixed42Week(input, employee, date))) return "";
   const weeks = new Map<string, string[]>();
   for (const date of [...new Set(dates)].sort()) {
-    const monday = weekStart(date, input);
-    const actual = weeks.get(monday) ?? [];
-    actual.push(date); weeks.set(monday, actual);
+    const start = weekStart(date, input);
+    const actual = weeks.get(start) ?? [];
+    actual.push(date); weeks.set(start, actual);
   }
-  return [...weeks].map(([monday, actual]) => {
+  return [...weeks].map(([start, actual]) => {
     const days = actual.map(date => `${weekdays[dayOfWeek(date)]} ${date.slice(8)}`).join(", ");
-    return `${dayMonth(monday)}–${dayMonth(addDays(monday, 6))}: ${actual.length} ${actual.length === 1 ? "dia" : "dias"} · ${days}`;
+    return `${dayMonth(start)}–${dayMonth(planningWeekEnd(start, input))}: ${actual.length} ${actual.length === 1 ? "dia" : "dias"} · ${days}`;
   }).join("\n");
 }

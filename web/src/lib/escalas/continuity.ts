@@ -110,7 +110,7 @@ export function preservePublishedDays(input: EscalaInput, published: EscalaInput
         if (sourceShift) {
           if (person.scheduleMode === "MISSING" || person.scheduleMode === "UNTIMED") throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Há horários publicados para uma pessoa sem jornada definida nesta proposta. Confira a referência importada antes de gerar.");
           const segments = shiftSignature(sourceShift);
-          shiftId = signatures.get(segments);
+          shiftId = existing?.shiftId ?? signatures.get(segments);
           if (!shiftId) {
             shiftId = "plan-" + createHash("sha256").update(segments).digest("hex").slice(0, 32);
             const collision = shifts.find(shift => shift.id === shiftId);

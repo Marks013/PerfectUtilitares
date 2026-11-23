@@ -18,7 +18,7 @@ import { canDisplayEscalaAction, isEscalaAdministrator, useEscalaClientAccess } 
 import { pendingNavigation } from "./workspace-navigation";
 import type { ImportSyncCommand } from "@/lib/escalas/import-sync-contracts";
 import { requestImportReplacement, type ImportReplacementResult } from "./import-replacement-client";
-import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
+import { canUpgradePlanningCalendar } from "@/lib/escalas/calendar-upgrade";
 import { workspaceTeamActions } from "./workspace-team-actions";
 
 export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status" | "updatedAt"> & {
@@ -383,7 +383,7 @@ export function useEscalasWorkspace() {
   function upgradeCalendar() {
     const selected = latestWorkspace.current;
     if (!isEscalaAdministrator(latestAccess.current)) return;
-    if (!selected?.canEdit || !canCreate || working.current || !latestInput.current || planningWeekStartsOn(latestInput.current) === "SUNDAY") return;
+    if (!selected?.canEdit || !canCreate || working.current || !latestInput.current || !canUpgradePlanningCalendar(latestInput.current)) return;
     void run("Criando rascunho com semanas de domingo a sábado…", async (signal, isCurrent) => {
       const saved = await flushDraft();
       if (!isCurrent() || !isEscalaAdministrator(latestAccess.current) || latestWorkspace.current?.id !== selected.id || !saved) return;

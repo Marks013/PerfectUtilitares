@@ -205,6 +205,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     const createdResponse = await creating; expect(createdResponse.status()).toBe(201);
     let workspace = scope.trackWorkspace(await createdResponse.json() as EscalaWorkspace);
     expect(workspace).toMatchObject({ approvedPolicyVersionId: approved.id, status: "DRAFT", teamSeed: "LATEST_IMPORT" });
+    expect(workspace.input).toMatchObject({ startDate: "2026-12-01", endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY" });
     expect(workspace.input.employees.map(person => person.registration).sort()).toEqual(["0001", extraRegistration]);
     expect(workspace.input.employees).toContainEqual(expect.objectContaining({ id: importedExtra.id, registration: extraRegistration }));
     expect(workspace.input.assignments).toEqual(expect.arrayContaining(input.assignments));

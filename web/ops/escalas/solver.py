@@ -7,12 +7,15 @@ from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
+from coverage_comparison import COMPARISON_CONFLICT, CoverageComparison
+from coverage_service_protection import SERVICE_CONFLICT, add_service_protection
 from diagnostics import ConflictRegistry
 from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates, saturday_rest_forbidden
 from leadership import PRIORITY, leadership_objective, leadership_summary, movement_priority
-from model_input import validate_manual_shifts, validate_planning_horizon, validate_fixed_rest_settings
+from model_input import (validate_fixed_rest_settings, validate_manual_shifts,
+                         validate_planning_horizon)
 from rest_configuration import add_variable_rest_constraints, effective_rest_input, repeated_variable_pattern
-from planning_calendar import planning_week_starts_on
+from planning_calendar import is_december_cutover, planning_week_starts_on, planning_weeks
 from optimization import ImprovementContext, Snapshot, improve, remember
 from rest_quality import build_rest_quality, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
@@ -21,6 +24,8 @@ from sunday_peak import build_sunday_peaks
 from weekend_balance import available_weekends, preserve_sunday_presence, sunday_distribution, weekend_objectives
 
 ZONE = ZoneInfo("America/Sao_Paulo")
+PROTECTED_COVERAGE_CONFLICT = ("Não foi possível preservar as faixas de cobertura da grade salva com as demais regras. "
+                               "Confira a equipe e os horários dessas faixas; nenhuma proteção foi removida.")
 
 
 def days_between(start, end):
@@ -43,12 +48,12 @@ def _clock_profiles(choices, shifts):
     return {pid: tuple(sorted(profiles)) for pid, profiles in people.items()}
 
 
-def _weekend_group_key(person, dates, clock_profiles):
+def _weekend_group_key(person, dates, clock_profiles, *, week_ends=None):
     """Compare the same function and admissible clocks, not sector substitutes."""
     untimed = has_no_clock(person)
+    week_ends = dates[6::7] if week_ends is None else week_ends
     return (untimed, person['sector'], person['role'], sunday_limit(person),
-            () if untimed else tuple(effective_weekly_hours(person, dates[index + 6])
-                                    for index in range(0, len(dates), 7)),
+            () if untimed else tuple(effective_weekly_hours(person, day) for day in week_ends),
             () if untimed else clock_profiles.get(person['id'], ()))
 
 
@@ -251,9 +256,11 @@ def _solve(data, control=None, started=None):
     started = time.monotonic() if started is None else started
     if control is not None:
         control.checkpoint()
-    dates = days_between(data["startDate"], data["endDate"])
+    weeks = planning_weeks(data)
+    dates = [day for week in weeks for day in week['dates']]
+    cutover = is_december_cutover(data)
     employees = sorted((p for p in data["employees"] if p.get("planningEnabled") is not False), key=lambda e: e["id"])
-    if not 1 <= len(employees) <= 250 or not 7 <= len(dates) <= 42 or len(dates) % 7:
+    if not 1 <= len(employees) <= 250:
         raise ValueError("model bounds")
     policy = {**data["policy"], "_simulation": data.get("simulation") is True,
               "_visibleMonth": _coverage_month(data),
@@ -293,9 +300,9 @@ def _solve(data, control=None, started=None):
         mixed_days = set()
         if (not untimed and person["sector"] in mixed_sectors and person["weeklyHours"] == 42
                 and person.get("simulationDailyMinutes") is None):
-            mixed_days = {day for week in range(0, len(dates), 7)
-                          if effective_weekly_hours(person, dates[week + 6]) == 42
-                          for day in dates[week:week + 7]}
+            mixed_days = {day for week in weeks
+                          if effective_weekly_hours(person, week['endDate']) == 42
+                          for day in week['dates']}
         if mixed_days:
             mixed_people.add(pid)
         prior = {a["date"]: a for a in person.get("planningHistory", []) + person["history"]}
@@ -395,28 +402,31 @@ def _solve(data, control=None, started=None):
             for term in changed:
                 model.add(changed_person >= term)
             people_changed.append(changed_person)
-        for week in range(0, len(dates), 7):
-            group = [d for d in dates[week:week + 7] if d in active[pid]]
+        for index, week in enumerate(weeks):
+            group = [d for d in week['dates'] if d in active[pid]]
             absences = [d for d in group if baseline.get((pid, d), {}).get("kind") == "ABSENCE"]
             holidays_in_group = {d for d in group if baseline.get((pid, d), {}).get('kind') == 'HOLIDAY'
                                  or d in paid_holidays and data.get('generationMode') != 'HOURS_ONLY'}
             closed_weekdays = sum(date.fromisoformat(d).weekday() != 6 for d in holidays_in_group)
             closed_sundays = sum(date.fromisoformat(d).weekday() == 6 for d in holidays_in_group)
-            if len(group) == 7 and not absences:
-                conflicts.track(model.add(sum(work[pid, d] for d in group) == max(0, 5 - closed_weekdays)), "DAYS_WORKED")
+            first_cutover_week = cutover and index == 0 and len(group) == len(week['dates'])
+            complete_week = len(group) == 7
+            if (complete_week or first_cutover_week) and not absences:
+                work_target = max(0, (3 if first_cutover_week else 5) - closed_weekdays)
+                conflicts.track(model.add(sum(work[pid, d] for d in group) == work_target), "DAYS_WORKED")
                 conflicts.track(model.add(sum(off[pid, d] for d in group) == max(0, 2 - closed_sundays)), "DAYS_WORKED")
-                if not untimed and not closed_weekdays:
+                if complete_week and not untimed and not closed_weekdays:
                     conflicts.track(model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                                    == effective_weekly_minutes(person, dates[week + 6], policy["_simulation"])), "WEEKLY_MINUTES")
+                                    == effective_weekly_minutes(person, week['endDate'], policy["_simulation"])), "WEEKLY_MINUTES")
             else:
                 conflicts.track(model.add(sum(work[pid, d] for d in group) <= 5), "DAYS_WORKED")
-            if absences or closed_weekdays:
-                if dates[week] in mixed_days:
+            if absences or closed_weekdays or cutover and len(week['dates']) < 7:
+                if week['startDate'] in mixed_days:
                     model.add(sum(v for d in group for s, v in choices[pid, d].items()
                                   if metrics[s][0] == 540) <= 2)
             if not untimed:
                 conflicts.track(model.add(sum(metrics[s][0] * v for d in group for s, v in choices[pid, d].items())
-                                <= min(effective_weekly_minutes(person, dates[week + 6], policy["_simulation"]), policy["weeklyLimit"] * 60)), "WEEKLY_MINUTES")
+                                <= min(effective_weekly_minutes(person, week['endDate'], policy["_simulation"]), policy["weeklyLimit"] * 60)), "WEEKLY_MINUTES")
         add_variable_rest_constraints(model, person, dates, off, baseline, policy, conflicts)
         rest_start = len(model.proto.constraints)
         _streaks(model, person, dates, work, off, boundary, active[pid], policy, baseline=baseline)
@@ -468,12 +478,42 @@ def _solve(data, control=None, started=None):
             # Explicit unavailable dates are not opportunities or a rotation debt.
             opportunities = len(available) + known if available else 0
             weekend_totals[weekday][pid] = (sum(civil_weekends[d] for d in available) + historical, opportunities)
-    coverage_start = len(model.proto.constraints)
-    hard_coverage = _coverage(model, data, employees, choices, shifts, started, "HARD")
-    conflicts.track_range(model, coverage_start, "COVERAGE")
-    construction_finished = time.monotonic()
+    sunday_coverage, sector_coverage, visible_sunday_coverage, visible_sector_coverage, closing_coverage = {}, {}, {}, {}, {}
+    daily_coverage, role_coverage = {}, {}
+    movement_coverage, priority_coverage, movement_groups = [], {}, {}
+    comparison_protected = "_coverageComparison" in data
+
+    def build_estimated_coverage(values=None):
+        return _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage,
+                         visible_sunday_coverage, visible_sector_coverage, closing_coverage,
+                         movement_terms=movement_coverage, priority_terms=priority_coverage,
+                         movement_groups=movement_groups, daily_terms=daily_coverage, role_terms=role_coverage,
+                         control=control if comparison_protected else None)
+
+    def register_coverage(family, build):
+        first = len(model.proto.constraints)
+        outcome = build()
+        if outcome is not False and not isinstance(outcome, str):
+            conflicts.track_range(model, first, family)
+        return outcome
+
+    hard_coverage = register_coverage("COVERAGE", lambda: _coverage(model, data, employees, choices, shifts, started, "HARD"))
+    service_guard = data.get("_coverageServiceProtection", {})
+    service_protected = bool(service_guard.get("days") or service_guard.get("bands"))
+    if hard_coverage is not False and not isinstance(hard_coverage, str) and data.get("_coverageProtection"):
+        hard_coverage = register_coverage("COVERAGE_SAVED_DAY", lambda: _coverage(
+            model, data, employees, choices, shifts, started, "PROTECTED", control=control))
+    if hard_coverage is not False and not isinstance(hard_coverage, str) and service_protected:
+        hard_coverage = register_coverage("COVERAGE_SERVICE", lambda: add_service_protection(
+            model, data, employees, dates, choices, shifts, started + MAX_SECONDS - 1, control))
+    coverage = None
+    if hard_coverage is not False and not isinstance(hard_coverage, str) and comparison_protected:
+        coverage = register_coverage("COVERAGE_COMPARISON", build_estimated_coverage)
+        if coverage is False or isinstance(coverage, str):
+            hard_coverage = coverage
     if hard_coverage is False:
         return _response("UNKNOWN", [], started)
+    construction_finished = time.monotonic()
     if isinstance(hard_coverage, str):
         response = _response("INFEASIBLE", [], started, hard_coverage)
         response["rejectionStage"] = "COVERAGE_CHECK"
@@ -548,7 +588,14 @@ def _solve(data, control=None, started=None):
             response = _response(seed.status_name(seed_status), [], started)
             if seed_status == cp_model.INFEASIBLE:
                 response["rejectionStage"] = "SEARCH"
-                response["solverDiagnostics"] = conflicts.diagnose(model, started + MAX_SECONDS, control)
+                diagnostics = conflicts.diagnose(model, started + MAX_SECONDS, control)
+                if data.get("_coverageProtection") or service_protected or comparison_protected:
+                    message = (COMPARISON_CONFLICT if comparison_protected else
+                               SERVICE_CONFLICT if service_protected else PROTECTED_COVERAGE_CONFLICT)
+                    if not diagnostics:
+                        # The full protected model, not any individual rule, was proven infeasible.
+                        diagnostics = [{"family": "COVERAGE", "message": message}]
+                response["solverDiagnostics"] = diagnostics
                 response["wallTimeSeconds"] = round(time.monotonic() - started, 3)
             return response
     result = _read_assignments(seed, employees, active, baseline, work, choices,
@@ -560,18 +607,8 @@ def _solve(data, control=None, started=None):
         model.add_hint(variable, seed.value(variable))
     sunday_recovery = _preserve_daily_timed_presence(model, employees, dates, choices, shifts,
                                                      data["demands"], values, control) or {}
-    sunday_coverage = {}
-    sector_coverage = {}
-    visible_sunday_coverage = {}
-    visible_sector_coverage = {}
-    closing_coverage = {}
-    daily_coverage, role_coverage = {}, {}
-    movement_coverage, priority_coverage, movement_groups = [], {}, {}
-    coverage = _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage,
-                         visible_sunday_coverage, visible_sector_coverage, closing_coverage,
-                         movement_terms=movement_coverage, priority_terms=priority_coverage,
-                         movement_groups=movement_groups, daily_terms=daily_coverage,
-                         role_terms=role_coverage)
+    if coverage is None:
+        coverage = build_estimated_coverage(values)
     if coverage is False or isinstance(coverage, str):
         finished = time.monotonic()
         response = _response("FEASIBLE", result, started)
@@ -589,13 +626,14 @@ def _solve(data, control=None, started=None):
     peak_plan = build_sunday_peaks(model, daily_coverage, policy, values,
                                    visible_month=_coverage_month(data), control=control)
     groups = {}
+    week_ends = tuple(week['endDate'] for week in weeks)
     clock_profiles = _clock_profiles(choices, shifts)
     preserve_sunday_presence(model, employees, dates, work, values, control)
     for person in employees:
         if control is not None:
             control.checkpoint()
         # Comparable opportunities only; absence/new-hire histories are not a debt.
-        key = _weekend_group_key(person, dates, clock_profiles)
+        key = _weekend_group_key(person, dates, clock_profiles, week_ends=week_ends)
         groups.setdefault(key, []).append(person["id"])
     sundays, saturdays = weekend_objectives(model, groups, weekend_totals,
                                             Snapshot(values), values, control)
@@ -1377,25 +1415,58 @@ def _coverage_common_boundaries(references, presence):
 def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None,
               sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None, closing_terms=None,
               movement_terms=None, priority_terms=None, movement_groups=None, daily_terms=None,
-              role_terms=None):
+              role_terms=None, control=None):
+    protected = scope == "PROTECTED"
+    comparison = CoverageComparison(data["_coverageComparison"]) if scope == "ESTIMATED" and "_coverageComparison" in data else None
+    bounded_coverage = protected or comparison is not None
+
+    def expired():
+        if control is not None:
+            control.checkpoint()
+        return time.monotonic() - started > MAX_SECONDS - 1
+
     closed_holidays = paid_holiday_dates(data["policy"])
-    relevant = [d for d in data['demands'] if d['minimum'] > 0
-                and not (d.get('estimated') is True and d['date'] in closed_holidays)
-                and not (scope == 'HARD' and d.get('estimated') is True)
-                and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
+    relevant = data.get("_coverageProtection", []) if protected else [
+        d for d in data['demands'] if d['minimum'] > 0
+        and not (comparison is None and d.get('estimated') is True and d['date'] in closed_holidays)
+        and not (comparison is not None and not data["startDate"] <= d["date"] <= data["endDate"])
+        and not (scope == 'HARD' and d.get('estimated') is True)
+        and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
     if not relevant:
         return []
+    if comparison is not None:
+        sector_terms = {} if sector_terms is None else sector_terms
+        sunday_terms = {} if sunday_terms is None else sunday_terms
+        visible_sector_terms = {} if visible_sector_terms is None else visible_sector_terms
+        visible_sunday_terms = {} if visible_sunday_terms is None else visible_sunday_terms
+        closing_terms = {} if closing_terms is None else closing_terms
+        previous_day = (date.fromisoformat(data["startDate"]) - timedelta(days=1)).isoformat()
+        if any(instant(day, 1440) - instant(day, 0) != 1440 for day in days_between(previous_day, data["endDate"])):
+            return "Não foi possível projetar os limites de desfalque em um horizonte com mudança de fuso horário."
     by_id = {p["id"]: p for p in employees}
     index = {}
     shortages, grouped = [], {}
+    comparison_intervals = {}
     visible_month = _coverage_month(data)
-    closing = data.get('storeClosingMinutes') if closing_terms is not None else None
+    closing = data.get('storeClosingMinutes') if closing_terms is not None or comparison is not None else None
     if type(closing) is not int or not 1 <= closing <= 1440:
-        closing = None  # Older callers supplied no effective closing time.
+        if comparison is not None:
+            branch = str(data.get("branchCode", "")).strip().lstrip("0")
+            closing = 1320 if branch == "18" else 1200
+        else:
+            closing = None  # Older callers supplied no effective closing time.
     priorities = data.get('movementPriorities', [])
     movement_enabled = bool(priorities) and movement_terms is not None
     priority_cache = {}
     segment_cache = {}
+    if bounded_coverage:
+        target_days = {(floor["sector"], floor["date"]) for floor in relevant}
+        source_days = target_days | {
+            (sector, (date.fromisoformat(day) - timedelta(days=1)).isoformat())
+            for sector, day in target_days}
+        protected_records = {(record["employeeId"], record["date"]): record for record in data["assignments"]}
+        closed = closed_holidays | set(data["policy"]["closedDates"])
+        emitted = set()
 
     def register(pid, day, sid, variable):
         person = by_id[pid]
@@ -1411,17 +1482,35 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                     segments.append((civil, start, end))
             segment_cache[key] = segments
         for civil, start, end in segment_cache[key]:
-            index.setdefault((person["sector"], civil), []).append((start, end, variable, person["role"]))
+            sector_day = person["sector"], civil
+            if bounded_coverage:
+                if sector_day not in target_days or civil in closed:
+                    continue
+                if civil < person["activeFrom"] or person.get("activeUntil") and civil > person["activeUntil"]:
+                    continue
+                record = protected_records.get((pid, civil), {})
+                if record.get("kind") in ("ABSENCE", "HOLIDAY") or record.get("kind") == "OFF" and record.get("locked"):
+                    continue
+            index.setdefault(sector_day, []).append((start, end, variable, person["role"]))
 
-    for (pid, day), options in choices.items():
+    for position, ((pid, day), options) in enumerate(choices.items()):
+        if bounded_coverage:
+            if position % 64 == 0 and expired():
+                return False
+            if (by_id[pid]["sector"], day) not in source_days:
+                continue
         for sid, variable in options.items():
             register(pid, day, sid, variable)
+    previous_day = (date.fromisoformat(data["startDate"]) - timedelta(days=1)).isoformat()
     for person in employees:
         if has_no_clock(person):
             continue
         for assignment in {a["date"]: a for a in person.get("planningHistory", []) + person["history"]}.values():
-            if assignment["kind"] == "WORK" and assignment["date"] >= (date.fromisoformat(data["startDate"]) - timedelta(days=1)).isoformat():
-                register(person["id"], assignment["date"], assignment["shiftId"], 1)
+            day = assignment["date"]
+            if assignment["kind"] == "WORK" and day >= previous_day and (
+                    not bounded_coverage or day == previous_day and day >= person["activeFrom"] and
+                    (not person.get("activeUntil") or day <= person["activeUntil"])):
+                register(person["id"], day, assignment["shiftId"], 1)
     common_boundaries = _coverage_common_boundaries(relevant, index) if role_terms is not None else {}
     for demand_index, demand in enumerate(_coverage_reference_slices(relevant)):
         estimated = demand.get("estimated") is True
@@ -1431,6 +1520,8 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
             continue  # A zero floor adds no constraint or shortage; keep it only in the reported estimates.
         if time.monotonic() - started > MAX_SECONDS - 1:
             return False
+        if bounded_coverage and control is not None:
+            control.checkpoint()
         begin, finish = instant(demand["date"], demand["start"]), instant(demand["date"], demand["end"])
         intervals, points = [], {begin, finish}
         for start, end, variable, role in index.get((demand["sector"], demand["date"]), []):
@@ -1439,10 +1530,11 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                 intervals.append((left, right, variable, role))
                 points.update((left, right))
         ordered = sorted(points)
-        in_visible_month = visible_month and demand['date'].startswith(visible_month + '-')
+        in_visible_month = (visible_month and demand['date'].startswith(visible_month + '-')
+                            or comparison is not None and not visible_month)
         is_sunday = estimated and date.fromisoformat(demand['date']).weekday() == 6
         closing_window = None
-        if (estimated and closing is not None and (not visible_month or in_visible_month)
+        if (estimated and closing is not None and (comparison is not None or not visible_month or in_visible_month)
                 and demand['start'] < closing and demand['end'] > closing - 60):
             closing_window = (instant(demand['date'], max(0, closing - 60)),
                               instant(demand['date'], closing))
@@ -1453,6 +1545,8 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
         # Missing movement data is neutral, not an inferred weekend peak.
         movement_weight = (priority if priority is not None else PRIORITY['NORMAL']) if movement_enabled else 0
         for interval_index, (left, right) in enumerate(zip(ordered, ordered[1:])):
+            if bounded_coverage and interval_index % 16 == 0 and expired():
+                return False
             present = [(v, role) for start, end, v, role in intervals if start <= left and end >= right]
             available = [v for v, _ in present]
             role_available = {role: [v for v, actual_role in present if actual_role == role]
@@ -1484,6 +1578,16 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                         if is_sunday:
                             grouped[key][4] += int(right - left)
                     grouped[key][6] += movement_weight * int(right - left)
+                    if comparison is not None:
+                        first = int(left - begin + demand["start"])
+                        last = int(right - begin + demand["start"])
+                        counts = comparison_intervals.setdefault(key, {})
+                        for label in ("HORIZON", *(("MONTH",) if in_visible_month else ()),
+                                      *(("SUNDAYS",) if is_sunday else ()),
+                                      *(("MONTH_SUNDAYS",) if is_sunday and in_visible_month else ()),
+                                      *((demand["date"],) if comparison.protect_daily_bands else ())):
+                            band = label, first, last
+                            counts[band] = counts.get(band, 0) + 1
                     if priority_terms is not None and priority == PRIORITY['HIGH']:
                         prioritized = grouped[key][7]
                         prioritized[priority_key] = prioritized.get(priority_key, 0) + int(right - left)
@@ -1513,6 +1617,25 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                                 if minutes:
                                     temporal[label, slot] = temporal.get((label, slot), 0) + minutes
                 continue
+            if protected:
+                # Choices are exclusive per person/day and intersecting work
+                # across days cannot coexist under the model's rest constraints.
+                floors = [(demand["minimum"], available), *[
+                    (floor, role_available[role]) for role, floor in demand["roles"].items()]]
+                for floor, members in floors:
+                    required = floor - sum(value for value in members if isinstance(value, int))
+                    if required <= 0:
+                        continue
+                    variables = [value for value in members if not isinstance(value, int)]
+                    if required > len(variables):
+                        minute = int(left - instant(demand["date"], 0))
+                        return (f"Faixa protegida sem cobertura possível em {demand['date']} às "
+                                f"{minute // 60:02d}:{minute % 60:02d}. " + PROTECTED_COVERAGE_CONFLICT)
+                    clause = required, tuple(sorted(variable.index for variable in variables))
+                    if clause not in emitted:
+                        model.add(cp_model.LinearExpr.sum(variables) >= required)
+                        emitted.add(clause)
+                continue
             if not available and demand["minimum"] > 0:
                 minute = int(left - instant(demand["date"], 0))
                 return (f"Cobertura sem horário disponível em {demand['date']} às {minute // 60:02d}:{minute % 60:02d}. "
@@ -1520,17 +1643,24 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
             model.add(cp_model.LinearExpr.sum(available) >= demand["minimum"])
             for role, floor in demand['roles'].items():
                 model.add(cp_model.LinearExpr.sum(role_available[role]) >= floor)
-    for index, ((minimum, _, sector, roles), (variables, weight, sunday_weight, visible_weight, visible_sunday_weight, closing_weight, movement_weight, prioritized, daily, temporal)) in enumerate(grouped.items()):
+    for index, (key, (variables, weight, sunday_weight, visible_weight, visible_sunday_weight, closing_weight, movement_weight, prioritized, daily, temporal)) in enumerate(grouped.items()):
+        minimum, _, sector, roles = key
         ceiling = max(minimum, sum(required for required, _, _role in roles))
-        shortage = model.new_int_var(0, ceiling, f'coverage-gap:{index}')
-        model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
+        if comparison is None:
+            shortage = model.new_int_var(0, ceiling, f'coverage-gap:{index}')
+            model.add(cp_model.LinearExpr.sum(variables) + shortage >= minimum)
+        elif index % 32 == 0 and expired():
+            return False
         role_gaps = []
         initial_role_gap = 0
         for role_index, (required, indexes, role) in enumerate(roles):
             members = [model.get_int_var_from_proto_index(i) for i in indexes]
             if members:
                 gap = model.new_int_var(0, required, f'coverage-role-gap:{index}:{role_index}')
-                model.add(cp_model.LinearExpr.sum(members) + gap >= required)
+                if comparison is None:
+                    model.add(cp_model.LinearExpr.sum(members) + gap >= required)
+                else:
+                    model.add_max_equality(gap, [0, required - cp_model.LinearExpr.sum(members)])
                 if values is not None:
                     initial = max(0, required - sum(values[i] for i in indexes))
                     remember(model, values, gap, initial)
@@ -1539,6 +1669,8 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                 gap = required
                 initial_role_gap += required
             role_gaps.append(gap)
+            if comparison is not None:
+                comparison.track_band(sector, role, gap, comparison_intervals[key])
             if role_terms is not None:
                 # A Fiscal shortage is not interchangeable with a Zelador
                 # shortage even when their sector's combined deficit ties.
@@ -1549,7 +1681,23 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
                         role_terms.setdefault((sector, role, scope_name), []).append(duration * gap)
                 for (scope_name, slot), duration in temporal.items():
                     role_terms.setdefault((sector, role, scope_name, slot), []).append(duration * gap)
-        if role_gaps:
+        if comparison is not None:
+            # The initial feasibility solve must report real deficits rather
+            # than choosing arbitrary excess slack in the absence of a goal.
+            if not variables and all(isinstance(gap, int) for gap in role_gaps):
+                shortage = max(minimum, sum(role_gaps))
+            elif not minimum and len(role_gaps) == 1:
+                shortage = role_gaps[0]
+            else:
+                shortage = model.new_int_var(0, ceiling, f'coverage-gap:{index}')
+                maxima = [0, minimum - cp_model.LinearExpr.sum(variables)]
+                if role_gaps:
+                    maxima.append(cp_model.LinearExpr.sum(role_gaps))
+                model.add_max_equality(shortage, maxima)
+            if not comparison.track_sector(sector, shortage):
+                return COMPARISON_CONFLICT
+            comparison.track_band(sector, None, shortage, comparison_intervals[key])
+        elif role_gaps:
             model.add(shortage >= sum(role_gaps))
         shortages.append(weight * shortage)
         if sector_terms is not None:
@@ -1576,9 +1724,16 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
         if daily_terms is not None:
             for sector_day, minutes in daily.items():
                 daily_terms.setdefault(sector_day, []).append(minutes * shortage)
-        if values is not None:
+        if values is not None and not isinstance(shortage, int):
             present = sum(values[v.index] for v in variables)
             remember(model, values, shortage, max(0, minimum - present, initial_role_gap))
+    if comparison is not None:
+        guarded = comparison.constrain(model, (
+            (sector_terms or {}, "horizon"), (visible_sector_terms or {}, "month"),
+            (sunday_terms or {}, "sundays"), (visible_sunday_terms or {}, "monthSundays"),
+            (closing_terms or {}, "closing")), expired)
+        if guarded is not True:
+            return guarded
     return shortages
 
 

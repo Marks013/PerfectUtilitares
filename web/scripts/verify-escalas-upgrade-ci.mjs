@@ -25,6 +25,9 @@ const chain = readdirSync(migrations, { withFileTypes: true })
   .map(entry => entry.name).sort();
 const old = chain.filter(name => name < migration);
 const successors = chain.filter(name => name > migration);
+if (!successors.includes("20261122190000_escalas_december_cutover")) {
+  throw new Error("Missing December 2026 calendar migration.");
+}
 const sql = read(migrations, migration + "/migration.sql");
 const firstChange = sql.indexOf('ALTER TABLE "EscalaModuleSession"');
 const injectAfter = sql.indexOf(";", firstChange) + 1;
@@ -48,6 +51,42 @@ INSERT INTO "EscalaWorkspace" ("id", "tenantId", "branchCode", "branchName", "st
 VALUES ('upgrade-test-workspace', 'escala-access-fixture-a', '02', 'Synthetic branch', '2026-11-30', '2027-01-03', 1, 'PUBLISHED', CURRENT_TIMESTAMP);
 INSERT INTO "EscalaRevision" ("id", "tenantId", "workspaceId", "revision", "status", "input", "createdById")
 VALUES ('upgrade-test-revision', 'escala-access-fixture-a', 'upgrade-test-workspace', 1, 'PUBLISHED', '{"synthetic":true}', 'upgrade-test-admin');
+`;
+const decemberCalendarProof = String.raw`
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+DO $$
+DECLARE
+  v_constraint text;
+  approval jsonb := jsonb_build_object(
+    'schemaVersion', 1,
+    'configuration', '{"branchCode":"02","startDate":"2026-12-01","endDate":"2026-12-31","visibleMonth":"2026-12","planningWeekStartsOn":"SUNDAY"}'::jsonb,
+    'seed', '{"employees":[{"id":"synthetic"}],"shifts":[],"assignments":[]}'::jsonb,
+    'regimeModels', '[{"id":"synthetic-model"}]'::jsonb,
+    'provenance', '{"tenantId":"escala-access-fixture-a","approvedById":"upgrade-test-admin","approvedAt":"2026-11-22T12:00:00.000Z","origin":null}'::jsonb);
+BEGIN
+  -- Synthetic SQL envelope; the application validates the full snapshot and its hash.
+  INSERT INTO "EscalaBranchPolicyVersion" ("id", "tenantId", "branchCode", "startDate", "endDate",
+    "visibleMonth", "version", "snapshotSchemaVersion", "snapshot", "snapshotHash", "approvedById", "approvedAt")
+  VALUES ('upgrade-test-december-sunday', 'escala-access-fixture-a', '02', '2026-12-01', '2026-12-31',
+    '2026-12', 1, 1, approval, repeat('a', 64), 'upgrade-test-admin', '2026-11-22 12:00:00');
+
+  BEGIN
+    INSERT INTO "EscalaBranchPolicyVersion" ("id", "tenantId", "branchCode", "startDate", "endDate",
+      "visibleMonth", "version", "snapshotSchemaVersion", "snapshot", "snapshotHash", "approvedById", "approvedAt")
+    SELECT 'upgrade-test-december-monday', "tenantId", "branchCode", "startDate", "endDate",
+      "visibleMonth", 2, "snapshotSchemaVersion", jsonb_set("snapshot", '{configuration,planningWeekStartsOn}', '"MONDAY"'),
+      "snapshotHash", "approvedById", "approvedAt"
+    FROM "EscalaBranchPolicyVersion" WHERE "id" = 'upgrade-test-december-sunday';
+    RAISE EXCEPTION 'Expected the December cutover to reject the Monday calendar';
+  EXCEPTION WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+    IF v_constraint IS DISTINCT FROM 'EscalaPolicy_period' THEN RAISE; END IF;
+  END;
+END;
+$$;
+ROLLBACK;
 `;
 const fingerprint = db => {
   const result = psql(db, String.raw`
@@ -94,6 +133,7 @@ SELECT NOT EXISTS (SELECT FROM information_schema.columns WHERE table_name='Esca
     for (const check of ["escalas-access-foundation.verify.sql", "escalas-approved-policy.verify.sql"]) {
       psql(db, read(fixtures, check));
     }
+    psql(db, decemberCalendarProof);
   }
   console.log("Synthetic Escalas legacy upgrade, rollback, restore and constraint checks passed.");
 } finally {

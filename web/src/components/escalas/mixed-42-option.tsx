@@ -1,11 +1,12 @@
 "use client";
 
 import { useId } from "react";
+import { planningWeekDates } from "@/lib/escalas/dates";
 import { legalWeeklyHours } from "@/lib/escalas/labor-rules";
 import type { EscalaInput } from "@/lib/escalas/types";
 import { buttonClass, Check, panelClass } from "./controls";
 import styles from "./escalas.module.css";
-import { addDate, changeMixed42Sectors, datesBetween, mixed42EligibleSectors } from "./workspace-model";
+import { changeMixed42Sectors, mixed42EligibleSectors } from "./workspace-model";
 
 const suggestedSectorNames = new Set(["frente de caixa", "acougue", "balcao"]);
 function isSuggestedSector(sector: string) {
@@ -19,7 +20,7 @@ export function Mixed42Option({ input, disabled, onChange }: {
   if (input.defaultWeeklyHours !== 42) return null;
   const sectors = mixed42EligibleSectors(input);
   const selected = input.mixed42Sectors ?? [];
-  const has42Week = datesBetween(input.startDate, input.endDate).some((day, index) => index % 7 === 0 && legalWeeklyHours(addDate(day, 6)) >= 42);
+  const has42Week = planningWeekDates(input).some(week => legalWeeklyHours(week[week.length - 1]) >= 42);
   const suggestions = sectors.filter(isSuggestedSector);
   const count = sectors.filter((sector) => selected.includes(sector)).length;
   return <details className={panelClass}>

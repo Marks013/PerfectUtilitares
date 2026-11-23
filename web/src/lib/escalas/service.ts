@@ -12,13 +12,15 @@ import { findGenerationConflicts } from "./generation-conflicts";
 import { generationScenarioBasis, isHoursReferenceOnly, matchesGenerationScenarioBasis, matchesHoursOnlyAssignments } from "./hours-reference";
 import { compareBranches } from "./order";
 import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./dates";
-import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
+import { clearDecemberBoundaryContext, preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
+import { isDecember2026Cutover } from "./planning-calendar";
+import { prepareDecemberCoverage } from "./december-origin.server";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { assertEscalaEmployeeRemovalAllowed, inputWithoutEscalaEmployee } from "./employee-removal";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
-import { isOperationallyReusable } from "./roster-quality";
+import { compareRosterCoverage, isOperationallyReusable, preservesAdmittedDecemberCoverage } from "./roster-quality";
 import type { EscalaCandidateResponse } from "./candidate-reference";
 import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
@@ -101,7 +103,8 @@ export async function listEscalas(actor: EscalaActor) {
     rows = rows.filter(row => approvedWorkspaceIds.has(row.id));
   }
   return rows.sort((a, b) => compareBranches(a, b) || b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).map((row) => {
-    const calendar = dayOfWeek(row.startDate) === 6 ? { planningWeekStartsOn: "SUNDAY" as const } : {};
+    const sunday = { planningWeekStartsOn: "SUNDAY" as const };
+    const calendar = dayOfWeek(row.startDate) === 6 || isDecember2026Cutover({ ...row, ...sunday }) ? sunday : {};
     const visible = visibleDates({ ...row, ...calendar });
     const month = visible[0]?.slice(0, 7);
     const visibleMonth = month && visible[0] === monthBounds(month).startDate && visible.at(-1) === monthBounds(month).endDate ? month : undefined;
@@ -150,7 +153,7 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput, appro
     if (approvedPolicyVersionId) {
       const approved = await loadEscalaApproval(actor, approvedPolicyVersionId, tx);
       const expected = parseEscalaInput({ ...approved.snapshot.configuration, ...approved.snapshot.seed });
-      if (stableEscalaJson(publishedPlanningContext(materializeManualShiftOverrides(expected), [])) !== stableEscalaJson(input)) {
+      if (stableEscalaJson(clearDecemberBoundaryContext(publishedPlanningContext(materializeManualShiftOverrides(expected), []))) !== stableEscalaJson(input)) {
         throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "A criação deve usar a configuração aprovada exata.");
       }
       if (reuseImportedTeam) {
@@ -358,8 +361,11 @@ function assertPublishedBoundary(input: EscalaInput, baseline: EscalaInput) {
 }
 
 async function planningContext(actor: EscalaActor, id: string, input: EscalaInput, db: Prisma.TransactionClient = prisma) {
+  const cutover = isDecember2026Cutover(input);
   const rows = await db.escalaWorkspace.findMany({
-    where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id }, startDate: { lte: addDays(input.endDate, 21) }, endDate: { gte: addDays(input.startDate, -21) } },
+    where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id },
+      startDate: { lte: cutover ? input.endDate : addDays(input.endDate, 21) },
+      endDate: { gte: cutover ? input.startDate : addDays(input.startDate, -21) } },
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
     select: { revisions: { where: { tenantId: actor.tenantId, status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
   });
@@ -371,6 +377,7 @@ async function planningContext(actor: EscalaActor, id: string, input: EscalaInpu
     if (!parsed.success) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Uma proposta publicada da filial não pôde ser conferida.");
     published.push(parsed.data);
   }
+  if (cutover) return preservePublishedDays(clearDecemberBoundaryContext(input), published);
   return preserveCalendarSourceContext(input, preservePublishedDays(publishedPlanningContext(input, published), published));
 }
 
@@ -462,6 +469,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   }
   preserveLockedAssignments(removedAbsences.size ? { ...current.input,
     assignments: current.input.assignments.filter(day => !removedAbsences.has(assignmentKey(day))) } : current.input, input, !publish && current.canPublish);
+  input = clearDecemberBoundaryContext(input);
   const scenarioChanged = generationScenarioBasis(current.input) !== generationScenarioBasis(input);
   const preparedProposal = !input.needsRegeneration && matchesGenerationScenarioBasis(input);
   if (removal) input = { ...input, needsRegeneration: true, generationBasis: undefined, coverageBasis: undefined };
@@ -601,11 +609,20 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
       proposalProof: signEscalaProposal(finalScope, proposalInput) };
   }
   requireSolverSetup(prepared.input);
-  const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
+  const context = await planningContext(actor, id, parseEscalaInput(prepared.input));
+  const { contextual, origin } = await prepareDecemberCoverage(actor, id, qualityReference, context);
+  const coverageReference = origin ?? qualityReference;
+  const coverageMode = origin ? "DECEMBER_DEMAND" as const : undefined;
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
   if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
-  const admission = admitCandidateReference(comparisonReference, scope, qualityReference, contextual);
-  const calculation = await solveEscala(contextual, { ...solverOptions, qualityReference });
+  const admitted = admitCandidateReference(comparisonReference, scope, qualityReference, contextual);
+  const meetsOrigin = (proposal: EscalaInput) => preservesAdmittedDecemberCoverage(
+    compareRosterCoverage(coverageReference, proposal, coverageReference, coverageMode),
+  );
+  const admission: ReturnType<typeof admitCandidateReference> = origin && admitted.input && !meetsOrigin(admitted.input)
+    ? { comparison: { admission: "INCOMPATIBLE", selection: "NOT_USED", reason: "FROZEN_COVERAGE_REGRESSION" } }
+    : admitted;
+  const calculation = await solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin });
   let result = calculation.status === "INFEASIBLE" ? {
     ...calculation, conflicts: [...findGenerationConflicts(contextual), ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
       code: `SOLVER_${diagnostic.family}`, message: diagnostic.message,
@@ -638,7 +655,10 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   }
   let comparison = admission.comparison;
   if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
-    const selected = selectCandidateReference(admission, proposalInput, qualityReference);
+    if (origin && !meetsOrigin(proposalInput)) {
+      throw new EscalaError(422, "ESCALA_FROZEN_COVERAGE_REGRESSION", "A proposta perdeu cobertura em relação à referência de dezembro. O rascunho salvo foi preservado.");
+    }
+    const selected = selectCandidateReference(admission, proposalInput, coverageReference, coverageMode);
     comparison = selected.comparison;
     if (comparison.selection === "REFERENCE_RETAINED") {
       proposalInput = parseEscalaInput(selected.input);

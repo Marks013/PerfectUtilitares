@@ -16,7 +16,7 @@ import { visibleDates, weekStart } from "./dates";
 import { usesMixed42Week } from "./labor-rules";
 import { isHoursReferenceOnly } from "./hours-reference";
 import { ROSTER_COLOR_LEGEND, ROSTER_STATE_COLORS, rosterStateIndex, rosterPdfColor } from "./roster-colors";
-import { planningWeekStartsOn } from "./planning-calendar";
+import { planningWeekLabel } from "./planning-calendar";
 
 function reportPeriod(value: string): string {
   return value.replace(/(\d{4})-(\d{2})-(\d{2})/g, "$3/$2/$1");
@@ -165,7 +165,7 @@ export function exportEscalaXlsx(raw: EscalaWorkspace, mode: EscalaExportMode = 
   const legend = reportLegend(model);
   const metadata = (title: string, description = ""): SpreadsheetCell[][] => [[model.branch],
     [title + ". " + reportPeriod(model.period) + ". Jornada escolhida: " + workspace.input.defaultWeeklyHours + "h. Revisão " + workspace.revision + ". " + model.state + simulation],
-    [[`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, `Semana: ${planningWeekStartsOn(workspace.input) === "SUNDAY" ? "domingo a sábado" : "segunda a domingo"}`, model.calendarLabel, model.holidayNotes.length ? "* Feriados: " + model.holidayNotes.join("; ") : "", mixedNotice, description].filter(Boolean).join(" | ")]];
+    [[`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, `Semana: ${planningWeekLabel(workspace.input)}`, model.calendarLabel, model.holidayNotes.length ? "* Feriados: " + model.holidayNotes.join("; ") : "", mixedNotice, description].filter(Boolean).join(" | ")]];
   const sectors = { main: [] as number[], hours: [] as number[], excluded: [] as number[] };
   const main = [...metadata("Escala de folgas", legend),
     ["Setor", "Matrícula", "Colaborador", "Cargo", "Horário proposto", ...model.dates.map(date => date.slice(8) + (holidayLabel(workspace.input, date) ? "*" : "") + "\n" + escalaDateLabel(date).split(" ")[1])]];
@@ -334,7 +334,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
       write(line, margin, y, 10, true); y -= 14;
     }
     write(`${reportTitle}${referencesOnly ? "" : " | 5x2"} | Jornada ${workspace.input.defaultWeeklyHours}h | ${reportPeriod(model.period)} | Versão ${workspace.revision} | ${model.state}`, margin, y, 9); y -= 15;
-    write([`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, `Semana: ${planningWeekStartsOn(workspace.input) === "SUNDAY" ? "domingo a sábado" : "segunda a domingo"}`, model.calendarLabel].filter(Boolean).join(" | "), margin, y, 8); y -= 12;
+    write([`Fechamento da loja: ${storeClosingLabel(workspace.input)}`, `Semana: ${planningWeekLabel(workspace.input)}`, model.calendarLabel].filter(Boolean).join(" | "), margin, y, 8); y -= 12;
     if (model.holidayNotes.length) for (const line of wrapText("* Feriados: " + model.holidayNotes.join("; "), width - 2 * margin, font, 7.5)) {
       write(line, margin, y, 7.5); y -= 11;
     }

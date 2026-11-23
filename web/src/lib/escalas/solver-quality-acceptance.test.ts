@@ -8,6 +8,7 @@ import { validateEscala } from "./validation";
 import { compareRosterCoverage, isReusableRoster } from "./roster-quality";
 import { matchesRestOnlyReferences } from "./generation";
 import { restPairSummary } from "./rest-quality";
+import { dateRange } from "./dates";
 vi.mock("./solver-transport", () => ({ requestSolver: vi.fn() }));
 afterEach(() => vi.restoreAllMocks());
 function fixture() {
@@ -25,6 +26,37 @@ function fixture() {
   return input;
 }
 describe("verified processor quality delivery", () => {
+  it("rejects a legal December response that loses admitted demand and accepts a preserving response", async () => {
+    const origin = fixture();
+    Object.assign(origin, { startDate: "2026-12-01", endDate: "2026-12-31", visibleMonth: "2026-12",
+      planningWeekStartsOn: "SUNDAY", coverageBasis: "coverage-v2:aaaaaaaaaaaaaaaa", needsRegeneration: true });
+    origin.employees = origin.employees.slice(0, 1);
+    origin.shifts.push({ ...origin.shifts[0], id: "late", segments: origin.shifts[0].segments
+      .map(segment => ({ ...segment, start: segment.start + 30, end: segment.end + 30 })) });
+    origin.employees[0].shiftIds.push("late");
+    const rests = new Set([1, 3, 6, 9, 13, 17, 20, 22, 27, 30]);
+    origin.assignments = dateRange(origin.startDate, origin.endDate).map(date => rests.has(Number(date.slice(-2)))
+      ? { employeeId: "a", date, kind: "OFF" }
+      : { employeeId: "a", date, kind: "WORK", shiftId: "day" });
+    origin.demands = [{ id: "source-demand", date: "2026-12-07", sector: "Loja", role: "Operador",
+      start: 480, end: 510, minimum: 1, estimated: true }];
+    const input = { ...origin, assignments: [] };
+    const worse = origin.assignments.map(day => day.date === "2026-12-07" ? { ...day, shiftId: "late" } : day);
+    expect(validateEscala({ ...input, assignments: worse }).valid).toBe(true);
+    vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
+    vi.mocked(requestSolver).mockResolvedValueOnce({ status: "FEASIBLE", message: "Regressed", assignments: worse, wallTimeSeconds: 1 });
+    await expect(solveEscala(input, { admittedDecemberOrigin: origin })).rejects
+      .toMatchObject({ status: 422, code: "ESCALA_FROZEN_COVERAGE_REGRESSION" });
+    expect(requestSolver).toHaveBeenLastCalledWith(expect.objectContaining({ assignments: [], demands: origin.demands }), expect.objectContaining({
+      coverageComparison: expect.objectContaining({ dailyBands: [] }),
+      coverageServiceProtection: expect.objectContaining({ bands: [] }),
+    }));
+    vi.mocked(requestSolver).mockResolvedValueOnce({ status: "FEASIBLE", message: "Preserved", assignments: origin.assignments, wallTimeSeconds: 1 });
+    await expect(solveEscala(input, { admittedDecemberOrigin: origin })).resolves.toMatchObject({
+      status: "FEASIBLE", assignments: origin.assignments.map(day => ({ ...day, locked: false })),
+    });
+  });
+
   it("accepts preserved HOURS_ONLY days without refining a baseline with improvable rest spacing", async () => {
     const input = fixture(); input.generationMode = "HOURS_ONLY";
     const changedDays = input.assignments.map(day => day.employeeId === "a" && day.date === "2026-11-03"

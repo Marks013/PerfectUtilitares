@@ -4,7 +4,7 @@ import { useState } from "react";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import { visibleDates } from "@/lib/escalas/dates";
 import { compareBranches } from "@/lib/escalas/order";
-import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
+import { planningWeekLabel } from "@/lib/escalas/planning-calendar";
 import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
 import { controlClass, Field } from "./controls";
 import styles from "./escalas.module.css";
@@ -12,7 +12,7 @@ import type { WorkspaceSummary } from "./use-escalas-workspace";
 
 const MONTHS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 const displayDate = (value: string) => value.split("-").reverse().join("/");
-const weekLabel = (plan: WorkspaceSummary) => planningWeekStartsOn(plan.input) === "SUNDAY" ? "domingo a sábado" : "segunda a domingo";
+const weekLabel = (plan: WorkspaceSummary) => planningWeekLabel(plan.input);
 
 /** Reuse the same legacy-month interpretation as the roster; never change a saved period. */
 export function planPeriod(plan: WorkspaceSummary) {

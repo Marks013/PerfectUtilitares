@@ -2,9 +2,10 @@ import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, Escala
 import { CCT_FROM, CCT_UNTIL, effectiveWeeklyMinutes, isMixed42LongShift, legalWeeklyHours, SUPERMARKET_CCT, usesMixed42Week } from "@/lib/escalas/labor-rules";
 import { planningWeeklyHours } from "@/lib/escalas/preparation";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
+import { planningWeekDates } from "@/lib/escalas/dates";
 import { storeClosingMinutes } from "@/lib/escalas/store-hours";
 import { reconcileImport, type ImportChoices } from "./import-reconciliation";
-import { planningMonthPeriod, planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
+import { planningMonthPeriod, planningWeekStartsOn, planningWeeks } from "@/lib/escalas/planning-calendar";
 
 export const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const HOURS: WeeklyHours[] = [40, 42, 44];
@@ -46,9 +47,8 @@ export function newInput(branchCode: string, branchName: string, month: string, 
   const period = monthPeriod(month);
   const weeklyTargets = [
     ...new Set(
-      datesBetween(period.startDate, period.endDate)
-        .filter((_, index) => index % 7 === 0)
-        .map((start) => Math.min(hours, legalWeeklyHours(addDate(start, 6)))),
+      planningWeeks({ ...period, planningWeekStartsOn: "SUNDAY" })
+        .map(({ endDate }) => Math.min(hours, legalWeeklyHours(endDate))),
     ),
   ];
   return {
@@ -164,12 +164,12 @@ export function changeContinuousWorkLimit(input: EscalaInput, enabled: boolean):
 
 export function mixed42EligibleSectors(input: EscalaInput): string[] {
   if (input.defaultWeeklyHours !== 42) return [];
-  const weeks = datesBetween(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
+  const weeks = planningWeekDates(input);
   const scope = { ...input, simulation: true, mixed42Sectors: [...new Set(input.employees.map((person) => person.sector).filter(Boolean))] };
   const eligible = input.employees.filter((person) => {
     const reference = { ...person, ...planningWeeklyHours(person, 42, 42) };
-    return weeks.some((day) => (!person.activeUntil || person.activeUntil >= day)
-      && (!person.activeFrom || person.activeFrom <= addDate(day, 6)) && usesMixed42Week(scope, reference, day));
+    return weeks.some((week) => (!person.activeUntil || person.activeUntil >= week[0])
+      && (!person.activeFrom || person.activeFrom <= week[week.length - 1]) && usesMixed42Week(scope, reference, week[0]));
   });
   return [...new Set(eligible.map((person) => person.sector))].sort((a, b) => a.localeCompare(b, "pt-BR"));
 }

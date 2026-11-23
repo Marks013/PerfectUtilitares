@@ -1,4 +1,4 @@
-import { dateRange } from "./dates";
+import { planningWeekDates } from "./dates";
 import { isEscalaPlanningParticipant, isRestPlanningExcludedRole } from "./eligibility";
 import { effectiveWeeklyHours } from "./labor-rules";
 import { compareSectors } from "./order";
@@ -32,7 +32,7 @@ const number = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
 
 /** A hypothetical 44h baseline compares capacity; it is not an imported contract or authorization. */
 export function weeklySectorCapacity(input: EscalaInput): WeeklySectorCapacity[] {
-  const weeks = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0);
+  const weeks = planningWeekDates(input).map(week => week[0]);
   if (!weeks.length) return [];
   const availability = weeklySectorAvailability(input);
   const scenarioWeeklyHours = Math.min(...weeks.map(week => effectiveWeeklyHours({ weeklyHours: input.defaultWeeklyHours }, week, input))) as WeeklyHours;

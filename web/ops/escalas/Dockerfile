@@ -33,7 +33,7 @@ LABEL org.opencontainers.image.title="PerfectUtilitares Escalas Solver" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
-COPY --chmod=0644 solver.py hints.py optimization.py sunday_peak.py weekend_balance.py server.py control.py worker.py service_security.py service_operations.py \
+COPY --chmod=0644 solver.py coverage_service_protection.py coverage_comparison.py hints.py optimization.py sunday_peak.py weekend_balance.py server.py control.py worker.py service_security.py service_operations.py \
      policy_reference.py policy-reference.json runtime_settings.py diagnostics.py leadership.py model_input.py planning_calendar.py rest_quality.py rest_configuration.py ./
 USER 1001:1001
 RUN python -B -c 'import solver; from sunday_peak import build_sunday_peaks; from planning_calendar import planning_week_start; assert callable(build_sunday_peaks); assert planning_week_start("2026-12-13", {"planningWeekStartsOn": "SUNDAY"}) == "2026-12-13"'

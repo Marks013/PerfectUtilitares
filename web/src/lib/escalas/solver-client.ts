@@ -8,12 +8,15 @@ import { isAdministrativeEscalaSector, operationalEscalaInput } from "./eligibil
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
 import { restPairSummary } from "./rest-quality";
-import { compareRosterCoverage, isOperationallyReusable, isReusableRoster, selectVerifiedRoster } from "./roster-quality";
+import { compareRosterCoverage, completeRoster, frozenCoverageComparison, isOperationallyReusable, isReusableRoster, preservesAdmittedDecemberCoverage, sameCoverageScenario, selectVerifiedRoster } from "./roster-quality";
 import { validateEscala } from "./validation";
 import { matchesHoursOnlyAssignments } from "./hours-reference";
 import { matchesRestOnlyReferences } from "./generation";
 import { logSolverRejection } from "./solver-diagnostics";
 import { EscalaError } from "./errors";
+import { frozenCoverageService } from "./coverage-protection";
+import { stableEscalaJson } from "./operational-input-policy";
+import { isDecember2026Cutover } from "./planning-calendar";
 
 import { manualAssignmentIssues } from "./shift-catalog/manual-override";
 const objectiveName = z.enum(["COVERAGE", "MOVEMENT_COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_PEAK", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
@@ -112,7 +115,7 @@ function verifiedCompleteRoster(input: EscalaInput): boolean {
 
 export async function solveEscala(
   input: EscalaInput,
-  options?: SolverOptions & { qualityReference?: EscalaInput },
+  options?: SolverOptions & { qualityReference?: EscalaInput; admittedDecemberOrigin?: EscalaInput },
 ): Promise<EscalaSolveResult> {
   const started = performance.now();
   const saved = escalaInputSchema.parse(input);
@@ -120,16 +123,30 @@ export async function solveEscala(
   const administrativeIds = new Set(saved.employees.filter(person => isAdministrativeEscalaSector(person.sector)).map(person => person.id));
   const administrativeDays = saved.assignments.filter(day => administrativeIds.has(day.employeeId));
   const withAdministrativeDays = (days: EscalaInput["assignments"]) => administrativeDays.length ? [...days, ...administrativeDays] : days;
-  // This private snapshot is never sent to the processor or written into the prepared demands.
-  const { qualityReference: rawQualityReference, ...transportOptions } = options ?? {};
-  const qualityReference = rawQualityReference ? operationalEscalaInput(escalaInputSchema.parse(rawQualityReference)) : parsed;
+  // The worker receives only protected coverage bounds, never the private source roster.
+  const { qualityReference: rawQualityReference, admittedDecemberOrigin, ...transportOptions } = options ?? {};
+  const reference = admittedDecemberOrigin ?? rawQualityReference;
+  const qualityReference = reference ? operationalEscalaInput(escalaInputSchema.parse(reference)) : parsed;
+  if (admittedDecemberOrigin && (!isDecember2026Cutover(parsed) || !isDecember2026Cutover(qualityReference)
+    || !sameCoverageScenario(qualityReference, parsed) || !completeRoster(qualityReference)
+    || parsed.coverageBasis !== qualityReference.coverageBasis || stableEscalaJson(parsed.demands) !== stableEscalaJson(qualityReference.demands))) {
+    throw new EscalaError(409, "ESCALA_CALENDAR_REFERENCE_MISMATCH", "A referência de cobertura da origem diverge da proposta de dezembro. Recarregue o planejamento.");
+  }
+  const coverageMode = admittedDecemberOrigin ? "DECEMBER_DEMAND" : undefined;
+  const assess = (roster: EscalaInput) => compareRosterCoverage(qualityReference, roster, qualityReference, coverageMode);
+  const coverageComparison = admittedDecemberOrigin ? frozenCoverageComparison(qualityReference, coverageMode) : undefined;
+  const coverageServiceProtection = admittedDecemberOrigin ? frozenCoverageService(qualityReference, false) : undefined;
+  if (coverageComparison === null || coverageServiceProtection === null) {
+    throw new EscalaError(422, "ESCALA_COVERAGE_PROTECTION_LIMIT", "Há faixas protegidas demais para comparar com segurança. A grade salva foi mantida. Divida a revisão de cobertura por setor ou período.");
+  }
   // Cheap verified day exchanges seed the bounded optimizer without changing its staffing target.
   if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   let refined: EscalaInput;
   try {
     // Clock-only generation must compare against the original days, even if moving rest days could improve their spacing.
     refined = parsed.generationMode === "HOURS_ONLY" ? parsed : verifiedCompleteRoster(parsed)
-      ? selectVerifiedRoster(parsed, refineRoster(parsed), undefined, qualityReference).input : refineRoster(parsed);
+      ? selectVerifiedRoster(parsed, refineRoster(parsed), undefined, qualityReference, coverageMode).input : refineRoster(parsed);
+    if (admittedDecemberOrigin && refined !== parsed && !preservesAdmittedDecemberCoverage(assess(refined))) refined = parsed;
   } catch {
     logSolverRejection("refinement", "REFINEMENT_FAILED");
     throw new EscalaSolverError("SOLVER_REFINEMENT_FAILED");
@@ -145,6 +162,8 @@ export async function solveEscala(
   const preparationSeconds = (performance.now() - started) / 1000;
   const payload = await requestSolver(parsed, {
     ...transportOptions,
+    ...(coverageComparison ? { coverageComparison } : {}),
+    ...(coverageServiceProtection && (coverageServiceProtection.days.length || coverageServiceProtection.bands.length) ? { coverageServiceProtection } : {}),
     initialAssignments: refined === parsed || !verifiedCompleteRoster(refined) ? undefined : refined.assignments,
   });
   let stage = "result-schema", reason = "SCHEMA_INVALID";
@@ -218,11 +237,12 @@ export async function solveEscala(
       stage = "selection-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const candidate = { ...parsed, assignments: result.assignments };
       let retentionReason = "REFERENCE_UNVERIFIED";
-      let selected = verifiedCompleteRoster(refined) ? selectVerifiedRoster(refined, candidate,
-        reason => { retentionReason = reason; }, qualityReference)
+      let selected = verifiedCompleteRoster(refined)
+        && (!admittedDecemberOrigin || preservesAdmittedDecemberCoverage(assess(refined))) ? selectVerifiedRoster(refined, candidate,
+        reason => { retentionReason = reason; }, qualityReference, coverageMode)
         : { input: candidate, retainedReference: false };
-      const merit = compareRosterCoverage(qualityReference, selected.input);
-      if (merit.comparable && merit.regressed) {
+      const merit = admittedDecemberOrigin ? undefined : assess(selected.input);
+      if (merit?.comparable && merit.regressed) {
         // Reuse the old assignments only if their effective clocks and every protected record are still usable here.
         const oldShifts = new Map(qualityReference.shifts.map(shift => [shift.id, shift.segments]));
         const currentShifts = new Map(parsed.shifts.map(shift => [shift.id, shift.segments]));
@@ -272,7 +292,11 @@ export async function solveEscala(
       }
       if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
       stage = "result-recheck"; reason = "RECHECK_FAILED"; details = undefined;
-      const finalMerit = compareRosterCoverage(qualityReference, finalInput);
+      const finalMerit = assess(finalInput);
+      if (admittedDecemberOrigin && !preservesAdmittedDecemberCoverage(finalMerit)) {
+        reason = finalMerit.reason;
+        throw new EscalaError(422, "ESCALA_FROZEN_COVERAGE_REGRESSION", "A proposta não preservou a cobertura da referência de dezembro. A grade salva foi mantida.");
+      }
       const originalReferenceReusable = verifiedCompleteRoster(qualityReference);
       const comparisonNotice = !finalMerit.comparable
         ? "A proposta é válida, mas a referência anterior não é comparável por período, equipe ou jornada. Não foi afirmada melhoria operacional global."
@@ -308,7 +332,7 @@ export async function solveEscala(
     if (!(error instanceof EscalaSolverError) || error.code !== "SOLVER_CANCELLED") {
       logSolverRejection(stage, reason, { ...details, issues: error instanceof z.ZodError ? error.issues : details?.issues });
     }
-    if (error instanceof EscalaSolverError) throw error;
+    if (error instanceof EscalaSolverError || error instanceof EscalaError && error.code === "ESCALA_FROZEN_COVERAGE_REGRESSION") throw error;
     if (stage === "preservation") throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
     if (reason === "MISSING_ACTIVE_DATE") throw new EscalaSolverError("SOLVER_RESPONSE_INCOMPLETE");
     throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");

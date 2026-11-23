@@ -3,7 +3,7 @@ import { z } from "zod";
 import { EscalaError } from "./errors";
 import { escalaInputSchema } from "./schema";
 import { candidateReferenceSignature } from "./solver-transport";
-import { compareRosterCoverage, isOperationallyReusable, selectVerifiedRoster } from "./roster-quality";
+import { compareRosterCoverage, isOperationallyReusable, selectVerifiedRoster, type RosterCoverageMode } from "./roster-quality";
 import { validateEscala } from "./validation";
 import { applyBranchRestCalendar, branchClosesOnSunday } from "./rest-configuration";
 import { matchesRestOnlyReferences } from "./generation";
@@ -72,7 +72,7 @@ export function admitCandidateReference(value: unknown, scope: Scope, base: Esca
   return { input, comparison: { admission: "ADMITTED", selection: "NOT_USED" } };
 }
 
-export function selectCandidateReference(admitted: Admission, candidate: EscalaInput, ruler: EscalaInput): { input: EscalaInput; comparison: EscalaCandidateComparison } {
+export function selectCandidateReference(admitted: Admission, candidate: EscalaInput, ruler: EscalaInput, mode?: RosterCoverageMode): { input: EscalaInput; comparison: EscalaCandidateComparison } {
   if (!admitted.input) return { input: candidate, comparison: admitted.comparison };
   // Both current candidates have already adopted v3; the authenticated base may
   // still have no explicit Sunday closures. Align only this operational rule in
@@ -81,8 +81,8 @@ export function selectCandidateReference(admitted: Admission, candidate: EscalaI
   const effectiveRuler = (candidate.restRulesVersion ?? 1) >= 3 && (admitted.input.restRulesVersion ?? 1) >= 3
     && branchClosesOnSunday(candidate)
     ? { ...applyBranchRestCalendar({ ...ruler, restRulesVersion: 3 }), demands: ruler.demands } : ruler;
-  if (!compareRosterCoverage(admitted.input, candidate, effectiveRuler).comparable) return { input: candidate, comparison: { admission: "INCOMPATIBLE", selection: "NOT_USED", reason: "REFERENCE_NOT_COMPARABLE" } };
+  if (!compareRosterCoverage(admitted.input, candidate, effectiveRuler, mode).comparable) return { input: candidate, comparison: { admission: "INCOMPATIBLE", selection: "NOT_USED", reason: "REFERENCE_NOT_COMPARABLE" } };
   let reason = "ACCEPTED";
-  const selected = selectVerifiedRoster(admitted.input, candidate, value => { reason = value; }, effectiveRuler);
+  const selected = selectVerifiedRoster(admitted.input, candidate, value => { reason = value; }, effectiveRuler, mode);
   return { input: selected.input, comparison: { admission: "ADMITTED", selection: selected.retainedReference ? "REFERENCE_RETAINED" : "CANDIDATE_SELECTED", reason } };
 }

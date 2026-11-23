@@ -1,6 +1,7 @@
 import { operationalEscalaInput } from "./eligibility";
 import { addDays, dateRange, dayOfWeek, weekStart } from "./dates";
 import { dailyMinuteCeiling, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
+import { isDecember2026Cutover, planningWeekEnd } from "./planning-calendar";
 import type { EscalaGenerationConflict, EscalaInput } from "./types";
 type EscalaDemand = EscalaInput["demands"][number];
 
@@ -60,7 +61,9 @@ export function findGenerationConflicts(rawInput: EscalaInput): EscalaGeneration
   const repeated = new Map<string, { group: Budget; required: number; capacity: number; weeks: string[] }>();
   for (const group of groups.values()) {
     const first = group.week < input.startDate ? input.startDate : group.week;
-    const last = addDays(group.week, 6) > input.endDate ? input.endDate : addDays(group.week, 6);
+    const weekEnd = planningWeekEnd(group.week, input);
+    const last = weekEnd > input.endDate ? input.endDate : weekEnd;
+    const opening = isDecember2026Cutover(input) && first === input.startDate;
     const dates = dateRange(first, last);
     let capacity = 0;
     for (const person of input.employees) {
@@ -79,9 +82,11 @@ export function findGenerationConflicts(rawInput: EscalaInput): EscalaGeneration
         const assignment = assignments.get(JSON.stringify([person.id, date]));
         return assignment?.kind !== "ABSENCE" && !(assignment?.kind === "OFF" && assignment.locked);
       }).length;
-      capacity += Math.min(effectiveWeeklyMinutes(person, group.week, input), Math.min(5, available) * maximumWork);
+      const fullOpening = opening && person.activeFrom <= first && (!person.activeUntil || person.activeUntil >= last)
+        && dates.every(date => assignments.get(JSON.stringify([person.id, date]))?.kind !== "ABSENCE");
+      capacity += Math.min(effectiveWeeklyMinutes(person, group.week, input), Math.min(fullOpening ? 3 : 5, available) * maximumWork);
       // Civil coverage can arrive from the previous Sunday's journey. Overestimate uncertain carry rather than invent an impossibility.
-      if ((timed || previous?.kind === "WORK") && (!previous || previous.kind === "WORK") && person.activeFrom <= previousDate) {
+      if (!opening && (timed || previous?.kind === "WORK") && (!previous || previous.kind === "WORK") && person.activeFrom <= previousDate) {
         const previousShift = previous?.shiftId ? shifts.get(previous.shiftId) : undefined;
         const carryShifts = previousShift ? [previousShift] : allowed;
         capacity += Math.max(0, ...carryShifts.map((shift) => shift.segments.reduce((sum, segment) => sum + (segment.kind === "WORK" ? Math.max(0, Math.min(2880, segment.end) - Math.max(1440, segment.start)) : 0), 0)));
@@ -99,7 +104,7 @@ export function findGenerationConflicts(rawInput: EscalaInput): EscalaGeneration
   const coverage: EscalaGenerationConflict[] = [...repeated.values()].sort((a, b) => (b.required - b.capacity) - (a.required - a.capacity)).slice(0, 20).map(({ group, required, capacity, weeks }) => ({
     code: "COVERAGE_WEEKLY_CAPACITY", target: "coverage", sector: group.sector, ...(group.role ? { role: group.role } : {}),
     date: [...group.demands].sort((a, b) => a.date.localeCompare(b.date))[0].date,
-    message: group.sector + (group.role ? " / " + group.role : "") + ": os mínimos exigem " + duration(required) + " de atendimento na semana de " + displayDate(group.week) + " a " + displayDate(addDays(group.week, 6)) + ", mas a equipe com horário tem capacidade de, no máximo, " + duration(capacity) + ". " + (weeks.length > 1 ? "O conflito se repete em " + weeks.length + " semanas do horizonte. " : "") + "Revise os mínimos obrigatórios ou escolha a cobertura automática estimada.",
+    message: group.sector + (group.role ? " / " + group.role : "") + ": os mínimos exigem " + duration(required) + " de atendimento na semana de " + displayDate(group.week) + " a " + displayDate(planningWeekEnd(group.week, input)) + ", mas a equipe com horário tem capacidade de, no máximo, " + duration(capacity) + ". " + (weeks.length > 1 ? "O conflito se repete em " + weeks.length + " semanas do horizonte. " : "") + "Revise os mínimos obrigatórios ou escolha a cobertura automática estimada.",
   }));
   return [...individual, ...coverage].slice(0, 20);
 }

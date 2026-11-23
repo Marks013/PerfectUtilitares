@@ -23,7 +23,7 @@ test('legacy metadata, strict values and Sunday ownership', () => {
 
 test('monthly bounds may add or remove a complete technical week', () => {
   for (const [month, startDate, endDate, length] of [
-    ['2026-12', '2026-11-29', '2027-01-02', 5],
+    ['2026-11', '2026-11-01', '2026-12-05', 5],
     ['2027-01', '2026-12-27', '2027-02-06', 6],
     ['2026-02', '2026-02-01', '2026-02-28', 4],
   ]) {
@@ -34,6 +34,15 @@ test('monthly bounds may add or remove a complete technical week', () => {
   // Real callers may pass a whole saved input; its old dates must not override new bounds.
   assert.deepEqual(planningMonthPeriod('2027-01', { ...sunday, startDate: '2026-12-28', endDate: '2027-01-31' }),
     { startDate: '2026-12-27', endDate: '2027-02-06' });
+});
+
+test('December 2026 splits exactly at the civil boundaries and the intervening Sundays', () => {
+  const period = planningMonthPeriod('2026-12', sunday);
+  assert.deepEqual(period, { startDate: '2026-12-01', endDate: '2026-12-31' });
+  assert.deepEqual(planningWeeks({ ...period, ...sunday }).map(week => week.dates.length), [5, 7, 7, 7, 5]);
+  assert.throws(() => planningWeeks({ ...period, planningWeekStartsOn: 'MONDAY' }));
+  assert.deepEqual(planningWeeks({ startDate: '2026-11-29', endDate: '2027-01-02', ...sunday }).map(week => week.dates.length),
+    [7, 7, 7, 7, 7]);
 });
 
 test('mismatched, incomplete and oversized horizons fail instead of changing anchors', () => {
@@ -127,15 +136,19 @@ test('Python and TypeScript agree on every month in 2000..2099 in both conventio
       const weeks = planningWeeks({ ...period, planningWeekStartsOn });
       const days = weeks.flatMap(week => week.dates);
       assert.equal(days.length, new Set(days).size);
-      assert.ok([28, 35, 42].includes(days.length));
-      const weekday = planningWeekStartsOn === 'SUNDAY' ? 0 : 1;
-      assert.equal(new Date(period.startDate + 'T00:00:00Z').getUTCDay(), weekday);
-      assert.equal(new Date(period.endDate + 'T00:00:00Z').getUTCDay(), (weekday + 6) % 7);
+      if (input.month === '2026-12' && planningWeekStartsOn === 'SUNDAY') {
+        assert.equal(days.length, 31);
+      } else {
+        assert.ok([28, 35, 42].includes(days.length));
+        const weekday = planningWeekStartsOn === 'SUNDAY' ? 0 : 1;
+        assert.equal(new Date(period.startDate + 'T00:00:00Z').getUTCDay(), weekday);
+        assert.equal(new Date(period.endDate + 'T00:00:00Z').getUTCDay(), (weekday + 6) % 7);
+      }
       const lastCivil = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
       assert.ok(period.startDate <= input.month + '-01' && period.endDate >= lastCivil);
       for (const week of weeks) for (const day of week.dates) {
-        assert.equal(planningWeekStart(day, input), week.startDate);
-        assert.equal(planningWeekEnd(day, input), week.endDate);
+        assert.equal(planningWeekStart(day, { ...period, planningWeekStartsOn }), week.startDate);
+        assert.equal(planningWeekEnd(day, { ...period, planningWeekStartsOn }), week.endDate);
       }
       expected.push({ ...period, weeks });
     }
