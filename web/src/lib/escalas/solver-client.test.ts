@@ -9,6 +9,7 @@ writeFileSync(secretPath, "s".repeat(64), { mode: 0o600 });
 beforeEach(() => vi.stubEnv("ESCALAS_SOLVER_SECRET_FILE", secretPath));
 afterAll(() => rmSync(secretDirectory, { recursive: true }));
 import { solveEscala } from "./solver-client";
+import { dateRange } from "./dates";
 import { validateEscala } from "./validation";
 import { matchesRestOnlyReferences } from "./generation";
 import * as rosterRefinement from "./roster-refinement";
@@ -50,6 +51,41 @@ function expectViableWorkerResult(input: EscalaInput) {
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
+describe("December conversion coverage", () => {
+  it("sends the frozen bounds without transporting the origin roster", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const origin: EscalaInput = { ...fixture(), startDate: "2026-12-01", endDate: "2026-12-31",
+      visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY", needsRegeneration: true,
+      coverageBasis: "coverage-v2:aaaaaaaaaaaaaaaa" };
+    origin.employees[0].activeFrom = origin.startDate;
+    origin.assignments = dateRange(origin.startDate, origin.endDate)
+      .map(date => ({ employeeId: "p1", date, kind: "WORK", shiftId: "day" }));
+    origin.demands = [{ id: "source-demand", date: "2026-12-07", sector: "Loja", role: "Repositor",
+      start: 1180, end: 1200, minimum: 1, estimated: true }];
+    const prepared = { ...origin, assignments: [] };
+    const worker = vi.fn(async (_url: URL, options: RequestInit) => {
+      const { input } = JSON.parse(String(options.body));
+      expect(input.demands).toEqual(origin.demands);
+      expect(input.assignments).toEqual([]);
+      expect(input).toHaveProperty("_coverageComparison.dailyBands", expect.arrayContaining([{
+        date: "2026-12-07", sector: "Loja", role: "Repositor", start: 1180, end: 1200, maximum: 1,
+      }]));
+      expect(input).toHaveProperty("_coverageServiceProtection.days", expect.arrayContaining([{ date: "2026-12-07", sector: "Loja" }]));
+      expect(input).toHaveProperty("_coverageServiceProtection.bands", expect.arrayContaining([{
+        sector: "Loja", role: "Repositor", scope: "HORIZON", start: 480, end: 720, minimum: 31,
+      }]));
+      expect(input).not.toHaveProperty("admittedDecemberOrigin");
+      expect(input).not.toHaveProperty("_monthlyClockOptions");
+      return Response.json({ status: "UNKNOWN", assignments: [], message: "Processador simulado", wallTimeSeconds: 1 });
+    });
+    vi.stubGlobal("fetch", worker);
+    await expect(solveEscala(prepared, { admittedDecemberOrigin: origin })).resolves.toMatchObject({ status: "UNKNOWN" });
+    const changed = { ...prepared, demands: [{ ...origin.demands[0], minimum: 3 }] };
+    await expect(solveEscala(changed, { admittedDecemberOrigin: origin })).rejects.toMatchObject({ code: "ESCALA_CALENDAR_REFERENCE_MISMATCH" });
+    expect(worker).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("isolated schedule processor client", () => {
   it("keeps the administrative sector off the private processor payload and restores unchanged saved records", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
@@ -68,6 +104,8 @@ describe("isolated schedule processor client", () => {
       expect(input.employees.map(person => person.id)).toEqual(["p1"]);
       expect(input.assignments.every(day => day.employeeId === "p1")).toBe(true);
       expect(input.demands).toEqual([]);
+      expect(input).not.toHaveProperty("_coverageComparison");
+      expect(input).not.toHaveProperty("_coverageServiceProtection");
       return Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Synthetic", wallTimeSeconds: 1 });
     });
     vi.stubGlobal("fetch", worker);

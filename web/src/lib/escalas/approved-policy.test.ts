@@ -88,6 +88,25 @@ describe("approved branch/period policy candidate", () => {
     expect(readEscalaApprovedPolicy(tampered, snapshotHash).ok).toBe(false);
   });
 
+  it("signs the clipped December period while preserving the declared employee history", () => {
+    const source = request();
+    Object.assign(source.input, { startDate: "2026-12-01", endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY" });
+    source.input.employees[0].history = [{ employeeId: "person", date: "2026-11-29", kind: "OFF" }];
+    const before = structuredClone(source);
+    const approved = buildEscalaApprovedPolicy(source);
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) return;
+    const { snapshot, snapshotHash } = approved.value;
+    expect(createInputFromEscalaApprovedPolicy(JSON.parse(JSON.stringify(snapshot)), snapshotHash)).toMatchObject({
+      ok: true, value: { startDate: "2026-12-01", endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY",
+        employees: [expect.objectContaining({ historyKnown: true, history: source.input.employees[0].history, shiftIds: ["s"] })],
+        assignments: [source.input.assignments[2]] },
+    });
+    const expanded = { ...snapshot, configuration: { ...snapshot.configuration, startDate: "2026-11-29", endDate: "2027-01-02" } };
+    expect(readEscalaApprovedPolicy(expanded, snapshotHash).ok).toBe(false);
+    expect(source).toEqual(before);
+  });
+
   it("hashes object keys stably, includes provenance and retains meaningful array order", () => {
     const source = request();
     const reversed = Object.fromEntries(Object.entries(source).reverse());

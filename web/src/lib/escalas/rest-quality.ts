@@ -1,5 +1,5 @@
 import { isEscalaPlanningParticipant } from "./eligibility";
-import { addDays, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
+import { addDays, dayOfWeek, planningWeekDates, visibleDates, weekStart } from "./dates";
 import { effectiveSundayLimit, effectiveWeeklyHours } from "./labor-rules";
 import type { EscalaEmployee, EscalaInput } from "./types";
 
@@ -41,7 +41,7 @@ export function restPairSummary(input: EscalaInput): RestPairSummary {
     const weeks = new Set(pairs.filter(pair => pair.adjustable).map(pair => weekStart(pair.after, input)));
     return { employeeId: person.id, totalPairs, imposedPairs, adjustablePairs,
       correctableExcess: Math.max(0, totalPairs - 2) - Math.max(0, imposedPairs - 2),
-      weeklyRepetitions: [...weeks].filter(week => weeks.has(addDays(week, -7))).length };
+      weeklyRepetitions: [...weeks].filter(week => weeks.has(weekStart(addDays(week, -1), input))).length };
   });
   const sum = (field: "totalPairs" | "imposedPairs" | "adjustablePairs" | "correctableExcess" | "weeklyRepetitions") => people.reduce((total, person) => total + person[field], 0);
   return { targetMonthlyPairs: 2, totalPairs: sum("totalPairs"), imposedPairs: sum("imposedPairs"), adjustablePairs: sum("adjustablePairs"),
@@ -58,13 +58,13 @@ export function compareRestQuality(before: RestPairSummary, after: RestPairSumma
 
 function groups(input: EscalaInput, summary: RestPairSummary) {
   const byPerson = new Map(summary.people.map(person => [person.employeeId, person]));
-  const days = dateRange(input.startDate, input.endDate);
+  const weeks = planningWeekDates(input);
   const result = new Map<string, number>();
   for (const person of input.employees) {
     if (!isEscalaPlanningParticipant(person)) continue;
     const noClock = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
     const key = JSON.stringify([noClock, person.sector, effectiveSundayLimit(person),
-      noClock ? [] : days.filter((_, index) => index % 7 === 0).map(day => effectiveWeeklyHours(person, day, input))]);
+      noClock ? [] : weeks.map(week => effectiveWeeklyHours(person, week[0], input))]);
     result.set(key, (result.get(key) ?? 0) + (byPerson.get(person.id)?.adjustablePairs ?? 0));
   }
   return result;

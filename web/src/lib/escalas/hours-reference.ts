@@ -1,5 +1,5 @@
 import { isEscalaPlanningParticipant, operationalEscalaInput } from "./eligibility";
-import { dateRange, dayOfWeek } from "./dates";
+import { dayOfWeek, planningWeekDates } from "./dates";
 import { effectiveScheduleMode } from "./fpre136-schedule";
 import { effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import { referenceNotices } from "./reference-notices";
@@ -109,8 +109,8 @@ function referenceCanMeetWeek(input: EscalaInput, person: EscalaEmployee, days: 
 export function validateHoursReferences(rawInput: EscalaInput): EscalaValidation {
   const input = operationalEscalaInput(rawInput);
   const issues: EscalaIssue[] = manualShiftIssues(input), shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
-  const calendarDays = dateRange(input.startDate, input.endDate);
-  const dates = calendarDays.filter((_, index) => index % 7 === 0);
+  const weeks = planningWeekDates(input);
+  const dates = weeks.map(week => week[0]);
   const holidays = new Set(input.policy.holidayDates);
   const absences = new Set(input.assignments.filter(day => day.kind === "ABSENCE")
     .map(day => `${day.employeeId}\0${day.date}`));
@@ -127,8 +127,8 @@ export function validateHoursReferences(rawInput: EscalaInput): EscalaValidation
     if (mode === "UNTIMED" || mode === "MISSING") continue;
     if (!person.shiftIds.length) issues.push({ code: "EMPLOYEE_SHIFT_PENDING", severity: "ERROR", employeeId: person.id, message: "Informe um horário de referência para este colaborador." });
     // Do not require an exact full week across holidays, absences or partial employment.
-    for (let index = 0; index + 7 <= calendarDays.length; index += 7) {
-      const week = calendarDays.slice(index, index + 7);
+    for (const week of weeks) {
+      if (week.length !== 7) continue;
       if (week.some(day => day < person.activeFrom || person.activeUntil && day > person.activeUntil
         || holidays.has(day) || absences.has(`${person.id}\0${day}`))) continue;
       if (!referenceCanMeetWeek(input, person, week, shifts)) {

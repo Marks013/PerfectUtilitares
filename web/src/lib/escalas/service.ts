@@ -13,11 +13,13 @@ import { generationScenarioBasis, isHoursReferenceOnly, matchesGenerationScenari
 import { compareBranches } from "./order";
 import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./dates";
 import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
+import { isDecember2026Cutover } from "./planning-calendar";
+import { admitDecemberCandidate, calculateWithDecemberFallback, prepareDecemberCoverage, selectDecemberCandidate } from "./december-origin.server";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { assertEscalaEmployeeRemovalAllowed, inputWithoutEscalaEmployee } from "./employee-removal";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
-import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
+import { admitCandidateReference, issueCandidateReceipt } from "./candidate-reference.server";
 import { isOperationallyReusable } from "./roster-quality";
 import type { EscalaCandidateResponse } from "./candidate-reference";
 import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
@@ -101,7 +103,8 @@ export async function listEscalas(actor: EscalaActor) {
     rows = rows.filter(row => approvedWorkspaceIds.has(row.id));
   }
   return rows.sort((a, b) => compareBranches(a, b) || b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).map((row) => {
-    const calendar = dayOfWeek(row.startDate) === 6 ? { planningWeekStartsOn: "SUNDAY" as const } : {};
+    const sunday = { planningWeekStartsOn: "SUNDAY" as const };
+    const calendar = dayOfWeek(row.startDate) === 6 || isDecember2026Cutover({ ...row, ...sunday }) ? sunday : {};
     const visible = visibleDates({ ...row, ...calendar });
     const month = visible[0]?.slice(0, 7);
     const visibleMonth = month && visible[0] === monthBounds(month).startDate && visible.at(-1) === monthBounds(month).endDate ? month : undefined;
@@ -601,11 +604,15 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
       proposalProof: signEscalaProposal(finalScope, proposalInput) };
   }
   requireSolverSetup(prepared.input);
-  const contextual = await planningContext(actor, id, parseEscalaInput(prepared.input));
+  const context = await planningContext(actor, id, parseEscalaInput(prepared.input));
+  const { contextual, origin } = await prepareDecemberCoverage(actor, id, qualityReference, context);
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
   if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
-  const admission = admitCandidateReference(comparisonReference, scope, qualityReference, contextual);
-  const calculation = await solveEscala(contextual, { ...solverOptions, qualityReference });
+  const admission = admitDecemberCandidate(admitCandidateReference(comparisonReference, scope, qualityReference, contextual), origin);
+  const { calculation, retainedReference } = await calculateWithDecemberFallback(
+    solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin }),
+    origin && admission.input,
+  );
   let result = calculation.status === "INFEASIBLE" ? {
     ...calculation, conflicts: [...findGenerationConflicts(contextual), ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
       code: `SOLVER_${diagnostic.family}`, message: diagnostic.message,
@@ -638,7 +645,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   }
   let comparison = admission.comparison;
   if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
-    const selected = selectCandidateReference(admission, proposalInput, qualityReference);
+    const selected = selectDecemberCandidate(admission, proposalInput, qualityReference, origin, retainedReference);
     comparison = selected.comparison;
     if (comparison.selection === "REFERENCE_RETAINED") {
       proposalInput = parseEscalaInput(selected.input);

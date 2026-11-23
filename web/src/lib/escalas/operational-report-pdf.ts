@@ -35,7 +35,6 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
   const stateText = (value: string) => value.replace(/^Plantão \(PL\), sem horário informado$/, "Plantão sem horário definido")
     .replace(/^(?:ENC|NP) — /, "");
   const calendarCode = (code: string) => code === "ENC" ? "SH" : code === "NP" ? "P" : code;
-  const weekConvention = model.planningWeekStartsOn === "SUNDAY" ? "domingo a sábado" : "segunda a domingo";
   const regularCharacters = new Set(font.getCharacterSet()), boldCharacters = new Set(bold.getCharacterSet());
   const width = 842, height = 595, margin = 26, available = width - margin * 2;
   let page!: PDFPage;
@@ -73,7 +72,7 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
   const newPage = () => {
     page = document.addPage([width, height]);
     const branchLines = wrap(model.branch, available - 20, 12, true);
-    const metadata = wrap(`${month} | Revisão ${model.revision} | ${model.status} | Planejamento da equipe\nPeríodo: ${civilDate(model.period)} | Atualizado em ${updated} | Semana: ${weekConvention}`, available - 20, 8);
+    const metadata = wrap(`${month} | Revisão ${model.revision} | ${model.status} | Planejamento da equipe\nPeríodo: ${civilDate(model.period)} | Atualizado em ${updated} | Semana: ${model.planningWeekLabel}`, available - 20, 8);
     const bandHeight = branchLines.length * 16 + metadata.length * 12 + 12;
     page.drawRectangle({ x: margin, y: height - margin - bandHeight, width: available, height: bandHeight, color: rgb(0.12, 0.27, 0.4) });
     y = height - margin - 16;

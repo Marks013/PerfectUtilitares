@@ -4,6 +4,8 @@ import { z } from "zod";
 import { EscalaSolverError } from "./solver-errors";
 import { logSolverRejection } from "./solver-diagnostics";
 import { storeClosingMinutes } from "./store-hours";
+import type { CoverageServiceProtection } from "./coverage-protection";
+import type { CoverageComparisonBounds } from "./roster-quality";
 import type { EscalaAssignment, EscalaInput } from "./types";
 
 type SolverOperation = { operationId: string; cancelToken: string };
@@ -105,7 +107,10 @@ function scopedHistory(entries: EscalaAssignment[]) {
   return entries.map(({ employeeId: _employeeId, ...entry }) => entry);
 }
 
-export async function requestSolver(input: EscalaInput, options: SolverOptions = {}) {
+export async function requestSolver(input: EscalaInput, options: SolverOptions & {
+  coverageComparison?: CoverageComparisonBounds;
+  coverageServiceProtection?: CoverageServiceProtection;
+} = {}) {
   if (options.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   const body = JSON.stringify({ input: {
     ...input, storeClosingMinutes: storeClosingMinutes(input),
@@ -116,6 +121,8 @@ export async function requestSolver(input: EscalaInput, options: SolverOptions =
       ...(person.planningFuture ? { planningFuture: scopedHistory(person.planningFuture) } : {}),
     })),
     ...(options.initialAssignments ? { _initialAssignments: options.initialAssignments } : {}),
+    ...(options.coverageComparison ? { _coverageComparison: options.coverageComparison } : {}),
+    ...(options.coverageServiceProtection ? { _coverageServiceProtection: options.coverageServiceProtection } : {}),
   } });
   if (Buffer.byteLength(body, "utf8") > maxSolverRequestBytes) throw new EscalaSolverError("SOLVER_INPUT_TOO_LARGE");
   const operation = { operationId: options.operationId || randomUUID(), cancelToken: options.cancelToken || randomBytes(32).toString("hex") };

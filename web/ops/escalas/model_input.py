@@ -1,7 +1,10 @@
 """Structural private-service boundary errors, without echoing submitted values."""
 from datetime import date
 from rest_configuration import fixed_rest_projection
-from planning_calendar import planning_week_starts_on, planning_weeks
+from planning_calendar import is_december_cutover, planning_week_starts_on, planning_weeks
+
+
+SERVICE_SCOPES = ("HORIZON", "MONTH", "SUNDAYS", "MONTH_SUNDAYS")
 
 
 class ModelInputError(ValueError):
@@ -113,6 +116,89 @@ def validate_planning_horizon(data):
         raise ModelInputError('endDate', 'INVALID_HORIZON') from None
 
 
+def _validate_service_protection(data, roles_by_sector):
+    path = "_coverageServiceProtection"
+    service = _object(data[path], path)
+    _require(service.keys() == {"days", "bands"}, path, "INVALID_FIELDS")
+    for index, entry in enumerate(_array(service["days"], path + ".days", 10500)):
+        prefix = f"{path}.days[{index}]"
+        row = _object(entry, prefix)
+        _require(row.keys() == {"date", "sector"}, prefix, "INVALID_FIELDS")
+        _date(row["date"], prefix + ".date")
+        _require(data["startDate"] <= row["date"] <= data["endDate"], prefix + ".date", "OUTSIDE_HORIZON")
+        sector = row["sector"]
+        _require(isinstance(sector, str) and sector in roles_by_sector, prefix + ".sector", "UNKNOWN_REFERENCE")
+    for index, entry in enumerate(_array(service["bands"], path + ".bands", 12000)):
+        prefix = f"{path}.bands[{index}]"
+        row = _object(entry, prefix)
+        _require(row.keys() == {"sector", "role", "start", "end", "scope", "minimum"}, prefix, "INVALID_FIELDS")
+        sector, role = row["sector"], row["role"]
+        _require(isinstance(sector, str) and sector in roles_by_sector, prefix + ".sector", "UNKNOWN_REFERENCE")
+        _require(isinstance(role, str) and role in roles_by_sector[sector], prefix + ".role", "UNKNOWN_REFERENCE")
+        _require(row["scope"] in SERVICE_SCOPES, prefix + ".scope")
+        _integer(row["start"], prefix + ".start", 0, 1439)
+        _integer(row["end"], prefix + ".end", 1, 1440)
+        _require(row["start"] < row["end"], prefix, "INVALID_INTERVAL")
+        _integer(row["minimum"], prefix + ".minimum", 1, 10500)
+
+
+def _validate_coverage_comparison(data, roles_by_sector):
+    path = "_coverageComparison"
+    comparison = _object(data[path], path)
+    fields = {"sectors", "bands"}
+    if "dailyBands" in comparison and is_december_cutover(data):
+        fields.add("dailyBands")
+    _require(comparison.keys() == fields, path, "INVALID_FIELDS")
+    # A demand-only sector or function can have a real nonzero saved shortage.
+    scopes = {sector: set(roles) for sector, roles in roles_by_sector.items()}
+    for demand in data["demands"]:
+        roles = scopes.setdefault(demand["sector"], set())
+        if isinstance(demand.get("role"), str):
+            roles.add(demand["role"])
+    # The bounded payload can contain overlapping minima for distinct functions.
+    maximum_peak = 12000 * 250
+    maximum_minutes = maximum_peak * 42 * 1440
+    fields = {"horizon", "month", "sundays", "monthSundays", "closing"}
+    sectors = set()
+    for index, entry in enumerate(_array(comparison["sectors"], path + ".sectors", 12000)):
+        prefix = f"{path}.sectors[{index}]"
+        row = _object(entry, prefix)
+        _require(row.keys() == fields | {"sector", "peak"}, prefix, "INVALID_FIELDS")
+        sector = row["sector"]
+        _require(isinstance(sector, str) and sector in scopes, prefix + ".sector", "UNKNOWN_REFERENCE")
+        _require(sector not in sectors, prefix + ".sector", "DUPLICATE_REFERENCE")
+        sectors.add(sector)
+        for field in sorted(fields):
+            _integer(row[field], prefix + "." + field, 0, maximum_minutes)
+        _integer(row["peak"], prefix + ".peak", 0, maximum_peak)
+    for index, entry in enumerate(_array(comparison["bands"], path + ".bands", 12000)):
+        prefix = f"{path}.bands[{index}]"
+        row = _object(entry, prefix)
+        _require(row.keys() == {"scope", "sector", "role", "start", "end", "maximum", "peak"}, prefix, "INVALID_FIELDS")
+        sector, role = row["sector"], row["role"]
+        _require(isinstance(sector, str) and sector in scopes, prefix + ".sector", "UNKNOWN_REFERENCE")
+        _require(role is None or isinstance(role, str) and role in scopes[sector], prefix + ".role", "UNKNOWN_REFERENCE")
+        _require(row["scope"] in SERVICE_SCOPES, prefix + ".scope")
+        _integer(row["start"], prefix + ".start", 0, 1439)
+        _integer(row["end"], prefix + ".end", 1, 1440)
+        _require(row["start"] < row["end"], prefix, "INVALID_INTERVAL")
+        _integer(row["maximum"], prefix + ".maximum", 0, maximum_peak * 42)
+        _integer(row["peak"], prefix + ".peak", 0, maximum_peak)
+    for index, entry in enumerate(_array(comparison.get("dailyBands", []), path + ".dailyBands", 12000)):
+        prefix = f"{path}.dailyBands[{index}]"
+        row = _object(entry, prefix)
+        _require(row.keys() == {"date", "sector", "role", "start", "end", "maximum"}, prefix, "INVALID_FIELDS")
+        _date(row["date"], prefix + ".date")
+        _require(data["startDate"] <= row["date"] <= data["endDate"], prefix + ".date", "OUTSIDE_HORIZON")
+        sector, role = row["sector"], row["role"]
+        _require(isinstance(sector, str) and sector in scopes, prefix + ".sector", "UNKNOWN_REFERENCE")
+        _require(role is None or isinstance(role, str) and role in scopes[sector], prefix + ".role", "UNKNOWN_REFERENCE")
+        _integer(row["start"], prefix + ".start", 0, 1439)
+        _integer(row["end"], prefix + ".end", 1, 1440)
+        _require(row["start"] < row["end"], prefix, "INVALID_INTERVAL")
+        _integer(row["maximum"], prefix + ".maximum", 0, maximum_peak)
+
+
 def validate_model_input(data):
     data = _object(data, "input")
     _date(data.get("startDate"), "startDate")
@@ -216,6 +302,33 @@ def validate_model_input(data):
         _integer(demand.get("end"), prefix + ".end", 1, 1440)
         _require(demand["end"] > demand["start"], prefix, "INVALID_INTERVAL")
         _integer(demand.get("minimum"), prefix + ".minimum", 0, 250)
+    if any(field in data for field in ("_coverageProtection", "_coverageServiceProtection", "_coverageComparison")):
+        roles_by_sector = {}
+        for person in people:
+            if person.get("planningEnabled") is not False:
+                roles_by_sector.setdefault(person["sector"], set()).add(person["role"])
+    if "_coverageServiceProtection" in data:
+        _validate_service_protection(data, roles_by_sector)
+    if "_coverageComparison" in data:
+        _validate_coverage_comparison(data, roles_by_sector)
+    if "_coverageProtection" in data:
+        for index, floor in enumerate(_array(data["_coverageProtection"], "_coverageProtection", 12000)):
+            prefix = f"_coverageProtection[{index}]"
+            floor = _object(floor, prefix)
+            _require(floor.keys() <= {"date", "sector", "role", "start", "end", "minimum"}, prefix, "UNKNOWN_FIELD")
+            _date(floor.get("date"), prefix + ".date")
+            _require(data["startDate"] <= floor["date"] <= data["endDate"], prefix + ".date", "OUTSIDE_HORIZON")
+            sector = floor.get("sector")
+            _require(isinstance(sector, str) and bool(sector) and sector in roles_by_sector,
+                     prefix + ".sector", "UNKNOWN_REFERENCE")
+            if "role" in floor:
+                role = floor["role"]
+                _require(isinstance(role, str) and bool(role) and role in roles_by_sector[sector],
+                         prefix + ".role", "UNKNOWN_REFERENCE")
+            _integer(floor.get("start"), prefix + ".start", 0, 1439)
+            _integer(floor.get("end"), prefix + ".end", 1, 1440)
+            _require(floor["end"] > floor["start"], prefix, "INVALID_INTERVAL")
+            _integer(floor.get("minimum"), prefix + ".minimum", 1, 250)
     sectors = {person['sector'] for person in people} | {demand['sector'] for demand in data['demands']}
     for index, priority in enumerate(data.get('movementPriorities', [])):
         if 'sector' in priority:

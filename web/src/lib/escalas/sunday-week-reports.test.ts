@@ -44,7 +44,7 @@ describe("Sunday planning calendar in the generated files", () => {
   it("assigns Sunday to the new weekly application without changing weekday identifiers or legacy reports", () => {
     const source = fixture(); source.input.mixed42Sectors = ["Caixa"];
     const dates = ["2026-12-04", "2026-12-06"], person = source.input.employees[0];
-    expect(mixedWeeklyApplication(source.input, person, dates)).toBe("29/11–05/12: 1 dia · Sex 04\n06/12–12/12: 1 dia · Dom 06");
+    expect(mixedWeeklyApplication(source.input, person, dates)).toBe("01/12–05/12: 1 dia · Sex 04\n06/12–12/12: 1 dia · Dom 06");
     const legacy = { ...source.input, planningWeekStartsOn: undefined, startDate: "2026-11-30", endDate: "2027-01-03" };
     expect(mixedWeeklyApplication(legacy, person, dates)).toBe("30/11–06/12: 2 dias · Sex 04, Dom 06");
     expect(source.input.planningWeekStartsOn).toBe("SUNDAY");
@@ -94,7 +94,7 @@ describe("Sunday planning calendar in the generated files", () => {
       const bytes = await exportOperationalReportPdf(model);
       expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
       expect(drawn.join(" ")).toContain("Semana: domingo a sábado");
-      expect(drawn.filter(line => line.startsWith("Semanas iniciadas em ")).join(" ")).toContain("29/11, 06/12, 13/12, 20/12, 27/12");
+      expect(drawn.filter(line => line.startsWith("Semanas iniciadas em ")).join(" ")).toContain("01/12, 06/12, 13/12, 20/12, 27/12");
       expect(await pdfText(bytes)).toContain("Pessoa sintética");
     } finally { spy.mockRestore(); }
   });

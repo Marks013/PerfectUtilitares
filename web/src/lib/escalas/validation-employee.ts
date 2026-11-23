@@ -1,9 +1,10 @@
-import { addDays, dateRange, dayOfWeek } from "./dates";
+import { addDays, dateRange, dayOfWeek, planningWeekDates } from "./dates";
 import { regularRestQuality } from "./rest-spacing";
 import { closedHolidayDates } from "./calendar";
 import type { EscalaAssignment, EscalaEmployee, EscalaEmployeeSummary, EscalaInput, EscalaIssue } from "./types";
 import { interveningOffs, type WorkJourney } from "./validation-time";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, effectiveWorkDayLimit, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
+import { isDecember2026Cutover } from "./planning-calendar";
 
 import { manualAssignmentIssues, manualShiftAt } from "./shift-catalog/manual-override";
 function isActive(person: EscalaEmployee, day: string): boolean {
@@ -151,9 +152,11 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     issues.push({ code: "EMPLOYMENT_AVAILABILITY", severity: "WARNING", employeeId: person.id, date: first, periodEnd: last,
       message: `Disponível neste planejamento de ${formatDate(first)} a ${formatDate(last)} por ${cause}. Fora dessas datas não há vínculo ativo; isso não significa contrato com jornada reduzida. Nas semanas de admissão ou desligamento não se exige a jornada semanal integral. Nenhuma ação é necessária se as datas estiverem corretas.` });
   }
-  for (let index = 0; index < days.length; index += 7) {
-    const start = days[index];
-    const active = days.slice(index, index + 7).filter((day) => isActive(person, day));
+  const cutover = isDecember2026Cutover(input);
+  const weeks = planningWeekDates(input);
+  for (const week of weeks) {
+    const start = week[0];
+    const active = week.filter((day) => isActive(person, day));
     if (!active.length) continue;
     const entries = active.map((day) => byDate.get(day));
     const minutes = minutesByWeek.get(start) ?? 0;
@@ -165,13 +168,16 @@ export function validateEmployee(input: EscalaInput, person: EscalaEmployee, { c
     const offs = entries.filter((entry) => entry?.kind === "OFF").map((entry) => entry?.date ?? "");
     const closedWeekdays = entries.filter(entry => entry?.kind === "HOLIDAY" && closedHolidays.has(entry.date) && dayOfWeek(entry.date) !== 6).length;
     const closedSundays = entries.filter(entry => entry?.kind === "HOLIDAY" && closedHolidays.has(entry.date) && dayOfWeek(entry.date) === 6).length;
-    const expectedWork = Math.max(0, 5 - closedWeekdays), expectedOff = Math.max(0, 2 - closedSundays);
-    const limitedAvailability = active.length < 7 || entries.some((entry) => entry?.kind === "ABSENCE");
+    const firstCutoverWeek = cutover && start === input.startDate;
+    const expectedWork = Math.max(0, (firstCutoverWeek ? 3 : 5) - closedWeekdays), expectedOff = Math.max(0, 2 - closedSundays);
+    const absence = entries.some((entry) => entry?.kind === "ABSENCE");
+    const limitedAvailability = active.length < 7 || absence;
+    const enforceRestCount = !limitedAvailability || firstCutoverWeek && active.length === week.length && !absence;
     if (usesMixed42Week(input, person, start)) {
       const long = longByWeek.get(start) ?? 0;
       if (long > 2 || (!limitedAvailability && !closedWeekdays && long !== 2)) issue("MIXED_42_WEEK", "Na jornada mista, a semana completa deve ter dois dias de 9h e três de 8h; em semanas com afastamento ou feriado fechado, não ultrapasse dois dias de 9h.", start);
     }
-    if (work > 5 || !limitedAvailability && (work !== expectedWork || offs.length !== expectedOff)) issue("FIVE_BY_TWO", `Semana 5×2: esperados ${expectedWork} dias de trabalho e ${expectedOff} folgas regulares, além dos feriados fechados. Encontrados ${work} dia(s) de trabalho e ${offs.length} folga(s), de ${formatDate(start)} a ${formatDate(addDays(start, 6))}.`, start);
+    if (work > 5 || enforceRestCount && (work !== expectedWork || offs.length !== expectedOff)) issue("FIVE_BY_TWO", `Semana 5×2: esperados ${expectedWork} dias de trabalho e ${expectedOff} folgas regulares, além dos feriados fechados. Encontrados ${work} dia(s) de trabalho e ${offs.length} folga(s), de ${formatDate(start)} a ${formatDate(cutover ? (week.at(-1) ?? start) : addDays(start, 6))}.`, start);
     if (!limitedAvailability && !closedWeekdays && !untimed && minutes !== target * 60) issue("WEEKLY_MINUTES", `Carga semanal de ${minutes} minutos difere dos ${target * 60} minutos vigentes nesta semana.`, start);
     if (closedWeekdays) issue("HOLIDAY_WEEK", "Semana com feriado fechado: o relatório soma apenas o trabalho planejado. O feriado não vira falta, folga semanal nem horas a repor; a ferramenta não calcula folha de pagamento.", start, "WARNING");
     const regularRests = [...offs, ...entries.filter(entry => entry?.kind === "HOLIDAY" && closedHolidays.has(entry.date) && dayOfWeek(entry.date) === 6).map(entry => entry?.date ?? "")];

@@ -6,7 +6,7 @@ import { isHoursReferenceOnly } from "./hours-reference";
 import { retainCoverageReference } from "./automatic-coverage";
 import { applyRestEligibility, isAdministrativeEscalaSector, isEscalaPlanningParticipant, isRestPlanningExcludedRole, isShortFpre136Schedule, operationalEscalaInput } from "./eligibility";
 import { effectiveScheduleMode } from "./fpre136-schedule";
-import { addDays, dateRange } from "./dates";
+import { dateRange, planningWeekDates } from "./dates";
 import { effectiveWeeklyHours, effectiveWorkDayLimit, isMixed42LongShift, maximumMealMinutes, minimumMealMinutes, usesMixed42 } from "./labor-rules";
 import { automaticShiftAlternatives, importedShiftReference, isAutomaticPreparedShift, isGeneratedMixed42Shift, planningWeeklyHours, preparedShiftSignature, prepareRoster, proposeCoverage, refreshProposedWorkBlocks, requiresWorkBlockBalance, stableShiftReferences } from "./preparation";
 import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes } from "./store-hours";
@@ -55,6 +55,7 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
     }
     monthlyChoices.push(choice);
   };
+  const weeks = planningWeekDates(input);
   let adjustedEmployees = input.employees.map((original) => {
     if (isAdministrativeEscalaSector(original.sector)) return original;
     const person: EscalaEmployee = { ...applyRestEligibility(original), scheduleMode: effectiveScheduleMode(original), fixedImportedShiftId: undefined,
@@ -64,9 +65,8 @@ export function prepareGeneration(rawInput: EscalaInput): { input: EscalaInput; 
       || (person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING")) return person;
     const reference = planningWeeklyHours(person, input.defaultWeeklyHours, input.defaultWeeklyHours);
     const hours = reference.weeklyHours;
-    const weekHours = dateRange(input.startDate, input.endDate).filter((_, index) => index % 7 === 0
-      && person.activeFrom <= addDays(input.startDate, index + 6) && (!person.activeUntil || person.activeUntil >= addDays(input.startDate, index)))
-      .map(date => effectiveWeeklyHours({ weeklyHours: hours }, date, input));
+    const weekHours = weeks.filter(week => person.activeFrom <= week[week.length - 1] && (!person.activeUntil || person.activeUntil >= week[0]))
+      .map(week => effectiveWeeklyHours({ weeklyHours: hours }, week[0], input));
     const imported = importedShiftReference(person);
     const compatibleImport = Boolean(imported && weekHours.length && weekHours.every(week => paidMinutes(imported) === week * 12));
     // A legacy short-clock marker must not activate mixed hours only after the clock choice is frozen.

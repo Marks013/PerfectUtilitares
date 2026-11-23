@@ -6,7 +6,8 @@ import styles from "./escalas.module.css";
 import { useEffect, useRef, useState } from "react";
 import { visibleDates } from "@/lib/escalas/dates";
 import { planningMonth } from "@/lib/escalas/planning-month";
-import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
+import { canUpgradePlanningCalendar } from "@/lib/escalas/calendar-upgrade";
+import { isDecember2026Cutover, planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
 import type { EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
@@ -269,13 +270,16 @@ export function EscalasWorkspace() {
           <div className="min-w-0"><h2 id="escala-scenario-title" className={styles.sectionTitle}>Filial {input.branchCode} · {input.branchName}</h2>
             <p className={styles.subtitle}>{displayDate(visibleDates(input)[0])} a {displayDate(visibleDates(input).at(-1) ?? input.endDate)} · {included} na equipe · revisão {workspace.revision}</p>
             <p className={styles.muted}>Semana: {planningWeekStartsOn(input) === "SUNDAY" ? "domingo a sábado. O domingo inicia uma nova semana." : "segunda a domingo (planejamento anterior)."}</p>
+            {isDecember2026Cutover(input) && <p className={styles.muted}>Programe duas folgas entre 1º e 5 de dezembro. A semana seguinte começa no dia 6.</p>}
           </div>
           <span role="status" className={styles.saveStatus} data-state={model.saveState}>{SAVE_LABEL[model.saveState]} · {workspace.status === "PUBLISHED" ? "Publicada" : "Rascunho"}</span>
         </div>
       </section>
-      {planningWeekStartsOn(input) !== "SUNDAY" && unrestricted && workspace.canEdit && model.canCreate && <section className={panelClass} aria-label="Atualizar semana do planejamento">
-        <p className={styles.muted}>Para usar domingo como primeiro dia da semana, crie um novo rascunho a partir deste. O original, seus afastamentos e bloqueios serão preservados.</p>
-        <button type="button" className={buttonClass} disabled={!model.canEdit || model.saveState === "saving"} onClick={model.upgradeCalendar}>Usar semana de domingo a sábado</button>
+      {canUpgradePlanningCalendar(input) && unrestricted && workspace.canEdit && model.canCreate && <section className={panelClass} aria-label="Atualizar semana do planejamento">
+        <p className={styles.muted}>{input.visibleMonth === "2026-12"
+          ? "Crie um rascunho de 1º a 31 de dezembro. A escala original, os afastamentos e os bloqueios do mês serão preservados."
+          : "Para usar domingo como primeiro dia da semana, crie um novo rascunho a partir deste. O original, seus afastamentos e bloqueios serão preservados."}</p>
+        <button type="button" className={buttonClass} disabled={!model.canEdit || model.saveState === "saving"} onClick={model.upgradeCalendar}>{input.visibleMonth === "2026-12" ? "Criar rascunho de dezembro" : "Usar semana de domingo a sábado"}</button>
       </section>}
       <nav aria-label="Etapas do planejamento" className={styles.guidedNavigation}>
         {AREAS.map((item, index) => <button key={item.id} type="button" aria-current={area === item.id ? "step" : undefined} aria-pressed={area === item.id} aria-controls={`escala-area-${item.id}`} className={styles.guidedStep} onClick={() => setArea(item.id)}><span className={styles.stepNumber} aria-hidden="true">{index + 1}</span><span><strong>{item.label}</strong><small>{item.id === "team" ? included ? `${included} ${included === 1 ? "colaborador incluído" : "colaboradores incluídos"}` : "Confira os colaboradores da filial" : item.id === "generate" ? `${input.defaultWeeklyHours} horas por semana · modelo 5×2` : hasRoster ? "Escala disponível para conferir" : "Confira antes de baixar os arquivos"}</small></span></button>)}

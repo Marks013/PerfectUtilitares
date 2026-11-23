@@ -1,4 +1,4 @@
-import { planningWeekStart, planningWeekEnd, type PlanningCalendar } from "./planning-calendar";
+import { isDecember2026Cutover, planningWeeks, planningWeekStart, planningWeekEnd, type PlanningCalendar, type PlanningPeriod } from "./planning-calendar";
 
 const DAY_MS = 86_400_000;
 const branchFormatter = new Intl.DateTimeFormat("en-CA", {
@@ -32,6 +32,13 @@ export function dateRange(start: string, end: string): string[] {
   const count = Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / DAY_MS) + 1;
   if (count > 366) throw new Error("Intervalo de datas muito extenso");
   return Array.from({ length: count }, (_, index) => addDays(start, index));
+}
+
+/** Calendar weeks for calculations that also accept unvalidated legacy previews. */
+export function planningWeekDates(input: PlanningPeriod & PlanningCalendar): string[][] {
+  if (isDecember2026Cutover(input)) return planningWeeks(input).map(week => week.dates);
+  const days = dateRange(input.startDate, input.endDate);
+  return days.filter((_, index) => index % 7 === 0).map((_, index) => days.slice(index * 7, index * 7 + 7));
 }
 
 /** Actual instant of a civil minute in the explicitly supported branch timezone. */

@@ -1,7 +1,7 @@
 import { isEscalaPlanningParticipant } from "./eligibility";
-import { addDays, isDate, weekStart } from "./dates";
+import { isDate, weekStart } from "./dates";
 import type { EscalaEmployee, EscalaInput, EscalaPolicy, EscalaShift, WeeklyHours } from "./types";
-import type { PlanningCalendar } from "./planning-calendar";
+import { planningWeekEnd, type PlanningCalendar } from "./planning-calendar";
 import reference from "../../../ops/escalas/policy-reference.json" with { type: "json" };
 
 /** Operational invariant of this project's 5x2 planning model, not a general legal conclusion. */
@@ -42,7 +42,7 @@ export function legalWeeklyHours(day: string): WeeklyHours {
 
 /** Conservative whole-week proposal; transition weeks require explicit acceptance. */
 export function effectiveWeeklyHours(person: Pick<EscalaEmployee, "weeklyHours">, start: string, calendar: PlanningCalendar = {}): WeeklyHours {
-  return Math.min(person.weeklyHours, legalWeeklyHours(addDays(weekStart(start, calendar), 6))) as WeeklyHours;
+  return Math.min(person.weeklyHours, legalWeeklyHours(planningWeekEnd(start, calendar))) as WeeklyHours;
 }
 
 /** The optional distribution is scoped to timed 42h references; no saved authorization is inferred. */

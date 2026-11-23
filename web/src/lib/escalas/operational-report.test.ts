@@ -50,7 +50,7 @@ describe("read-only operational report adapter", () => {
     workspace.input.demands[0].estimated = true;
     expect(buildOperationalReport(workspace, options).calendar.days[0]).toMatchObject({ minimum: null, balance: null });
   });
-  it.each([["MONDAY", "2026-11-30"], ["SUNDAY", "2026-11-29"]] as const)("counts %s civil-week groups and actual DUTY without fabricating clock hours", (weekStartsOn, firstWeek) => {
+  it.each([["MONDAY", "2026-11-30"], ["SUNDAY", "2026-12-01"]] as const)("counts %s civil-week groups and actual DUTY without fabricating clock hours", (weekStartsOn, firstWeek) => {
     const workspace = fixture();
     const period = planningMonthPeriod("2026-12", { planningWeekStartsOn: weekStartsOn });
     workspace.input = { ...workspace.input, ...period, planningWeekStartsOn: weekStartsOn,
@@ -58,6 +58,12 @@ describe("read-only operational report adapter", () => {
     const options = operationalReportOptionsSchema.parse({ workspaceId: "synthetic", revision: 19, month: "2026-12", sections: ["calendar", "presence"], date: "2026-12-01" });
     const model = buildOperationalReport(workspace, options);
     expect(model.calendar.weeks[0]).toMatchObject({ start: firstWeek });
+    if (weekStartsOn === "SUNDAY") {
+      expect(model.planningWeekLabel).toContain("01–05/12 e 27–31/12");
+      expect(model.calendar.weeks.map(week => [week.start, week.dates.length])).toEqual([
+        ["2026-12-01", 5], ["2026-12-06", 7], ["2026-12-13", 7], ["2026-12-20", 7], ["2026-12-27", 5],
+      ]);
+    }
     expect(model.calendar.weeks.flatMap(week => week.dates)).toEqual(model.dates);
     expect(model.calendar.people.find(row => row.employeeId === "b")?.totals).toMatchObject({ worked: 1, duty: 1, timedWorkMinutes: 0 });
     expect(model.calendar.days[0]).toMatchObject({ working: 2, duty: 1 });

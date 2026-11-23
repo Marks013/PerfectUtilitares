@@ -1,6 +1,6 @@
 import { addDays, dateRange, monthBounds, visibleDates } from "./dates";
 import { EscalaError } from "./errors";
-import { planningMonthPeriod, planningWeekStart, planningWeekStartsOn } from "./planning-calendar";
+import { isDecember2026Cutover, planningMonthPeriod, planningWeekStart, planningWeekStartsOn } from "./planning-calendar";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput } from "./types";
 
 function sameDay(a: EscalaAssignment, b: EscalaAssignment): boolean {
@@ -57,13 +57,23 @@ export function preserveCalendarSourceContext(previous: EscalaInput, next: Escal
   return retainCalendarSourceBoundaries(next, { ...previous, assignments: boundary });
 }
 
+function calendarMonth(input: EscalaInput): string | undefined {
+  if (input.visibleMonth) return input.visibleMonth;
+  const visible = visibleDates(input);
+  const inferred = visible[0]?.slice(0, 7);
+  return inferred && visible[0] === monthBounds(inferred).startDate
+    && visible.at(-1) === monthBounds(inferred).endDate ? inferred : undefined;
+}
+
+export function canUpgradePlanningCalendar(input: EscalaInput): boolean {
+  return planningWeekStartsOn(input) !== "SUNDAY"
+    || (calendarMonth(input) === "2026-12" && !isDecember2026Cutover(input));
+}
+
 /** Create a new dated proposal; never move dates or reinterpret the saved source in place. */
 export function sundayCalendarDraft(source: EscalaInput, origin: { workspaceId: string; revision: number }): EscalaInput {
-  if (planningWeekStartsOn(source) === "SUNDAY") throw new EscalaError(409, "ESCALA_CALENDAR_CURRENT", "Este planejamento já usa semanas de domingo a sábado.");
-  const visible = visibleDates(source);
-  const inferred = visible[0]?.slice(0, 7);
-  const month = source.visibleMonth ?? (inferred && visible[0] === monthBounds(inferred).startDate
-    && visible.at(-1) === monthBounds(inferred).endDate ? inferred : undefined);
+  if (!canUpgradePlanningCalendar(source)) throw new EscalaError(409, "ESCALA_CALENDAR_CURRENT", "Este planejamento já usa o calendário vigente.");
+  const month = calendarMonth(source);
   const calendar = { planningWeekStartsOn: "SUNDAY" as const };
   const startDate = planningWeekStart(source.startDate, calendar);
   const period = month ? planningMonthPeriod(month, calendar)

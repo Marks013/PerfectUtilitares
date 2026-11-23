@@ -265,7 +265,7 @@ test("one journey controls a full FPRE136 simulation, stale outputs and actual P
   }
 });
 
-test("explicit Sunday upgrade preserves its legacy source and protected outer absence through real persistence", async ({ page }) => {
+test("the December upgrade limits the draft to the month and preserves its legacy source", async ({ page }) => {
   const branch = `E2E-WEEK-${Date.now().toString(36)}`;
   await page.goto("/escala");
   const origin = new URL(page.url()).origin;
@@ -284,7 +284,7 @@ test("explicit Sunday upgrade preserves its legacy source and protected outer ab
   try {
     await page.reload();
     await selectEscalasWorkspace(page, original);
-    const action = page.getByRole("button", { name: "Usar semana de domingo a sábado", exact: true });
+    const action = page.getByRole("button", { name: "Criar rascunho de dezembro", exact: true });
     await expect(action).toBeEnabled();
     const responsePromise = page.waitForResponse(response => response.request().method() === "POST"
       && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "UPGRADE_CALENDAR"
@@ -295,11 +295,12 @@ test("explicit Sunday upgrade preserves its legacy source and protected outer ab
     upgraded = await response.json();
     if (!upgraded) throw new Error("The explicit calendar upgrade did not return a workspace");
     expect(upgraded.id).not.toBe(original.id);
-    expect(upgraded.input).toMatchObject({ planningWeekStartsOn: "SUNDAY", planningCalendarSource: { workspaceId: original.id, revision: original.revision }, startDate: "2026-11-29", endDate: "2027-01-02" });
+    expect(upgraded.input).toMatchObject({ planningWeekStartsOn: "SUNDAY", planningCalendarSource: { workspaceId: original.id, revision: original.revision }, startDate: "2026-12-01", endDate: "2026-12-31" });
     expect(upgraded.input.assignments).toEqual([original.input.assignments[0]]);
-    const boundary = { employeeId: "synthetic-calendar-person", date: "2027-01-03", kind: "ABSENCE", locked: true };
+    const boundary = { employeeId: "synthetic-calendar-person", date: "2027-01-03", kind: "ABSENCE", locked: true } as const;
     expect(upgraded.input.employees[0].planningFuture).toEqual([boundary]);
     await expect(page.getByText("Semana: domingo a sábado. O domingo inicia uma nova semana.", { exact: true })).toBeVisible();
+    await expect(page.getByText(/duas folgas entre 1º e 5 de dezembro/)).toBeVisible();
     const unchangedResponse = await page.request.get(`/api/escalas?id=${original.id}`);
     expect(unchangedResponse.status()).toBe(200);
     const unchanged: EscalaWorkspace = await unchangedResponse.json();
@@ -311,6 +312,7 @@ test("explicit Sunday upgrade preserves its legacy source and protected outer ab
     const saved: EscalaWorkspace = await savedResponse.json();
     expect(saved.revision).toBe(upgraded.revision + 1);
     expect(saved.input.employees[0].planningFuture).toEqual([boundary]);
+    expect(saved.input.assignments).toEqual(upgraded.input.assignments);
     const reloaded: EscalaWorkspace = await (await page.request.get(`/api/escalas?id=${saved.id}`)).json();
     expect(reloaded.input).toEqual(saved.input);
   } finally {
