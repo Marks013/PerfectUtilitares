@@ -145,8 +145,16 @@
 @media (max-width: 39.999rem) {
   .workflowTag { inline-size: 100%; }
   .mainActions > .button { flex: 1 1 10rem; }
-  .nameHeading, .nameCell { min-inline-size: 12rem; max-inline-size: 14rem; }
-  .rosterScroll { scroll-padding-inline-start: 12.5rem; }
+  .rosterScroll {
+    --roster-name-width: clamp(7.5rem, 34vw, 10rem);
+    scroll-padding-inline-start: calc(var(--roster-name-width) + .5rem);
+  }
+  .nameHeading, .nameCell {
+    min-inline-size: var(--roster-name-width);
+    max-inline-size: var(--roster-name-width);
+    padding-inline: .5rem;
+    overflow-wrap: anywhere;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .button { transition: none; }

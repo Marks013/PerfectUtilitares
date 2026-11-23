@@ -15,9 +15,9 @@ type Format = "pdf" | "xlsx";
 type FileState = { url: string; filename: string; workspaceId: string; revision: number; mode: EscalaExportMode };
 const CONTENT = { rest: "Folgas", hours: "Horários", both: "Folgas e horários" };
 
-export function Publication({ workspace, validation, dirty, busy, outdated = false, mode, onModeChange, onPublish, onRegenerate, onPrepare, isCurrent, candidatePending = false, canUseCandidate = false, onUseCandidate }: {
+export function Publication({ workspace, validation, dirty, busy, outdated = false, mode, onModeChange, onPublish, onReopen, onRegenerate, onPrepare, isCurrent, candidatePending = false, canUseCandidate = false, onUseCandidate }: {
   workspace: EscalaWorkspace; validation: EscalaValidation | null; dirty: boolean; busy: boolean; outdated?: boolean; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void;
-  onPublish: () => void; onRegenerate?: () => void; onPrepare?: () => Promise<EscalaWorkspace | null>; isCurrent?: (workspace: EscalaWorkspace) => boolean;
+  onPublish: () => void; onReopen?: () => void; onRegenerate?: () => void; onPrepare?: () => Promise<EscalaWorkspace | null>; isCurrent?: (workspace: EscalaWorkspace) => boolean;
   candidatePending?: boolean; canUseCandidate?: boolean; onUseCandidate?: () => void;
 }) {
   const hoursOnly = workspace.input.generationMode === "HOURS_ONLY";
@@ -28,16 +28,18 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
   const branchCode = workspace.input.branchCode;
   const canDownload = (format: Format) => canDisplayEscalaAction(access, `export.schedule.${format}`, branchCode);
   const allowedFormats = (["pdf", "xlsx"] as const).filter(canDownload);
-  const canRegenerate = onRegenerate
+  const published = workspace.status === "PUBLISHED";
+  const canRegenerate = !published && onRegenerate
     && canDisplayEscalaAction(access, "schedule.generate", branchCode)
     && (!dirty || workspace.canEdit && canDisplayEscalaAction(access, "workspace.save", branchCode));
   const canApplyCandidate = canUseCandidate && Boolean(onUseCandidate);
   const canPublish = canDisplayEscalaAction(access, "workspace.publish", branchCode) && workspace.canPublish;
   const [reviewed, setReviewed] = useState<ReviewedRevision | null>(null);
-  const confirmed = isReviewedRevisionCurrent(reviewed, workspace, dirty, outdated);
+  const reviewOutdated = !published && outdated;
+  const confirmed = isReviewedRevisionCurrent(reviewed, workspace, dirty, reviewOutdated);
   useEffect(() => {
-    setReviewed(previous => canPublish && isReviewedRevisionCurrent(previous, workspace, dirty, outdated) ? previous : null);
-  }, [workspace, dirty, outdated, canPublish]);
+    setReviewed(previous => canPublish && isReviewedRevisionCurrent(previous, workspace, dirty, reviewOutdated) ? previous : null);
+  }, [workspace, dirty, reviewOutdated, canPublish]);
   const [exporting, setExporting] = useState<Format | null>(null);
   const [files, setFiles] = useState<Partial<Record<Format, FileState>>>({});
   const urls = useRef(new Set<string>());
@@ -51,10 +53,12 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
   }, []);
   const hasReferences = hasHourReferences(workspace.input);
   const blocked = busy || outdated || Boolean(exporting) || (hoursOnly ? !hasReferences : !workspace.input.assignments.length);
-  const ready = !referencesOnly && canPublish && !dirty && !blocked && Boolean(validation?.readyToPublish) && workspace.status !== "PUBLISHED";
+  const ready = !referencesOnly && canPublish && !dirty && !blocked && Boolean(validation?.readyToPublish) && !published;
+  const readyToReopen = published && canPublish && Boolean(onReopen) && !dirty && !busy && !exporting;
+  const confirmRevision = (checked: boolean) => setReviewed(checked ? { workspaceId: workspace.id, revision: workspace.revision, input: workspace.input } : null);
   // Explain existing publication gates without changing eligibility or pretending that estimates are approved.
-  const approvalGuidance = workspace.status === "PUBLISHED"
-    ? "Esta revisão já foi publicada. Confira uma nova revisão antes de publicar novamente."
+  const approvalGuidance = published
+    ? "Esta revisão publicada permanece congelada. A reabertura cria um rascunho separado; as mudanças só valem após nova publicação."
     : !canPublish ? "Seu acesso permite consultar, mas não aprovar a publicação desta filial."
     : referencesOnly ? "Referências de horários não representam uma escala diária pronta para publicação."
     : outdated ? "A grade está desatualizada. Gere e aplique uma proposta atualizada antes de publicar."
@@ -127,6 +131,17 @@ export function Publication({ workspace, validation, dirty, busy, outdated = fal
     {exporting && <ProcessingBar label={"Preparando " + exporting.toUpperCase() + " da revisão correta"} />}
     <p role="status" aria-live="polite" className="sr-only">{exporting ? "Arquivo em processamento" : allowedFormats.some(format => isDownloadCurrent(files[format], format)) ? "Arquivo pronto para baixar" : ""}</p>
     {error && <p role="alert" className={styles.errorText}>{error}</p>}
-    <details><summary className={styles.disclosureTrigger}>Aprovação interna (opcional)</summary><p className="text-sm">O salvamento automático não publica. A aprovação exige revisão conferida e perfil autorizado.</p><p id="escala-publication-guidance" className={styles.muted}>{approvalGuidance}</p>{canPublish && <><Check label={"Conferi esta revisão da filial " + workspace.input.branchCode} checked={confirmed} disabled={!ready} onChange={checked => setReviewed(checked ? { workspaceId: workspace.id, revision: workspace.revision, input: workspace.input } : null)} /><button type="button" className={buttonClass} aria-describedby="escala-publication-guidance" disabled={!ready || !confirmed} onClick={() => { if (ready && confirmed) onPublish(); }}>{workspace.status === "PUBLISHED" ? "Revisão já publicada" : "Publicar proposta"}</button></>}</details>
+    <details>
+      <summary className={styles.disclosureTrigger}>Aprovação interna (opcional)</summary>
+      {!published && <p className="text-sm">O salvamento automático não publica. A aprovação exige revisão conferida e perfil autorizado.</p>}
+      <p id="escala-publication-guidance" className={styles.muted}>{approvalGuidance}</p>
+      {canPublish && (published ? onReopen && <>
+        <Check label={`Quero reabrir a revisão ${workspace.revision} da filial ${branchCode} como rascunho`} checked={confirmed} disabled={!readyToReopen} onChange={confirmRevision} />
+        <button type="button" className={buttonClass} aria-describedby="escala-publication-guidance" disabled={!readyToReopen || !confirmed} onClick={() => { if (readyToReopen && confirmed) onReopen(); }}>Reabrir como rascunho</button>
+      </> : <>
+        <Check label={"Conferi esta revisão da filial " + branchCode} checked={confirmed} disabled={!ready} onChange={confirmRevision} />
+        <button type="button" className={buttonClass} aria-describedby="escala-publication-guidance" disabled={!ready || !confirmed} onClick={() => { if (ready && confirmed) onPublish(); }}>Publicar proposta</button>
+      </>)}
+    </details>
   </section>;
 }

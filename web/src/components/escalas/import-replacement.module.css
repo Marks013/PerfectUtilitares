@@ -2,3 +2,8 @@
 .root ul { padding-inline-start: 1.25rem; }
 .review { min-inline-size: 0; }
 .review:focus-visible { outline: 2px solid var(--app-action-blue); outline-offset: 3px; }
+.diagnostics, .departures, .registrations { display: grid; gap: .5rem; border: 1px solid var(--app-border); border-radius: .75rem; padding: .75rem; background: var(--app-surface); }
+.diagnostics[data-tone="error"] { border-color: var(--app-danger-border); background: var(--app-danger-soft); }
+.diagnostics[data-tone="warning"] { border-color: var(--app-warning-border); background: var(--app-warning-soft); }
+.reasons { display: grid; gap: .5rem; }
+.registrationFields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: .75rem; }

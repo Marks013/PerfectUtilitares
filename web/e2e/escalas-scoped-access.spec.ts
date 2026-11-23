@@ -327,11 +327,11 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     const swap = page.getByRole("region", { name: "Atribuir turno cadastrado a Pessoa nominal", exact: true });
     await swap.getByRole("radio", { name: new RegExp(`^${catalog.entries[0].code} ·`) }).check();
     const previewing = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "PREVIEW_SWAP");
-    await swap.getByRole("button", { name: "Conferir atribuição", exact: true }).click();
+    await swap.getByRole("button", { name: "Conferir troca de turno", exact: true }).click();
     const swapResponse = await previewing; expect(swapResponse.status()).toBe(200); const preview = await swapResponse.json() as TurnoSwapPreviewDto;
     expect(preview.canApply).toBe(true); expect(preview.validationIssues).toEqual([]);
     const swapping = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "APPLY_SWAP");
-    await swap.getByRole("button", { name: "Confirmar e salvar atribuição", exact: true }).click();
+    await swap.getByRole("button", { name: "Salvar troca de turno", exact: true }).click();
     const swapped = await swapping;
     const swappedBody = await swapped.json();
     const swapCode = typeof swappedBody?.error?.code === "string" && /^[A-Z_]+$/.test(swappedBody.error.code) ? swappedBody.error.code : "UNCLASSIFIED";
@@ -400,8 +400,7 @@ test("nominal access owns its scope, preserves admin configuration, operates the
         await page.getByRole("button", { name: new RegExp(`^Pessoa autorizada, ${editable.date.split("-").reverse().join("/")}:`) }).click();
         const editor = page.locator("#escala-day-editor");
         await expect(editor.getByRole("checkbox", { name: "Preservar esta decisão nas próximas gerações", exact: true, includeHidden: true })).toHaveCount(0);
-        await editor.getByLabel("Situação do dia", { exact: true }).selectOption("OFF");
-        await editor.getByRole("button", { name: "Conferir alteração", exact: true }).click();
+        await editor.getByRole("button", { name: "Marcar folga", exact: true }).click();
         const saving = page.waitForResponse(response => response.request().method() === "POST"
           && new URL(response.url()).pathname === "/api/escalas" && response.request().postDataJSON()?.action === "SAVE"
           && response.request().postDataJSON()?.id === workspace.id);
@@ -629,6 +628,67 @@ test("nominal operator records and removes only an authorized draft's manual abs
     expect(saved.input.assignments).toContainEqual({ employeeId: "person", date: "2026-12-09", kind: "ABSENCE", locked: true });
   } finally {
     await context.close();
+    await scope.setMode("ADMIN_ONLY");
+  }
+});
+
+test("nominal operator saves independent fixed and rotating rests with the approved generation mode", async () => {
+  const scope = nominalScope();
+  const input = nominalInput("PERSONAL-REST");
+  input.policy.coverageReview = "CONFIRMED";
+  const approved = await scope.approve(input);
+  const workspace = scope.trackWorkspace(await responseWorkspace(await scope.post({
+    action: "CREATE_APPROVED", approvedPolicyVersionId: approved.id,
+  }), 201));
+  const operator = await scope.createOperator([{ branchCode: input.branchCode, active: true, capabilities: [...operationalCapabilities] }]);
+  const context = await scope.newContext("nominal-personal-rest");
+  try {
+    await scope.setMode("SCOPED");
+    const page = await context.newPage();
+    await nominalEntry(page, operator.username);
+    await selectEscalasWorkspace(page, workspace);
+    await openEscalasArea(page, "generate");
+    const generationModes = page.getByRole("group", { name: "O que gerar?", exact: true });
+    await expect(generationModes.getByRole("radio", { name: "Folgas e horários", exact: true })).toBeChecked();
+    for (const radio of await generationModes.getByRole("radio").all()) await expect(radio).toBeDisabled();
+    await expect(page.getByRole("button", { name: /^(Gerar nova proposta|Gerar escala e horários)$/ })).toBeEnabled();
+
+    const openEditor = async () => {
+      await openEscalasArea(page, "team");
+      const edit = page.getByRole("button", { name: "Editar Pessoa nominal", exact: true, includeHidden: true });
+      await revealEscalasControl(edit);
+      await edit.click();
+      return page.getByRole("form", { name: "Editar colaborador", exact: true });
+    };
+    const saveRest = async (form: ReturnType<Page["getByRole"]>) => {
+      const saving = page.waitForResponse(response => response.request().method() === "POST"
+        && new URL(response.url()).pathname === "/api/escalas" && response.request().postDataJSON()?.action === "SAVE");
+      await form.getByRole("button", { name: "Aplicar cadastro à proposta", exact: true }).click();
+      const response = await saving;
+      expect(response.status()).toBe(200);
+      return await response.json() as EscalaWorkspace;
+    };
+    const editor = await openEditor();
+    await editor.getByLabel("Primeira folga", { exact: true }).selectOption("1");
+    await editor.getByLabel("Segunda folga", { exact: true }).selectOption("3");
+    const fixed = await saveRest(editor);
+    expect(fixed).toMatchObject({ revision: workspace.revision + 1, approvedPolicyVersionId: approved.id, input: {
+      needsRegeneration: true, policy: { coverageReview: "CONFIRMED" }, assignments: workspace.input.assignments,
+      employees: [{ offMode: "FIXED", fixedOffDays: [1, 3] }],
+    } });
+
+    await page.reload();
+    await selectEscalasWorkspace(page, fixed);
+    const reopened = await openEditor();
+    await expect(reopened.getByLabel("Primeira folga", { exact: true })).toHaveValue("1");
+    await reopened.getByLabel("Primeira folga", { exact: true }).selectOption("variable");
+    const rotated = await saveRest(reopened);
+    expect(rotated).toMatchObject({ revision: fixed.revision + 1, approvedPolicyVersionId: approved.id, input: {
+      assignments: workspace.input.assignments, employees: [{ offMode: "MIXED", fixedOffDays: [3],
+        fixedRestSlots: [{ enabled: false, weekday: 1 }, { enabled: true, weekday: 3 }] }],
+    } });
+    expect((await readWorkspace(scope.admin, workspace.id)).input.employees).toEqual(rotated.input.employees);
+  } finally {
     await scope.setMode("ADMIN_ONLY");
   }
 });

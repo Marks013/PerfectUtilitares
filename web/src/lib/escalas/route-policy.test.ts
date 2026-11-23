@@ -154,6 +154,9 @@ describe("Escalas route authorization contract, before handler integration", () 
     expect(hasCapabilities(command("PUBLISH"), approver)).toBe(true);
     expect(hasCapabilities(command("PUBLISH"), approver, "02")).toBe(false);
     expect(hasCapabilities(command("PUBLISH"))).toBe(false);
+    expect(hasCapabilities(command("REOPEN_PUBLICATION"), approver)).toBe(true);
+    expect(hasCapabilities(command("REOPEN_PUBLICATION"), approver, "02")).toBe(false);
+    expect(hasCapabilities(command("REOPEN_PUBLICATION"))).toBe(false);
     expect(hasCapabilities({ route: root, method: "DELETE" }, approver)).toBe(false);
     expect(hasCapabilities({ route: root, method: "DELETE" }, administrator)).toBe(true);
   });
@@ -199,7 +202,7 @@ describe("closed inventory of the current route files and literal action schemas
 
   it("classifies every literal action of the two discriminated command schemas", () => {
     const expected = ["CREATE", "CREATE_APPROVED", "APPLY_PROPOSAL", "ADD_EMPLOYEE", "REMOVE_EMPLOYEE", "ADD_ABSENCE", "REMOVE_ABSENCE", "ADMIN_REBASE", "UPGRADE_CALENDAR",
-      "SAVE", "VALIDATE", "GENERATE", "START_GENERATION", "CANCEL_GENERATION", "GENERATION_STATUS", "PUBLISH"].sort();
+      "SAVE", "VALIDATE", "GENERATE", "START_GENERATION", "CANCEL_GENERATION", "GENERATION_STATUS", "PUBLISH", "REOPEN_PUBLICATION", "SYNC_WORKFORCE"].sort();
     expect(actions(source(""))).toEqual(expected);
     expect(actions(source("turnos"))).toEqual(["APPLY_SWAP", "PREVIEW_SWAP", "SYNC"]);
     for (const action of expected) expect(classifyEscalaRoute(command(action)).kind).toBe("resource");
@@ -211,6 +214,7 @@ describe("closed inventory of the current route files and literal action schemas
       ["", ["GET", "POST", "DELETE"], ["PATCH"]],
       ["access/session", ["GET", "POST", "DELETE"], ["PATCH"]],
       ["import", ["GET", "POST"], ["DELETE"]],
+      ["workforce", ["GET", "POST"], ["DELETE"]],
       ["turnos", ["GET", "POST"], ["PATCH", "DELETE"]],
       ["turnos/opcoes", ["GET"], ["POST", "PATCH", "DELETE"]],
       ["export", ["GET"], ["POST"]],

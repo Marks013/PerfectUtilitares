@@ -28,7 +28,7 @@ function render(options: { workspace?: EscalaWorkspace; dirty?: boolean; busy?: 
   const workspace = options.workspace ?? fixture();
   const publication = <Publication workspace={workspace} validation={workspace.validation}
     dirty={options.dirty ?? false} busy={options.busy ?? false} outdated={options.outdated ?? false}
-    onPublish={vi.fn()} candidatePending={options.candidatePending}
+    onPublish={vi.fn()} onReopen={vi.fn()} candidatePending={options.candidatePending}
     canUseCandidate={options.canUseCandidate} onUseCandidate={vi.fn()} />;
   return options.anonymous
     ? renderToStaticMarkup(<EscalaAccessProvider value={null}>{publication}</EscalaAccessProvider>)
@@ -73,12 +73,14 @@ describe("internal publication UI preserves permissions and explicit review", ()
     expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Publicar proposta<\/button>/);
   });
 
-  it("marks an already published revision as immutable for a second publication", () => {
+  it("offers an explicit confirmation to reopen a publication but never to edit it in place", () => {
     const workspace = fixture();
     workspace.status = "PUBLISHED";
     const area = approval(render({ workspace }));
-    expect(area).toContain("Revisão já publicada");
-    expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Revisão já publicada<\/button>/);
+    expect(area).toContain("Quero reabrir a revisão 4 da filial 08 como rascunho");
+    expect(area).toMatch(/<button[^>]*disabled=""[^>]*>Reabrir como rascunho<\/button>/);
+    expect(area).not.toContain(">Publicar proposta<");
+    expect(approval(render({ workspace, anonymous: true }))).not.toContain(">Reabrir como rascunho<");
   });
 
   it("explains a pending candidate is not the saved roster being exported", () => {
@@ -132,7 +134,7 @@ describe("publication accessibility guidance", () => {
     expect(approval(render({ workspace: unready }))).toContain("pendências da validação");
     const published = fixture();
     published.status = "PUBLISHED";
-    expect(approval(render({ workspace: published }))).toContain("Esta revisão já foi publicada.");
+    expect(approval(render({ workspace: published }))).toContain("Esta revisão publicada permanece congelada.");
   });
 
   it("does not present an empty roster or reference-only scenario as publishable", () => {

@@ -80,8 +80,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     await expect(anaCell).toContainText(/^T\d+/);
     const originalCode = await anaCell.locator("span").first().textContent();
     await anaCell.click();
-    await page.getByLabel("Situação do dia", { exact: true }).selectOption("OFF");
-    await page.getByRole("button", { name: "Conferir alteração", exact: true }).click();
+    await page.getByRole("button", { name: "Marcar folga", exact: true }).click();
     await expect(page.getByRole("region", { name: "Impacto da alteração", exact: true })).toContainText("0 presente(s), mínimo 1");
     await page.getByRole("button", { name: "Aplicar com conflitos ao rascunho", exact: true }).click();
     await expect(anaCell.locator("span").first()).toHaveText("F");
@@ -91,7 +90,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
 
     await anaCell.click();
-    await page.getByText("Trocar este dia com outro colaborador ou outra data", { exact: true }).click();
+    await page.getByText("Trocar com outro dia", { exact: true }).click();
     await page.getByLabel("Colaborador para a troca", { exact: true }).selectOption(bruno.id);
     await page.getByLabel("Data para a troca", { exact: true }).selectOption("2026-11-02");
     await page.getByRole("button", { name: "Conferir troca", exact: true }).click();

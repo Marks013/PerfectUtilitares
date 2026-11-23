@@ -67,6 +67,7 @@ test("revision confirmation, inactive panels, canonical identity and excluded-pe
     await expect(confirmation).toBeChecked();
 
     await page.getByRole("button", { name: /^Pessoa de verificação, 02\/11\/2026:/ }).click();
+    await page.getByText("Opções de edição", { exact: true }).click();
     await page.getByRole("checkbox", { name: "Preservar esta decisão nas próximas gerações", exact: true }).check();
     await page.getByRole("button", { name: "Conferir alteração", exact: true }).click();
     const saving = page.waitForResponse(response => response.url().endsWith("/api/escalas") && response.request().method() === "POST" && response.request().postDataJSON()?.action === "SAVE");

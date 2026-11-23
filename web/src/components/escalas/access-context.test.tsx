@@ -108,7 +108,8 @@ describe("branch-scoped display permissions", () => {
     const editor = contextMarkup(operator, <EmployeeEditor input={input} employee={employee} onSave={onSave} onCancel={vi.fn()} />);
     expect(editor).toContain("Dias de folga preferidos (não obrigatórios)");
     expect(editor).toContain("Nome completo");
-    expect(editor).toContain("A jornada e as regras são definidas pelo administrador");
+    expect(editor).toContain("Primeira folga");
+    expect(editor).toContain("Segunda folga");
     for (const administrativeField of ["Horário de trabalho", "Turnos autorizados", "Histórico anterior e continuidade"]) expect(editor).not.toContain(administrativeField);
     expect(onSave).not.toHaveBeenCalled();
     const day = contextMarkup(operator, <CellEditor input={input} employee={employee} date="2026-12-01" assignment={{ employeeId: employee.id, date: "2026-12-01", kind: "ABSENCE", locked: true }} canUnlock={false} onApply={vi.fn()} onCancel={vi.fn()} />);

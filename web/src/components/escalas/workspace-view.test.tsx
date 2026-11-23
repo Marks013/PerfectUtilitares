@@ -152,12 +152,14 @@ describe("Escalas practical accessibility and publication states", () => {
       employee={{ ...input.employees[0], ...(untimed ? { scheduleMode: "UNTIMED" as const, shiftIds: [] } : {}) }}
       date={input.startDate} input={input} canUnlock onApply={vi.fn()} onCancel={vi.fn()} /></EscalaAccessProvider>);
     const untimed = renderEditor(true);
-    expect(untimed).toContain('value="DUTY" selected=""');
-    expect(untimed).toContain("ENC — Sem horário fixo");
-    expect(untimed).not.toContain('value="WORK"');
+    expect(untimed).toContain("Marcar presença");
+    expect(untimed).toContain("Marcar folga");
+    expect(untimed).not.toContain("Definir horário");
     expect(untimed).not.toContain("Horário de trabalho neste dia");
     const timed = renderEditor(false);
-    expect(timed).not.toContain('value="DUTY"');
+    expect(timed).not.toContain("Marcar presença");
+    expect(timed).toContain("Marcar folga");
+    expect(timed).toContain("Definir horário");
     expect(timed).toContain("Horário de trabalho neste dia");
   });
 
@@ -231,7 +233,14 @@ describe("Escalas practical accessibility and publication states", () => {
         canUnlock={false} onApply={vi.fn()} onCancel={vi.fn()} />
     </EscalaAccessProvider>);
     expect(canEditBranchRosterDay(assignment)).toBe(locked === false);
-    expect(html.match(/<fieldset[^>]*>/)?.[0]?.includes("disabled")).toBe(locked !== false);
+    if (locked === false) {
+      expect(html).toContain("Marcar folga");
+      expect(html).toContain("Definir horário");
+    } else {
+      expect(html).toContain("Fechar consulta");
+      expect(html).not.toContain("Marcar folga");
+      expect(html).not.toContain("Definir horário");
+    }
   });
 
   it("uses the effective manual shift in the editor and validates both swap destinations", () => {
@@ -329,9 +338,9 @@ describe("Escalas practical accessibility and publication states", () => {
       html.lastIndexOf("Zélia"),
     );
     expect(html).toContain("Dia não processado");
-    expect(html).toContain(", bloqueado. Editar");
+    expect(html).toContain(", bloqueado. Consultar dia");
     expect(html).toContain("rolagem horizontal");
-    expect(html).toContain('aria-label="Ana, 01/10/2026: Folga, bloqueado. Editar"');
+    expect(html).toContain('aria-label="Ana, 01/10/2026: Folga, bloqueado. Consultar dia"');
     expect(html).toContain("As sugestões em massa consideram todos os colaboradores incluídos da filial");
     expect(html).not.toContain("Sugerir folgas");
   });

@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
   user: { findFirst: state.user }, escalaModuleAccessPolicy: { findUnique: state.policy },
   escalaBranchAccess: { findMany: state.grants },
   escalaWorkspace: { findFirst: state.workspace }, escalaRevision: { findUnique: state.revision },
+  escalaWorkforce: { findUnique: async () => null },
   shiftCatalogEntry: { findMany: state.catalog, count: state.count }, turnoExportManifest: { create: state.create, findFirst: state.read },
 } }));
 const rows = [

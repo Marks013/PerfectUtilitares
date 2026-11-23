@@ -5,6 +5,8 @@ import { allowedBranches, branchPermission, requireEscalaPermission, requireEsca
 import { createEscala, createEscalaApproved, addEscalaEmployee, removeEscalaEmployee, changeEscalaAbsence, rebaseEscalaApproval, validateEscalaOperational, deleteEscala, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
 import { isDate } from "@/lib/escalas/dates";
 import { validateEscala } from "@/lib/escalas/validation";
+import { reopenEscalaPublication } from "@/lib/escalas/reopen-publication";
+import { syncEscalaWorkforceDraft } from "@/lib/escalas/global-workforce-sync";
 import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGenerationOperation, generationOperationStatus } from "@/lib/escalas/solve-operations";
 import { escalaFailure, escalaJson } from "./http";
 
@@ -31,6 +33,8 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("CANCEL_GENERATION"), operationId: z.uuid() }).strict(),
   z.object({ action: z.literal("GENERATION_STATUS"), operationId: z.uuid() }).strict(),
   z.object({ action: z.literal("PUBLISH"), ...version }).strict(),
+  z.strictObject({ action: z.literal("REOPEN_PUBLICATION"), ...version }),
+  z.strictObject({ action: z.literal("SYNC_WORKFORCE"), ...version }),
 ]);
 
 export async function GET(request: Request) {
@@ -94,6 +98,8 @@ export async function POST(request: Request) {
         const current = await getEscala(actor, data.id);
         return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, current.input, true));
       }
+      case "REOPEN_PUBLICATION": return escalaJson(await reopenEscalaPublication(actor, data.id, data.expectedRevision));
+      case "SYNC_WORKFORCE": return escalaJson(await syncEscalaWorkforceDraft(actor, data.id, data.expectedRevision));
     }
   } catch (error) { return escalaFailure(error); }
 }

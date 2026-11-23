@@ -49,6 +49,17 @@ const snapshotSchema = z.strictObject({
   provenance: provenanceSchema,
 });
 export type EscalaApprovedPolicySnapshot = z.output<typeof snapshotSchema>;
+
+/** Personal rest choices do not change the approved clock of a model enrollment. */
+export function approvedShiftIdsForEmployee(snapshot: EscalaApprovedPolicySnapshot, person: EscalaEmployee): Set<string> {
+  const seed = snapshot.seed.employees.find(employee => employee.id === person.id);
+  if (seed) return new Set(seed.shiftIds);
+  return new Set(snapshot.regimeModels.filter(({ protectedFields }) => {
+    const { offMode: _mode, fixedOffDays: _days, ...clockRegime } = protectedFields;
+    return Object.entries(clockRegime).every(([key, value]) => canonicalJson(person[key as keyof EscalaEmployee]) === canonicalJson(value));
+  }).flatMap(model => model.protectedFields.shiftIds));
+}
+
 type EscalaApprovedRegimeModel = EscalaApprovedPolicySnapshot["regimeModels"][number];
 export type EscalaApprovedPolicyCandidate = Readonly<{
   tenantId: string; branchCode: string; startDate: string; endDate: string; visibleMonth: string | null;

@@ -49,7 +49,7 @@ export type EscalaOperationalCommand =
   | (EscalaAbsenceCommand & EscalaVersionTarget)
   | ({ action: "ADMIN_REBASE"; approvedPolicyVersionId: string } & EscalaVersionTarget)
   | ({ action: "VALIDATE" | "SAVE"; input: EscalaInput } & EscalaVersionTarget);
-export type EscalaWorkspaceAccessMetadata = { approvedPolicyVersionId: string | null };
+export type EscalaWorkspaceAccessMetadata = { approvedPolicyVersionId: string | null; approvedPolicyRevoked?: true };
 export type EscalaApprovedCreationMetadata = { teamSeed?: "LATEST_IMPORT" | "APPROVED_CONFIGURATION" };
 
 /** UI distinction only; the server independently authorizes definition and assignment. */

@@ -43,6 +43,30 @@ describe("administrative replacement boundary", () => {
     const p = preview(); p.canApply = false; p.blockers = [{ code: "SOURCE_PARTIAL", message: "Arquivo incompleto" }]; p.counts.blockers = 1;
     expect(validateImportPreview(p, command, workspace).canApply).toBe(false);
   });
+  it("verifies correction lines before accepting a preview that can be applied", () => {
+    const hole = { line: 3, name: "Nova pessoa", sector: "Loja", role: "Atendente", resolved: false };
+    const pending = preview(); pending.missingRegistrations = [hole];
+    pending.impact.people.removed = []; pending.counts.removedPeople = 0;
+    pending.canApply = false; pending.blockers = [{ code: "SOURCE_IDENTITY", line: 3, message: "Informe a matrícula." }]; pending.counts.blockers = 1;
+    expect(validateImportPreview(pending, command, workspace).missingRegistrations).toEqual([hole]);
+    expect(() => validateImportPreview({ ...pending, missingRegistrations: [hole, hole] }, command, workspace)).toThrow();
+    expect(() => validateImportPreview({ ...pending, impact: preview().impact, counts: { ...pending.counts, removedPeople: 1 } }, command, workspace)).toThrow();
+    const resolved = preview(); resolved.missingRegistrations = [{ ...hole, resolved: true }];
+    expect(() => validateImportPreview(resolved, command, workspace)).toThrow();
+    expect(() => validateImportPreview(resolved, { ...command, registrationCorrections: [{ line: 9, registration: "0008" }] }, workspace)).toThrow();
+    expect(validateImportPreview(resolved, { ...command, registrationCorrections: [{ line: 3, registration: "0008" }] }, workspace).canApply).toBe(true);
+  });
+  it("accepts identical preview but rejects no-change status when the preview has changes", () => {
+    const identical = preview(); identical.canApply = false; identical.effect.noChanges = true;
+    expect(() => validateImportPreview(identical, command, workspace)).toThrow();
+    identical.impact.people.added = []; identical.impact.people.removed = [];
+    identical.counts.addedPeople = 0; identical.counts.removedPeople = 0;
+    identical.effect.approvedPolicyVersionIdAfter = identical.effect.approvedPolicyVersionIdBefore;
+    identical.effect.approvalInvalidated = false;
+    expect(validateImportPreview(identical, command, workspace).effect.noChanges).toBe(true);
+    const apply: ImportSyncCommand = { ...command, action: "APPLY_REPLACE", completeScopeConfirmed: true, confirm: true, expectedImpactHash: identical.expectedImpactHash };
+    expect(() => validateImportPreview(identical, apply, workspace)).toThrow();
+  });
   it("never enables a zero-result removal batch or another source scope", () => {
     const p = preview(); p.impact.people.added = []; p.counts.addedPeople = 0;
     expect(() => validateImportPreview(p, command, workspace)).toThrow();
@@ -55,6 +79,20 @@ describe("administrative replacement boundary", () => {
     expect(await requestImportReplacement(file, command, workspace, new AbortController().signal)).toEqual({ preview: p });
     p.fileHash = "0".repeat(64);
     await expect(requestImportReplacement(file, command, workspace, new AbortController().signal)).rejects.toThrow();
+  });
+  it("sends supplied registration as text with the original file bytes", async () => {
+    const p = preview();
+    p.fileHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), b => b.toString(16).padStart(2, "0")).join("");
+    p.missingRegistrations = [{ line: 3, name: "Nova pessoa", sector: "Loja", role: "Atendente", resolved: true }];
+    const corrected: ImportSyncCommand = { ...command, registrationCorrections: [{ line: 3, registration: "0008" }] };
+    const fetcher = vi.fn(async (_url, init) => {
+      const form = init.body as FormData;
+      expect(JSON.parse(form.get("command") as string)).toEqual(corrected);
+      expect(await (form.get("file") as File).text()).toBe(await file.text());
+      return Response.json({ preview: p });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    expect(await requestImportReplacement(file, corrected, workspace, new AbortController().signal)).toEqual({ preview: p });
   });
   it("rejects a missing payload and caps uploads at 512 KiB before reaching fetch", async () => {
     const fetcher = vi.fn(async () => Response.json({}, { status: 409 }));

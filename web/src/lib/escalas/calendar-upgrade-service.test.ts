@@ -59,8 +59,9 @@ vi.mock("@/lib/prisma", () => {
         ? { ...where, status: "ACTIVE", role: "ADMIN", securityVersion: 1 } : null) },
   };
   const tables = { ...access, escalaWorkspace: workspace, escalaRevision: revision, auditLog: { create: db.audits } };
-  const tx = { ...tables, $executeRaw: vi.fn(async () => 1), $queryRaw: vi.fn(async () => []) };
-  return { prisma: { ...tables, $transaction: async (callback: (connection: typeof tx) => unknown) => callback(tx) } };
+  const workforce = { escalaWorkforce: { findUnique: async () => null } };
+  const tx = { ...tables, ...workforce, $executeRaw: vi.fn(async () => 1), $queryRaw: vi.fn(async () => []) };
+  return { prisma: { ...tables, ...workforce, $transaction: async (callback: (connection: typeof tx) => unknown) => callback(tx) } };
 });
 
 const actor = { userId: "synthetic-user", tenantId: "synthetic-company", admin: true, accountSessionId: "synthetic-session" };

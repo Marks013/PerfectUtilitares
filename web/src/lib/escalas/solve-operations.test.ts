@@ -13,6 +13,7 @@ vi.mock("@/lib/prisma", () => {
   const db = {
     escalaSolveOperation: mocks,
     escalaWorkspace: { findFirst: authorization.workspace },
+    escalaWorkforce: { findUnique: async () => null },
     escalaBranchAccess: { findUnique: authorization.branch, findMany: authorization.grants },
     escalaRevision: { findUnique: authorization.revision },
     escalaBranchPolicyVersion: { findFirst: authorization.approval },
@@ -83,7 +84,7 @@ beforeEach(() => {
   mocks.cancel.mockResolvedValue("CANCELLED"); mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" } });
 });
 
-async function completionAuthorization() {
+function approvedGenerationFixture() {
   const value = newInput("02", "Synthetic completion", "2026-11", 42);
   value.startDate = "2026-11-02"; value.endDate = "2026-11-08"; delete value.visibleMonth;
   value.planningWeekStartsOn = "MONDAY";
@@ -96,9 +97,20 @@ async function completionAuthorization() {
     selectedSeedAssignments: [], regimeModelSelections: [{ id: "model", label: "Approved", employeeId: "e1" }] });
   if (!built.ok) throw new Error("Invalid completion approval fixture");
   const approval = { ...built.value, id: "approval", approvedAt: new Date(built.value.approvedAt), revokedAt: null as Date | null };
+  authorization.approval.mockImplementation(async ({ where }) => where.tenantId === "t1" && where.id === approval.id ? { ...approval } : null);
+  return { approval, value };
+}
+
+function authorizeStartGeneration(canEdit = true) {
+  const { approval, value } = approvedGenerationFixture();
+  mocks.get.mockResolvedValue({ id: "w1", revision: 1, status: "DRAFT", canEdit, approvedPolicyVersionId: approval.id, input: value });
+  return approval;
+}
+
+async function completionAuthorization() {
+  const { approval, value } = approvedGenerationFixture();
   const session = await authorization.session();
   authorization.session.mockImplementation(async () => structuredClone(session));
-  authorization.approval.mockImplementation(async ({ where }) => where.tenantId === "t1" && where.id === approval.id ? { ...approval } : null);
   let revision = 1;
   authorization.workspace.mockImplementation(async ({ where }) => where.id === "w1" && where.tenantId === "t1"
     ? { id: "w1", tenantId: "t1", branchCode: "02", branchName: value.branchName, startDate: value.startDate, endDate: value.endDate,
@@ -182,11 +194,17 @@ describe("generation operation ownership and atomic lifecycle", () => {
     expect(mocks.updateMany.mock.calls.every(([args]) => !JSON.stringify(args.data).includes("synthetic"))).toBe(true);
     expect(row.state).toBe("COMPLETED");
   });
+  it("does not reserve a generation slot for a published workspace", async () => {
+    mocks.get.mockResolvedValue({ id: "w1", revision: 1, status: "PUBLISHED", input: { branchCode: "02" } });
+    await expect(startGenerationOperation(actor, "owner", "w1", 1)).rejects.toMatchObject({ code: "ESCALA_REOPEN_REQUIRED" });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
   it.each(["complete", "cancel"] as const)("allows generation-only access to start and %s its operation without SAVE", async action => {
     const session = await authorization.session();
     session.operator.branchGrants[0].capabilities = ["workspace.read", "schedule.generate"];
     authorization.session.mockImplementation(async () => structuredClone(session));
-    mocks.get.mockResolvedValue({ id: "w1", revision: 1, canEdit: false, input: { branchCode: "02" } });
+    authorizeStartGeneration(false);
     for (const capability of ["workspace.save", "schedule.apply"] as const) {
       await expect(requireEscalaCapability(actor, capability, "02")).rejects.toMatchObject({ status: 403, code: "ESCALA_ACTION_FORBIDDEN" });
     }
@@ -270,6 +288,7 @@ describe("generation operation ownership and atomic lifecycle", () => {
   });
 
   it("cleans only its owner's expired operations and cannot query or cancel another owner's row", async () => {
+    authorizeStartGeneration();
     const old = new Date(Date.now() - 2 * 86_400_000);
     const foreignId = "b5986455-f36b-440e-b1be-015ab98ab028";
     const rows: Row[] = [
@@ -370,11 +389,27 @@ describe("generation operation ownership and atomic lifecycle", () => {
     expect(mocks.updateMany).not.toHaveBeenCalled();
   });
   it("creates only metadata for the selected revision", async () => {
+    authorizeStartGeneration();
     expect(await startGenerationOperation(actor, "owner", "w1", 1)).toMatchObject({ operationId, state: "CREATED" });
     expect(mocks.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tenantId: "t1", workspaceId: "w1", ownerKey: "owner", expectedRevision: 1 }) });
     expect(JSON.stringify(mocks.create.mock.calls)).not.toContain("private-capability");
     mocks.get.mockResolvedValue({ revision: 2, canEdit: true, input: { branchCode: "02" } });
     await expect(startGenerationOperation(actor, "owner", "w1", 1)).rejects.toMatchObject({ status: 409 });
+  });
+  it("does not check or reserve a slot when approval is revoked while waiting for the access lock", async () => {
+    const approval = authorizeStartGeneration();
+    const boundary = pauseAtBoundary();
+    authorization.lock.mockImplementationOnce(boundary.wait);
+    const rejection = expect(startGenerationOperation(actor, "owner", "w1", 1)).rejects.toMatchObject({
+      status: 409, code: "ESCALA_CONFIG_REVOKED",
+    });
+    await boundary.reached;
+    expect(authorization.approval).not.toHaveBeenCalled();
+    approval.revokedAt = new Date();
+    boundary.release();
+    await rejection;
+    expect(mocks.count).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
   });
   it("rejects another tenant, session or revision without invoking the solver", async () => {
     await expect(cancelGenerationOperation(actor, "another-session", operationId)).rejects.toMatchObject({ status: 404 });

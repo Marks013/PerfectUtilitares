@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getEscala } from "../service";
 import { requireEscalaCapability, type EscalaActor } from "../access";
 import { loadEscalaApproval } from "../approved-policy-service";
+import { approvedShiftIdsForEmployee } from "../approved-policy";
 import { stableEscalaJson } from "../operational-input-policy";
 import { EscalaError } from "../errors";
 import { canAssignCatalogShift } from "./reference-choices";
@@ -24,11 +25,7 @@ async function eligibleContext(actor: EscalaActor, request: TurnoCatalogOptionsR
   if (!actor.admin) {
     if (!workspace.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Solicite a aprovação administrativa deste período.");
     const approval = await loadEscalaApproval(actor, workspace.approvedPolicyVersionId, undefined, workspace.input);
-    // Keep the same approved seed/model eligibility used by PREVIEW_SWAP.
-    const ids = new Set(approval.snapshot.seed.employees.find(person => person.id === employee.id)?.shiftIds
-      ?? approval.snapshot.regimeModels.filter(model => model.protectedFields.sector === employee.sector
-        && Object.entries(model.protectedFields).every(([key, value]) => stableEscalaJson(employee[key as keyof typeof employee]) === stableEscalaJson(value)))
-        .flatMap(model => model.protectedFields.shiftIds));
+    const ids = approvedShiftIdsForEmployee(approval.snapshot, employee);
     permitted = new Set(approval.snapshot.seed.shifts.flatMap(shift => {
       const result = markingsFromShift(shift);
       return ids.has(shift.id) && result.ok ? [markingKey(result.markings)] : [];

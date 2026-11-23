@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listTurnoCatalogOptions } from "@/lib/escalas/shift-catalog/catalog-options";
 import { buildEscalaApprovedPolicy } from "@/lib/escalas/approved-policy";
+import { withFixedRestSlots } from "@/lib/escalas/fixed-rest";
 import { escalaInputSchema } from "@/lib/escalas/schema";
 import type { EscalaInput } from "@/lib/escalas/types";
 import { GET, POST } from "./route";
@@ -11,6 +12,7 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/escalas/access.server", () => ({ requireEscalaAccess: state.guard }));
 vi.mock("@/lib/api/security", async original => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: state.limit }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: { findFirst: state.workspace }, escalaRevision: { findUnique: state.revision },
+  escalaWorkforce: { findUnique: async () => null },
   escalaModuleAccessPolicy: { findUnique: state.policy }, escalaModuleSession: { findFirst: state.session }, user: { findFirst: state.user },
   escalaBranchPolicyVersion: { findFirst: state.approval }, shiftCatalogEntry: { findMany: state.catalog } } }));
 function fixture(): EscalaInput {
@@ -48,6 +50,25 @@ describe("contextual catalog options with real access and services", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(state.catalog).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "t", code: { gt: 0 }, OR: [{ firstIn: 480, firstOut: 720, secondIn: 780, secondOut: 1020 }] } }));
     expect(POST().status).toBe(405);
+  });
+
+  it("keeps approved options after a model enrollment changes personal rests", async () => {
+    const revision = await state.revision();
+    const employee = withFixedRestSlots({ ...revision.input.employees[0], id: "enrolled" },
+      [{ weekday: 1, enabled: true }, { weekday: 3, enabled: false }]);
+    revision.input.employees = [employee];
+    state.catalog.mockResolvedValue([
+      { code: 1500, firstIn: 480, firstOut: 720, secondIn: 780, secondOut: 1020 },
+      { code: 1501, firstIn: 420, firstOut: 660, secondIn: 0, secondOut: 0 },
+    ]);
+    const enrolledRequest = () => new Request(request().url.replace("employeeId=e1", "employeeId=enrolled"));
+    const response = await GET(enrolledRequest());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ entries: [{ code: 1500 }] });
+    employee.weeklyHours = 42;
+    const withoutModel = await GET(enrolledRequest());
+    expect(withoutModel.status).toBe(200);
+    expect(await withoutModel.json()).toMatchObject({ entries: [] });
   });
   it("returns only approved options for a legacy controlled shift without a persisted schedule mode", async () => {
     const revision = await state.revision();

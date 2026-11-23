@@ -7,17 +7,24 @@ export const isImportSyncFileSizeAllowed = (bytes: number) => bytes > 0 && bytes
 
 const id = z.string().min(1).max(100).regex(/^[\p{L}\p{N}_.:-]+$/u);
 const date = z.string().refine(isDate, "Informe uma data real no formato AAAA-MM-DD.");
+const registrationCorrections = z.array(z.strictObject({
+  line: z.number().int().min(2).max(maxFileBytes + 1),
+  registration: z.string().trim().min(1).max(60).refine(value => !/[\p{Cc}]/u.test(value)),
+})).max(250).refine(rows => new Set(rows.map(row => row.line)).size === rows.length, "Informe somente uma matrícula por linha.");
 const common = {
   purpose: z.enum(["EMPLOYEES", "ABSENCES"]), workspaceId: id,
   expectedRevision: z.coerce.number().int().min(1).max(2_000_000_000),
   startDate: date, endDate: date,
+  registrationCorrections: registrationCorrections.optional(),
 };
 export const importSyncCommandSchema = z.discriminatedUnion("action", [
   z.strictObject({ ...common, action: z.literal("PREVIEW_REPLACE"), completeScopeConfirmed: z.boolean().default(false) }),
   z.strictObject({ ...common, action: z.literal("APPLY_REPLACE"), completeScopeConfirmed: z.literal(true), confirm: z.literal(true),
     expectedImpactHash: z.string().regex(/^[a-f0-9]{64}$/) }),
 ]).refine(value => value.startDate <= value.endDate && Date.parse(value.endDate) - Date.parse(value.startDate) <= 41 * 86_400_000,
-  "Confira o intervalo de até 42 dias.");
+  "Confira o intervalo de até 42 dias.")
+  .refine(value => value.purpose === "EMPLOYEES" || value.registrationCorrections === undefined,
+    "A correção de matrículas é exclusiva da substituição de equipe.");
 export type ImportSyncCommand = z.infer<typeof importSyncCommandSchema>;
 export type ImportSyncPurpose = ImportSyncCommand["purpose"];
 export type ImportSyncPreviewCommand = Extract<ImportSyncCommand, { action: "PREVIEW_REPLACE" }>;
@@ -32,6 +39,7 @@ export type ImportSyncProblem = { code: ImportSyncBlockerCode; message: string; 
 type ImportSyncWarning = { code: "SOURCE_WARNING" | "NUMERIC_REGISTRATION_MATCH" | "UNKNOWN_BINDING" | "OUTSIDE_SCOPE";
   message: string; line?: number; employeeId?: string };
 export type ImportSyncPersonChange = { id: string; registration: string; name: string; fields: string[] };
+export type ImportSyncMissingRegistration = { line: number; name: string; sector: string; role: string; resolved: boolean };
 type ImportSyncAbsenceDay = { employeeId: string; registration: string; date: string };
 type ImportSyncAssignmentChange = { employeeId: string; registration: string; date: string;
   previousKind: EscalaAssignment["kind"] | null; nextKind: EscalaAssignment["kind"] | null;
@@ -51,10 +59,11 @@ export type ImportSyncPreview = {
   coverage: { completeScopeConfirmed: boolean; sourcePeriod: { startDate: string; endDate: string } | null;
     basis: "ADMIN_DECLARATION" | "REPORT_PERIOD_AND_ADMIN_DECLARATION" };
   fileHash: string; expectedImpactHash: string; canApply: boolean;
+  missingRegistrations?: ImportSyncMissingRegistration[];
   impact: ImportSyncImpact; blockers: ImportSyncProblem[]; warnings: ImportSyncWarning[];
   counts: { addedPeople: number; updatedPeople: number; removedPeople: number; unchangedPeople: number;
     addedAbsenceDays: number; removedAbsenceDays: number; unchangedAbsenceDays: number; assignmentChanges: number; blockers: number };
-  effect: { nextStatus: "DRAFT"; needsRegeneration: boolean; approvalInvalidated: boolean;
+  effect: { nextStatus: "DRAFT"; needsRegeneration: boolean; approvalInvalidated: boolean; noChanges?: true;
     approvedPolicyVersionIdBefore: string | null; approvedPolicyVersionIdAfter: string | null };
 };
 export type ImportSyncPreviewResult = { preview: ImportSyncPreview };

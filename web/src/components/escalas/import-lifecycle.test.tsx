@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Fragment, isValidElement, type ReactElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { ImportSyncCommand, ImportSyncPreview, ImportSyncPurpose } from "@/lib/escalas/import-sync-contracts";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
@@ -62,7 +63,7 @@ type ControlProps = {
   type?: string;
   disabled?: boolean;
   onClick?: () => void;
-  onChange?: (event: { target: { files?: File[]; checked?: boolean } }) => void;
+  onChange?: (event: { target: { files?: File[]; checked?: boolean; value?: string } }) => void;
 };
 let props: ImportReplacementProps, component: typeof ImportEmployees | typeof AbsenceImport, tree: ReactNode;
 let parent: ReturnType<typeof createHooks>, child: ReturnType<typeof createHooks> | undefined, childKey: ReactElement["key"];
@@ -289,22 +290,149 @@ describe.each([
     }));
     await click(checkPreview());
     expect(replace.mock.calls[1][1]).toMatchObject({ expectedRevision: 5, action: "PREVIEW_REPLACE" });
-    expect(text(tree)).toContain("O dia bloqueado foi preservado.");
+    expect(renderToStaticMarkup(tree)).toContain("O dia bloqueado foi preservado.");
     expect(apply()?.disabled).toBe(true);
     expect(props.workspace.input.assignments[0]).toMatchObject({ date, kind: "OFF", locked: true });
   });
 });
 
 describe("replacement request feedback", () => {
+  it("asks for missing registration and sends only the reviewed text on confirmation", async () => {
+    const missing = { line: 3, name: "Pessoa nova", sector: "Loja", role: "Atendente" };
+    const replace = replaceWith(async (_file, command) => {
+      const corrected = Boolean(command.registrationCorrections?.length);
+      const result = preview(props.workspace, command, corrected ? [] : [{ code: "SOURCE_IDENTITY", line: 3, message: "Informe a matrícula." }]);
+      result.layout = "FPRE136";
+      result.missingRegistrations = [{ ...missing, resolved: corrected }];
+      result.expectedImpactHash = (corrected ? command.registrationCorrections?.[0]?.registration === "0007" ? "7" : "8" : "0").repeat(64);
+      return command.action === "PREVIEW_REPLACE" ? { preview: result } : { summary: result, workspace: { ...props.workspace, revision: command.expectedRevision + 1 } };
+    });
+    await select();
+    await click(checkPreview());
+    expect(renderToStaticMarkup(tree)).toContain("Matrícula — Pessoa nova (linha 3)");
+    expect(renderToStaticMarkup(tree)).toContain("mantenha o mesmo número, mesmo que tenha mudado de filial");
+    expect(renderToStaticMarkup(tree)).toContain("Nenhuma matrícula será deduzida pelo nome.");
+    expect(apply()?.disabled).toBe(true);
+    expect(replace.mock.calls[0][1]).not.toHaveProperty("registrationCorrections");
+    control("text")({ target: { value: "0007" } });
+    await settle();
+    expect(apply()).toBeUndefined();
+    await click(checkPreview());
+    expect(replace.mock.calls[1][1]).toMatchObject({ action: "PREVIEW_REPLACE", registrationCorrections: [{ line: 3, registration: "0007" }] });
+    control("checkbox", 1)({ target: { checked: true } });
+    await settle();
+    expect(apply()?.disabled).toBe(false);
+
+    control("text")({ target: { value: "0008" } });
+    await settle();
+    expect(apply()).toBeUndefined();
+    await click(checkPreview());
+    expect(apply()?.disabled).toBe(true);
+    control("checkbox", 1)({ target: { checked: true } });
+    await settle();
+    await click(apply());
+    expect(replace.mock.calls[3][1]).toMatchObject({ action: "APPLY_REPLACE", expectedImpactHash: "8".repeat(64), registrationCorrections: [{ line: 3, registration: "0008" }] });
+  });
+
+  it("does not carry a registration correction across a file or saved revision change", async () => {
+    const replace = replaceWith(async (_file, command) => {
+      const result = preview(props.workspace, command, [{ code: "SOURCE_IDENTITY", line: 3, message: "Informe a matrícula." }]);
+      result.missingRegistrations = [{ line: 3, name: "Pessoa nova", sector: "Loja", role: "Atendente", resolved: false }];
+      return { preview: result };
+    });
+    await select();
+    await click(checkPreview());
+    control("text")({ target: { value: "0007" } });
+    await settle();
+    await select(new File(["changed source"], "other.csv", { type: "text/csv" }));
+    expect(text(tree)).not.toContain("Matrículas ausentes no arquivo");
+    await click(checkPreview());
+    expect(replace.mock.calls[1][1]).not.toHaveProperty("registrationCorrections");
+    control("text")({ target: { value: "0008" } });
+    await settle();
+    await setWorkspace({ ...props.workspace, revision: 5 });
+    expect(text(tree)).not.toContain("Matrículas ausentes no arquivo");
+    await click(checkPreview());
+    expect(replace.mock.calls[2][1]).not.toHaveProperty("registrationCorrections");
+  });
+
+  it("reports identical team without offering to save a revision", async () => {
+    const replace = replaceWith(async (_file, command) => {
+      const result = preview(props.workspace, command);
+      result.canApply = false; result.effect.noChanges = true;
+      result.impact.people.added = []; result.counts.addedPeople = 0;
+      result.impact.people.unchanged = [{ id: "existing", registration: "0001", name: "Pessoa existente", fields: [] }]; result.counts.unchangedPeople = 1;
+      return { preview: result };
+    });
+    await select();
+    await click(checkPreview());
+    expect(text(tree)).toContain("Nenhuma alteração na equipe. O planejamento e a revisão atual foram mantidos.");
+    expect(text(tree)).not.toContain("Será salva uma nova revisão");
+    expect(apply()).toBeUndefined();
+    expect(replace).toHaveBeenCalledOnce();
+  });
+
   it("disables apply for a rejected source and reports why", async () => {
     const replace = replaceWith(async (_file, command) => ({
       preview: preview(props.workspace, command, [{ code: "SOURCE_INVALID", message: "Formato de arquivo inválido." }]),
     }));
     await select(new File(["invalid"], "invalid.csv"));
     await click(checkPreview());
-    expect(text(tree)).toContain("Formato de arquivo inválido.");
+    expect(renderToStaticMarkup(tree)).toContain("Formato de arquivo inválido.");
     expect(apply()?.disabled).toBe(true);
     expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("separates distinct FPHI105 blockers and warnings while preserving their locations", async () => {
+    component = AbsenceImport;
+    const lock = { code: "PROTECTED_ASSIGNMENT", message: "Afastamento em atribuição protegida.", employeeId: "existing", date: "2026-12-03" } as const;
+    replaceWith(async (_file, command) => {
+      const result = preview(props.workspace, command, [lock, lock, { ...lock, date: "2026-12-04" }]);
+      const admission = { code: "UNKNOWN_BINDING", message: "Admissão desconhecida.", employeeId: "existing" } as const;
+      const source = { code: "SOURCE_WARNING", message: "Confira o dado na origem.", line: 14 } as const;
+      result.warnings.push(admission, admission, source, { ...source, line: 17 });
+      return { preview: result };
+    });
+    await select();
+    await click(checkPreview());
+    const html = renderToStaticMarkup(tree);
+    expect(html.match(/Afastamento em atribuição protegida\./g)).toHaveLength(1);
+    expect(html).toContain("1 motivo bloqueante");
+    expect(html).toContain("03/12/2026 a 04/12/2026");
+    expect(html).toContain("Avisos que não bloqueiam");
+    expect(html).toContain("2 tipos de aviso");
+    expect(html.match(/Admissão desconhecida\./g)).toHaveLength(1);
+    expect(html.match(/Confira o dado na origem\./g)).toHaveLength(1);
+    expect(html).toContain("Linha 14");
+    expect(html).toContain("Linha 17");
+    expect(html).toContain("2 ocorrências");
+    expect(apply()?.disabled).toBe(true);
+  });
+
+  it("shows FPRE136 departures openly and applies them only after explicit confirmation", async () => {
+    const removed = { id: "existing", registration: "0001", name: "Pessoa sintética", fields: [] };
+    const replace = replaceWith(async (_file, command) => {
+      const result = preview(props.workspace, command);
+      result.layout = "FPRE136";
+      result.impact.people.removed = [removed];
+      result.counts.removedPeople = 1;
+      result.warnings = [{ code: "UNKNOWN_BINDING", message: "Admissão desconhecida.", employeeId: "new-person" }];
+      return command.action === "PREVIEW_REPLACE" ? { preview: result } : { summary: result, workspace: { ...props.workspace, revision: command.expectedRevision + 1 } };
+    });
+    await select();
+    await click(checkPreview());
+    const html = renderToStaticMarkup(tree);
+    expect(html).toMatch(/<details[^>]*open=""[^>]*><summary[^>]*>Pessoas retiradas \(1\)/);
+    expect(html).toContain("Estas pessoas não constam no arquivo.");
+    expect(html).toContain("Isso não registra uma demissão nem define uma data de desligamento.");
+    expect(html).toContain("Pessoa sintética");
+    expect(html).not.toContain('role="alert"');
+    expect(apply()?.disabled).toBe(true);
+    expect(replace).toHaveBeenCalledTimes(1);
+    control("checkbox", 1)({ target: { checked: true } });
+    await settle();
+    await click(apply());
+    expect(replace.mock.calls[1][1]).toMatchObject({ action: "APPLY_REPLACE", confirm: true, expectedImpactHash: "1".repeat(64) });
   });
 
   it("clears a ready review on save gating and changes to the period", async () => {

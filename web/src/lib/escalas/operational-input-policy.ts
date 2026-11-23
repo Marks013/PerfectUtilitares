@@ -51,7 +51,7 @@ export function assertEscalaProtectedAssignments(previous: EscalaInput, next: Es
   }
 }
 
-/** Compare structurally parsed RAW values, before override materialization or scenario preparation. */
+/** Compare parsed raw input. Returns whether personal rest edits require a transactional grant check. */
 export function assertEscalaOperationalInput(previous: EscalaInput, next: EscalaInput,
   capabilities: readonly EscalaCapability[], trustedProposal = false, catalogIntent = false, allowExplicitUnlock = false) {
   const has = (capability: EscalaCapability) => capabilities.includes(capability);
@@ -61,19 +61,25 @@ export function assertEscalaOperationalInput(previous: EscalaInput, next: Escala
     if (!catalogIntent || !has("shift.manage") || !has("workspace.save")
       || !onlyUpdatesUnlockedWorkShifts(previous.assignments, next.assignments)) forbidden();
   }
-  if (trustedProposal) return;
+  if (trustedProposal) return false;
   const rootExceptions = new Set(["employees", "assignments", ...(catalogIntent ? ["shifts"] : [])]);
   for (const field of new Set([...Object.keys(previous), ...Object.keys(next)])) {
     if (!rootExceptions.has(field) && !same(previous[field as keyof EscalaInput], next[field as keyof EscalaInput])) forbidden();
   }
   if (previous.employees.length !== next.employees.length) forbidden();
   const oldById = new Map(previous.employees.map(person => [person.id, person]));
+  let fixedRestChanged = false;
   for (const person of next.employees) {
     const old = oldById.get(person.id);
     if (!old) forbidden();
     for (const field of new Set([...Object.keys(old ?? {}), ...Object.keys(person)])) {
       if (same(old?.[field as keyof typeof person], person[field as keyof typeof person])) continue;
       if ((field === "name" || field === "preferredOffDays") && has("employee.manage")) continue;
+      if ((field === "offMode" || field === "fixedOffDays" || field === "fixedRestSlots")
+        && previous.generationMode !== "HOURS_ONLY" && has("employee.manage")) {
+        fixedRestChanged = true;
+        continue;
+      }
       if (catalogIntent && has("shift.manage") && ["manualShiftOverrides", "manualShiftBaseIds", "manualShiftByDate", "shiftIds"].includes(field)) continue;
       forbidden();
     }
@@ -85,4 +91,5 @@ export function assertEscalaOperationalInput(previous: EscalaInput, next: Escala
     if (!person || !(person.shiftIds.includes(assignment.shiftId ?? "")
       || person.manualShiftByDate?.[assignment.date] === assignment.shiftId)) forbidden();
   }
+  return fixedRestChanged;
 }

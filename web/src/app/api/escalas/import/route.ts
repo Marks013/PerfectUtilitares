@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   if (body.data.has("command")) {
     for (const name of body.data.keys()) if (!["file", "command"].includes(name) || body.data.getAll(name).length !== 1) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Envie somente um comando e um arquivo para confirmar a substituição.");
     const encoded = body.data.get("command");
-    if (typeof encoded !== "string" || encoded.length > 8192) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Informe um comando de substituição válido.");
+    if (typeof encoded !== "string" || encoded.length > 48 * 1024) return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Informe um comando de substituição válido.");
     let metadata: unknown;
     try { metadata = JSON.parse(encoded); }
     catch { return jsonError(400, "ESCALA_IMPORT_OPTIONS", "Não foi possível ler o comando de substituição."); }

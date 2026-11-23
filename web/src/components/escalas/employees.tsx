@@ -18,9 +18,11 @@ import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } fro
 import { addDate, displayDate, HOURS, newEmployee, replaceAssignment, WEEKDAYS } from "./workspace-model";
 
 function DayChoices({ values, change, label }: { values: number[]; change: (days: number[]) => void; label: string }) {
+  const hint = useId();
   return (
-    <fieldset className="min-w-0">
+    <fieldset className="min-w-0" aria-describedby={hint}>
       <legend className="text-sm font-semibold">{label}</legend>
+      <p id={hint} className={styles.fieldHint}>Marque os dias preferidos para as próximas escalas. Para mudar uma folga já marcada, abra a grade.</p>
       <div className="flex flex-wrap gap-x-4">
         {WEEKDAYS.map((day, index) => (
           <Check
@@ -147,11 +149,13 @@ function HistoryEditor({
 export function EmployeeEditor({
   employee,
   input,
+  managedTeam = false,
   onSave,
   onCancel,
 }: {
   employee: EscalaEmployee;
   input: EscalaInput;
+  managedTeam?: boolean;
   onSave: (employee: EscalaEmployee) => void;
   onCancel: () => void;
 }) {
@@ -184,6 +188,7 @@ export function EmployeeEditor({
   if (!canManage) return null;
   if (!administrative) {
     if (!existing) return null;
+    const canEditRests = input.generationMode !== "HOURS_ONLY";
     return (
       <form id="escala-employee-editor" tabIndex={-1} aria-labelledby="escala-employee-editor-title"
         className={panelClass} onSubmit={(event) => {
@@ -195,21 +200,26 @@ export function EmployeeEditor({
             onSave({
               ...existing,
               name,
-              ...(input.generationMode === "HOURS_ONLY" ? {} : { preferredOffDays: draft.preferredOffDays }),
+              ...(canEditRests ? {
+                preferredOffDays: draft.preferredOffDays,
+                offMode: draft.offMode,
+                fixedOffDays: draft.fixedOffDays,
+                fixedRestSlots: draft.fixedRestSlots,
+              } : {}),
             });
           } catch (cause) {
             setError(cause instanceof Error ? cause.message : "Não foi possível aplicar o cadastro. Confira os dados e tente novamente.");
           }
         }}>
         <h3 id="escala-employee-editor-title" className="font-semibold">Editar colaborador</h3>
-        <p className={styles.muted}>Matrícula {existing.registration} · {existing.sector} · {existing.role}. A jornada e as regras são definidas pelo administrador.</p>
-        <Field label="Nome completo">
+        <p className={styles.muted}>Matrícula {existing.registration} · {existing.sector} · {existing.role}</p>
+        {!managedTeam && <Field label="Nome completo">
           {(id, accessibility) => <input id={id} {...accessibility} className={controlClass} required maxLength={160}
             value={draft.name} onChange={(event) => change("name", event.target.value)} />}
-        </Field>
-        {input.generationMode !== "HOURS_ONLY" && <DayChoices
-          label="Dias de folga preferidos (não obrigatórios)" values={draft.preferredOffDays}
-          change={(days) => change("preferredOffDays", days)} />}
+        </Field>}
+        <FixedRestFields employee={draft} input={input} onChange={setDraft} />
+        {canEditRests && <DayChoices label="Dias de folga preferidos (não obrigatórios)"
+          values={draft.preferredOffDays} change={(days) => change("preferredOffDays", days)} />}
         {error && <p role="alert" className={styles.errorText}>{error}</p>}
         <div className={styles.actions}>
           <button type="submit" className={primaryClass}>Aplicar cadastro à proposta</button>
@@ -230,6 +240,7 @@ export function EmployeeEditor({
               id={id} {...accessibility}
               required
               maxLength={50}
+              readOnly={managedTeam}
               value={draft.registration}
               onChange={(event) => change("registration", event.target.value)}
               className={controlClass}
@@ -242,6 +253,7 @@ export function EmployeeEditor({
               id={id} {...accessibility}
               required
               maxLength={160}
+              readOnly={managedTeam}
               value={draft.name}
               onChange={(event) => change("name", event.target.value)}
               className={controlClass}
@@ -274,6 +286,7 @@ export function EmployeeEditor({
               required
               maxLength={100}
               value={draft.sector}
+              readOnly={managedTeam}
               onChange={(event) => change("sector", event.target.value)}
               className={controlClass}
             />
@@ -286,6 +299,7 @@ export function EmployeeEditor({
               required
               maxLength={100}
               value={draft.role}
+              readOnly={managedTeam}
               onChange={(event) => change("role", event.target.value)}
               className={controlClass}
             />
@@ -303,6 +317,7 @@ export function EmployeeEditor({
               max="2099-12-31"
               min="1900-01-01"
               value={draft.activeFrom}
+              readOnly={managedTeam}
               onChange={(event) => change("activeFrom", event.target.value)}
               className={controlClass}
             />
@@ -316,6 +331,7 @@ export function EmployeeEditor({
               max="2099-12-31"
               min={draft.activeFrom || "1900-01-01"}
               value={draft.activeUntil ?? ""}
+              readOnly={managedTeam}
               onChange={(event) => change("activeUntil", event.target.value || undefined)}
               className={controlClass}
             />
@@ -473,6 +489,7 @@ export function Employees({
   review,
   onSwap,
   onRemoveEmployee,
+  managedTeam = false,
   swapDisabled = false,
 }: {
   input: EscalaInput;
@@ -481,6 +498,7 @@ export function Employees({
   review?: EscalaRecoveryRequest;
   onSwap?: (employee: EscalaEmployee) => void;
   onRemoveEmployee?: (employeeId: string) => Promise<boolean>;
+  managedTeam?: boolean;
   swapDisabled?: boolean;
 }) {
   const access = useEscalaClientAccess();
@@ -488,7 +506,7 @@ export function Employees({
   const canChangeTeam = canDisplayEscalaAction(access, "employee.manage", input.branchCode)
     && canDisplayEscalaAction(access, "workspace.save", input.branchCode);
   const canManage = !disabled && canChangeTeam;
-  const showRemoval = administrative || (Boolean(onRemoveEmployee) && canChangeTeam);
+  const showRemoval = !managedTeam && (administrative || (Boolean(onRemoveEmployee) && canChangeTeam));
   const [editing, setEditing] = useState<EscalaEmployee | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [removalStatus, setRemovalStatus] = useState<"idle" | "saving" | "failed">("idle");
@@ -570,7 +588,7 @@ export function Employees({
         <h2 id="escala-employees-title" className="text-lg font-bold">
           1. Equipe da filial
         </h2>
-        {administrative && <button
+        {administrative && !managedTeam && <button
           type="button"
           className={buttonClass}
           disabled={!canManage || input.employees.length >= 250}
@@ -589,7 +607,7 @@ export function Employees({
           Adicionar colaborador
         </button>}
       </div>
-      {administrative ? <>
+      {managedTeam ? <p className={styles.muted}>Cadastros e afastamentos são editados na base global. Ajustes de folga e turno continuam na proposta.</p> : administrative ? <>
         <p className="text-sm text-[color:var(--app-muted)]">
           A importação já prepara a equipe. Abra um cadastro somente para ajustar uma exceção. Alterações são salvas automaticamente.
         </p>
@@ -684,6 +702,7 @@ export function Employees({
             key={editing.id}
             employee={editing}
             input={input}
+            managedTeam={managedTeam}
             onCancel={() => setEditing(null)}
             onSave={(employee) => {
               if (!canManage) return;

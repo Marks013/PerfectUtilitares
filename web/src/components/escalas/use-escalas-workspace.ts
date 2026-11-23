@@ -4,11 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DraftSaveQueue, parseSavedWorkspace, sameDraft, type SaveState } from "./draft-persistence";
 import { isCurrentRosterChange } from "./roster-model";
 import { clearRecovery, readRecovery, saveRecovery, type RecoverableDraft } from "./draft-recovery";
-import type {
-  EscalaInput,
-  EscalaValidation,
-  EscalaWorkspace,
-} from "@/lib/escalas/types";
+import type { EscalaInput, EscalaValidation, EscalaWorkspace } from "@/lib/escalas/types";
 import { coverageDefinitionChanged, hasOutdatedResults, isCurrentResponse, responseMessage, scenarioDefinitionChanged } from "./workspace-model";
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
 import { GenerationOperation, generationCancellationNotice } from "./generation-operation";
@@ -237,14 +233,17 @@ export function useEscalasWorkspace() {
   );
 
   const update = useCallback((next: EscalaInput) => {
-    if (working.current || unresolvedRecovery.current || accessLocked.current || sessionRequests.current.signal.aborted || !latestWorkspace.current?.canEdit
+    if (working.current || unresolvedRecovery.current || accessLocked.current || sessionRequests.current.signal.aborted || latestWorkspace.current?.status !== "DRAFT" || !latestWorkspace.current.canEdit
       || !canDisplayEscalaAction(access, "workspace.save", next.branchCode)) return;
     const changed = Boolean(input && scenarioDefinitionChanged(input, next));
-    const changedCoverage = Boolean(input && coverageDefinitionChanged(input, next));
-    const needsRegeneration = Boolean(next.needsRegeneration || (changed && input?.assignments.length));
-    const marked = Boolean(next.needsRegeneration) === needsRegeneration ? next : { ...next, needsRegeneration };
-    const draft = changedCoverage && marked.policy.coverageReview === "CONFIRMED"
-      ? { ...marked, policy: { ...marked.policy, coverageReview: "SUGGESTED" as const } } : marked;
+    let draft = next;
+    // Scoped edits leave protected planning metadata for the server to derive.
+    if (isEscalaAdministrator(access)) {
+      if (changed && input?.assignments.length && !next.needsRegeneration) draft = { ...draft, needsRegeneration: true };
+      if (input && coverageDefinitionChanged(input, next) && next.policy.coverageReview === "CONFIRMED") {
+        draft = { ...draft, policy: { ...draft.policy, coverageReview: "SUGGESTED" } };
+      }
+    }
     latestInput.current = draft; latestDirty.current = true;
     saveQueue.edit(draft);
     setInput(draft);
@@ -266,7 +265,12 @@ export function useEscalasWorkspace() {
     setPendingOpen(null);
     void run("Carregando escala…", async (signal, isCurrent) => {
       const result = await requestJson<EscalaWorkspace>(`/api/escalas?id=${encodeURIComponent(id)}`, { signal });
-      if (isCurrent()) acceptWorkspace(result);
+      if (!isCurrent()) return;
+      acceptWorkspace(result);
+      if (result.workforce?.needsSync && result.status === "DRAFT" && result.canEdit && !readRecovery(result)) {
+        const updated = await post<EscalaWorkspace>({ action: "SYNC_WORKFORCE", id, expectedRevision: result.revision }, signal);
+        if (isCurrent()) acceptWorkspace(updated);
+      }
     });
   }
 
@@ -381,7 +385,7 @@ export function useEscalasWorkspace() {
   });
 
   function rebaseApproved(approvedPolicyVersionId: string) {
-    if (!workspace || dirty || generated || recovery) return;
+    if (workspace?.status !== "DRAFT" || dirty || generated || recovery) return;
     void run("Vinculando configuração aprovada…", async (signal, isCurrent) => {
       const result = await operationalCommand({ action: "ADMIN_REBASE", id: workspace.id, expectedRevision: workspace.revision, approvedPolicyVersionId }, signal);
       if (isCurrent()) { acceptWorkspace(result); setNotice("Configuração vinculada em uma nova revisão. Confira os dados e gere outra proposta."); }
@@ -436,9 +440,10 @@ export function useEscalasWorkspace() {
     });
   }
 
-  const readOnlyDraft = !isEscalaAdministrator(access) && (workspace as Partial<EscalaWorkspaceAccessMetadata> | null)?.approvedPolicyVersionId === null;
-  const canGenerate = Boolean(workspace && input && !busy && !recovery && !sessionLocked && !readOnlyDraft
-    && canDisplayEscalaAction(access, "schedule.generate", input.branchCode)
+  const approval = workspace as Partial<EscalaWorkspaceAccessMetadata> | null;
+  const readOnlyDraft = !isEscalaAdministrator(access) && approval?.approvedPolicyVersionId === null;
+  const canGenerate = Boolean(workspace?.status === "DRAFT" && input && !busy && !recovery && !sessionLocked && !readOnlyDraft && !approval?.approvedPolicyRevoked
+    && !workspace.workforce?.needsSync && canDisplayEscalaAction(access, "schedule.generate", input.branchCode)
     && (!dirty || workspace.canEdit && canDisplayEscalaAction(access, "workspace.save", input.branchCode)));
 
   function generate() {
@@ -569,20 +574,14 @@ export function useEscalasWorkspace() {
     return restored;
   }
 
-  function publish() {
-    if (!workspace?.canPublish || dirty || outdated || !validation?.readyToPublish) return;
-    void run("Publicando revisão conferida…", async (signal, isCurrent) => {
-      const result = await post<EscalaWorkspace>(
-        {
-          action: "PUBLISH",
-          id: workspace.id,
-          expectedRevision: workspace.revision,
-        },
-        signal,
-      );
+  function publish(action: "PUBLISH" | "REOPEN_PUBLICATION" = "PUBLISH") {
+    const reopen = action === "REOPEN_PUBLICATION";
+    if (!workspace?.canPublish || dirty || working.current || (reopen ? workspace.status !== "PUBLISHED" : workspace.workforce?.needsSync || outdated || !validation?.readyToPublish)) return;
+    void run(reopen ? "Reabrindo publicação como rascunho…" : "Publicando revisão conferida…", async (signal, isCurrent) => {
+      const result = await post<EscalaWorkspace>({ action, id: workspace.id, expectedRevision: workspace.revision }, signal);
       if (isCurrent()) {
         acceptWorkspace(result);
-        setNotice("Escala publicada internamente. Nenhuma mensagem ou lançamento em folha foi enviado.");
+        setNotice(reopen ? "Novo rascunho aberto. A revisão publicada anterior foi preservada." : "Escala publicada internamente. Nenhuma mensagem ou lançamento em folha foi enviado.");
       }
     });
   }
@@ -718,6 +717,6 @@ export function useEscalasWorkspace() {
     cancelLabel,
     cancelAnalysis,
     dismissProposals: () => { generatedReference.current = null; setGenerated(null); },
-    canEdit: Boolean(workspace?.canEdit && !busy && !recovery && !sessionLocked),
+    canEdit: Boolean(workspace?.status === "DRAFT" && workspace.canEdit && !workspace.workforce?.needsSync && !busy && !recovery && !sessionLocked),
   };
 }

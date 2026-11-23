@@ -6,9 +6,11 @@ import { DELETE, GET, PATCH, POST } from "./route";
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
 
 const candidateDb = vi.hoisted(() => ({ row: vi.fn(), revision: vi.fn(), peers: vi.fn(), solver: vi.fn(), user: vi.fn(), policy: vi.fn(),
+  updateWorkspace: vi.fn(), appendRevision: vi.fn(), appendAudit: vi.fn(), grants: vi.fn(), workforce: vi.fn(),
   findOperation: vi.fn(), updateOperation: vi.fn(), createOperation: vi.fn(), countOperation: vi.fn() }));
 vi.mock("@/lib/prisma", () => {
-  const db = { escalaWorkspace: { findFirst: candidateDb.row, findMany: candidateDb.peers }, escalaRevision: { findUnique: candidateDb.revision },
+  const db = { escalaWorkspace: { findFirst: candidateDb.row, findMany: candidateDb.peers, updateMany: candidateDb.updateWorkspace }, escalaRevision: { findUnique: candidateDb.revision, create: candidateDb.appendRevision },
+    auditLog: { create: candidateDb.appendAudit }, escalaBranchAccess: { findMany: candidateDb.grants }, escalaWorkforce: { findUnique: candidateDb.workforce },
     user: { findFirst: candidateDb.user }, escalaModuleAccessPolicy: { findUnique: candidateDb.policy },
     escalaSolveOperation: { findFirst: candidateDb.findOperation, findUniqueOrThrow: candidateDb.findOperation, updateMany: candidateDb.updateOperation,
       create: candidateDb.createOperation, count: candidateDb.countOperation, findMany: vi.fn(async () => []), deleteMany: vi.fn() },
@@ -52,9 +54,104 @@ beforeEach(() => {
   mocks.list.mockResolvedValue([workspace]); mocks.get.mockResolvedValue(workspace); mocks.read.mockResolvedValue(workspace); mocks.create.mockResolvedValue(workspace); mocks.save.mockResolvedValue({ ...workspace, revision: 2 });
   mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input, validation: { valid: true }, preparation: { adjustedEmployeeIds: [], excludedEmployeeIds: [], generatedCoverageSlots: 7, includedEmployees: 81, untimedEmployees: 12 } });
   mocks.rate.mockResolvedValue(null); mocks.module.mockResolvedValue(null);
+  candidateDb.workforce.mockResolvedValue(null);
 });
 
 describe("/api/escalas", () => {
+  it("synchronizes the global team into a new draft revision without rewriting a publication", async () => {
+    const real = await vi.importActual<typeof import("@/lib/escalas/service")>("@/lib/escalas/service");
+    mocks.read.mockImplementation(real.getEscalaForRead);
+    const value = newInput("02", "Filial sintética", "2026-12", 42);
+    const worker = { ...newEmployee(42), id: "worker", registration: "0012", name: "Pessoa sintética",
+      activeFrom: "2026-12-01", role: "Caixa", sector: "Frente de Caixa", scheduleMode: "UNTIMED" as const };
+    value.employees = [worker];
+    const first = { input: structuredClone(value), revision: 1, status: "DRAFT", createdAt: new Date("2026-12-01") };
+    const revisions = new Map([[1, first]]);
+    let latest = { id: "w1", tenantId: "t1", branchCode: "02", branchName: value.branchName, startDate: value.startDate,
+      endDate: value.endDate, status: "DRAFT", revision: 1, updatedAt: first.createdAt, workforceState: null as unknown };
+    candidateDb.user.mockImplementation(async ({ where }) => ({ id: where.id, tenantId: where.tenantId, status: "ACTIVE", role: "ADMIN" }));
+    candidateDb.policy.mockResolvedValue({ tenantId: "t1", mode: "ADMIN_ONLY", version: 1 });
+    candidateDb.row.mockImplementation(async ({ where }) => where.id === latest.id && where.tenantId === latest.tenantId
+      && (where.revision === undefined || where.revision === latest.revision) && (where.status === undefined || where.status === latest.status) ? latest : null);
+    candidateDb.revision.mockImplementation(async ({ where }) => revisions.get(where.tenantId_workspaceId_revision.revision));
+    candidateDb.peers.mockResolvedValue([]);
+    candidateDb.workforce.mockResolvedValue({ revision: 5, snapshot: {
+      version: 1, catalogs: [{ branchCode: "02", shifts: [] }],
+      absences: [{ registration: "0012", startDate: "2026-12-08", endDate: "2026-12-08", source: "FPHI105" }],
+      people: [{ branchCode: "02", dismissedFrom: null, employee: { ...worker, id: "global", role: "Operador de caixa" } }],
+    } });
+    candidateDb.updateWorkspace.mockImplementation(async ({ where, data }) => {
+      if (where.revision !== latest.revision || where.status !== latest.status) return { count: 0 };
+      latest = { ...latest, ...data };
+      return { count: 1 };
+    });
+    candidateDb.appendRevision.mockImplementation(async ({ data }) => {
+      revisions.set(data.revision, { ...data, createdAt: first.createdAt });
+    });
+    const sync = (expectedRevision: number) => POST(command({ action: "SYNC_WORKFORCE", id: "w1", expectedRevision }));
+    const response = await sync(1);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ revision: 2, status: "DRAFT", workforce: { needsSync: false },
+      input: { needsRegeneration: true, employees: [{ id: "worker", registration: "0012", role: "Operador de caixa" }],
+        assignments: [{ employeeId: "worker", date: "2026-12-08", kind: "ABSENCE" }] } });
+    expect(candidateDb.updateWorkspace).toHaveBeenCalledWith({ where: { id: "w1", tenantId: "t1", branchCode: "02", revision: 1, status: "DRAFT" },
+      data: { revision: 2, workforceState: { baseRevision: 5, managedAbsenceKeys: [["worker", "2026-12-08"]], managedEmploymentEnds: [] } } });
+    expect(candidateDb.appendRevision).toHaveBeenCalledTimes(1);
+    expect(first.input).toEqual(value);
+    const repeated = await sync(2);
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({ revision: 2 });
+    expect(candidateDb.updateWorkspace).toHaveBeenCalledTimes(1);
+
+    const updated = revisions.get(2);
+    if (!updated) throw new Error("Expected synchronized draft");
+    const published = { ...updated, status: "PUBLISHED", revision: 3 };
+    latest = { ...latest, status: "PUBLISHED", revision: 3 };
+    revisions.set(3, published);
+    const denied = await sync(3);
+    expect(denied.status).toBe(409);
+    expect(await denied.json()).toMatchObject({ error: { code: "ESCALA_REOPEN_REQUIRED" } });
+    expect(candidateDb.appendRevision).toHaveBeenCalledTimes(1);
+    expect(revisions.get(3)).toBe(published);
+  });
+  it("reopens the exact publication as a separately audited draft and rejects payload overrides", async () => {
+    const publishedInput = newInput("02", "Filial sintética", "2026-12", 42);
+    const snapshot = Object.freeze({ status: "PUBLISHED", input: publishedInput, approvedPolicyVersionId: null });
+    mocks.get.mockResolvedValue({ ...workspace, input: publishedInput, status: "PUBLISHED", revision: 3, approvedPolicyVersionId: null });
+    candidateDb.user.mockResolvedValue({ id: "u1", tenantId: "t1", status: "ACTIVE", role: "ADMIN", securityVersion: 1 });
+    candidateDb.revision.mockResolvedValue(snapshot);
+    candidateDb.updateWorkspace.mockResolvedValue({ count: 1 });
+    const data = { action: "REOPEN_PUBLICATION", id: "w1", expectedRevision: 3 };
+    const denied = await POST(command({ ...data, input: { branchCode: "07" } }));
+    expect(denied.status).toBe(400);
+    expect(candidateDb.updateWorkspace).not.toHaveBeenCalled();
+    const response = await POST(command(data));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "DRAFT", revision: 4, input: publishedInput });
+    expect(candidateDb.revision).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tenantId_workspaceId_revision: { tenantId: "t1", workspaceId: "w1", revision: 3 } },
+    }));
+    expect(candidateDb.updateWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "w1", tenantId: "t1", branchCode: "02", revision: 3, status: "PUBLISHED" },
+    }));
+    expect(candidateDb.appendRevision).toHaveBeenCalledExactlyOnceWith({ data: expect.objectContaining({ status: "DRAFT", revision: 4, input: publishedInput }) });
+    expect(candidateDb.appendAudit).toHaveBeenCalledExactlyOnceWith({ data: expect.objectContaining({
+      action: "REOPEN_PUBLICATION", metadata: expect.objectContaining({ previousRevision: 3, revision: 4 }),
+    }) });
+    expect(snapshot.status).toBe("PUBLISHED");
+  });
+
+  it("denies reopening to a same-branch operator without publication permission", async () => {
+    mocks.session = { user: { id: "planner", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
+    candidateDb.user.mockResolvedValue({ id: "planner", tenantId: "t1", status: "ACTIVE", role: "OPERATOR", securityVersion: 1 });
+    candidateDb.policy.mockResolvedValue({ tenantId: "t1", mode: "SCOPED" });
+    candidateDb.grants.mockResolvedValue([{ tenantId: "t1", userId: "planner", branchCode: "02", role: "OPERATOR" }]);
+    mocks.get.mockResolvedValue({ ...workspace, input: { ...input, branchCode: "02" }, status: "PUBLISHED", revision: 3 });
+    const response = await POST(command({ action: "REOPEN_PUBLICATION", id: "w1", expectedRevision: 3 }));
+    expect(response.status).toBe(403);
+    expect(candidateDb.updateWorkspace).not.toHaveBeenCalled();
+    expect(candidateDb.appendRevision).not.toHaveBeenCalled();
+  });
   it.each([false, true])("derives creation availability from the current capability scope=%s", async allowed => {
     mocks.session = { user: { id: "planner", tenantId: "t1", role: "OPERATOR", status: "ACTIVE" }, expires: "2099" };
     mocks.createScope = allowed ? ["02"] : [];

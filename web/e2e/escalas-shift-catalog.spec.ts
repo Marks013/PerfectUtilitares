@@ -143,7 +143,13 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     await team.getByRole("button", { name: "Trocar turno de Pessoa de teste", exact: true }).click();
     const swap = page.getByRole("region", { name: "Atribuir turno cadastrado a Pessoa de teste", exact: true });
     async function chooseAndPreview(code: number, partial = false) {
-      if (partial) { await swap.getByLabel("Aplicar a partir de", { exact: true }).fill("2026-12-10"); await swap.getByLabel("Aplicar até", { exact: true }).fill("2026-12-20"); }
+      const back = swap.getByRole("button", { name: "Voltar à escolha", exact: true });
+      if (await back.isVisible()) await back.click();
+      if (partial) {
+        await swap.getByText("Alterar datas", { exact: true }).click();
+        await swap.getByLabel("Aplicar a partir de", { exact: true }).fill("2026-12-10");
+        await swap.getByLabel("Aplicar até", { exact: true }).fill("2026-12-20");
+      }
       const searching = page.waitForResponse(response => new URL(response.url()).pathname === "/api/escalas/turnos/opcoes" && new URL(response.url()).searchParams.get("search") === String(code));
       await swap.getByLabel("Buscar turno permitido pelo código ou pelas horas", { exact: true }).fill(String(code));
       const response = await searching; expect(response.status()).toBe(200);
@@ -152,7 +158,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
       expect(options.entries.map(entry => entry.code)).toEqual([code]);
       await swap.getByRole("radio", { name: new RegExp("^" + code + " ·") }).check();
       const previewing = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "PREVIEW_SWAP");
-      await swap.getByRole("button", { name: "Conferir atribuição", exact: true }).click();
+      await swap.getByRole("button", { name: "Conferir troca de turno", exact: true }).click();
       const result = await previewing; expect(result.status()).toBe(200);
       await expect(swap.getByText("Altera a referência de horário; não cria dias de trabalho nem folgas.", { exact: true })).toBeVisible();
       return result.json() as Promise<TurnoSwapPreviewDto>;
@@ -160,7 +166,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     const invalidPreview = await chooseAndPreview(afterClosingCode, true);
     expect(invalidPreview.canApply).toBe(false);
     expect(invalidPreview.validationIssues).toContainEqual(expect.objectContaining({ code: "STORE_CLOSING_EXCEEDED" }));
-    await expect(swap.getByRole("button", { name: "Confirmar e salvar atribuição", exact: true })).toBeDisabled();
+    await expect(swap.getByRole("button", { name: "Salvar troca de turno", exact: true })).toBeDisabled();
     const invalidApply = await page.request.post("/api/escalas/turnos", { headers, data: {
       action: "APPLY_SWAP", workspaceId: workspace.id, expectedRevision: workspace.revision, employeeId: "person",
       catalogCode: afterClosingCode, effectiveFrom: "2026-12-10", effectiveUntil: "2026-12-20",
@@ -174,7 +180,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     expect(afterRejection.input.employees).toEqual(unchanged.input.employees);
     expect((await chooseAndPreview(manualCode)).canApply).toBe(true);
     const applying = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "APPLY_SWAP");
-    await swap.getByRole("button", { name: "Confirmar e salvar atribuição", exact: true }).click();
+    await swap.getByRole("button", { name: "Salvar troca de turno", exact: true }).click();
     expect((await applying).status()).toBe(200);
     await expect.poll(async () => (await page.request.get("/api/escalas?id=" + workspace.id).then(response => response.json()) as EscalaWorkspace).revision).toBeGreaterThan(workspace.revision);
     const afterSwap: EscalaWorkspace = await page.request.get("/api/escalas?id=" + workspace.id).then(response => response.json());
@@ -202,7 +208,7 @@ test("catalog choices, two files and a revision conflict use real saved data", a
     const saved = await page.request.post("/api/escalas", { headers, data: { action: "SAVE", id: workspace.id, expectedRevision: afterSwap.revision, input: { ...afterSwap.input, branchName: "Catálogo sintético atualizado" } } });
     expect(saved.status()).toBe(200);
     const conflicting = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "APPLY_SWAP");
-    await swap.getByRole("button", { name: "Confirmar e salvar atribuição", exact: true }).click();
+    await swap.getByRole("button", { name: "Salvar troca de turno", exact: true }).click();
     expect((await conflicting).status()).toBe(409);
     await expect(swap.getByRole("alert")).toContainText(/revisão|atualize/i);
     const afterConflict: EscalaWorkspace = await page.request.get("/api/escalas?id=" + workspace.id).then(response => response.json());

@@ -229,7 +229,7 @@ describe("employee turn swap", () => {
     expect(saved.input.employees[0].manualShiftOverrides).toEqual([expect.objectContaining({ catalogCode: 1500, shiftId: "old" })]);
   });
 
-  it("applies an approved turno to an unlocked workday with branch shift and save permissions", async () => {
+  it.each(["seed", "enrolled"])("applies an approved turno to an unlocked workday with a branch employee from %s", async (source) => {
     const branchActor = { ...actor, admin: false };
     const [assigned, locked] = current().input.assignments;
     const plan = current(undefined, [assigned, locked]);
@@ -244,8 +244,12 @@ describe("employee turn swap", () => {
       employees: [{ ...plan.input.employees[0], scheduleMode: "TIMED", shiftIds: ["old", "approved"] }],
       shifts: [clock("old", 480), clock("approved", 540)],
     });
+    const baseEmployee = input.employees[0];
     state.get.mockResolvedValue({ ...plan, input, approvedPolicyVersionId: "approved-policy" });
-    state.approval.mockResolvedValue({ snapshot: { seed: { employees: input.employees, shifts: input.shifts }, regimeModels: [] } });
+    state.approval.mockResolvedValue({ snapshot: { seed: { employees: source === "seed" ? [baseEmployee] : [], shifts: input.shifts },
+      regimeModels: [{ protectedFields: { offMode: baseEmployee.offMode, fixedOffDays: baseEmployee.fixedOffDays,
+        sector: baseEmployee.sector, role: baseEmployee.role, weeklyHours: baseEmployee.weeklyHours, shiftIds: baseEmployee.shiftIds } }] } });
+    if (source === "enrolled") input.employees[0] = { ...baseEmployee, offMode: "MIXED", fixedOffDays: [3] };
     state.parse.mockImplementation(value => escalaInputSchema.parse(value));
     state.save.mockImplementation(async (_actor, _id, _revision, next, publish, options) => {
       expect(publish).toBe(false);

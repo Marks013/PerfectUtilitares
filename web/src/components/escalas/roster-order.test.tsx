@@ -54,6 +54,16 @@ function render(input: EscalaInput, mode: "rest" | "hours" | "both" = "rest") {
 beforeEach(() => { state.filter = ""; state.sector = ""; state.page = 0; state.textState = 0; });
 
 describe("monthly roster presentation order", () => {
+  it("keeps the rest grid visible and collapses only the daily hours controls by default", () => {
+    const input = fixture();
+    const { html } = render(input, "both");
+    const hours = html.match(/<details(?![^>]*\bopen=)[^>]*aria-labelledby="escala-hours-title"[^>]*><summary[^>]*>Escala de horários<\/summary>([\s\S]*?)<\/details>/);
+    expect(hours?.[1]).toContain("Dia dos horários propostos");
+    expect(hours?.[1]).toContain("Horários da equipe, com rolagem horizontal");
+    expect(html.slice(0, hours?.index)).toContain(">Escala de folgas</h3>");
+    expect(render(input, "rest").html).not.toContain('id="escala-hours-title"');
+  });
+
   it.each(["rest", "hours", "both"] as const)("keeps enabled original six-hour AM/PM employees out of active %s tables", (mode) => {
     const input = fixture();
     const reference = input.employees.find(person => person.id === "4");

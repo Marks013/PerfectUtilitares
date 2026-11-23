@@ -42,6 +42,7 @@ import { escalaCatalogActions, type EscalaWorkspaceAccessMetadata } from "@/lib/
 import { ApprovedEmployeeForm, CreateApprovedPlan } from "./approved-forms";
 import { ApprovalAdministration } from "./approval-administration";
 import { OperatorAdministration } from "./operator-administration";
+import { EscalaWorkforcePanel } from "./workforce-panel";
 
 type Area = "team" | "generate" | "roster" | "coverage" | "review" | "adjustments" | "reports";
 const AREAS: { id: Area; label: string }[] = [
@@ -109,20 +110,27 @@ export function EscalasWorkspace() {
   const manageSettings = can("settings.manage");
   const importTeam = can("import.manage");
   const generate = model.canGenerate && can("schedule.generate");
-  const canSaveDraft = Boolean(workspace?.canEdit && can("workspace.save"));
+  const canSaveDraft = Boolean(workspace?.status === "DRAFT" && workspace.canEdit && can("workspace.save"));
   const editRoster = model.canEdit && can("schedule.apply") && can("workspace.save");
   const editTeam = model.canEdit && can("employee.manage") && can("workspace.save");
   const unrestricted = isEscalaAdministrator(access);
+  const approvalRevoked = (workspace as Partial<EscalaWorkspaceAccessMetadata> | null)?.approvedPolicyRevoked === true;
   const catalog = access ? escalaCatalogActions(access, input?.branchCode ?? "") : { canDefine: false, canAssign: false };
-  const canSwapShift = readable && !readOnlyDraft && catalog.canAssign && can("workspace.save");
-  const canImportTeam = importTeam && model.canEdit;
-  const canAddApprovedEmployee = editTeam
+  const canSwapShift = readable && !readOnlyDraft && !approvalRevoked && catalog.canAssign && can("workspace.save");
+  const globalTeam = Boolean(workspace?.workforce);
+  const canImportTeam = importTeam && model.canEdit && !globalTeam;
+  const canAddApprovedEmployee = editTeam && !globalTeam
     && Boolean((workspace as Partial<EscalaWorkspaceAccessMetadata> | null)?.approvedPolicyVersionId) && !model.generated;
   const emptyTeamHelp = canImportTeam ? "Importe o relatório da equipe para começar."
     : canAddApprovedEmployee ? "Cadastre os colaboradores usando um modelo aprovado."
       : "Peça ao administrador para preparar a equipe desta filial.";
   const swapDisabled = !model.canEdit || model.dirty || model.saveState !== "saved" || Boolean(model.generated);
   const allowedPlans = unrestricted ? model.workspaces : model.workspaces.filter(plan => canDisplayEscalaAction(access, "workspace.read", plan.input.branchCode));
+  const workforceBranches = [...new Set([...(access?.branches.map(branch => branch.code) ?? []),
+    ...allowedPlans.map(plan => plan.input.branchCode)])].filter(code => canDisplayEscalaAction(access, "employee.manage", code)).sort();
+  const [workforceBranch, setWorkforceBranch] = useState<string | null>(null);
+  const [workforceOpen, setWorkforceOpen] = useState(false);
+  const effectiveWorkforceBranch = workforceBranch ?? (editTeam ? input?.branchCode : undefined) ?? workforceBranches[0] ?? "";
   const multipleBranches = new Set(allowedPlans.map(plan => planPeriod(plan).branch)).size > 1;
   const fixedBranch = !unrestricted && access?.branches.filter(branch =>
     canDisplayEscalaAction(access, "workspace.read", branch.code)
@@ -240,6 +248,21 @@ export function EscalasWorkspace() {
       </div>
       </details>
     </section>
+    {(unrestricted || workforceBranches.length > 0) && <details className={panelClass} onToggle={event => setWorkforceOpen(event.currentTarget.open)}>
+      <summary className={styles.disclosureTrigger}>Base global de equipes e afastamentos</summary>
+      {workforceOpen && <div className={styles.stackSmall}>
+        <Field label="Filial para consultar na base global">
+          {id => unrestricted
+            ? <input id={id} className={controlClass} list="escala-workforce-branches" value={effectiveWorkforceBranch} onChange={event => setWorkforceBranch(event.target.value)} />
+            : <select id={id} className={controlClass} value={effectiveWorkforceBranch} onChange={event => setWorkforceBranch(event.target.value)}>
+              {workforceBranches.map(code => <option key={code} value={code}>{code}</option>)}
+            </select>}
+        </Field>
+        <datalist id="escala-workforce-branches">{workforceBranches.map(code => <option key={code} value={code} />)}</datalist>
+        {Boolean(effectiveWorkforceBranch.trim()) && <EscalaWorkforcePanel key={effectiveWorkforceBranch} branchCode={effectiveWorkforceBranch} canImport={unrestricted && importTeam}
+          onChanged={() => { if (workspace?.status === "DRAFT" && !model.busy && !model.dirty && !model.generated && !model.recovery) model.open(workspace.id); }} />}
+      </div>}
+    </details>}
     {unrestricted && <OperatorAdministration />}
     {unrestricted && can("export.integration") && <section className={styles.stackSmall} aria-label="Catálogo administrativo de turnos">
       <TurnoExport key={catalogContext} plans={allowedPlans} disabled={Boolean(model.busy || model.dirty || model.recovery || model.generated || workspace && model.saveState !== "saved")} />
@@ -288,7 +311,7 @@ export function EscalasWorkspace() {
       {can("report.analytics") && visited.has("reports") && <section hidden={area !== "reports"} inert={area !== "reports"} id="escala-area-reports" aria-label="Área de relatórios e gráficos PDF"><OperationalReports key={`${workspace.id}:${workspace.revision}`} workspace={workspace} disabled={Boolean(model.busy || model.dirty || model.recovery || model.saveState !== "saved")} /></section>}
       <section hidden={area !== "generate"} inert={area !== "generate"} id="escala-area-generate" className={`${panelClass} ${styles.generationPanel}`} aria-labelledby="escala-generate-title">
         <div><h2 id="escala-generate-title" className={styles.sectionTitle}>Monte uma proposta para conferir</h2><p className={styles.muted}>{hoursOnly ? "Ajusta horários sem redistribuir os dias. Se ainda não há grade, prepara referências de horários para conferência." : generationMode === "REST_ONLY" ? "O algoritmo distribui as folgas usando os horários de referência ajustados à jornada. Você revisa antes de aplicar." : "Os horários, as folgas e a cobertura estimada são calculados juntos. Você revisa antes de aplicar."}</p></div>
-        <GenerationModeOption input={input} disabled={!generate || !model.canEdit || !can("workspace.save")} onChange={model.update} />
+        <GenerationModeOption input={input} disabled={!manageSettings || !generate || !model.canEdit || !can("workspace.save")} onChange={model.update} />
         <div className={styles.contextBar}>
           <fieldset disabled={!model.canEdit || !manageSettings} className={styles.journeyField}>
             <Field label="Jornada semanal">{(id) => <select id={id} value={input.defaultWeeklyHours} className={controlClass} onChange={(event) => model.update(changeBranchWeeklyHours(input, Number(event.target.value) as WeeklyHours))}>{HOURS.map((hours) => <option key={hours} value={hours}>{hours} horas</option>)}</select>}</Field>
@@ -322,7 +345,10 @@ export function EscalasWorkspace() {
         {can("report.analytics") && <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />}
         {catalog.canDefine && input.employees.length > 0 && generationMode !== "REST_ONLY" && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
         {readOnlyDraft && <p role="status" className={styles.muted}>Rascunho disponível para consulta. Para gerar, alterar ou baixar arquivos, solicite a aprovação administrativa.</p>}
-        {!readOnlyDraft && !workspace.canEdit && !model.dirty && <p className={styles.muted}>{can("schedule.generate")
+        {approvalRevoked && <p role="status" className={styles.muted}>A configuração deste rascunho foi revogada. Solicite ao administrador que vincule uma versão vigente para editar ou gerar.</p>}
+        {workspace.workforce?.needsSync && <p role="status" className={styles.muted}>A equipe global mudou. Reabra o rascunho para atualizar antes de calcular ou publicar.
+          {workspace.canEdit && !model.busy && !model.dirty && !model.recovery && <button type="button" className={buttonClass} onClick={() => model.open(workspace.id)}>Atualizar equipe do rascunho</button>}</p>}
+        {!readOnlyDraft && !approvalRevoked && !workspace.canEdit && !model.dirty && <p className={styles.muted}>{can("schedule.generate")
           ? "Você pode gerar uma proposta para conferir. Aplicar ou salvar alterações exige permissão de edição nesta filial."
           : "Acesso de consulta nesta filial."}</p>}
       </section>
@@ -337,11 +363,11 @@ export function EscalasWorkspace() {
 
       {visited.has("team") && <section hidden={area !== "team"} inert={area !== "team"} id="escala-area-team" aria-labelledby="escala-team-title" className={styles.stackSmall}>
         <div id="escala-team" tabIndex={-1}><h2 id="escala-team-title" className={styles.sectionTitle}>Equipe da filial</h2><p className={styles.muted}>{included ? `${included} colaboradores incluídos. Confira os dados antes de montar a escala.` : emptyTeamHelp}</p></div>
-        {importTeam && <details className={styles.disclosure} open={!included || undefined}><summary className={styles.disclosureTrigger}>Importar ou atualizar arquivos da equipe</summary><div className={styles.stackSmall}>
-          <ImportEmployees workspace={workspace} disabled={!workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
-          <AbsenceImport workspace={workspace} disabled={!workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
+        {importTeam && !globalTeam && workspace.status === "DRAFT" && <details className={styles.disclosure} open={!included || undefined}><summary className={styles.disclosureTrigger}>Importar ou atualizar arquivos da equipe</summary><div className={styles.stackSmall}>
+          <ImportEmployees workspace={workspace} disabled={workspace.status !== "DRAFT" || !workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
+          <AbsenceImport workspace={workspace} disabled={workspace.status !== "DRAFT" || !workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
         </div></details>}
-        {workspace.canEdit && workspace.status === "DRAFT" && can("workspace.save") && can("employee.manage") && <ManualAbsences key={workspace.id + ":" + workspace.revision}
+        {!globalTeam && workspace.canEdit && workspace.status === "DRAFT" && can("workspace.save") && can("employee.manage") && <ManualAbsences key={workspace.id + ":" + workspace.revision}
           workspace={workspace} administrator={unrestricted}
           disabled={Boolean(!model.canEdit || model.dirty || model.saveState !== "saved" || model.generated || model.conflict)}
           changeAbsence={model.changeAbsence} />}
@@ -349,11 +375,11 @@ export function EscalasWorkspace() {
           <div id="escala-team-review" tabIndex={-1} className="scroll-mt-24 rounded-md p-2 focus:outline-2 focus:outline-[color:var(--app-action-blue)]">
             {reviewContext?.target === "team" && <p className={styles.muted}>Localize o colaborador indicado e use Editar para conferir folgas fixas e horários permitidos. Dias bloqueados e ausências aparecem na área Escala. Nada será alterado apenas por abrir esta conferência.</p>}
           </div>
-          <Employees input={input} disabled={!editTeam} swapDisabled={swapDisabled} onSwap={canSwapShift ? person => setSwapId(person.id) : undefined} onRemoveEmployee={model.removeEmployee} onChange={(next) => model.update(pruneMixed42Sectors(next))} review={reviewContext?.target === "team" ? reviewContext : undefined} />
+          <Employees input={input} disabled={!editTeam} managedTeam={globalTeam} swapDisabled={swapDisabled} onSwap={canSwapShift ? person => setSwapId(person.id) : undefined} onRemoveEmployee={globalTeam ? undefined : model.removeEmployee} onChange={(next) => model.update(manageSettings ? pruneMixed42Sectors(next) : next)} review={reviewContext?.target === "team" ? reviewContext : undefined} />
           {canSwapShift && swapEmployee && generationMode !== "REST_ONLY" && <ShiftSwap key={workspace.id + ":" + workspace.revision + ":" + swapEmployee.id} workspace={workspace} employee={swapEmployee} disabled={swapDisabled} onClose={() => setSwapId(null)} onApplied={() => { setSwapId(null); if (latestModel.current.workspace?.id === workspace.id) latestModel.current.open(workspace.id); }} />}
         </details>}
-        {input.employees.length === 0 && unrestricted && <Employees input={input} disabled={!editTeam} onChange={model.update} />}
-        {can("employee.manage") && <ApprovedEmployeeForm key={workspace.id} workspace={workspace} disabled={!editTeam || Boolean(model.generated)} add={model.addEmployee} />}
+        {input.employees.length === 0 && unrestricted && !globalTeam && <Employees input={input} disabled={!editTeam} onChange={model.update} />}
+        {!globalTeam && can("employee.manage") && <ApprovedEmployeeForm key={workspace.id} workspace={workspace} disabled={!editTeam || Boolean(model.generated)} add={model.addEmployee} />}
         {included > 0 && <div className={styles.nextStep}><div><strong>Equipe pronta para o próximo passo</strong><p className={styles.muted}>Confira os colaboradores e os afastamentos registrados antes de montar a escala.</p></div><button type="button" className={primaryClass} onClick={() => setArea("generate")}>Continuar para montar escala</button></div>}
       </section>}
 
@@ -366,7 +392,7 @@ export function EscalasWorkspace() {
           {hasRoster && <p className={styles.muted}>Grade atual · revisão salva {workspace.revision}{model.dirty ? " · alterações aguardando salvamento" : ""}{model.generated ? " · a candidata acima ainda não foi aplicada" : ""}.</p>}
           {referencesOnly && hasHourReferences(input) ? <HoursReferencePreview input={input} /> : hasRoster ? <Roster active={area === "roster"} key={workspace.id} input={input} review={reviewContext?.target === "roster" ? reviewContext : undefined} mode={exportMode} onModeChange={setExportMode} onReviewEmployee={employeeId => resolve("team", { employeeId })} onReviewCoverage={() => { setReviewSection("coverage"); setArea("review"); }} validation={model.validation} disabled={!editRoster} canUnlock={manageSettings && workspace.canPublish} onUndo={model.undoRoster} onChange={model.update} /> : !model.generated && <div className={`${panelClass} ${styles.emptyState}`}><h2 className={styles.sectionTitle}>Seu resultado aparecerá aqui</h2><p className="mt-2 text-sm text-[color:var(--app-muted)]">{included ? "Escolha a jornada e gere a proposta. O algoritmo prepara somente o conteúdo selecionado." : emptyTeamHelp}</p>{!included && (canImportTeam || canAddApprovedEmployee) && <button type="button" className={`${buttonClass} mt-4`} onClick={() => setArea("team")}>{canImportTeam ? "Importar equipe" : "Cadastrar colaboradores"}</button>}</div>}
         </div>
-        {(hasRoster || referencesOnly && hasHourReferences(input)) && <><div className={styles.actions}>{can("report.analytics") && !referencesOnly && <button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Onde falta gente?</button>}<button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir avisos e orientações</button><button type="button" className={buttonClass} onClick={() => setArea("generate")}>Voltar para montar escala</button></div>{!readOnlyDraft && <Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onRegenerate={model.generate} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} candidatePending={Boolean(model.generated)} canUseCandidate={editRoster && Boolean(model.generated?.validation.valid)} onUseCandidate={model.applyGenerated} />}</>}
+        {(hasRoster || referencesOnly && hasHourReferences(input) || workspace.status === "PUBLISHED") && <><div className={styles.actions}>{can("report.analytics") && !referencesOnly && <button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Onde falta gente?</button>}<button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir avisos e orientações</button><button type="button" className={buttonClass} onClick={() => setArea("generate")}>Voltar para montar escala</button></div>{!readOnlyDraft && <Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onReopen={() => model.publish("REOPEN_PUBLICATION")} onRegenerate={generate ? model.generate : undefined} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} candidatePending={Boolean(model.generated)} canUseCandidate={editRoster && Boolean(model.generated?.validation.valid)} onUseCandidate={model.applyGenerated} />}</>}
       </section>}
 
       {can("report.analytics") && !referencesOnly && visited.has("coverage") && <section hidden={area !== "coverage"} inert={area !== "coverage"} id="escala-area-coverage" className={styles.stackSmall} aria-label="Cobertura da filial"><CoverageTimeline key={workspace.id} input={input} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}

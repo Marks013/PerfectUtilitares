@@ -64,7 +64,7 @@ export function preserveManualAbsences(previous: EscalaInput, next: EscalaInput)
   }
 }
 
-export async function assertNoPublishedAbsenceChanges(tx: Prisma.TransactionClient, tenantId: string, input: EscalaInput,
+export async function assertNoPublishedAbsenceChanges(tx: Prisma.TransactionClient, tenantId: string, workspaceId: string, input: EscalaInput,
   edit: ReturnType<typeof editDraftAbsences>) {
   const dates = [...edit.changedDates].sort();
   const first = dates[0], last = dates.at(-1);
@@ -72,7 +72,8 @@ export async function assertNoPublishedAbsenceChanges(tx: Prisma.TransactionClie
   const lockKey = `escalas-publication:${JSON.stringify([tenantId, input.branchCode])}`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
   const peers = await tx.escalaWorkspace.findMany({
-    where: { tenantId, branchCode: input.branchCode, startDate: { lte: last },
+    // Reopening keeps our publication immutable; only other workspaces constrain this new draft.
+    where: { tenantId, branchCode: input.branchCode, id: { not: workspaceId }, startDate: { lte: last },
       endDate: { gte: addDays(first, -1) }, revisions: { some: { tenantId, status: "PUBLISHED" } } },
     select: { revisions: { where: { tenantId, status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
   });

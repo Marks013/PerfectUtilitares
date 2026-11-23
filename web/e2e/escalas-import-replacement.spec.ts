@@ -72,6 +72,36 @@ test("PREVIEW leaves A/B intact; visible removals and one explicit APPLY adopt c
   } finally { await removeOwnedWorkspace(page, created); }
 });
 
+test("requests a missing registration before showing departures and skips an identical reimport", async ({ page }) => {
+  const created = await createAB(page, { startDate: "2026-12-01", endDate: "2026-12-31" });
+  try {
+    const complete = employeeCsv(["0002", "0003"]);
+    const incomplete = Buffer.from(complete.toString().replace("\r\n0003;", "\r\n;"));
+    const { panel, preview } = await previewReplacement(page, "EMPLOYEES", { name: "equipe-sem-matricula.csv", mimeType: "text/csv", buffer: incomplete });
+    expect(preview.canApply).toBe(false);
+    expect(preview.impact.people.removed).toEqual([]);
+    await expect(panel.getByRole("button", { name: "Confirmar e salvar substituição de equipe", exact: true })).toBeDisabled();
+    const field = panel.getByRole("textbox", { name: /Matrícula.*linha 3/i });
+    await field.fill("0003");
+    const receiving = page.waitForResponse(response => isImportResponse(response, "PREVIEW_REPLACE"));
+    await panel.getByRole("button", { name: "Conferir substituição de equipe", exact: true }).click();
+    const response = await receiving; expect(response.status()).toBe(200);
+    const { preview: corrected } = await response.json();
+    expect(corrected.canApply).toBe(true);
+    expect(corrected.impact.people.removed).toEqual([expect.objectContaining({ registration: "0001" })]);
+    expect(corrected.impact.people.added).toEqual([expect.objectContaining({ registration: "0003" })]);
+    expect((await readWorkspace(page, created.id)).revision).toBe(created.revision);
+    const { workspace } = await applyReplacement(page, panel, "EMPLOYEES");
+    expect(workspace.input.employees.map(person => person.registration).sort()).toEqual(["0002", "0003"]);
+
+    const repeated = await previewReplacement(page, "EMPLOYEES", { name: "equipe-identica.csv", mimeType: "text/csv", buffer: complete });
+    expect(repeated.preview.effect.noChanges).toBe(true);
+    expect(repeated.preview.canApply).toBe(false);
+    await expect(repeated.panel.getByText(/Nenhuma alteração/i)).toBeVisible();
+    expect((await readWorkspace(page, created.id)).revision).toBe(workspace.revision);
+  } finally { await removeOwnedWorkspace(page, created); }
+});
+
 test("partial absence file is blocked; scoped replacement preserves technical borders and leaves removed days empty", async ({ page }) => {
   let owned = await createAB(page, legacyDecemberPeriod);
   const origin = new URL(page.url()).origin;
@@ -152,6 +182,44 @@ test("invalid end date focuses its associated error; editing or changing coverag
   } finally { await removeOwnedWorkspace(page, created); }
 });
 
+function fpre136Pages(pages: number[]) {
+  const rows = pages.flatMap((number, index) => [
+    ["0001", "-", "Empresa sintética", "Pág.:", String(number)], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"],
+    ["02.01 , FILIAL SINTETICA, LOJA"], ["Horário:", "0026", "-", "Diurno"],
+    [String(index + 2).padStart(4, "0"), "-", "Pessoa sintética", "Operador", "08:00", "-", "12:00", "13:00", "-", "17:00"],
+    ["Sábado:", "08:00", "-", "12:00", "13:00", "-", "17:00", "08:00", "0026"],
+  ]);
+  return Buffer.from(rows.map(row => row.map(cell => JSON.stringify(cell)).join(",")).join("\r\n"));
+}
+
+test("FPRE136 complete report can remove a person with legacy work and automatic holidays", async ({ browser }) => {
+  const scope = await ownedAccountScope(browser); const page = scope.admin;
+  const input = newInput("02", "Filial sintética exclusiva", "2026-12", 40);
+  input.shifts = [{ id: "day", name: "Diurno", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1020, kind: "WORK" }] }];
+  input.employees = ["0001", "0002"].map((registration, index) => ({ ...newEmployee(40, "day"), id: index ? "B" : "A", registration, name: `Pessoa ${registration}`, sector: "Loja", role: "Operador", activeFrom: "2026-12-01" }));
+  input.assignments = [
+    { employeeId: "A", date: "2026-12-01", kind: "WORK", shiftId: "day" },
+    { employeeId: "A", date: "2026-12-02", kind: "OFF" },
+    { employeeId: "A", date: "2026-12-25", kind: "HOLIDAY" },
+    { employeeId: "B", date: "2026-12-01", kind: "WORK", shiftId: "day" },
+    { employeeId: "B", date: "2026-12-25", kind: "HOLIDAY" },
+  ];
+  try {
+    const saved = scope.trackWorkspace(await createdWorkspace(await scope.post({ action: "CREATE", input })));
+    await page.goto("/escala"); await selectEscalasWorkspace(page, saved);
+    const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "fpre-completo.csv", mimeType: "text/csv", buffer: fpre136Pages([1]) });
+    expect(reviewed.preview.canApply).toBe(true);
+    expect(reviewed.preview.impact.people.removed).toEqual([expect.objectContaining({ id: "A", registration: "0001" })]);
+    expect((await readWorkspace(page, saved.id)).input).toEqual(saved.input);
+    const { workspace } = await applyReplacement(page, reviewed.panel, "EMPLOYEES");
+    expect(workspace.revision).toBe(saved.revision + 1);
+    expect(workspace.input.employees).toEqual([expect.objectContaining({ id: "B", activeFrom: "2026-12-01" })]);
+    expect(workspace.input.assignments).toEqual(saved.input.assignments.filter(day => day.employeeId === "B"));
+    expect(workspace.input.policy.closedDates).toContain("2026-12-25");
+    expect((await readWorkspace(page, saved.id)).input).toEqual(workspace.input);
+  } finally { await scope.cleanup(); }
+});
+
 test("FPRE136 page gaps, duplicates, reversed pages and a missing first page block replacement without removing anyone", async ({ browser }) => {
   const scope = await ownedAccountScope(browser); const page = scope.admin;
   const input = newInput("02", "Filial sintética exclusiva", "2026-12", 40);
@@ -160,14 +228,7 @@ test("FPRE136 page gaps, duplicates, reversed pages and a missing first page blo
     const owned = scope.trackWorkspace(await createdWorkspace(await scope.post({ action: "CREATE", input })));
     await page.goto("/escala"); await selectEscalasWorkspace(page, owned);
     for (const pages of [[2], [1, 3], [1, 1], [2, 1], [0], [1, 0]]) {
-      const rows = pages.flatMap((number, index) => [
-        ["0001", "-", "Empresa sintética", "Pág.:", String(number)], ["Quadro de Horários"], ["", "Nome", "Cargo", "Horário"],
-        ["02.01 , FILIAL SINTETICA, LOJA"], ["Horário:", "0026", "-", "Diurno"],
-        [String(index + 2).padStart(4, "0"), "-", "Pessoa sintética", "Operador", "08:00", "-", "12:00", "13:00", "-", "17:00"],
-        ["Sábado:", "08:00", "-", "12:00", "13:00", "-", "17:00", "08:00", "0026"],
-      ]);
-      const buffer = Buffer.from(rows.map(row => row.map(cell => JSON.stringify(cell)).join(",")).join("\r\n"));
-      const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "fpre-parcial.csv", mimeType: "text/csv", buffer });
+      const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "fpre-parcial.csv", mimeType: "text/csv", buffer: fpre136Pages(pages) });
       expect(reviewed.preview.layout).toBe("FPRE136"); expect(reviewed.preview.canApply).toBe(false);
       expect(reviewed.preview.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "SOURCE_PARTIAL" })]));
       await expect(reviewed.panel.getByRole("checkbox", { name: /^Confirmo substituir/ })).toBeDisabled();

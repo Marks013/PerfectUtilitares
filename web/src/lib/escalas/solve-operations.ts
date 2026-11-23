@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { branchPermission, EscalaError, lockEscalaAccess, requireEscalaCapability, type EscalaActor } from "./access";
+import { loadEscalaApproval } from "./approved-policy-service";
+import { checkWorkforceReady, checkWorkforceWrite } from "./global-workforce-binding";
 import { getEscala, generateEscala, recheckEscalaGeneration } from "./service";
 import { EscalaSolverError } from "./solver-errors";
 import { cancelSolverOperation, solverCapability } from "./solver-transport";
@@ -52,6 +54,8 @@ export async function startGenerationOperation(actor: EscalaActor, ownerKey: str
   const workspace = await getEscala(actor, workspaceId);
   await requireEscalaCapability(actor, "schedule.generate", workspace.input.branchCode);
   if (workspace.revision !== expectedRevision) throw new EscalaError(409, "ESCALA_REVISION_CONFLICT", "A escala mudou. Atualize a proposta antes de calcular novamente.");
+  if (workspace.status === "PUBLISHED") throw new EscalaError(409, "ESCALA_REOPEN_REQUIRED", "Reabra a publicação como rascunho antes de gerar uma proposta.");
+  checkWorkforceReady(workspace);
   await cleanup(ownerKey, actor.tenantId);
   try {
     const operation = await prisma.$transaction(async tx => {
@@ -59,6 +63,11 @@ export async function startGenerationOperation(actor: EscalaActor, ownerKey: str
       await requireEscalaCapability(actor, "schedule.generate", workspace.input.branchCode, tx);
       const current = await tx.escalaWorkspace.findFirst({ where: { id: workspaceId, tenantId: actor.tenantId, revision: expectedRevision }, select: { revision: true } });
       if (!current) throw new EscalaError(409, "ESCALA_REVISION_CONFLICT", "A revisão mudou antes do início do cálculo.");
+      await checkWorkforceWrite(tx, actor.tenantId, workspace);
+      if (!actor.admin) {
+        if (!workspace.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária aprovação administrativa.");
+        await loadEscalaApproval(actor, workspace.approvedPolicyVersionId, tx, workspace.input);
+      }
       const existing = await tx.escalaSolveOperation.count({ where: { tenantId: actor.tenantId, ownerKey, state: { in: [...active] }, expiresAt: { gt: new Date() } } });
       if (existing) throw new EscalaSolverError("SOLVER_BUSY");
       return tx.escalaSolveOperation.create({ data: { tenantId: actor.tenantId, workspaceId, expectedRevision, ownerKey, expiresAt: new Date(Date.now() + 120_000) } });

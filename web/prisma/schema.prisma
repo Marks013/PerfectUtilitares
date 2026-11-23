@@ -223,6 +223,7 @@ model Tenant {
   escalaModuleAccessPolicy EscalaModuleAccessPolicy?
   escalaWorkspaces        EscalaWorkspace[]
   escalaImportedTeams     EscalaImportedTeam[]
+  escalaWorkforce         EscalaWorkforce?
   escalaApprovedPolicies  EscalaBranchPolicyVersion[]
   escalaAccesses          EscalaBranchAccess[]
   shiftCatalogSequence    ShiftCatalogSequence?
@@ -245,6 +246,14 @@ model EscalaImportedTeam {
   @@id([tenantId, branchCode])
 }
 
+model EscalaWorkforce {
+  tenantId  String   @id
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  revision  Int
+  snapshot  Json
+  updatedAt DateTime @updatedAt
+}
+
 model EscalaWorkspace {
   id           String   @id @default(cuid())
   tenantId     String
@@ -255,6 +264,7 @@ model EscalaWorkspace {
   endDate      String
   revision     Int      @default(1)
   status       String   @default("DRAFT")
+  workforceState Json?
   revisions    EscalaRevision[]
   solveOperations EscalaSolveOperation[]
   createdAt    DateTime @default(now())

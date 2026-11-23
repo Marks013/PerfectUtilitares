@@ -5,13 +5,16 @@ import { validateXlsxArchive } from "@/lib/spreadsheets/xlsx-security";
 import { EscalaError } from "./errors";
 import type { EscalaEmployee, EscalaShift, WeeklyHours } from "./types";
 import { isFpre136Text, isFpre136Rows, previewFpre136Rows } from "./fpre136";
+import type { ImportSyncMissingRegistration } from "./import-sync-contracts";
 
 export const ESCALA_IMPORT_TEMPLATE = "Matricula;Nome;Setor;Cargo;CargaSemanal;Horarios;Admissao;RegraDomingos\r\n0001;Nome completo;Reposição;Repositor;42;08:00-12:00 / 13:00-17:24;2020-01-01;\r\n";
 const headers = ["matricula", "nome", "setor", "cargo", "cargasemanal", "horarios", "admissao"];
 export type ImportOptions = { startDate: string; defaultWeeklyHours: WeeklyHours; branchCode?: string;
+  registrationCorrections?: ReadonlyMap<number, string>; sourceLines?: readonly number[];
   onLayoutRecognized?: (layout: "ESCALA_TEMPLATE" | "FPRE136") => void };
-export type EscalaImportPreview = { employees: EscalaEmployee[]; shifts: EscalaShift[]; issues: { line: number; message: string }[]; totalRows: number;
+export type EscalaImportPreview = { employees: EscalaEmployee[]; shifts: EscalaShift[]; issues: { line: number; message: string; rejected?: true }[]; totalRows: number;
   replacement?: { rejectedRows: number; invalidIdentityRows: number; fieldsById: Record<string, string[]>;
+    missingRegistrations?: ImportSyncMissingRegistration[];
     paginationIssues?: { line: number; code: "PAGE_SEQUENCE" | "PAGE_HEADER" | "PAGE_CONTEXT"; message: string }[] };
   report?: { format: "FPRE136"; branchCode: string; branchName: string; sourceEmployees: number; otherBranchesExcluded: number; missingSchedule: number } };
 
@@ -58,21 +61,31 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
   if (rows.length < 2) throw new EscalaError(400, "ESCALA_IMPORT_LAYOUT", "O modelo contém apenas o cabeçalho, sem colaboradores.");
   const result: EscalaImportPreview = { employees: [], shifts: [], issues: [], totalRows: rows.length - 1,
     replacement: { rejectedRows: 0, invalidIdentityRows: 0, fieldsById: {} } };
+  const missingRegistrations: ImportSyncMissingRegistration[] = [];
+  const lineAt = (index: number) => options.sourceLines?.[index] ?? index + 1;
+  const registrationAt = (row: unknown[], line: number) => String(row[0] ?? "").trim() || options.registrationCorrections?.get(line) || "";
+  const data = rows.slice(1);
   // Fail closed for every occurrence of a repeated registration. Otherwise the
   // first row could remain importable even though later duplicates are warned about.
   const registrationCounts = new Map<string, number>();
-  for (const row of rows.slice(1)) {
+  for (const [index, row] of data.entries()) {
     if (row.every((cell) => cell === null || cell === undefined || String(cell).trim() === "")) continue;
-    const registration = String(row[0] ?? "").trim();
+    const registration = registrationAt(row, lineAt(index + 1));
     if (registration) registrationCounts.set(registration, (registrationCounts.get(registration) ?? 0) + 1);
   }
   const shifts = new Map<string, EscalaShift>();
-  rows.slice(1).forEach((row, index) => {
+  data.forEach((row, index) => {
     if (row.every((cell) => cell === null || cell === undefined || String(cell).trim() === "")) return;
-    const line = index + 2;
+    const line = lineAt(index + 1);
     try {
-      const registration = bounded(row[0], 60), name = bounded(row[1], 160), sector = bounded(row[2], 120), role = bounded(row[3], 120);
-      if (typeof row[0] !== "string" && result.replacement) result.replacement.invalidIdentityRows++;
+      const name = bounded(row[1], 160), sector = bounded(row[2], 120), role = bounded(row[3], 120);
+      const sourceRegistration = bounded(row[0], 60);
+      const supplied = !sourceRegistration && options.registrationCorrections && name && sector && role;
+      const registration = bounded(registrationAt(row, line), 60);
+      if (supplied) {
+        missingRegistrations.push({ line, name, sector, role, resolved: Boolean(registration) });
+        if (!registration) return;
+      } else if (typeof row[0] !== "string" && result.replacement) result.replacement.invalidIdentityRows++;
       if (!registration || !name || !sector || !role) throw new Error("Matrícula, nome, setor e cargo são obrigatórios; nenhuma classificação será inferida.");
       if ((registrationCounts.get(registration) ?? 0) > 1) throw new Error("Matrícula duplicada nesta prévia. Registros não foram unidos pelo nome.");
       const hoursText = bounded(row[4], 10);
@@ -96,11 +109,33 @@ export function previewEscalaRows(rows: unknown[][], options: ImportOptions): Es
         ...(hoursText ? ["weeklyHours", "weeklyHoursMode"] : []), ...(sundayRule ? ["sundayRestRule", "maxConsecutiveSundays"] : [])];
     } catch (error) {
       if (result.replacement) result.replacement.rejectedRows++;
-      result.issues.push({ line, message: error instanceof Error ? error.message : "Linha inválida." });
+      result.issues.push({ line, message: error instanceof Error ? error.message : "Linha inválida.", rejected: true });
     }
   });
+  if (missingRegistrations.length && result.replacement) result.replacement.missingRegistrations = missingRegistrations;
   result.shifts = [...shifts.values()];
   return result;
+}
+
+// csv-parse byte offsets include skipped blank records. Count CRLF once, also
+// inside quoted fields, so a correction names the actual start line in the file.
+function csvSourceLines(text: string, recordEnds: number[]) {
+  const bytes = Buffer.from(text);
+  let offset = 0, line = 1;
+  const isBreak = () => bytes[offset] === 10 || bytes[offset] === 13;
+  const advance = () => {
+    if (isBreak()) {
+      line++;
+      if (bytes[offset] === 13 && bytes[offset + 1] === 10) offset++;
+    }
+    offset++;
+  };
+  return recordEnds.map(end => {
+    while (offset < end && isBreak()) advance();
+    const recordLine = line;
+    while (offset < end) advance();
+    return recordLine;
+  });
 }
 
 export async function previewEscalaImport(buffer: Buffer, extension: "csv" | "xlsx", options: ImportOptions) {
@@ -119,7 +154,10 @@ export async function previewEscalaImport(buffer: Buffer, extension: "csv" | "xl
     text = text.replace(/^\uFEFF/, "");
     const report = isFpre136Text(text);
     const first = text.split(/\r?\n/, 1)[0];
-    rows = parse(text, { delimiter: report ? "," : first.includes(";") ? ";" : ",", bom: true, skip_empty_lines: true, max_record_size: 8192, relax_column_count: report }) as unknown[][];
+    const recordEnds: number[] = [];
+    rows = parse(text, { delimiter: report ? "," : first.includes(";") ? ";" : ",", bom: true, skip_empty_lines: true, max_record_size: 8192,
+      relax_column_count: report, on_record: (record, info) => { recordEnds.push(info.bytes); return record; } });
+    return previewEscalaRows(rows, { ...options, sourceLines: csvSourceLines(text, recordEnds) });
   }
   return previewEscalaRows(rows, options);
 }

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { EscalaClientAccess } from "@/lib/escalas/access-view";
 import { EscalaAccessProvider } from "./access-context";
-import { PlanSelector, planPeriod, planSelection, selectPlan } from "./plan-selector";
+import { PlanSelector, planPeriod, planSelection } from "./plan-selector";
 import type { WorkspaceSummary } from "./use-escalas-workspace";
 import { newInput } from "./workspace-model";
 
@@ -51,29 +51,28 @@ describe("hierarchical planning selection", () => {
     expect(input).toEqual(before);
   });
 
-  it("keeps the open month and year when switching stores, otherwise opens the latest real period", () => {
-    expect(selectPlan(plans(), "08-nov", "branch", "02")).toBe("02-nov");
-    expect(selectPlan(plans(), "02-dec", "branch", "08")).toBe("08-dec");
-    expect(selectPlan(plans(), "02-dec", "branch", "11")).toBe("11-nov");
-    expect(selectPlan(plans(), "11-nov", "branch", "missing")).toBeUndefined();
+  it("stages a different branch without automatically choosing a period or changing the active plan", () => {
+    expect(planSelection(plans(), "08-nov", undefined, { branch: "02" })).toMatchObject({
+      active: { id: "08-nov" }, branch: "02", year: undefined, month: undefined, chosen: undefined,
+    });
+    expect(planSelection(plans(), "08-nov", undefined, { branch: "missing" }).chosen).toBeUndefined();
   });
 
   it("filters months by year while keeping the opened workspace until a month is chosen", () => {
     const input = [...plans(), plan("08-nov-next", "08", "2027-11")];
-    expect(planSelection(input, "08-nov", undefined, "2027")).toMatchObject({
+    expect(planSelection(input, "08-nov", undefined, { year: "2027" })).toMatchObject({
       active: { id: "08-nov" }, year: "2027", month: undefined, months: ["01", "11"], matching: [],
     });
-    expect(selectPlan(input, "08-nov", "month", "11", undefined, "2027")).toBe("08-nov-next");
-    expect(selectPlan(input, "08-nov", "month", "12", undefined, "2027")).toBeUndefined();
-    expect(planSelection(input, "08-nov", undefined, "2025").year).toBe("2026");
+    expect(planSelection(input, "08-nov", undefined, { year: "2027", month: "11" }).chosen?.id).toBe("08-nov-next");
+    expect(planSelection(input, "08-nov", undefined, { year: "2027", month: "12" }).chosen).toBeUndefined();
+    expect(planSelection(input, "08-nov", undefined, { year: "2025" }).year).toBeUndefined();
   });
 
   it("never changes store or year when a month is selected and never invents a missing plan", () => {
-    expect(selectPlan(plans(), "08-nov", "month", "12")).toBe("08-dec");
-    expect(selectPlan(plans(), "08-nov", "month", "11")).toBe("08-nov");
-    expect(selectPlan(plans(), "08-next", "month", "12")).toBeUndefined();
-    expect(selectPlan(plans(), undefined, "month", "11")).toBeUndefined();
-    expect(selectPlan(plans(), undefined, "branch", "08")).toBe("08-next");
+    expect(planSelection(plans(), "08-nov", undefined, { month: "12" }).chosen?.id).toBe("08-dec");
+    expect(planSelection(plans(), "08-nov", undefined, { month: "11" }).chosen?.id).toBe("08-nov");
+    expect(planSelection(plans(), "08-next", undefined, { month: "12" }).chosen).toBeUndefined();
+    expect(planSelection(plans(), undefined, undefined, { month: "11" }).chosen).toBeUndefined();
   });
 
   it("renders three native controls with associated visible labels and the actual open context", () => {
@@ -91,10 +90,9 @@ describe("hierarchical planning selection", () => {
   });
 
   it("keeps controls on the current workspace until opening is confirmed, and disables them while busy", () => {
-    const requested = selectPlan(plans(), "08-nov", "branch", "02");
-    expect(requested).toBe("02-nov");
     const html = renderSelector({ plans: plans(), selectedId: "08-nov", disabled: true, onSelect: vi.fn() });
     expect(html).toMatch(/<fieldset[^>]*disabled=""/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Abrir planejamento<\/button>/);
     expect(html).toContain('value="08" selected=""');
     expect(planSelection(plans(), "02-nov").period?.branch).toBe("02");
   });
@@ -109,7 +107,11 @@ describe("hierarchical planning selection", () => {
   it("retains duplicate same-period workspaces with explicit choices and the current ID", () => {
     const input = [...plans(), { ...plan("08-nov-copy", "08", "2026-11", 3), status: "PUBLISHED" as const }];
     expect(planSelection(input, "08-nov").matching.map(entry => entry.id).sort()).toEqual(["08-nov", "08-nov-copy"]);
-    expect(selectPlan(input, "08-nov", "month", "11")).toBe("08-nov");
+    expect(planSelection(input, "08-nov").chosen?.id).toBe("08-nov");
+    const filters = { branch: "08", year: "2026", month: "11" };
+    expect(planSelection(input, undefined, undefined, filters).chosen).toBeUndefined();
+    expect(planSelection(input, undefined, undefined, { ...filters, planId: "02-nov" }).chosen).toBeUndefined();
+    expect(planSelection(input, undefined, undefined, { ...filters, planId: "08-nov-copy" }).chosen?.id).toBe("08-nov-copy");
     const html = renderSelector({ plans: input, selectedId: "08-nov", disabled: false, onSelect: vi.fn() });
     expect(html.match(/<select\b/g)).toHaveLength(4);
     expect(html).toContain(">Planejamento</label>");
@@ -129,10 +131,10 @@ describe("hierarchical planning selection", () => {
     expect(html).toContain("Selecione o ano primeiro");
     expect(html).not.toContain("Planejamento aberto:");
     expect(html).not.toContain("Loja 11");
-    expect(planSelection(plans(), undefined, "08", "2027")).toMatchObject({
+    expect(planSelection(plans(), undefined, "08", { year: "2027" })).toMatchObject({
       active: undefined, year: "2027", month: undefined, months: ["01"],
     });
-    expect(selectPlan(plans(), undefined, "month", "01", "08", "2027")).toBe("08-next");
+    expect(planSelection(plans(), undefined, "08", { branch: "02", year: "2027", month: "01" }).chosen?.id).toBe("08-next");
     expect(onSelect).not.toHaveBeenCalled();
   });
 

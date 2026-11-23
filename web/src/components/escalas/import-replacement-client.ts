@@ -20,8 +20,9 @@ const previewSchema = z.object({
     references: z.array(z.object({ employeeId: text, registration: text, before: text, after: text })) }),
   blockers: z.array(z.object({ code: z.enum(IMPORT_SYNC_BLOCKER_CODES), message: text, line: count.optional(), employeeId: text.optional(), date: date.optional() })),
   warnings: z.array(z.object({ code: z.enum(["SOURCE_WARNING", "NUMERIC_REGISTRATION_MATCH", "UNKNOWN_BINDING", "OUTSIDE_SCOPE"]), message: text, line: count.optional(), employeeId: text.optional() })),
+  missingRegistrations: z.array(z.object({ line: count.positive(), name: text.min(1).max(160), sector: text.max(120), role: text.max(120), resolved: z.boolean() })).max(250).optional(),
   counts: z.object({ addedPeople: count, updatedPeople: count, removedPeople: count, unchangedPeople: count, addedAbsenceDays: count, removedAbsenceDays: count, unchangedAbsenceDays: count, assignmentChanges: count, blockers: count }),
-  effect: z.object({ nextStatus: z.literal("DRAFT"), needsRegeneration: z.boolean(), approvalInvalidated: z.boolean(), approvedPolicyVersionIdBefore: text.nullable(), approvedPolicyVersionIdAfter: text.nullable() }),
+  effect: z.object({ nextStatus: z.literal("DRAFT"), needsRegeneration: z.boolean(), approvalInvalidated: z.boolean(), approvedPolicyVersionIdBefore: text.nullable(), approvedPolicyVersionIdAfter: text.nullable(), noChanges: z.literal(true).optional() }),
 });
 export type ImportReplacementResult = ImportSyncPreviewResult | ImportSyncApplyResult;
 export type ReplaceImport = (file: File, command: ImportSyncCommand, signal: AbortSignal) => Promise<ImportReplacementResult | null>;
@@ -38,6 +39,9 @@ export function validateImportPreview(value: unknown, command: ImportSyncCommand
     || p.context.visibleMonth !== (workspace.input.visibleMonth ?? null) || p.context.status !== workspace.status
     || p.scope.startDate !== command.startDate || p.scope.endDate !== command.endDate || p.coverage.completeScopeConfirmed !== command.completeScopeConfirmed) throw invalid();
   const i = p.impact, n = p.counts;
+  const corrections = new Set(command.registrationCorrections?.map(({ line }) => line));
+  const missing = p.missingRegistrations ?? [];
+  const unresolved = missing.some(row => !row.resolved);
   const people = new Map((workspace.input.employees ?? []).map(person => [person.id, person.registration]));
   const preservedAbsences = new Set((workspace.input.assignments ?? []).filter(day => day.kind === "ABSENCE").map(day => JSON.stringify([day.employeeId, day.date])));
   if (n.addedPeople !== i.people.added.length || n.updatedPeople !== i.people.updated.length || n.removedPeople !== i.people.removed.length || n.unchangedPeople !== i.people.unchanged.length
@@ -45,6 +49,14 @@ export function validateImportPreview(value: unknown, command: ImportSyncCommand
     || command.startDate < workspace.input.startDate || command.endDate > workspace.input.endDate
     || command.purpose === "EMPLOYEES" && (command.startDate !== workspace.input.startDate || command.endDate !== workspace.input.endDate)
     || command.purpose === "ABSENCES" && (i.people.added.length + i.people.updated.length + i.people.removed.length > 0 || i.references.length > 0)
+    || missing.length > 0 && (p.purpose !== "EMPLOYEES" || !["FPRE136", "ESCALA_TEMPLATE"].includes(p.layout))
+    || new Set(missing.map(({ line }) => line)).size !== missing.length
+    || missing.some(row => row.resolved && !corrections.has(row.line))
+    || unresolved && n.removedPeople > 0
+    || (p.canApply || p.effect.noChanges) && (unresolved || corrections.size !== missing.length)
+    || p.effect.noChanges && (p.purpose !== "EMPLOYEES" || p.canApply || p.layout === "UNRECOGNIZED" || !p.coverage.completeScopeConfirmed
+      || p.blockers.length > 0 || n.addedPeople + n.updatedPeople + n.removedPeople + n.addedAbsenceDays + n.removedAbsenceDays + n.assignmentChanges + i.references.length > 0
+      || p.effect.approvalInvalidated || p.effect.approvedPolicyVersionIdBefore !== p.effect.approvedPolicyVersionIdAfter)
     || p.canApply && (!p.coverage.completeScopeConfirmed || p.blockers.length > 0 || p.layout === "UNRECOGNIZED")
     || p.canApply && (p.purpose === "EMPLOYEES" ? n.addedPeople + n.updatedPeople + n.unchangedPeople === 0 : n.addedAbsenceDays + n.unchangedAbsenceDays === 0)
     || [...i.absences.added, ...i.absences.removed, ...i.assignments].some(d => d.date < command.startDate || d.date > command.endDate)

@@ -7,6 +7,7 @@ import type { EscalaInput } from "./types";
 import { createEscala, createEscalaApproved, addEscalaEmployee, changeEscalaAbsence, rebaseEscalaApproval, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration, validateEscalaOperational } from "./service";
 import { preserveLockedAssignments } from "./draft-save-policy";
 import { removeEscalaEmployee } from "./service";
+import { reopenEscalaPublication } from "./reopen-publication";
 import { buildEscalaApprovedPolicy } from "./approved-policy";
 import { ESCALA_OPERATOR_CAPABILITIES } from "./permissions";
 import { allowedBranches, branchPermission, escalaActor, requireEscalaPermission, requireEscalaCapability } from "./access";
@@ -14,6 +15,7 @@ import { addDays, dateRange, dayOfWeek } from "./dates";
 import { validateEscala } from "./validation";
 import { publishedPlanningContext } from "./continuity";
 import { generationScenarioBasis } from "./hours-reference";
+import { withFixedRestSlots } from "./fixed-rest";
 import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
 
 import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
@@ -21,11 +23,11 @@ const mocks = vi.hoisted(() => ({
   workspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   revision: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() }, grants: { findUnique: vi.fn(), findMany: vi.fn() },
   audit: { create: vi.fn(), findFirst: vi.fn() }, importedTeam: { findUnique: vi.fn(), upsert: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(), catalogEntry: vi.fn(),
-  policy: vi.fn(), user: vi.fn(), session: vi.fn(), approval: vi.fn(),
+  policy: vi.fn(), user: vi.fn(), session: vi.fn(), approval: vi.fn(), workforce: vi.fn(),
   solverSecretPath: undefined as string | undefined, solverSecretDescriptor: undefined as number | undefined,
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: mocks.workspace, escalaRevision: mocks.revision, escalaBranchAccess: mocks.grants, auditLog: mocks.audit, $transaction: mocks.transaction,
-  escalaModuleAccessPolicy: { findUnique: mocks.policy }, user: { findFirst: mocks.user },
+  escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkforce: { findUnique: mocks.workforce }, user: { findFirst: mocks.user },
   escalaModuleSession: { findFirst: mocks.session }, escalaBranchPolicyVersion: { findFirst: mocks.approval } } }));
 vi.mock("node:fs", async original => {
   const fs = await original<typeof import("node:fs")>();
@@ -112,14 +114,46 @@ beforeEach(() => {
   mocks.policy.mockResolvedValue({ tenantId: "company-a", mode: "SCOPED", version: 1 });
   mocks.user.mockImplementation(async ({ where }) => ({ id: where.id, tenantId: where.tenantId, status: "ACTIVE", role: where.id === "operator-a" ? "OPERATOR" : "ADMIN" }));
   mocks.peers.mockResolvedValue([]);
+  mocks.workforce.mockResolvedValue(null);
   mocks.advisory.mockResolvedValue(1);
   mocks.transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({ escalaWorkspace: { ...mocks.workspace, findMany: mocks.peers }, escalaRevision: mocks.revision, auditLog: mocks.audit, escalaImportedTeam: mocks.importedTeam, $executeRaw: mocks.advisory,
-    escalaModuleAccessPolicy: { findUnique: mocks.policy }, user: { findFirst: mocks.user }, escalaBranchAccess: mocks.grants,
+    escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkforce: { findUnique: mocks.workforce }, user: { findFirst: mocks.user }, escalaBranchAccess: mocks.grants,
     escalaModuleSession: { findFirst: mocks.session }, escalaBranchPolicyVersion: { findFirst: mocks.approval }, $queryRaw: vi.fn() }));
   mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: generatedInput().assignments, wallTimeSeconds: 0.1, message: "Proposta viável" });
 });
 
 describe("canonical scheduling branch service", () => {
+  it("freezes generic edits to a published revision", async () => {
+    const published = input();
+    useCurrent(published, "PUBLISHED");
+    await expect(saveEscala(actor, "w1", 1, published)).rejects.toMatchObject({ code: "ESCALA_REOPEN_REQUIRED", status: 409 });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("cannot reopen again after a concurrent change or accept an already open draft", async () => {
+    useCurrent(input(), "PUBLISHED");
+    const identity = { ...actor };
+    mocks.workspace.updateMany.mockResolvedValue({ count: 0 });
+    await expect(reopenEscalaPublication(identity, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION", status: 409 });
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+    expect(mocks.audit.create).not.toHaveBeenCalled();
+
+    useCurrent(input());
+    await expect(reopenEscalaPublication(identity, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_NOT_PUBLISHED", status: 409 });
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechecks publication authority within the same transaction as reopening", async () => {
+    useCurrent(input(), "PUBLISHED");
+    // Read the workspace and authorize the request while the account is active.
+    const authorized = { id: actor.userId, tenantId: actor.tenantId, role: "ADMIN", status: "ACTIVE", securityVersion: 1 };
+    mocks.user.mockResolvedValueOnce(authorized).mockResolvedValueOnce(authorized).mockResolvedValueOnce({ ...authorized, status: "INACTIVE" });
+    await expect(reopenEscalaPublication({ ...actor }, "w1", 1)).rejects.toMatchObject({ status: 403 });
+    expect(mocks.advisory).toHaveBeenCalled();
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
   it("upgrades the real service into a separate Sunday draft without transferring approval or writing its source", async () => {
     const source = input(); source.planningWeekStartsOn = "MONDAY";
     const before = structuredClone(source);
@@ -901,12 +935,28 @@ describe("Escalas revision service", () => {
     mocks.revision.findUnique.mockResolvedValue(null);
     await expect(getEscala(actor, "w1", 9)).rejects.toMatchObject({ status: 404 });
   });
-  it("saves a new draft without updating the previous published revision", async () => {
-    mocks.revision.findUnique.mockResolvedValue(version(input(), 1, "PUBLISHED"));
-    const result = await saveEscala(actor, "w1", 1, input());
-    expect(result).toMatchObject({ revision: 2, status: "DRAFT" });
-    expect(mocks.revision.create).toHaveBeenCalledWith({ data: expect.objectContaining({ revision: 2, status: "DRAFT" }) });
-    expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", tenantId: "company-a", revision: 1 } }));
+  it("reopens, saves and republishes without changing the first published snapshot", async () => {
+    const first = version(input(), 1, "PUBLISHED");
+    useCurrent(first.input, "PUBLISHED");
+    const reopened = await reopenEscalaPublication({ ...actor }, "w1", 1);
+    expect(reopened).toMatchObject({ revision: 2, status: "DRAFT", input: first.input });
+    expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "w1", tenantId: "company-a", branchCode: "02", revision: 1, status: "PUBLISHED" },
+    }));
+
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
+    mocks.revision.findUnique.mockResolvedValue(version(reopened.input, 2));
+    const adjusted = structuredClone(reopened.input);
+    adjusted.employees[0].name = "Ana revisada";
+    const saved = await saveEscala(actor, "w1", 2, adjusted);
+    expect(saved).toMatchObject({ revision: 3, status: "DRAFT" });
+
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 3 }));
+    mocks.revision.findUnique.mockResolvedValue(version(saved.input, 3));
+    const republished = await saveEscala(actor, "w1", 3, saved.input, true);
+    expect(republished).toMatchObject({ revision: 4, status: "PUBLISHED" });
+    expect(mocks.revision.create.mock.calls.map(([{ data }]) => [data.revision, data.status])).toEqual([[2, "DRAFT"], [3, "DRAFT"], [4, "PUBLISHED"]]);
+    expect(first.input.employees[0].name).toBe("Ana");
   });
   it("persists provisional estimates without treating a legacy global review as a mandatory minimum", async () => {
     const value = input(); value.policy.coverageReview = "CONFIRMED";
@@ -1373,6 +1423,83 @@ function scopedSavedFixture(withDemands = false, baseline = input()) {
   mocks.revision.findUnique.mockResolvedValue({ ...version(baseline), approvedPolicyVersionId: "approval" });
   return { scoped, baseline, approval, session };
 }
+
+describe("personal rest settings in a branch draft", () => {
+  const fixed = (value: EscalaInput) => parseEscalaInput({ ...value,
+    employees: [withFixedRestSlots(value.employees[0], [{ weekday: 1, enabled: true }, { weekday: 3, enabled: true }])],
+  });
+
+  it.each(["operator", "admin"])("persists both choices with the same approval and an intact roster for %s", async (role) => {
+    const seed = input();
+    seed.policy.coverageReview = "CONFIRMED";
+    const { scoped, baseline, approval } = scopedSavedFixture(false, seed);
+    const editor = role === "operator" ? scoped : actor;
+    const planned = fixed(baseline);
+    const saved = await saveEscala(editor, "w1", 1, planned);
+    expect(saved).toMatchObject({ revision: 2, approvedPolicyVersionId: "approval", input: { needsRegeneration: true,
+      policy: baseline.policy, employees: planned.employees, assignments: baseline.assignments } });
+    expect(mocks.revision.create).toHaveBeenCalledWith({ data: expect.objectContaining({ input: saved.input, approvedPolicyVersionId: "approval" }) });
+    expect(approval.snapshot.seed.employees[0].fixedOffDays).toEqual([]);
+
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
+    mocks.revision.findUnique.mockResolvedValue({ ...version(saved.input, 2), approvedPolicyVersionId: "approval" });
+    const rotated = withFixedRestSlots(saved.input.employees[0], [{ weekday: 1, enabled: false }, { weekday: 3, enabled: true }]);
+    await expect(saveEscala(editor, "w1", 2, { ...saved.input, employees: [rotated] })).resolves.toMatchObject({
+      revision: 3, approvedPolicyVersionId: "approval", input: { employees: [rotated], assignments: baseline.assignments },
+    });
+  });
+
+  it("requires the correct branch and rechecks employee management while saving", async () => {
+    const { scoped, baseline, session } = scopedSavedFixture();
+    const grant = session.operator.branchGrants[0];
+    grant.branchCode = "03";
+    await expect(saveEscala(scoped, "w1", 1, fixed(baseline))).rejects.toMatchObject({ code: "ESCALA_BRANCH_FORBIDDEN" });
+    grant.branchCode = "02";
+    mocks.advisory.mockImplementationOnce(async () => {
+      grant.capabilities = grant.capabilities.filter(capability => capability !== "employee.manage");
+      return 1;
+    });
+    await expect(saveEscala(scoped, "w1", 1, fixed(baseline))).rejects.toMatchObject({ status: 403 });
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("preserves the mode for hours-only work and denies administrative changes mixed with a rest edit", async () => {
+    const { scoped, baseline } = scopedSavedFixture();
+    await expect(saveEscala(scoped, "w1", 1, { ...fixed(baseline), defaultWeeklyHours: 40 })).rejects.toMatchObject({ code: "ESCALA_PROTECTED_INPUT" });
+    const seed = input(); seed.generationMode = "HOURS_ONLY";
+    const hours = scopedSavedFixture(false, seed);
+    await expect(saveEscala(hours.scoped, "w1", 1, fixed(hours.baseline))).rejects.toMatchObject({ code: "ESCALA_PROTECTED_INPUT" });
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps personal settings when an administrator links a different approval", async () => {
+    const { scoped, baseline } = scopedSavedFixture();
+    const saved = await saveEscala(scoped, "w1", 1, fixed(baseline));
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
+    mocks.revision.findUnique.mockResolvedValue({ ...version(saved.input, 2), approvedPolicyVersionId: "approval" });
+    await expect(rebaseEscalaApproval(actor, "w1", 2, "approval-new")).resolves.toMatchObject({
+      revision: 3, approvedPolicyVersionId: "approval-new", input: { employees: saved.input.employees, assignments: baseline.assignments },
+    });
+  });
+});
+
+it("opens a revoked draft for branch consultation and keeps operations blocked", async () => {
+  const { scoped, baseline, approval } = scopedSavedFixture();
+  mocks.approval.mockResolvedValue({ ...approval, revokedAt: new Date() });
+  await expect(getEscalaForRead(scoped, "w1")).resolves.toMatchObject({ approvedPolicyVersionId: "approval",
+    approvedPolicyRevoked: true, canEdit: false, canPublish: false, input: baseline });
+  await expect(saveEscala(scoped, "w1", 1, baseline)).rejects.toMatchObject({ code: "ESCALA_CONFIG_REVOKED" });
+  await expect(generateEscala(scoped, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_CONFIG_REVOKED" });
+  expect(mocks.revision.create).not.toHaveBeenCalled();
+  expect(mocks.solve).not.toHaveBeenCalled();
+  await expect(getEscalaForRead(actor, "w1")).resolves.toMatchObject({ canEdit: true });
+});
+
+it("requires reopening a published revision before generating another proposal", async () => {
+  useCurrent(input(), "PUBLISHED");
+  await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "ESCALA_REOPEN_REQUIRED" });
+  expect(mocks.solve).not.toHaveBeenCalled();
+});
 describe("revisioned manual absences", () => {
   const day = (date: string) => ({ employeeId: "e1", date, kind: "ABSENCE" as const, absenceSource: "MANUAL" as const });
   const command = { action: "ADD_ABSENCE" as const, employeeId: "e1", startDate: "2026-12-01", endDate: "2026-12-02" };
@@ -1436,6 +1563,31 @@ describe("revisioned manual absences", () => {
     mocks.advisory.mockImplementationOnce(async () => { session.revokedAt = new Date(); return 1; });
     await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ACCESS_REQUIRED" });
     expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+  it("edits an absence in an explicitly reopened draft without changing its original publication", async () => {
+    const { scoped, baseline } = december();
+    const original = structuredClone(baseline);
+    const first = { ...version(baseline, 1, "PUBLISHED"), approvedPolicyVersionId: "approval" };
+    const identity = { branchCode: baseline.branchCode, startDate: baseline.startDate, endDate: baseline.endDate };
+    mocks.workspace.findFirst.mockResolvedValue(row({ ...identity, status: "PUBLISHED" }));
+    mocks.revision.findUnique.mockResolvedValue(first);
+    const reopened = await reopenEscalaPublication(actor, "w1", 1);
+    expect(reopened).toMatchObject({ revision: 2, status: "DRAFT", input: original });
+
+    mocks.workspace.findFirst.mockResolvedValue(row({ ...identity, revision: 2 }));
+    mocks.revision.findUnique.mockImplementation(async ({ where }) => where.tenantId_workspaceId_revision.revision === 1
+      ? first : { ...version(reopened.input, 2), approvedPolicyVersionId: "approval" });
+    mocks.peers.mockImplementation(async ({ where }) => where.id?.not === "w1" ? [] : [{ revisions: [{ input: first.input }] }]);
+    const adjusted = await changeEscalaAbsence(scoped, "w1", 2, command);
+    expect(adjusted).toMatchObject({ revision: 3, status: "DRAFT", approvedPolicyVersionId: "approval" });
+    expect(adjusted.input.assignments).toContainEqual(day(command.startDate));
+    expect(adjusted.input.assignments).toContainEqual(day(command.endDate));
+    expect(mocks.peers).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: { not: "w1" }, tenantId: actor.tenantId, branchCode: "02" }),
+    }));
+    expect(mocks.revision.create.mock.calls.map(([{ data }]) => [data.revision, data.status])).toEqual([[2, "DRAFT"], [3, "DRAFT"]]);
+    await expect(getEscala(actor, "w1", 1)).resolves.toMatchObject({ revision: 1, status: "PUBLISHED", input: original });
+    expect(first.input).toEqual(original);
   });
   it("rejects overlapping published assignments by permanent registration", async () => {
     const { scoped, baseline } = december();
@@ -1666,6 +1818,28 @@ describe("manual employee removal", () => {
 });
 
 describe("canonical comparison composed with current operational authority", () => {
+  it("rejects generation, a previously signed proposal and publication after the workforce base changes", async () => {
+    const { scoped } = scopedComparisonFixture();
+    const current = await mocks.workspace.findFirst();
+    mocks.workspace.findFirst.mockResolvedValue({ ...current, workforceState: {
+      baseRevision: 4, managedAbsenceKeys: [], managedEmploymentEnds: [],
+    } });
+    const snapshot = { version: 1, catalogs: [{ branchCode: "02", shifts: [] }], people: [], absences: [] };
+    mocks.workforce.mockResolvedValue({ revision: 4, snapshot });
+    const first = await generateEscala(scoped, "w1", 1);
+    expect(first.proposalProof).toBeTypeOf("string");
+    if (!first.proposalProof) throw new Error("Expected signed proposal");
+
+    mocks.workforce.mockResolvedValue({ revision: 5, snapshot });
+    const stale = { status: 409, code: "ESCALA_WORKFORCE_SYNC_REQUIRED" };
+    await expect(getEscalaForRead(scoped, "w1")).resolves.toMatchObject({ revision: 1, workforce: { needsSync: true } });
+    await expect(generateEscala(scoped, "w1", 1)).rejects.toMatchObject(stale);
+    await expect(saveEscala(scoped, "w1", 1, first.proposalInput, false, { proposalProof: first.proposalProof })).rejects.toMatchObject(stale);
+    await expect(saveEscala(actor, "w1", 1, (await getEscala(actor, "w1")).input, true)).rejects.toMatchObject(stale);
+    expect(mocks.solve).toHaveBeenCalledTimes(1);
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
   it("shares current approval authority with result delivery without generating, signing or saving", async () => {
     const { scoped, approval } = scopedSavedFixture();
     await expect(recheckEscalaGeneration(scoped, "w1", 1)).resolves.toMatchObject({ workspaceId: "w1", revision: 1, approvalId: "approval", session: scoped.moduleSessionId });

@@ -1,16 +1,129 @@
 import { describe, expect, it } from "vitest";
-import { previewFphi105Import, mergeAbsenceAssignments } from "./fphi105";
+import { previewFphi105Import, mergeAbsenceAssignments, parseFphi105Report } from "./fphi105";
 import type { AbsenceImportOptions } from "./fphi105";
 import type { EscalaAssignment } from "./types";
 
 const header = "Empresa,Tipo,Cadastro,Nome,Função,Admissão,Afastamento,CID,Situação,Término,Dias";
 const options: AbsenceImportOptions = { startDate: "2026-10-26", endDate: "2026-12-06", visibleMonth: "2026-11", employees: [{ id: "p1", registration: "0001" }] };
-function row(registration = "1", start = "02/11/2026", end = "04/11/2026", status = "Férias", company = "0001") {
-  return [company, "1", registration, "Pessoa sintética", "Operador", "01/01/2020", start, "MEDICAL-CODE-DO-NOT-RETURN", "MEDICAL-TEXT-DO-NOT-RETURN", "2", status, end, "999"].map((value) => JSON.stringify(value)).join(",");
+function row(registration = "1", start = "02/11/2026", end = "04/11/2026", status = "Férias", company = "0001", statusCode = "2") {
+  return [company, "1", registration, "Pessoa sintética", "Operador", "01/01/2020", start, "MEDICAL-CODE-DO-NOT-RETURN", "MEDICAL-TEXT-DO-NOT-RETURN", statusCode, status, end, "999"].map((value) => JSON.stringify(value)).join(",");
 }
 function preview(records = [row()], settings = options) {
   return previewFphi105Import(Buffer.from(["Período,01/11/2026,a,30/11/2026", header, ...records].join("\n")), settings);
 }
+
+const decemberPeriod = { startDate: "2026-12-01", endDate: "2026-12-31" };
+const decemberOptions: AbsenceImportOptions = {
+  ...decemberPeriod, branchCode: "07", visibleMonth: "2026-12",
+  employees: [{ id: "p1", registration: "0001" }, { id: "p2", registration: "0002" }],
+};
+function decemberPage(page: number, sections: { branch: string; records: string[] }[]) {
+  return [
+    `0001,Empresa sintética,Pág.:,${page},FPHI105`,
+    "Período :,01/12/2026,a,31/12/2026",
+    ...sections.flatMap(({ branch, records }) => [`"${branch}.01 , FILIAL SINTÉTICA, SETOR SINTÉTICO"`, header, ...records]),
+  ].join("\r\n");
+}
+const decemberReport = (...pages: string[]) => Buffer.from(pages.join("\r\n"), "latin1");
+
+describe("FPHI105 reports with page and branch sections", () => {
+  it.each(["", "00/00/0000"])("keeps an undated return (%j) as null in the report and projects only through the requested horizon", (end) => {
+    const buffer = decemberReport(
+      decemberPage(1, [{ branch: "07", records: [row("0001", "29/12/2026", end)] }]),
+      decemberPage(2, [{ branch: "08", records: [row("0002", "30/12/2026", end)] }]),
+      decemberPage(3, [{ branch: "07", records: [row("0003", "31/12/2026", "31/12/2026")] }]),
+    );
+    const report = parseFphi105Report(buffer);
+    expect(report).toMatchObject({ hasBranchSections: true, reportPeriod: decemberPeriod, totalRows: 3, invalidRows: 0, unrecognizedRows: 0 });
+    expect(report.records).toEqual([
+      { line: 5, companyCode: "0001", employmentType: "1", branchCode: "07", registration: "0001", startDate: "2026-12-29", endDate: null },
+      { line: 10, companyCode: "0001", employmentType: "1", branchCode: "08", registration: "0002", startDate: "2026-12-30", endDate: null },
+      { line: 15, companyCode: "0001", employmentType: "1", branchCode: "07", registration: "0003", startDate: "2026-12-31", endDate: "2026-12-31" },
+    ]);
+    expect(JSON.stringify(report)).not.toMatch(/MEDICAL|Pessoa|Operador|Férias|2020|999/);
+
+    const cropped = previewFphi105Import(buffer, { ...decemberOptions, endDate: "2026-12-30" });
+    expect(cropped.assignments).toEqual(["2026-12-29", "2026-12-30"].map((date) => ({ employeeId: "p1", date, kind: "ABSENCE" })));
+    expect(cropped.reportPeriod).toEqual(decemberPeriod);
+    expect(cropped.counts).toMatchObject({ matchedRows: 1, openEndedRows: 1, invalidRows: 0, unmatchedRows: 0 });
+    expect(cropped.issues).toContainEqual(expect.objectContaining({ line: 5, code: "OPEN_ENDED_ABSENCE" }));
+
+    const full = previewFphi105Import(buffer, decemberOptions);
+    expect(full.assignments.map((entry) => entry.date)).toEqual(["2026-12-29", "2026-12-30", "2026-12-31"]);
+    expect(full.counts).toMatchObject({ unmatchedRows: 1, outsidePeriodRows: 0 });
+    expect(full.issues).toContainEqual(expect.objectContaining({ line: 15, code: "UNMATCHED_REGISTRATION" }));
+  });
+
+  it("projects only the selected branch even when another branch contains a matrícula known to the rascunho", () => {
+    const buffer = decemberReport(decemberPage(1, [
+      { branch: "08", records: [row("0001", "20/12/2026", "")] },
+      { branch: "07", records: [row("0002", "30/12/2026", "30/12/2026")] },
+    ]));
+    const result = previewFphi105Import(buffer, decemberOptions);
+    expect(result.assignments).toEqual([{ employeeId: "p2", date: "2026-12-30", kind: "ABSENCE" }]);
+    expect(result.counts).toMatchObject({ matchedRows: 1, unmatchedRows: 0, openEndedRows: 0, days: 1 });
+  });
+
+  it("does not claim another branch for an unknown matrícula in a report without branch sections", () => {
+    const buffer = Buffer.from(["Período,01/12/2026,a,31/12/2026", header, row("0001", "31/12/2026", ""), row("0003", "31/12/2026", "")].join("\n"));
+    expect(parseFphi105Report(buffer).hasBranchSections).toBe(false);
+    const result = previewFphi105Import(buffer, decemberOptions);
+    expect(result.assignments).toEqual([{ employeeId: "p1", date: "2026-12-31", kind: "ABSENCE" }]);
+    expect(result.counts).toMatchObject({ matchedRows: 1, unmatchedRows: 1 });
+    expect(result.issues).toContainEqual(expect.objectContaining({ line: 4, code: "UNMATCHED_REGISTRATION" }));
+  });
+
+  it("flags missing report pages as incomplete even when the remaining absence data matches", () => {
+    const buffer = decemberReport(
+      decemberPage(1, [{ branch: "07", records: [row("0001", "30/12/2026", "")] }]),
+      decemberPage(3, [{ branch: "07", records: [row("0002", "31/12/2026", "")] }]),
+    );
+    const report = parseFphi105Report(buffer);
+    expect(report.unrecognizedRows).toBeGreaterThan(0);
+    expect(report.issues).toContainEqual(expect.objectContaining({ line: 6, code: "INVALID_REPORT_PAGE" }));
+    expect(previewFphi105Import(buffer, decemberOptions).replacement?.unrecognizedRows).toBe(report.unrecognizedRows);
+  });
+
+  it("does not inherit the previous page's branch or accept a row from a different company", () => {
+    const buffer = decemberReport(
+      decemberPage(1, [{ branch: "07", records: [
+        row("0001", "31/12/2026", ""),
+        row("0002", "31/12/2026", "", "Férias", "0002"),
+      ] }]),
+      [decemberPage(2, []), header, row("0002", "31/12/2026", "")].join("\r\n"),
+    );
+    const report = parseFphi105Report(buffer);
+    expect(report.records.map((record) => record.registration)).toEqual(["0001"]);
+    expect(report.issues).toEqual(expect.arrayContaining([6, 10].map((line) => expect.objectContaining({ line, code: "INVALID_REPORT_CONTEXT" }))));
+    expect(previewFphi105Import(buffer, decemberOptions).assignments).toEqual([{ employeeId: "p1", date: "2026-12-31", kind: "ABSENCE" }]);
+  });
+
+  it("keeps the Término day inclusive when a later report supplies the end of an open absence", () => {
+    const report = (end: string) => decemberReport(decemberPage(1, [{ branch: "07", records: [row("0001", "27/12/2026", end)] }]));
+    const open = report("");
+    expect(parseFphi105Report(open).records[0]?.endDate).toBeNull();
+    expect(previewFphi105Import(open, decemberOptions).counts).toMatchObject({ openEndedRows: 1, days: 5 });
+
+    const closed = report("29/12/2026");
+    expect(parseFphi105Report(closed).records[0]?.endDate).toBe("2026-12-29");
+    const result = previewFphi105Import(closed, decemberOptions);
+    expect(result.assignments.map((entry) => entry.date)).toEqual(["2026-12-27", "2026-12-28", "2026-12-29"]);
+    expect(result.counts).toMatchObject({ openEndedRows: 0, days: 3 });
+    expect(result.issues.some((entry) => entry.code === "OPEN_ENDED_ABSENCE")).toBe(false);
+  });
+
+  it.each([["8", "Lic. s/ Remuneração"], ["17", "Aposent. Invalidez"], ["368", "Detenção"]])(
+    "recognizes the report's open-ended absence status %s without returning its description",
+    (code, status) => {
+      const buffer = decemberReport(decemberPage(1, [{ branch: "07", records: [row("0001", "31/12/2026", "", status, "0001", code)] }]));
+      const report = parseFphi105Report(buffer);
+      expect(report.records).toEqual([expect.objectContaining({ registration: "0001", startDate: "2026-12-31", endDate: null })]);
+      expect(report.invalidRows).toBe(0);
+      expect(JSON.stringify(report)).not.toContain(status);
+      expect(previewFphi105Import(buffer, decemberOptions).assignments).toEqual([{ employeeId: "p1", date: "2026-12-31", kind: "ABSENCE" }]);
+    },
+  );
+});
 
 describe("optional FPHI105 absence import", () => {
   it("exposes numeric fallback and unknown lines as structured replacement metadata", () => {

@@ -3,7 +3,7 @@ import type { EscalaInput, EscalaShift } from "../types";
 import { getEscala, parseEscalaInput, saveEscala } from "../service";
 import { EscalaError, requireEscalaCapability, type EscalaActor } from "../access";
 import { loadEscalaApproval } from "../approved-policy-service";
-import { stableEscalaJson } from "../operational-input-policy";
+import { approvedShiftIdsForEmployee } from "../approved-policy";
 import { canAssignCatalogShift } from "./reference-choices";
 import { validateEscala } from "../validation";
 import { findTurnoCatalogCode, getTurnoCatalogEntry } from "./catalog";
@@ -51,11 +51,7 @@ async function computeSwap(actor: EscalaActor, request: TurnoSwapRequest): Promi
   if (!actor.admin) {
     if (!workspace.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária uma configuração aprovada.");
     const approval = await loadEscalaApproval(actor, workspace.approvedPolicyVersionId, undefined, workspace.input);
-    const permittedIds = new Set(approval.snapshot.seed.employees.find(person => person.id === employee.id)?.shiftIds
-      ?? approval.snapshot.regimeModels.filter(model => model.protectedFields.sector === employee.sector
-        && Object.entries(model.protectedFields).every(([key, value]) =>
-          stableEscalaJson(employee[key as keyof typeof employee]) === stableEscalaJson(value)))
-        .flatMap(model => model.protectedFields.shiftIds));
+    const permittedIds = approvedShiftIdsForEmployee(approval.snapshot, employee);
     if (!approval.snapshot.seed.shifts.some(shift => permittedIds.has(shift.id) && sameMarkings(markingsFromShift(shift), target.markings))) {
       throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "O turno não está aprovado para este colaborador e período.");
     }

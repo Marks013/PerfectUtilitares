@@ -266,4 +266,5 @@ export type EscalaWorkspace = {
   canEdit: boolean;
   canPublish: boolean;
   updatedAt: string;
+  workforce?: { needsSync: boolean };
 };

@@ -5,6 +5,7 @@ export const ESCALA_POLICY_ROUTES = Object.freeze([
   "/api/escalas/export", "/api/escalas/operational-report",
   "/api/escalas/turnos/export/manifest", "/api/escalas/turnos/export", "/api/escalas/turnos/opcoes",
   "/api/escalas/access/admin", "/api/escalas/approved-policy",
+  "/api/escalas/workforce",
 ] as const);
 
 type Scope = "branch-collection" | "workspace" | "approved-configuration" | "operation"
@@ -72,6 +73,10 @@ const workspaceCommands = new Map<string, EscalaResourcePolicy>([
     ["canonical-resource", "owned-operation", "authorization-recheck"])],
   ["PUBLISH", resource("workspace.publish", ["workspace.publish"], "workspace",
     ["canonical-resource", "current-revision", "shift-policy-and-locks"])],
+  ["REOPEN_PUBLICATION", resource("workspace.reopen-publication", ["workspace.publish"], "workspace",
+    ["canonical-resource", "current-revision", "authorization-recheck"])],
+  ["SYNC_WORKFORCE", resource("workspace.sync-workforce", ["workspace.save"], "workspace",
+    ["canonical-resource", "current-revision", "approved-period-policy", "authorization-recheck"])],
 ]);
 const shiftCommands = new Map<string, EscalaResourcePolicy>([
   ["SYNC", resource("catalog.sync", ["settings.manage", "shift.manage"], "workspace-selection",
@@ -89,6 +94,7 @@ function expectedSelectors(request: EscalaRouteRequest): readonly typeof selecto
   if (request.route === "/api/escalas/turnos" && request.method === "POST") return ["action"];
   if (["/api/escalas/access/admin", "/api/escalas/approved-policy"].includes(request.route) && request.method === "POST") return ["action"];
   if (request.route === "/api/escalas/import" && request.method === "POST") return ["purpose"];
+  if (request.route === "/api/escalas/workforce" && request.method === "POST") return ["action", "purpose"];
   if (request.route === "/api/escalas/export" && request.method === "GET") return ["format", "projection"];
   if (request.route === "/api/escalas/turnos/export" && request.method === "GET") return ["format"];
   return [];
@@ -141,6 +147,19 @@ export function classifyEscalaRoute(request: EscalaRouteRequest): EscalaRoutePol
     return purpose === "EMPLOYEES"
       ? resource("import.employees", ["import.manage"], "tenant", ["upload-boundary"])
       : resource("import.absences", ["import.manage"], "branch-context", ["canonical-input-baseline", "upload-boundary"]);
+  }
+  if (request.route === "/api/escalas/workforce") {
+    if (request.method === "GET") return resource("workforce.read", ["employee.manage"], "branch-context", ["canonical-resource"]);
+    if (request.method !== "POST") return denied("UNKNOWN_METHOD");
+    if (request.action === "IMPORT_PREVIEW" || request.action === "IMPORT_APPLY") {
+      if (request.purpose !== "EMPLOYEES" && request.purpose !== "ABSENCES") return denied("INVALID_SELECTOR");
+      return resource("workforce.import", ["import.manage"], "tenant",
+        ["administrator", "upload-boundary", "current-revision", "preview-hash", "authorization-recheck"]);
+    }
+    if (request.purpose !== undefined) return denied("INVALID_SELECTOR");
+    if (typeof request.action !== "string" || !["CREATE_PERSON", "UPDATE_PERSON", "SET_ABSENCE", "REMOVE_ABSENCE", "SET_RETURN_DATE", "DISMISS_PERSON"].includes(request.action)) return denied("UNKNOWN_ACTION");
+    return resource("workforce.edit", ["employee.manage"], "branch-context",
+      ["canonical-resource", "current-revision", "authorization-recheck"]);
   }
   if (request.route === "/api/escalas/turnos/opcoes") return request.method === "GET"
     ? resource("shift.catalog-options", ["workspace.read", "shift.manage"], "workspace",
