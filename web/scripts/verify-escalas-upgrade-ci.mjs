@@ -28,6 +28,9 @@ const successors = chain.filter(name => name > migration);
 if (!successors.includes("20261122190000_escalas_december_cutover")) {
   throw new Error("Missing December 2026 calendar migration.");
 }
+for (const version of ["20261123190000_escalas_global_workforce", "20261123200000_escalas_workforce_draft_state"]) {
+  if (!successors.includes(version)) throw new Error(`Missing global workforce migration: ${version}.`);
+}
 const sql = read(migrations, migration + "/migration.sql");
 const firstChange = sql.indexOf('ALTER TABLE "EscalaModuleSession"');
 const injectAfter = sql.indexOf(";", firstChange) + 1;
@@ -92,7 +95,7 @@ const fingerprint = db => {
   const result = psql(db, String.raw`
 SELECT jsonb_build_array(
   to_jsonb(s) - ARRAY['operatorId', 'accessPolicyVersion', 'permissionVersion'],
-  to_jsonb(w), to_jsonb(r) - 'approvedPolicyVersionId')
+  to_jsonb(w) - 'workforceState', to_jsonb(r) - 'approvedPolicyVersionId')
 FROM "EscalaModuleSession" s, "EscalaWorkspace" w, "EscalaRevision" r
 WHERE s.id='escala-access-fixture-legacy' AND w.id='upgrade-test-workspace' AND r.id='upgrade-test-revision';
 `);
@@ -130,6 +133,12 @@ SELECT NOT EXISTS (SELECT FROM information_schema.columns WHERE table_name='Esca
     if (fingerprint(db) !== before || psql(db, 'SELECT "approvedPolicyVersionId" IS NULL FROM "EscalaRevision" WHERE id = \'upgrade-test-revision\';') !== "t") {
       throw new Error("The upgrade changed protected legacy data.");
     }
+    // The additive column is excluded only from the legacy fingerprint. Check it
+    // directly so the migration cannot silently initialize any existing draft.
+    if (psql(db, String.raw`
+SELECT NOT EXISTS (SELECT FROM "EscalaWorkspace" WHERE "workforceState" IS NOT NULL)
+  AND NOT EXISTS (SELECT FROM "EscalaWorkforce");
+`) !== "t") throw new Error("The upgrade initialized workforce data without a confirmed import.");
     for (const check of ["escalas-access-foundation.verify.sql", "escalas-approved-policy.verify.sql"]) {
       psql(db, read(fixtures, check));
     }
