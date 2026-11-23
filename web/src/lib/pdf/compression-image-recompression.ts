@@ -36,6 +36,7 @@ export type PdfCompressionCandidate = {
   // true se algum estágio puder alterar amostras de imagem.
   lossy: boolean;
   appliedMonochromeThreshold?: number;
+  visualOptionsScopedToImages?: boolean;
   notApplied: string[];
 };
 
@@ -203,6 +204,7 @@ async function ghostscriptCandidate(
   outputPath: string,
   options: PdfCompressionEffectiveOptions,
   profile: PdfCompressionProfile,
+  timeoutMs?: number,
 ) {
   throwIfPdfExecutionAborted();
   const hasSourceXmp = (await PDFDocument.load(
@@ -212,7 +214,7 @@ async function ghostscriptCandidate(
   const args = buildGhostscriptImageArgs({ inputPath, outputPath, options, profile });
   // Preserve the original catalog shape; never discard XMP already in the source.
   if (!hasSourceXmp) args.unshift("-dOmitXMP=true");
-  await runTool("gs", args);
+  await runTool("gs", args, timeoutMs);
   // This can also feed the OCRmyPDF optimizer. A larger intermediate may still
   // produce a smaller final candidate; do not prune the pipeline at this stage.
   await validateSemanticCandidate(inputPath, outputPath);
@@ -349,23 +351,26 @@ async function monoXObjectJbig2Candidate({
     "--threshold",
     String(threshold),
   ]);
-  await validateSmallerCandidate(inputPath, outputPath);
 }
 
 export async function buildPreservingImageCandidates({
+  preserveDetectedColor = false,
   inputPath,
   baseOutputPath,
   options,
   profile,
   minimumAdaptiveMonoSavingsRatio = 0.03,
   onIntegrityRejection,
+  onInsufficientSavings,
 }: {
   inputPath: string;
   baseOutputPath: string;
+  preserveDetectedColor?: boolean;
   options: PdfCompressionEffectiveOptions;
   profile: PdfCompressionProfile;
   minimumAdaptiveMonoSavingsRatio?: number;
   onIntegrityRejection?: () => void;
+  onInsufficientSavings?: () => void;
 }) {
   const candidates: PdfCompressionCandidate[] = [];
   const reportIntegrityRejection = (error: unknown) => {
@@ -405,7 +410,8 @@ export async function buildPreservingImageCandidates({
           "--quality",
           String(options.imageQuality),
           "--mode",
-          options.colorMode === "GRAYSCALE" ? "grayscale" : "preserve",
+          !preserveDetectedColor && options.colorMode === "GRAYSCALE" ? "grayscale" : "preserve",
+          ...(preserveDetectedColor ? ["--allow-partial"] : []),
         ],
         Math.min(compressionToolTimeoutMs(), 30_000),
       );
@@ -427,13 +433,17 @@ export async function buildPreservingImageCandidates({
             path: jpegPath,
             kind: "JPEG_XOBJECT_RECOMPRESSION",
             engine: "pikepdf + Pillow",
-            description:
-              "Imagens JPEG recomprimidas sem reescrever as páginas; texto e OCR preservados.",
+            description: preserveDetectedColor
+              ? "Imagens JPEG elegíveis recomprimidas dentro do limite de processamento. DPI e qualidade são alvos apenas para as imagens tratadas. Texto e OCR preservados."
+              : "Imagens JPEG recomprimidas sem reescrever as páginas; texto e OCR preservados.",
+            visualOptionsScopedToImages: preserveDetectedColor,
             visualTransform: true,
             lossy: true,
           }),
         );
         if (hasEarlyJpegSavings(input.size, output.size)) return candidates;
+      } else if (output.size > 0 && output.size < input.size) {
+        onInsufficientSavings?.();
       }
     } catch (error) {
       throwIfPdfExecutionAborted();
@@ -459,19 +469,6 @@ export async function buildPreservingImageCandidates({
         targetDpi: adaptiveMonoTargetDpi,
         threshold: adaptiveThreshold,
       });
-      candidates.push(
-        candidate({
-          path: monoXObjectPath,
-          kind: "MONO_XOBJECT_JBIG2",
-          engine: "pikepdf + Pillow + jbig2enc",
-          description:
-            `XObjects monocromáticos reamostrados de forma adaptativa para ${adaptiveMonoTargetDpi} DPI e reencodados em JBIG2 generic lossless; páginas e camada OCR originais foram preservadas.`,
-          visualTransform: true,
-          lossy: true,
-          appliedMonochromeThreshold: adaptiveThreshold,
-          notApplied: ["imageQuality"],
-        }),
-      );
       const [input, output] = await Promise.all([
         stat(inputPath),
         stat(monoXObjectPath),
@@ -483,13 +480,28 @@ export async function buildPreservingImageCandidates({
           minimumAdaptiveMonoSavingsRatio,
         )
       ) {
-        return candidates;
+        await validateSemanticCandidate(inputPath, monoXObjectPath);
+        return [
+          ...candidates,
+          candidate({
+            path: monoXObjectPath,
+            kind: "MONO_XOBJECT_JBIG2",
+            engine: "pikepdf + Pillow + jbig2enc",
+            description:
+              `XObjects monocromáticos reamostrados de forma adaptativa para ${adaptiveMonoTargetDpi} DPI e reencodados em JBIG2 generic lossless; páginas e camada OCR originais foram preservadas.`,
+            visualTransform: true,
+            lossy: true,
+            appliedMonochromeThreshold: adaptiveThreshold,
+            notApplied: ["imageQuality"],
+          }),
+        ];
       }
+      if (output.size > 0 && output.size < input.size) onInsufficientSavings?.();
     } catch (error) {
       throwIfPdfExecutionAborted();
       reportIntegrityRejection(error);
-      await rm(monoXObjectPath, { force: true }).catch(() => undefined);
     }
+    await rm(monoXObjectPath, { force: true }).catch(() => undefined);
   }
 
   const qpdfPath = `${baseOutputPath}.qpdf-images.pdf`;
@@ -524,7 +536,9 @@ export async function buildPreservingImageCandidates({
     profile.predominantImageEncoding === "FLATE" ||
     profile.predominantImageEncoding === "OTHER";
 
-  if (imageWork && adaptiveMonoTargetDpi === null) {
+  // A useful adaptive result already returned; a rejected attempt is not a reason
+  // to skip the preserving fallback.
+  if (imageWork) {
     const safeColorMode = resolveSafeGhostscriptColorMode(options, profile);
     const notApplied =
       options.colorMode === "MONOCHROME" && safeColorMode !== "MONOCHROME"
@@ -532,7 +546,8 @@ export async function buildPreservingImageCandidates({
         : [];
     const gsPath = `${baseOutputPath}.gs-images.pdf`;
     try {
-      await ghostscriptCandidate(inputPath, gsPath, options, profile);
+      const fallbackTimeout = adaptiveMonoTargetDpi === null ? undefined : Math.min(compressionToolTimeoutMs(), 30_000);
+      await ghostscriptCandidate(inputPath, gsPath, options, profile, fallbackTimeout);
       candidates.push(
         candidate({
           path: gsPath,

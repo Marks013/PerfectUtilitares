@@ -390,6 +390,8 @@ describe("PDF compression control paths", () => {
     } else {
       expect(mocks.copyFile).toHaveBeenCalledWith(inputPath, "/tmp/output.partial");
       expect(mocks.rename).not.toHaveBeenCalled();
+      if (structuralSize < 1_000) expect(result.planReason).toContain("abaixo do ganho mínimo");
+      else expect(result.planReason).not.toContain("abaixo do ganho mínimo");
     }
     expect(result).toMatchObject({
       outcome: eligible ? "COMPRESSED" : "UNCHANGED",

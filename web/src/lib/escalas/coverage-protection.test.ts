@@ -79,6 +79,34 @@ describe("frozen coverage service", () => {
     expect(frozenCoverageService(input)).toEqual({ days: [], bands: [] });
   });
 
+  it("compares dated deficits chronologically even when reports list empty bands first", () => {
+    const original = fixture(), first = "2026-12-07", second = "2026-12-14";
+    Object.assign(original, { startDate: "2026-12-01", endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY" });
+    original.employees = [original.employees[0]];
+    original.employees[0].activeFrom = original.startDate;
+    original.shifts = [
+      { id: "day", name: "Manhã", segments: [{ start: 480, end: 540, kind: "WORK" }] },
+      { id: "later", name: "Tarde", segments: [{ start: 720, end: 780, kind: "WORK" }] },
+    ];
+    original.demands = [first, second].flatMap(date => [480, 600].map(start => ({
+      id: `${date}:${start}`, date, sector: "Loja", start, end: start + 60, minimum: 2, estimated: true,
+    })));
+    original.assignments = dateRange(original.startDate, original.endDate).map(date => date === first || date === second
+      ? { employeeId: "timed", date, kind: "WORK", shiftId: date === first ? "day" : "later" }
+      : { employeeId: "timed", date, kind: "OFF" });
+
+    expect(compareRosterCoverage(original, structuredClone(original), original, "DECEMBER_DEMAND"))
+      .toMatchObject({ comparable: true, regressed: false });
+
+    const swapped = { ...original, assignments: original.assignments.map(row => row.kind === "WORK"
+      ? { ...row, shiftId: row.date === first ? "later" : "day" }
+      : row) };
+    expect(compareRosterCoverage(original, swapped, original, "DECEMBER_DEMAND")).toMatchObject({
+      comparable: true, regressed: true, reason: "SECTOR_COVERAGE",
+      regression: { date: first, sector: "Loja", start: 480, end: 540, before: 60, after: 120, delta: 60 },
+    });
+  });
+
   it.each([undefined, "DECEMBER_DEMAND"] as const)("keeps 01–05 advisory in comparison mode %s and protects December 06", mode => {
     const original = fixture(), early = "2026-12-01", later = "2026-12-06";
     Object.assign(original, { startDate: early, endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY" });

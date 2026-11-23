@@ -236,6 +236,9 @@ function datedDeficitRegression(reference: EscalaInput, proposal: EscalaInput, r
     const before = datedDeficitBands(reference, ruler, estimated, dates);
     for (const [key, proposalBands] of datedDeficitBands(proposal, ruler, estimated, dates)) {
       const referenceBands = before.get(key) ?? [];
+      // Reports prioritize empty bands. The comparison cursor needs chronological order.
+      referenceBands.sort((a, b) => a.start - b.start);
+      proposalBands.sort((a, b) => a.start - b.start);
       let position = 0;
       for (const band of proposalBands) {
         let start = band.start;

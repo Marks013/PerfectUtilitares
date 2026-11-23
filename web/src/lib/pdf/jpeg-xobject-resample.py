@@ -113,7 +113,7 @@ def is_plain_jpeg(obj):
     return image_filter == pikepdf.Name.DCTDecode and params is None
 
 
-def transform(source, output, target_dpi, quality, grayscale):
+def transform(source, output, target_dpi, quality, grayscale, allow_partial=False):
     changed = False
     pixels = 0
     with pikepdf.Pdf.open(source, attempt_recovery=False) as pdf:
@@ -161,9 +161,13 @@ def transform(source, output, target_dpi, quality, grayscale):
                 continue
             if width < 1 or height < 1 or width * height > MAX_IMAGE_PIXELS:
                 raise NotApplicable()
-            pixels += width * height
-            if pixels > MAX_TOTAL_PIXELS:
+            image_pixels = width * height
+            if pixels + image_pixels > MAX_TOTAL_PIXELS:
+                # Keep work already done only for a tone-preserving request.
+                if allow_partial and not grayscale:
+                    break
                 raise NotApplicable()
+            pixels += image_pixels
 
             raw = obj.read_raw_bytes()
             with Image.open(io.BytesIO(raw), formats=("JPEG",)) as jpeg:
@@ -205,10 +209,11 @@ def main():
     parser.add_argument("--target-dpi", type=int, required=True, choices=range(72, 601), metavar="72..600")
     parser.add_argument("--quality", type=int, required=True, choices=range(1, 96), metavar="1..95")
     parser.add_argument("--mode", choices=("grayscale", "preserve"), required=True)
+    parser.add_argument("--allow-partial", action="store_true")
     args = parser.parse_args()
 
     try:
-        transform(args.input, args.output, args.target_dpi, args.quality, args.mode == "grayscale")
+        transform(args.input, args.output, args.target_dpi, args.quality, args.mode == "grayscale", args.allow_partial)
     except NotApplicable:
         return 2
     except (OSError, ValueError, RuntimeError, pikepdf.PdfError, Image.DecompressionBombError):

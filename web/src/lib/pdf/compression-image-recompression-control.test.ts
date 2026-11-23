@@ -14,6 +14,7 @@ import type { PdfCompressionEffectiveOptions } from "./compression-types";
 
 const processMock = vi.hoisted(() => ({
   jpegBytes: 0,
+  monoBytes: 0,
   gsBytes: 0,
   optimizerBytes: 0,
   optimizerStarted: null as (() => void) | null,
@@ -57,6 +58,10 @@ vi.mock("node:child_process", async () => {
                   processMock.jpegBytes > 0
                 ) {
                   writeFileSync(args[2], Buffer.alloc(processMock.jpegBytes));
+                } else if (executable === "python3" &&
+                  args[0]?.endsWith("mono-xobject-resample.py") && processMock.monoBytes > 0
+                ) {
+                  writeFileSync(args[2], Buffer.alloc(processMock.monoBytes));
                 } else {
                   const output = args
                     .find((argument) => argument.startsWith("-sOutputFile="))
@@ -137,6 +142,7 @@ async function inputPdf() {
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "pdf-image-control-"));
   processMock.jpegBytes = 0;
+  processMock.monoBytes = 0;
   processMock.gsBytes = 0;
   processMock.optimizerBytes = 0;
   processMock.optimizerStarted = null;
@@ -233,6 +239,43 @@ describe("PDF image recompression process control", () => {
       );
     },
   );
+
+  it.each([
+    { mode: "validated", size: 850, fallback: false },
+    { mode: "below minimum", size: 990, fallback: true },
+    { mode: "rejected", size: 850, fallback: true },
+  ])("uses the preserving monochrome fallback only after an unsuccessful adaptive attempt ($mode)", async ({ mode, size, fallback }) => {
+    const inputPath = join(directory, "input.pdf");
+    const baseOutputPath = join(directory, "candidate");
+    await writeFile(inputPath, await inputPdf());
+    processMock.monoBytes = size;
+    processMock.gsBytes = 650;
+    const onIntegrityRejection = vi.fn();
+    const onInsufficientSavings = vi.fn();
+    if (mode === "rejected") {
+      const { PdfToolError } = await import("./compression-types");
+      vi.mocked(validateSemanticCandidate).mockRejectedValueOnce(
+        new PdfToolError("PDF_SEMANTIC_INTEGRITY_FAILED", "Test candidate rejected"),
+      );
+    }
+
+    const candidates = await buildPreservingImageCandidates({
+      inputPath, baseOutputPath, options: options({ colorMode: "MONOCHROME" }),
+      profile: profile({ colorMode: "MONOCHROME", sourceDpi: 300, predominantImageEncoding: "JBIG2",
+        bitsPerComponent: 1, alreadyOptimized: true, optimizationClass: "OPTIMIZED_MONO" }),
+      onIntegrityRejection, onInsufficientSavings,
+    });
+
+    expect(vi.mocked(spawn).mock.calls.map(([tool]) => tool)).toEqual(fallback ? ["python3", "qpdf", "gs"] : ["python3"]);
+    expect(candidates.map(({ kind }) => kind)).toEqual(fallback
+      ? ["QPDF_IMAGE_OPTIMIZE", "GS_IMAGE_RECOMPRESSION"] : ["MONO_XOBJECT_JBIG2"]);
+    expect(onIntegrityRejection).toHaveBeenCalledTimes(mode === "rejected" ? 1 : 0);
+    expect(onInsufficientSavings).toHaveBeenCalledTimes(mode === "below minimum" ? 1 : 0);
+    if (fallback) {
+      expect(validateSemanticCandidate).toHaveBeenCalledWith(inputPath, `${baseOutputPath}.gs-images.pdf`);
+      await expect(readFile(`${baseOutputPath}.mono-xobject-jbig2.pdf`)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
 
   it("bounds optional optimizer time and keeps the validated fallback", async () => {
     const inputPath = join(directory, "input.pdf");

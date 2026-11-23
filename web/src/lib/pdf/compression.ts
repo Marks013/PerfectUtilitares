@@ -214,6 +214,7 @@ async function selectCandidateOrOriginal({
     return {
       outcome: "UNCHANGED" as const,
       selectedCandidate: null,
+      belowMinimumSavings: existing.some(({ size }) => size > 0 && size < input.size),
     };
   }
   // Generated candidates are disposable siblings of the reserved output.
@@ -221,6 +222,7 @@ async function selectCandidateOrOriginal({
   return {
     outcome: "COMPRESSED" as const,
     selectedCandidate: best.candidate,
+    belowMinimumSavings: false,
   };
 }
 
@@ -315,6 +317,7 @@ export async function compressPdfFile({
     let selectedCandidate: PdfCompressionCandidate | null = null;
     let semanticValidated = false;
     let integrityRejected = false;
+    let belowMinimumSavings = false;
 
     if (plan.strategy === "SKIP") {
       await copyFile(inputPath, reservation.temporaryPath);
@@ -340,6 +343,7 @@ export async function compressPdfFile({
         });
         outcome = selection.outcome;
         selectedCandidate = selection.selectedCandidate;
+        belowMinimumSavings = selection.belowMinimumSavings;
       } catch (error) {
         throwIfPdfExecutionAborted();
         if (options.method === "LOSSLESS") {
@@ -361,6 +365,7 @@ export async function compressPdfFile({
       }
       const candidates = await withRasterCompressionSlot(() =>
         buildPreservingImageCandidates({
+          preserveDetectedColor: options.colorMode === "KEEP_DETECTED",
           inputPath,
           baseOutputPath: preservingBase,
           options: plan.effectiveOptions,
@@ -372,6 +377,9 @@ export async function compressPdfFile({
             }),
           onIntegrityRejection: () => {
             integrityRejected = true;
+          },
+          onInsufficientSavings: () => {
+            belowMinimumSavings = true;
           },
         }),
       );
@@ -400,6 +408,8 @@ export async function compressPdfFile({
               visual: false,
             });
             candidates.push(structuralCandidate);
+          } else if (output.size > 0 && output.size < input.size) {
+            belowMinimumSavings = true;
           }
         } catch {
           throwIfPdfExecutionAborted();
@@ -416,6 +426,7 @@ export async function compressPdfFile({
       });
       outcome = selection.outcome;
       selectedCandidate = selection.selectedCandidate;
+      belowMinimumSavings ||= selection.belowMinimumSavings;
     } else {
       outcome = await withRasterCompressionSlot(async () => {
         throwIfPdfExecutionAborted();
@@ -524,8 +535,10 @@ export async function compressPdfFile({
     const planReason =
       outcome === "UNCHANGED" && plan.strategy !== "SKIP"
         ? integrityRejected
-          ? "Original mantido (0% de redução). Houve falha na verificação de integridade, e nenhuma versão aprovada reduziu o tamanho o suficiente."
-          : "Original mantido (0% de redução). Não foi gerado um PDF menor que atendesse às verificações."
+          ? "Original mantido (0% de redução). Pelo menos uma versão falhou na verificação de integridade; nenhuma alternativa aprovada atingiu o ganho mínimo."
+          : belowMinimumSavings
+            ? "Original mantido (0% de redução). Houve redução em uma tentativa, mas ela ficou abaixo do ganho mínimo exigido."
+            : "Original mantido (0% de redução). Não foi gerado um PDF menor que atendesse às verificações."
         : selectedCandidate
           ? selectedCandidate.description
           : plan.reason;
@@ -536,6 +549,7 @@ export async function compressPdfFile({
           ? plan.effectiveOptions
           : plan.strategy === "IMAGE_RECOMPRESSION" &&
               selectedCandidate?.visualTransform &&
+              !selectedCandidate.visualOptionsScopedToImages &&
               resultAnalysis
             ? {
                 ...plan.effectiveOptions,
@@ -569,7 +583,7 @@ export async function compressPdfFile({
               visualTransform: selectedCandidate.visualTransform,
               lossy: selectedCandidate.lossy,
               encoding: resultAnalysis?.predominantImageEncoding ?? null,
-              dpi: resultAnalysis?.sourceDpi ?? null,
+              dpi: selectedCandidate.visualOptionsScopedToImages ? null : (resultAnalysis?.sourceDpi ?? null),
               colorMode: resultAnalysis?.colorMode ?? null,
             }
           : null,
