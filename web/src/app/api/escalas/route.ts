@@ -2,7 +2,7 @@ import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
 import { allowedBranches, branchPermission, requireEscalaPermission, requireEscalaCapability } from "@/lib/escalas/access";
-import { createEscala, createEscalaApproved, addEscalaEmployee, removeEscalaEmployee, rebaseEscalaApproval, validateEscalaOperational, deleteEscala, generateEscala, getEscala, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
+import { createEscala, createEscalaApproved, addEscalaEmployee, removeEscalaEmployee, rebaseEscalaApproval, validateEscalaOperational, deleteEscala, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
 import { validateEscala } from "@/lib/escalas/validation";
 import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGenerationOperation, generationOperationStatus } from "@/lib/escalas/solve-operations";
 import { escalaFailure, escalaJson } from "./http";
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     const requestedId = new URL(request.url).searchParams.get("id");
     if (requestedId !== null) {
       if (!id.safeParse(requestedId).success) return jsonError(400, "ESCALA_INVALID_ID", "Identificador de escala inválido.");
-      return escalaJson(await getEscala(actor, requestedId));
+      return escalaJson(await getEscalaForRead(actor, requestedId));
     }
     const createScope = await allowedBranches(actor, "workspace.create");
     return escalaJson({ workspaces: await listEscalas(actor), canCreate: createScope === null || createScope.length > 0 });

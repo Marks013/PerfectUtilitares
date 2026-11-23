@@ -101,7 +101,7 @@ export function EscalasStatus({ busy, notice, cancellable, onCancel, cancelLabel
 
 export function EscalasWorkspace() {
   const model = useEscalasWorkspace();
-  const { input, workspace, conflict } = model;
+  const { input, workspace, conflict, readOnlyDraft } = model;
   const access = useEscalaClientAccess();
   const can = (capability: Parameters<typeof canDisplayEscalaAction>[1]) => canDisplayEscalaAction(access, capability, input?.branchCode);
   const readable = Boolean(input && workspace && can("workspace.read"));
@@ -113,7 +113,7 @@ export function EscalasWorkspace() {
   const editTeam = model.canEdit && can("employee.manage") && can("workspace.save");
   const unrestricted = isEscalaAdministrator(access);
   const catalog = access ? escalaCatalogActions(access, input?.branchCode ?? "") : { canDefine: false, canAssign: false };
-  const canSwapShift = readable && catalog.canAssign && can("workspace.save");
+  const canSwapShift = readable && !readOnlyDraft && catalog.canAssign && can("workspace.save");
   const canImportTeam = importTeam && model.canEdit;
   const canAddApprovedEmployee = editTeam
     && Boolean((workspace as Partial<EscalaWorkspaceAccessMetadata> | null)?.approvedPolicyVersionId) && !model.generated;
@@ -320,7 +320,8 @@ export function EscalasWorkspace() {
         </div></details>}
         {can("report.analytics") && <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />}
         {catalog.canDefine && input.employees.length > 0 && generationMode !== "REST_ONLY" && <HoursProposal input={input} disabled={!model.canEdit} onChange={model.update} />}
-        {!workspace.canEdit && !model.dirty && <p className={styles.muted}>{can("schedule.generate")
+        {readOnlyDraft && <p role="status" className={styles.muted}>Rascunho disponível para consulta. Para gerar, alterar ou baixar arquivos, solicite a aprovação administrativa.</p>}
+        {!readOnlyDraft && !workspace.canEdit && !model.dirty && <p className={styles.muted}>{can("schedule.generate")
           ? "Você pode gerar uma proposta para conferir. Aplicar ou salvar alterações exige permissão de edição nesta filial."
           : "Acesso de consulta nesta filial."}</p>}
       </section>
@@ -353,14 +354,14 @@ export function EscalasWorkspace() {
 
       {visited.has("roster") && <section hidden={area !== "roster"} inert={area !== "roster"} id="escala-area-roster" className={styles.stackSmall} aria-label="Revisar escala mensal">
         {can("report.analytics") && <EstimatedCoverageNotice validation={model.validation} hasRoster={hasCalculatedRoster} outdated={model.outdated} onReview={() => { setReviewSection("coverage"); setArea("review"); }} />}
-        <div><h2 className={styles.sectionTitle}>Revise e baixe os arquivos</h2><p className={styles.muted}>{referencesOnly ? "Confira os horários de referência por setor. Nenhuma presença ou folga foi inventada." : hoursOnly ? "Confira os horários. Os dias de trabalho, folgas e afastamentos foram mantidos." : "Confira os horários e as folgas. Para ajustar um dia, selecione a célula na grade."}</p></div>
+        <div><h2 className={styles.sectionTitle}>{readOnlyDraft ? "Confira a escala" : "Revise e baixe os arquivos"}</h2><p className={styles.muted}>{referencesOnly ? "Confira os horários de referência por setor. Nenhuma presença ou folga foi inventada." : hoursOnly ? "Confira os horários. Os dias de trabalho, folgas e afastamentos foram mantidos." : "Confira os horários e as folgas. Para ajustar um dia, selecione a célula na grade."}</p></div>
         {model.outdated && hasRoster && <div role="status" className="app-radius-lg border border-[color:var(--app-coral)] bg-[color:var(--app-danger-soft)] p-4 text-sm"><strong>Cenário alterado.</strong> A grade anterior fica visível para comparação, mas precisa ser gerada novamente antes de exportar.</div>}
         <Proposals active={area === "roster"} input={input} generated={model.generated} disabled={!editRoster} onGenerated={model.applyGenerated} onDismiss={model.dismissProposals} />
         <div id="escala-roster" tabIndex={-1} className="min-w-0">
           {hasRoster && <p className={styles.muted}>Grade atual · revisão salva {workspace.revision}{model.dirty ? " · alterações aguardando salvamento" : ""}{model.generated ? " · a candidata acima ainda não foi aplicada" : ""}.</p>}
           {referencesOnly && hasHourReferences(input) ? <HoursReferencePreview input={input} /> : hasRoster ? <Roster active={area === "roster"} key={workspace.id} input={input} review={reviewContext?.target === "roster" ? reviewContext : undefined} mode={exportMode} onModeChange={setExportMode} onReviewEmployee={employeeId => resolve("team", { employeeId })} onReviewCoverage={() => { setReviewSection("coverage"); setArea("review"); }} validation={model.validation} disabled={!editRoster} canUnlock={manageSettings && workspace.canPublish} onUndo={model.undoRoster} onChange={model.update} /> : !model.generated && <div className={`${panelClass} ${styles.emptyState}`}><h2 className={styles.sectionTitle}>Seu resultado aparecerá aqui</h2><p className="mt-2 text-sm text-[color:var(--app-muted)]">{included ? "Escolha a jornada e gere a proposta. O algoritmo prepara somente o conteúdo selecionado." : emptyTeamHelp}</p>{!included && (canImportTeam || canAddApprovedEmployee) && <button type="button" className={`${buttonClass} mt-4`} onClick={() => setArea("team")}>{canImportTeam ? "Importar equipe" : "Cadastrar colaboradores"}</button>}</div>}
         </div>
-        {(hasRoster || referencesOnly && hasHourReferences(input)) && <><div className={styles.actions}>{can("report.analytics") && !referencesOnly && <button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Onde falta gente?</button>}<button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir avisos e orientações</button><button type="button" className={buttonClass} onClick={() => setArea("generate")}>Voltar para montar escala</button></div><Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onRegenerate={model.generate} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} candidatePending={Boolean(model.generated)} canUseCandidate={editRoster && Boolean(model.generated?.validation.valid)} onUseCandidate={model.applyGenerated} /></>}
+        {(hasRoster || referencesOnly && hasHourReferences(input)) && <><div className={styles.actions}>{can("report.analytics") && !referencesOnly && <button type="button" className={buttonClass} onClick={() => setArea("coverage")}>Onde falta gente?</button>}<button type="button" className={buttonClass} onClick={() => setArea("review")}>Conferir avisos e orientações</button><button type="button" className={buttonClass} onClick={() => setArea("generate")}>Voltar para montar escala</button></div>{!readOnlyDraft && <Publication mode={exportMode} onModeChange={setExportMode} key={workspace.id} workspace={workspace} validation={model.validation} dirty={model.dirty} outdated={model.outdated} busy={Boolean(model.busy || model.recovery)} onPublish={model.publish} onRegenerate={model.generate} onPrepare={model.flushDraft} isCurrent={model.isCurrentRevision} candidatePending={Boolean(model.generated)} canUseCandidate={editRoster && Boolean(model.generated?.validation.valid)} onUseCandidate={model.applyGenerated} />}</>}
       </section>}
 
       {can("report.analytics") && !referencesOnly && visited.has("coverage") && <section hidden={area !== "coverage"} inert={area !== "coverage"} id="escala-area-coverage" className={styles.stackSmall} aria-label="Cobertura da filial"><CoverageTimeline key={workspace.id} input={input} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /><div id="escala-coverage" tabIndex={-1}><Coverage input={input} disabled={!model.canEdit} onChange={model.update} review={reviewContext?.target === "coverage" ? reviewContext : undefined} /></div></section>}

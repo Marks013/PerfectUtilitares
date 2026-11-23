@@ -15,6 +15,7 @@ import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./date
 import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
 import { isDecember2026Cutover } from "./planning-calendar";
 import { admitDecemberCandidate, calculateWithDecemberFallback, prepareDecemberCoverage, selectDecemberCandidate } from "./december-origin.server";
+import { decemberCapacityConflicts } from "./december-capacity-diagnostic";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { assertEscalaEmployeeRemovalAllowed, inputWithoutEscalaEmployee } from "./employee-removal";
@@ -90,17 +91,18 @@ export async function listEscalas(actor: EscalaActor) {
     orderBy: [{ branchCode: "asc" }, { startDate: "desc" }, { id: "asc" }],
   });
   if (!actor.admin && rows.length) {
+    const approvalRequired = rows.filter(row => row.status !== "DRAFT");
     const approvedWorkspaceIds = new Set<string>();
     const batchSize = 1000;
-    for (let offset = 0; offset < rows.length; offset += batchSize) {
+    for (let offset = 0; offset < approvalRequired.length; offset += batchSize) {
       const approvals = await prisma.escalaRevision.findMany({
         where: { tenantId: actor.tenantId, approvedPolicyVersionId: { not: null },
-          OR: rows.slice(offset, offset + batchSize).map(({ id, revision }) => ({ workspaceId: id, revision })) },
+          OR: approvalRequired.slice(offset, offset + batchSize).map(({ id, revision }) => ({ workspaceId: id, revision })) },
         select: { workspaceId: true },
       });
       for (const approval of approvals) approvedWorkspaceIds.add(approval.workspaceId);
     }
-    rows = rows.filter(row => approvedWorkspaceIds.has(row.id));
+    rows = rows.filter(row => row.status === "DRAFT" || approvedWorkspaceIds.has(row.id));
   }
   return rows.sort((a, b) => compareBranches(a, b) || b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).map((row) => {
     const sunday = { planningWeekStartsOn: "SUNDAY" as const };
@@ -115,7 +117,11 @@ export async function listEscalas(actor: EscalaActor) {
   }); });
 }
 
-export async function getEscala(actor: EscalaActor, id: string, revision?: number): Promise<EscalaWorkspace & { approvedPolicyVersionId: string | null }> {
+// The consultation endpoint may read the current draft; every other loader still requires approval.
+export function getEscalaForRead(actor: EscalaActor, id: string) { return loadEscala(actor, id, undefined, true); }
+export function getEscala(actor: EscalaActor, id: string, revision?: number) { return loadEscala(actor, id, revision, false); }
+
+async function loadEscala(actor: EscalaActor, id: string, revision: number | undefined, consultation: boolean): Promise<EscalaWorkspace & { approvedPolicyVersionId: string | null }> {
   const row = await prisma.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId } });
   if (!row) throw new EscalaError(404, "ESCALA_NOT_FOUND", "Escala não encontrada.");
   const permission = await branchPermission(actor, row.branchCode);
@@ -123,9 +129,14 @@ export async function getEscala(actor: EscalaActor, id: string, revision?: numbe
     tenantId_workspaceId_revision: { tenantId: actor.tenantId, workspaceId: row.id, revision: revision ?? row.revision },
   } });
   if (!version) throw new EscalaError(404, "ESCALA_REVISION_NOT_FOUND", "Versão da escala não encontrada.");
-  if (!actor.admin && !version.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "O planejamento precisa de aprovação administrativa antes do acesso operacional.");
+  const readOnlyDraft = !actor.admin && !version.approvedPolicyVersionId;
+  if (readOnlyDraft && !(consultation && revision === undefined && version.revision === row.revision
+    && row.status === "DRAFT" && version.status === "DRAFT")) {
+    throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "O planejamento precisa de aprovação administrativa antes do acesso operacional.");
+  }
   const input = parseEscalaInput(version.input);
-  return { ...view({ ...row, revision: version.revision, status: version.status, updatedAt: version.createdAt }, input, permission),
+  const effectivePermission = readOnlyDraft ? { canEdit: false, canPublish: false } : permission;
+  return { ...view({ ...row, revision: version.revision, status: version.status, updatedAt: version.createdAt }, input, effectivePermission),
     approvedPolicyVersionId: version.approvedPolicyVersionId };
 }
 
@@ -614,7 +625,8 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
     origin && admission.input,
   );
   let result = calculation.status === "INFEASIBLE" ? {
-    ...calculation, conflicts: [...findGenerationConflicts(contextual), ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
+    ...calculation, conflicts: [...decemberCapacityConflicts(contextual, origin), ...findGenerationConflicts(contextual),
+      ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
       code: `SOLVER_${diagnostic.family}`, message: diagnostic.message,
       target: diagnostic.family === "COVERAGE" ? "coverage" as const : "team" as const,
     }))],

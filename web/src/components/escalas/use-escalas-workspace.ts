@@ -16,6 +16,7 @@ import { EscalaRequestError, invalidatesCandidate, responseCode, solverProblem, 
 import { operationalCommand } from "./operational-client";
 import { canDisplayEscalaAction, isEscalaAdministrator, useEscalaClientAccess } from "./access-context";
 import { pendingNavigation } from "./workspace-navigation";
+import type { EscalaWorkspaceAccessMetadata } from "@/lib/escalas/access-contracts";
 import type { ImportSyncCommand } from "@/lib/escalas/import-sync-contracts";
 import { requestImportReplacement, type ImportReplacementResult } from "./import-replacement-client";
 import { canUpgradePlanningCalendar } from "@/lib/escalas/calendar-upgrade";
@@ -428,7 +429,8 @@ export function useEscalasWorkspace() {
     });
   }
 
-  const canGenerate = Boolean(workspace && input && !busy && !recovery && !sessionLocked
+  const readOnlyDraft = !isEscalaAdministrator(access) && (workspace as Partial<EscalaWorkspaceAccessMetadata> | null)?.approvedPolicyVersionId === null;
+  const canGenerate = Boolean(workspace && input && !busy && !recovery && !sessionLocked && !readOnlyDraft
     && canDisplayEscalaAction(access, "schedule.generate", input.branchCode)
     && (!dirty || workspace.canEdit && canDisplayEscalaAction(access, "workspace.save", input.branchCode)));
 
@@ -697,6 +699,7 @@ export function useEscalasWorkspace() {
     validate,
     generate,
     canGenerate,
+    readOnlyDraft,
     applyGenerated,
     undoRoster,
     publish,

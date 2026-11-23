@@ -22,7 +22,7 @@ vi.mock("@/lib/escalas/solver-transport", async original => {
     candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "route-synthetic-receipt-key").update(payload).digest("hex") };
 });
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, createScope: null as string[] | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), recheck: vi.fn(), remove: vi.fn(), removeEmployee: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, createScope: null as string[] | null, list: vi.fn(), get: vi.fn(), read: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), recheck: vi.fn(), remove: vi.fn(), removeEmployee: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
 vi.mock("@/lib/escalas/access", async original => ({ ...await original<typeof import("@/lib/escalas/access")>(),
   allowedBranches: async (actor: { admin: boolean }, capability?: string) => capability === "workspace.create" ? mocks.createScope : actor.admin ? null : ["02"] }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
@@ -37,7 +37,7 @@ vi.mock("next/headers", async (original) => ({
   headers: async () => new Headers(),
 }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
-vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, createEscalaApproved: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
+vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, getEscalaForRead: mocks.read, createEscala: mocks.create, createEscalaApproved: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
   addEscalaEmployee: vi.fn(), removeEscalaEmployee: mocks.removeEmployee, rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
@@ -49,7 +49,7 @@ beforeEach(() => {
   mocks.createScope = null;
   for (const operation of [mocks.startOperation, mocks.runOperation, mocks.cancelOperation, mocks.operationStatus]) operation.mockReset();
   mocks.session = { user: { id: "u1", tenantId: "t1", role: "ADMIN", status: "ACTIVE" }, expires: "2099" };
-  mocks.list.mockResolvedValue([workspace]); mocks.get.mockResolvedValue(workspace); mocks.create.mockResolvedValue(workspace); mocks.save.mockResolvedValue({ ...workspace, revision: 2 });
+  mocks.list.mockResolvedValue([workspace]); mocks.get.mockResolvedValue(workspace); mocks.read.mockResolvedValue(workspace); mocks.create.mockResolvedValue(workspace); mocks.save.mockResolvedValue({ ...workspace, revision: 2 });
   mocks.generate.mockResolvedValue({ result: { status: "FEASIBLE" }, proposalInput: input, validation: { valid: true }, preparation: { adjustedEmployeeIds: [], excludedEmployeeIds: [], generatedCoverageSlots: 7, includedEmployees: 81, untimedEmployees: 12 } });
   mocks.rate.mockResolvedValue(null); mocks.module.mockResolvedValue(null);
 });
@@ -202,7 +202,30 @@ describe("/api/escalas", () => {
     expect(await response.json()).toEqual({ workspaces: [workspace], canCreate: true });
     expect(mocks.list).toHaveBeenCalledWith({ userId: "u1", tenantId: "t1", admin: true });
     expect((await GET(new Request("http://localhost/api/escalas?id=w1"))).status).toBe(200);
-    expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1");
+    expect(mocks.read).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1");
+    expect(mocks.get).not.toHaveBeenCalled();
+  });
+  it("uses consultation only for the nominal GET and keeps mutation loading strict", async () => {
+    mocks.session = null;
+    mocks.module.mockResolvedValue({ id: "module-1", tenantId: "company", expiresAt: new Date("2030-01-01") });
+    const branchActor = { userId: null, tenantId: "company", admin: false, moduleSessionId: "module-1" };
+    const draft = { ...workspace, canEdit: false, canPublish: false, approvedPolicyVersionId: null };
+    mocks.read.mockResolvedValueOnce(draft).mockRejectedValueOnce(new EscalaError(403, "ESCALA_BRANCH_FORBIDDEN", "Filial não autorizada."));
+    const response = await GET(new Request("http://localhost/api/escalas?id=w1&tenantId=foreign"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toMatchObject(draft);
+    expect(mocks.read).toHaveBeenNthCalledWith(1, branchActor, "w1");
+    const denied = await GET(new Request("http://localhost/api/escalas?id=other-branch"));
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ error: { code: "ESCALA_BRANCH_FORBIDDEN" } });
+    expect(mocks.read).toHaveBeenNthCalledWith(2, branchActor, "other-branch");
+    expect(mocks.get).not.toHaveBeenCalled();
+    mocks.get.mockRejectedValueOnce(new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Aprovação necessária."));
+    expect((await POST(command({ action: "PUBLISH", id: "w1", expectedRevision: 1 }))).status).toBe(409);
+    expect(mocks.get).toHaveBeenCalledExactlyOnceWith(branchActor, "w1");
+    expect(mocks.read).toHaveBeenCalledTimes(2);
+    expect(mocks.save).not.toHaveBeenCalled();
   });
   it("creates, saves and publishes through versioned services", async () => {
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(201);

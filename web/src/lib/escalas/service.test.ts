@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyTurnoSwap, previewTurnoSwap } from "./shift-catalog/swap";
 import type { EscalaInput } from "./types";
-import { createEscala, createEscalaApproved, addEscalaEmployee, rebaseEscalaApproval, generateEscala, getEscala, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration } from "./service";
+import { createEscala, createEscalaApproved, addEscalaEmployee, rebaseEscalaApproval, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration } from "./service";
 import { removeEscalaEmployee } from "./service";
 import { buildEscalaApprovedPolicy } from "./approved-policy";
 import { ESCALA_OPERATOR_CAPABILITIES } from "./permissions";
@@ -845,33 +845,46 @@ describe("Escalas revision service", () => {
     mocks.workspace.findMany.mockResolvedValue([row({ id: "10", branchCode: "10" }), row({ id: "2", branchCode: "2" }), row({ id: "1", branchCode: "1" })]);
     expect((await listEscalas(actor)).map((workspace) => workspace.id)).toEqual(["1", "2", "10"]);
   });
-  it("lists only current revisions with approval for scoped operators and keeps legacy drafts for administrators", async () => {
+  it("lists and opens a current draft for its branch without expanding operational or historical access", async () => {
     const { scoped, baseline } = scopedSavedFixture();
-    const approved = row({ revision: 2 });
-    const legacy = row({ id: "legacy", revision: 3 });
-    mocks.workspace.findMany.mockResolvedValue([approved, legacy]);
+    const approved = row({ revision: 2, status: "PUBLISHED" });
+    const draft = row({ id: "draft", revision: 3 });
+    const publishedWithoutApproval = row({ id: "legacy", revision: 4, status: "PUBLISHED" });
+    const anotherBranch = row({ id: "foreign-branch", branchCode: "07" });
+    const otherCompany = row({ id: "foreign-company", tenantId: "company-b" });
+    const visibleRows = [approved, draft, publishedWithoutApproval];
+    mocks.workspace.findMany.mockResolvedValue(visibleRows);
     mocks.workspace.findFirst.mockImplementation(async ({ where }) =>
-      [approved, legacy].find(workspace => workspace.id === where.id && workspace.tenantId === where.tenantId) ?? null);
+      [...visibleRows, anotherBranch, otherCompany].find(workspace => workspace.id === where.id && workspace.tenantId === where.tenantId) ?? null);
     mocks.revision.findMany.mockResolvedValue([{ workspaceId: approved.id }]);
-    mocks.revision.findUnique
-      .mockResolvedValueOnce({ ...version(baseline, approved.revision), approvedPolicyVersionId: "approval" })
-      .mockResolvedValueOnce({ ...version(baseline, legacy.revision), approvedPolicyVersionId: null })
-      .mockResolvedValueOnce({ ...version(baseline, 1), approvedPolicyVersionId: "approval" })
-      .mockResolvedValueOnce({ ...version(baseline, legacy.revision), approvedPolicyVersionId: null });
+    mocks.revision.findUnique.mockImplementation(async ({ where }) => {
+      const { workspaceId, revision } = where.tenantId_workspaceId_revision;
+      const match = visibleRows.find(item => item.id === workspaceId);
+      return { ...version(baseline, revision, match?.status), approvedPolicyVersionId: workspaceId === approved.id || revision === 1 ? "approval" : null };
+    });
 
     const listed = await listEscalas(scoped);
-    expect(listed.map(({ id, revision }) => ({ id, revision }))).toEqual([{ id: approved.id, revision: approved.revision }]);
+    expect(listed.map(({ id, revision }) => ({ id, revision }))).toEqual([{ id: draft.id, revision: 3 }, { id: approved.id, revision: 2 }]);
+    expect(mocks.workspace.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: actor.tenantId, branchCode: { in: ["02"] } } }));
     expect(mocks.revision.findMany).toHaveBeenCalledExactlyOnceWith({
       where: { tenantId: actor.tenantId, approvedPolicyVersionId: { not: null }, OR: [
-        { workspaceId: approved.id, revision: approved.revision }, { workspaceId: legacy.id, revision: legacy.revision },
+        { workspaceId: approved.id, revision: 2 }, { workspaceId: publishedWithoutApproval.id, revision: 4 },
       ] },
       select: { workspaceId: true },
     });
-    await expect(getEscala(scoped, listed[0].id)).resolves.toMatchObject({ id: approved.id, revision: 2, approvedPolicyVersionId: "approval" });
-    await expect(getEscala(scoped, legacy.id)).rejects.toMatchObject({ status: 409, code: "ESCALA_CONFIG_APPROVAL_REQUIRED" });
-    await expect(getEscala(scoped, legacy.id, 1)).resolves.toMatchObject({ id: legacy.id, revision: 1, approvedPolicyVersionId: "approval" });
-    expect((await listEscalas(actor)).map(workspace => workspace.id)).toEqual([legacy.id, approved.id]);
-    await expect(getEscala(actor, legacy.id)).resolves.toMatchObject({ id: legacy.id, revision: 3, approvedPolicyVersionId: null });
+    await expect(getEscalaForRead(scoped, draft.id)).resolves.toMatchObject({ id: draft.id, revision: 3, input: baseline,
+      approvedPolicyVersionId: null, canEdit: false, canPublish: false });
+    await expect(getEscalaForRead(scoped, approved.id)).resolves.toMatchObject({ approvedPolicyVersionId: "approval", canEdit: true });
+    await expect(getEscalaForRead(scoped, publishedWithoutApproval.id)).rejects.toMatchObject({ status: 409, code: "ESCALA_CONFIG_APPROVAL_REQUIRED" });
+    await expect(getEscala(scoped, draft.id)).rejects.toMatchObject({ status: 409, code: "ESCALA_CONFIG_APPROVAL_REQUIRED" });
+    await expect(getEscala(scoped, draft.id, 2)).rejects.toMatchObject({ status: 409, code: "ESCALA_CONFIG_APPROVAL_REQUIRED" });
+    await expect(getEscala(scoped, draft.id, 1)).resolves.toMatchObject({ revision: 1, approvedPolicyVersionId: "approval" });
+    mocks.revision.findUnique.mockClear();
+    await expect(getEscalaForRead(scoped, anotherBranch.id)).rejects.toMatchObject({ status: 403, code: "ESCALA_BRANCH_FORBIDDEN" });
+    await expect(getEscalaForRead(scoped, otherCompany.id)).rejects.toMatchObject({ status: 404, code: "ESCALA_NOT_FOUND" });
+    expect(mocks.revision.findUnique).not.toHaveBeenCalled();
+    expect((await listEscalas(actor)).map(workspace => workspace.id)).toEqual([draft.id, publishedWithoutApproval.id, approved.id]);
+    await expect(getEscala(actor, draft.id)).resolves.toMatchObject({ id: draft.id, revision: 3, approvedPolicyVersionId: null, canEdit: true });
     expect(mocks.revision.findMany).toHaveBeenCalledTimes(1);
   });
   it("does not disclose a workspace belonging to another company", async () => {
