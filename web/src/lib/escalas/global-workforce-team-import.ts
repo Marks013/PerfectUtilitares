@@ -27,7 +27,7 @@ function confirmBatch(previews: readonly EscalaImportPreview[], confirmedBranchC
     if (report?.format !== "FPRE136" || !confirmed.has(branchCode) || branches.has(branchCode) ||
       !coverage || coverage.rejectedRows || coverage.invalidIdentityRows || coverage.paginationIssues?.length ||
       coverage.missingRegistrations?.some(row => !row.resolved) || preview.issues.some(issue => issue.rejected) ||
-      !preview.employees.length || preview.totalRows !== preview.employees.length ||
+      preview.totalRows !== preview.employees.length ||
       new Set(preview.shifts.map(shift => shift.id)).size !== preview.shifts.length ||
       sourceEmployees !== report.sourceEmployees || report.otherBranchesExcluded !== report.sourceEmployees - preview.totalRows) {
       reject("A equipe contém uma prévia incompleta, divergente ou sem confirmação. Nenhuma filial foi alterada.");

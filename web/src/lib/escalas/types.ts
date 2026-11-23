@@ -266,5 +266,5 @@ export type EscalaWorkspace = {
   canEdit: boolean;
   canPublish: boolean;
   updatedAt: string;
-  workforce?: { needsSync: boolean };
+  workforce?: { needsSync: boolean; legacyAbsenceDays?: [employeeId: string, date: string][] };
 };

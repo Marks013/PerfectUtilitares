@@ -92,4 +92,23 @@ describe("workforce panel", () => {
     await expect(applyWorkforceImport(file, "ABSENCES", [], preview, signal)).rejects.toThrow("Confira uma nova prévia.");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("binds the manually confirmed source company and explicit removal confirmation to the approved preview", async () => {
+    const impact = { ...preview, requiresRemovalConfirmation: true, impactByBranch: [
+      { branchCode: "02", added: 0, removed: 2, transferredIn: 0, transferredOut: 1, replacedAbsences: 0 },
+    ] };
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ preview: impact })).mockResolvedValueOnce(Response.json({ revision: 4, changed: true }));
+    vi.stubGlobal("fetch", fetch);
+    const approved = await previewWorkforceImport(file, "EMPLOYEES", [], signal, "0007");
+    expect(approved.impactByBranch).toEqual(impact.impactByBranch);
+    expect(() => applyWorkforceImport(file, "EMPLOYEES", [], approved, signal, { sourceCompanyCode: "0007" })).toThrow("confirme separadamente");
+    expect(() => applyWorkforceImport(file, "EMPLOYEES", [], { ...approved, impactByBranch: [] }, signal, { confirmRemovals: true })).toThrow("confirme separadamente");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await applyWorkforceImport(file, "EMPLOYEES", [], approved, signal, { sourceCompanyCode: "0007", confirmRemovals: true });
+    const first = fetch.mock.calls[0][1].body as FormData;
+    const second = fetch.mock.calls[1][1].body as FormData;
+    expect(JSON.parse(String(first.get("command")))).toMatchObject({ sourceCompanyCode: "0007", action: "IMPORT_PREVIEW" });
+    expect(JSON.parse(String(second.get("command")))).toMatchObject({ sourceCompanyCode: "0007", action: "IMPORT_APPLY",
+      confirmRemovals: true, expectedRevision: 3, impactHash: preview.impactHash });
+  });
 });

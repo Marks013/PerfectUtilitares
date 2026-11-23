@@ -43,6 +43,7 @@ const absenceKey = (item: AbsenceKey) => JSON.stringify([item.registration, item
 
 export const escalaWorkforceSnapshotSchema = z.strictObject({
   version: z.literal(1),
+  sourceCompanyCode: z.string().regex(/^(?:0|[1-9]\d{0,59})$/).optional(),
   people: z.array(personSchema).max(10_000),
   catalogs: z.array(z.strictObject({ branchCode: branch, shifts: escalaInputSchema.shape.shifts })).max(1_000),
   absences: z.array(absenceSchema).max(100_000),

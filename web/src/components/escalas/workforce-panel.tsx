@@ -11,7 +11,7 @@ import {
 
 type PanelProps = { branchCode: string; canImport: boolean; onChanged?: () => void | Promise<void> };
 type Mutate = (command: WorkforceChange) => Promise<boolean>;
-type ImportReview = { file: File; purpose: WorkforceImportPurpose; corrections: WorkforceRegistrationCorrection[]; preview: WorkforceImportPreview };
+type ImportReview = { file: File; purpose: WorkforceImportPurpose; corrections: WorkforceRegistrationCorrection[]; sourceCompanyCode?: string; preview: WorkforceImportPreview };
 type Run = <T>(operation: (signal: AbortSignal) => Promise<T>) => Promise<T | undefined>;
 const describeError = (error: unknown) => error instanceof Error ? error.message : "Não foi possível acessar a base de pessoal.";
 const labelDate = (iso: string) => iso.split("-").reverse().join("/");
@@ -124,7 +124,7 @@ function BranchWorkforcePanel({ branchCode, canImport, onChanged }: PanelProps) 
           </select>}
         </Field>
         {person && <PersonOperations key={`${registration}:${snapshot.revision}`} person={person} absences={absences} disabled={disabled} mutate={mutate} />}
-        {canImport && <GlobalImport key={snapshot.revision} disabled={disabled} run={run} updated={updated} />}
+        {canImport && <GlobalImport key={snapshot.revision} disabled={disabled} run={run} updated={updated} linkedCompanyCode={snapshot.sourceCompanyCode ?? undefined} />}
       </>}
     </div>
   </details>;
@@ -257,39 +257,47 @@ function ReturnForm({ absence, disabled, mutate }: { absence: WorkforceAbsence; 
   </form>;
 }
 
-function GlobalImport({ disabled, run, updated }: { disabled: boolean; run: Run; updated: (result: { revision: number; changed: boolean }) => Promise<void> }) {
+function GlobalImport({ disabled, run, updated, linkedCompanyCode }: { disabled: boolean; run: Run; updated: (result: { revision: number; changed: boolean }) => Promise<void>; linkedCompanyCode?: string }) {
   const [file, setFile] = useState<File>();
   const [purpose, setPurpose] = useState<WorkforceImportPurpose>("EMPLOYEES");
   const [review, setReview] = useState<ImportReview>();
   const [corrections, setCorrections] = useState<Record<number, string>>({});
   const [confirmed, setConfirmed] = useState(false);
+  const [confirmedRemovals, setConfirmedRemovals] = useState(false);
+  const [typedCompanyCode, setTypedCompanyCode] = useState("");
   const [needsReview, setNeedsReview] = useState(false);
   const fileId = useId();
   const submitted = Object.entries(corrections).flatMap(([line, registration]) => registration.trim() ? [{ line: Number(line), registration: registration.trim() }] : []);
+  const sourceCompanyCode = purpose === "EMPLOYEES" ? linkedCompanyCode ?? typedCompanyCode.trim() : undefined;
   const currentReview = !needsReview && review?.file === file && review?.purpose === purpose
-    && JSON.stringify(review?.corrections) === JSON.stringify(submitted) ? review : undefined;
-  const canApply = Boolean(currentReview?.preview.canApply && currentReview.preview.changed && !currentReview.preview.missingRegistrations?.some(row => !row.resolved));
+    && review.sourceCompanyCode === sourceCompanyCode
+    && JSON.stringify(review.corrections) === JSON.stringify(submitted) ? review : undefined;
+  const requiresRemovals = Boolean(currentReview?.preview.requiresRemovalConfirmation);
+  const hasRemovalImpact = !requiresRemovals || Boolean(currentReview?.preview.impactByBranch?.length);
+  const canApply = Boolean(currentReview?.preview.canApply && currentReview.preview.changed
+    && hasRemovalImpact && !currentReview.preview.missingRegistrations?.some(row => !row.resolved));
 
-  function reset() { setReview(undefined); setCorrections({}); setConfirmed(false); setNeedsReview(false); }
+  function resetConfirmations() { setConfirmed(false); setConfirmedRemovals(false); }
+  function reset() { setReview(undefined); setCorrections({}); resetConfirmations(); setNeedsReview(false); }
 
   async function preview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled || !file) return;
-    setConfirmed(false);
+    if (disabled || !file || purpose === "EMPLOYEES" && !sourceCompanyCode) return;
+    resetConfirmations();
     setNeedsReview(true);
-    const result = await run(signal => previewWorkforceImport(file, purpose, submitted, signal));
+    const result = await run(signal => previewWorkforceImport(file, purpose, submitted, signal, sourceCompanyCode));
     if (result) {
-      setReview({ file, purpose, corrections: submitted, preview: result });
+      setReview({ file, purpose, corrections: submitted, sourceCompanyCode, preview: result });
       setNeedsReview(false);
     }
   }
 
   async function apply() {
-    if (disabled || !confirmed || !canApply || !currentReview) return;
-    const { file, purpose, corrections, preview } = currentReview;
-    setConfirmed(false);
+    if (disabled || !confirmed || !canApply || !currentReview || requiresRemovals && !confirmedRemovals) return;
+    const { file, purpose, corrections, preview, sourceCompanyCode } = currentReview;
+    resetConfirmations();
     setReview(undefined);
-    const result = await run(signal => applyWorkforceImport(file, purpose, corrections, preview, signal));
+    const result = await run(signal => applyWorkforceImport(file, purpose, corrections, preview, signal, { sourceCompanyCode, confirmRemovals: confirmedRemovals }));
     if (result) await updated(result);
   }
 
@@ -307,28 +315,42 @@ function GlobalImport({ disabled, run, updated }: { disabled: boolean; run: Run;
         <Field label="Arquivo da base de pessoal" hint={purpose === "ABSENCES" ? "Relatório FPHI105 em CSV, até 512 KB." : "Relatório FPRE136 em CSV, até 512 KB."}>{id => <input key={`${fileId}:${purpose}`} id={id} type="file" className={controlClass} accept=".csv" required disabled={disabled} onChange={event => {
           setFile(event.target.files?.[0]); reset();
         }} />}</Field>
+        {purpose === "EMPLOYEES" && <Field label="Código da empresa na origem" hint={linkedCompanyCode ? "Empresa já vinculada à base." : "Informe o código confirmado no sistema de origem, incluindo os zeros à esquerda."}>{id =>
+          <input id={id} className={controlClass} inputMode="numeric" pattern="[0-9]{1,60}" maxLength={60} value={linkedCompanyCode ?? typedCompanyCode} readOnly={Boolean(linkedCompanyCode)} required disabled={disabled} onChange={event => {
+            setTypedCompanyCode(event.target.value); resetConfirmations(); setNeedsReview(true);
+          }} />}
+        </Field>}
       </div>
       {review && <div className={styles.feedback}>
         <h3 className={styles.sectionTitle}>Prévia da importação</h3>
         <p>Revisão {review.preview.revision} · {review.preview.rowCount} registro(s){review.preview.openRowCount !== undefined ? ` · ${review.preview.openRowCount} sem retorno` : ""}.</p>
         {review.preview.branchCodes?.length ? <p>Filiais no arquivo: {review.preview.branchCodes.join(", ")}.</p> : null}
+        {review.preview.impactByBranch?.length ? <ul aria-label="Impacto por filial" className={styles.stackSmall}>
+          {review.preview.impactByBranch.map(impact => <li key={impact.branchCode}>
+            <strong>Filial {impact.branchCode}</strong>: {impact.added} inclusões, {impact.removed} saídas da lista,
+            {" "}{impact.transferredIn} transferências recebidas, {impact.transferredOut} transferências enviadas,
+            {" "}{impact.replacedAbsences} afastamentos substituídos.
+          </li>)}
+        </ul> : null}
         {review.preview.missingRegistrations?.length ? <div className={styles.formGrid}>{review.preview.missingRegistrations.map(row =>
           <Field key={row.line} label={`Matrícula da linha ${row.line}${row.name ? ` · ${row.name}` : ""}`} hint={row.branchCode ? `Filial ${row.branchCode}.` : undefined}>
             {id => <input id={id} className={controlClass} inputMode="numeric" pattern="[0-9]{1,60}" maxLength={60} value={corrections[row.line] ?? ""} disabled={disabled} onChange={event => {
               const registration = event.target.value;
-              setCorrections(previous => ({ ...previous, [row.line]: registration })); setConfirmed(false);
+              setCorrections(previous => ({ ...previous, [row.line]: registration })); resetConfirmations();
             }} />}
           </Field>,
         )}</div> : null}
         {!currentReview && <p role="status">Os dados mudaram. Confira uma nova prévia antes de aplicar.</p>}
         {currentReview && !review.preview.canApply && <p>Preencha os dados pendentes e confira o arquivo novamente.</p>}
         {currentReview && review.preview.canApply && !review.preview.changed && <p>Nenhuma alteração encontrada.</p>}
+        {!hasRemovalImpact && <p role="alert">A prévia não informou as saídas por filial. Confira o arquivo novamente antes de confirmar.</p>}
       </div>}
-      <div className={styles.actions}><button type="submit" className={buttonClass} disabled={disabled || !file}>Conferir arquivo</button></div>
+      <div className={styles.actions}><button type="submit" className={buttonClass} disabled={disabled || !file || purpose === "EMPLOYEES" && !sourceCompanyCode}>Conferir arquivo</button></div>
     </form>
     {canApply && <div className={styles.stackSmall}>
       <Check label="Conferi a prévia e confirmo as mudanças na base de pessoal." checked={confirmed} onChange={setConfirmed} disabled={disabled} />
-      <div className={styles.actions}><button type="button" className={primaryClass} disabled={disabled || !confirmed} onClick={() => void apply()}>Confirmar importação</button></div>
+      {requiresRemovals && <Check label="Confirmo também as saídas da equipe indicadas por filial." checked={confirmedRemovals} onChange={setConfirmedRemovals} disabled={disabled} />}
+      <div className={styles.actions}><button type="button" className={primaryClass} disabled={disabled || !confirmed || requiresRemovals && !confirmedRemovals} onClick={() => void apply()}>Confirmar importação</button></div>
     </div>}
   </details>;
 }

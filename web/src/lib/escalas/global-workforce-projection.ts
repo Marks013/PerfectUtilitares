@@ -20,11 +20,31 @@ function conflict(message: string): never {
 }
 
 function hasContinuity(person: EscalaEmployee) {
-  return Boolean(person.historyKnown || person.history.length || person.planningHistory?.length || person.planningFuture?.length);
+  return Boolean(person.history.length || person.planningHistory?.length || person.planningFuture?.length);
 }
 
 function earlierEnd(local: string | undefined, base: string | undefined) {
   return local && (!base || local < base) ? local : base;
+}
+
+function reconcileShiftIds(old: EscalaEmployee, source: EscalaEmployee,
+  localShifts: ReadonlyMap<string, EscalaShift>, sourceShifts: ReadonlyMap<string, EscalaShift>): EscalaEmployee {
+  const preferred = [...new Set([...(old.manualShiftBaseIds ?? old.shiftIds), ...(old.originalShiftIds ?? [])])];
+  const localId = (id: string) => {
+    const incoming = sourceShifts.get(id);
+    if (!incoming) conflict("O cadastro exige uma referência de turno não encontrada.");
+    const collision = localShifts.get(id);
+    if (collision && !same(collision.segments, incoming.segments)) {
+      conflict("Um identificador de turno da base já existe no rascunho com outra geometria.");
+    }
+    // Keep the draft identity when only the external ID differs.
+    return preferred.find(candidate => same(localShifts.get(candidate)?.segments, incoming.segments)) ?? id;
+  };
+  return { ...source,
+    shiftIds: [...new Set(source.shiftIds.map(localId))],
+    originalShiftIds: source.originalShiftIds && [...new Set(source.originalShiftIds.map(localId))],
+    fixedImportedShiftId: source.fixedImportedShiftId && localId(source.fixedImportedShiftId),
+  };
 }
 
 function mergeExistingPerson(old: EscalaEmployee, source: EscalaEmployee, activeUntil: string | undefined): EscalaEmployee {
@@ -97,6 +117,8 @@ export function materializeEscalaWorkforceDraft(
   }
   const { employees: sources, shifts: sourceShifts, absenceDates } =
     projectEscalaWorkforceDraft(snapshot, branch, input.startDate, input.endDate);
+  const localShiftById = new Map(input.shifts.map(shift => [shift.id, shift]));
+  const sourceShiftById = new Map(sourceShifts.map(shift => [shift.id, shift]));
   const oldByRegistration = new Map<string, EscalaEmployee>();
   for (const old of input.employees) {
     if (oldByRegistration.has(old.registration)) conflict("Há mais de um vínculo local para a mesma matrícula.");
@@ -120,7 +142,8 @@ export function materializeEscalaWorkforceDraft(
     }
     const previous = previousEnds.get(old.id);
     const local = previous && old.activeUntil === previous.baseActiveUntil ? previous.localActiveUntil ?? undefined : old.activeUntil;
-    employees.push(mergeExistingPerson(old, source, employmentEnd(old.id, local, source.activeUntil)));
+    employees.push(mergeExistingPerson(old, reconcileShiftIds(old, source, localShiftById, sourceShiftById),
+      employmentEnd(old.id, local, source.activeUntil)));
   }
   for (const source of sources) {
     if (!oldByRegistration.has(source.registration)) {
@@ -170,9 +193,19 @@ export function materializeEscalaWorkforceDraft(
     }
     if (entry.kind === "WORK") {
       const manual = manualShiftAt(person, entry.date);
-      if (!entry.shiftId || (manual ? manual !== entry.shiftId : !person.shiftIds.includes(entry.shiftId)) ||
-        person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING") {
-        conflict("Uma atribuição existente não é compatível com o turno indicado pela base.");
+      const timed = person.scheduleMode !== "UNTIMED" && person.scheduleMode !== "MISSING";
+      if (!timed || !entry.shiftId || (manual ? manual !== entry.shiftId : !person.shiftIds.includes(entry.shiftId))) {
+        const previousShift = entry.shiftId && localShiftById.get(entry.shiftId);
+        const equivalent = timed && !manual && previousShift && person.shiftIds.some(id =>
+          same(previousShift.segments, shiftsById.get(id)?.segments));
+        if (equivalent && entry.shiftId && person.shiftIds.length < 12) {
+          // A protected decision can retain another local ID for the same clock.
+          person.shiftIds = [...person.shiftIds, entry.shiftId];
+        } else {
+          if (entry.locked === false && !manual && !closed.has(entry.date) && !holidays.has(entry.date) &&
+            input.generationMode !== "HOURS_ONLY") continue;
+          conflict("Uma atribuição existente não é compatível com o turno indicado pela base.");
+        }
       }
     }
     assignments.set(key, entry);

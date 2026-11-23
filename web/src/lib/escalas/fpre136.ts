@@ -35,15 +35,14 @@ export function discoverFpre136Branches(file: Buffer) {
   if (!isFpre136Text(text)) throw new EscalaError(422, "ESCALA_WORKFORCE_UNREVIEWABLE_IMPORT", "Envie o relatório completo FPRE136 em CSV.");
   const rows: unknown[][] = parse(text, { delimiter: ",", bom: true, skip_empty_lines: true, max_record_size: 8192, relax_column_count: true });
   const companies = new Set<string>(), branches = new Set<string>();
-  let branch: string | undefined;
   for (const row of rows) {
     if (isPageHeader(row)) companies.add(cell(row[0]).replace(/^0+(?=\d)/, ""));
     const sector = row.length === 1 ? sectorPattern.exec(cell(row[0])) : null;
-    if (sector) branch = normalizeBranch(sector[1]);
-    if (branch && row.length === 10 && cell(row[1]) === "-" && (!cell(row[0]) || /^\d+$/.test(cell(row[0])))) branches.add(branch);
+    if (sector) branches.add(normalizeBranch(sector[1]));
   }
-  if (companies.size !== 1 || !branches.size) throw new EscalaError(422, "ESCALA_WORKFORCE_UNREVIEWABLE_IMPORT", "O relatório deve identificar uma única empresa e suas filiais.");
-  return [...branches].sort();
+  const [companyCode] = companies;
+  if (companies.size !== 1 || !/^\d{1,60}$/.test(companyCode) || !branches.size) throw new EscalaError(422, "ESCALA_WORKFORCE_UNREVIEWABLE_IMPORT", "O relatório deve identificar uma única empresa e suas filiais.");
+  return { companyCode, branchCodes: [...branches].sort() };
 }
 
 function required(value: unknown, max: number) {
@@ -52,7 +51,7 @@ function required(value: unknown, max: number) {
   return text;
 }
 
-export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, parseShift: (value: string) => EscalaShift): EscalaImportPreview {
+export function previewFpre136Rows(rows: unknown[][], options: ImportOptions & { allowExplicitEmptySections?: boolean }, parseShift: (value: string) => EscalaShift): EscalaImportPreview {
   if (!options.branchCode?.trim()) throw new EscalaError(400, "ESCALA_IMPORT_BRANCH", "Selecione a filial para importar o FPRE136.");
   const branchCode = normalizeBranch(options.branchCode);
   const selected: { row: unknown[]; line: number; sector: string; code: string; description: string; saturday?: unknown[] }[] = [];
@@ -61,6 +60,7 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
   const pageByCompany = new Map<string, number>();
   let pageCompany: string | undefined, sectorCompany: string | undefined, scheduleCompany: string | undefined;
   let code = "", description = "", branchName = "", sourceEmployees = 0, unrecognizedRows = 0;
+  let explicitSection = false;
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
     const line = options.sourceLines?.[index] ?? index + 1;
@@ -83,6 +83,9 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
     } else if (cell(row[0]) === "Horário:") {
       code = cell(row[1]); description = cell(row[3]);
       scheduleCompany = sectorCompany === pageCompany ? pageCompany : undefined;
+      if (context?.branchCode === branchCode && context.branchName && context.sector && scheduleCompany && code && description) {
+        explicitSection = true;
+      }
     } else if (row.length === 10 && cell(row[1]) === "-" && (/^\d+$/.test(cell(row[0])) || (!cell(row[0]) && options.registrationCorrections))) {
       if (!pageCompany || sectorCompany !== pageCompany || scheduleCompany !== pageCompany) paginationIssues.push({ line, code: "PAGE_CONTEXT", message: "Não foi possível vincular filial e horário à empresa da página. Exporte o relatório completo." });
       sourceEmployees++;
@@ -96,7 +99,9 @@ export function previewFpre136Rows(rows: unknown[][], options: ImportOptions, pa
       unrecognizedRows++;
     }
   }
-  if (!branchName || !selected.length) throw new EscalaError(400, "ESCALA_IMPORT_BRANCH", "A filial selecionada não contém colaboradores neste FPRE136.");
+  if (!branchName || !selected.length && !(options.allowExplicitEmptySections && explicitSection)) {
+    throw new EscalaError(400, "ESCALA_IMPORT_BRANCH", "A filial selecionada não contém colaboradores nem seção verificável neste FPRE136.");
+  }
   if (selected.length > 250) throw new EscalaError(400, "ESCALA_IMPORT_LIMIT", "A importação aceita até 250 colaboradores da filial por proposta.");
   const result: EscalaImportPreview = { employees: [], shifts: [], issues: [], totalRows: selected.length,
     replacement: { rejectedRows: unrecognizedRows, invalidIdentityRows: 0, fieldsById: {}, paginationIssues },

@@ -260,7 +260,12 @@ export function EscalasWorkspace() {
         </Field>
         <datalist id="escala-workforce-branches">{workforceBranches.map(code => <option key={code} value={code} />)}</datalist>
         {Boolean(effectiveWorkforceBranch.trim()) && <EscalaWorkforcePanel key={effectiveWorkforceBranch} branchCode={effectiveWorkforceBranch} canImport={unrestricted && importTeam}
-          onChanged={() => { if (workspace?.status === "DRAFT" && !model.busy && !model.dirty && !model.generated && !model.recovery) model.open(workspace.id); }} />}
+          onChanged={() => {
+            const latest = latestModel.current;
+            if (workspace?.status === "DRAFT" && latest.workspace?.id === workspace.id && latest.resetKey === model.resetKey && latest.isCurrentRevision(workspace)
+              && !latest.busy && !latest.dirty && !latest.generated && !latest.recovery && !latest.conflict && !latest.pendingOpen
+              && latest.saveState === "saved" && latest.workspace?.status === "DRAFT") latest.open(workspace.id);
+          }} />}
       </div>}
     </details>}
     {unrestricted && <OperatorAdministration />}
@@ -367,8 +372,8 @@ export function EscalasWorkspace() {
           <ImportEmployees workspace={workspace} disabled={workspace.status !== "DRAFT" || !workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
           <AbsenceImport workspace={workspace} disabled={workspace.status !== "DRAFT" || !workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
         </div></details>}
-        {!globalTeam && workspace.canEdit && workspace.status === "DRAFT" && can("workspace.save") && can("employee.manage") && <ManualAbsences key={workspace.id + ":" + workspace.revision}
-          workspace={workspace} administrator={unrestricted}
+        {(!globalTeam || Boolean(workspace.workforce?.legacyAbsenceDays?.length)) && workspace.canEdit && workspace.status === "DRAFT" && can("workspace.save") && can("employee.manage") && <ManualAbsences key={workspace.id + ":" + workspace.revision}
+          workspace={workspace} administrator={unrestricted} legacyOnly={globalTeam}
           disabled={Boolean(!model.canEdit || model.dirty || model.saveState !== "saved" || model.generated || model.conflict)}
           changeAbsence={model.changeAbsence} />}
         {input.employees.length > 0 && <details id="escala-team-restrictions" className={panelClass}><summary className={styles.disclosureTrigger}>Ver colaboradores e ajustar cadastro</summary>

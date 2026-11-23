@@ -257,21 +257,24 @@ export function useEscalasWorkspace() {
     setProblem(null);
   }, [access, input, saveQueue]);
 
+  async function openAndSync(id: string, signal: AbortSignal, isCurrent: () => boolean) {
+    const result = await requestJson<EscalaWorkspace>(`/api/escalas?id=${encodeURIComponent(id)}`, { signal });
+    if (!isCurrent()) return;
+    setPendingOpen(null);
+    acceptWorkspace(result);
+    if (result.workforce?.needsSync && result.status === "DRAFT" && result.canEdit && !unresolvedRecovery.current) {
+      const updated = await post<EscalaWorkspace>({ action: "SYNC_WORKFORCE", id, expectedRevision: result.revision }, signal);
+      if (isCurrent()) acceptWorkspace(updated);
+    }
+  }
+
   function open(id: string, discard = false) {
-    if (pendingNavigation(dirty, Boolean(generated), discard)) {
+    if (pendingNavigation(latestDirty.current, Boolean(generatedReference.current), discard)) {
       setPendingOpen(id);
       return;
     }
     setPendingOpen(null);
-    void run("Carregando escala…", async (signal, isCurrent) => {
-      const result = await requestJson<EscalaWorkspace>(`/api/escalas?id=${encodeURIComponent(id)}`, { signal });
-      if (!isCurrent()) return;
-      acceptWorkspace(result);
-      if (result.workforce?.needsSync && result.status === "DRAFT" && result.canEdit && !readRecovery(result)) {
-        const updated = await post<EscalaWorkspace>({ action: "SYNC_WORKFORCE", id, expectedRevision: result.revision }, signal);
-        if (isCurrent()) acceptWorkspace(updated);
-      }
-    });
+    void run("Carregando escala…", (signal, isCurrent) => openAndSync(id, signal, isCurrent));
   }
 
   function compareLatest() {
@@ -305,8 +308,7 @@ export function useEscalasWorkspace() {
     saveQueue.retry();
     void run("Salvando antes de abrir outro planejamento…", async (signal, isCurrent) => {
       await flushDraft();
-      const result = await requestJson<EscalaWorkspace>("/api/escalas?id=" + encodeURIComponent(id), { signal });
-      if (isCurrent()) { setPendingOpen(null); acceptWorkspace(result); }
+      if (isCurrent()) await openAndSync(id, signal, isCurrent);
     });
   }
 

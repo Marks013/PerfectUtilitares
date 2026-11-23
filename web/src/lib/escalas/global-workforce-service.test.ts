@@ -33,6 +33,7 @@ function fixture(): EscalaWorkforceSnapshot {
   };
   return {
     version: 1,
+    sourceCompanyCode: "1",
     people: [
       { branchCode: "02", employee, dismissedFrom: null },
       { branchCode: "03", employee: { ...employee, registration: "0008", id: "pessoa-b", name: "Pessoa B" }, dismissedFrom: null },
@@ -211,7 +212,9 @@ describe("serviço interno da base global de Escalas", () => {
   it("confirma uma prévia FPHI105, fecha o mesmo evento e preserva o registro ausente do relatório", async () => {
     const file = report();
     const preview = await previewEscalaWorkforceFphi105(admin, file);
-    expect(preview).toEqual({ revision: 3, impactHash: expect.stringMatching(/^[a-f\d]{64}$/), rowCount: 1, openRowCount: 0, changed: true, canApply: true });
+    expect(preview).toEqual({ revision: 3, impactHash: expect.stringMatching(/^[a-f\d]{64}$/), rowCount: 1, openRowCount: 0,
+      changed: true, canApply: true, requiresRemovalConfirmation: false,
+      impactByBranch: [{ branchCode: "02", added: 0, removed: 0, transferredIn: 0, transferredOut: 0, replacedAbsences: 1 }] });
     expect(db.update).not.toHaveBeenCalled();
     await expect(confirmEscalaWorkforceFphi105(admin, file, { expectedRevision: preview.revision, impactHash: preview.impactHash }))
       .resolves.toEqual({ revision: 4, changed: true });
@@ -244,12 +247,26 @@ describe("serviço interno da base global de Escalas", () => {
     expect(db.update).not.toHaveBeenCalled();
   });
 
+  it("recusa FPHI105 de outra empresa ou quando ainda falta vincular a origem oficial", async () => {
+    const changed = Buffer.from(report().toString().replaceAll("0001", "0002"));
+    await expect(previewEscalaWorkforceFphi105(admin, changed)).rejects.toMatchObject({
+      code: "ESCALA_WORKFORCE_SOURCE_COMPANY_MISMATCH", status: 422,
+    });
+    const unbound = fixture();
+    delete unbound.sourceCompanyCode;
+    db.find.mockResolvedValue({ revision: 3, snapshot: unbound });
+    await expect(previewEscalaWorkforceFphi105(admin, report())).rejects.toMatchObject({
+      code: "ESCALA_WORKFORCE_SOURCE_COMPANY_REQUIRED", status: 409,
+    });
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
   it("fecha pela filial anterior o mesmo afastamento após transferência confirmada e projeta o retorno apenas no destino", async () => {
     const file = transferReport();
     const preview = await importEscalaWorkforce(admin, { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES" }, file);
     if (!("preview" in preview) || !preview.preview) throw new Error("Prévia de transferência ausente");
     await expect(importEscalaWorkforce(admin, { action: "IMPORT_APPLY", purpose: "EMPLOYEES",
-      expectedRevision: 3, impactHash: preview.preview.impactHash }, file)).resolves.toEqual({ revision: 4, changed: true });
+      expectedRevision: 3, impactHash: preview.preview.impactHash, confirmRemovals: true }, file)).resolves.toEqual({ revision: 4, changed: true });
     const transferred = changes();
     expect(transferred.snapshot.people.find(person => person.employee.registration === "0007")).toMatchObject({
       branchCode: "03", previousBranchCodes: ["02"], employee: { id: "pessoa-a", activeFrom: "2026-12-01" },

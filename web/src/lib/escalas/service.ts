@@ -19,6 +19,7 @@ import { fixedBoundaryReservations } from "./boundary";
 import { publishedPlanningContext } from "./continuity";
 import { planningContext } from "./planning-context.server";
 import { carryWorkforceState, checkWorkforceReady, checkWorkforceWrite, workforceDraftInfo } from "./global-workforce-binding";
+import { assertTransferredWorkDoesNotOverlap } from "./global-workforce-publication";
 import { projectWorkforceForDraft, readWorkforceForDraft } from "./global-workforce-draft";
 import { assertEscalaEmployeeRemovalAllowed, inputWithoutEscalaEmployee } from "./employee-removal";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
@@ -145,7 +146,7 @@ async function loadEscala(actor: EscalaActor, id: string, revision: number | und
     : null;
   const effectivePermission = readOnlyDraft || linkedApproval?.revokedAt ? { canEdit: false, canPublish: false } : permission;
   const workforce = revision === undefined && version.status === "DRAFT"
-    ? await workforceDraftInfo(prisma, actor.tenantId, row.branchCode, row.workforceState) : undefined;
+    ? await workforceDraftInfo(prisma, actor.tenantId, input, row.workforceState) : undefined;
   return { ...view({ ...row, revision: version.revision, status: version.status, updatedAt: version.createdAt }, input, effectivePermission),
     approvedPolicyVersionId: version.approvedPolicyVersionId, ...(linkedApproval?.revokedAt ? { approvedPolicyRevoked: true as const } : {}), ...(workforce ? { workforce } : {}) };
 }
@@ -494,7 +495,9 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   await prisma.$transaction(async (tx) => {
     await lockEscalaAccess(tx, actor.tenantId);
     await requireEscalaCapability(actor, publish ? "workspace.publish" : "workspace.save", current.input.branchCode, tx);
-    await checkWorkforceWrite(tx, actor.tenantId, current, rawInput, Boolean(options.adminImport || options.serverEnrollment || removal || absence));
+    const workforce = await checkWorkforceWrite(tx, actor.tenantId, current, rawInput, {
+      legacyTeamWrite: Boolean(options.adminImport || options.serverEnrollment || removal), absenceCommand: options.manualAbsence,
+    });
     if (fixedRestChanged) await requireEscalaCapability(actor, "employee.manage", current.input.branchCode, tx);
     if (options.adminImport) {
       await requireEscalaCapability(actor, "import.manage", undefined, tx);
@@ -521,6 +524,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     }
     if (publish) {
       input = await preservePublishedContinuity(tx, actor, id, input);
+      if (workforce) await assertTransferredWorkDoesNotOverlap(tx, actor.tenantId, input, workforce.snapshot);
       validation = validateEscala(input);
       if (!validation.readyToPublish) throw new EscalaError(422, "ESCALA_NOT_READY", "A escala possui impedimentos ou pendências. Resolva a conferência antes de publicar.");
     }

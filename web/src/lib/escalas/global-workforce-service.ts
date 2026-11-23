@@ -16,7 +16,7 @@ import {
   setEscalaWorkforceReturnDate,
 } from "./global-workforce-domain";
 import { applyEscalaWorkforceFpre136 } from "./global-workforce-team-import";
-import { previewEscalaImport } from "./import";
+import { type ImportOptions, previewEscalaImport } from "./import";
 
 const branch = z.string().trim().min(1).max(160).transform(canonicalBranchCode);
 const registration = z.string().trim().min(1).max(160);
@@ -117,6 +117,7 @@ export async function readEscalaWorkforceBranch(actor: EscalaActor, branchCode: 
     const registrations = new Set(people.map((person) => person.employee.registration));
     return {
       revision,
+      ...(actor.admin && snapshot.sourceCompanyCode !== undefined ? { sourceCompanyCode: snapshot.sourceCompanyCode } : {}),
       people: people.map(person => {
         const scoped = { ...person };
         delete scoped.previousBranchCodes;
@@ -216,12 +217,35 @@ async function requireWorkforceImporter(tx: Prisma.TransactionClient, actor: Esc
   if (!actor.admin) throw new EscalaError(403, "ESCALA_ACTION_FORBIDDEN", "Somente administradores podem importar para a base global.");
 }
 
+const normalizeCompanyCode = (value: string) => value.replace(/^0+(?=\d)/, "");
+const companyRequired = () => new EscalaError(409, "ESCALA_WORKFORCE_SOURCE_COMPANY_REQUIRED",
+  "Informe o código oficial da empresa ao conferir o FPRE136 para vincular a origem da base global.");
+const companyMismatch = () => new EscalaError(422, "ESCALA_WORKFORCE_SOURCE_COMPANY_MISMATCH",
+  "A empresa do arquivo não corresponde ao código oficial informado ou já vinculado à base global.");
+
+function impactCounter() {
+  const branches = new Map<string, { branchCode: string; added: number; removed: number; transferredIn: number;
+    transferredOut: number; replacedAbsences: number }>();
+  return {
+    branch(branchCode: string) {
+      const row = branches.get(branchCode) ?? { branchCode, added: 0, removed: 0, transferredIn: 0, transferredOut: 0, replacedAbsences: 0 };
+      branches.set(branchCode, row);
+      return row;
+    },
+    result: () => [...branches.values()].sort((first, second) => first.branchCode.localeCompare(second.branchCode)),
+  };
+}
+
 function prepareFphi105(tenantId: string, current: Awaited<ReturnType<typeof loadSnapshot>>, file: Buffer) {
+  const { sourceCompanyCode } = current.snapshot;
+  if (sourceCompanyCode === undefined) throw companyRequired();
   const report = parseFphi105Report(file);
+  const companies = new Set(report.records.map(record => normalizeCompanyCode(record.companyCode)));
   if (!report.records.length || report.issues.length || report.invalidRows || report.unrecognizedRows ||
-      new Set(report.records.map((record) => record.companyCode)).size !== 1) {
+      companies.size !== 1) {
     throw new EscalaError(422, "ESCALA_WORKFORCE_UNREVIEWABLE_IMPORT", "O relatório precisa estar íntegro e identificar uma única empresa.");
   }
+  if (!companies.has(sourceCompanyCode)) throw companyMismatch();
   const people = new Map(current.snapshot.people.map((person) => [person.employee.registration, person]));
   const employmentTypes = new Map<string, string>();
   const eventKey = (registration: string, startDate: string) => JSON.stringify([registration, startDate]);
@@ -250,6 +274,12 @@ function prepareFphi105(tenantId: string, current: Awaited<ReturnType<typeof loa
     return { registration, startDate, endDate };
   });
   const next = applyEscalaWorkforceFphi105(current.snapshot, records);
+  const impact = impactCounter();
+  for (const event of next.absences) {
+    const previous = existing.get(eventKey(event.registration, event.startDate));
+    const person = people.get(event.registration);
+    if (person && previous && previous.endDate !== event.endDate) impact.branch(person.branchCode).replacedAbsences++;
+  }
   const fileHash = createHash("sha256").update(file).digest("hex");
   const impactHash = createHash("sha256").update(JSON.stringify([tenantId, current.revision, fileHash, next])).digest("hex");
   return {
@@ -261,6 +291,8 @@ function prepareFphi105(tenantId: string, current: Awaited<ReturnType<typeof loa
       openRowCount: records.filter((record) => record.endDate === null).length,
       changed: next !== current.snapshot,
       canApply: true,
+      requiresRemovalConfirmation: false,
+      impactByBranch: impact.result(),
     },
   };
 }
@@ -269,21 +301,33 @@ const correctionsSchema = z.array(z.strictObject({ line: z.number().int().min(2)
   registration: z.string().trim().regex(/^\d{1,60}$/), })).max(250)
   .refine(rows => new Set(rows.map(row => row.line)).size === rows.length);
 const importRevision = z.number().int().min(0).max(maxRevision);
-const importFields = { purpose: z.enum(["EMPLOYEES", "ABSENCES"]), registrationCorrections: correctionsSchema.optional() };
+const importFields = { purpose: z.enum(["EMPLOYEES", "ABSENCES"]), registrationCorrections: correctionsSchema.optional(),
+  sourceCompanyCode: z.string().trim().regex(/^\d{1,60}$/).transform(normalizeCompanyCode).optional() };
 const workforceImportCommandSchema = z.discriminatedUnion("action", [
   z.strictObject({ ...importFields, action: z.literal("IMPORT_PREVIEW"), expectedRevision: importRevision.optional() }),
-  z.strictObject({ ...importFields, action: z.literal("IMPORT_APPLY"), expectedRevision: importRevision, impactHash: z.hash("sha256") }),
-]).refine(command => command.purpose === "EMPLOYEES" || command.registrationCorrections === undefined);
+  z.strictObject({ ...importFields, action: z.literal("IMPORT_APPLY"), expectedRevision: importRevision, impactHash: z.hash("sha256"),
+    confirmRemovals: z.boolean().optional() }),
+]).refine(command => command.purpose === "EMPLOYEES" || command.registrationCorrections === undefined &&
+  command.sourceCompanyCode === undefined && (command.action !== "IMPORT_APPLY" || command.confirmRemovals === undefined));
 type ImportCommand = z.output<typeof workforceImportCommandSchema>;
 
 async function prepareFpre136(tenantId: string, current: Awaited<ReturnType<typeof loadSnapshot>>, file: Buffer,
-  corrections: ImportCommand["registrationCorrections"],
+  command: ImportCommand,
 ) {
-  const branchCodes = discoverFpre136Branches(file);
+  const boundCompany = current.snapshot.sourceCompanyCode;
+  const expectedCompany = boundCompany ?? command.sourceCompanyCode;
+  if (expectedCompany === undefined) throw companyRequired();
+  const { branchCodes, companyCode } = discoverFpre136Branches(file);
+  if (companyCode !== expectedCompany || command.sourceCompanyCode !== undefined && command.sourceCompanyCode !== expectedCompany) throw companyMismatch();
+  const corrections = command.registrationCorrections;
   const registrationCorrections = new Map(corrections?.map(item => [item.line, item.registration]));
-  const previews = await Promise.all(branchCodes.map(branchCode => previewEscalaImport(file, "csv", {
-    branchCode, registrationCorrections, defaultWeeklyHours: 42, startDate: "",
-  })));
+  const options: ImportOptions & { allowExplicitEmptySections: boolean } = {
+    registrationCorrections, defaultWeeklyHours: 42, startDate: "", allowExplicitEmptySections: true,
+  };
+  const previews = await Promise.all(branchCodes.map(branchCode => {
+    const scoped = { ...options, branchCode };
+    return previewEscalaImport(file, "csv", scoped);
+  }));
   const missingRegistrations = previews.flatMap(preview => (preview.replacement?.missingRegistrations ?? []).map(item => ({
     ...item, branchCode: preview.report?.branchCode,
   }))).sort((first, second) => first.line - second.line);
@@ -291,11 +335,28 @@ async function prepareFpre136(tenantId: string, current: Awaited<ReturnType<type
     throw new EscalaError(422, "ESCALA_WORKFORCE_INVALID_COMMAND", "Corrija somente as linhas sem matrícula indicadas pela prévia.");
   }
   const canApply = missingRegistrations.every(item => item.resolved);
-  const next = canApply ? applyEscalaWorkforceFpre136(current.snapshot, previews, branchCodes) : current.snapshot;
+  const rowCount = previews[0].report?.sourceEmployees ?? 0;
+  if (current.revision === 0 && !rowCount) {
+    throw new EscalaError(422, "ESCALA_WORKFORCE_INCOMPLETE_TEAM", "A primeira importação precisa conter pelo menos uma pessoa.");
+  }
+  const linked = boundCompany === undefined ? { ...current.snapshot, sourceCompanyCode: expectedCompany } : current.snapshot;
+  const next = canApply ? applyEscalaWorkforceFpre136(linked, previews, branchCodes) : current.snapshot;
+  const impact = impactCounter();
+  const before = new Map(current.snapshot.people.map(person => [person.employee.registration, person]));
+  for (const person of next.people) {
+    const previous = before.get(person.employee.registration);
+    if (previous?.branchCode && previous.branchCode !== person.branchCode) {
+      impact.branch(person.branchCode).transferredIn++;
+      if (previous.listed !== false) impact.branch(previous.branchCode).transferredOut++;
+    } else if (person.listed === false && previous && previous.listed !== false) impact.branch(person.branchCode).removed++;
+    else if (person.listed !== false && (!previous || previous.listed === false)) impact.branch(person.branchCode).added++;
+  }
+  const impactByBranch = impact.result();
+  const requiresRemovalConfirmation = impactByBranch.some(branch => branch.removed > 0 || branch.transferredOut > 0);
   const fileHash = createHash("sha256").update(file).digest("hex");
-  const impactHash = createHash("sha256").update(JSON.stringify([tenantId, current.revision, fileHash, canApply, next])).digest("hex");
+  const impactHash = createHash("sha256").update(JSON.stringify([tenantId, current.revision, expectedCompany, fileHash, canApply, impactByBranch, next])).digest("hex");
   return { next, summary: { revision: current.revision, impactHash, branchCodes, missingRegistrations,
-    canApply, rowCount: previews[0].report?.sourceEmployees ?? 0, changed: next !== current.snapshot } };
+    canApply, rowCount, changed: next !== current.snapshot, impactByBranch, requiresRemovalConfirmation } };
 }
 
 export async function importEscalaWorkforce(actor: EscalaActor, rawCommand: unknown, file: Buffer) {
@@ -308,11 +369,14 @@ export async function importEscalaWorkforce(actor: EscalaActor, rawCommand: unkn
     const current = await loadSnapshot(tx, actor.tenantId, command.purpose === "ABSENCES");
     if (command.expectedRevision !== undefined && current.revision !== command.expectedRevision) throw stale();
     const { next, summary } = command.purpose === "EMPLOYEES"
-      ? await prepareFpre136(actor.tenantId, current, bytes, command.registrationCorrections)
+      ? await prepareFpre136(actor.tenantId, current, bytes, command)
       : prepareFphi105(actor.tenantId, current, bytes);
     if (command.action === "IMPORT_PREVIEW") return { preview: summary };
     if (!summary.canApply) throw new EscalaError(422, "ESCALA_WORKFORCE_INCOMPLETE_TEAM", "Preencha as matrículas pendentes antes de confirmar a importação.");
     if (summary.impactHash !== command.impactHash) throw new EscalaError(409, "ESCALA_WORKFORCE_PREVIEW_CHANGED", "O arquivo ou o impacto mudou. Confira uma nova prévia.");
+    if (summary.requiresRemovalConfirmation && command.confirmRemovals !== true) {
+      throw new EscalaError(409, "ESCALA_WORKFORCE_REMOVALS_CONFIRMATION_REQUIRED", "Confira e confirme separadamente as retiradas e transferências de equipe.");
+    }
     return persistChange(tx, actor, current, next, command.purpose === "EMPLOYEES" ? "IMPORT_FPRE136" : "IMPORT_FPHI105", { rowCount: summary.rowCount });
   });
 }

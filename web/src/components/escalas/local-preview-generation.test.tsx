@@ -8,15 +8,29 @@ import { useEscalasWorkspace } from "./use-escalas-workspace";
 import { newEmployee, newInput } from "./workspace-model";
 
 vi.mock("./use-escalas-workspace", () => ({ useEscalasWorkspace: vi.fn() }));
+vi.mock("./workforce-panel", () => ({
+  EscalaWorkforcePanel({ onChanged }: { onChanged?: () => void }) {
+    ui.workforceChanged = onChanged;
+    return null;
+  },
+}));
 
 // Capture real screen callbacks and keep its hook primitives between static renders.
 // Effects, DOM focus and browser navigation are deliberately outside this harness.
 const ui = vi.hoisted(() => {
   type Button = { children?: unknown; "aria-controls"?: string; disabled?: boolean; onClick?: () => void };
+  type DisclosureToggle = (event: { currentTarget: { open: boolean } }) => void;
   const buttons = new Map<string, Button>();
   return {
     slots: [] as unknown[], cursor: 0, buttons,
+    workforceChanged: undefined as (() => void) | undefined,
+    toggleWorkforce: undefined as DisclosureToggle | undefined,
     capture(type: unknown, raw: unknown) {
+      if (type === "details" && raw && typeof raw === "object") {
+        const details = raw as { children?: unknown[]; onToggle?: DisclosureToggle };
+        const summary = Array.isArray(details.children) ? details.children[0] as { props?: { children?: unknown } } : undefined;
+        if (summary?.props?.children === "Base global de equipes e afastamentos") this.toggleWorkforce = details.onToggle;
+      }
       if (type !== "button" || !raw || typeof raw !== "object") return;
       const props = raw as Button;
       const control = props["aria-controls"];
@@ -108,7 +122,33 @@ function generationButton(html: string) {
 }
 
 describe("saved-revision preview in the real scheduling screen", () => {
-  beforeEach(() => { vi.clearAllMocks(); ui.slots = []; ui.cursor = 0; ui.buttons.clear(); });
+  beforeEach(() => { vi.clearAllMocks(); ui.slots = []; ui.cursor = 0; ui.buttons.clear(); ui.workforceChanged = undefined; ui.toggleWorkforce = undefined; });
+
+  it.each(["dirty", "switched", "unchanged"] as const)("uses current draft state when a delayed workforce mutation finishes (%s)", async stateWhenFinished => {
+    const state = model();
+    const administrator: EscalaClientAccess = { channel: "ACCOUNT", roleLabel: "Administrador", administrator: true, allBranches: true, branches: [] };
+    const source = { ...(state.workspace as EscalaWorkspace), canEdit: true };
+    markup({ ...state, workspace: source, canEdit: true }, administrator);
+    if (!ui.toggleWorkforce) throw new Error("Workforce disclosure unavailable");
+    ui.toggleWorkforce({ currentTarget: { open: true } });
+    markup({ ...state, workspace: source, canEdit: true }, administrator);
+    const completed = ui.workforceChanged;
+    if (!completed) throw new Error("Workforce completion callback unavailable");
+    let finishPost = () => {};
+    const response = new Promise<void>(resolve => { finishPost = resolve; }).then(completed);
+    const current = {
+      ...state,
+      workspace: stateWhenFinished === "switched" ? { ...source, id: "synthetic-other-plan" } : source,
+      dirty: stateWhenFinished === "dirty",
+      open: vi.fn(),
+    };
+    markup(current, administrator);
+    finishPost();
+    await response;
+    expect(state.open).not.toHaveBeenCalled();
+    if (stateWhenFinished === "unchanged") expect(current.open).toHaveBeenCalledExactlyOnceWith(source.id);
+    else expect(current.open).not.toHaveBeenCalled();
+  });
 
   it("identifies the only granted branch when there is no saved planning", () => {
     const state = { ...model(), workspaces: [], workspace: null, input: null, validation: null, canGenerate: false };

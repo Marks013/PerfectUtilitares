@@ -44,7 +44,7 @@ export async function reopenEscalaPublication(actor: EscalaActor, id: string, ex
       metadata: { ...provenance, tenantId: actor.tenantId, revision, previousRevision: expectedRevision, approvedPolicyVersionId: source.approvedPolicyVersionId },
     } });
     const saved = await tx.escalaWorkspace.findFirst({ where: { tenantId: actor.tenantId, id, revision }, select: { workforceState: true } });
-    return workforceDraftInfo(tx, actor.tenantId, branchCode, saved?.workforceState);
+    return workforceDraftInfo(tx, actor.tenantId, current.input, saved?.workforceState);
   });
 
   return { ...current, revision, status: "DRAFT" as const, validation, updatedAt: updatedAt.toISOString(), ...(workforce ? { workforce } : {}) };

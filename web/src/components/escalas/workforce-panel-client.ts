@@ -19,6 +19,7 @@ const absenceSchema = z.object({
 const snapshotSchema = z.object({
   revision, people: z.array(personSchema), absences: z.array(absenceSchema),
   catalogs: z.array(z.object({ branchCode: z.string().optional() })),
+  sourceCompanyCode: z.string().nullish(),
 });
 const mutationSchema = z.object({ revision, changed: z.boolean() });
 const previewSchema = z.object({
@@ -28,6 +29,11 @@ const previewSchema = z.object({
     rowCount: z.number().int().nonnegative(),
     openRowCount: z.number().int().nonnegative().optional(),
     branchCodes: z.array(z.string().min(1)).optional(),
+    impactByBranch: z.array(z.object({
+      branchCode: z.string().min(1), added: revision, removed: revision, transferredIn: revision,
+      transferredOut: revision, replacedAbsences: revision,
+    })).optional(),
+    requiresRemovalConfirmation: z.boolean().optional(),
     missingRegistrations: z.array(z.object({
       line: z.number().int().positive(), name: z.string().optional(), branchCode: z.string().optional(), resolved: z.boolean().optional(),
     })).optional(),
@@ -55,9 +61,9 @@ export type WorkforceChange =
   | { action: "SET_RETURN_DATE"; registration: string; startDate: string; returnDate: string }
   | { action: "DISMISS_PERSON"; registration: string; dismissedFrom: string };
 
-type ImportCommand = { purpose: WorkforceImportPurpose; registrationCorrections?: WorkforceRegistrationCorrection[] } & (
+type ImportCommand = { purpose: WorkforceImportPurpose; registrationCorrections?: WorkforceRegistrationCorrection[]; sourceCompanyCode?: string } & (
   | { action: "IMPORT_PREVIEW" }
-  | { action: "IMPORT_APPLY"; expectedRevision: number; impactHash: string }
+  | { action: "IMPORT_APPLY"; expectedRevision: number; impactHash: string; confirmRemovals?: true }
 );
 
 async function request<T>(schema: z.ZodType<T>, url: string, signal: AbortSignal, options: RequestInit = {}) {
@@ -102,19 +108,25 @@ function importOptions(file: File, command: ImportCommand): RequestInit {
   return { method: "POST", body };
 }
 
-export async function previewWorkforceImport(file: File, purpose: WorkforceImportPurpose, registrationCorrections: WorkforceRegistrationCorrection[], signal: AbortSignal) {
+export async function previewWorkforceImport(file: File, purpose: WorkforceImportPurpose, registrationCorrections: WorkforceRegistrationCorrection[], signal: AbortSignal, sourceCompanyCode?: string) {
   const result = await request(previewSchema, endpoint, signal, importOptions(file, {
     action: "IMPORT_PREVIEW", purpose, ...(registrationCorrections.length ? { registrationCorrections } : {}),
+    ...(purpose === "EMPLOYEES" && sourceCompanyCode ? { sourceCompanyCode } : {}),
   }));
   return result.preview;
 }
 
-export function applyWorkforceImport(file: File, purpose: WorkforceImportPurpose, registrationCorrections: WorkforceRegistrationCorrection[], preview: WorkforceImportPreview, signal: AbortSignal) {
+export function applyWorkforceImport(file: File, purpose: WorkforceImportPurpose, registrationCorrections: WorkforceRegistrationCorrection[], preview: WorkforceImportPreview, signal: AbortSignal, selection: { sourceCompanyCode?: string; confirmRemovals?: boolean } = {}) {
   if (!preview.changed || !preview.canApply || preview.missingRegistrations?.some(row => !row.resolved)) {
     throw new Error("Confira o arquivo e as matrículas antes de confirmar a importação.");
+  }
+  if (preview.requiresRemovalConfirmation && (!preview.impactByBranch?.length || !selection.confirmRemovals)) {
+    throw new Error("Confira e confirme separadamente as saídas da equipe antes de importar.");
   }
   return request(mutationSchema, endpoint, signal, importOptions(file, {
     action: "IMPORT_APPLY", purpose, expectedRevision: preview.revision, impactHash: preview.impactHash,
     ...(registrationCorrections.length ? { registrationCorrections } : {}),
+    ...(purpose === "EMPLOYEES" && selection.sourceCompanyCode ? { sourceCompanyCode: selection.sourceCompanyCode } : {}),
+    ...(preview.requiresRemovalConfirmation && selection.confirmRemovals ? { confirmRemovals: true } : {}),
   }));
 }

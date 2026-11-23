@@ -11,11 +11,12 @@ import { displayDate } from "./workspace-model";
 
 type Range = Omit<AbsenceCommand, "action">;
 
-export function ManualAbsences({ workspace, administrator, disabled, changeAbsence }: {
+export function ManualAbsences({ workspace, administrator, disabled, changeAbsence, legacyOnly = false }: {
   workspace: EscalaWorkspace;
   administrator: boolean;
   disabled: boolean;
   changeAbsence: (command: AbsenceCommand) => Promise<boolean>;
+  legacyOnly?: boolean;
 }) {
   const [employeeId, selectEmployee] = useState("");
   const [startDate, setStart] = useState("");
@@ -37,7 +38,9 @@ export function ManualAbsences({ workspace, administrator, disabled, changeAbsen
   const validDates = Boolean(first && last && startDate && endDate && startDate >= first && startDate <= endDate && endDate <= last);
   const groups = new Map<string, { range: Range; source: string; removable: boolean }[]>();
   const visible = new Set(days);
-  const absences = input.assignments.filter(item => item.kind === "ABSENCE" && visible.has(item.date));
+  const legacy = new Set(workspace.workforce?.legacyAbsenceDays?.map(pair => JSON.stringify(pair)));
+  const absences = input.assignments.filter(item => item.kind === "ABSENCE" && visible.has(item.date) &&
+    (!legacyOnly || legacy.has(JSON.stringify([item.employeeId, item.date]))));
   for (const { source, assignments, removable } of [
     { source: "Manual", assignments: absences.filter(item => item.absenceSource === "MANUAL" && !item.locked), removable: true },
     { source: "Importado ou legado", assignments: absences.filter(item => item.absenceSource !== "MANUAL" && !item.locked), removable: administrator },
@@ -53,7 +56,7 @@ export function ManualAbsences({ workspace, administrator, disabled, changeAbsen
 
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled || confirmation) return;
+    if (legacyOnly || disabled || confirmation) return;
     setSubmitted(true);
     if (person && validDates && await changeAbsence({ action: "ADD_ABSENCE", employeeId, startDate, endDate })) {
       setStart(""); setEnd(""); setSubmitted(false);
@@ -72,14 +75,16 @@ export function ManualAbsences({ workspace, administrator, disabled, changeAbsen
   }
 
   return <details className={panelClass}>
-    <summary className={styles.disclosureTrigger}>Afastamentos do planejamento</summary>
+    <summary className={styles.disclosureTrigger}>{legacyOnly ? "Corrigir afastamentos antigos do rascunho" : "Afastamentos do planejamento"}</summary>
     <div className={styles.stackSmall}>
-      <p className={styles.muted}>Lance por colaborador e informe o primeiro e o último dia. Períodos com dias bloqueados, feriados fechados ou ajustes manuais não são salvos. A próxima geração considera os afastamentos salvos, sem publicar a escala.</p>
-      <p className={styles.muted}>{administrator
+      {legacyOnly ? <p className={styles.muted}>Confira apenas os dias antigos que não são mais cobertos pela base global. A exclusão é deste rascunho e não altera afastamentos da base nem publicações.</p>
+        : <p className={styles.muted}>Lance por colaborador e informe o primeiro e o último dia. Períodos com dias bloqueados, feriados fechados ou ajustes manuais não são salvos. A próxima geração considera os afastamentos salvos, sem publicar a escala.</p>}
+      <p className={styles.muted}>{legacyOnly ? (administrator ? "Lance ou encerre novos afastamentos na base global." : "Você pode excluir registros manuais antigos. Peça ao administrador a conferência de dias de origem importada.")
+        : administrator
         ? "Para corrigir um período, exclua o registro incorreto e lance o novo. A importação confirmada substitui os afastamentos dentro do período informado."
         : "Você pode excluir os lançamentos manuais desta filial. Registros importados ou legados são administrados separadamente."}</p>
       {disabled && <p role="status" className={styles.muted}>Conclua a operação ou resolva as alterações pendentes para editar afastamentos.</p>}
-      <form noValidate className={styles.stackSmall} onSubmit={add}>
+      {!legacyOnly && <form noValidate className={styles.stackSmall} onSubmit={add}>
         <div className={styles.formGrid}>
           <Field label="Colaborador" error={submitted && !person ? "Selecione um colaborador." : undefined}>
             {(id) => <select id={id} required className={controlClass} disabled={disabled || Boolean(confirmation)} value={employeeId} onChange={event => selectEmployee(event.target.value)}>
@@ -96,7 +101,7 @@ export function ManualAbsences({ workspace, administrator, disabled, changeAbsen
         </div>
         {person && !canAdd && <p className={styles.muted}>Este colaborador não tem dias ativos no período selecionado.</p>}
         <div className={styles.actions}><button type="submit" className={primaryClass} disabled={disabled || !canAdd || !people.length || Boolean(confirmation)}>Salvar afastamento</button></div>
-      </form>
+      </form>}
       <div>
         <h3 className={styles.sectionTitle}>Afastamentos registrados</h3>
         {!groups.size && <p className={styles.muted}>Nenhum afastamento registrado no período.</p>}

@@ -135,6 +135,11 @@ beforeEach(async () => {
           const saved = { ...previous, revision: previous.revision + 1, input: structuredClone(body.input as EscalaInput) };
           sources.set(saved.id, saved); reply = { status: 200, body: saved };
         }
+      } else if (body.action === "SYNC_WORKFORCE") {
+        const previous = sources.get(String(body.id));
+        if (!previous || previous.revision !== body.expectedRevision) throw new Error("Unexpected workforce sync target");
+        const saved = { ...previous, revision: previous.revision + 1, workforce: { needsSync: false } };
+        sources.set(saved.id, saved); reply = { status: 200, body: saved };
       } else if (body.action === "APPLY_PROPOSAL") {
         const previous = sources.get(String(body.id)); if (!previous) throw new Error("Unknown synthetic workspace");
         const saved = { ...previous, revision: previous.revision + 1, input: structuredClone(body.input as EscalaInput) };
@@ -148,6 +153,26 @@ beforeEach(async () => {
 afterEach(() => {
   for (const cleanup of hooks.cleanup) cleanup?.();
   vi.unstubAllGlobals(); vi.useRealTimers();
+});
+
+it("flushes local changes before opening and synchronizing a different draft", async () => {
+  const destination = sources.get("plan-07");
+  if (!destination || !current.input) throw new Error("Expected synthetic drafts");
+  destination.workforce = { needsSync: true };
+  const edited = { ...current.input, employees: current.input.employees.map(person => ({ ...person, name: "Alteração local sintética" })) };
+  current.update(edited);
+  await settle();
+  current.open(destination.id);
+  await settle();
+  expect(current.pendingOpen).toBe(destination.id);
+  current.saveAndOpen(destination.id);
+  await settle();
+  expect(calls.map(({ action, id, expectedRevision }) => [action, id, expectedRevision])).toEqual([
+    ["SAVE", "plan-08", 2], ["SYNC_WORKFORCE", destination.id, 2],
+  ]);
+  expect(sources.get("plan-08")?.input.employees[0]?.name).toBe(edited.employees[0]?.name);
+  expect(current.workspace).toMatchObject({ id: destination.id, revision: 3, workforce: { needsSync: false } });
+  expect(current.pendingOpen).toBeNull();
 });
 
 describe("scoped preview and independent application authority", () => {

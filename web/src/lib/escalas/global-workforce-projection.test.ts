@@ -124,20 +124,50 @@ describe("projeção da base global no rascunho", () => {
     expect(workspace.input.assignments).toEqual([absence(10)]);
   });
 
-  it("bloqueia retirada de vínculo que contém decisões de continuidade", () => {
+  it("permite retirar vínculo com histórico conhecido vazio, mas protege decisões reais de continuidade", () => {
     const { workspace, snapshot } = fixture();
     workspace.input.employees[0].historyKnown = true;
     snapshot.people[0].branchCode = "02";
+    expect(materializeEscalaWorkforceDraft(workspace, snapshot).input.employees).toEqual([]);
+    workspace.input.employees[0].history = [{ ...off(1, true), date: "2026-11-30" }];
     expect(() => materializeEscalaWorkforceDraft(workspace, snapshot)).toThrow("ajuste manual ou registro de continuidade");
   });
 
-  it("não reinterpreta a geometria de um turno nem remapeia automaticamente um trabalho existente", () => {
-    const { workspace, snapshot } = fixture([work(2)]);
+  it("mantém turno e dias protegidos quando a geometria é idêntica e só o ID da base difere", () => {
+    const days = [{ ...work(2), locked: true }, work(3), off(4)];
+    const { workspace, snapshot } = fixture(days);
+    snapshot.catalogs[0].shifts[0].id = "novo-turno";
+    snapshot.people[0].employee.shiftIds = ["novo-turno"];
+    snapshot.people[0].employee.originalShiftIds = ["novo-turno"];
+    snapshot.people[0].employee.fixedImportedShiftId = "novo-turno";
+    const projected = materializeEscalaWorkforceDraft(workspace, snapshot);
+    expect(projected.input.employees[0]).toMatchObject({
+      shiftIds: [shift.id], originalShiftIds: [shift.id], fixedImportedShiftId: shift.id,
+    });
+    expect(projected.input.assignments).toEqual(days);
+    expect(projected.input.shifts).toEqual([shift]);
+    expect(materializeEscalaWorkforceDraft({ ...workspace, input: projected.input }, snapshot).changed).toBe(false);
+  });
+
+  it("invalida somente trabalho explicitamente livre quando há referência realmente incompatível", () => {
+    const days = [work(2), off(3, true), off(4)];
+    const { workspace, snapshot } = fixture(days);
     snapshot.catalogs[0].shifts[0].segments[0].end++;
     expect(() => materializeEscalaWorkforceDraft(workspace, snapshot)).toThrow("outra geometria");
     snapshot.catalogs[0].shifts[0].id = "novo-turno";
     snapshot.people[0].employee.shiftIds = ["novo-turno"];
+    const projected = materializeEscalaWorkforceDraft(workspace, snapshot);
+    expect(projected.input.employees[0].shiftIds).toEqual(["novo-turno"]);
+    expect(projected.input.assignments).toEqual([off(3, true), off(4)]);
+    expect(projected.input.needsRegeneration).toBe(true);
+    expect(workspace.input.assignments).toEqual(days);
+
+    for (const locked of [true, undefined]) {
+      workspace.input.assignments[0] = { ...work(2), locked };
+      expect(() => materializeEscalaWorkforceDraft(workspace, snapshot)).toThrow("não é compatível com o turno");
+    }
+    workspace.input.assignments[0] = work(2);
+    workspace.input.generationMode = "HOURS_ONLY";
     expect(() => materializeEscalaWorkforceDraft(workspace, snapshot)).toThrow("não é compatível com o turno");
-    expect(workspace.input.assignments).toEqual([work(2)]);
   });
 });

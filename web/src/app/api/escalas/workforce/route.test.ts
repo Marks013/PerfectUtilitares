@@ -64,7 +64,9 @@ describe("base global de Escalas por HTTP", () => {
   });
 
   it("confirms administrator preview at revision zero, preserves unknown admission and no-ops on reimport", async () => {
-    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES" };
+    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES", sourceCompanyCode: "0001" };
+    expect((await POST(upload({ action: command.action, purpose: command.purpose }))).status).toBe(409);
+    expect((await POST(upload({ ...command, sourceCompanyCode: "0002" }))).status).toBe(422);
     const previewResponse = await POST(upload(command));
     expect(previewResponse.status).toBe(200);
     const { preview } = await previewResponse.json();
@@ -76,8 +78,11 @@ describe("base global de Escalas por HTTP", () => {
     expect(applied.status).toBe(200);
     expect(await applied.json()).toEqual({ revision: 1, changed: true });
     expect(calls.create).toHaveBeenCalledExactlyOnceWith({ data: expect.objectContaining({ tenantId: "t1", revision: 1,
-      snapshot: expect.objectContaining({ people: expect.arrayContaining([expect.objectContaining({ branchCode: "03",
+      snapshot: expect.objectContaining({ sourceCompanyCode: "1", people: expect.arrayContaining([expect.objectContaining({ branchCode: "03",
         employee: expect.objectContaining({ activeFrom: "", registration: "0008", shiftIds: [], scheduleMode: "UNTIMED" }) })]) }) }) });
+    expect(await (await GET(new Request(`${url}?branchCode=02`))).json()).toMatchObject({ sourceCompanyCode: "1" });
+    expect((await POST(upload({ ...command, sourceCompanyCode: "0002" }, fpre().replace('"0001","-"', '"0002","-"')))).status).toBe(422);
+    expect((await POST(upload(command, fpre().replace('"0001","-"', '"0002","-"')))).status).toBe(422);
     const repeated = await (await POST(upload(command))).json();
     expect(repeated.preview).toMatchObject({ revision: 1, canApply: true, changed: false });
     const same = await POST(upload({ ...apply, expectedRevision: 1, impactHash: repeated.preview.impactHash }));
@@ -85,8 +90,50 @@ describe("base global de Escalas por HTTP", () => {
     expect(calls.update).not.toHaveBeenCalled();
   });
 
+  it("does not remove omitted people until an administrator confirms the specific preview", async () => {
+    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES", sourceCompanyCode: "1" };
+    const lines = fpre().split("\r\n");
+    const extra = lines[5].replace('"0007"', '"0009"');
+    const full = [...lines.slice(0, 7), extra, lines[6], ...lines.slice(7)].join("\r\n");
+    const { preview: initial } = await (await POST(upload(command, full))).json();
+    expect((await POST(upload({ ...command, action: "IMPORT_APPLY", expectedRevision: 0, impactHash: initial.impactHash }, full))).status).toBe(200);
+    const { preview } = await (await POST(upload(command))).json();
+    expect(preview).toMatchObject({ requiresRemovalConfirmation: true, impactByBranch: [{ branchCode: "02", removed: 1 }] });
+    const apply = { ...command, action: "IMPORT_APPLY", expectedRevision: 1, impactHash: preview.impactHash };
+    expect((await POST(upload(apply))).status).toBe(409);
+    expect(calls.update).not.toHaveBeenCalled();
+    expect((await POST(upload({ ...apply, confirmRemovals: true }, full))).status).toBe(409);
+    expect(calls.update).not.toHaveBeenCalled();
+    expect((await POST(upload({ ...apply, confirmRemovals: true }))).status).toBe(200);
+    expect(calls.update).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ data: expect.objectContaining({
+      snapshot: expect.objectContaining({ people: expect.arrayContaining([expect.objectContaining({ listed: false,
+        employee: expect.objectContaining({ registration: "0009" }) })]) }),
+    }) }));
+  });
+
+  it("recognizes a verified empty origin for transfer but does not infer one from omission or a bare heading", async () => {
+    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES", sourceCompanyCode: "1" };
+    const { preview: initial } = await (await POST(upload(command))).json();
+    expect((await POST(upload({ ...command, action: "IMPORT_APPLY", expectedRevision: 0, impactHash: initial.impactHash }))).status).toBe(200);
+    const lines = fpre().split("\r\n");
+    const destination = [...lines.slice(7), lines[5], lines[6]];
+    const fileFor = (section: string[]) => [...lines.slice(0, 3), ...section, ...destination].join("\r\n");
+    expect((await POST(upload(command, fileFor([])))).status).toBe(422);
+    expect((await POST(upload(command, fileFor(lines.slice(3, 4))))).status).toBe(400);
+    const transfer = fileFor(lines.slice(3, 5));
+    const { preview } = await (await POST(upload(command, transfer))).json();
+    expect(preview).toMatchObject({ requiresRemovalConfirmation: true, branchCodes: ["02", "03"],
+      impactByBranch: [{ branchCode: "02", transferredOut: 1 }, { branchCode: "03", transferredIn: 1 }] });
+    const apply = { ...command, action: "IMPORT_APPLY", expectedRevision: 1, impactHash: preview.impactHash, confirmRemovals: true };
+    expect((await POST(upload(apply, transfer))).status).toBe(200);
+    calls.guard.mockResolvedValue({ ok: true, actor: operator });
+    expect(await (await GET(new Request(`${url}?branchCode=02`))).json()).toEqual({
+      revision: 2, people: [], catalogs: [expect.objectContaining({ branchCode: "02" })], absences: [],
+    });
+  });
+
   it("requests missing registrations before creating the base and denies import by nominal operators", async () => {
-    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES" };
+    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES", sourceCompanyCode: "0001" };
     const response = await POST(upload(command, fpre("")));
     expect(response.status).toBe(200);
     const { preview } = await response.json();
@@ -103,7 +150,7 @@ describe("base global de Escalas por HTTP", () => {
   });
 
   it("allows manual registration only inside the assigned branch and does not create a second identity", async () => {
-    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES" };
+    const command = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES", sourceCompanyCode: "0001" };
     const { preview } = await (await POST(upload(command))).json();
     expect((await POST(upload({ ...command, action: "IMPORT_APPLY", expectedRevision: 0, impactHash: preview.impactHash }))).status).toBe(200);
     calls.guard.mockResolvedValue({ ok: true, actor: operator });
@@ -125,7 +172,7 @@ describe("base global de Escalas por HTTP", () => {
     const absence = { action: "IMPORT_PREVIEW", purpose: "ABSENCES" };
     expect((await POST(upload(absence, absenceCsv))).status).toBe(409);
     expect(calls.create).not.toHaveBeenCalled();
-    const team = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES" };
+    const team = { action: "IMPORT_PREVIEW", purpose: "EMPLOYEES", sourceCompanyCode: "0001" };
     const { preview } = await (await POST(upload(team))).json();
     expect((await POST(upload({ ...team, action: "IMPORT_APPLY", expectedRevision: 0, impactHash: preview.impactHash }))).status).toBe(200);
     const reportPreview = await POST(upload(absence, absenceCsv));
