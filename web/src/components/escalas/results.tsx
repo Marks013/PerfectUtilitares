@@ -212,6 +212,57 @@ function useActiveDiagnostics(input: EscalaInput, issues: EscalaValidation["issu
   }, [input, issues, active]);
 }
 
+type Optimization = NonNullable<EscalaSolveResult["optimization"]>;
+
+const optimizationLabels: Partial<Record<Optimization["phases"][number]["objective"], string>> = {
+  COVERAGE: "cobertura",
+  MOVEMENT_COVERAGE: "cobertura nos horários de maior movimento",
+  SUNDAY_COVERAGE: "cobertura aos domingos",
+  SUNDAY_PEAK: "picos de desfalque aos domingos",
+  CLOSING_COVERAGE: "cobertura no fechamento",
+  SUNDAY_BALANCE: "distribuição dos domingos",
+  SATURDAY_BALANCE: "distribuição dos sábados",
+  WEEKEND_BALANCE: "distribuição dos fins de semana",
+  REST_SPACING: "espaçamento das folgas",
+  REST_DISTRIBUTION: "distribuição das folgas",
+  REST_ROTATION: "rodízio de folgas",
+  UNTIMED_ROTATION: "rodízio da equipe sem horário fixo",
+  LEADERSHIP: "presença de liderança",
+  PEOPLE_CHANGED: "redução de pessoas com mudanças na escala",
+  STABILITY: "preservação da escala de referência",
+  PREFERENCES: "preferências de folga",
+  TIE_BREAK: "desempate",
+  SECONDARY_POLISH: "ajustes finais",
+};
+
+function OptimizationSearchSummary({ optimization }: { optimization?: Optimization }) {
+  if (!optimization) return null;
+
+  const recorded = new Set<Optimization["phases"][number]["objective"]>();
+  const skipped = new Set<string>();
+  const inconclusive = new Set<string>();
+  for (const phase of optimization.phases) {
+    recorded.add(phase.objective);
+    for (const member of phase.members ?? []) recorded.add(member.objective);
+
+    let label = optimizationLabels[phase.objective];
+    if (phase.objective === "COVERAGE" && phase.searchScope === "GLOBAL") label = "busca geral de cobertura";
+    if (phase.objective === "COVERAGE" && phase.searchScope === "SELECTED_PEOPLE") label = "ajuste local de cobertura";
+    if (!label) continue;
+    if (phase.searchSkippedReason) skipped.add(label);
+    else if (phase.status === "UNKNOWN") inconclusive.add(label);
+  }
+  for (const objective of optimization.unattemptedObjectives ?? []) {
+    const label = optimizationLabels[objective];
+    if (label && !recorded.has(objective)) skipped.add(label);
+  }
+
+  return <>
+    {skipped.size > 0 && <p className={styles.muted}>Etapas sem início ({[...skipped].join(", ")}).</p>}
+    {inconclusive.size > 0 && <p className={styles.muted}>Buscas iniciadas e sem conclusão ({[...inconclusive].join(", ")}).</p>}
+  </>;
+}
+
 export const Proposals = memo(function Proposals({ input: nextInput, generated: nextGenerated, disabled, onGenerated, onDismiss, active = true }: {
   input: EscalaInput; generated: { result: { status: string; message: string; optimization?: EscalaSolveResult["optimization"]; restQuality?: { search: RestDistributionSearch } }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
   disabled: boolean; onGenerated: () => void; onDismiss: () => void; active?: boolean;
@@ -225,6 +276,7 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">Proposta candidata. A sugestão ainda não foi aplicada à grade atual nem aos arquivos. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
     <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
+    <OptimizationSearchSummary optimization={generated.result.optimization} />
     <LeadershipSummary counts={generated.result.optimization?.leadership} />
     <RestDistributionSummary input={generated.proposalInput} previousInput={input} search={generated.result.restQuality?.search} />
     {analytics && generated.proposalInput.employees.length > 0 && !isHoursReferenceOnly(generated.proposalInput) && <details><summary className={styles.disclosureTrigger}>Conferir capacidade e desfalques por setor</summary><div className={styles.reviewScroller}><CoverageGaps input={generated.proposalInput} rows={diagnostics.coverageGroups} emptySectors={emptySectors} referenceOrigin="PREPARED" /></div></details>}

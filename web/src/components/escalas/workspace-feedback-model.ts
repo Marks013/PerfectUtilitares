@@ -1,4 +1,4 @@
-import type { EscalaGenerationConflict } from "@/lib/escalas/types";
+import type { EscalaGenerationConflict, EscalaSolveResult } from "@/lib/escalas/types";
 
 export type EscalaRecoveryAction = "team" | "coverage" | "rules" | "reload" | "generate" | "login" | "roster";
 export type EscalaProblem = { message: string; explanation: string; tone: "error" | "warning"; action?: EscalaRecoveryAction; actionLabel?: string; conflicts?: EscalaGenerationConflict[]; outcome?: "not-generated" };
@@ -39,6 +39,11 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
   if (code === "ESCALA_DAILY_LIMIT" || code === "ESCALA_SHIFT_CONFLICT" || code === "ESCALA_REFERENCE_REVIEW_REQUIRED" || code === "ESCALA_SHIFT_OPTIONS_LIMIT") return problem("Um horário ou bloqueio precisa de conferência.", cause instanceof EscalaRequestError && cause.code === "ESCALA_REFERENCE_REVIEW_REQUIRED" ? cause.message : "Confira os horários e dias bloqueados da equipe. A proposta anterior foi preservada; não é necessário refazer a importação.", "team", "Conferir horários e bloqueios");
   if (code === "ESCALA_MIXED_42_SHIFT_REQUIRED" && cause instanceof EscalaRequestError) return problem("Não foi possível montar o horário de 9h.", cause.message, "team", "Conferir horários");
   if (code === "ESCALA_DAILY_EXTENSION_REQUIRED" || code === "ESCALA_CERTIFICATE_REQUIRED" || code === "ESCALA_HOLIDAY_POLICY_REQUIRED" || code?.startsWith("ESCALA_CCT_")) return problem("Existe uma regra especial pendente de conferência.", "Confira a condição indicada antes da aplicação real. Não marque uma autorização que não existe; os dados da proposta foram preservados.", "rules", "Conferir condição especial");
+  if (code === "SOLVER_RESPONSE_INCOMPLETE") return problem("O cálculo retornou uma proposta incompleta.", "A proposta não cobre todos os dias exigidos e não foi aplicada. Gere novamente; a escala salva foi preservada.", "generate", "Gerar novamente");
+  if (code === "SOLVER_PROTECTED_RECORD_CHANGED") return problem("A proposta alterava um registro protegido.", "A proposta foi recusada. Ausências, horários e bloqueios salvos foram preservados. Se repetir, informe ao suporte.");
+  if (code === "SOLVER_RULES_INVALID") return problem("A proposta não atende às regras obrigatórias.", "A proposta foi recusada e a escala salva foi mantida. Confira a regra indicada ou informe ao suporte.", "rules", "Conferir regras");
+  if (code === "ESCALA_OPERATION_CHANGED") return problem("O estado deste cálculo mudou.", "Confira a revisão atual antes de iniciar uma nova proposta. A escala salva foi preservada.", "reload", "Conferir revisão atual");
+  if (code === "SOLVER_TIMED_OUT") return problem("O prazo deste cálculo terminou.", "A escala salva foi preservada. Gere novamente quando estiver pronto.", "generate", "Gerar novamente");
   if (code === "SOLVER_INVALID_RESPONSE") return problem("O cálculo não passou pela conferência de segurança.", "A resposta recebida não foi aplicada. Tente gerar novamente; se o problema continuar, informe ao suporte. Sua proposta anterior foi preservada.", "generate", "Gerar novamente");
   if (code === "SOLVER_INPUT_TOO_LARGE") return problem("Este planejamento ficou grande demais para o cálculo.", "Sua escala salva e o rascunho foram preservados. Informe o problema ao suporte para revisar o tamanho do envio; não apague colaboradores, ausências ou históricos para tentar novamente.");
   if (code === "SOLVER_BUSY") return problem("Já existe uma análise em andamento.", "Aguarde a análise terminar antes de gerar novamente. Sua equipe e suas alterações foram preservadas.", "generate", "Gerar novamente");
@@ -50,13 +55,16 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
   return problem("Não foi possível concluir esta ação.", "Sua equipe e suas alterações locais foram preservadas. Tente a mesma ação novamente; se continuar, informe o problema ao suporte.");
 }
 
-export function solverProblem(status: string, message = "", conflicts: EscalaGenerationConflict[] = []): EscalaProblem | null {
+export function solverProblem(status: string, message = "", conflicts: EscalaGenerationConflict[] = [], evidence?: EscalaSolveResult["rejectionEvidence"]): EscalaProblem | null {
   if (status === "OPTIMAL" || status === "FEASIBLE") return null;
   if (status === "UNKNOWN") return { outcome: "not-generated", tone: "warning", message: "O cálculo terminou sem uma proposta no tempo disponível.", explanation: "Isso não significa que a escala seja impossível. Tente gerar novamente; se repetir, confira os horários e bloqueios da equipe.", action: "generate", actionLabel: "Gerar novamente" };
   if (status === "INFEASIBLE") {
-    if (conflicts.length) return { outcome: "not-generated", tone: "warning", message: "Há condições específicas que impedem esta proposta.", explanation: "Confira os motivos abaixo. Nenhuma ausência, dia bloqueado ou exigência de cobertura foi alterada automaticamente.", conflicts, action: conflicts[0].target, actionLabel: recoveryActionLabel(conflicts[0].target) };
+    const stage = evidence === "PRECHECK" ? "A checagem de entrada ou cobertura impediu o início da busca."
+      : evidence === "MODEL_PROOF" ? "A busca demonstrou que o modelo não tem solução com as condições atuais."
+        : undefined;
+    if (conflicts.length) return { outcome: "not-generated", tone: "warning", message: "Há condições específicas que impedem esta proposta.", explanation: [stage, "Confira os motivos abaixo. Nenhuma ausência, dia bloqueado ou exigência de cobertura foi alterada automaticamente."].filter(Boolean).join(" "), conflicts, action: conflicts[0].target, actionLabel: recoveryActionLabel(conflicts[0].target) };
     const coverage = message.startsWith("Cobertura sem horário disponível");
-    return { outcome: "not-generated", tone: "warning", message: "As condições atuais não permitem montar uma proposta.", explanation: coverage ? message : "O cálculo não identificou um único ajuste seguro. Abra a conferência dos dados; nenhum bloqueio, ausência ou mínimo foi alterado.", action: coverage ? "coverage" : "team", actionLabel: coverage ? "Conferir cobertura" : "Conferir equipe e restrições" };
+    return { outcome: "not-generated", tone: "warning", message: "As condições atuais não permitem montar uma proposta.", explanation: [stage, coverage ? "Confira os horários disponíveis para a cobertura exigida." : "Abra a conferência dos dados; nenhum bloqueio, ausência ou mínimo foi alterado."].filter(Boolean).join(" "), action: coverage ? "coverage" : "team", actionLabel: coverage ? "Conferir cobertura" : "Conferir equipe e restrições" };
   }
   return { tone: "error", message: "O cálculo encontrou um dado que não conseguiu processar.", explanation: "Confira os horários informados e tente gerar novamente. Se continuar, informe o problema ao suporte; a proposta anterior foi preservada.", action: "team", actionLabel: "Conferir horários" };
 }

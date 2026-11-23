@@ -499,8 +499,11 @@ export function useEscalasWorkspace() {
               setNotice(comparisonNotice
                 ? [warning, comparisonNotice, canApply ? "Confira antes de aplicar." : previewAction].filter(Boolean).join(" ")
                 : `${warning || "Proposta concluída."} ${canApply ? "Confira e aplique à escala." : previewAction}`);
+            } else {
+              const { status, message, conflicts, rejectionEvidence } = result.result;
+              restorePrevious();
+              const problem = solverProblem(status, message, conflicts, rejectionEvidence); setProblem(problem); setNotice(problem?.message ?? "");
             }
-            else { restorePrevious(); setProblem(solverProblem(result.result.status, result.result.message, result.result.conflicts)); setNotice(result.result.message); }
           }
         } catch (cause) {
           if (!currentIntent() || (context && !sameContext(context))) return;

@@ -48,7 +48,7 @@ describe("verified processor quality delivery", () => {
     expect(validateEscala(input).valid).toBe(false);
     vi.spyOn(refinement, "refineRoster").mockImplementation(value => value);
     vi.mocked(requestSolver).mockResolvedValue({ status: "OPTIMAL", message: "Rejected claim", assignments: input.assignments, wallTimeSeconds: 1 });
-    await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+    await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_RULES_INVALID" });
   });
   it("accepts a valid Saturday repair even when there is no valid old incumbent", async () => {
     const input = fixture(); input.restRulesVersion = 2;

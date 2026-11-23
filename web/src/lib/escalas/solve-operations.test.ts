@@ -3,6 +3,7 @@ import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGen
 import { EscalaError, requireEscalaCapability, type EscalaActor } from "./access";
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
 import { buildEscalaApprovedPolicy } from "./approved-policy";
+import { EscalaSolverError } from "./solver-errors";
 
 const mocks = vi.hoisted(() => ({ findFirst: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn(), count: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn(), get: vi.fn(), generate: vi.fn(), recheck: vi.fn(), cancel: vi.fn() }));
 const authorization = vi.hoisted(() => ({
@@ -146,7 +147,7 @@ describe("generation operation ownership and atomic lifecycle", () => {
       expect(row.state).toBe("COMPLETED");
       expect(mocks.recheck).toHaveBeenCalledExactlyOnceWith(actor, "w1", 1);
       // The failed delivery cannot rewrite the completed lifecycle through a RUNNING-only CAS.
-      expect(mocks.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: { id: operationId, state: "RUNNING" }, data: expect.objectContaining({ state: "FAILED" }) }));
+      expect(mocks.updateMany.mock.calls.some(([args]) => args.data.state === "FAILED")).toBe(false);
       expect(mocks.generate).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(mocks.updateMany.mock.calls)).not.toContain("synthetic-opaque-proof");
     });
@@ -430,9 +431,64 @@ describe("generation operation ownership and atomic lifecycle", () => {
       await expect(generationOperationStatus(actor, "owner", operationId)).resolves.toMatchObject({ state: "TIMED_OUT" });
       return { result: { status: "FEASIBLE" } };
     });
-    await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code: "SOLVER_CANCELLED" });
+    await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code: "SOLVER_TIMED_OUT" });
     expect(row.state).toBe("TIMED_OUT");
   });
+  it.each([
+    ["CANCEL_REQUESTED", true, "SOLVER_CANCELLED"],
+    ["CREATED", true, "SOLVER_TIMED_OUT"],
+    ["RUNNING", false, "ESCALA_OPERATION_CHANGED"],
+  ] as const)("rereads a lost claim with state %s", async (state, expired, code) => {
+    mocks.updateMany.mockImplementationOnce(async () => {
+      row.state = state;
+      if (expired) row.expiresAt = new Date(Date.now() - 500);
+      return { count: 0 };
+    });
+    await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code });
+    expect(mocks.findFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it.each(["RUNNING", "COMPLETED"] as const)("keeps a stale revision when the %s CAS loses", async state => {
+    const update = mocks.updateMany.getMockImplementation()!;
+    mocks.updateMany.mockImplementation(async args => args.data.state === state ? { count: 0 } : update(args));
+    mocks.recheck.mockRejectedValueOnce(new EscalaError(409, "ESCALA_STALE_REVISION", "Synthetic"));
+    await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
+    expect(row.state).toBe(state === "RUNNING" ? "CREATED" : "RUNNING");
+  });
+
+  it.each([["CANCEL_REQUESTED", "SOLVER_CANCELLED"], ["RUNNING", "SOLVER_TIMED_OUT"]] as const)
+    ("withholds an expired proposal with state %s", async (state, code) => {
+      mocks.generate.mockImplementationOnce(async () => {
+        row.state = state; row.expiresAt = new Date(Date.now() - 500);
+        return { result: { status: "FEASIBLE" } };
+      });
+      await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code });
+      expect(row.state).toBe(state);
+      expect(mocks.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: expect.objectContaining({
+        id: operationId, tenantId: "t1", ownerKey: "owner", workspaceId: "w1", expectedRevision: 1, state: "RUNNING", expiresAt: { gt: expect.any(Date) },
+      }) }));
+    });
+  it("does not write TIMED_OUT when explicit cancellation wins a solver timeout", async () => {
+    mocks.generate.mockImplementationOnce(async () => {
+      row.state = "CANCEL_REQUESTED";
+      row.expiresAt = new Date(Date.now() - 500);
+      throw new EscalaSolverError("SOLVER_TIMED_OUT");
+    });
+    await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code: "SOLVER_CANCELLED" });
+    expect(row.state).toBe("CANCEL_REQUESTED");
+  });
+
+  it("withholds delivery if the deadline passes during the final revision check", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const expiredAt = row.expiresAt.getTime() + 1;
+      mocks.recheck.mockImplementationOnce(async () => { vi.setSystemTime(expiredAt); });
+      await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code: "SOLVER_TIMED_OUT" });
+      expect(row.state).toBe("COMPLETED");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("returns a valid completed proposal and makes later cancellation a no-op", async () => {
     expect(await runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).toEqual({ result: { status: "FEASIBLE" } });
     expect(row.state).toBe("COMPLETED");

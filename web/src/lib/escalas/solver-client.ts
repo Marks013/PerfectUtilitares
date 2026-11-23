@@ -20,6 +20,7 @@ const objectiveName = z.enum(["COVERAGE", "MOVEMENT_COVERAGE", "SUNDAY_COVERAGE"
 
 const resultSchema = z.strictObject({
   status: z.enum(["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN", "MODEL_INVALID"]),
+  rejectionStage: z.enum(["INPUT_CHECK", "COVERAGE_CHECK", "SEARCH"]).optional(),
   message: z.string().max(1000),
   wallTimeSeconds: z.number().finite().min(0).max(60),
   solverDiagnostics: z.array(z.strictObject({
@@ -84,7 +85,20 @@ const resultSchema = z.strictObject({
     kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE", "HOLIDAY"]),
     shiftId: z.string().max(100).optional(), locked: z.boolean().optional(),
   })).max(10500),
+}).superRefine((result, context) => {
+  if (result.rejectionStage !== undefined && result.status !== "INFEASIBLE") {
+    context.addIssue({ code: "custom", path: ["rejectionStage"], message: "Etapa de rejeição exige resultado inviável" });
+  }
 });
+
+function normalizeSkippedObjectives(optimization: NonNullable<EscalaSolveResult["optimization"]>) {
+  const skipped = optimization.phases.filter(phase => phase.searchSkippedReason).map(phase => phase.objective);
+  if (!skipped.length) return optimization;
+  const attempted = new Set(optimization.phases.filter(phase => !phase.searchSkippedReason)
+    .flatMap(phase => [phase.objective, ...(phase.members?.map(member => member.objective) ?? [])]));
+  const objectives = new Set([...(optimization.unattemptedObjectives ?? []), ...skipped]);
+  return { ...optimization, unattemptedObjectives: [...objectives].filter(name => !attempted.has(name)) };
+}
 
 /** Pending days are permitted in drafts, never in an incumbent used to replace a calculated roster. */
 function verifiedCompleteRoster(input: EscalaInput): boolean {
@@ -139,14 +153,15 @@ export async function solveEscala(
   const preserveExcluded = (day: EscalaInput["assignments"][number]) => retained.has(day.employeeId)
     && (parsed.generationMode === "HOURS_ONLY" || day.kind === "HOLIDAY");
   try {
-    const result = resultSchema.parse(payload);
+    const { rejectionStage, ...result } = resultSchema.parse(payload);
+    if (result.optimization) result.optimization = normalizeSkippedObjectives(result.optimization);
     if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
       const previous = new Map(parsed.assignments.map(day => [`${day.employeeId}\0${day.date}`, day]));
       const excluded = new Set(parsed.employees.filter(person => person.planningEnabled === false).map(person => person.id));
       result.assignments = result.assignments.map(day => {
         const old = previous.get(`${day.employeeId}\0${day.date}`);
         if (day.locked === true && !old?.locked) {
-          stage = "preservation"; reason = "LOCK_CHANGED"; throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+          stage = "preservation"; reason = "LOCK_CHANGED"; throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
         }
         if (excluded.has(day.employeeId) || ["ABSENCE", "HOLIDAY"].includes(day.kind) || old?.locked) {
           const same = old?.kind === day.kind && old.shiftId === day.shiftId
@@ -164,8 +179,22 @@ export async function solveEscala(
       // Revalidate references and dates, independently of the processor's contract.
       stage = "assignment-schema";
       escalaInputSchema.parse({ ...parsed, assignments: result.assignments });
-      if (manualAssignmentIssues({ ...parsed, assignments: result.assignments }, parsed.assignments).length) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+      if (manualAssignmentIssues({ ...parsed, assignments: result.assignments }, parsed.assignments).length) {
+        stage = "independent-validation"; reason = "RULES_INVALID";
+        throw new EscalaSolverError("SOLVER_RULES_INVALID");
+      }
       const assignments = new Map(result.assignments.map((item) => [`${item.employeeId}\0${item.date}`, item]));
+      stage = "preservation"; details = undefined;
+      for (const previous of parsed.assignments) {
+        const proposed = assignments.get(`${previous.employeeId}\0${previous.date}`);
+        reason = "ABSENCE_CHANGED";
+        if (previous.kind === "ABSENCE" && (proposed?.kind !== "ABSENCE" || proposed.locked !== previous.locked)) throw new Error("Changed absence");
+        if (previous.kind === "HOLIDAY" && (proposed?.kind !== "HOLIDAY" || proposed.locked !== previous.locked)) throw new Error("Changed closed holiday");
+        reason = "PROTECTED_ASSIGNMENT_CHANGED";
+        if (preserveExcluded(previous) && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || proposed.locked !== previous.locked)) throw new Error("Changed excluded record");
+        reason = "LOCK_CHANGED";
+        if (previous.locked && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || !proposed.locked)) throw new Error("Changed locked day");
+      }
       let expected = parsed.assignments.filter(item => retained.has(item.employeeId)
         && (parsed.generationMode === "HOURS_ONLY" || item.locked || item.kind === "ABSENCE" || item.kind === "HOLIDAY")).length;
       for (const person of parsed.employees) {
@@ -180,17 +209,6 @@ export async function solveEscala(
       }
       reason = "ASSIGNMENT_COUNT"; details = { expected, actual: result.assignments.length };
       if (expected !== result.assignments.length) throw new Error("Unexpected processor assignments");
-      stage = "preservation"; details = undefined;
-      for (const previous of parsed.assignments) {
-        const proposed = assignments.get(`${previous.employeeId}\0${previous.date}`);
-        reason = "ABSENCE_CHANGED";
-        if (previous.kind === "ABSENCE" && (proposed?.kind !== "ABSENCE" || proposed.locked !== previous.locked)) throw new Error("Changed absence");
-        if (previous.kind === "HOLIDAY" && (proposed?.kind !== "HOLIDAY" || proposed.locked !== previous.locked)) throw new Error("Changed closed holiday");
-        reason = "PROTECTED_ASSIGNMENT_CHANGED";
-        if (preserveExcluded(previous) && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || proposed.locked !== previous.locked)) throw new Error("Changed excluded record");
-        reason = "LOCK_CHANGED";
-        if (previous.locked && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || !proposed.locked)) throw new Error("Changed locked day");
-      }
     } else if (result.assignments.length) {
       stage = "completeness"; reason = "UNEXPECTED_ASSIGNMENTS"; details = { actual: result.assignments.length, expected: 0 };
       throw new Error("Unexpected assignments on unsuccessful solve");
@@ -226,7 +244,10 @@ export async function solveEscala(
       // A selector without a valid incumbent can return the proposal unchanged. It is never proof of feasibility.
       stage = "assignment-schema"; reason = "SCHEMA_INVALID";
       const finalInput = escalaInputSchema.parse({ ...parsed, assignments: selected.input.assignments });
-      if (manualAssignmentIssues(finalInput, parsed.assignments).length) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+      if (manualAssignmentIssues(finalInput, parsed.assignments).length) {
+        stage = "independent-validation"; reason = "RULES_INVALID";
+        throw new EscalaSolverError("SOLVER_RULES_INVALID");
+      }
       const finalDays = new Map(finalInput.assignments.map(day => [`${day.employeeId}\0${day.date}`, day]));
       stage = "preservation"; reason = "PROTECTED_ASSIGNMENT_CHANGED";
       if (parsed.assignments.some(day => {
@@ -235,7 +256,7 @@ export async function solveEscala(
           || day.kind === "HOLIDAY" && next?.kind !== "HOLIDAY"
           || preserveExcluded(day) && (next?.kind !== day.kind || next.shiftId !== day.shiftId || next.locked !== day.locked)
           || day.locked && (next?.kind !== day.kind || next.shiftId !== day.shiftId || !next.locked);
-      })) throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+      })) throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
       const finalValidation = validateEscala(finalInput);
       const operationallyReusable = isOperationallyReusable(finalValidation);
       const hoursOnlyMatches = matchesHoursOnlyAssignments(parsed, finalInput);
@@ -243,8 +264,11 @@ export async function solveEscala(
       stage = "independent-validation"; reason = "RULES_INVALID";
       details = { issues: finalValidation.issues };
       if (!operationallyReusable || !hoursOnlyMatches || !fixedReferencesMatch) {
-        if (operationallyReusable) reason = !hoursOnlyMatches ? "HOURS_ONLY_CHANGED" : "REST_ONLY_CHANGED";
-        throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+        if (!hoursOnlyMatches || !fixedReferencesMatch) {
+          reason = !hoursOnlyMatches ? "HOURS_ONLY_CHANGED" : "REST_ONLY_CHANGED";
+          throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
+        }
+        throw new EscalaSolverError("SOLVER_RULES_INVALID");
       }
       if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
       stage = "result-recheck"; reason = "RECHECK_FAILED"; details = undefined;
@@ -278,12 +302,15 @@ export async function solveEscala(
       };
       return { ...result, assignments: assignmentsWithAdministrativeDays, restQuality };
     }
-    return result;
+    if (rejectionStage === undefined) return result;
+    return { ...result, rejectionEvidence: rejectionStage === "SEARCH" ? "MODEL_PROOF" : "PRECHECK" };
   } catch (error) {
-    if (!(error instanceof EscalaSolverError) || error.code === "SOLVER_INVALID_RESPONSE") {
+    if (!(error instanceof EscalaSolverError) || error.code !== "SOLVER_CANCELLED") {
       logSolverRejection(stage, reason, { ...details, issues: error instanceof z.ZodError ? error.issues : details?.issues });
     }
     if (error instanceof EscalaSolverError) throw error;
+    if (stage === "preservation") throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
+    if (reason === "MISSING_ACTIVE_DATE") throw new EscalaSolverError("SOLVER_RESPONSE_INCOMPLETE");
     throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
   }
 }

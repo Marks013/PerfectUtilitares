@@ -47,6 +47,19 @@ describe("plain language planning recovery", () => {
     expect(solverProblem("FEASIBLE")).toBeNull();
     expect(solverProblem("OPTIMAL")).toBeNull();
   });
+  it.each([["PRECHECK", "checagem de entrada ou cobertura"], ["MODEL_PROOF", "modelo não tem solução"]] as const)("shows %s only from verified evidence", (evidence, label) => {
+    const conflicts = [{ code: "SOLVER_COVERAGE", message: "Synthetic", target: "coverage" as const }];
+    const problem = solverProblem("INFEASIBLE", "private worker text", conflicts, evidence);
+    expect(problem).toMatchObject({ action: "coverage", conflicts });
+    expect(problem?.explanation).toContain(label);
+    expect(solverProblem("INFEASIBLE", "private worker text", conflicts)?.explanation).not.toContain(label);
+  });
+  it.each([["SOLVER_RESPONSE_INCOMPLETE", "incompleta"], ["SOLVER_PROTECTED_RECORD_CHANGED", "registro protegido"],
+    ["SOLVER_RULES_INVALID", "regras obrigatórias"]])("classifies %s without raw worker text", (code, label) => {
+    const problem = toEscalaProblem(new EscalaRequestError(code, 503, "private worker text"));
+    expect(problem.message).toContain(label);
+    expect(JSON.stringify(problem)).not.toContain("private worker text");
+  });
   it("links a genuine coverage conflict to the coverage controls without reducing minima", () => {
     expect(solverProblem("INFEASIBLE", "Cobertura sem horário disponível em 2026-11-02.")).toMatchObject({ tone: "warning", action: "coverage" });
     expect(toEscalaProblem(new EscalaRequestError("ESCALA_SETUP_REQUIRED", 422, "raw"))).toMatchObject({ action: "team" });

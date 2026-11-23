@@ -1,8 +1,8 @@
 import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { describe, expect, it } from "vitest";
 import { visibleDates } from "@/lib/escalas/dates";
-import type { EscalaValidation } from "@/lib/escalas/types";
-import { ValidationResults } from "./results";
+import type { EscalaSolveResult, EscalaValidation } from "@/lib/escalas/types";
+import { Proposals, ValidationResults } from "./results";
 import { newEmployee, newInput } from "./workspace-model";
 
 function fixture() {
@@ -11,6 +11,83 @@ function fixture() {
   const validation: EscalaValidation = { valid: true, readyToPublish: false, minimumCoverageMargin: null, issues: [], summaries: [{ employeeId: "person", workedMinutes: 0, workDays: 2, offDays: 1, maxStreak: 1, sundaysWorked: 99 }] };
   return { input, validation };
 }
+type Optimization = NonNullable<EscalaSolveResult["optimization"]>;
+
+function renderProposal(optimization?: Optimization) {
+  const { input, validation } = fixture();
+  return renderToStaticMarkup(<Proposals input={input} generated={{
+    result: { status: "FEASIBLE", message: "Proposta de teste.", optimization },
+    proposalInput: input,
+    validation,
+  }} disabled={false} onGenerated={() => {}} onDismiss={() => {}} />);
+}
+
+describe("buscas no resumo da proposta", () => {
+  const skippedCoverage: Optimization["phases"][number] = {
+    objective: "COVERAGE", status: "UNKNOWN", searchScope: "GLOBAL",
+    wallTimeSeconds: 0, budgetSeconds: 0, incumbentValue: 1,
+    searchSkippedReason: "PREPARATION_EXHAUSTED",
+  };
+
+  it("separa a fase pulada dos objetivos sem registro de tentativa", () => {
+    const html = renderProposal({
+      budgetSeconds: 12,
+      phases: [skippedCoverage],
+      unattemptedObjectives: ["COVERAGE", "REST_SPACING"],
+    });
+    expect(html).toContain("Etapas sem início (busca geral de cobertura, espaçamento das folgas).");
+    expect(html).not.toContain("Buscas iniciadas e sem conclusão");
+  });
+
+  it("mostra a busca que iniciou e ficou sem conclusão", () => {
+    const html = renderProposal({
+      budgetSeconds: 12,
+      phases: [{
+        objective: "SUNDAY_COVERAGE", status: "UNKNOWN", searchScope: "GLOBAL",
+        wallTimeSeconds: 0.4, budgetSeconds: 0.4, incumbentValue: 1,
+      }],
+    });
+    expect(html).toContain("Buscas iniciadas e sem conclusão (cobertura aos domingos).");
+    expect(html).not.toContain("Etapas sem início");
+  });
+
+  it("mostra desempate e ajustes finais quando as buscas ficam inconclusivas", () => {
+    const html = renderProposal({
+      budgetSeconds: 12,
+      phases: [
+        { objective: "TIE_BREAK", status: "UNKNOWN", wallTimeSeconds: 0.2, budgetSeconds: 0.2, incumbentValue: 1 },
+        { objective: "SECONDARY_POLISH", status: "UNKNOWN", wallTimeSeconds: 0.3, budgetSeconds: 0.3, incumbentValue: 1 },
+      ],
+    });
+    expect(html).toContain("Buscas iniciadas e sem conclusão (desempate, ajustes finais).");
+    expect(html).not.toContain("Etapas sem início");
+  });
+
+  it("identifica só a busca geral como pulada quando houve reparo local", () => {
+    const html = renderProposal({
+      budgetSeconds: 12,
+      phases: [
+        { objective: "COVERAGE", status: "FEASIBLE", searchScope: "SELECTED_PEOPLE",
+          wallTimeSeconds: 0.4, budgetSeconds: 0.4, incumbentValue: 1 },
+        skippedCoverage,
+      ],
+    });
+    expect(html).toContain("Etapas sem início (busca geral de cobertura).");
+    expect(html).not.toContain("Etapas sem início (cobertura).");
+    expect(html).not.toContain("Buscas iniciadas e sem conclusão");
+  });
+
+  it("omite o resumo das buscas quando faltam metadados", () => {
+    for (const optimization of [undefined, { budgetSeconds: 12, phases: [] }]) {
+      const html = renderProposal(optimization);
+      expect(html).toContain("Solução viável encontrada");
+      expect(html).not.toContain("Melhor solução comprovada");
+      expect(html).not.toContain("Etapas sem início");
+      expect(html).not.toContain("Buscas iniciadas e sem conclusão");
+    }
+  });
+});
+
 describe("operational review insights", () => {
   it.each(["DAYS_AND_HOURS", "REST_ONLY", "HOURS_ONLY"] as const)("shows period work and distinct shortage measures in %s", mode => {
     const { input, validation } = fixture();

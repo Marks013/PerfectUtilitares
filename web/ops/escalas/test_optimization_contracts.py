@@ -47,7 +47,84 @@ class ObjectiveNameContracts(unittest.TestCase):
         engine.assert_not_called()
 
 
+class RejectionStageContracts(unittest.TestCase):
+    def test_input_and_coverage_checks_reject_before_search(self):
+        incomplete = fixture()
+        incomplete['generationMode'] = 'HOURS_ONLY'
+        no_clock = fixture()
+        person = no_clock['employees'][0]
+        no_clock['demands'] = [{'date': '2026-11-03', 'sector': person['sector'],
+                               'role': person['role'], 'start': 720, 'end': 780, 'minimum': 1}]
+
+        for data, stage, family in ((incomplete, 'INPUT_CHECK', 'BLOCKS'),
+                                    (no_clock, 'COVERAGE_CHECK', 'COVERAGE')):
+            with self.subTest(stage=stage), patch('solver.cp_model.CpSolver') as engine:
+                result = solver.solve(data)
+                self.assertEqual(result['status'], 'INFEASIBLE')
+                self.assertEqual(result['rejectionStage'], stage)
+                self.assertEqual(result['assignments'], [])
+                self.assertEqual(result['solverDiagnostics'][0]['family'], family)
+                engine.assert_not_called()
+
+    def test_rejected_fixed_seed_yields_to_unrestricted_search(self):
+        data = fixture()
+        search_modes = []
+
+        class Control:
+            def checkpoint(self):
+                pass
+
+            def solve(self, engine, model):
+                fixed = engine.parameters.fix_variables_to_their_hinted_value
+                search_modes.append(fixed)
+                return cp_model.INFEASIBLE if fixed else engine.solve(model)
+
+        with patch('solver._seed_hint_state', return_value='COMPLETE'):
+            result = solver.solve(data, Control())
+        self.assertEqual(search_modes[0], True)
+        self.assertIn(False, search_modes)
+        self.assertIn(result['status'], ('FEASIBLE', 'OPTIMAL'))
+        self.assertNotIn('rejectionStage', result)
+
+    def test_unrestricted_search_proves_incompatible_coverage(self):
+        data = fixture()
+        person = data['employees'][0]
+        data['demands'] = [{'date': '2026-11-03', 'sector': person['sector'],
+                            'role': person['role'], 'start': 480, 'end': 720, 'minimum': 2}]
+        result = solver.solve(data)
+        self.assertEqual(result['status'], 'INFEASIBLE')
+        self.assertEqual(result['rejectionStage'], 'SEARCH')
+        self.assertEqual(result['assignments'], [])
+
+
 class EarlyRefinementContracts(unittest.TestCase):
+    def test_skipped_search_is_unattempted_unless_a_real_phase_or_member_accounts_for_it(self):
+        data = fixture(people=2)
+        data['assignments'] = [{'employeeId': 'p0', 'date': '2026-11-08', 'kind': 'OFF'}]
+        data['demands'] = [{'date': '2026-11-08', 'sector': 'Reposição',
+                            'start': 480, 'end': 720, 'minimum': 1, 'estimated': True}]
+        skipped = {'objective': 'COVERAGE', 'status': 'UNKNOWN', 'searchScope': 'GLOBAL',
+                   'searchSkippedReason': 'PREPARATION_EXHAUSTED'}
+        polish = {'objective': 'POLISH', 'status': 'FEASIBLE',
+                  'members': [{'objective': 'SUNDAY_COVERAGE'},
+                              {'objective': 'STABILITY', 'searchSkippedReason': 'DEADLINE'}]}
+        local = {'objective': 'COVERAGE', 'status': 'UNKNOWN', 'searchScope': 'SELECTED_PEOPLE'}
+
+        for phases, coverage_unattempted in (([skipped, polish], True), ([local, skipped, polish], False)):
+            with self.subTest(coverage_unattempted=coverage_unattempted):
+                def refine(_model, _objectives, values, _deadline, names, **_kwargs):
+                    self.assertTrue({'COVERAGE', 'SUNDAY_COVERAGE', 'STABILITY'}.issubset(names))
+                    return values, False, phases
+
+                with patch('solver.improve', side_effect=refine):
+                    result = solver.solve(data)
+                self.assertEqual(result['status'], 'FEASIBLE')
+                self.assertEqual(result['optimization']['phases'], phases)
+                unattempted = result['optimization']['unattemptedObjectives']
+                self.assertEqual('COVERAGE' in unattempted, coverage_unattempted)
+                self.assertNotIn('SUNDAY_COVERAGE', unattempted)
+                self.assertIn('STABILITY', unattempted)
+
     def test_interrupted_estimates_keep_the_verified_seed_and_honest_metadata(self):
         for interrupted, reason in ((False, 'TIME_BUDGET'),
                                     ('estimated construction interrupted', 'BOUNDED_REFINEMENT')):

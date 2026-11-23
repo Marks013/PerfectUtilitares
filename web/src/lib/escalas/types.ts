@@ -240,6 +240,8 @@ export type EscalaSolveResult = {
       prioritizedSectorDaysWithoutLeader: number; timedCoverageIncluded: false } };
   /** Safe explanatory families; never a full model dump or a minimum-conflict guarantee. */
   solverDiagnostics?: { family: string; message: string; dates?: string[] }[];
+  /** Safe evidence marker derived from the private processor contract. */
+  rejectionEvidence?: "PRECHECK" | "MODEL_PROOF";
   /** Concrete necessary-condition conflicts, never an invented diagnosis. */
   conflicts?: EscalaGenerationConflict[];
   status: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | "MODEL_INVALID";

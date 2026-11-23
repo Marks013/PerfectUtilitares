@@ -193,6 +193,7 @@ def _saturday_off_forbidden(data, day, old=None):
 
 def _contract_conflict(started, message):
     response = _response('INFEASIBLE', [], started)
+    response['rejectionStage'] = 'INPUT_CHECK'
     response['solverDiagnostics'] = [{'family': 'BLOCKS', 'message': message}]
     return response
 
@@ -475,6 +476,7 @@ def _solve(data, control=None, started=None):
         return _response("UNKNOWN", [], started)
     if isinstance(hard_coverage, str):
         response = _response("INFEASIBLE", [], started, hard_coverage)
+        response["rejectionStage"] = "COVERAGE_CHECK"
         response["solverDiagnostics"] = [{"family": "COVERAGE", "message": hard_coverage}]
         return response
     # Find a mandatory-feasible incumbent before adding thousands of optional staffing goals.
@@ -545,6 +547,7 @@ def _solve(data, control=None, started=None):
         if seed_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             response = _response(seed.status_name(seed_status), [], started)
             if seed_status == cp_model.INFEASIBLE:
+                response["rejectionStage"] = "SEARCH"
                 response["solverDiagnostics"] = conflicts.diagnose(model, started + MAX_SECONDS, control)
                 response["wallTimeSeconds"] = round(time.monotonic() - started, 3)
             return response
@@ -698,8 +701,13 @@ def _solve(data, control=None, started=None):
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices,
                                paid_holidays if data.get('generationMode') != 'HOURS_ONLY' else frozenset()) + retained_disabled_records(data)
     response = _response("OPTIMAL" if proven else "FEASIBLE", result, started)
-    attempted = {phase['objective'] for phase in phases}
-    attempted.update(member['objective'] for phase in phases for member in phase.get('members', []))
+    attempted = set()
+    for phase in phases:
+        if 'searchSkippedReason' in phase:
+            continue
+        attempted.add(phase['objective'])
+        attempted.update(member['objective'] for member in phase.get('members', [])
+                         if 'searchSkippedReason' not in member)
     response['optimization'] = {'budgetSeconds': MAX_SECONDS, 'phases': phases,
                                 'unattemptedObjectives': [name for name, _ in goals if name not in attempted],
                                 'constructionSeconds': round(construction_finished - started, 3),

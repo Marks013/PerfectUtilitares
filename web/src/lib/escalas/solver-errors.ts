@@ -1,4 +1,4 @@
-type SolverErrorCode = "SOLVER_BUSY" | "SOLVER_UNAVAILABLE" | "SOLVER_INVALID_INPUT" | "SOLVER_INTERNAL_ERROR" | "SOLVER_INVALID_RESPONSE" | "SOLVER_AUTH_FAILED" | "SOLVER_CANCELLED" | "SOLVER_TIMED_OUT" | "SOLVER_INPUT_TOO_LARGE" | "SOLVER_REFINEMENT_FAILED";
+type SolverErrorCode = "SOLVER_BUSY" | "SOLVER_UNAVAILABLE" | "SOLVER_INVALID_INPUT" | "SOLVER_INTERNAL_ERROR" | "SOLVER_INVALID_RESPONSE" | "SOLVER_RESPONSE_INCOMPLETE" | "SOLVER_PROTECTED_RECORD_CHANGED" | "SOLVER_RULES_INVALID" | "SOLVER_AUTH_FAILED" | "SOLVER_CANCELLED" | "SOLVER_TIMED_OUT" | "SOLVER_INPUT_TOO_LARGE" | "SOLVER_REFINEMENT_FAILED";
 
 const messages: Record<SolverErrorCode, string> = {
   SOLVER_INVALID_INPUT: "Algum dado deste planejamento não pôde ser lido pelo cálculo. Confira a equipe, os horários e as restrições; sua escala salva foi mantida.",
@@ -6,6 +6,9 @@ const messages: Record<SolverErrorCode, string> = {
   SOLVER_BUSY: "Há um cálculo em andamento. Aguarde o cálculo atual terminar e tente novamente.",
   SOLVER_UNAVAILABLE: "Não foi possível acessar o cálculo. Sua escala salva foi mantida; tente novamente.",
   SOLVER_INVALID_RESPONSE: "O cálculo não passou pela conferência. Sua escala salva foi mantida; tente novamente.",
+  SOLVER_RESPONSE_INCOMPLETE: "O cálculo retornou uma proposta incompleta. Nenhuma alteração foi aplicada; tente novamente.",
+  SOLVER_PROTECTED_RECORD_CHANGED: "A proposta violou a proteção de um registro da escala. Os registros salvos foram mantidos.",
+  SOLVER_RULES_INVALID: "A proposta não atende às regras obrigatórias do planejamento. Nenhuma alteração foi aplicada.",
   SOLVER_AUTH_FAILED: "O serviço de cálculo precisa de uma correção de acesso interno. Avise o responsável pelo sistema; sua escala foi mantida.",
   SOLVER_CANCELLED: "O cálculo foi interrompido. Sua escala salva foi mantida.",
   SOLVER_TIMED_OUT: "O cálculo atingiu o prazo disponível. Sua escala salva foi mantida; tente novamente.",

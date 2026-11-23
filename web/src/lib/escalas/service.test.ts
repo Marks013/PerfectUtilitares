@@ -239,10 +239,10 @@ describe("canonical scheduling branch service", () => {
     value.employees[0] = withManualShiftOverride(value.employees[0], { catalogCode: 1500, shiftId: "catalog-1500", markings: ["07:00", "11:00", "12:00", "16:24"], effectiveFrom: "2026-10-27", effectiveUntil: "2026-10-28" });
     value = materializeManualShiftOverrides(value); useCurrent(value);
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: value.assignments, message: "Synthetic", wallTimeSeconds: 1 });
-    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_PROTECTED_RECORD_CHANGED" });
     expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
   });
-  it.each(["schema", "validation"] as const)("records the service %s boundary without changing its public rejection", async stage => {
+  it.each(["schema", "validation"] as const)("records the service %s boundary with a safe public rejection", async stage => {
     const input = generatedInput(); input.employees[0].name = "PRIVATE_SERVICE_SENTINEL";
     useCurrent(input);
     const assignments = stage === "schema" ? [{ employeeId: "e1", date: input.startDate, kind: "OFF", shiftId: "PRIVATE_SERVICE_SENTINEL" }]
@@ -250,7 +250,9 @@ describe("canonical scheduling branch service", () => {
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments, message: "PRIVATE_SERVICE_SENTINEL", wallTimeSeconds: 1 });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE", message: "O cálculo não passou pela conferência. Sua escala salva foi mantida; tente novamente." });
+      const failure = generateEscala(actor, "w1", 1);
+      await expect(failure).rejects.toMatchObject({ code: stage === "schema" ? "SOLVER_INVALID_RESPONSE" : "SOLVER_RULES_INVALID" });
+      await expect(failure).rejects.not.toThrow("PRIVATE_SERVICE_SENTINEL");
       expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: "escala_solver_rejected", stage: stage === "schema" ? "service-schema" : "service-validation", code: stage === "schema" ? "SCHEMA_INVALID" : "RULES_INVALID" }));
       expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE_SERVICE_SENTINEL");
       expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
@@ -310,8 +312,8 @@ describe("canonical scheduling branch service", () => {
   it("independently rejects a solver changing HOURS_ONLY work and rest classifications", async () => {
     const value = input(); value.generationMode = "HOURS_ONLY"; useCurrent(value);
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", message: "Changed", wallTimeSeconds: 1,
-      assignments: value.assignments.map(day => day.date === value.startDate ? { ...day, kind: "OFF" } : day) });
-    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+      assignments: value.assignments.map(day => day.date === value.startDate ? { ...day, kind: "OFF", shiftId: undefined } : day) });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_PROTECTED_RECORD_CHANGED" });
   });
   it("rejects edited late work even when a caller marks the draft outdated", async () => {
     const before = input();
@@ -432,7 +434,7 @@ describe("canonical scheduling branch service", () => {
     assignments[0].shiftId = "other";
     useCurrent(value);
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments, wallTimeSeconds: 0.1, message: "Viável" });
-    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_PROTECTED_RECORD_CHANGED" });
     value.assignments[0] = { ...assignments[0], locked: true };
     assignments[0].locked = true;
     useCurrent(value);
@@ -1063,7 +1065,7 @@ describe("Escalas revision service", () => {
   });
   it("rejects a feasible response with an unassigned day even when missing days are draft pendings", async () => {
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments.slice(1), wallTimeSeconds: 0.1, message: "Concluído" });
-    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_RESPONSE_INCOMPLETE" });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
   it("generates one joint preview with documentary warnings and proposed coverage, without approving or persisting", async () => {
@@ -1157,7 +1159,7 @@ describe("Escalas revision service", () => {
   });
   it("never returns a hard-invalid solved proposal for application", async () => {
     mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: input().assignments.map((item) => ({ employeeId: item.employeeId, date: item.date, kind: "OFF" })), wallTimeSeconds: 0.1, message: "Resposta inconsistente" });
-    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+    await expect(generateEscala(actor, "w1", 1)).rejects.toMatchObject({ code: "SOLVER_RULES_INVALID" });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
   it("clears the persisted regeneration marker only for a successful verified proposal", async () => {
