@@ -273,7 +273,8 @@ export async function rebaseEscalaApproval(actor: EscalaActor, id: string, expec
   if (stableEscalaJson(protectedPeople(current.input.employees)) !== stableEscalaJson(protectedPeople(approved.snapshot.seed.employees))) {
     throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "A aprovação precisa incluir os dados protegidos da equipe atual antes da vinculação.");
   }
-  const input = parseEscalaInput({ ...approved.snapshot.configuration, employees: current.input.employees,
+  const input = parseEscalaInput({ ...approved.snapshot.configuration, planningCalendarSource: current.input.planningCalendarSource,
+    employees: current.input.employees,
     shifts: current.input.shifts, assignments: current.input.assignments, needsRegeneration: true });
   return saveEscala(actor, id, expectedRevision, input, false, { rebaseId: approvalId });
 }

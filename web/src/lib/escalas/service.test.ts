@@ -1826,6 +1826,37 @@ describe("approved operational write boundary", () => {
     expect(mocks.revision.create).toHaveBeenCalledTimes(1);
     expect(mocks.revision.create).toHaveBeenCalledWith({ data: expect.objectContaining({ revision: 2, approvedPolicyVersionId: "approval-new" }) });
   });
+  it("binds an approval to a converted December draft with its origin and protected days intact", async () => {
+    const converted = period("2026-12-01", 5);
+    converted.endDate = "2026-12-31";
+    converted.visibleMonth = "2026-12";
+    converted.planningWeekStartsOn = "SUNDAY";
+    converted.planningCalendarSource = { workspaceId: "legacy", revision: 3 };
+    converted.assignments = converted.assignments.filter(day => day.date <= converted.endDate);
+    converted.assignments[0].locked = true;
+    converted.demands = converted.demands.filter(day => day.date <= converted.endDate);
+    converted.employees[0].scheduleMode = "TIMED";
+    const built = buildEscalaApprovedPolicy({ input: converted, version: 1, selectedSeedAssignments: [],
+      regimeModelSelections: [{ id: "model", label: "Approved", employeeId: "e1" }],
+      provenance: { tenantId: actor.tenantId, approvedById: actor.userId, approvedAt: "2026-11-13T12:00:00.000Z",
+        origin: { workspaceId: "w1", revision: 1 } } });
+    if (!built.ok) throw new Error("Invalid converted approval fixture");
+    mocks.approval.mockResolvedValue({ ...built.value, id: "approval-new", approvedAt: new Date(built.value.approvedAt), revokedAt: null });
+    converted.employees[0].planningHistory = [{ employeeId: "e1", date: "2026-11-30", kind: "WORK", shiftId: "day", locked: true }];
+    converted.employees[0].planningFuture = [{ employeeId: "e1", date: "2027-01-01", kind: "OFF", locked: true }];
+    useCurrent(converted);
+
+    const saved = await rebaseEscalaApproval(actor, "w1", 1, "approval-new");
+
+    expect(saved).toMatchObject({ revision: 2, approvedPolicyVersionId: "approval-new" });
+    const preserved = { planningCalendarSource: converted.planningCalendarSource, employees: converted.employees, assignments: converted.assignments };
+    expect(saved.input).toMatchObject(preserved);
+    expect(mocks.revision.create).toHaveBeenCalledExactlyOnceWith({ data: expect.objectContaining({
+      revision: 2, approvedPolicyVersionId: "approval-new", input: expect.objectContaining({
+        ...preserved, employees: expect.arrayContaining([expect.objectContaining(converted.employees[0])]),
+      }),
+    }) });
+  });
   it("does not turn unknown legacy assignments into unlocked operator work", async () => {
     const { scoped, baseline } = scopedSavedFixture();
     delete baseline.assignments[3].locked;
