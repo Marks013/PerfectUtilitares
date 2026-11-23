@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { clearDecemberBoundaryContext } from "./calendar-upgrade";
 import { canonicalBranchCode } from "./branch-code";
 import { isDate } from "./dates";
 import { escalaInputSchema } from "./schema";
@@ -129,13 +128,12 @@ const buildSchema = z.strictObject({
 export function buildEscalaApprovedPolicy(value: unknown): Result<EscalaApprovedPolicyCandidate> {
   const parsed = buildSchema.safeParse(value);
   if (!parsed.success) return failure();
-  const { provenance, version, selectedSeedAssignments, regimeModelSelections } = parsed.data;
-  const input = clearDecemberBoundaryContext(parsed.data.input);
+  const { input, provenance, version, selectedSeedAssignments, regimeModelSelections } = parsed.data;
   // Schema normalization must not hide a noncanonical identity at this boundary.
   const rawInput = (value as { input: { branchCode: string } }).input;
   if (rawInput.branchCode !== input.branchCode) return failure();
   // Published continuity needs a canonical server reload that this pure stage cannot provide.
-  if (parsed.data.input.employees.some(person => person.planningHistory?.length || person.planningFuture?.length)) return failure();
+  if (input.employees.some(person => person.planningHistory?.length || person.planningFuture?.length)) return failure();
   const selected = new Set<string>();
   const assignments: EscalaInput["assignments"] = [];
   for (const choice of selectedSeedAssignments) {

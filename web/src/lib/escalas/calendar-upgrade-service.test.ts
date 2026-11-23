@@ -190,7 +190,7 @@ describe("December origin ruler", () => {
 });
 
 describe("calendar upgrade persistence", () => {
-  it("creates an independent December draft with only in-month commitments", async () => {
+  it("creates a December draft with in-month assignments and retains protected continuity separately", async () => {
     const before = structuredClone(db.versions.get(JSON.stringify([actor.tenantId, "source", 7])));
     const created = await upgradeEscalaCalendar(actor, "source", 7);
     expect(created).toMatchObject({ id: "new-draft", revision: 1, status: "DRAFT", input: { planningWeekStartsOn: "SUNDAY", planningCalendarSource: { workspaceId: "source", revision: 7 }, startDate: "2026-12-01", endDate: "2026-12-31" } });
@@ -199,15 +199,16 @@ describe("calendar upgrade persistence", () => {
     expect(db.versions.get(JSON.stringify([actor.tenantId, "source", 7]))).toEqual(before);
     const absence = { employeeId: "e1", date: "2026-12-03", kind: "ABSENCE", locked: true };
     expect(created.input.assignments).toEqual([absence]);
-    expect(created.input.employees[0].planningFuture).toBeUndefined();
+    const future = { employeeId: "e1", date: "2027-01-03", kind: "OFF", locked: true } as const;
+    expect(created.input.employees[0].planningFuture).toEqual([future]);
     const client = structuredClone(created.input);
     client.employees[0].history = [{ employeeId: "e1", date: "2026-11-30", kind: "OFF" }];
     client.employees[0].historyKnown = true;
     const saved = await saveEscala(actor, created.id, created.revision, client);
     expect(saved.revision).toBe(2);
-    expect(saved.input.employees[0]).toMatchObject({ history: [], historyKnown: false });
+    expect(saved.input.employees[0]).toMatchObject({ history: client.employees[0].history, historyKnown: true, planningFuture: [future] });
     const persisted = db.versions.get(JSON.stringify([actor.tenantId, "new-draft", 2]));
-    expect(persisted).toMatchObject({ input: { planningCalendarSource: { workspaceId: "source", revision: 7 }, assignments: [absence], employees: [expect.objectContaining({ history: [], historyKnown: false })] } });
+    expect(persisted).toMatchObject({ input: { planningCalendarSource: { workspaceId: "source", revision: 7 }, assignments: [absence], employees: [expect.objectContaining({ history: client.employees[0].history, historyKnown: true })] } });
     expect(db.versions.get(JSON.stringify([actor.tenantId, "source", 7]))).toEqual(before);
   });
 
@@ -231,7 +232,7 @@ describe("calendar upgrade persistence", () => {
 
     const result = await upgradeEscalaCalendar(actor, "source", 7);
     expect(db.published).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
-      tenantId: actor.tenantId, branchCode: "06", startDate: { lte: "2026-12-31" }, endDate: { gte: "2026-12-01" },
+      tenantId: actor.tenantId, branchCode: "06", startDate: { lte: "2027-01-21" }, endDate: { gte: "2026-11-10" },
     }) }));
     expect(result.input.assignments).toEqual([
       { employeeId: "e1", date: "2026-12-03", kind: "ABSENCE", locked: true },
@@ -239,7 +240,7 @@ describe("calendar upgrade persistence", () => {
       { employeeId: "e1", date: "2026-12-06", kind: "OFF", locked: true },
     ]);
     expect(result.input.shifts.find(shift => shift.id === originalClock.id)).toEqual(originalClock);
-    expect(result.input.employees[0].planningHistory).toBeUndefined();
+    expect(result.input.employees[0].planningHistory).toContainEqual({ employeeId: "e1", date: "2026-11-30", kind: "OFF" });
     expect(snapshot.input).toBe(legacy);
     expect(db.updates).not.toHaveBeenCalled();
   });

@@ -38,6 +38,23 @@ function fixture(): EscalaInput {
 }
 
 describe("December 2026 planning transition", () => {
+  it("uses neighboring history for continuity without crediting it as a December rest", () => {
+    const input = fixture();
+    input.employees[0].activeFrom = "2026-11-01";
+    input.employees[0].historyKnown = true;
+    input.shifts.push({ id: "overnight", name: "Anterior à virada", segments: [{ start: 1380, end: 1560, kind: "WORK" }] });
+    input.employees[0].history = [
+      { employeeId: id, date: "2026-11-29", kind: "OFF" },
+      { employeeId: id, date: "2026-11-30", kind: "WORK", shiftId: "overnight" },
+    ];
+    input.assignments = input.assignments.map(day => day.date === "2026-12-03" ? { ...day, kind: "WORK", shiftId: "day" } : day);
+    const snapshot = structuredClone(input);
+    expect(validateEscala(input).issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "OFF_OCCUPIED", date: "2026-12-01" }),
+      expect.objectContaining({ code: "FIVE_BY_TWO", date: "2026-12-01" }),
+    ]));
+    expect(input).toEqual(snapshot);
+  });
   it("keeps both civil boundaries in December and begins the next week on Sunday the sixth", () => {
     expect(planningMonthPeriod("2026-12", period)).toEqual({ startDate: period.startDate, endDate: period.endDate });
     expect(planningWeeks(period).map(week => [week.startDate, week.endDate, week.dates.length])).toEqual([

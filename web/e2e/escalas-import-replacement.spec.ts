@@ -3,7 +3,7 @@ import { expect, test } from "./fixtures";
 import { loginAsAdmin } from "./admin-session";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
 import { addDays } from "../src/lib/escalas/dates";
-import type { EscalaWorkspace } from "../src/lib/escalas/types";
+import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import { openEscalasArea, selectEscalasWorkspace } from "./escalas-selection";
 import { absenceCsv, applyReplacement, employeeCsv, importPanel, isImportResponse, ownedAccountScope, previewReplacement, readWorkspace, removeOwnedWorkspace, responseWorkspace, syntheticBranch } from "./escalas-access-fixtures";
 
@@ -26,8 +26,16 @@ async function createdWorkspace(response: APIResponse): Promise<EscalaWorkspace>
   return response.json();
 }
 
-async function createAB(page: Page) {
+const legacyDecemberPeriod = { startDate: "2026-11-29", endDate: "2027-01-02" };
+
+async function createAB(page: Page, period?: Pick<EscalaInput, "startDate" | "endDate">) {
   const input = newInput(syntheticBranch("REPLACE"), "Substituição sintética", "2026-12", 40);
+  if (period) {
+    input.startDate = period.startDate;
+    input.endDate = period.endDate;
+    input.policy.validFrom = period.startDate;
+    input.policy.validUntil = period.endDate;
+  }
   input.shifts = [{ id: "day", name: "Diurno", segments: [{ start: 480, end: 720, kind: "WORK" }, { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1020, kind: "WORK" }] }];
   input.employees = ["0001", "0002"].map((registration, index) => ({ ...newEmployee(40, "day"), id: index ? "B" : "A", registration, name: `Pessoa ${registration}`, sector: "Loja", role: "Operador", activeFrom: "2020-01-01", scheduleMode: "TIMED", weeklyHoursMode: "INDIVIDUAL" }));
   input.employees[1].historyKnown = true;
@@ -65,7 +73,7 @@ test("PREVIEW leaves A/B intact; visible removals and one explicit APPLY adopt c
 });
 
 test("partial absence file is blocked; scoped replacement preserves technical borders and leaves removed days empty", async ({ page }) => {
-  let owned = await createAB(page);
+  let owned = await createAB(page, legacyDecemberPeriod);
   const origin = new URL(page.url()).origin;
   try {
     owned = await responseWorkspace(await page.request.post("/api/escalas", { headers: { origin }, data: { action: "SAVE", id: owned.id, expectedRevision: owned.revision,

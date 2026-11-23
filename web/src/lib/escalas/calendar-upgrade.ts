@@ -49,18 +49,8 @@ function retainCalendarSourceBoundaries(input: EscalaInput, source: EscalaInput)
   return { ...input, employees, shifts };
 }
 
-/** Do not import neighboring dates into the December 2026 calculation or signed references. */
-export function clearDecemberBoundaryContext(input: EscalaInput): EscalaInput {
-  if (!isDecember2026Cutover(input)) return input;
-  return { ...input, employees: input.employees.map(person => {
-    const { planningHistory: _past, planningFuture: _future, ...employee } = person;
-    return { ...employee, history: [], historyKnown: false };
-  }) };
-}
-
 /** Rehydrate server-saved source commitments after discarding untrusted client context. */
 export function preserveCalendarSourceContext(previous: EscalaInput, next: EscalaInput): EscalaInput {
-  if (isDecember2026Cutover(next)) return clearDecemberBoundaryContext(next);
   if (!previous.planningCalendarSource) return next;
   const boundary = previous.employees.flatMap(person => [...(person.planningHistory ?? []), ...(person.planningFuture ?? [])]
     .filter(day => day.locked === true));
@@ -88,7 +78,6 @@ export function sundayCalendarDraft(source: EscalaInput, origin: { workspaceId: 
   const startDate = planningWeekStart(source.startDate, calendar);
   const period = month ? planningMonthPeriod(month, calendar)
     : { startDate, endDate: addDays(startDate, dateRange(source.startDate, source.endDate).length - 1) };
-  const cutover = isDecember2026Cutover({ ...period, ...calendar });
   const inside = (date: string) => date >= period.startDate && date <= period.endDate;
   const assignments = new Map(source.assignments.filter(day => inside(day.date)).map(day => [JSON.stringify([day.employeeId, day.date]), structuredClone(day)]));
   const employees: EscalaEmployee[] = source.employees.map(person => {
@@ -100,11 +89,9 @@ export function sundayCalendarDraft(source: EscalaInput, origin: { workspaceId: 
       if (existing && !sameDay(existing, day)) throw new EscalaError(409, "ESCALA_CALENDAR_BOUNDARY_CONFLICT", `A continuidade diverge da grade em ${day.date}. Confira esse dia antes de atualizar a semana.`);
       assignments.set(key, { ...day, locked: true });
     }
-    if (!cutover) {
-      copy.history = copy.history.filter(day => day.date < period.startDate && day.date >= addDays(period.startDate, -56));
-      copy.planningHistory = (copy.planningHistory ?? []).filter(day => day.date < period.startDate && day.date >= addDays(period.startDate, -56));
-      copy.planningFuture = (copy.planningFuture ?? []).filter(day => day.date > period.endDate && day.date <= addDays(period.endDate, 21));
-    }
+    copy.history = copy.history.filter(day => day.date < period.startDate && day.date >= addDays(period.startDate, -56));
+    copy.planningHistory = (copy.planningHistory ?? []).filter(day => day.date < period.startDate && day.date >= addDays(period.startDate, -56));
+    copy.planningFuture = (copy.planningFuture ?? []).filter(day => day.date > period.endDate && day.date <= addDays(period.endDate, 21));
     if (copy.manualShiftOverrides?.length) {
       copy.manualShiftOverrides = copy.manualShiftOverrides.map(choice => ({ ...choice,
         effectiveFrom: choice.effectiveFrom < period.startDate ? period.startDate : choice.effectiveFrom,
@@ -128,5 +115,5 @@ export function sundayCalendarDraft(source: EscalaInput, origin: { workspaceId: 
       return startDate <= endDate ? [{ ...priority, startDate, endDate }] : [];
     }),
     demands: source.demands.filter(demand => !demand.estimated && inside(demand.date)).map(demand => ({ ...demand })) };
-  return cutover ? clearDecemberBoundaryContext(draft) : retainCalendarSourceBoundaries(draft, source);
+  return retainCalendarSourceBoundaries(draft, source);
 }

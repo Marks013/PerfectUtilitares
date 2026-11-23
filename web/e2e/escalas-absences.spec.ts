@@ -155,6 +155,11 @@ test("replacement blocks protected collisions, then preserves borders and locked
   await loginAsAdmin(page);
   const origin = new URL(page.url()).origin;
   const input = newInput("E2E-ABS-" + Date.now().toString(36), "Afastamentos sintéticos", "2026-12", 40);
+  // Exercise an existing full-week plan with assignments outside the import's civil scope.
+  input.startDate = "2026-11-29";
+  input.endDate = "2027-01-02";
+  input.policy.validFrom = input.startDate;
+  input.policy.validUntil = input.endDate;
   input.employees = ["a", "b"].map((id, index) => ({ id, registration: "000" + (index + 1), name: index ? "Bruno Sintético" : "Ana Sintética", sector: "Loja", role: "Repositor", weeklyHours: 40, weeklyHoursMode: "BRANCH", shiftIds: [input.shifts[0].id], activeFrom: "", offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 2, preferredOffDays: [], historyKnown: false, history: [] }));
   input.assignments = [
     { employeeId: "a", date: "2026-12-04", kind: "WORK", shiftId: input.shifts[0].id, locked: true },

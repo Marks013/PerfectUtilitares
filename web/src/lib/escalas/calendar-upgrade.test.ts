@@ -83,8 +83,8 @@ describe("explicit Sunday calendar upgrade", () => {
     const draft = sundayCalendarDraft(source, origin);
     expect(escalaInputSchema.parse(draft)).toMatchObject({ visibleMonth: "2026-12", startDate: "2026-12-01", endDate: "2026-12-31" });
     expect(draft.assignments).toEqual(source.assignments.filter(day => day.date >= draft.startDate && day.date <= draft.endDate));
-    expect(draft.employees[0]).toMatchObject({ history: [], historyKnown: false });
-    expect(draft.employees[0]).not.toHaveProperty("planningHistory");
+    expect(draft.employees[0]).toMatchObject({ history: source.employees[0].history, historyKnown: source.employees[0].historyKnown });
+    expect(draft.employees[0].planningHistory).toContainEqual({ employeeId: "e1", date: "2026-11-29", kind: "OFF", locked: true });
     expect(canUpgradePlanningCalendar(draft)).toBe(false);
     expect(source).toEqual(before);
   });

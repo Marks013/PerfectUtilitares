@@ -15,7 +15,7 @@ const explicit = (input: EscalaInput) => input.demands.filter(demand => demand.e
 function draftDefinition(input: EscalaInput) {
   const { needsRegeneration: _stale, coverageBasis: _coverage, generationBasis: _generation, branchName: _label, ...draft } = input;
   return stableEscalaJson({ ...draft, demands: sorted(explicit(input)), assignments: sorted(draft.assignments),
-    employees: sorted(draft.employees.map(({ name: _name, ...person }) => person)),
+    employees: sorted(draft.employees.map(({ name: _name, planningHistory: _past, planningFuture: _future, ...person }) => person)),
     shifts: sorted(draft.shifts.map(({ name: _name, ...shift }) => shift)),
   });
 }

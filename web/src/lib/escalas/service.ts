@@ -12,7 +12,7 @@ import { findGenerationConflicts } from "./generation-conflicts";
 import { generationScenarioBasis, isHoursReferenceOnly, matchesGenerationScenarioBasis, matchesHoursOnlyAssignments } from "./hours-reference";
 import { compareBranches } from "./order";
 import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./dates";
-import { clearDecemberBoundaryContext, preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
+import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
 import { isDecember2026Cutover } from "./planning-calendar";
 import { admitDecemberCandidate, calculateWithDecemberFallback, prepareDecemberCoverage, selectDecemberCandidate } from "./december-origin.server";
 import { fixedBoundaryReservations } from "./boundary";
@@ -153,7 +153,7 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput, appro
     if (approvedPolicyVersionId) {
       const approved = await loadEscalaApproval(actor, approvedPolicyVersionId, tx);
       const expected = parseEscalaInput({ ...approved.snapshot.configuration, ...approved.snapshot.seed });
-      if (stableEscalaJson(clearDecemberBoundaryContext(publishedPlanningContext(materializeManualShiftOverrides(expected), []))) !== stableEscalaJson(input)) {
+      if (stableEscalaJson(publishedPlanningContext(materializeManualShiftOverrides(expected), [])) !== stableEscalaJson(input)) {
         throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "A criação deve usar a configuração aprovada exata.");
       }
       if (reuseImportedTeam) {
@@ -361,11 +361,8 @@ function assertPublishedBoundary(input: EscalaInput, baseline: EscalaInput) {
 }
 
 async function planningContext(actor: EscalaActor, id: string, input: EscalaInput, db: Prisma.TransactionClient = prisma) {
-  const cutover = isDecember2026Cutover(input);
   const rows = await db.escalaWorkspace.findMany({
-    where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id },
-      startDate: { lte: cutover ? input.endDate : addDays(input.endDate, 21) },
-      endDate: { gte: cutover ? input.startDate : addDays(input.startDate, -21) } },
+    where: { tenantId: actor.tenantId, branchCode: input.branchCode, id: { not: id }, startDate: { lte: addDays(input.endDate, 21) }, endDate: { gte: addDays(input.startDate, -21) } },
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
     select: { revisions: { where: { tenantId: actor.tenantId, status: "PUBLISHED" }, orderBy: { revision: "desc" }, take: 1, select: { input: true } } },
   });
@@ -377,7 +374,6 @@ async function planningContext(actor: EscalaActor, id: string, input: EscalaInpu
     if (!parsed.success) throw new EscalaError(409, "ESCALA_PUBLISHED_CONTINUITY", "Uma proposta publicada da filial não pôde ser conferida.");
     published.push(parsed.data);
   }
-  if (cutover) return preservePublishedDays(clearDecemberBoundaryContext(input), published);
   return preserveCalendarSourceContext(input, preservePublishedDays(publishedPlanningContext(input, published), published));
 }
 
@@ -469,7 +465,6 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   }
   preserveLockedAssignments(removedAbsences.size ? { ...current.input,
     assignments: current.input.assignments.filter(day => !removedAbsences.has(assignmentKey(day))) } : current.input, input, !publish && current.canPublish);
-  input = clearDecemberBoundaryContext(input);
   const scenarioChanged = generationScenarioBasis(current.input) !== generationScenarioBasis(input);
   const preparedProposal = !input.needsRegeneration && matchesGenerationScenarioBasis(input);
   if (removal) input = { ...input, needsRegeneration: true, generationBasis: undefined, coverageBasis: undefined };
