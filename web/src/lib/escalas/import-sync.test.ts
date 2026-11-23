@@ -265,6 +265,41 @@ describe("administrative replacement with real service and authorization", () =>
     expect(result.summary.impact.assignments).toMatchObject([{ date: "2026-12-04", previousKind: "WORK", nextKind: "ABSENCE" }]);
     expect(result.summary.counts).toMatchObject({ addedAbsenceDays: 1, unchangedAbsenceDays: 1 });
   });
+  it("replaces manual absences only within the confirmed FPHI105 scope", async () => {
+    value.assignments = [
+      { employeeId: "e2", date: "2026-11-30", kind: "ABSENCE", absenceSource: "MANUAL" },
+      { employeeId: "e2", date: "2026-12-02", kind: "ABSENCE", absenceSource: "MANUAL" },
+      { employeeId: "e2", date: "2026-12-03", kind: "ABSENCE", absenceSource: "MANUAL" },
+    ];
+    const result = await apply(command("ABSENCES"), absenceFile("0002", "03/12/2026", "03/12/2026"));
+    expect(value.assignments).toEqual([
+      { employeeId: "e2", date: "2026-11-30", kind: "ABSENCE", absenceSource: "MANUAL" },
+      { employeeId: "e2", date: "2026-12-03", kind: "ABSENCE" },
+    ]);
+    expect(result.summary.counts).toMatchObject({ assignmentChanges: 2, addedAbsenceDays: 0, removedAbsenceDays: 1, unchangedAbsenceDays: 2 });
+    expect(result.summary.warnings).toContainEqual({ code: "SOURCE_WARNING", message: expect.stringContaining("confirma 1 dia(s)") });
+    expect(result.workspace.input.needsRegeneration).toBe(true);
+  });
+  it.each(["source-only", "added-day", "removed-day"] as const)("revalidates approval according to the FPHI105 %s delta", async delta => {
+    Object.assign(value, { startDate: "2026-12-01", endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY" });
+    value.assignments = [{ employeeId: "e2", date: "2026-12-03", kind: "ABSENCE", absenceSource: "MANUAL" }];
+    if (delta === "removed-day") value.assignments.push({ employeeId: "e2", date: "2026-12-02", kind: "ABSENCE" });
+    approve();
+    const settings = command("ABSENCES");
+    const source = absenceFile("0002", "03/12/2026", delta === "added-day" ? "04/12/2026" : "03/12/2026");
+    const preview = await previewAdminImport(actor, settings, source);
+    const invalidate = delta !== "source-only";
+    expect(preview.effect).toMatchObject({ approvalInvalidated: invalidate, needsRegeneration: invalidate,
+      approvedPolicyVersionIdBefore: "approval", approvedPolicyVersionIdAfter: invalidate ? null : "approval" });
+    expect(preview.counts.assignmentChanges).toBe(invalidate ? 2 : 1);
+    expect(preview.warnings).toContainEqual({ code: "SOURCE_WARNING", message: expect.stringContaining("confirma 1 dia(s)") });
+    const result = await apply(settings, source, preview);
+    expect(result.workspace).toMatchObject({ revision: 2, approvedPolicyVersionId: invalidate ? null : "approval" });
+    expect(value.assignments[0]).toEqual({ employeeId: "e2", date: "2026-12-03", kind: "ABSENCE" });
+    expect(audits).toContainEqual(expect.objectContaining({ metadata: expect.objectContaining({
+      approvalInvalidated: invalidate, adminImport: expect.objectContaining({ impactHash: preview.expectedImpactHash }),
+    }) }));
+  });
   it("does not permit absence removal through ordinary SAVE", async () => {
     value.assignments = [{ employeeId: "e2", date: "2026-12-02", kind: "ABSENCE", locked: true }];
     await expect(saveEscala(actor, "w1", 1, { ...value, assignments: [] })).rejects.toMatchObject({ code: "ESCALA_LOCKED_ASSIGNMENT" }); expect(mocks.transaction).not.toHaveBeenCalled();

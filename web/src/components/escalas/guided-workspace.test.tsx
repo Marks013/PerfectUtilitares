@@ -21,7 +21,7 @@ function state(workspace: EscalaWorkspace | null = null) {
     canCreate: true, workspace, input: workspace?.input ?? null, validation: workspace?.validation ?? null,
     dirty: false, outdated: false, busy: "", error: "", problem: null, notice: "", generated: null,
     pendingOpen: null, setPendingOpen: action, update: action, open: action, create: action, createApproved: action,
-    addEmployee: vi.fn(async () => false), removeEmployee: vi.fn(async () => false), replaceImport: vi.fn(async () => null), rebaseApproved: action,
+    addEmployee: vi.fn(async () => false), removeEmployee: vi.fn(async () => false), changeAbsence: vi.fn(async () => false), replaceImport: vi.fn(async () => null), rebaseApproved: action,
     upgradeCalendar: action, save: action,
     validate: action, generate: action, canGenerate: Boolean(workspace?.canEdit), readOnlyDraft: false, applyGenerated: action,
     undoRoster: vi.fn(async () => false), publish: action,

@@ -34,6 +34,9 @@ import { addEmployeeFromEscalaApprovedModel } from "./approved-policy";
 import { assertEscalaOperationalInput, assertEscalaProtectedAssignments, stableEscalaJson } from "./operational-input-policy";
 import { ESCALA_CAPABILITIES, decideEscalaPermission } from "./permissions";
 import { signEscalaProposal, verifyEscalaProposal, type EscalaProposalScope } from "./proposal-proof";
+import type { EscalaAbsenceCommand } from "./access-contracts";
+import { assertNoPublishedAbsenceChanges, assignmentKey, editDraftAbsences, preserveManualAbsences } from "./manual-absence";
+import { excludeConfirmedImportAbsences, importAbsenceApprovalView, preserveLockedAssignments, type AdminImportSaveIntent } from "./draft-save-policy";
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
   startDate: string; endDate: string; revision: number; status: string; updatedAt: Date;
@@ -261,6 +264,14 @@ export async function removeEscalaEmployee(actor: EscalaActor, id: string, expec
   return saveEscala(actor, id, expectedRevision, inputWithoutEscalaEmployee(current.input, employeeId), false, { serverRemoval: { employeeId } });
 }
 
+export async function changeEscalaAbsence(actor: EscalaActor, id: string, expectedRevision: number, command: EscalaAbsenceCommand) {
+  const current = await getEscala(actor, id);
+  assertRevision(current, expectedRevision);
+  await requireEscalaCapability(actor, "employee.manage", current.input.branchCode);
+  if (current.status !== "DRAFT") throw new EscalaError(409, "ESCALA_ABSENCE_DRAFT_REQUIRED", "Ajuste afastamentos em um rascunho, não em uma escala publicada.");
+  return saveEscala(actor, id, expectedRevision, editDraftAbsences(current.input, command, actor.admin).input, false, { manualAbsence: command });
+}
+
 export async function rebaseEscalaApproval(actor: EscalaActor, id: string, expectedRevision: number, approvalId: string) {
   const current = await getEscala(actor, id);
   await requireEscalaCapability(actor, "settings.manage");
@@ -283,17 +294,13 @@ export async function validateEscalaOperational(actor: EscalaActor, id: string, 
   const current = await getEscala(actor, id);
   assertRevision(current, expectedRevision);
   const context = await requireEscalaCapability(actor, "workspace.save", current.input.branchCode);
+  preserveManualAbsences(current.input, input);
   if (!actor.admin) {
     if (!current.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária aprovação administrativa.");
     await loadEscalaApproval(actor, current.approvedPolicyVersionId, prisma, current.input);
     assertEscalaOperationalInput(current.input, input, ESCALA_CAPABILITIES.filter(capability => decideEscalaPermission(context, capability).allowed));
   }
   return validateEscala(materializeManualShiftOverrides(input));
-}
-
-function assignmentKey(item: EscalaAssignment) { return `${item.employeeId}\0${item.date}`; }
-function sameAssignment(a: EscalaAssignment, b: EscalaAssignment | undefined) {
-  return Boolean(b && a.kind === b.kind && a.shiftId === b.shiftId && Boolean(a.locked) === Boolean(b.locked));
 }
 
 type PublishedDay = { date: string; signature: string; scheduled: boolean };
@@ -388,29 +395,8 @@ async function planningContext(actor: EscalaActor, id: string, input: EscalaInpu
   return preserveCalendarSourceContext(input, preservePublishedDays(publishedPlanningContext(input, published), published));
 }
 
-export function preserveLockedAssignments(previous: EscalaInput, next: EscalaInput, canUnlock = false) {
-  const assignments = new Map(next.assignments.map((item) => [assignmentKey(item), item]));
-  const previousShifts = new Map(previous.shifts.map((shift) => [shift.id, shift]));
-  const nextShifts = new Map(next.shifts.map((shift) => [shift.id, shift]));
-  for (const item of previous.assignments.filter((assignment) => assignment.locked)) {
-    const proposed = assignments.get(assignmentKey(item));
-    const explicitUnlock = canUnlock && proposed?.locked === false && proposed.kind === item.kind && proposed.shiftId === item.shiftId;
-    if ((!sameAssignment(item, proposed) && !explicitUnlock) || (item.shiftId && JSON.stringify(previousShifts.get(item.shiftId)) !== JSON.stringify(nextShifts.get(item.shiftId)))) {
-      throw new EscalaError(409, "ESCALA_LOCKED_ASSIGNMENT", "A proposta altera um dia bloqueado ou seu horário. Um aprovador pode desmarcar o bloqueio e salvar, preservando a atribuição; depois poderá editá-la.");
-    }
-  }
-}
-
-/** Server-created intent only; no HTTP SAVE command accepts this object or its callback. */
-export type AdminImportSaveIntent = {
-  removedAbsenceKeys: readonly string[]; invalidatesApproval: boolean;
-  verify: (tx: Prisma.TransactionClient, current: EscalaWorkspace & { approvedPolicyVersionId: string | null }, rawInput: EscalaInput) => Promise<void>;
-  audit: { purpose: "EMPLOYEES" | "ABSENCES"; fileHash: string; impactHash: string; startDate: string; endDate: string;
-    addedPeople: number; removedPeople: number; addedAbsenceDays: number; removedAbsenceDays: number };
-};
-
 export async function saveEscala(actor: EscalaActor, id: string, expectedRevision: number, input: EscalaInput, publish = false,
-  options: { proposalProof?: string; catalogIntent?: boolean; serverEnrollment?: { employeeId: string; regimeModelId: string }; serverRemoval?: { employeeId: string }; rebaseId?: string; adminImport?: AdminImportSaveIntent } = {}) {
+  options: { proposalProof?: string; catalogIntent?: boolean; serverEnrollment?: { employeeId: string; regimeModelId: string }; serverRemoval?: { employeeId: string }; rebaseId?: string; adminImport?: AdminImportSaveIntent; manualAbsence?: EscalaAbsenceCommand } = {}) {
   input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, publish ? "publish" : "edit");
@@ -418,6 +404,12 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   if (JSON.stringify(input.planningCalendarSource) !== JSON.stringify(current.input.planningCalendarSource))
     throw new EscalaError(409, "ESCALA_CALENDAR_SOURCE_CHANGED", "A origem da atualização da semana não pode ser alterada. Recarregue o rascunho atual.");
   const context = await requireEscalaCapability(actor, publish ? "workspace.publish" : "workspace.save", current.input.branchCode);
+  const absence = options.manualAbsence && editDraftAbsences(current.input, options.manualAbsence, actor.admin);
+  if (absence) {
+    await requireEscalaCapability(actor, "employee.manage", current.input.branchCode);
+    if (current.status !== "DRAFT" || publish || Object.keys(options).length !== 1 || stableEscalaJson(absence.input) !== stableEscalaJson(input))
+      throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "O lançamento deve alterar somente os afastamentos indicados no rascunho.");
+  } else if (options.adminImport?.audit.purpose !== "ABSENCES") preserveManualAbsences(current.input, input);
   const removal = options.serverRemoval;
   if (removal) {
     await requireEscalaCapability(actor, "employee.manage", current.input.branchCode);
@@ -443,13 +435,15 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     if (!approvalId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária aprovação administrativa.");
     await loadEscalaApproval(actor, approvalId, prisma, current.input);
     if (options.proposalProof) verifyEscalaProposal(options.proposalProof, await proposalScope(actor, current), input);
-    if (!options.serverEnrollment && !removal) assertEscalaOperationalInput(current.input, input,
+    if (!options.serverEnrollment && !removal && !absence) assertEscalaOperationalInput(current.input, input,
       ESCALA_CAPABILITIES.filter(capability => decideEscalaPermission(context, capability).allowed), Boolean(options.proposalProof), options.catalogIntent,
       !publish && !options.proposalProof && current.canPublish);
   } else if (options.proposalProof) verifyEscalaProposal(options.proposalProof, await proposalScope(actor, current), input);
-  else if (approvalId && !options.rebaseId && !options.serverEnrollment && !removal) {
+  else if (approvalId && !options.rebaseId && !options.serverEnrollment && !removal && !absence) {
     // An administrator may edit rules/data, but an old approval must not certify the new regime.
-    try { assertEscalaOperationalInput(current.input, input, ESCALA_CAPABILITIES, false, false, !publish && current.canPublish); }
+    const audit = options.adminImport?.audit;
+    const approvalInput = audit?.purpose === "ABSENCES" ? importAbsenceApprovalView(current.input, input, audit.startDate, audit.endDate) : input;
+    try { assertEscalaOperationalInput(current.input, approvalInput, ESCALA_CAPABILITIES, false, false, !publish && current.canPublish); }
     catch (error) {
       if (!(error instanceof EscalaError) || error.code !== "ESCALA_PROTECTED_INPUT") throw error;
       approvalId = null;
@@ -458,24 +452,14 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   if (input.branchCode !== current.input.branchCode || input.startDate !== current.input.startDate || input.endDate !== current.input.endDate) {
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
+  if (absence && !absence.changedDates.size) return current;
   input = materializeManualShiftOverrides(input);
   await assertManualCatalogSelections(actor, input, current.input);
   const manualReferenceIssue = manualShiftIssues(input)[0];
   if (manualReferenceIssue) throw new EscalaError(422, manualReferenceIssue.code, manualReferenceIssue.message);
   const manualAssignmentIssue = manualAssignmentIssues(input)[0];
   if (manualAssignmentIssue) throw new EscalaError(422, manualAssignmentIssue.code, manualAssignmentIssue.message);
-  const removedAbsences = new Set(options.adminImport?.removedAbsenceKeys ?? []);
-  if (removedAbsences.size) {
-    const intent = options.adminImport;
-    const nextKeys = new Set(input.assignments.map(assignmentKey));
-    if (intent?.audit.purpose !== "ABSENCES" || [...removedAbsences].some(key =>
-      nextKeys.has(key) || !current.input.assignments.some(day => assignmentKey(day) === key && day.kind === "ABSENCE"
-        && day.date >= intent.audit.startDate && day.date <= intent.audit.endDate))) {
-      throw new EscalaError(403, "ESCALA_IMPORT_INTENT_INVALID", "O delta de afastamentos não corresponde à confirmação.");
-    }
-  }
-  preserveLockedAssignments(removedAbsences.size ? { ...current.input,
-    assignments: current.input.assignments.filter(day => !removedAbsences.has(assignmentKey(day))) } : current.input, input, !publish && current.canPublish);
+  preserveLockedAssignments(excludeConfirmedImportAbsences(current.input, input, options.adminImport), input, !publish && current.canPublish);
   const scenarioChanged = generationScenarioBasis(current.input) !== generationScenarioBasis(input);
   const preparedProposal = !input.needsRegeneration && matchesGenerationScenarioBasis(input);
   if (removal) input = { ...input, needsRegeneration: true, generationBasis: undefined, coverageBasis: undefined };
@@ -514,6 +498,10 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     if (options.adminImport) {
       await requireEscalaCapability(actor, "import.manage", undefined, tx);
       await options.adminImport.verify(tx, current, rawInput);
+    }
+    if (absence) {
+      await requireEscalaCapability(actor, "employee.manage", current.input.branchCode, tx);
+      await assertNoPublishedAbsenceChanges(tx, actor.tenantId, current.input, absence);
     }
     if (requiresUnlockAuthority) await requireEscalaCapability(actor, "workspace.publish", current.input.branchCode, tx);
     if (options.proposalProof) await requireEscalaCapability(actor, "schedule.apply", current.input.branchCode, tx);
@@ -555,6 +543,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
       metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision, previousRevision: expectedRevision, employeeCount: input.employees.length,
         approvedPolicyVersionId: approvalId, approvalInvalidated: Boolean(current.approvedPolicyVersionId && !approvalId),
         ...(options.adminImport ? { adminImport: options.adminImport.audit } : {}),
+        ...(absence ? { manualAbsence: { ...options.manualAbsence, changedDays: absence.changedDates.size } } : {}),
         ...(removal ? { removedEmployeeId: removal.employeeId } : {}),
         ...(options.serverEnrollment ? { employeeId: options.serverEnrollment.employeeId, regimeModelId: options.serverEnrollment.regimeModelId } : {}) } } });
   }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
@@ -586,9 +575,11 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const current = await getEscala(actor, id);
   assertRevision(current, expectedRevision);
   await requireEscalaCapability(actor, "schedule.generate", current.input.branchCode);
+  let currentApprovalVerified = false;
   if (!actor.admin) {
     if (!current.approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária aprovação administrativa.");
     await loadEscalaApproval(actor, current.approvedPolicyVersionId, prisma, current.input);
+    currentApprovalVerified = true;
   }
   if (current.input.generationMode === "HOURS_ONLY" && !isHoursReferenceOnly(current.input)) {
     const existing = new Set(current.input.assignments.map(day => `${day.employeeId}\0${day.date}`));
@@ -602,7 +593,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const prepared = prepareGeneration(current.input);
   if (isHoursReferenceOnly(prepared.input)) {
     const proposalInput = parseEscalaInput({ ...prepared.input, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared.input) });
-    try { preserveLockedAssignments(current.input, proposalInput); if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true); }
+    try { preserveLockedAssignments(current.input, proposalInput); preserveManualAbsences(current.input, proposalInput); if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true); }
     catch (error) { logSolverRejection("service-preservation", "LOCK_CHANGED"); throw error; }
     if (!matchesHoursOnlyAssignments(current.input, proposalInput)) { logSolverRejection("service-preservation", "HOURS_ONLY_CHANGED"); throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED"); }
     const validation = validateEscala(proposalInput);
@@ -616,12 +607,12 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   }
   requireSolverSetup(prepared.input);
   const context = await planningContext(actor, id, parseEscalaInput(prepared.input));
-  const { contextual, origin } = await prepareDecemberCoverage(actor, id, qualityReference, context);
+  const { contextual, origin } = await prepareDecemberCoverage(actor, id, qualityReference, context, currentApprovalVerified);
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
   if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
   const admission = admitDecemberCandidate(admitCandidateReference(comparisonReference, scope, qualityReference, contextual), origin);
   const { calculation, retainedReference } = await calculateWithDecemberFallback(
-    solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin }),
+    solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin, preserveImplicitLocks: !actor.admin }),
     origin && admission.input,
   );
   let result = calculation.status === "INFEASIBLE" ? {
@@ -643,7 +634,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
       throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
     }
   }
-  try { preserveLockedAssignments(current.input, proposalInput); if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true); }
+  try { preserveLockedAssignments(current.input, proposalInput); preserveManualAbsences(current.input, proposalInput); if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true); }
   catch (error) { logSolverRejection("service-preservation", "LOCK_CHANGED"); throw error; }
   if (!matchesHoursOnlyAssignments(current.input, proposalInput)) { logSolverRejection("service-preservation", "HOURS_ONLY_CHANGED"); throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED"); }
   let validation = validateEscala(proposalInput);
@@ -662,6 +653,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
     if (comparison.selection === "REFERENCE_RETAINED") {
       proposalInput = parseEscalaInput(selected.input);
       preserveLockedAssignments(current.input, proposalInput);
+      preserveManualAbsences(current.input, proposalInput);
       // Admission authenticates comparison; it does not replace operational protection.
       if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true);
       validation = validateEscala(proposalInput);

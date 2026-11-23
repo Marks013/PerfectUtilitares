@@ -22,7 +22,7 @@ vi.mock("@/lib/escalas/solver-transport", async original => {
     candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "route-synthetic-receipt-key").update(payload).digest("hex") };
 });
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, createScope: null as string[] | null, list: vi.fn(), get: vi.fn(), read: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), recheck: vi.fn(), remove: vi.fn(), removeEmployee: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, createScope: null as string[] | null, list: vi.fn(), get: vi.fn(), read: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), recheck: vi.fn(), remove: vi.fn(), removeEmployee: vi.fn(), changeAbsence: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
 vi.mock("@/lib/escalas/access", async original => ({ ...await original<typeof import("@/lib/escalas/access")>(),
   allowedBranches: async (actor: { admin: boolean }, capability?: string) => capability === "workspace.create" ? mocks.createScope : actor.admin ? null : ["02"] }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
@@ -38,7 +38,7 @@ vi.mock("next/headers", async (original) => ({
 }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, getEscalaForRead: mocks.read, createEscala: mocks.create, createEscalaApproved: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
-  addEscalaEmployee: vi.fn(), removeEscalaEmployee: mocks.removeEmployee, rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
+  addEscalaEmployee: vi.fn(), removeEscalaEmployee: mocks.removeEmployee, changeEscalaAbsence: mocks.changeAbsence, rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
 const workspace = { id: "w1", revision: 1, status: "DRAFT", input, canEdit: true, canPublish: true };
@@ -310,4 +310,23 @@ it("removes a collaborator through the scoped revision action and returns the sa
     { userId: null, tenantId: "default-company", admin: false, moduleSessionId: "module-1" }, "w1", 1, "p1");
   expect((await POST(command({ ...data, branchCode: "07" }))).status).toBe(400);
   expect(mocks.removeEmployee).toHaveBeenCalledTimes(1);
+});
+
+it.each(["ADD_ABSENCE", "REMOVE_ABSENCE"] as const)("persists %s as a revisioned scoped absence action", async action => {
+  mocks.session = null;
+  mocks.module.mockResolvedValue({ id: "module-1", tenantId: "default-company", expiresAt: new Date("2030-01-01") });
+  const dates = { employeeId: "p1", startDate: "2026-12-01", endDate: "2026-12-04" };
+  const saved = { ...workspace, revision: 2, input: { ...input, assignments: [], needsRegeneration: true } };
+  mocks.changeAbsence.mockResolvedValueOnce(saved);
+  const body = { action, id: "w1", expectedRevision: 1, ...dates };
+  const response = await POST(command(body));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(saved);
+  expect(mocks.changeAbsence).toHaveBeenCalledExactlyOnceWith(
+    { userId: null, tenantId: "default-company", admin: false, moduleSessionId: "module-1" }, "w1", 1, { action, ...dates },
+  );
+  for (const invalid of [{ ...body, endDate: "2026-12-32" }, { ...body, tenantId: "other" }, { ...body, absenceSource: "MANUAL" }]) {
+    expect((await POST(command(invalid))).status).toBe(400);
+  }
+  expect(mocks.changeAbsence).toHaveBeenCalledTimes(1);
 });

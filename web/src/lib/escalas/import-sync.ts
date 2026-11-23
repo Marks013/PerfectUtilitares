@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { EscalaError, requireEscalaCapability, type EscalaActor } from "./access";
 import { loadEscalaApproval } from "./approved-policy-service";
+import { importAbsenceApprovalView } from "./draft-save-policy";
 import { previewEscalaImport } from "./import";
 import { previewFphi105Import } from "./fphi105";
 import { generationScenarioBasis } from "./hours-reference";
@@ -29,6 +30,7 @@ async function reconcile(actor: EscalaActor, command: ImportSyncCommand, file: I
   if (current.revision !== command.expectedRevision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "A proposta mudou. Refaça a conferência.");
   if (!isImportSyncFileSizeAllowed(file.buffer.length) || !["csv", "xlsx"].includes(file.extension)) throw new EscalaError(400, "ESCALA_IMPORT_FILE", "Envie um CSV ou XLSX de até 512 KB.");
   const input = current.input, candidate = structuredClone(input);
+  const confirmedManualDays = new Set<string>();
   const blockers: ImportSyncProblem[] = [], warnings: ImportSyncPreview["warnings"] = [];
   const block = (code: ImportSyncProblem["code"], message: string, extra: Partial<ImportSyncProblem> = {}) => blockers.push({ code, message, ...extra });
   const impact: ImportSyncPreview["impact"] = { people: { added: [], updated: [], removed: [], unchanged: [] }, absences: { added: [], removed: [], unchanged: [] }, assignments: [], references: [] };
@@ -129,10 +131,18 @@ async function reconcile(actor: EscalaActor, command: ImportSyncCommand, file: I
         if (!person || !eligible(person, day.date, day.date)) block("OUTSIDE_BINDING", "O afastamento está fora do vínculo canônico.", { employeeId: day.employeeId, date: day.date });
         if (person && !person.activeFrom) warnings.push({ code: "UNKNOWN_BINDING", message: "Admissão desconhecida; confira o vínculo.", employeeId: person.id });
         const old = existing.get(key(day));
-        if (old && old.kind !== "ABSENCE" && (old.kind === "HOLIDAY" || old.locked !== false)) block("PROTECTED_ASSIGNMENT", "O afastamento conflita com uma atribuição protegida.", { employeeId: day.employeeId, date: day.date });
+        if (person?.manualShiftByDate?.[day.date] || old && old.kind !== "ABSENCE" && (old.kind === "HOLIDAY" || old.locked !== false)) block("PROTECTED_ASSIGNMENT", "O afastamento conflita com uma atribuição protegida.", { employeeId: day.employeeId, date: day.date });
       }
       candidate.assignments = input.assignments.filter(day => !(day.kind === "ABSENCE" && day.date >= command.startDate && day.date <= command.endDate) && !incoming.has(key(day)));
-      for (const [id, day] of incoming) candidate.assignments.push(existing.get(id)?.kind === "ABSENCE" ? existing.get(id) as EscalaAssignment : day);
+      for (const [id, day] of incoming) {
+        const old = existing.get(id);
+        if (old?.kind === "ABSENCE" && old.absenceSource === "MANUAL") {
+          const { absenceSource: _manual, ...imported } = old;
+          candidate.assignments.push(imported);
+          confirmedManualDays.add(id);
+        } else candidate.assignments.push(old?.kind === "ABSENCE" ? old : day);
+      }
+      if (confirmedManualDays.size) warnings.push({ code: "SOURCE_WARNING", message: `A importação confirma ${confirmedManualDays.size} dia(s) lançado(s) manualmente. Após a substituição, esses dias terão origem na importação e só poderão ser alterados pela administração.` });
       impact.people.unchanged = input.employees.map(person => personChange(person));
     } catch (error) {
       if (!(error instanceof Error)) throw error;
@@ -144,21 +154,28 @@ async function reconcile(actor: EscalaActor, command: ImportSyncCommand, file: I
   candidate.assignments.sort((a, b) => key(a).localeCompare(key(b)));
   const before = new Map(input.assignments.map(day => [key(day), day])), after = new Map(candidate.assignments.map(day => [key(day), day]));
   const people = new Map([...input.employees, ...candidate.employees].map(person => [person.id, person]));
+  let operationalAssignmentChanged = false;
   for (const id of [...new Set([...before.keys(), ...after.keys()])].sort()) {
     const old = before.get(id), next = after.get(id), day = next ?? old;
     if (!day) continue;
     const registration = people.get(day.employeeId)?.registration ?? "";
-    if (!same(old, next)) impact.assignments.push({ employeeId: day.employeeId, registration, date: day.date, previousKind: old?.kind ?? null, nextKind: next?.kind ?? null, previousShiftId: old?.shiftId ?? null, nextShiftId: next?.shiftId ?? null });
+    if (!same(old, next)) {
+      if (!confirmedManualDays.has(id)) operationalAssignmentChanged = true;
+      impact.assignments.push({ employeeId: day.employeeId, registration, date: day.date, previousKind: old?.kind ?? null, nextKind: next?.kind ?? null, previousShiftId: old?.shiftId ?? null, nextShiftId: next?.shiftId ?? null });
+    }
     const fact = { employeeId: day.employeeId, registration, date: day.date };
     if (old?.kind === "ABSENCE" && next?.kind === "ABSENCE") impact.absences.unchanged.push(fact);
     else if (old?.kind === "ABSENCE") impact.absences.removed.push(fact);
     else if (next?.kind === "ABSENCE") impact.absences.added.push(fact);
   }
-  const regenerate = generationScenarioBasis(input) !== generationScenarioBasis(candidate) || impact.assignments.length > 0;
+  const regenerate = generationScenarioBasis(input) !== generationScenarioBasis(candidate) || operationalAssignmentChanged;
   if (regenerate) { candidate.needsRegeneration = true; delete candidate.generationBasis; delete candidate.coverageBasis; }
   let invalidatesApproval = false;
   if (current.approvedPolicyVersionId) {
-    try { assertEscalaOperationalInput(input, candidate, ESCALA_CAPABILITIES); }
+    // Days explicitly confirmed in the CSV retain their exact operational record. The
+    // preview and hash still capture the source change, but it is not a regime change.
+    const approvalCandidate = confirmedManualDays.size ? importAbsenceApprovalView(input, candidate, command.startDate, command.endDate) : candidate;
+    try { assertEscalaOperationalInput(input, approvalCandidate, ESCALA_CAPABILITIES); }
     catch (error) { if (!(error instanceof EscalaError) || error.code !== "ESCALA_PROTECTED_INPUT") throw error; invalidatesApproval = true; }
   }
   let parsed = candidate;

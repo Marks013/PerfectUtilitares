@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyTurnoSwap, previewTurnoSwap } from "./shift-catalog/swap";
 import type { EscalaInput } from "./types";
-import { createEscala, createEscalaApproved, addEscalaEmployee, rebaseEscalaApproval, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration } from "./service";
+import { createEscala, createEscalaApproved, addEscalaEmployee, changeEscalaAbsence, rebaseEscalaApproval, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration, validateEscalaOperational } from "./service";
+import { preserveLockedAssignments } from "./draft-save-policy";
 import { removeEscalaEmployee } from "./service";
 import { buildEscalaApprovedPolicy } from "./approved-policy";
 import { ESCALA_OPERATOR_CAPABILITIES } from "./permissions";
@@ -1352,9 +1353,9 @@ describe("Shared operational provenance", () => {
   });
 });
 
-function scopedSavedFixture(withDemands = false) {
+function scopedSavedFixture(withDemands = false, baseline = input()) {
   const scoped = { userId: null, tenantId: actor.tenantId, admin: false, moduleSessionId: "named-session" };
-  const baseline = input(); if (!withDemands) baseline.demands = []; baseline.employees[0].scheduleMode = "TIMED";
+  if (!withDemands) baseline.demands = []; baseline.employees[0].scheduleMode = "TIMED";
   baseline.assignments = baseline.assignments.map(day => ({ ...day, locked: false }));
   const built = buildEscalaApprovedPolicy({ input: baseline, version: 1,
     provenance: { tenantId: actor.tenantId, approvedById: actor.userId, approvedAt: "2026-11-13T12:00:00.000Z", origin: null },
@@ -1368,10 +1369,131 @@ function scopedSavedFixture(withDemands = false) {
   mocks.session.mockImplementation(async ({ where }) => where.id === session.id && where.tenantId === session.tenantId ? session : null);
   mocks.approval.mockImplementation(async ({ where }) => where.tenantId === actor.tenantId && (!where.id || ["approval", "approval-new"].includes(where.id))
     ? { ...approval, id: where.id ?? "approval" } : null);
-  mocks.workspace.findFirst.mockResolvedValue(row());
+  mocks.workspace.findFirst.mockResolvedValue(row({ branchCode: baseline.branchCode, startDate: baseline.startDate, endDate: baseline.endDate }));
   mocks.revision.findUnique.mockResolvedValue({ ...version(baseline), approvedPolicyVersionId: "approval" });
   return { scoped, baseline, approval, session };
 }
+describe("revisioned manual absences", () => {
+  const day = (date: string) => ({ employeeId: "e1", date, kind: "ABSENCE" as const, absenceSource: "MANUAL" as const });
+  const command = { action: "ADD_ABSENCE" as const, employeeId: "e1", startDate: "2026-12-01", endDate: "2026-12-02" };
+  const remove = { ...command, action: "REMOVE_ABSENCE" as const };
+  function december() {
+    const value = { ...period("2026-12-01", 5), endDate: "2026-12-31", visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY" as const };
+    value.assignments = value.assignments.filter(day => day.date <= value.endDate);
+    return scopedSavedFixture(false, value);
+  }
+  it("adds an inclusive range to the current branch, retains approval and feeds the next generation", async () => {
+    const { scoped, baseline } = december();
+    const original = structuredClone(baseline);
+    const saved = await changeEscalaAbsence(scoped, "w1", 1, command);
+    const manual = [day(command.startDate), day(command.endDate)];
+    expect(saved).toMatchObject({ status: "DRAFT", revision: 2, approvedPolicyVersionId: "approval",
+      input: { needsRegeneration: true, policy: original.policy, employees: original.employees, assignments: [...original.assignments.slice(2), ...manual] } });
+    expect(baseline).toEqual(original);
+    expect(mocks.audit.create).toHaveBeenCalledWith({ data: expect.objectContaining({ metadata: expect.objectContaining({
+      manualAbsence: { ...command, changedDays: 2 }, previousRevision: 1,
+    }) }) });
+    mocks.workspace.findFirst.mockResolvedValue(row({ startDate: baseline.startDate, endDate: baseline.endDate, revision: 2 }));
+    mocks.revision.findUnique.mockResolvedValue({ ...version(saved.input, 2), approvedPolicyVersionId: "approval" });
+    mocks.solve.mockResolvedValueOnce({ status: "INFEASIBLE", assignments: [], wallTimeSeconds: 0, message: "Cenário sintético" });
+    const result = await generateEscala(scoped, "w1", 2);
+    expect(mocks.solve).toHaveBeenCalledWith(expect.objectContaining({ assignments: expect.arrayContaining(manual) }), expect.anything());
+    expect(result.proposalInput.assignments).toEqual(expect.arrayContaining(manual));
+    expect(mocks.revision.create).toHaveBeenCalledTimes(1);
+  });
+  it("removes only manual days for a scoped operator and keeps untouched days", async () => {
+    const { scoped, baseline } = december();
+    baseline.assignments.splice(0, 3, day("2026-12-01"), day("2026-12-02"), { employeeId: "e1", date: "2026-12-03", kind: "ABSENCE" });
+    const saved = await changeEscalaAbsence(scoped, "w1", 1, remove);
+    expect(saved.input.assignments).toEqual(baseline.assignments.slice(2));
+    expect(saved).toMatchObject({ revision: 2, approvedPolicyVersionId: "approval", input: { needsRegeneration: true } });
+  });
+  it("does not change an existing absence's provenance on repeated manual addition", async () => {
+    const { scoped, baseline } = december();
+    baseline.assignments.splice(0, 2, day("2026-12-01"), { employeeId: "e1", date: "2026-12-02", kind: "ABSENCE" });
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).resolves.toMatchObject({ revision: 1, input: { assignments: baseline.assignments } });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+  it("blocks an operator's mixed removal atomically and lets the administrator correct it", async () => {
+    const { scoped, baseline } = december();
+    baseline.assignments.splice(0, 2, day("2026-12-01"), { employeeId: "e1", date: "2026-12-02", kind: "ABSENCE" });
+    await expect(changeEscalaAbsence(scoped, "w1", 1, remove)).rejects.toMatchObject({ code: "ESCALA_ABSENCE_IMPORT_PROTECTED" });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    const saved = await changeEscalaAbsence(actor, "w1", 1, remove);
+    expect(saved.input.assignments).toEqual(baseline.assignments.slice(2));
+  });
+  it("blocks foreign branches, published workspaces and stale revisions without a write", async () => {
+    const { scoped, baseline, session } = december();
+    session.operator.branchGrants[0].branchCode = "07";
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ status: 403 });
+    await expect(changeEscalaAbsence(actor, "w1", 2, command)).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
+    useCurrent(baseline, "PUBLISHED");
+    await expect(changeEscalaAbsence(actor, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ABSENCE_DRAFT_REQUIRED" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+  it("checks access again under the transaction lock", async () => {
+    const { scoped, session } = december();
+    mocks.advisory.mockImplementationOnce(async () => { session.revokedAt = new Date(); return 1; });
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ACCESS_REQUIRED" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+  it("rejects overlapping published assignments by permanent registration", async () => {
+    const { scoped, baseline } = december();
+    const published = structuredClone(baseline);
+    published.employees[0].id = "other-local-id";
+    published.employees[0].history = [];
+    published.assignments = published.assignments.map(day => ({ ...day, employeeId: "other-local-id" }));
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: published }] }]);
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ABSENCE_CONFLICT" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+  });
+  it("protects dates outside the month, inactive people, locked work, closed holidays and dated manual work", async () => {
+    const { scoped, baseline } = december();
+    await expect(changeEscalaAbsence(scoped, "w1", 1, { ...command, endDate: "2027-01-01" })).rejects.toMatchObject({ code: "ESCALA_ABSENCE_PERIOD" });
+    baseline.employees[0].activeFrom = "2026-12-02";
+    baseline.employees[0].history = [];
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ABSENCE_EMPLOYEE" });
+    baseline.employees[0].activeFrom = "2026-12-01";
+    baseline.assignments[1].locked = true;
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ABSENCE_CONFLICT" });
+    baseline.assignments[1].locked = false;
+    baseline.policy.closedDates = ["2026-12-02"];
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ABSENCE_CONFLICT" });
+    baseline.policy.closedDates = [];
+    baseline.employees[0] = withManualShiftOverride(baseline.employees[0], {
+      catalogCode: 1500, shiftId: "catalog-1500", markings: ["08:00", "12:00", "13:00", "17:24"], effectiveFrom: "2026-12-02", effectiveUntil: "2026-12-02",
+    });
+    Object.assign(baseline, materializeManualShiftOverrides(baseline));
+    await expect(changeEscalaAbsence(scoped, "w1", 1, command)).rejects.toMatchObject({ code: "ESCALA_ABSENCE_CONFLICT" });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+  it("does not let SAVE, APPLY_PROPOSAL or VALIDATE erase manual provenance", async () => {
+    const { baseline } = december();
+    baseline.assignments[0] = day("2026-12-01");
+    const altered = structuredClone(baseline);
+    delete altered.assignments[0].absenceSource;
+    for (const options of [{}, { proposalProof: "untrusted" }]) {
+      await expect(saveEscala(actor, "w1", 1, altered, false, options)).rejects.toMatchObject({ code: "ESCALA_PROTECTED_INPUT" });
+    }
+    await expect(validateEscalaOperational(actor, "w1", 1, altered)).rejects.toMatchObject({ code: "ESCALA_PROTECTED_INPUT" });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+  it("keeps approval when a confirmed import changes only the source of an existing absence", async () => {
+    const { baseline } = december();
+    baseline.assignments[0] = day("2026-12-01");
+    const imported = structuredClone(baseline);
+    delete imported.assignments[0].absenceSource;
+    const verify = vi.fn().mockResolvedValue(undefined);
+    const saved = await saveEscala(actor, "w1", 1, imported, false, { adminImport: {
+      removedAbsenceKeys: [], invalidatesApproval: false, verify,
+      audit: { purpose: "ABSENCES", fileHash: "file", impactHash: "impact", startDate: "2026-12-01", endDate: "2026-12-05",
+        addedPeople: 0, removedPeople: 0, addedAbsenceDays: 0, removedAbsenceDays: 0 },
+    } });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(saved).toMatchObject({ revision: 2, approvedPolicyVersionId: "approval" });
+    expect(saved.input.assignments[0]).toEqual(imported.assignments[0]);
+  });
+});
 function scopedComparisonFixture(legacy = false) {
   const fixture = scopedSavedFixture(true);
   Object.assign(fixture.baseline, generatedInput());

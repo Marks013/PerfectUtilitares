@@ -557,3 +557,78 @@ test("blocked account cannot borrow a nominal session and site logout permits sc
     await scope.setMode("ADMIN_ONLY");
   }
 });
+
+test("nominal operator records and removes only an authorized draft's manual absence", async () => {
+  const scope = nominalScope();
+  const input = nominalInput("ABSENCE");
+  const foreignInput = nominalInput("ABSENCE-DENIED");
+  const approved = await scope.approve(input);
+  const foreignApproved = await scope.approve(foreignInput);
+  const workspace = scope.trackWorkspace(await responseWorkspace(await scope.post({
+    action: "CREATE_APPROVED", approvedPolicyVersionId: approved.id,
+  }), 201));
+  const otherBranch = scope.trackWorkspace(await responseWorkspace(await scope.post({
+    action: "CREATE_APPROVED", approvedPolicyVersionId: foreignApproved.id,
+  }), 201));
+  const operator = await scope.createOperator([{ branchCode: input.branchCode, active: true, capabilities: [...operationalCapabilities] }]);
+  const context = await scope.newContext("nominal-manual-absence");
+  try {
+    await scope.setMode("SCOPED");
+    const page = await context.newPage();
+    await nominalEntry(page, operator.username);
+    const openPanel = async () => {
+      await openEscalasArea(page, "team");
+      await page.getByText("Afastamentos do planejamento", { exact: true }).click();
+    };
+    const waitForAction = (action: string) => page.waitForResponse(response => response.request().method() === "POST"
+      && new URL(response.url()).pathname === "/api/escalas" && response.request().postDataJSON()?.action === action);
+    const range = { employeeId: "person", startDate: "2026-12-10", endDate: "2026-12-11" };
+    const days = ["2026-12-10", "2026-12-11"];
+    const manualDays = (draft: EscalaWorkspace) => draft.input.assignments
+      .filter(day => day.employeeId === range.employeeId && days.includes(day.date) && day.kind === "ABSENCE" && day.absenceSource === "MANUAL")
+      .map(day => day.date).sort();
+
+    await selectEscalasWorkspace(page, workspace);
+    await openPanel();
+    await page.getByLabel("Colaborador", { exact: true }).selectOption(range.employeeId);
+    await page.getByLabel("Início do afastamento", { exact: true }).fill(range.startDate);
+    await page.getByLabel("Fim do afastamento", { exact: true }).fill(range.endDate);
+    const adding = waitForAction("ADD_ABSENCE");
+    await page.getByRole("button", { name: "Salvar afastamento", exact: true }).click();
+    const addedResponse = await adding;
+    expect(addedResponse.status()).toBe(200);
+    const added = await addedResponse.json() as EscalaWorkspace;
+    expect(added).toMatchObject({ id: workspace.id, revision: workspace.revision + 1, status: "DRAFT", input: { needsRegeneration: true } });
+    expect(manualDays(added)).toEqual(days);
+
+    const denied = await page.request.post("/api/escalas", { headers: scope.headers, data: {
+      action: "ADD_ABSENCE", id: otherBranch.id, expectedRevision: otherBranch.revision, ...range,
+    } });
+    expect(denied.status()).toBe(403);
+    const stale = await page.request.post("/api/escalas", { headers: scope.headers, data: {
+      action: "REMOVE_ABSENCE", id: added.id, expectedRevision: workspace.revision, ...range,
+    } });
+    expect(stale.status()).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: { code: "ESCALA_STALE_REVISION" } });
+
+    await page.reload();
+    await selectEscalasWorkspace(page, added);
+    await openPanel();
+    const remove = page.getByRole("button", { name: "Excluir afastamento de Pessoa nominal, 10/12/2026 a 11/12/2026", exact: true });
+    await expect(remove).toBeVisible();
+    await remove.click();
+    const dialog = page.getByRole("dialog", { name: "Excluir afastamento?", exact: true });
+    await expect(dialog).toBeVisible();
+    const removing = waitForAction("REMOVE_ABSENCE");
+    await dialog.getByRole("button", { name: "Confirmar exclusão", exact: true }).click();
+    const removedResponse = await removing;
+    expect(removedResponse.status()).toBe(200);
+    const saved = await readWorkspace(page, added.id);
+    expect(saved).toMatchObject({ revision: added.revision + 1, status: "DRAFT" });
+    expect(saved.input.assignments.filter(day => day.employeeId === range.employeeId && days.includes(day.date))).toEqual([]);
+    expect(saved.input.assignments).toContainEqual({ employeeId: "person", date: "2026-12-09", kind: "ABSENCE", locked: true });
+  } finally {
+    await context.close();
+    await scope.setMode("ADMIN_ONLY");
+  }
+});

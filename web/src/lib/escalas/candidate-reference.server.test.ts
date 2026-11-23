@@ -26,6 +26,17 @@ function fixture(): EscalaInput {
 }
 const reference = (input = fixture()) => ({ input, receipt: issueCandidateReceipt(scope, input, input, input, now) });
 describe("authenticated candidate continuity", () => {
+  it("rejects even a signed reference if it loses the current manual absence source", () => {
+    const input = fixture();
+    Object.assign(input, { startDate: "2026-12-01", endDate: "2026-12-31", visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY", demands: [] });
+    input.assignments = [{ employeeId: "a", date: "2026-12-03", kind: "ABSENCE", absenceSource: "MANUAL" }];
+    const altered = structuredClone(input);
+    delete altered.assignments[0].absenceSource;
+    const candidate = { input: altered, receipt: issueCandidateReceipt(scope, input, input, altered, now) };
+    expect(admitCandidateReference(candidate, scope, input, input, now + 1)).toMatchObject({
+      comparison: { admission: "INCOMPATIBLE", reason: "PROTECTED_ASSIGNMENT_CHANGED" },
+    });
+  });
   it("admits a complete valid reference with stable unordered collections", () => {
     const input = fixture(), candidate = reference(input), context = structuredClone(input);
     context.employees.reverse(); context.assignments.reverse(); context.demands.reverse();

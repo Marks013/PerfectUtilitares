@@ -65,7 +65,7 @@ export function admitCandidateReference(value: unknown, scope: Scope, base: Esca
   if (context.assignments.some(old => {
     if (!old.locked && old.kind !== "ABSENCE" && old.kind !== "HOLIDAY") return false;
     const next = days.get(JSON.stringify([old.employeeId, old.date]));
-    return next?.kind !== old.kind || next.locked !== old.locked || next.shiftId !== old.shiftId;
+    return next?.kind !== old.kind || next.locked !== old.locked || next.shiftId !== old.shiftId || next.absenceSource !== old.absenceSource;
   })) return unused("INCOMPATIBLE", "PROTECTED_ASSIGNMENT_CHANGED");
   if (!isOperationallyReusable(validateEscala(input)) || !matchesRestOnlyReferences(context, input.assignments)
     || !matchesHoursOnlyAssignments(context, input) || manualAssignmentIssues(input, context.assignments).length) return unused("INCOMPATIBLE", "REFERENCE_NOT_REUSABLE");

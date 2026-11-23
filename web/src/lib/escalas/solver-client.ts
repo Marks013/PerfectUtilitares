@@ -19,6 +19,13 @@ import { stableEscalaJson } from "./operational-input-policy";
 import { isDecember2026Cutover } from "./planning-calendar";
 
 import { manualAssignmentIssues } from "./shift-catalog/manual-override";
+type Assignment = EscalaInput["assignments"][number];
+const assignmentKey = (day: Assignment) => `${day.employeeId}\0${day.date}`;
+
+function workerAssignments(days: Assignment[]): Assignment[] {
+  return days.map(({ absenceSource: _absenceSource, ...day }) => day);
+}
+
 const objectiveName = z.enum(["COVERAGE", "MOVEMENT_COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_PEAK", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
 
 const resultSchema = z.strictObject({
@@ -115,7 +122,7 @@ function verifiedCompleteRoster(input: EscalaInput): boolean {
 
 export async function solveEscala(
   input: EscalaInput,
-  options?: SolverOptions & { qualityReference?: EscalaInput; admittedDecemberOrigin?: EscalaInput },
+  options?: SolverOptions & { qualityReference?: EscalaInput; admittedDecemberOrigin?: EscalaInput; preserveImplicitLocks?: boolean },
 ): Promise<EscalaSolveResult> {
   const started = performance.now();
   const saved = escalaInputSchema.parse(input);
@@ -124,7 +131,33 @@ export async function solveEscala(
   const administrativeDays = saved.assignments.filter(day => administrativeIds.has(day.employeeId));
   const withAdministrativeDays = (days: EscalaInput["assignments"]) => administrativeDays.length ? [...days, ...administrativeDays] : days;
   // The worker receives only protected coverage bounds, never the private source roster.
-  const { qualityReference: rawQualityReference, admittedDecemberOrigin, ...transportOptions } = options ?? {};
+  const { qualityReference: rawQualityReference, admittedDecemberOrigin, preserveImplicitLocks, ...transportOptions } = options ?? {};
+  const implicit = new Map<string, Assignment>();
+  if (preserveImplicitLocks) {
+    const beforePreparation = rawQualityReference ? operationalEscalaInput(escalaInputSchema.parse(rawQualityReference)) : parsed;
+    const preparedDays = new Map(parsed.assignments.map(day => [assignmentKey(day), day]));
+    for (const day of beforePreparation.assignments) {
+      if (day.locked !== undefined || day.kind === "ABSENCE" || day.kind === "HOLIDAY") continue;
+      const key = assignmentKey(day), prepared = preparedDays.get(key);
+      if (prepared?.kind !== day.kind || prepared.shiftId !== day.shiftId || prepared.locked !== undefined) {
+        logSolverRejection("preservation", "LOCK_CHANGED");
+        throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
+      }
+      implicit.set(key, prepared);
+    }
+  }
+  const pin = (days: Assignment[]) => implicit.size ? days.map(day =>
+    implicit.has(assignmentKey(day)) ? { ...day, locked: true } : day) : days;
+  const restore = (day: Assignment): Assignment => {
+    const original = implicit.get(assignmentKey(day));
+    if (!original) return day;
+    if (day.locked !== true || day.kind !== original.kind || day.shiftId !== original.shiftId) {
+      throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
+    }
+    return original;
+  };
+  // Temporary pins constrain the search. Compare and validate the roster with its persisted lock flags.
+  const searchInput = implicit.size ? { ...parsed, assignments: pin(parsed.assignments) } : parsed;
   const reference = admittedDecemberOrigin ?? rawQualityReference;
   const qualityReference = reference ? operationalEscalaInput(escalaInputSchema.parse(reference)) : parsed;
   if (admittedDecemberOrigin && (!isDecember2026Cutover(parsed) || !isDecember2026Cutover(qualityReference)
@@ -144,8 +177,11 @@ export async function solveEscala(
   let refined: EscalaInput;
   try {
     // Clock-only generation must compare against the original days, even if moving rest days could improve their spacing.
+    const searched = parsed.generationMode === "HOURS_ONLY" ? searchInput : refineRoster(searchInput);
+    const proposal = searched === searchInput ? parsed
+      : implicit.size ? { ...searched, assignments: searched.assignments.map(restore) } : searched;
     refined = parsed.generationMode === "HOURS_ONLY" ? parsed : verifiedCompleteRoster(parsed)
-      ? selectVerifiedRoster(parsed, refineRoster(parsed), undefined, qualityReference, coverageMode).input : refineRoster(parsed);
+      ? selectVerifiedRoster(parsed, proposal, undefined, qualityReference, coverageMode).input : proposal;
     if (admittedDecemberOrigin && refined !== parsed && !preservesAdmittedDecemberCoverage(assess(refined))) refined = parsed;
   } catch {
     logSolverRejection("refinement", "REFINEMENT_FAILED");
@@ -160,24 +196,37 @@ export async function solveEscala(
     throw new EscalaError(409, "ESCALA_REST_REPAIR_PENDING", "O cálculo não encontrou, no prazo disponível, uma redistribuição das folgas que preservasse a cobertura. A grade salva foi mantida; confira as folgas e os horários desse setor antes de aplicar outra proposta.");
   }
   const preparationSeconds = (performance.now() - started) / 1000;
-  const payload = await requestSolver(parsed, {
+  const payload = await requestSolver({
+    ...searchInput,
+    assignments: workerAssignments(searchInput.assignments),
+    employees: searchInput.employees.map(person => ({
+      ...person, history: workerAssignments(person.history),
+      ...(person.planningHistory ? { planningHistory: workerAssignments(person.planningHistory) } : {}),
+      ...(person.planningFuture ? { planningFuture: workerAssignments(person.planningFuture) } : {}),
+    })),
+  }, {
     ...transportOptions,
     ...(coverageComparison ? { coverageComparison } : {}),
     ...(coverageServiceProtection && (coverageServiceProtection.days.length || coverageServiceProtection.bands.length) ? { coverageServiceProtection } : {}),
-    initialAssignments: refined === parsed || !verifiedCompleteRoster(refined) ? undefined : refined.assignments,
+    initialAssignments: refined === parsed || !verifiedCompleteRoster(refined) ? undefined : workerAssignments(pin(refined.assignments)),
   });
   let stage = "result-schema", reason = "SCHEMA_INVALID";
   let details: Parameters<typeof logSolverRejection>[2];
   const retained = new Set(parsed.employees.filter(person => person.planningEnabled === false).map(person => person.id));
-  const preserveExcluded = (day: EscalaInput["assignments"][number]) => retained.has(day.employeeId)
-    && (parsed.generationMode === "HOURS_ONLY" || day.kind === "HOLIDAY");
+  const preserveExcluded = (day: Assignment) => retained.has(day.employeeId)
+    && (parsed.generationMode === "HOURS_ONLY" || day.kind === "HOLIDAY" || implicit.has(assignmentKey(day)));
   try {
     const { rejectionStage, ...result } = resultSchema.parse(payload);
     if (result.optimization) result.optimization = normalizeSkippedObjectives(result.optimization);
     if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
       const previous = new Map(parsed.assignments.map(day => [`${day.employeeId}\0${day.date}`, day]));
       const excluded = new Set(parsed.employees.filter(person => person.planningEnabled === false).map(person => person.id));
-      result.assignments = result.assignments.map(day => {
+      result.assignments = result.assignments.map(workerDay => {
+        if (implicit.has(assignmentKey(workerDay))) {
+          stage = "preservation"; reason = "LOCK_CHANGED";
+          return restore(workerDay);
+        }
+        const day = workerDay;
         const old = previous.get(`${day.employeeId}\0${day.date}`);
         if (day.locked === true && !old?.locked) {
           stage = "preservation"; reason = "LOCK_CHANGED"; throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
@@ -212,10 +261,12 @@ export async function solveEscala(
         reason = "PROTECTED_ASSIGNMENT_CHANGED";
         if (preserveExcluded(previous) && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || proposed.locked !== previous.locked)) throw new Error("Changed excluded record");
         reason = "LOCK_CHANGED";
-        if (previous.locked && (proposed?.kind !== previous.kind || proposed.shiftId !== previous.shiftId || !proposed.locked)) throw new Error("Changed locked day");
+        if ((previous.locked || implicit.has(assignmentKey(previous))) && stableEscalaJson(previous) !== stableEscalaJson(proposed)) {
+          throw new Error("Changed locked day");
+        }
       }
       let expected = parsed.assignments.filter(item => retained.has(item.employeeId)
-        && (parsed.generationMode === "HOURS_ONLY" || item.locked || item.kind === "ABSENCE" || item.kind === "HOLIDAY")).length;
+        && (preserveExcluded(item) || item.locked || item.kind === "ABSENCE")).length;
       for (const person of parsed.employees) {
         stage = "completeness"; reason = "MISSING_ACTIVE_DATE";
         details = { actual: result.assignments.length };
@@ -249,10 +300,12 @@ export async function solveEscala(
         const oldDays = new Map(qualityReference.assignments.map(day => [day.employeeId + "\0" + day.date, day]));
         const sameClocks = qualityReference.assignments.filter(day => day.kind === "WORK").every(day =>
           JSON.stringify(oldShifts.get(day.shiftId ?? "")) === JSON.stringify(currentShifts.get(day.shiftId ?? "")));
-        const protectedDays = parsed.assignments.filter(day => day.locked || day.kind === "ABSENCE" || day.kind === "HOLIDAY" || preserveExcluded(day));
+        const protectedDays = parsed.assignments.filter(day => day.locked || implicit.has(assignmentKey(day))
+          || day.kind === "ABSENCE" || day.kind === "HOLIDAY" || preserveExcluded(day));
         const preservesDays = protectedDays.every(day => {
           const old = oldDays.get(day.employeeId + "\0" + day.date);
-          return old?.kind === day.kind && old.shiftId === day.shiftId && old.locked === day.locked;
+          return old?.kind === day.kind && old.shiftId === day.shiftId && old.locked === day.locked
+            && old.absenceSource === day.absenceSource;
         });
         const reusable = { ...parsed, assignments: qualityReference.assignments };
         if (sameClocks && preservesDays && verifiedCompleteRoster(reusable)
@@ -272,10 +325,10 @@ export async function solveEscala(
       stage = "preservation"; reason = "PROTECTED_ASSIGNMENT_CHANGED";
       if (parsed.assignments.some(day => {
         const next = finalDays.get(`${day.employeeId}\0${day.date}`);
-        return day.kind === "ABSENCE" && next?.kind !== "ABSENCE"
+        return day.kind === "ABSENCE" && (next?.kind !== "ABSENCE" || next.absenceSource !== day.absenceSource)
           || day.kind === "HOLIDAY" && next?.kind !== "HOLIDAY"
           || preserveExcluded(day) && (next?.kind !== day.kind || next.shiftId !== day.shiftId || next.locked !== day.locked)
-          || day.locked && (next?.kind !== day.kind || next.shiftId !== day.shiftId || !next.locked);
+          || (day.locked || implicit.has(assignmentKey(day))) && stableEscalaJson(day) !== stableEscalaJson(next);
       })) throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
       const finalValidation = validateEscala(finalInput);
       const operationallyReusable = isOperationallyReusable(finalValidation);

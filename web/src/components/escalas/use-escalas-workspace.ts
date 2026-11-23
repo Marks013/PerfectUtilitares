@@ -368,9 +368,16 @@ export function useEscalasWorkspace() {
     });
   }
 
-  const { createApproved, addEmployee, removeEmployee } = workspaceTeamActions({
+  const { createApproved, addEmployee, removeEmployee, changeAbsence } = workspaceTeamActions({
     workspaceId: workspace?.id, canCreate: !dirty && !generated && !recovery,
     canChangeTeam: !generated && !recovery, run, flushDraft, acceptWorkspace, setNotice,
+    absenceTarget: () => {
+      const target = latestWorkspace.current;
+      return target?.canEdit && target.status === "DRAFT" && target.id === workspace?.id && target.revision === workspace.revision && !latestDirty.current
+        && !generated && !recovery && !conflict && saveState === "saved" && !accessLocked.current
+        && canDisplayEscalaAction(latestAccess.current, "workspace.save", target.input.branchCode)
+        && canDisplayEscalaAction(latestAccess.current, "employee.manage", target.input.branchCode) ? target : null;
+    },
   });
 
   function rebaseApproved(approvedPolicyVersionId: string) {
@@ -692,6 +699,7 @@ export function useEscalasWorkspace() {
     createApproved,
     addEmployee,
     removeEmployee,
+    changeAbsence,
     replaceImport,
     rebaseApproved,
     upgradeCalendar,

@@ -92,6 +92,111 @@ describe("December conversion coverage", () => {
 });
 
 describe("isolated schedule processor client", () => {
+  it("pins nominal days with missing legacy flags and restores the original records", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.employees.push({ ...input.employees[0], id: "day-duty", registration: "02",
+      scheduleMode: "UNTIMED", shiftIds: [] });
+    const dutyDays = completeAssignments().map(({ shiftId: _shift, ...day }, index) => ({
+      ...day, employeeId: "day-duty", kind: day.kind === "WORK" ? "DUTY" as const : day.kind,
+      ...(index === 1 ? {} : { locked: false }),
+    }));
+    input.assignments = [...completeAssignments().map((day, index) => index < 2 ? day : { ...day, locked: false }),
+      ...dutyDays];
+    const original = structuredClone(input);
+    const worker = vi.fn(async (_url: URL, options: RequestInit) => {
+      const sent = JSON.parse(String(options.body)).input as EscalaInput;
+      expect(sent.assignments.slice(0, 3).map(day => day.locked)).toEqual([true, true, false]);
+      expect(sent.assignments.find(day => day.employeeId === "day-duty" && day.date === "2026-11-03"))
+        .toMatchObject({ kind: "DUTY", locked: true });
+      expect(sent).not.toHaveProperty("preserveImplicitLocks");
+      return Response.json({ status: "FEASIBLE", assignments: sent.assignments, message: "Synthetic", wallTimeSeconds: 1 });
+    });
+    vi.stubGlobal("fetch", worker);
+    const result = await solveEscala(input, { preserveImplicitLocks: true });
+    expect(result.assignments).toEqual(original.assignments);
+    expect(input).toEqual(original);
+    expect(worker).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["changed", "removed", "unlocked"] as const)("rejects a %s implicitly protected day in the worker result", async change => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.assignments = completeAssignments().map((day, index) => index === 0 ? day : { ...day, locked: false });
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, options: RequestInit) => {
+      const result = (JSON.parse(String(options.body)).input as EscalaInput).assignments;
+      const day = result[0];
+      const assignments = change === "removed" ? result.slice(1)
+        : [{ ...day, ...(change === "changed" ? { kind: "WORK", shiftId: "day" } : { locked: false }) }, ...result.slice(1)];
+      return Response.json({ status: "FEASIBLE", assignments, message: "Synthetic", wallTimeSeconds: 1 });
+    }));
+    await expect(solveEscala(input, { preserveImplicitLocks: true })).rejects.toMatchObject({ code: "SOLVER_PROTECTED_RECORD_CHANGED" });
+  });
+
+  it("rejects preparation that already changed an implicitly protected day", async () => {
+    const original = fixture();
+    original.assignments = completeAssignments();
+    const prepared = structuredClone(original);
+    prepared.assignments[0] = { ...prepared.assignments[0], kind: "WORK", shiftId: "day" };
+    const worker = vi.fn();
+    vi.stubGlobal("fetch", worker);
+    await expect(solveEscala(prepared, { qualityReference: original, preserveImplicitLocks: true }))
+      .rejects.toMatchObject({ code: "SOLVER_PROTECTED_RECORD_CHANGED" });
+    expect(worker).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy flags in the administrative solver payload", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.assignments = completeAssignments();
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, options: RequestInit) => {
+      const sent = JSON.parse(String(options.body)).input as EscalaInput;
+      expect(sent.assignments).toEqual(input.assignments);
+      return Response.json({ status: "FEASIBLE", assignments: sent.assignments, message: "Synthetic", wallTimeSeconds: 1 });
+    }));
+    expect((await solveEscala(input, { preserveImplicitLocks: false })).assignments).toEqual(input.assignments);
+  });
+
+  it("restores the original absence source when the HOURS_ONLY worker echoes assignments", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.generationMode = "HOURS_ONLY";
+    input.employees.push({ ...input.employees[0], id: "excluded", registration: "02", planningEnabled: false });
+    const absence = { employeeId: "excluded", date: "2026-11-03", kind: "ABSENCE", absenceSource: "MANUAL", locked: true } as const;
+    input.employees[1].history = [{ ...absence, date: "2026-11-01" }];
+    input.assignments = [...completeAssignments(), absence];
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, options: RequestInit) => {
+      const sent = JSON.parse(String(options.body)).input as EscalaInput;
+      expect(sent.assignments.at(-1)).toEqual({ employeeId: "excluded", date: "2026-11-03", kind: "ABSENCE", locked: true });
+      expect(sent.employees[1].history[0]).not.toHaveProperty("absenceSource");
+      return Response.json({ status: "FEASIBLE", assignments: sent.assignments, message: "Synthetic", wallTimeSeconds: 1 });
+    }));
+    expect((await solveEscala(input, { preserveImplicitLocks: true })).assignments).toEqual(input.assignments);
+  });
+
+  it("excludes manual absence metadata from the optimizer seed and rejects a fallback that drops its origin", async () => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input = fixture();
+    input.employees.push({ ...input.employees[0], id: "excluded", registration: "02", planningEnabled: false });
+    input.assignments = [...completeAssignments(),
+      { employeeId: "excluded", date: "2026-11-03", kind: "ABSENCE", absenceSource: "MANUAL", locked: true }];
+    const refine = vi.spyOn(rosterRefinement, "refineRoster")
+      .mockImplementation(value => ({ ...value, assignments: [...value.assignments] }));
+    const select = vi.spyOn(rosterQuality, "selectVerifiedRoster")
+      .mockImplementation((_old, candidate) => ({ input: { ...candidate, assignments: candidate.assignments.map(
+        ({ absenceSource: _absenceSource, ...day }) => day) }, retainedReference: true }))
+      .mockImplementationOnce((_old, proposal) => ({ input: proposal, retainedReference: false }));
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, options: RequestInit) => {
+      const sent = JSON.parse(String(options.body)).input as EscalaInput & { _initialAssignments: EscalaInput["assignments"] };
+      expect(sent._initialAssignments.at(-1)).toMatchObject({ kind: "ABSENCE" });
+      expect(sent._initialAssignments.at(-1)).not.toHaveProperty("absenceSource");
+      return Response.json({ status: "FEASIBLE", assignments: sent.assignments, message: "Synthetic", wallTimeSeconds: 1 });
+    }));
+    try {
+      await expect(solveEscala(input)).rejects.toMatchObject({ code: "SOLVER_PROTECTED_RECORD_CHANGED" });
+    } finally { select.mockRestore(); refine.mockRestore(); }
+  });
+
   it("keeps the administrative sector off the private processor payload and restores unchanged saved records", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const data = fixture();

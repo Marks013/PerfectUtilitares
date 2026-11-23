@@ -38,11 +38,15 @@ export type EscalaApprovePolicyCommand = {
 };
 export type EscalaPolicyCommand = EscalaApprovePolicyCommand | { action: "REVOKE"; id: string };
 type EscalaVersionTarget = { id: string; expectedRevision: number };
+export type EscalaAbsenceCommand = {
+  action: "ADD_ABSENCE" | "REMOVE_ABSENCE"; employeeId: string; startDate: string; endDate: string;
+};
 export type EscalaOperationalCommand =
   | { action: "CREATE_APPROVED"; approvedPolicyVersionId: string }
   | ({ action: "APPLY_PROPOSAL"; input: EscalaInput; proposalProof: string } & EscalaVersionTarget)
   | ({ action: "ADD_EMPLOYEE"; regimeModelId: string; name: string; registration: string } & EscalaVersionTarget)
   | ({ action: "REMOVE_EMPLOYEE"; employeeId: string } & EscalaVersionTarget)
+  | (EscalaAbsenceCommand & EscalaVersionTarget)
   | ({ action: "ADMIN_REBASE"; approvedPolicyVersionId: string } & EscalaVersionTarget)
   | ({ action: "VALIDATE" | "SAVE"; input: EscalaInput } & EscalaVersionTarget);
 export type EscalaWorkspaceAccessMetadata = { approvedPolicyVersionId: string | null };

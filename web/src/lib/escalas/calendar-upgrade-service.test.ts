@@ -1,13 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { POST } from "@/app/api/escalas/route";
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
 import { EscalaError } from "./access";
+import { buildEscalaApprovedPolicy } from "./approved-policy";
 import { dateRange, dayOfWeek } from "./dates";
-import { createEscala, generateEscala, saveEscala, upgradeEscalaCalendar } from "./service";
+import { createEscala, generateEscala, getEscala, saveEscala, upgradeEscalaCalendar } from "./service";
 import type { EscalaInput } from "./types";
 import { validateEscala } from "./validation";
 
 const db = vi.hoisted(() => ({ rows: new Map<string, Record<string, unknown>>(), versions: new Map<string, Record<string, unknown>>(),
-  inserts: vi.fn(), updates: vi.fn(), audits: vi.fn(), published: vi.fn(), solve: vi.fn(), stale: false }));
+  inserts: vi.fn(), updates: vi.fn(), audits: vi.fn(), published: vi.fn(), solve: vi.fn(), approval: vi.fn(), session: vi.fn(), stale: false }));
+vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/escalas/access.server", () => ({ requireEscalaAccess: async () => ({ ok: true, actor: nominal }) }));
+vi.mock("@/lib/api/security", async original => ({
+  ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: async () => null,
+}));
 vi.mock("./solver-client", async (original) => ({ ...await original<typeof import("./solver-client")>(), solveEscala: db.solve }));
 vi.mock("./solver-transport", async (original) => {
   const { createHmac } = await import("node:crypto");
@@ -44,7 +51,9 @@ vi.mock("@/lib/prisma", () => {
     }),
   };
   const access = {
-    escalaModuleAccessPolicy: { findUnique: vi.fn(async () => null) },
+    escalaModuleAccessPolicy: { findUnique: vi.fn(async () => ({ tenantId: "synthetic-company", mode: "SCOPED", version: 1 })) },
+    escalaModuleSession: { findFirst: db.session },
+    escalaBranchPolicyVersion: { findFirst: db.approval },
     user: { findFirst: vi.fn(async ({ where }: { where: { id: string; tenantId: string } }) =>
       where.id === "synthetic-user" && where.tenantId === "synthetic-company"
         ? { ...where, status: "ACTIVE", role: "ADMIN", securityVersion: 1 } : null) },
@@ -55,6 +64,7 @@ vi.mock("@/lib/prisma", () => {
 });
 
 const actor = { userId: "synthetic-user", tenantId: "synthetic-company", admin: true, accountSessionId: "synthetic-session" };
+const nominal = { userId: null, tenantId: actor.tenantId, admin: false, moduleSessionId: "nominal-session" };
 function source(): EscalaInput {
   const input = newInput("06", "Filial sintética", "2026-12", 42);
   return { ...input, planningWeekStartsOn: "MONDAY", startDate: "2026-11-30", endDate: "2027-01-03",
@@ -66,6 +76,13 @@ function source(): EscalaInput {
 beforeEach(() => {
   db.published.mockReset().mockResolvedValue([]);
   db.solve.mockReset().mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 0.1, message: "Processador simulado" });
+  db.approval.mockReset().mockResolvedValue(null);
+  db.session.mockReset().mockImplementation(async ({ where }) => where.id === nominal.moduleSessionId && where.tenantId === nominal.tenantId
+    ? { id: where.id, tenantId: where.tenantId, operatorId: "nominal-operator", permissionVersion: 1, accessPolicyVersion: 1,
+      createdAt: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 60000), revokedAt: null,
+      operator: { id: "nominal-operator", tenantId: where.tenantId, active: true, permissionVersion: 1,
+        branchGrants: [{ tenantId: where.tenantId, operatorId: "nominal-operator", branchCode: "06", active: true,
+          capabilities: ["workspace.read", "schedule.generate"] }] } } : null);
   db.rows.clear(); db.versions.clear(); db.inserts.mockClear(); db.updates.mockClear(); db.audits.mockClear(); db.stale = false;
   db.rows.set("source", { id: "source", tenantId: actor.tenantId, branchCode: "06", branchName: "Filial sintética", startDate: "2026-11-30", endDate: "2027-01-03", revision: 7, status: "DRAFT", updatedAt: new Date("2026-11-18T00:00:00Z") });
   db.versions.set(JSON.stringify([actor.tenantId, "source", 7]), { revision: 7, status: "DRAFT", input: source(), createdAt: new Date("2026-11-18T00:00:00Z") });
@@ -103,6 +120,98 @@ describe("December origin ruler", () => {
     if (!stored) throw new Error("Missing synthetic draft");
     return { created, legacy, stored, original };
   }
+
+  async function approvedConversion() {
+    const conversion = await convert(new Set([1, 3, 6, 9, 13, 17, 20, 23, 27, 30]));
+    const { created, stored } = conversion;
+    const built = buildEscalaApprovedPolicy({ input: created.input, version: 1, selectedSeedAssignments: [],
+      regimeModelSelections: [{ id: "model", label: "Regime sintético", employeeId: "e1" }],
+      provenance: { tenantId: actor.tenantId, approvedById: actor.userId, approvedAt: "2026-11-18T00:00:00.000Z",
+        origin: { workspaceId: created.id, revision: created.revision } } });
+    if (!built.ok) throw new Error("Invalid current approval fixture");
+    const approval = { ...built.value, id: "current-approval", revokedAt: null as Date | null, approvedAt: new Date(built.value.approvedAt) };
+    stored.approvedPolicyVersionId = approval.id;
+    db.approval.mockImplementation(async ({ where }) => where.id === approval.id && where.tenantId === approval.tenantId ? approval : null);
+    return { ...conversion, approval };
+  }
+
+  function generateViaRoute(id: string, expectedRevision: number) {
+    return POST(new Request("http://localhost/api/escalas", { method: "POST", headers: {
+      origin: "http://localhost", "content-type": "application/json",
+    }, body: JSON.stringify({ action: "GENERATE", id, expectedRevision }) }));
+  }
+
+  it("generates via HTTP for a nominal operator using only the immutable unapproved origin internally", async () => {
+    const { created, legacy, original, stored } = await approvedConversion();
+    const sourceRow = db.rows.get("source");
+    if (!sourceRow) throw new Error("Missing synthetic origin");
+    sourceRow.revision = 8;
+    const latest = structuredClone(legacy);
+    latest.demands[0].minimum = 99;
+    db.versions.set(versionKey("source", 8), { ...original, revision: 8, input: latest });
+    const before = structuredClone([original, stored]);
+    await expect(getEscala(nominal, "source", 7)).rejects.toMatchObject({ code: "ESCALA_CONFIG_APPROVAL_REQUIRED" });
+    vi.stubEnv("UNIMED_ACCESS_COOKIE_SECRET", "synthetic-december-proposal-test-material-0000");
+    try {
+      db.solve.mockResolvedValueOnce({ status: "FEASIBLE", assignments: created.input.assignments, wallTimeSeconds: 0.1, message: "Sintético" });
+      const response = await generateViaRoute(created.id, created.revision);
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(await response.json()).toMatchObject({ result: { status: "FEASIBLE" }, validation: { valid: true }, proposalProof: expect.any(String) });
+      expect(db.solve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ demands: legacy.demands.slice(0, 2) }),
+        expect.objectContaining({ admittedDecemberOrigin: expect.objectContaining({ demands: legacy.demands.slice(0, 2) }) }));
+      expect(db.approval).toHaveBeenCalledTimes(2);
+      expect([original, stored]).toEqual(before);
+      expect(db.updates).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(["absent", "revoked"] as const)("refuses a nominal generation with %s current approval", async failure => {
+    const { created, stored, approval } = await approvedConversion();
+    if (failure === "absent") delete stored.approvedPolicyVersionId;
+    else approval.revokedAt = new Date();
+    const response = await generateViaRoute(created.id, created.revision);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: failure === "absent" ? "ESCALA_CONFIG_APPROVAL_REQUIRED" : "ESCALA_CONFIG_REVOKED" } });
+    expect(db.solve).not.toHaveBeenCalled();
+  });
+
+  it("withholds a nominal result when the current approval is revoked during generation", async () => {
+    const { created, approval } = await approvedConversion();
+    db.solve.mockImplementationOnce(async () => {
+      approval.revokedAt = new Date();
+      return { status: "UNKNOWN", assignments: [], wallTimeSeconds: 0.1, message: "Sintético" };
+    });
+    const response = await generateViaRoute(created.id, created.revision);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "ESCALA_CONFIG_REVOKED", message: expect.any(String) } });
+    expect(db.solve).toHaveBeenCalledTimes(1);
+    expect(db.updates).not.toHaveBeenCalled();
+  });
+
+  it.each(["branch", "tenant", "revision", "domain"] as const)("does not admit a nominal historical origin from another %s", async failure => {
+    const { created, original, legacy } = await approvedConversion();
+    const sourceRow = db.rows.get("source");
+    if (!sourceRow) throw new Error("Missing synthetic origin");
+    if (failure === "branch") sourceRow.branchCode = "09";
+    if (failure === "tenant") sourceRow.tenantId = "foreign-company";
+    if (failure === "revision") db.versions.delete(versionKey("source", 7));
+    if (failure === "domain") original.input = { ...legacy, branchCode: "09" };
+    const response = await generateViaRoute(created.id, created.revision);
+    if (failure === "domain") {
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(db.solve).toHaveBeenCalledTimes(1);
+      const [context, options] = db.solve.mock.calls[0];
+      expect(options.admittedDecemberOrigin).toBeUndefined();
+      expect(context.demands).toEqual(expect.arrayContaining(created.input.demands));
+      expect(context.demands.map((demand: { id: string }) => demand.id)).not.toContain("origin-estimated-december");
+    } else {
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: { code: "ESCALA_DECEMBER_ORIGIN_UNAVAILABLE" } });
+      expect(db.solve).not.toHaveBeenCalled();
+    }
+  });
 
   it("reloads the pinned origin after actual upgrade and passes its clipped ruler to generation", async () => {
     const { created, legacy, original, stored } = await convert();

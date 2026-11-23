@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { EscalaRequestError, responseCode, solverProblem, toEscalaProblem } from "./workspace-feedback-model";
 
 describe("plain language planning recovery", () => {
+  it("distinguishes a blocked absence range from a concurrent revision change", () => {
+    expect(toEscalaProblem(new EscalaRequestError("ESCALA_ABSENCE_CONFLICT", 409, "raw"))).toMatchObject({
+      message: "O período inclui dias protegidos.", explanation: expect.stringContaining("Nenhum dia foi alterado"),
+    });
+    expect(toEscalaProblem(new EscalaRequestError("ESCALA_STALE_REVISION", 409, "raw")).action).toBe("reload");
+    expect(toEscalaProblem(new EscalaRequestError("ESCALA_ABSENCE_IMPORT_PROTECTED", 403, "raw")).message).toContain("lançamentos manuais");
+  });
   it("explains missing and revoked administrative approval without sending the operator to edit protected rules", () => {
     for (const code of ["ESCALA_CONFIG_APPROVAL_REQUIRED", "ESCALA_CONFIG_REVOKED"]) {
       const problem = toEscalaProblem(new EscalaRequestError(code, 409, "private"));

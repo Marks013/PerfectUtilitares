@@ -7,6 +7,7 @@ export type EscalaAssignment = {
   kind: "WORK" | "DUTY" | "OFF" | "ABSENCE" | "HOLIDAY";
   shiftId?: string;
   locked?: boolean;
+  absenceSource?: "MANUAL";
 };
 export type EscalaShift = {
   id: string;

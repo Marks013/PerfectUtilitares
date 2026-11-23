@@ -11,7 +11,7 @@ import type { EscalaInput } from "./types";
 type Admission = ReturnType<typeof admitCandidateReference>;
 type Calculation = Awaited<ReturnType<typeof solveEscala>>;
 
-async function loadDecemberOrigin(actor: EscalaActor, id: string, saved: EscalaInput, context: EscalaInput) {
+async function loadDecemberOrigin(actor: EscalaActor, id: string, saved: EscalaInput, context: EscalaInput, currentApprovalVerified: boolean) {
   const origin = saved.planningCalendarSource;
   if (!origin) return undefined;
   const row = await prisma.escalaWorkspace.findFirst({
@@ -22,7 +22,8 @@ async function loadDecemberOrigin(actor: EscalaActor, id: string, saved: EscalaI
     const version = await prisma.escalaRevision.findUnique({ where: {
       tenantId_workspaceId_revision: { tenantId: actor.tenantId, workspaceId: row.id, revision: origin.revision },
     } });
-    if (version?.revision === origin.revision && (actor.admin || version.approvedPolicyVersionId)) {
+    // A verified approval on the current draft permits internal use of its pinned legacy origin.
+    if (version?.revision === origin.revision && (actor.admin || version.approvedPolicyVersionId || currentApprovalVerified)) {
       const source = escalaInputSchema.safeParse(version.input);
       if (source.success) return admitDecemberOriginReference(source.data, saved, context);
     }
@@ -31,11 +32,11 @@ async function loadDecemberOrigin(actor: EscalaActor, id: string, saved: EscalaI
     "A revisão de origem deste rascunho está indisponível. Confira a escala original antes de gerar dezembro.");
 }
 
-export async function prepareDecemberCoverage(actor: EscalaActor, id: string, saved: EscalaInput, context: EscalaInput) {
+export async function prepareDecemberCoverage(actor: EscalaActor, id: string, saved: EscalaInput, context: EscalaInput, currentApprovalVerified: boolean) {
   if (!isDecember2026Cutover(context)) return { contextual: context };
   const aligned = alignPersistedCoverageTarget(saved, context);
   if (aligned !== context || !saved.needsRegeneration) return { contextual: aligned };
-  const origin = await loadDecemberOrigin(actor, id, saved, context);
+  const origin = await loadDecemberOrigin(actor, id, saved, context, currentApprovalVerified);
   return { origin, contextual: origin ? { ...context, demands: origin.demands, coverageBasis: origin.coverageBasis } : context };
 }
 

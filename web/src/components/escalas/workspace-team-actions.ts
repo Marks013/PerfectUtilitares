@@ -6,11 +6,13 @@ type Revision = Pick<EscalaWorkspace, "id" | "revision">;
 type TeamCommand =
   | Pick<Extract<EscalaOperationalCommand, { action: "ADD_EMPLOYEE" }>, "action" | "regimeModelId" | "name" | "registration">
   | Pick<Extract<EscalaOperationalCommand, { action: "REMOVE_EMPLOYEE" }>, "action" | "employeeId">;
+export type AbsenceCommand = { action: "ADD_ABSENCE" | "REMOVE_ABSENCE"; employeeId: string; startDate: string; endDate: string };
 
-export function workspaceTeamActions({ workspaceId, canCreate, canChangeTeam, run, flushDraft, acceptWorkspace, setNotice }: {
+export function workspaceTeamActions({ workspaceId, canCreate, canChangeTeam, absenceTarget, run, flushDraft, acceptWorkspace, setNotice }: {
   workspaceId?: string;
   canCreate: boolean;
   canChangeTeam: boolean;
+  absenceTarget?: () => Revision | null;
   run: (label: string, operation: (signal: AbortSignal, isCurrent: () => boolean) => Promise<void>) => Promise<void>;
   flushDraft: () => Promise<Revision | null>;
   acceptWorkspace: (value: EscalaWorkspace) => void;
@@ -45,8 +47,26 @@ export function workspaceTeamActions({ workspaceId, canCreate, canChangeTeam, ru
     return confirmed;
   }
 
+  async function changeAbsence(command: AbsenceCommand) {
+    const target = absenceTarget?.();
+    if (!target) return false;
+    const adding = command.action === "ADD_ABSENCE";
+    let confirmed = false;
+    await run(adding ? "Salvando afastamento…" : "Excluindo afastamento…", async (signal, isCurrent) => {
+      const result = await operationalCommand({ ...command, id: target.id, expectedRevision: target.revision }, signal);
+      const current = absenceTarget?.();
+      if (!isCurrent() || current?.id !== target.id || current.revision !== target.revision) return;
+      acceptWorkspace(result);
+      confirmed = true;
+      setNotice(adding ? "Afastamento salvo. A próxima geração vai considerar o período registrado."
+        : "Afastamento excluído. Gere Só folgas ou Folgas e horários para preencher os dias liberados.");
+    });
+    return confirmed;
+  }
+
   return {
     createApproved,
+    changeAbsence,
     addEmployee: (regimeModelId: string, name: string, registration: string) => changeTeam({ action: "ADD_EMPLOYEE", regimeModelId, name, registration }),
     removeEmployee: (employeeId: string) => changeTeam({ action: "REMOVE_EMPLOYEE", employeeId }),
   };

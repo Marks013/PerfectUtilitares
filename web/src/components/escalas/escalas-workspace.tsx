@@ -11,6 +11,7 @@ import { isDecember2026Cutover, planningWeekStartsOn } from "@/lib/escalas/plann
 import type { EscalaExportMode } from "@/lib/escalas/presentation";
 import type { EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { AbsenceImport } from "./absence-import";
+import { ManualAbsences } from "./manual-absences";
 import { Rules, Shifts } from "./configuration";
 import { buttonClass, controlClass, Field, panelClass, primaryClass } from "./controls";
 import { CoverageTimeline } from "./coverage-timeline";
@@ -340,6 +341,10 @@ export function EscalasWorkspace() {
           <ImportEmployees workspace={workspace} disabled={!workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
           <AbsenceImport workspace={workspace} disabled={!workspace.canEdit || Boolean(model.recovery || model.generated || model.conflict)} operationPending={Boolean(model.busy)} pendingSave={model.dirty} onSave={model.save} replaceImport={model.replaceImport} />
         </div></details>}
+        {workspace.canEdit && workspace.status === "DRAFT" && can("workspace.save") && can("employee.manage") && <ManualAbsences key={workspace.id + ":" + workspace.revision}
+          workspace={workspace} administrator={unrestricted}
+          disabled={Boolean(!model.canEdit || model.dirty || model.saveState !== "saved" || model.generated || model.conflict)}
+          changeAbsence={model.changeAbsence} />}
         {input.employees.length > 0 && <details id="escala-team-restrictions" className={panelClass}><summary className={styles.disclosureTrigger}>Ver colaboradores e ajustar cadastro</summary>
           <div id="escala-team-review" tabIndex={-1} className="scroll-mt-24 rounded-md p-2 focus:outline-2 focus:outline-[color:var(--app-action-blue)]">
             {reviewContext?.target === "team" && <p className={styles.muted}>Localize o colaborador indicado e use Editar para conferir folgas fixas e horários permitidos. Dias bloqueados e ausências aparecem na área Escala. Nada será alterado apenas por abrir esta conferência.</p>}
