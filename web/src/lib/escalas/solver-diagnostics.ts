@@ -1,5 +1,7 @@
 const stages = new Set(["transport-body", "transport-json", "transport-http", "refinement", "result-schema", "assignment-schema", "completeness", "preservation", "selection-recheck", "independent-validation", "result-recheck", "service-schema", "service-preservation", "service-validation", "service-recheck"]);
 const codes = new Set(["BODY_MISSING", "BODY_LIMIT", "BODY_READ", "JSON_INVALID", "HTTP_REJECTED", "REFINEMENT_FAILED", "SCHEMA_INVALID", "MISSING_ACTIVE_DATE", "ASSIGNMENT_COUNT", "ABSENCE_CHANGED", "LOCK_CHANGED", "UNEXPECTED_ASSIGNMENTS", "PROTECTED_ASSIGNMENT_CHANGED", "RULES_INVALID", "HOURS_ONLY_CHANGED", "REST_ONLY_CHANGED", "RECHECK_FAILED"]);
+const coverageRecheckReasons = new Set(["REFERENCE_NOT_COMPARABLE", "SECTOR_COVERAGE", "CLOSING_COVERAGE", "SECTOR_PEAK", "DAILY_PRESENCE",
+  "ROLE_TIME_COVERAGE", "ROLE_TIME_PRESENCE"]);
 const rules = new Set(["invalid_type", "invalid_value", "invalid_format", "too_big", "too_small", "unrecognized_keys", "invalid_union", "custom", "SATURDAY_REST_FORBIDDEN", "CONSECUTIVE_REST_LIMIT", "DAY_PENDING", "WEEKLY_MINUTES", "WEEKLY_WORK_DAYS", "DAYS_WORKED", "WEEKLY_REST", "INTER_SHIFT_REST", "CONSECUTIVE_WORK", "DAILY_LIMIT", "MEAL_INTERVAL", "STORE_CLOSING_EXCEEDED", "SHIFT_NOT_ALLOWED", "SCHEDULE_MODE", "ABSENCE_OCCUPIED", "HOLIDAY_CLOSURE", "OFF_OCCUPIED", "FIXED_OFF", "COVERAGE", "OUTSIDE_EMPLOYMENT"]);
 const fields = new Set(["assignments", "employees", "shifts", "segments", "kind", "date", "employeeId", "shiftId", "locked", "start", "end", "status", "message", "wallTimeSeconds", "optimization", "phases", "objective", "members", "solverDiagnostics"]);
 // Literal rule codes from the independent Escalas validators; unknown extensions remain masked.
@@ -20,7 +22,8 @@ export function logSolverRejection(stage: string, code: string, details: Details
     if (issue.path && paths.size < 8) paths.add(issue.path.slice(0, 6).map(part => typeof part === "number" ? "[]" : typeof part === "string" && fields.has(part) ? part : "*").join("."));
   }
   try {
-    console.error({ event: "escala_solver_rejected", stage: stages.has(stage) ? stage : "unknown", code: codes.has(code) ? code : "UNKNOWN",
+    const knownCode = codes.has(code) || stage === "result-recheck" && coverageRecheckReasons.has(code);
+    console.error({ event: "escala_solver_rejected", stage: stages.has(stage) ? stage : "unknown", code: knownCode ? code : "UNKNOWN",
       expected: count(details.expected), actual: count(details.actual),
       httpStatus: typeof details.httpStatus === "number" && details.httpStatus >= 100 && details.httpStatus <= 599 ? Math.trunc(details.httpStatus) : undefined,
       issueCount: details.issues?.length ?? 0, ruleCounts, paths: [...paths] });

@@ -70,6 +70,13 @@ describe("plain language planning recovery", () => {
     expect(solverProblem("INFEASIBLE", "Cobertura sem horário disponível em 2026-11-02.")).toMatchObject({ tone: "warning", action: "coverage" });
     expect(toEscalaProblem(new EscalaRequestError("ESCALA_SETUP_REQUIRED", 422, "raw"))).toMatchObject({ action: "team" });
   });
+  it("explains a rejected coverage comparison without exposing the calculation payload", () => {
+    const problem = toEscalaProblem(new EscalaRequestError("ESCALA_FROZEN_COVERAGE_REGRESSION", 422, "private worker text"));
+    expect(problem).toMatchObject({ action: "coverage", actionLabel: "Conferir cobertura", tone: "error" });
+    expect(problem.message).toContain("cobertura protegida");
+    expect(problem.explanation).toContain("grade salva ficou intacta");
+    expect(JSON.stringify(problem)).not.toContain("private worker text");
+  });
   it("keeps an expired module session recoverable without discarding the draft and hides unknown server detail", () => {
     expect(toEscalaProblem(new EscalaRequestError("AUTH_REQUIRED", 401, "raw"))).toMatchObject({ action: "login" });
     const problem = toEscalaProblem(new EscalaRequestError("OTHER", 500, "credential-secret/private-person"));

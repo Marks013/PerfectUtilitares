@@ -18,6 +18,17 @@ describe("fixed solver rejection diagnostics", () => {
       expect(JSON.stringify(log.mock.calls)).not.toContain(sentinel);
     } finally { log.mockRestore(); }
   });
+  it("allows fixed coverage comparison reasons only during final recheck", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logSolverRejection("result-recheck", "ROLE_TIME_PRESENCE");
+      expect(log).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "result-recheck", code: "ROLE_TIME_PRESENCE" }));
+      logSolverRejection("result-recheck", "ROLE_TIME_PRESENCE_PRIVATE_PAYLOAD");
+      expect(log).toHaveBeenLastCalledWith(expect.objectContaining({ code: "UNKNOWN" }));
+      logSolverRejection("result-schema", "ROLE_TIME_PRESENCE");
+      expect(log).toHaveBeenLastCalledWith(expect.objectContaining({ code: "UNKNOWN" }));
+    } finally { log.mockRestore(); }
+  });
   it("does not replace the original failure if the diagnostic sink fails", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => { throw new Error("PRIVATE_SINK_SENTINEL"); });
     try { expect(() => logSolverRejection("transport-json", "JSON_INVALID")).not.toThrow(); }

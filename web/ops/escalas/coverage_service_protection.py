@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
-from model_input import SERVICE_SCOPES
+from model_input import SERVICE_SCOPES, coverage_advisory_estimate_dates
 from rest_quality import visible_month
 
 
@@ -19,7 +19,9 @@ ZONE = ZoneInfo("America/Sao_Paulo")
 
 def _scope_dates(dates, data):
     month = visible_month(data)
-    full = frozenset(dates)
+    # Aggregate floors use the same civil dates as the frozen comparison.
+    # Keep original dates for exact-day guards and shift spill across midnight.
+    full = frozenset(dates) - coverage_advisory_estimate_dates(data)
     shown = frozenset(day for day in full if not month or day.startswith(month + "-"))
     sundays = frozenset(day for day in full if date.fromisoformat(day).weekday() == 6)
     return dict(zip(SERVICE_SCOPES, (full, shown, sundays, shown & sundays)))

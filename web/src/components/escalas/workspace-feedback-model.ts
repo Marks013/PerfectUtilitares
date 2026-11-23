@@ -49,6 +49,10 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
   if (code === "SOLVER_RESPONSE_INCOMPLETE") return problem("O cálculo retornou uma proposta incompleta.", "A proposta não cobre todos os dias exigidos e não foi aplicada. Gere novamente; a escala salva foi preservada.", "generate", "Gerar novamente");
   if (code === "SOLVER_PROTECTED_RECORD_CHANGED") return problem("A proposta alterava um registro protegido.", "A proposta foi recusada. Ausências, horários e bloqueios salvos foram preservados. Se repetir, informe ao suporte.");
   if (code === "SOLVER_RULES_INVALID") return problem("A proposta não atende às regras obrigatórias.", "A proposta foi recusada e a escala salva foi mantida. Confira a regra indicada ou informe ao suporte.", "rules", "Conferir regras");
+  if (code === "ESCALA_FROZEN_COVERAGE_REGRESSION") return problem(
+    "Não foi possível confirmar que a proposta mantém a cobertura protegida.",
+    "A grade salva ficou intacta. Confira a cobertura por setor e horário antes de tentar outra proposta. Nenhum mínimo, bloqueio ou afastamento foi alterado.",
+    "coverage", "Conferir cobertura");
   if (code === "ESCALA_OPERATION_CHANGED") return problem("O estado deste cálculo mudou.", "Confira a revisão atual antes de iniciar uma nova proposta. A escala salva foi preservada.", "reload", "Conferir revisão atual");
   if (code === "SOLVER_TIMED_OUT") return problem("O prazo deste cálculo terminou.", "A escala salva foi preservada. Gere novamente quando estiver pronto.", "generate", "Gerar novamente");
   if (code === "SOLVER_INVALID_RESPONSE") return problem("O cálculo não passou pela conferência de segurança.", "A resposta recebida não foi aplicada. Tente gerar novamente; se o problema continuar, informe ao suporte. Sua proposta anterior foi preservada.", "generate", "Gerar novamente");
