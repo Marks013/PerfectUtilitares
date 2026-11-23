@@ -49,7 +49,9 @@ describe("verified processor quality delivery", () => {
       .toMatchObject({ status: 422, code: "ESCALA_FROZEN_COVERAGE_REGRESSION" });
     expect(requestSolver).toHaveBeenLastCalledWith(expect.objectContaining({ assignments: [], demands: origin.demands }), expect.objectContaining({
       coverageComparison: expect.objectContaining({ dailyBands: [] }),
-      coverageServiceProtection: expect.objectContaining({ bands: [] }),
+      coverageServiceProtection: expect.objectContaining({ bands: expect.arrayContaining([{
+        sector: "Loja", role: "Operador", scope: "HORIZON", start: 480, end: 720, minimum: 21,
+      }]) }),
     }));
     vi.mocked(requestSolver).mockResolvedValueOnce({ status: "FEASIBLE", message: "Preserved", assignments: origin.assignments, wallTimeSeconds: 1 });
     await expect(solveEscala(input, { admittedDecemberOrigin: origin })).resolves.toMatchObject({

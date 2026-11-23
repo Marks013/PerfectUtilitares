@@ -14,13 +14,13 @@ import { compareBranches } from "./order";
 import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./dates";
 import { clearDecemberBoundaryContext, preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
 import { isDecember2026Cutover } from "./planning-calendar";
-import { prepareDecemberCoverage } from "./december-origin.server";
+import { admitDecemberCandidate, calculateWithDecemberFallback, prepareDecemberCoverage, selectDecemberCandidate } from "./december-origin.server";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { assertEscalaEmployeeRemovalAllowed, inputWithoutEscalaEmployee } from "./employee-removal";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
-import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
-import { compareRosterCoverage, isOperationallyReusable, preservesAdmittedDecemberCoverage } from "./roster-quality";
+import { admitCandidateReference, issueCandidateReceipt } from "./candidate-reference.server";
+import { isOperationallyReusable } from "./roster-quality";
 import type { EscalaCandidateResponse } from "./candidate-reference";
 import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
@@ -611,18 +611,13 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   requireSolverSetup(prepared.input);
   const context = await planningContext(actor, id, parseEscalaInput(prepared.input));
   const { contextual, origin } = await prepareDecemberCoverage(actor, id, qualityReference, context);
-  const coverageReference = origin ?? qualityReference;
-  const coverageMode = origin ? "DECEMBER_DEMAND" as const : undefined;
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
   if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
-  const admitted = admitCandidateReference(comparisonReference, scope, qualityReference, contextual);
-  const meetsOrigin = (proposal: EscalaInput) => preservesAdmittedDecemberCoverage(
-    compareRosterCoverage(coverageReference, proposal, coverageReference, coverageMode),
+  const admission = admitDecemberCandidate(admitCandidateReference(comparisonReference, scope, qualityReference, contextual), origin);
+  const { calculation, retainedReference } = await calculateWithDecemberFallback(
+    solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin }),
+    origin && admission.input,
   );
-  const admission: ReturnType<typeof admitCandidateReference> = origin && admitted.input && !meetsOrigin(admitted.input)
-    ? { comparison: { admission: "INCOMPATIBLE", selection: "NOT_USED", reason: "FROZEN_COVERAGE_REGRESSION" } }
-    : admitted;
-  const calculation = await solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin });
   let result = calculation.status === "INFEASIBLE" ? {
     ...calculation, conflicts: [...findGenerationConflicts(contextual), ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
       code: `SOLVER_${diagnostic.family}`, message: diagnostic.message,
@@ -655,10 +650,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   }
   let comparison = admission.comparison;
   if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
-    if (origin && !meetsOrigin(proposalInput)) {
-      throw new EscalaError(422, "ESCALA_FROZEN_COVERAGE_REGRESSION", "A proposta perdeu cobertura em relação à referência de dezembro. O rascunho salvo foi preservado.");
-    }
-    const selected = selectCandidateReference(admission, proposalInput, coverageReference, coverageMode);
+    const selected = selectDecemberCandidate(admission, proposalInput, qualityReference, origin, retainedReference);
     comparison = selected.comparison;
     if (comparison.selection === "REFERENCE_RETAINED") {
       proposalInput = parseEscalaInput(selected.input);

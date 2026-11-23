@@ -71,7 +71,9 @@ describe("December conversion coverage", () => {
         date: "2026-12-07", sector: "Loja", role: "Repositor", start: 1180, end: 1200, maximum: 1,
       }]));
       expect(input).toHaveProperty("_coverageServiceProtection.days", expect.arrayContaining([{ date: "2026-12-07", sector: "Loja" }]));
-      expect(input).toHaveProperty("_coverageServiceProtection.bands", []);
+      expect(input).toHaveProperty("_coverageServiceProtection.bands", expect.arrayContaining([{
+        sector: "Loja", role: "Repositor", scope: "HORIZON", start: 480, end: 720, minimum: 31,
+      }]));
       expect(input).not.toHaveProperty("admittedDecemberOrigin");
       expect(input).not.toHaveProperty("_monthlyClockOptions");
       return Response.json({ status: "UNKNOWN", assignments: [], message: "Processador simulado", wallTimeSeconds: 1 });

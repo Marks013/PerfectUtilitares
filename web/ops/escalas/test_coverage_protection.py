@@ -466,6 +466,43 @@ class CoverageComparisonTests(unittest.TestCase):
                 self.assertEqual(result["assignments"], [])
                 self.assertIn("COVERAGE", [entry["family"] for entry in result["solverDiagnostics"]])
 
+    def test_december_demand_comparison_also_preserves_role_presence_outside_demand(self):
+        data = december_fixture()
+        target = "2026-12-02"
+        repositor = data["employees"][0]
+        backup = {**repositor, "id": "p1", "role": "Apoio", "fixedImportedShiftId": "day"}
+        data["employees"].append(backup)
+        data["shifts"].append({"id": "late", "segments": [
+            {**part, "start": part["start"] + 30, "end": part["end"] + 30}
+            for part in data["shifts"][0]["segments"]
+        ]})
+        repositor.update(shiftIds=["late"], fixedImportedShiftId="late")
+        data["assignments"] = [
+            {"employeeId": person["id"], "date": target, "kind": "WORK",
+             "shiftId": person["fixedImportedShiftId"], "locked": True}
+            for person in data["employees"]
+        ]
+        data["demands"] = [{"id": "later-demand", **protection(target, 540, 600), "estimated": True}]
+        data["_coverageComparison"] = {"sectors": [], "bands": [], "dailyBands": []}
+        service = {"days": [{"date": target, "sector": "Reposição"}], "bands": []}
+        data["_coverageServiceProtection"] = service
+        validate_model_input(data)
+        result = solve(data)
+        self.assertIn(result["status"], ("OPTIMAL", "FEASIBLE"), result)
+
+        # The estimate and sector-day remain covered. Only the Repositor is unavailable
+        # in this earlier band, where the other role cannot replace that presence.
+        service["bands"] = [service_band(start=480, end=510, scope="MONTH")]
+        validate_model_input(data)
+        result = solve(data)
+        self.assertEqual(result["status"], "INFEASIBLE", result)
+        self.assertEqual(result["assignments"], [])
+        self.assertTrue(any(
+            item["family"] == "COVERAGE" and "cargo Repositor" in item["message"]
+            and SERVICE_CONFLICT in item["message"]
+            for item in result["solverDiagnostics"]
+        ), result)
+
     def test_no_margin_exposes_the_comparison_family_without_changing_api_family(self):
         self.data["assignments"] = [{"employeeId": "p0", "date": day, "kind": "OFF", "locked": True}
                                    for day in ("2026-11-08", "2026-11-15")]

@@ -1,10 +1,15 @@
 import { prisma } from "@/lib/prisma";
 import { EscalaError, type EscalaActor } from "./access";
+import { type admitCandidateReference, selectCandidateReference } from "./candidate-reference.server";
 import { admitDecemberOriginReference } from "./december-origin-reference";
 import { isDecember2026Cutover } from "./planning-calendar";
-import { alignPersistedCoverageTarget } from "./roster-quality";
+import { alignPersistedCoverageTarget, compareRosterCoverage, preservesAdmittedDecemberCoverage } from "./roster-quality";
 import { escalaInputSchema } from "./schema";
+import type { solveEscala } from "./solver-client";
 import type { EscalaInput } from "./types";
+
+type Admission = ReturnType<typeof admitCandidateReference>;
+type Calculation = Awaited<ReturnType<typeof solveEscala>>;
 
 async function loadDecemberOrigin(actor: EscalaActor, id: string, saved: EscalaInput, context: EscalaInput) {
   const origin = saved.planningCalendarSource;
@@ -32,4 +37,34 @@ export async function prepareDecemberCoverage(actor: EscalaActor, id: string, sa
   if (aligned !== context || !saved.needsRegeneration) return { contextual: aligned };
   const origin = await loadDecemberOrigin(actor, id, saved, context);
   return { origin, contextual: origin ? { ...context, demands: origin.demands, coverageBasis: origin.coverageBasis } : context };
+}
+
+export function admitDecemberCandidate(admitted: Admission, origin?: EscalaInput): Admission {
+  if (!origin || !admitted.input || meetsOrigin(origin, admitted.input)) return admitted;
+  return { comparison: { admission: "INCOMPATIBLE", selection: "NOT_USED", reason: "FROZEN_COVERAGE_REGRESSION" } };
+}
+
+export async function calculateWithDecemberFallback(
+  solve: Promise<Calculation>, reference?: EscalaInput,
+): Promise<{ calculation: Calculation; retainedReference: boolean }> {
+  try {
+    return { calculation: await solve, retainedReference: false };
+  } catch (error) {
+    if (!reference || !(error instanceof EscalaError) || error.code !== "ESCALA_FROZEN_COVERAGE_REGRESSION") throw error;
+    return { retainedReference: true, calculation: { status: "FEASIBLE", assignments: reference.assignments, wallTimeSeconds: 0,
+      message: "A proposta anterior verificada preserva a cobertura de dezembro." } };
+  }
+}
+
+export function selectDecemberCandidate(admitted: Admission, candidate: EscalaInput, saved: EscalaInput, origin?: EscalaInput, retainedReference = false) {
+  if (!origin) return selectCandidateReference(admitted, candidate, saved);
+  if (!retainedReference && meetsOrigin(origin, candidate)) return selectCandidateReference(admitted, candidate, origin, "DECEMBER_DEMAND");
+  if (admitted.input) return { input: admitted.input, comparison: { ...admitted.comparison,
+    selection: "REFERENCE_RETAINED" as const, reason: "FROZEN_COVERAGE_REGRESSION" } };
+  throw new EscalaError(422, "ESCALA_FROZEN_COVERAGE_REGRESSION",
+    "A proposta perdeu cobertura em relação à referência de dezembro. O rascunho salvo foi preservado.");
+}
+
+function meetsOrigin(origin: EscalaInput, candidate: EscalaInput): boolean {
+  return preservesAdmittedDecemberCoverage(compareRosterCoverage(origin, candidate, origin, "DECEMBER_DEMAND"));
 }

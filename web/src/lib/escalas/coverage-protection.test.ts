@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { newEmployee, newInput } from "../../components/escalas/workspace-model";
 import { frozenCoverageService } from "./coverage-protection";
 import { dateRange } from "./dates";
-import { compareRosterCoverage } from "./roster-quality";
+import { compareRosterCoverage, frozenCoverageComparison } from "./roster-quality";
 import type { EscalaInput } from "./types";
 
 function fixture(): EscalaInput {
@@ -41,11 +41,13 @@ describe("frozen coverage service", () => {
     expect(input).toEqual(original);
   });
 
-  it("models both verifier protections even when no demand minimum is registered", () => {
+  it.each([false, true])("keeps presence protections in December with estimated demand=%s", withDemand => {
     const original = fixture();
     original.demands = [];
     original.employees = [original.employees[0], { ...original.employees[0], id: "second", registration: "4", role: "Repositor" }];
     const sunday = "2026-12-06", weekday = "2026-12-09", receiver = "2026-12-10";
+    if (withDemand) original.demands = [{ id: "sunday", date: sunday, sector: "Loja", role: "Repositor",
+      start: 936, end: 1200, minimum: 1, estimated: true }];
     original.assignments = original.employees.flatMap(person => dateRange(original.startDate, original.endDate).map(date =>
       date === sunday || date === weekday && person.id === "timed"
         ? { employeeId: person.id, date, kind: "WORK" as const, shiftId: "day" }
@@ -61,6 +63,11 @@ describe("frozen coverage service", () => {
         : row.date === receiver ? { ...row, kind: "WORK", shiftId: "day" } : row) });
     expect(compareRosterCoverage(original, move(weekday))).toMatchObject({ regressed: true, reason: "DAILY_PRESENCE" });
     expect(compareRosterCoverage(original, move(sunday))).toMatchObject({ regressed: true, reason: "ROLE_TIME_PRESENCE" });
+    expect(frozenCoverageComparison(move(sunday), "DECEMBER_DEMAND")).toEqual(frozenCoverageComparison(original, "DECEMBER_DEMAND"));
+    expect(compareRosterCoverage(original, move(weekday), original, "DECEMBER_DEMAND"))
+      .toMatchObject({ regressed: true, reason: "DAILY_PRESENCE" });
+    expect(compareRosterCoverage(original, move(sunday), original, "DECEMBER_DEMAND"))
+      .toMatchObject({ regressed: true, reason: "ROLE_TIME_PRESENCE", regression: { role: "Caixa" } });
   });
 
   it("does not protect fictitious coverage during an absence, including on a closed date", () => {

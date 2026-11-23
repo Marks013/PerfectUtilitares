@@ -1,12 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { newEmployee, newInput } from "@/components/escalas/workspace-model";
+import { EscalaError } from "./access";
 import { dateRange, dayOfWeek } from "./dates";
 import { createEscala, generateEscala, saveEscala, upgradeEscalaCalendar } from "./service";
 import type { EscalaInput } from "./types";
+import { validateEscala } from "./validation";
 
 const db = vi.hoisted(() => ({ rows: new Map<string, Record<string, unknown>>(), versions: new Map<string, Record<string, unknown>>(),
   inserts: vi.fn(), updates: vi.fn(), audits: vi.fn(), published: vi.fn(), solve: vi.fn(), stale: false }));
 vi.mock("./solver-client", async (original) => ({ ...await original<typeof import("./solver-client")>(), solveEscala: db.solve }));
+vi.mock("./solver-transport", async (original) => {
+  const { createHmac } = await import("node:crypto");
+  return { ...await original<typeof import("./solver-transport")>(),
+    candidateReferenceSignature: (payload: string) => createHmac("sha256", "synthetic-december-key").update(payload).digest("hex") };
+});
 vi.mock("@/lib/prisma", () => {
   const workspace = {
     findFirst: vi.fn(async ({ where }: { where: { id: string; tenantId: string; revision?: number } }) => {
@@ -66,7 +73,7 @@ beforeEach(() => {
 
 describe("December origin ruler", () => {
   const versionKey = (id: string, revision: number) => JSON.stringify([actor.tenantId, id, revision]);
-  async function convert() {
+  async function convert(offs?: Set<number>) {
     const legacy = source();
     legacy.employees[0].sector = "Loja";
     legacy.employees[0].role = "Atendente";
@@ -74,7 +81,13 @@ describe("December origin ruler", () => {
     legacy.policy.calendarMode = "MANUAL";
     legacy.policy.coverageReview = "SUGGESTED";
     legacy.coverageBasis = "coverage-v2:aaaaaaaaaaaaaaaa";
-    legacy.assignments = dateRange(legacy.startDate, legacy.endDate).map(date => [2, 6].includes(dayOfWeek(date))
+    if (offs) {
+      legacy.policy = { ...legacy.policy, source: "Regra sintética", reviewed: true, reviewedBy: "Teste",
+        validFrom: legacy.startDate, validUntil: legacy.endDate, compensationAuthorized: true, transitionWeekAccepted: true };
+      legacy.employees[0].sundayRestRule = "COMMERCE";
+    }
+    legacy.assignments = dateRange(legacy.startDate, legacy.endDate).map(date => (offs && date.startsWith("2026-12")
+      ? offs.has(Number(date.slice(-2))) : [2, 6].includes(dayOfWeek(date)))
       ? { employeeId: "e1", date, kind: "OFF" } : { employeeId: "e1", date, kind: "WORK", shiftId: legacy.shifts[0].id });
     legacy.demands = [
       { id: "origin-estimated-december", date: "2026-12-04", sector: "Loja", role: "Atendente", start: 1180, end: 1200, minimum: 2, estimated: true },
@@ -147,6 +160,32 @@ describe("December origin ruler", () => {
     await expect(generateEscala(actor, created.id, created.revision)).rejects.toMatchObject({ code: "ESCALA_DECEMBER_ORIGIN_UNAVAILABLE" });
     expect(db.solve).not.toHaveBeenCalled();
     expect(db.updates).not.toHaveBeenCalled();
+  });
+
+  it("reuses only a signed valid December proposal when the processor rejects a coverage loss", async () => {
+    vi.stubEnv("UNIMED_ACCESS_COOKIE_SECRET", "synthetic-service-proposal-test-material-00000");
+    try {
+      const { created, legacy } = await convert(new Set([1, 3, 6, 9, 13, 17, 20, 23, 27, 30]));
+      const assignments = legacy.assignments.filter(day => day.date.startsWith("2026-12"));
+      db.solve.mockImplementationOnce(async (input: EscalaInput) => {
+        expect(validateEscala({ ...input, assignments }).issues.filter(issue => issue.severity === "ERROR")).toEqual([]);
+        return { status: "FEASIBLE", assignments, wallTimeSeconds: 0.1, message: "Valid synthetic proposal" };
+      });
+      const first = await generateEscala(actor, created.id, created.revision);
+      expect(first.candidateReceipt).toBeDefined();
+      const loss = new EscalaError(422, "ESCALA_FROZEN_COVERAGE_REGRESSION", "Synthetic loss");
+      db.solve.mockRejectedValueOnce(loss).mockRejectedValueOnce(loss);
+      const retained = await generateEscala(actor, created.id, created.revision, {
+        comparisonReference: { input: first.proposalInput, receipt: first.candidateReceipt },
+      });
+      expect(retained.comparison).toMatchObject({ admission: "ADMITTED", selection: "REFERENCE_RETAINED", reason: "FROZEN_COVERAGE_REGRESSION" });
+      expect(retained.proposalInput).toEqual(first.proposalInput);
+      expect(retained.candidateReceipt?.inputHash).toBe(first.candidateReceipt?.inputHash);
+      await expect(generateEscala(actor, created.id, created.revision)).rejects.toBe(loss);
+      expect(db.updates).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

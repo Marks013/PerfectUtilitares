@@ -357,10 +357,9 @@ export function compareRosterCoverage(rawReference: EscalaInput, rawProposal: Es
       const [sector, date] = dayLoss.key.split("\0");
       return reject("SECTOR_COVERAGE", { sector, date, scope: "MONTH", metric: "DEFICIT_PERSON_MINUTES", before: dayLoss.before, after: dayLoss.after, delta: dayLoss.delta });
     }
-  } else {
-    const serviceLoss = largestIncrease(newRoles.service, oldRoles.service);
-    if (serviceLoss) return reject("ROLE_TIME_PRESENCE", roleTimeRegression(serviceLoss, "SERVICE_PERSON_MINUTES"));
   }
+  const serviceLoss = largestIncrease(newRoles.service, oldRoles.service);
+  if (serviceLoss) return reject("ROLE_TIME_PRESENCE", roleTimeRegression(serviceLoss, "SERVICE_PERSON_MINUTES"));
   improved ||= improves(oldClosing, newClosing) || improves(oldRoles.deficit, newRoles.deficit);
   return result(improved ? "OPERATIONAL_IMPROVEMENT" : "ACCEPTED", false, improved);
 }
