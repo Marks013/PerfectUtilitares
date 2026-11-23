@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import type { TurnoCatalogEntryDto, TurnoCatalogPageDto, TurnoCatalogSyncResult } from "@/lib/escalas/shift-catalog/contracts";
+import type { TurnoExportFormat } from "@/lib/escalas/shift-catalog/domain";
 import type { TurnoFlowFilters, TurnoSelectionManifestDto } from "@/lib/escalas/shift-catalog/flow-contracts";
 import type { WorkspaceSummary } from "../use-escalas-workspace";
 import { planPeriod } from "../plan-selector";
@@ -10,7 +11,7 @@ import { useCatalogTask } from "./use-catalog-task";
 import { catalogBytes, catalogPost, catalogRequest } from "./client";
 import { chosenReference, confirmManifest, emptyFilters, expectedBytes, filteredCatalog, filterPeople, flowPeople, intersectSelection, selectionRequest, validCatalogEntry } from "./flow-model";
 
-export type Format = "TXT1" | "TXT2";
+type Format = TurnoExportFormat;
 export const EXPORT_PAGE_SIZE = 20;
 
 export function useExportFlow(plans: WorkspaceSummary[], disabled: boolean, canDefine: boolean) {

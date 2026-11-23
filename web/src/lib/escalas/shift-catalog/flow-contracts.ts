@@ -47,17 +47,19 @@ export type TurnoSelectionOmission = TurnoFlowPersonKey & {
 };
 export type TurnoSelectionBlocker = { reason: "DUPLICATE_REGISTRATION"; members: TurnoFlowPersonKey[]; message: string };
 export type TurnoEmployeeExportLine = TurnoFlowPersonKey & {
-  registration: string; localShiftId: string; code: number; markings: TurnoCatalogEntryDto["markings"];
+  registration: string; localShiftId: string; branchCode: string; code: number; markings: TurnoCatalogEntryDto["markings"];
 };
+export const TURNO_CATALOG_EXPORT_FORMATS = ["TXT2", "CADASTRO"] as const;
+export const TURNO_EMPLOYEE_EXPORT_FORMATS = ["TXT1", "TXT2", "CADASTRO", "VINCULOS"] as const;
 type TurnoSelectionCounts = { found: number; selected: number; includedEmployees: number; includedCodes: number;
   txt1Lines: number; txt2Lines: number; omitted: number; blockers: number };
 type ManifestCommon = { selectionVersion: 2; manifestId: string; expiresAt: string; selectionDigest: string;
   counts: TurnoSelectionCounts; omissions: TurnoSelectionOmission[]; blockers: TurnoSelectionBlocker[] };
 export type TurnoSelectionManifestDto = ManifestCommon & (
   | { mode: "CATALOG"; context: Extract<TurnoSelectionManifestRequest, { mode: "CATALOG" }>;
-      rows: TurnoCatalogEntryDto[]; formats: readonly ["TXT2"] }
+      rows: TurnoCatalogEntryDto[]; formats: typeof TURNO_CATALOG_EXPORT_FORMATS }
   | { mode: "EMPLOYEES"; context: Extract<TurnoSelectionManifestRequest, { mode: "EMPLOYEES" }>;
-      rows: TurnoEmployeeExportLine[]; formats: readonly ["TXT1", "TXT2"] }
+      rows: TurnoEmployeeExportLine[]; formats: typeof TURNO_EMPLOYEE_EXPORT_FORMATS }
 );
 
 export const turnoCatalogOptionsSchema = z.strictObject({

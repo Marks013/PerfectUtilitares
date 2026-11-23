@@ -15,7 +15,7 @@ import type {
   TurnoExportOmissionDto,
   TurnoExportSelection,
 } from "./contracts";
-import { clockMinutes, markingsFromShift, renderTurnoTxt, type TurnoTxtRow } from "./domain";
+import { clockMinutes, markingsFromShift, renderTurnoTxt, type TurnoExportFormat, type TurnoTxtRow } from "./domain";
 import type { TurnoUnrepresentableReason } from "./domain";
 import { readTurnoManifest, storeTurnoManifest, type TurnoManifestPayload } from "./catalog";
 import { downloadTurnoSelection } from "./selection-export";
@@ -185,9 +185,12 @@ export async function createTurnoExportManifest(actor: EscalaActor, request: Tur
   };
 }
 
-export async function downloadTurnoExport(actor: EscalaActor, manifestId: string, format: "TXT1" | "TXT2", acceptOmissions: boolean) {
+export async function downloadTurnoExport(actor: EscalaActor, manifestId: string, format: TurnoExportFormat, acceptOmissions: boolean) {
   const payload = await readTurnoManifest(actor, manifestId);
   if (payload.version === 2) return downloadTurnoSelection(actor, payload, format, acceptOmissions);
+  if (format !== "TXT1" && format !== "TXT2") {
+    throw new EscalaError(400, "TURNO_FORMAT_FORBIDDEN", "Confira a seleção atual para gerar este formato.");
+  }
   const { rows, omissions } = await buildExportRows(actor, payload.month, payload.year, payload.selections);
   if (hashRows(rows) !== payload.rowsHash) throw new EscalaError(409, "TURNO_MANIFEST_STALE", "O recorte da exportação mudou. Gere uma nova prévia.");
   if (rows.length === 0) throw new EscalaError(409, "TURNO_EXPORT_EMPTY", "Não há horários válidos para exportar.");

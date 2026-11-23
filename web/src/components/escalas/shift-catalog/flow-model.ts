@@ -2,9 +2,9 @@ import { isAdministrativeEscalaSector } from "@/lib/escalas/eligibility";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import type { TurnoCatalogEntryDto } from "@/lib/escalas/shift-catalog/contracts";
 import type { TurnoFlowFilters, TurnoSelectionManifestDto, TurnoSelectionManifestRequest } from "@/lib/escalas/shift-catalog/flow-contracts";
-import { turnoSelectionManifestSchema } from "@/lib/escalas/shift-catalog/flow-contracts";
+import { TURNO_CATALOG_EXPORT_FORMATS, TURNO_EMPLOYEE_EXPORT_FORMATS, turnoSelectionManifestSchema } from "@/lib/escalas/shift-catalog/flow-contracts";
 import { employeeReferenceShiftChoices } from "@/lib/escalas/shift-catalog/reference-choices";
-import { clockMinutes, markingKey, markingsFromShift, renderTurnoTxt } from "@/lib/escalas/shift-catalog/domain";
+import { clockMinutes, markingKey, markingsFromShift, renderTurnoTxt, type TurnoExportFormat } from "@/lib/escalas/shift-catalog/domain";
 import { planPeriod } from "../plan-selector";
 
 export const personKey = (value: { workspaceId: string; employeeId: string }) => JSON.stringify([value.workspaceId, value.employeeId]);
@@ -94,7 +94,7 @@ export function confirmManifest(manifest: TurnoSelectionManifestDto, request: Tu
     || typeof manifest.manifestId !== "string" || !manifest.manifestId || typeof manifest.selectionDigest !== "string" || !manifest.selectionDigest.trim() || !(Date.parse(manifest.expiresAt) > Date.now())
     || !Array.isArray(manifest.rows) || !Array.isArray(manifest.omissions) || !Array.isArray(manifest.blockers) || !Array.isArray(manifest.formats)
     || manifest.counts?.selected !== (request.mode === "CATALOG" ? request.codes.length : request.members.length)) throw new Error("A conferência recebida não corresponde à seleção atual. Confira novamente.");
-  const expectedFormats = request.mode === "CATALOG" ? ["TXT2"] : ["TXT1", "TXT2"];
+  const expectedFormats = request.mode === "CATALOG" ? TURNO_CATALOG_EXPORT_FORMATS : TURNO_EMPLOYEE_EXPORT_FORMATS;
   if (JSON.stringify(manifest.formats) !== JSON.stringify(expectedFormats)) throw new Error("Os formatos da conferência não foram confirmados.");
   const countKeys = ["found", "selected", "includedEmployees", "includedCodes", "txt1Lines", "txt2Lines", "omitted", "blockers"] as const;
   if (countKeys.some(key => !Number.isInteger(manifest.counts[key]) || manifest.counts[key] < 0) || manifest.counts.found < manifest.counts.selected
@@ -118,12 +118,13 @@ export function confirmManifest(manifest: TurnoSelectionManifestDto, request: Tu
     const blockedKeys = manifest.blockers.flatMap(blocker => blocker.members.map(personKey));
     const represented = [...rowKeys, ...omittedKeys, ...blockedKeys];
     if (new Set(represented).size !== members.size || represented.some(key => !members.has(key)) || new Set(rowKeys).size !== rowKeys.length || rowKeys.some(key => omittedKeys.includes(key) || blockedKeys.includes(key))
-      || new Set(manifest.rows.map(row => row.registration)).size !== manifest.rows.length || manifest.rows.some(row => !row.registration || members.get(personKey(row))?.localShiftId !== row.localShiftId)) throw new Error("A conferência incluiu ou retirou pessoas fora da seleção ou contém matrícula duplicada.");
+      || new Set(manifest.rows.map(row => row.registration)).size !== manifest.rows.length || manifest.rows.some(row => !row.registration || typeof row.branchCode !== "string" || !row.branchCode.trim()
+        || members.get(personKey(row))?.localShiftId !== row.localShiftId)) throw new Error("A conferência incluiu ou retirou pessoas fora da seleção ou contém matrícula duplicada.");
   }
   return manifest;
 }
 
-export function expectedBytes(manifest: TurnoSelectionManifestDto, format: "TXT1" | "TXT2"): Uint8Array {
+export function expectedBytes(manifest: TurnoSelectionManifestDto, format: TurnoExportFormat): Uint8Array {
   if (!manifest.formats.some(value => value === format)) throw new Error("Este formato não pertence à conferência.");
   return renderTurnoTxt(format, manifest.mode === "EMPLOYEES" ? manifest.rows : manifest.rows.map(row => ({ ...row, registration: "" })));
 }

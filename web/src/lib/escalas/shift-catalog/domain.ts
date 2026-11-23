@@ -14,9 +14,13 @@ export type ShiftMarkingResult =
 
 export type TurnoTxtRow = {
   registration: string;
+  branchCode?: string;
   code: number;
   markings: TurnoClockMarks;
 };
+
+export const TURNO_EXPORT_FORMATS = ["TXT1", "TXT2", "CADASTRO", "VINCULOS"] as const;
+export type TurnoExportFormat = typeof TURNO_EXPORT_FORMATS[number];
 
 export function clockMinutes(value: string): number | null {
   const match = /^(\d{2}):(\d{2})$/.exec(value);
@@ -107,12 +111,33 @@ function csvField(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
 }
 
-export function renderTurnoTxt(format: "TXT1" | "TXT2", rows: readonly TurnoTxtRow[]): Uint8Array {
-  const outputRows = format === "TXT2"
-    ? [...new Map(rows.map(row => [row.code, row])).values()].sort((left, right) => left.code - right.code)
-    : rows;
-  const lines = outputRows.map(row => format === "TXT1"
-    ? [row.registration, ...row.markings].map(csvField).join(",")
-    : [String(row.code), row.markings.join(" "), ...row.markings].map(csvField).join(","));
+export function supportsTurnoVinculos(rows: readonly Pick<TurnoTxtRow, "registration">[]): boolean {
+  return rows.every(row => row.registration.length > 0 && !/[;\u2028\u2029\p{Cc}]/u.test(row.registration));
+}
+
+const compareLiteral = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+
+export function renderTurnoTxt(format: TurnoExportFormat, rows: readonly TurnoTxtRow[]): Uint8Array {
+  let lines: string[];
+  switch (format) {
+    case "TXT1":
+      lines = rows.map(row => [row.registration, ...row.markings].map(csvField).join(","));
+      break;
+    case "VINCULOS":
+      if (!supportsTurnoVinculos(rows)) return new Uint8Array();
+      lines = [...rows].sort((left, right) => compareLiteral(left.registration, right.registration)
+        || compareLiteral(left.branchCode ?? "", right.branchCode ?? ""))
+        .map(row => [row.registration, row.code].join(";"));
+      break;
+    case "TXT2":
+    case "CADASTRO": {
+      const definitions = [...new Map(rows.map(row => [row.code, row])).values()].sort((left, right) => left.code - right.code);
+      lines = definitions.map(row => {
+        const fields = [String(row.code), row.markings.join(" "), ...row.markings];
+        return format === "CADASTRO" ? fields.join(";") : fields.map(csvField).join(",");
+      });
+      break;
+    }
+  }
   return new TextEncoder().encode(lines.length ? `${lines.join("\r\n")}\r\n` : "");
 }

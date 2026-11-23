@@ -4,11 +4,12 @@ import { requireEscalaCapability } from "@/lib/escalas/access";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed } from "@/lib/api/security";
 import { escalaFailure } from "../../http";
 import { downloadTurnoExport } from "@/lib/escalas/shift-catalog/export";
+import { TURNO_EXPORT_FORMATS } from "@/lib/escalas/shift-catalog/domain";
 
 export const runtime = "nodejs";
 const querySchema = z.object({
   manifestId: z.string().min(1).max(100),
-  format: z.enum(["TXT1", "TXT2"]),
+  format: z.enum(TURNO_EXPORT_FORMATS),
   acceptOmissions: z.enum(["true", "false"]).default("false"),
 }).strict();
 

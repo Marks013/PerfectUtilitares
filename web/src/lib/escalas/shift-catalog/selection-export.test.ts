@@ -110,6 +110,47 @@ describe("exact shift selections and HTTP files", () => {
     expect(txt2.headers.get("cache-control")).toBe("private, no-store");
     expect(state.create).toHaveBeenCalledTimes(1);
   });
+  it("downloads both import files from the same confirmed selection across branches", async () => {
+    const second = input("02");
+    second.employees[0].registration = "003";
+    second.employees[0].shiftIds = ["s2"];
+    state.sources.set("w2", { input: second, revision: 1 });
+    const value = request();
+    value.sources.push({ workspaceId: "w2", revision: 1 });
+    value.members.unshift({ workspaceId: "w2", employeeId: "e1", localShiftId: "s2" });
+    const response = await POST(http(value));
+    expect(response.status).toBe(201);
+    const manifest = await response.json();
+    expect(manifest.formats).toEqual(["TXT1", "TXT2", "CADASTRO", "VINCULOS"]);
+    const definitions = await download(manifest.manifestId, "CADASTRO");
+    expect(definitions.status).toBe(200);
+    expect(definitions.headers.get("content-disposition")).toContain("-CADASTRO.txt");
+    expect(await definitions.text()).toBe("1500;08:00 12:00 13:00 17:00;08:00;12:00;13:00;17:00\r\n1501;07:00 11:00 00:00 00:00;07:00;11:00;00:00;00:00\r\n");
+    const links = await download(manifest.manifestId, "VINCULOS");
+    expect(links.status).toBe(200);
+    expect(links.headers.get("content-disposition")).toContain("-VINCULOS.txt");
+    expect(await links.text()).toBe("0007;1500\r\n003;1501\r\n7;1500\r\n");
+    expect(state.create).toHaveBeenCalledTimes(1);
+    state.user.mockResolvedValue({ id: "admin", tenantId: "t", status: "ACTIVE", role: "OPERATOR", securityVersion: 0 });
+    for (const format of ["CADASTRO", "VINCULOS"]) {
+      const denied = await download(manifest.manifestId, format);
+      expect(denied.status).toBe(403);
+      expect(denied.headers.get("content-disposition")).toBeNull();
+    }
+  });
+  it("blocks a delimiter in a registration only for the new link file", async () => {
+    const source = state.sources.get("w1");
+    if (!source) throw new Error("Missing synthetic workspace w1");
+    const input = source.input as EscalaInput;
+    input.employees[0].registration = "00;07";
+    const response = await POST(http(request()));
+    expect(response.status).toBe(201);
+    const { manifestId } = await response.json();
+    const result = await download(manifestId, "VINCULOS");
+    expect(result.status).toBe(422);
+    expect(await result.json()).toMatchObject({ error: { code: "TURNO_REGISTRATION_UNSUPPORTED" } });
+    expect((await download(manifestId, "TXT1")).status).toBe(200);
+  });
   it("omits Afastados from v2 preview, saved selection and both TXT downloads", async () => {
     const source = state.sources.get("w1")?.input as EscalaInput;
     source.employees[1].sector = " Afástados ";
@@ -173,8 +214,9 @@ describe("exact shift selections and HTTP files", () => {
     state.sources.clear();
     const response = await POST(http({ selectionVersion: 2, mode: "CATALOG", scope: "ALL", year: 2026, month: 12, sources: [], filters: filters(), codes: [1502, 1500] }));
     expect(response.status).toBe(201); const manifest = await response.json();
-    expect(manifest.formats).toEqual(["TXT2"]); expect(manifest.counts).toMatchObject({ selected: 2, includedEmployees: 0, txt1Lines: 0, txt2Lines: 2 });
+    expect(manifest.formats).toEqual(["TXT2", "CADASTRO"]); expect(manifest.counts).toMatchObject({ selected: 2, includedEmployees: 0, txt1Lines: 0, txt2Lines: 2 });
     expect((await download(manifest.manifestId)).status).toBe(400);
+    expect((await download(manifest.manifestId, "VINCULOS")).status).toBe(400);
     const result = await download(manifest.manifestId, "TXT2"); expect(result.status).toBe(200);
     expect(await result.text()).toBe("1500,08:00 12:00 13:00 17:00,08:00,12:00,13:00,17:00\r\n1502,09:00 13:00 14:00 18:00,09:00,13:00,14:00,18:00\r\n");
     state.count.mockResolvedValue(4);

@@ -64,6 +64,18 @@ describe("approved policy persistence and HTTP", () => {
     expect(loaded.snapshot.seed.employees[0]).not.toHaveProperty("planningHistory");
     expect(command.input.employees[0].planningHistory).toHaveLength(1);
   });
+  it("authorizes the saved rules for branch operations without recording a labor review", async () => {
+    const command = approve();
+    command.origin = { workspaceId: "w", revision: 3 };
+    command.input.policy = { ...command.input.policy, source: "", reviewed: false, reviewedBy: "" };
+    mocks.source.mockResolvedValue({ id: "w", tenantId: "t", revision: 3, branchCode: "02", startDate: "2026-11-30", endDate: "2027-01-03" });
+    mocks.sourceRevision.mockResolvedValue({ input: command.input });
+    const response = await POST(request(command));
+    expect(response.status).toBe(201);
+    const loaded = await loadEscalaApproval(mocks.actor, "approval-1");
+    expect(loaded.row.approvedById).toBe("admin");
+    expect(loaded.snapshot.configuration.policy).toEqual(command.input.policy);
+  });
   it("revokes without changing content and denies later operational loading", async () => {
     await administerEscalaApproval(mocks.actor, approve());
     const old = structuredClone(mocks.rows[0]);

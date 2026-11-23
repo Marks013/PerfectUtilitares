@@ -71,8 +71,12 @@ function hashSnapshot(snapshot: EscalaApprovedPolicySnapshot): string {
   return createHash("sha256").update(canonicalJson(snapshot), "utf8").digest("hex");
 }
 function regimeOf(person: EscalaEmployee) {
-  return regimeSchema.parse(Object.fromEntries(Object.keys(regimeSchema.shape)
-    .map(key => [key, person[key as keyof EscalaEmployee]])));
+  const fields = Object.fromEntries(Object.keys(regimeSchema.shape)
+    .map(key => [key, person[key as keyof EscalaEmployee]]));
+  // A generated fixed reference can be selected as a template without exposing its unused alternatives.
+  const fixed = person.fixedImportedShiftId;
+  if (fixed) return regimeSchema.parse({ ...fields, shiftIds: [fixed], originalShiftIds: [fixed] });
+  return regimeSchema.parse(fields);
 }
 function cleanSeedEmployee(person: EscalaEmployee): EscalaEmployee {
   const copy = structuredClone(person);
@@ -89,8 +93,8 @@ function coherent(snapshot: EscalaApprovedPolicySnapshot): boolean {
   if (!escalaInputSchema.safeParse(input).success || input.employees.length === 0) return false;
   if (input.branchCode !== canonicalBranchCode(input.branchCode)) return false;
   if (/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u.test(input.branchCode)) return false;
-  if (!input.policy.reviewed || !input.policy.source || !input.policy.reviewedBy
-    || input.policy.validFrom > input.startDate || input.policy.validUntil < input.endDate) return false;
+  // An administrative grant to use these parameters does not record a labor review.
+  if (input.policy.validFrom > input.startDate || input.policy.validUntil < input.endDate) return false;
   const modelIds = new Set<string>();
   for (const model of snapshot.regimeModels) {
     const person = input.employees.find(employee => employee.id === model.sourceEmployeeId);
@@ -107,9 +111,10 @@ function coherent(snapshot: EscalaApprovedPolicySnapshot): boolean {
     if (person.manualShiftOverrides?.some(selection => canonicalJson(manualCatalogShift(selection).segments)
       !== canonicalJson(input.shifts.find(shift => shift.id === selection.shiftId)?.segments))) return false;
     if (person.scheduleMode === "UNTIMED" && person.shiftIds.length) return false;
-    // A model cannot silently discard person-specific manual selections or derived restrictions.
+    // A model cannot silently discard person-specific manual selections or adopt an unapproved clock.
     if (snapshot.regimeModels.some(model => model.sourceEmployeeId === person.id)
-      && (person.manualShiftOverrides || person.manualShiftByDate || person.fixedImportedShiftId)) return false;
+      && (person.manualShiftOverrides || person.manualShiftByDate
+        || (person.fixedImportedShiftId && !person.shiftIds.includes(person.fixedImportedShiftId)))) return false;
   }
   return input.assignments.every(entry => (entry.kind === "ABSENCE" || entry.kind === "HOLIDAY")
     && (entry.kind !== "HOLIDAY" || input.policy.holidayDates.includes(entry.date))

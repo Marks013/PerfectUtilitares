@@ -10,10 +10,10 @@ import { stableEscalaJson } from "../operational-input-policy";
 import type { EscalaEmployee, EscalaWorkspace } from "../types";
 import { visibleDates } from "../dates";
 import { employeeReferenceShiftChoices } from "./reference-choices";
-import { clockMinutes, markingKey, markingsFromShift, minutesClock, renderTurnoTxt } from "./domain";
+import { clockMinutes, markingKey, markingsFromShift, minutesClock, renderTurnoTxt, supportsTurnoVinculos, type TurnoExportFormat } from "./domain";
 import type { TurnoCatalogEntryDto } from "./contracts";
 import { storeTurnoManifest } from "./catalog";
-import { turnoSelectionManifestSchema, type TurnoSelectionManifestRequest, type TurnoSelectionManifestDto,
+import { TURNO_CATALOG_EXPORT_FORMATS, TURNO_EMPLOYEE_EXPORT_FORMATS, turnoSelectionManifestSchema, type TurnoSelectionManifestRequest, type TurnoSelectionManifestDto,
   type TurnoFlowPersonKey, type TurnoSelectionOmission, type TurnoEmployeeExportLine, type TurnoSelectionBlocker } from "./flow-contracts";
 
 export type TurnoSelectionPayload = { version: 2; request: TurnoSelectionManifestRequest; selectionDigest: string };
@@ -189,7 +189,7 @@ async function selectionSnapshot(actor: EscalaActor, value: TurnoSelectionManife
         : reference?.reason ?? (!reference ? (person.references.length > 1 ? "AMBIGUOUS_REFERENCE" : "NO_REFERENCE") : undefined);
       if (reason || !reference?.markings || reference.code === undefined) {
         omissions.push({ workspaceId: member.workspaceId, employeeId: member.employeeId, registration, reason: reason ?? "CATALOG_REQUIRED" });
-      } else employeeRows.push({ workspaceId: member.workspaceId, employeeId: member.employeeId, registration,
+      } else employeeRows.push({ workspaceId: member.workspaceId, employeeId: member.employeeId, registration, branchCode: person.branchCode,
         localShiftId: reference.id, code: reference.code, markings: reference.markings });
     }
     const registrations = new Map<string, TurnoFlowPersonKey[]>();
@@ -220,7 +220,9 @@ async function selectionSnapshot(actor: EscalaActor, value: TurnoSelectionManife
       .map(person => ({ workspaceId: person.workspaceId, employeeId: person.employeeId, references: person.references })) };
   // Found is a navigation count, not part of the selected file. An unrelated catalog
   // addition must not invalidate an otherwise identical, explicit ALL selection.
-  const selectionDigest = createHash("sha256").update(stableEscalaJson({ ...snapshot, counts: { ...counts, found: undefined } })).digest("hex");
+  // Existing v2 manifests hash the scope and rows without the display branch.
+  const digestRows = rows.map(row => "branchCode" in row ? { ...row, branchCode: undefined } : row);
+  const selectionDigest = createHash("sha256").update(stableEscalaJson({ ...snapshot, rows: digestRows, counts: { ...counts, found: undefined } })).digest("hex");
   return { request, rows, omissions, blockers, counts, selectionDigest };
 }
 
@@ -233,18 +235,23 @@ export async function createTurnoSelectionManifest(actor: EscalaActor, value: Tu
   const common = { selectionVersion: 2 as const, manifestId, expiresAt: expiresAt.toISOString(), selectionDigest: snapshot.selectionDigest,
     counts: snapshot.counts, omissions: snapshot.omissions, blockers: snapshot.blockers };
   return snapshot.request.mode === "CATALOG"
-    ? { ...common, mode: "CATALOG", context: snapshot.request, rows: snapshot.rows as TurnoCatalogEntryDto[], formats: ["TXT2"] }
-    : { ...common, mode: "EMPLOYEES", context: snapshot.request, rows: snapshot.rows as TurnoEmployeeExportLine[], formats: ["TXT1", "TXT2"] };
+    ? { ...common, mode: "CATALOG", context: snapshot.request, rows: snapshot.rows as TurnoCatalogEntryDto[], formats: TURNO_CATALOG_EXPORT_FORMATS }
+    : { ...common, mode: "EMPLOYEES", context: snapshot.request, rows: snapshot.rows as TurnoEmployeeExportLine[], formats: TURNO_EMPLOYEE_EXPORT_FORMATS };
 }
 
-export async function downloadTurnoSelection(actor: EscalaActor, payload: TurnoSelectionPayload, format: "TXT1" | "TXT2", acceptOmissions: boolean) {
+export async function downloadTurnoSelection(actor: EscalaActor, payload: TurnoSelectionPayload, format: TurnoExportFormat, acceptOmissions: boolean) {
   const snapshot = await selectionSnapshot(actor, payload.request);
   if (snapshot.selectionDigest !== payload.selectionDigest) return error("TURNO_MANIFEST_STALE", "O recorte mudou. Confira a seleção novamente.", 409);
-  if (snapshot.request.mode === "CATALOG" && format !== "TXT2") return error("TURNO_FORMAT_FORBIDDEN", "Turnos cadastrados geram somente TXT2.");
+  if (snapshot.request.mode === "CATALOG" && !TURNO_CATALOG_EXPORT_FORMATS.some(allowed => allowed === format)) {
+    return error("TURNO_FORMAT_FORBIDDEN", "Selecione os colaboradores no manifesto para preparar este formato.");
+  }
   if (snapshot.blockers.length) return error("TURNO_EXPORT_BLOCKED", "Corrija as matrículas repetidas antes de preparar qualquer arquivo.", 409);
   if (!snapshot.rows.length) return error("TURNO_EXPORT_EMPTY", "Não há linhas válidas nesta seleção.", 409);
   if (snapshot.omissions.length && !acceptOmissions) return error("TURNO_EXPORT_OMISSIONS", "Confira as pessoas omitidas e confirme o arquivo parcial.", 409);
   const rows = snapshot.rows.map(row => ({ ...row, registration: "registration" in row ? row.registration : "" }));
+  if (format === "VINCULOS" && !supportsTurnoVinculos(rows)) {
+    return error("TURNO_REGISTRATION_UNSUPPORTED", "Corrija as matrículas com ponto e vírgula antes de preparar os vínculos.", 422);
+  }
   const bytes = renderTurnoTxt(format, rows);
   await requireEscalaCapability(actor, "export.integration");
   return { bytes, omissions: snapshot.omissions, month: snapshot.request.month, year: snapshot.request.year };

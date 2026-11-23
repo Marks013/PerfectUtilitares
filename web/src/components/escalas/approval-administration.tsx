@@ -59,7 +59,7 @@ export function ApprovalAdministration({ workspace, disabled, prepare, rebase }:
   }
   return <details className={panelClass}>
     <summary className={styles.disclosureTrigger}>Aprovar configuração e modelos para a filial</summary>
-    <p className={styles.muted}>Filial {input.branchCode} · {input.visibleMonth ?? input.startDate} · revisão {workspace.revision}. A aprovação mantém jornada, distribuição de 8h/9h, definições de horários e regras sob administração.</p>
+    <p className={styles.muted}>Filial {input.branchCode} · {input.visibleMonth ?? input.startDate} · revisão {workspace.revision}. A filial poderá trabalhar com os parâmetros de jornada desta revisão. O sistema registra a conta administrativa que libera o uso. A conferência formal e o nome de quem a realizou são opcionais para esta liberação.</p>
     <fieldset disabled={disabled || busy} className={styles.stackSmall}>
       <p>Escolha os cadastros que servirão de modelo. Cada novo colaborador herda o regime do exemplar; não herda seu histórico pessoal.</p>
       {input.employees.map(person => <div key={person.id} className={styles.stackSmall}>
@@ -67,8 +67,8 @@ export function ApprovalAdministration({ workspace, disabled, prepare, rebase }:
         {person.id in models && <Field label={`Nome do modelo de ${person.name}`}>{id => <input id={id} required maxLength={120} className={controlClass} value={models[person.id]} onChange={event => { setModels(previous => ({ ...previous, [person.id]: event.target.value })); setReviewed(false); }} />}</Field>}
       </div>)}
       <Check label="Incluir os afastamentos e feriados já registrados como dados iniciais aprovados" checked={includeProtectedDays} onChange={value => { setIncludeProtectedDays(value); setReviewed(false); }} />
-      <Check label="Conferi a configuração, os horários, os modelos e os dados iniciais desta revisão" checked={reviewed} onChange={setReviewed} />
-      <button type="button" className={primaryClass} disabled={!reviewed || Object.values(models).some(label => !label.trim())} onClick={() => void approve()}>Aprovar esta configuração e os modelos selecionados</button>
+      <Check label="Autorizo esta filial a usar a configuração, os modelos e os dados iniciais desta revisão" checked={reviewed} onChange={setReviewed} />
+      <button type="button" className={primaryClass} disabled={!reviewed || Object.keys(models).length === 0 || Object.values(models).some(label => !label.trim())} onClick={() => void approve()}>Liberar esta configuração para a filial</button>
       <Field label="Versão aprovada deste período">{id => <select id={id} className={controlClass} value={selectedPolicy?.id ?? ""} onChange={event => setSelected(event.target.value)}><option value="">Escolha a versão</option>{policies.policies.map(policy => <option key={policy.id} value={policy.id}>Versão {policy.version} · {policy.regimeModels.length} modelo(s)</option>)}</select>}</Field>
       <p className={styles.muted}>Vincular cria uma nova revisão preservando o histórico. Não substitui a edição aberta pelo cadastro inicial da aprovação. Gere novamente após a vinculação.</p>
       <button type="button" className={buttonClass} disabled={!selectedPolicy} onClick={() => { if (selectedPolicy) rebase(selectedPolicy.id); }}>Vincular versão ao planejamento atual</button>

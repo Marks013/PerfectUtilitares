@@ -175,11 +175,19 @@ describe("approved branch/period policy candidate", () => {
     source.input.employees[0].shiftIds = ["other"];
     expect(buildEscalaApprovedPolicy(source).ok).toBe(false);
     source.input.employees[0].shiftIds = ["s"];
-    source.input.policy.reviewed = false;
-    expect(buildEscalaApprovedPolicy(source).ok).toBe(false);
-    source.input.policy.reviewed = true;
     source.input.policy.validUntil = "2026-12-01";
     expect(buildEscalaApprovedPolicy(source).ok).toBe(false);
+  });
+  it("uses the saved journey rules without requiring or recording a labor review", () => {
+    const source = request();
+    source.input.policy.reviewed = false;
+    source.input.policy.reviewedBy = "";
+    source.input.policy.source = "";
+    const approved = buildEscalaApprovedPolicy(source);
+    if (!approved.ok) throw new Error("Expected the operational configuration to be accepted");
+    const restored = createInputFromEscalaApprovedPolicy(approved.value.snapshot, approved.value.snapshotHash);
+    expect(restored).toMatchObject({ ok: true, value: { policy: source.input.policy } });
+    expect(approved.value.approvedById).toBe(source.provenance.approvedById);
   });
   it.each(["2", "002", " 02 "])("rejects noncanonical branch %s before its normalization hides changes", branchCode => {
     const source = request(); source.input.branchCode = branchCode;
@@ -239,6 +247,27 @@ describe("approved branch/period policy candidate", () => {
       expect(result.value.snapshot.seed.shifts).toEqual([]);
       expect(result.value.snapshot.seed.employees[0].scheduleMode).toBe("UNTIMED");
     }
+  });
+  it("lets an administrator select a fixed clock as a template without inheriting alternate clocks or history", () => {
+    const source = request();
+    const person = source.input.employees[0];
+    person.fixedImportedShiftId = "s";
+    const alternative = { ...structuredClone(source.input.shifts[0]), id: "alternate" };
+    source.input.shifts.push(alternative);
+    person.shiftIds.push(alternative.id);
+    person.originalShiftIds = [...person.shiftIds];
+    const approved = buildEscalaApprovedPolicy(source);
+    if (!approved.ok) throw new Error("Expected a fixed model with a valid saved clock");
+    const created = addEmployeeFromEscalaApprovedModel(approved.value.snapshot, approved.value.snapshotHash, {
+      id: "new-person", regimeModelId: source.regimeModelSelections[0].id, name: "Pessoa nova",
+      registration: "0009", activeFrom: "", preferredOffDays: [],
+    });
+    if (!created.ok) throw new Error("Expected the fixed model to support enrollment");
+    const newPerson = created.value.employees.find(item => item.id === "new-person");
+    expect(newPerson).toMatchObject({ shiftIds: ["s"], originalShiftIds: ["s"], history: [], historyKnown: false });
+    expect(newPerson?.fixedImportedShiftId).toBeUndefined();
+    person.shiftIds = [alternative.id];
+    expect(buildEscalaApprovedPolicy(source).ok).toBe(false);
   });
   it("rejects stored content tampering, unknown keys, model mutation and bad hashes", () => {
     const approved = candidate();

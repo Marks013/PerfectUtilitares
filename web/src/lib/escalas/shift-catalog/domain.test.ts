@@ -83,6 +83,20 @@ describe("turn catalog domain", () => {
     expect(allocateInitialCatalog([["00:00", "00:00", "00:00", "00:00"]])).toEqual([]);
   });
 
+  it("writes the two import layouts with semicolons, stable codes and literal registrations", () => {
+    const markings = ["07:36", "11:30", "13:30", "18:00"] as const;
+    const rows: TurnoTxtRow[] = [
+      { registration: "0007", branchCode: "02", code: 1510, markings: ["09:00", "13:00", "14:00", "18:00"] },
+      { registration: "7", branchCode: "01", code: 1500, markings },
+      { registration: "0007", branchCode: "01", code: 1500, markings },
+    ];
+    const decode = (format: Parameters<typeof renderTurnoTxt>[0]) => new TextDecoder().decode(renderTurnoTxt(format, rows));
+    expect(decode("CADASTRO")).toBe("1500;07:36 11:30 13:30 18:00;07:36;11:30;13:30;18:00\r\n1510;09:00 13:00 14:00 18:00;09:00;13:00;14:00;18:00\r\n");
+    expect(decode("VINCULOS")).toBe("0007;1500\r\n0007;1510\r\n7;1500\r\n");
+    expect(renderTurnoTxt("VINCULOS", [{ ...rows[0], registration: "000;7" }])).toHaveLength(0);
+    expect(renderTurnoTxt("CADASTRO", rows).slice(0, 3)).not.toEqual([0xef, 0xbb, 0xbf]);
+  });
+
   it("renders both TXT layouts as UTF-8 without BOM and with CRLF", () => {
     const row: TurnoTxtRow = {
       registration: "0007",

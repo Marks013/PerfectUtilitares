@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import type { TurnoCatalogEntryDto } from "@/lib/escalas/shift-catalog/contracts";
 import type { TurnoSelectionManifestDto, TurnoSelectionManifestRequest } from "@/lib/escalas/shift-catalog/flow-contracts";
+import { TURNO_CATALOG_EXPORT_FORMATS, TURNO_EMPLOYEE_EXPORT_FORMATS } from "@/lib/escalas/shift-catalog/flow-contracts";
 import { newEmployee, newInput } from "../workspace-model";
 import { chosenReference, confirmManifest, emptyFilters, expectedBytes, filteredCatalog, filterPeople, flowPeople, intentKey, intersectSelection, personKey, selectionRequest } from "./flow-model";
 
@@ -18,7 +19,7 @@ function workspace(id = "a", branchCode = "07"): EscalaWorkspace {
   return { id, revision: 3, input, status: "DRAFT", canEdit: true, canPublish: true, updatedAt: "2026-11-14", validation: { valid: true, readyToPublish: true, issues: [], summaries: [], minimumCoverageMargin: null } };
 }
 function catalogManifest(request: Extract<TurnoSelectionManifestRequest, { mode: "CATALOG" }>): TurnoSelectionManifestDto {
-  return { selectionVersion: 2, mode: "CATALOG", manifestId: "manifest", selectionDigest: "a".repeat(64), expiresAt: new Date(Date.now() + 60000).toISOString(), context: request, formats: ["TXT2"], rows: entries.filter(entry => request.codes.includes(entry.code)), omissions: [], blockers: [], counts: { found: 3, selected: request.codes.length, includedEmployees: 0, includedCodes: request.codes.length, txt1Lines: 0, txt2Lines: request.codes.length, omitted: 0, blockers: 0 } };
+  return { selectionVersion: 2, mode: "CATALOG", manifestId: "manifest", selectionDigest: "a".repeat(64), expiresAt: new Date(Date.now() + 60000).toISOString(), context: request, formats: TURNO_CATALOG_EXPORT_FORMATS, rows: entries.filter(entry => request.codes.includes(entry.code)), omissions: [], blockers: [], counts: { found: 3, selected: request.codes.length, includedEmployees: 0, includedCodes: request.codes.length, txt1Lines: 0, txt2Lines: request.codes.length, omitted: 0, blockers: 0 } };
 }
 
 describe("materialized turn selection", () => {
@@ -91,6 +92,7 @@ describe("manifest and byte identity", () => {
     const manifest = confirmManifest(catalogManifest(request), request);
     expect(confirmManifest({ ...manifest, selectionDigest: "opaque-contract-value" }, request).selectionDigest).toBe("opaque-contract-value");
     expect(new TextDecoder().decode(expectedBytes(manifest, "TXT2"))).toBe("1500,08:00 12:00 14:00 18:24,08:00,12:00,14:00,18:24\r\n");
+    expect(new TextDecoder().decode(expectedBytes(manifest, "CADASTRO"))).toBe("1500;08:00 12:00 14:00 18:24;08:00;12:00;14:00;18:24\r\n");
     expect(() => expectedBytes(manifest, "TXT1")).toThrow();
     expect(intentKey({ ...request, codes: [1501, 1500] })).toBe(intentKey({ ...request, codes: [1500, 1501] }));
   });
@@ -106,9 +108,9 @@ describe("manifest and byte identity", () => {
   });
   it("keeps blockers separate and refuses arbitrary winners for duplicate registration", () => {
     const request: Extract<TurnoSelectionManifestRequest, { mode: "EMPLOYEES" }> = { selectionVersion: 2, mode: "EMPLOYEES", month: 12, year: 2026, sources: [{ workspaceId: "a", revision: 3 }], filters: emptyFilters(), members: [{ workspaceId: "a", employeeId: "alice", localShiftId: "s1" }, { workspaceId: "a", employeeId: "bob", localShiftId: "s1" }] };
-    const manifest: TurnoSelectionManifestDto = { selectionVersion: 2, mode: "EMPLOYEES", manifestId: "duplicate", selectionDigest: "a".repeat(64), expiresAt: new Date(Date.now()+60000).toISOString(), context: request, formats: ["TXT1", "TXT2"], rows: [], omissions: [], blockers: [{ reason: "DUPLICATE_REGISTRATION", members: request.members, message: "Corrija as duas pessoas." }], counts: { found: 2, selected: 2, includedEmployees: 0, includedCodes: 0, txt1Lines: 0, txt2Lines: 0, omitted: 0, blockers: 1 } };
+    const manifest: TurnoSelectionManifestDto = { selectionVersion: 2, mode: "EMPLOYEES", manifestId: "duplicate", selectionDigest: "a".repeat(64), expiresAt: new Date(Date.now()+60000).toISOString(), context: request, formats: TURNO_EMPLOYEE_EXPORT_FORMATS, rows: [], omissions: [], blockers: [{ reason: "DUPLICATE_REGISTRATION", members: request.members, message: "Corrija as duas pessoas." }], counts: { found: 2, selected: 2, includedEmployees: 0, includedCodes: 0, txt1Lines: 0, txt2Lines: 0, omitted: 0, blockers: 1 } };
     expect(confirmManifest(manifest, request).blockers).toHaveLength(1);
-    const rows = request.members.map(member => ({ ...member, registration: "0007", localShiftId: "s1", code: 1500, markings: entries[0].markings }));
+    const rows = request.members.map(member => ({ ...member, registration: "0007", localShiftId: "s1", branchCode: "01", code: 1500, markings: entries[0].markings }));
     expect(() => confirmManifest({ ...manifest, rows, blockers: [], counts: { ...manifest.counts, includedEmployees: 2, includedCodes: 1, txt1Lines: 2, txt2Lines: 1, blockers: 0 } }, request)).toThrow(/duplicada/);
   });
 });
