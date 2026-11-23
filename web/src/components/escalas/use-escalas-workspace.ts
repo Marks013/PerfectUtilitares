@@ -500,8 +500,7 @@ export function useEscalasWorkspace() {
                 ? [warning, comparisonNotice, canApply ? "Confira antes de aplicar." : previewAction].filter(Boolean).join(" ")
                 : `${warning || "Proposta concluída."} ${canApply ? "Confira e aplique à escala." : previewAction}`);
             } else {
-              const { status, message, conflicts, rejectionEvidence } = result.result;
-              restorePrevious();
+              const { status, message, conflicts, rejectionEvidence } = result.result; restorePrevious();
               const problem = solverProblem(status, message, conflicts, rejectionEvidence); setProblem(problem); setNotice(problem?.message ?? "");
             }
           }
