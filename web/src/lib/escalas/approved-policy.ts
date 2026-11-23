@@ -186,15 +186,19 @@ const enrollmentSchema = z.strictObject({
 });
 /** Server picks the stored model; client cannot provide protected regime fields. Returns a fresh input. */
 export function addEmployeeFromEscalaApprovedModel(snapshot: unknown, expectedHash: string,
-  enrollment: unknown): Result<EscalaInput> {
+  enrollment: unknown, current?: EscalaInput): Result<EscalaInput> {
   const approved = readEscalaApprovedPolicy(snapshot, expectedHash);
   const parsed = enrollmentSchema.safeParse(enrollment);
   if (!approved.ok || !parsed.success) return failure();
   const { regimeModelId, ...person } = parsed.data;
   const model = approved.value.regimeModels.find(item => item.id === regimeModelId);
   if (!model) return failure();
-  const input = inputOf(approved.value);
-  input.employees.push({ ...structuredClone(model.protectedFields), ...person, historyKnown: false, history: [] });
-  const checked = escalaInputSchema.safeParse(input);
+  const configuration = approved.value.configuration;
+  if (current && (current.branchCode !== configuration.branchCode || current.startDate !== configuration.startDate
+    || current.endDate !== configuration.endDate || current.visibleMonth !== configuration.visibleMonth)) return failure();
+  // The model comes from the immutable approval. Registration conflicts are checked in the live roster.
+  const input = current ?? inputOf(approved.value);
+  const checked = escalaInputSchema.safeParse({ ...input, employees: [...input.employees,
+    { ...structuredClone(model.protectedFields), ...person, historyKnown: false, history: [] }] });
   return checked.success ? { ok: true, value: checked.data } : failure();
 }

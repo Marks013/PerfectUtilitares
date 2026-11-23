@@ -1,4 +1,4 @@
-import type { EscalaApprovedPolicyView, EscalaOperationalCommand, EscalaSessionResponse } from "@/lib/escalas/access-contracts";
+import type { EscalaApprovedCreationMetadata, EscalaApprovedPolicyView, EscalaOperationalCommand, EscalaSessionResponse } from "@/lib/escalas/access-contracts";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { EscalaRequestError, responseCode } from "./workspace-feedback-model";
@@ -59,8 +59,8 @@ export async function approvedPoliciesFor(target: { branchCode: string; startDat
   }, signal);
 }
 
-export async function operationalCommand(command: EscalaOperationalCommand, signal?: AbortSignal, send: typeof fetch = fetch): Promise<EscalaWorkspace> {
-  return readResponse<EscalaWorkspace>(await send("/api/escalas", { method: "POST", cache: "no-store", signal,
+export async function operationalCommand(command: EscalaOperationalCommand, signal?: AbortSignal, send: typeof fetch = fetch): Promise<EscalaWorkspace & EscalaApprovedCreationMetadata> {
+  return readResponse<EscalaWorkspace & EscalaApprovedCreationMetadata>(await send("/api/escalas", { method: "POST", cache: "no-store", signal,
     headers: { "Content-Type": "application/json" }, body: JSON.stringify(command) }), signal);
 }
 

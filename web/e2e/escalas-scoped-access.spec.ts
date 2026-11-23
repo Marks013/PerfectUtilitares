@@ -131,6 +131,33 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     input.employees[0].scheduleMode = "TIMED";
     input.assignments = [{ employeeId: "person", date: "2026-12-09", kind: "ABSENCE", locked: true }, { employeeId: "person", date: "2026-12-25", kind: "HOLIDAY", locked: true }];
     const approved = await scope.approve(input);
+    const legacyInput = { ...newInput(input.branchCode, input.branchName, "2027-01", 40), employees: input.employees, shifts: input.shifts };
+    const legacyWorkspace = scope.trackWorkspace(await responseWorkspace(await scope.post({
+      action: "CREATE", input: legacyInput,
+    }), 201));
+    const extraRegistration = "0002";
+    const importCommand = {
+      purpose: "EMPLOYEES", workspaceId: legacyWorkspace.id, expectedRevision: legacyWorkspace.revision,
+      startDate: legacyWorkspace.input.startDate, endDate: legacyWorkspace.input.endDate, completeScopeConfirmed: true,
+    };
+    const importFile = {
+      name: "equipe-sintetica.csv", mimeType: "text/csv",
+      buffer: Buffer.from(employeeCsv(["0001", extraRegistration]).toString("utf8").replace("Pessoa 0001", "Pessoa nominal")),
+    };
+    const importPreview = await scope.admin.request.post("/api/escalas/import", { headers, multipart: {
+      command: JSON.stringify({ ...importCommand, action: "PREVIEW_REPLACE" }), file: importFile,
+    } });
+    expect(importPreview.status()).toBe(200);
+    const { preview: reviewedImport } = await importPreview.json() as { preview: import("../src/lib/escalas/import-sync-contracts").ImportSyncPreview };
+    expect(reviewedImport).toMatchObject({ canApply: true, counts: { addedPeople: 1 } });
+    const importApplied = await scope.admin.request.post("/api/escalas/import", { headers, multipart: {
+      command: JSON.stringify({ ...importCommand, action: "APPLY_REPLACE", confirm: true, expectedImpactHash: reviewedImport.expectedImpactHash }),
+      file: importFile,
+    } });
+    expect(importApplied.status()).toBe(200);
+    const { workspace: importedWorkspace } = await importApplied.json() as { workspace: EscalaWorkspace };
+    const importedExtra = importedWorkspace.input.employees.find(person => person.registration === extraRegistration);
+    if (!importedExtra) throw new Error("Imported synthetic employee missing from confirmed revision");
     let administrative = newInput(syntheticBranch("ADMIN"), "Configuração administrativa", "2026-12", 42);
     administrative.employees = [{ ...newEmployee(42, administrative.shifts[0].id), id: "admin-person", registration: "0099", name: "Pessoa administrativa", sector: "Loja", role: "Operador", activeFrom: "2020-01-01" }];
     administrative.policy = reviewedConfiguration(administrative);
@@ -170,14 +197,32 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Strict" });
     expect((await page.request.get("/api/admin/users")).status()).toBe(401);
     expect((await page.request.get("/api/unimed/access/session")).status()).toBe(401);
-    await page.getByText("Iniciar período com configuração aprovada", { exact: true }).click();
+    await page.getByText("Criar planejamento", { exact: true }).click();
     await page.getByLabel("Mês do novo planejamento", { exact: true }).fill("2026-12");
     await page.getByLabel("Configuração aprovada", { exact: true }).selectOption(approved.id);
     const creating = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.action === "CREATE_APPROVED");
-    await page.getByRole("button", { name: "Criar planejamento aprovado", exact: true }).click();
+    await page.getByRole("button", { name: "Criar com esta equipe", exact: true }).click();
     const createdResponse = await creating; expect(createdResponse.status()).toBe(201);
     let workspace = scope.trackWorkspace(await createdResponse.json() as EscalaWorkspace);
-    expect(workspace).toMatchObject({ approvedPolicyVersionId: approved.id, status: "DRAFT" });
+    expect(workspace).toMatchObject({ approvedPolicyVersionId: approved.id, status: "DRAFT", teamSeed: "LATEST_IMPORT" });
+    expect(workspace.input.employees.map(person => person.registration).sort()).toEqual(["0001", extraRegistration]);
+    expect(workspace.input.employees).toContainEqual(expect.objectContaining({ id: importedExtra.id, registration: extraRegistration }));
+    expect(workspace.input.assignments).toEqual(expect.arrayContaining(input.assignments));
+    workspace = await responseWorkspace(await post({
+      action: "REMOVE_EMPLOYEE", id: workspace.id, expectedRevision: workspace.revision, employeeId: importedExtra.id,
+    }));
+    expect(workspace.input.employees.map(person => person.registration)).toEqual(["0001"]);
+    workspace = await responseWorkspace(await post({
+      action: "ADD_EMPLOYEE", id: workspace.id, expectedRevision: workspace.revision,
+      regimeModelId: "regime-person", registration: extraRegistration, name: "Pessoa cadastrada",
+    }));
+    const enrolled = workspace.input.employees.find(person => person.registration === extraRegistration);
+    if (!enrolled) throw new Error("Manually enrolled synthetic employee missing from current revision");
+    expect(enrolled).toMatchObject({ name: "Pessoa cadastrada" });
+    workspace = await responseWorkspace(await post({
+      action: "REMOVE_EMPLOYEE", id: workspace.id, expectedRevision: workspace.revision, employeeId: enrolled.id,
+    }));
+    expect(workspace.input.employees.map(person => person.registration)).toEqual(["0001"]);
     expect(workspace.input.assignments).toEqual(expect.arrayContaining(input.assignments));
     const foreignWorkspace = foreign.trackWorkspace(await responseWorkspace(await foreign.post({ action: "CREATE", input: { ...input, branchName: "Outro tenant sintético" } }), 201));
     expect((await page.request.get(`/api/escalas?id=${foreignWorkspace.id}`)).status()).toBe(404);
@@ -190,9 +235,14 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     // The authorized administrator still cannot resolve an ID from another tenant.
     expect((await scope.admin.request.delete("/api/escalas", { headers, data: deleteBody })).status()).toBe(404);
     expect((await readWorkspace(foreign.admin, foreignWorkspace.id)).revision).toBe(foreignWorkspace.revision);
+    await page.reload();
     await selectEscalasWorkspace(page, workspace);
+    await expect(page.getByLabel("Ano", { exact: true }).locator('option[value="2027"]')).toHaveCount(0);
     const list = await page.request.get("/api/escalas").then(response => response.json()) as { workspaces: EscalaWorkspace[] };
     expect(list.workspaces.map(item => item.id)).toEqual([workspace.id]);
+    const legacyResponse = await page.request.get(`/api/escalas?id=${legacyWorkspace.id}`);
+    expect(legacyResponse.status()).toBe(409);
+    await expect(legacyResponse.json()).resolves.toMatchObject({ error: { code: "ESCALA_CONFIG_APPROVAL_REQUIRED" } });
     expect((await page.request.get(`/api/escalas?id=${adminOnlyWorkspace.id}`)).status()).toBe(403);
     expect((await post({ action: "GENERATE", id: adminOnlyWorkspace.id, expectedRevision: adminOnlyWorkspace.revision })).status()).toBe(403);
     await openEscalasArea(page, "generate");

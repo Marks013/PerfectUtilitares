@@ -3,7 +3,7 @@ import type { EscalaActor } from "@/lib/escalas/access";
 import type { EscalaInput } from "@/lib/escalas/types";
 import { POST } from "@/app/api/escalas/import/route";
 import type { ImportSyncCommand, ImportSyncPreview, ImportSyncPreviewCommand } from "@/lib/escalas/import-sync-contracts";
-const mocks = vi.hoisted(() => ({ user: vi.fn(), transaction: vi.fn(), workspace: vi.fn(), update: vi.fn(), revision: vi.fn(), audit: vi.fn(), policy: vi.fn(), guard: vi.fn(), revisionRead: vi.fn(), approval: vi.fn() }));
+const mocks = vi.hoisted(() => ({ user: vi.fn(), transaction: vi.fn(), workspace: vi.fn(), update: vi.fn(), revision: vi.fn(), audit: vi.fn(), importSeed: vi.fn(), policy: vi.fn(), guard: vi.fn(), revisionRead: vi.fn(), approval: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {
   user: { findFirst: mocks.user }, escalaModuleAccessPolicy: { findUnique: mocks.policy },
   escalaWorkspace: { findFirst: mocks.workspace, updateMany: mocks.update }, escalaRevision: { findUnique: mocks.revisionRead, create: mocks.revision },
@@ -53,7 +53,7 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(async callback => {
     beforeTransaction?.();
     const snapshot = structuredClone({ value, revision, revisions, audits });
-    const tx = { user: { findFirst: mocks.user }, escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkspace: { findFirst: mocks.workspace, updateMany: mocks.update }, escalaRevision: { create: mocks.revision }, auditLog: { create: mocks.audit }, escalaBranchPolicyVersion: { findFirst: mocks.approval }, $executeRaw: async () => 1, $queryRaw: async () => [] };
+    const tx = { user: { findFirst: mocks.user }, escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkspace: { findFirst: mocks.workspace, updateMany: mocks.update }, escalaRevision: { create: mocks.revision }, auditLog: { create: mocks.audit }, escalaImportedTeam: { upsert: mocks.importSeed }, escalaBranchPolicyVersion: { findFirst: mocks.approval }, $executeRaw: async () => 1, $queryRaw: async () => [] };
     try { const result = await callback(tx); afterTransaction?.(); return result; }
     catch (error) { ({ value, revision, revisions, audits } = snapshot); throw error; }
   });

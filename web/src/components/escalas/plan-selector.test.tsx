@@ -58,12 +58,14 @@ describe("hierarchical planning selection", () => {
     expect(selectPlan(plans(), "11-nov", "branch", "missing")).toBeUndefined();
   });
 
-  it("keeps the month in a new year when available, otherwise chooses that year's newest month", () => {
+  it("filters months by year while keeping the opened workspace until a month is chosen", () => {
     const input = [...plans(), plan("08-nov-next", "08", "2027-11")];
-    expect(selectPlan(input, "08-nov", "year", "2027")).toBe("08-nov-next");
-    expect(selectPlan(plans(), "08-dec", "year", "2027")).toBe("08-next");
-    expect(selectPlan(plans(), "08-next", "year", "2026")).toBe("08-jan");
-    expect(selectPlan(plans(), "08-nov", "year", "2025")).toBeUndefined();
+    expect(planSelection(input, "08-nov", undefined, "2027")).toMatchObject({
+      active: { id: "08-nov" }, year: "2027", month: undefined, months: ["01", "11"], matching: [],
+    });
+    expect(selectPlan(input, "08-nov", "month", "11", undefined, "2027")).toBe("08-nov-next");
+    expect(selectPlan(input, "08-nov", "month", "12", undefined, "2027")).toBeUndefined();
+    expect(planSelection(input, "08-nov", undefined, "2025").year).toBe("2026");
   });
 
   it("never changes store or year when a month is selected and never invents a missing plan", () => {
@@ -127,7 +129,10 @@ describe("hierarchical planning selection", () => {
     expect(html).toContain("Selecione o ano primeiro");
     expect(html).not.toContain("Planejamento aberto:");
     expect(html).not.toContain("Loja 11");
-    expect(selectPlan(plans(), undefined, "year", "2027", "08")).toBe("08-next");
+    expect(planSelection(plans(), undefined, "08", "2027")).toMatchObject({
+      active: undefined, year: "2027", month: undefined, months: ["01"],
+    });
+    expect(selectPlan(plans(), undefined, "month", "01", "08", "2027")).toBe("08-next");
     expect(onSelect).not.toHaveBeenCalled();
   });
 

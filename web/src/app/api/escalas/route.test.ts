@@ -22,7 +22,7 @@ vi.mock("@/lib/escalas/solver-transport", async original => {
     candidateReferenceSignature: (payload: string) => crypto.createHmac("sha256", "route-synthetic-receipt-key").update(payload).digest("hex") };
 });
 
-const mocks = vi.hoisted(() => ({ session: null as AppSession | null, createScope: null as string[] | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), recheck: vi.fn(), remove: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: null as AppSession | null, createScope: null as string[] | null, list: vi.fn(), get: vi.fn(), create: vi.fn(), upgrade: vi.fn(), save: vi.fn(), generate: vi.fn(), recheck: vi.fn(), remove: vi.fn(), removeEmployee: vi.fn(), rate: vi.fn(), module: vi.fn(), startOperation: vi.fn(), runOperation: vi.fn(), cancelOperation: vi.fn(), operationStatus: vi.fn() }));
 vi.mock("@/lib/escalas/access", async original => ({ ...await original<typeof import("@/lib/escalas/access")>(),
   allowedBranches: async (actor: { admin: boolean }, capability?: string) => capability === "workspace.create" ? mocks.createScope : actor.admin ? null : ["02"] }));
 vi.mock("@/lib/escalas/module-session", () => ({ getEscalaModuleSession: mocks.module }));
@@ -38,7 +38,7 @@ vi.mock("next/headers", async (original) => ({
 }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
 vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, createEscala: mocks.create, createEscalaApproved: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
-  addEscalaEmployee: vi.fn(), rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
+  addEscalaEmployee: vi.fn(), removeEscalaEmployee: mocks.removeEmployee, rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
 const workspace = { id: "w1", revision: 1, status: "DRAFT", input, canEdit: true, canPublish: true };
@@ -271,4 +271,20 @@ it("uses a verified module company for successful query/create/save/generate, ig
   expect((await POST(command({ action: "CREATE_APPROVED", approvedPolicyVersionId: "approval" }))).status).toBe(201); expect(mocks.create).toHaveBeenLastCalledWith(actor, "approval");
   expect((await POST(command({ action: "SAVE", id: "w1", expectedRevision: 1, input }))).status).toBe(200); expect(mocks.save).toHaveBeenLastCalledWith(actor, "w1", 1, input);
   expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(200); expect(mocks.generate).toHaveBeenLastCalledWith(actor, "w1", 1, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+});
+
+it("removes a collaborator through the scoped revision action and returns the saved workspace", async () => {
+  mocks.session = null;
+  mocks.module.mockResolvedValue({ id: "module-1", tenantId: "default-company", expiresAt: new Date("2030-01-01") });
+  const saved = { ...workspace, revision: 2 };
+  mocks.removeEmployee.mockResolvedValueOnce(saved);
+  const data = { action: "REMOVE_EMPLOYEE", id: "w1", expectedRevision: 1, employeeId: "p1" };
+
+  const result = await POST(command(data));
+  expect(result.status).toBe(200);
+  expect(await result.json()).toEqual(saved);
+  expect(mocks.removeEmployee).toHaveBeenCalledWith(
+    { userId: null, tenantId: "default-company", admin: false, moduleSessionId: "module-1" }, "w1", 1, "p1");
+  expect((await POST(command({ ...data, branchCode: "07" }))).status).toBe(400);
+  expect(mocks.removeEmployee).toHaveBeenCalledTimes(1);
 });

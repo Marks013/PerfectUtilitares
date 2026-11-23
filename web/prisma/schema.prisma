@@ -222,6 +222,7 @@ model Tenant {
   escalaOperatorGrants    EscalaOperatorBranchGrant[]
   escalaModuleAccessPolicy EscalaModuleAccessPolicy?
   escalaWorkspaces        EscalaWorkspace[]
+  escalaImportedTeams     EscalaImportedTeam[]
   escalaApprovedPolicies  EscalaBranchPolicyVersion[]
   escalaAccesses          EscalaBranchAccess[]
   shiftCatalogSequence    ShiftCatalogSequence?
@@ -229,6 +230,19 @@ model Tenant {
   turnoExportManifests    TurnoExportManifest[]
   createdAt               DateTime                       @default(now())
   updatedAt               DateTime                       @updatedAt
+}
+
+model EscalaImportedTeam {
+  tenantId          String
+  branchCode        String
+  tenant            Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sourceWorkspaceId String
+  sourceRevision    Int
+  startDate         String
+  endDate           String
+  snapshot          Json
+
+  @@id([tenantId, branchCode])
 }
 
 model EscalaWorkspace {

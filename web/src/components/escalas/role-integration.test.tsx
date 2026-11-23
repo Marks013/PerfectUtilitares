@@ -25,7 +25,7 @@ describe("operational roles and contextual controls", () => {
     const create = vi.fn(), html = as(operator, <CreateApprovedPlan disabled={false} create={create} />);
     expect(html).toContain("07 · Centro");
     expect(html).not.toContain("Código da filial");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Criar planejamento aprovado/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Criar com esta equipe/);
     expect(create).not.toHaveBeenCalled();
   });
   it("reserves operator administration and free shift definitions to the administrative account", () => {

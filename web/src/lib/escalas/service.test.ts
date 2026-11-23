@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { applyTurnoSwap, previewTurnoSwap } from "./shift-catalog/swap";
 import type { EscalaInput } from "./types";
 import { createEscala, createEscalaApproved, addEscalaEmployee, rebaseEscalaApproval, generateEscala, getEscala, listEscalas, parseEscalaInput, preserveLockedAssignments, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration } from "./service";
+import { removeEscalaEmployee } from "./service";
 import { buildEscalaApprovedPolicy } from "./approved-policy";
 import { ESCALA_OPERATOR_CAPABILITIES } from "./permissions";
 import { allowedBranches, branchPermission, escalaActor, requireEscalaPermission, requireEscalaCapability } from "./access";
@@ -17,8 +18,8 @@ import { admitCandidateReference, issueCandidateReceipt, selectCandidateReferenc
 import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
 const mocks = vi.hoisted(() => ({
   workspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-  revision: { findUnique: vi.fn(), create: vi.fn() }, grants: { findUnique: vi.fn(), findMany: vi.fn() },
-  audit: { create: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(), catalogEntry: vi.fn(),
+  revision: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() }, grants: { findUnique: vi.fn(), findMany: vi.fn() },
+  audit: { create: vi.fn(), findFirst: vi.fn() }, importedTeam: { findUnique: vi.fn(), upsert: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(), catalogEntry: vi.fn(),
   policy: vi.fn(), user: vi.fn(), session: vi.fn(), approval: vi.fn(),
   solverSecretPath: undefined as string | undefined, solverSecretDescriptor: undefined as number | undefined,
 }));
@@ -104,13 +105,14 @@ beforeEach(() => {
   mocks.workspace.create.mockResolvedValue(row());
   mocks.workspace.updateMany.mockResolvedValue({ count: 1 });
   mocks.revision.findUnique.mockResolvedValue(version());
+  mocks.revision.findMany.mockResolvedValue([]);
   mocks.grants.findMany.mockResolvedValue([]);
   vi.stubEnv("UNIMED_ACCESS_COOKIE_SECRET", "synthetic-service-proposal-test-material-00000");
   mocks.policy.mockResolvedValue({ tenantId: "company-a", mode: "SCOPED", version: 1 });
   mocks.user.mockImplementation(async ({ where }) => ({ id: where.id, tenantId: where.tenantId, status: "ACTIVE", role: where.id === "operator-a" ? "OPERATOR" : "ADMIN" }));
   mocks.peers.mockResolvedValue([]);
   mocks.advisory.mockResolvedValue(1);
-  mocks.transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({ escalaWorkspace: { ...mocks.workspace, findMany: mocks.peers }, escalaRevision: mocks.revision, auditLog: mocks.audit, $executeRaw: mocks.advisory,
+  mocks.transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({ escalaWorkspace: { ...mocks.workspace, findMany: mocks.peers }, escalaRevision: mocks.revision, auditLog: mocks.audit, escalaImportedTeam: mocks.importedTeam, $executeRaw: mocks.advisory,
     escalaModuleAccessPolicy: { findUnique: mocks.policy }, user: { findFirst: mocks.user }, escalaBranchAccess: mocks.grants,
     escalaModuleSession: { findFirst: mocks.session }, escalaBranchPolicyVersion: { findFirst: mocks.approval }, $queryRaw: vi.fn() }));
   mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: generatedInput().assignments, wallTimeSeconds: 0.1, message: "Proposta viável" });
@@ -843,6 +845,35 @@ describe("Escalas revision service", () => {
     mocks.workspace.findMany.mockResolvedValue([row({ id: "10", branchCode: "10" }), row({ id: "2", branchCode: "2" }), row({ id: "1", branchCode: "1" })]);
     expect((await listEscalas(actor)).map((workspace) => workspace.id)).toEqual(["1", "2", "10"]);
   });
+  it("lists only current revisions with approval for scoped operators and keeps legacy drafts for administrators", async () => {
+    const { scoped, baseline } = scopedSavedFixture();
+    const approved = row({ revision: 2 });
+    const legacy = row({ id: "legacy", revision: 3 });
+    mocks.workspace.findMany.mockResolvedValue([approved, legacy]);
+    mocks.workspace.findFirst.mockImplementation(async ({ where }) =>
+      [approved, legacy].find(workspace => workspace.id === where.id && workspace.tenantId === where.tenantId) ?? null);
+    mocks.revision.findMany.mockResolvedValue([{ workspaceId: approved.id }]);
+    mocks.revision.findUnique
+      .mockResolvedValueOnce({ ...version(baseline, approved.revision), approvedPolicyVersionId: "approval" })
+      .mockResolvedValueOnce({ ...version(baseline, legacy.revision), approvedPolicyVersionId: null })
+      .mockResolvedValueOnce({ ...version(baseline, 1), approvedPolicyVersionId: "approval" })
+      .mockResolvedValueOnce({ ...version(baseline, legacy.revision), approvedPolicyVersionId: null });
+
+    const listed = await listEscalas(scoped);
+    expect(listed.map(({ id, revision }) => ({ id, revision }))).toEqual([{ id: approved.id, revision: approved.revision }]);
+    expect(mocks.revision.findMany).toHaveBeenCalledExactlyOnceWith({
+      where: { tenantId: actor.tenantId, approvedPolicyVersionId: { not: null }, OR: [
+        { workspaceId: approved.id, revision: approved.revision }, { workspaceId: legacy.id, revision: legacy.revision },
+      ] },
+      select: { workspaceId: true },
+    });
+    await expect(getEscala(scoped, listed[0].id)).resolves.toMatchObject({ id: approved.id, revision: 2, approvedPolicyVersionId: "approval" });
+    await expect(getEscala(scoped, legacy.id)).rejects.toMatchObject({ status: 409, code: "ESCALA_CONFIG_APPROVAL_REQUIRED" });
+    await expect(getEscala(scoped, legacy.id, 1)).resolves.toMatchObject({ id: legacy.id, revision: 1, approvedPolicyVersionId: "approval" });
+    expect((await listEscalas(actor)).map(workspace => workspace.id)).toEqual([legacy.id, approved.id]);
+    await expect(getEscala(actor, legacy.id)).resolves.toMatchObject({ id: legacy.id, revision: 3, approvedPolicyVersionId: null });
+    expect(mocks.revision.findMany).toHaveBeenCalledTimes(1);
+  });
   it("does not disclose a workspace belonging to another company", async () => {
     mocks.workspace.findFirst.mockResolvedValue(null);
     await expect(getEscala(actor, "foreign-id")).rejects.toMatchObject({ status: 404 });
@@ -1256,7 +1287,7 @@ describe("coverage provenance is preserved across every branch", () => {
 
 describe("Shared operational provenance", () => {
   const shared = { tenantId: "company-a", userId: null, admin: false, moduleSessionId: "operational-session" };
-  it("creates from an approved seed and saves with a named module session without inventing an account", async () => {
+  it.each([false, true])("creates and saves with a verified named session (reuse imported team: %s)", async reuseImport => {
     const seed = input(); seed.employees[0].scheduleMode = "TIMED";
     const built = buildEscalaApprovedPolicy({ input: seed, version: 1,
       provenance: { tenantId: actor.tenantId, approvedById: actor.userId, approvedAt: "2026-11-13T12:00:00.000Z", origin: null },
@@ -1267,8 +1298,24 @@ describe("Shared operational provenance", () => {
       accessPolicyVersion: 1, createdAt: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 60000), revokedAt: null,
       operator: { id: "named", tenantId: actor.tenantId, active: true, permissionVersion: 1, branchGrants: [{
         tenantId: actor.tenantId, operatorId: "named", branchCode: "02", active: true, capabilities: [...ESCALA_OPERATOR_CAPABILITIES] }] } });
+    if (reuseImport) {
+      const imported = structuredClone(seed);
+      imported.employees[0] = { ...imported.employees[0], id: "imported-person", name: "Equipe importada" };
+      imported.assignments = [];
+      mocks.peers.mockResolvedValueOnce([{ id: "import-workspace" }]);
+      mocks.audit.findFirst.mockResolvedValueOnce({ entityId: "import-workspace", metadata: { tenantId: actor.tenantId, revision: 3,
+        adminImport: { purpose: "EMPLOYEES", startDate: imported.startDate, endDate: imported.endDate } } });
+      mocks.revision.findUnique.mockResolvedValueOnce({ tenantId: actor.tenantId, workspaceId: "import-workspace", revision: 3,
+        input: imported, workspace: { branchCode: "02" } });
+    }
     const created = await createEscalaApproved(shared, "approval");
     expect(created.canEdit).toBe(true); expect(created.canPublish).toBe(false);
+    expect(created.teamSeed).toBe(reuseImport ? "LATEST_IMPORT" : "APPROVED_CONFIGURATION");
+    expect(created.input.employees[0].id).toBe(reuseImport ? "imported-person" : "e1");
+    expect(created.input.policy).toEqual(built.value.snapshot.configuration.policy);
+    if (reuseImport) expect(mocks.audit.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({
+      metadata: expect.objectContaining({ importedTeamOrigin: { workspaceId: "import-workspace", revision: 3 } }),
+    }) });
     expect(mocks.revision.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ createdById: null, accessChannel: "ESCALAS_USERNAME_ONLY", moduleSessionId: "operational-session", tenantId: "company-a", approvedPolicyVersionId: "approval" }) });
     mocks.revision.findUnique.mockResolvedValue({ ...version(created.input), approvedPolicyVersionId: "approval" });
     const saved = await saveEscala(shared, "w1", 1, created.input);
@@ -1332,6 +1379,156 @@ function scopedComparisonFixture(legacy = false) {
     : day.date === "2026-10-29" ? { ...day, kind: "WORK" as const, shiftId: "day" } : day);
   return { ...fixture, scope, worse };
 }
+
+describe("manual employee removal", () => {
+  it.each(["operator", "administrator"])("saves only the roster change and keeps the approval for %s", async (role) => {
+    const { scoped, baseline } = scopedSavedFixture();
+    const retained = { ...baseline.employees[0], id: "keep", registration: "0009" };
+    baseline.employees.push(retained);
+    const keepDay = { ...baseline.assignments[0], employeeId: retained.id };
+    baseline.assignments.push(keepDay);
+    const before = structuredClone(baseline);
+    mocks.revision.findFirst.mockResolvedValue(null);
+
+    const result = await removeEscalaEmployee(role === "operator" ? scoped : actor, "w1", 1, "e1");
+
+    expect(result).toMatchObject({ revision: 2, status: "DRAFT", approvedPolicyVersionId: "approval" });
+    expect(result.input).toMatchObject({ employees: [retained], assignments: [keepDay], policy: before.policy, shifts: before.shifts, needsRegeneration: true });
+    expect(baseline).toEqual(before);
+    expect(mocks.workspace.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: actor.tenantId, id: "w1", revision: 1 } }));
+    expect(mocks.revision.create).toHaveBeenCalledExactlyOnceWith({ data: expect.objectContaining({ tenantId: actor.tenantId, workspaceId: "w1", revision: 2, approvedPolicyVersionId: "approval", input: expect.objectContaining({ employees: [retained], assignments: [keepDay] }) }) });
+    expect(mocks.audit.create).toHaveBeenCalledWith({ data: expect.objectContaining({ metadata: expect.objectContaining({ removedEmployeeId: "e1", previousRevision: 1 }) }) });
+  });
+
+  it("allows an administrator to remove an editable registration from an unapproved draft", async () => {
+    const value = input();
+    value.assignments = [];
+    useCurrent(value);
+    mocks.revision.findUnique.mockResolvedValue({ ...version(value), approvedPolicyVersionId: null });
+
+    await expect(removeEscalaEmployee(actor, "w1", 1, "e1")).resolves.toMatchObject({ revision: 2, approvedPolicyVersionId: null, input: { employees: [], assignments: [] } });
+  });
+
+  it.each(["absence", "holiday", "locked", "legacy"])("protects %s records before saving", async (kind) => {
+    const { scoped, baseline } = scopedSavedFixture();
+    const date = baseline.assignments[0].date;
+    baseline.assignments[0] = kind === "absence" || kind === "holiday"
+      ? { employeeId: "e1", date, kind: kind === "absence" ? "ABSENCE" : "HOLIDAY", locked: false }
+      : { employeeId: "e1", date, kind: "OFF", ...(kind === "locked" ? { locked: true } : {}) };
+
+    await expect(removeEscalaEmployee(scoped, "w1", 1, "e1")).rejects.toMatchObject({ status: 409, code: "ESCALA_EMPLOYEE_REMOVAL_PROTECTED" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("preserves the published roster when the current revision is a draft", async () => {
+    const { scoped, baseline } = scopedSavedFixture();
+    const published = structuredClone(baseline);
+    published.employees[0].id = "previous-id";
+    for (const day of published.assignments) day.employeeId = "previous-id";
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
+    mocks.revision.findUnique.mockResolvedValue({ ...version(baseline, 2), approvedPolicyVersionId: "approval" });
+    mocks.revision.findFirst.mockResolvedValue({ input: published });
+
+    await expect(removeEscalaEmployee(scoped, "w1", 2, "e1")).rejects.toMatchObject({ status: 409, code: "ESCALA_EMPLOYEE_REMOVAL_PROTECTED" });
+    expect(mocks.revision.findFirst).toHaveBeenCalledExactlyOnceWith({ where: { tenantId: actor.tenantId, workspaceId: "w1", status: "PUBLISHED" }, orderBy: { revision: "desc" }, select: { input: true } });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it.each(["WORK", "ABSENCE", "HOLIDAY"] as const)("protects a neighbour's %s published after the draft", async (kind) => {
+    const { scoped, baseline } = scopedSavedFixture();
+    baseline.assignments = [];
+    const neighbour = period(addDays(baseline.startDate, -7), 2);
+    const person = neighbour.employees[0];
+    person.id = "neighbour-local-id";
+    person.name = "Nome atualizado em outra proposta";
+    person.history = [];
+    neighbour.assignments = [{ employeeId: person.id, date: baseline.endDate, kind, ...(kind === "WORK" ? { shiftId: "day" } : {}) }];
+    mocks.advisory.mockImplementationOnce(async () => {
+      mocks.peers.mockResolvedValue([{ revisions: [{ input: neighbour }] }]);
+      return 1;
+    });
+
+    await expect(removeEscalaEmployee(scoped, "w1", 1, "e1")).rejects.toMatchObject({
+      status: 409, code: "ESCALA_EMPLOYEE_REMOVAL_PROTECTED", message: expect.stringContaining("dias compartilhados"),
+    });
+    expect(mocks.peers).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      where: { tenantId: scoped.tenantId, branchCode: baseline.branchCode, id: { not: "w1" },
+        startDate: { lte: baseline.endDate }, endDate: { gte: addDays(baseline.startDate, -1) },
+        revisions: { some: { tenantId: scoped.tenantId, status: "PUBLISHED" } } },
+    }));
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("protects the fixed rest reserved on the first day by the preceding publication", async () => {
+    const { scoped, baseline } = scopedSavedFixture();
+    const previous = period(addDays(baseline.startDate, -7));
+    Object.assign(previous.employees[0], { offMode: "MIXED", fixedOffDays: [0], offPattern: "CONSECUTIVE" });
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: previous }] }]);
+
+    await expect(removeEscalaEmployee(scoped, "w1", 1, "e1")).rejects.toMatchObject({
+      code: "ESCALA_EMPLOYEE_REMOVAL_PROTECTED", message: expect.stringContaining("dias compartilhados"),
+    });
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("allows removal when a neighbour's commitments have a different registration or date outside the draft", async () => {
+    const { scoped, baseline } = scopedSavedFixture();
+    const sameName = period(addDays(baseline.startDate, -7), 2);
+    sameName.employees[0].registration = "0002";
+    const later = period(addDays(baseline.endDate, 1));
+    mocks.peers.mockResolvedValue([{ revisions: [{ input: sameName }] }, { revisions: [{ input: later }] }]);
+
+    await expect(removeEscalaEmployee(scoped, "w1", 1, "e1")).resolves.toMatchObject({
+      revision: 2, input: { employees: [], assignments: [] },
+    });
+    expect(mocks.revision.create).toHaveBeenCalledOnce();
+  });
+
+  it("rechecks employee management and the revision in the transaction", async () => {
+    const { scoped, session } = scopedSavedFixture();
+    const grant = session.operator.branchGrants[0];
+    mocks.advisory.mockImplementationOnce(async () => {
+      grant.capabilities = grant.capabilities.filter(capability => capability !== "employee.manage");
+      return 1;
+    });
+    await expect(removeEscalaEmployee(scoped, "w1", 1, "e1")).rejects.toMatchObject({ status: 403 });
+    grant.capabilities = [...ESCALA_OPERATOR_CAPABILITIES];
+    mocks.advisory.mockImplementationOnce(async () => {
+      mocks.workspace.findFirst.mockResolvedValue(null);
+      return 1;
+    });
+    await expect(removeEscalaEmployee(scoped, "w1", 1, "e1")).rejects.toMatchObject({ status: 409, code: "ESCALA_STALE_REVISION" });
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("requires the approved branch and keeps ordinary saves subject to the existing policy", async () => {
+    const { scoped, baseline, session } = scopedSavedFixture();
+    const desired = { ...baseline, employees: [], assignments: [] };
+    await expect(saveEscala(scoped, "w1", 1, desired)).rejects.toMatchObject({ status: 403, code: "ESCALA_PROTECTED_INPUT" });
+    await expect(saveEscala(scoped, "w1", 1, { ...desired, defaultWeeklyHours: 40 }, false, { serverRemoval: { employeeId: "e1" } })).rejects.toMatchObject({ status: 403, code: "ESCALA_EMPLOYEE_REMOVAL_INVALID" });
+    session.operator.branchGrants[0].branchCode = "03";
+    await expect(removeEscalaEmployee(scoped, "w1", 1, "e1")).rejects.toMatchObject({ status: 403 });
+    expect(mocks.revision.create).not.toHaveBeenCalled();
+  });
+
+  it("can enroll a removed registration from the same immutable approval again", async () => {
+    const { scoped, baseline, approval } = scopedSavedFixture();
+    const registration = baseline.employees[0].registration;
+    const removed = await removeEscalaEmployee(scoped, "w1", 1, "e1");
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
+    mocks.revision.findUnique.mockResolvedValue({ ...version(removed.input, 2), approvedPolicyVersionId: "approval" });
+
+    const result = await addEscalaEmployee(scoped, "w1", 2, { regimeModelId: "model", name: "Pessoa recadastrada", registration });
+
+    expect(result).toMatchObject({ revision: 3, approvedPolicyVersionId: "approval", input: { employees: [{ registration, name: "Pessoa recadastrada" }], assignments: [] } });
+    expect(result.input.employees[0].id).not.toBe("e1");
+    expect(approval.snapshot.seed.employees[0]).toMatchObject({ id: "e1", registration });
+  });
+});
 
 describe("canonical comparison composed with current operational authority", () => {
   it("shares current approval authority with result delivery without generating, signing or saving", async () => {
@@ -1592,6 +1789,22 @@ describe("approved operational write boundary", () => {
     mocks.revision.findUnique.mockResolvedValue({ ...version(administrative.input, 2), approvedPolicyVersionId: null });
     mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
     await expect(getEscala(scoped, "w1")).rejects.toMatchObject({ code: "ESCALA_CONFIG_APPROVAL_REQUIRED" });
+  });
+  it("rejects overlapping registrations in the current roster, including enrollments after approval", async () => {
+    const { scoped } = scopedSavedFixture();
+    const enrollment = { regimeModelId: "model", name: "Nova pessoa", registration: "0002" };
+    const duplicate = { status: 422, code: "ESCALA_DUPLICATE_REGISTRATION" };
+    await expect(addEscalaEmployee(scoped, "w1", 1, { ...enrollment, registration: " 0001 " })).rejects.toMatchObject(duplicate);
+    expect(mocks.workspace.updateMany).not.toHaveBeenCalled();
+
+    const added = await addEscalaEmployee(scoped, "w1", 1, enrollment);
+    expect(added).toMatchObject({ revision: 2, approvedPolicyVersionId: "approval" });
+    expect(added.input.employees).toHaveLength(2);
+    expect(added.input.employees[1].registration).toBe("0002");
+    mocks.workspace.findFirst.mockResolvedValue(row({ revision: 2 }));
+    mocks.revision.findUnique.mockResolvedValue({ ...version(added.input, 2), approvedPolicyVersionId: "approval" });
+    await expect(addEscalaEmployee(scoped, "w1", 2, enrollment)).rejects.toMatchObject(duplicate);
+    expect(mocks.workspace.updateMany).toHaveBeenCalledTimes(1);
   });
   it("performs an explicit administrative rebase on matching protected people and keeps the old revision intact", async () => {
     scopedSavedFixture();

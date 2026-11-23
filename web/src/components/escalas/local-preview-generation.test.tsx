@@ -81,7 +81,7 @@ function model(): ReturnType<typeof useEscalasWorkspace> {
     workspace, input, validation: workspace.validation, dirty: false, outdated: false,
     busy: "", error: "", problem: null, notice: "", generated: null, pendingOpen: null,
     setPendingOpen: action, update: action, open: action, create: action, createApproved: action,
-    addEmployee: vi.fn(async () => false), replaceImport: vi.fn(async () => null),
+    addEmployee: vi.fn(async () => false), removeEmployee: vi.fn(async () => false), replaceImport: vi.fn(async () => null),
     rebaseApproved: action, upgradeCalendar: action, save: action, validate: action,
     generate: vi.fn(), canGenerate: true, applyGenerated: action, undoRoster: vi.fn(async () => false),
     publish: action, discard: action, deleteWorkspace: action, resetKey: 0, cancellable: false,

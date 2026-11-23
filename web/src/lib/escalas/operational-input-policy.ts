@@ -13,6 +13,16 @@ export function stableEscalaJson(value: unknown): string {
 const same = (a: unknown, b: unknown) => stableEscalaJson(a) === stableEscalaJson(b);
 const forbidden = () => { throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "A alteração contém campos administrativos ou registros protegidos. Os dados foram preservados."); };
 
+function onlyUpdatesUnlockedWorkShifts(previous: EscalaInput["assignments"], next: EscalaInput["assignments"]) {
+  return previous.length === next.length && previous.every((old, index) => {
+    const updated = next[index];
+    return same(old, updated) || (
+      old.kind === "WORK" && old.locked === false && Boolean(old.shiftId && updated.shiftId)
+      && same({ ...old, shiftId: updated.shiftId }, updated)
+    );
+  });
+}
+
 /** Preservation check independent of permission to apply; generation previews must also preserve these records. */
 export function assertEscalaProtectedAssignments(previous: EscalaInput, next: EscalaInput,
   trustedProposal = false, allowExplicitUnlock = false) {
@@ -46,7 +56,11 @@ export function assertEscalaOperationalInput(previous: EscalaInput, next: Escala
   capabilities: readonly EscalaCapability[], trustedProposal = false, catalogIntent = false, allowExplicitUnlock = false) {
   const has = (capability: EscalaCapability) => capabilities.includes(capability);
   assertEscalaProtectedAssignments(previous, next, trustedProposal, allowExplicitUnlock);
-  if (!same(previous.assignments, next.assignments) && !has("schedule.apply")) forbidden();
+  if (!same(previous.assignments, next.assignments) && !has("schedule.apply")) {
+    // The catalog service computes the dated swap after checking the approved clock and preview.
+    if (!catalogIntent || !has("shift.manage") || !has("workspace.save")
+      || !onlyUpdatesUnlockedWorkShifts(previous.assignments, next.assignments)) forbidden();
+  }
   if (trustedProposal) return;
   const rootExceptions = new Set(["employees", "assignments", ...(catalogIntent ? ["shifts"] : [])]);
   for (const field of new Set([...Object.keys(previous), ...Object.keys(next)])) {

@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, Request } from "@playwright/test";
 import { expect } from "./fixtures";
 import { canonicalBranchCode } from "../src/lib/escalas/branch-code";
 import { visibleDates } from "../src/lib/escalas/dates";
@@ -35,8 +35,30 @@ export async function selectEscalasWorkspace(page: Page, workspace: EscalaWorksp
   if (await branch.count()) opened = await choose(branch, code);
   else await expect(picker.locator("p")).toContainText(`Filial ${code}`);
   const month = workspace.input.visibleMonth ?? visibleDates(workspace.input)[0]?.slice(0, 7) ?? workspace.input.startDate.slice(0, 7);
-  opened = await choose(picker.getByLabel("Ano", { exact: true }), month.slice(0, 4)) ?? opened;
-  opened = await choose(picker.getByLabel("Mês", { exact: true }), month.slice(5)) ?? opened;
+  await revealEscalasControl(picker);
+  const yearControl = picker.getByLabel("Ano", { exact: true });
+  const monthControl = picker.getByLabel("Mês", { exact: true });
+  const year = month.slice(0, 4);
+  await expect(yearControl).toBeEnabled();
+  if (await yearControl.inputValue() !== year) {
+    const requestedWorkspaces: string[] = [];
+    const recordWorkspace = (request: Request) => {
+      const url = new URL(request.url());
+      const id = url.searchParams.get("id");
+      if (request.method() === "GET" && url.pathname === "/api/escalas" && id) requestedWorkspaces.push(id);
+    };
+    page.on("request", recordWorkspace);
+    try {
+      await yearControl.selectOption(year);
+      await expect(yearControl).toHaveValue(year);
+      await expect(monthControl).toBeEnabled();
+      await expect(monthControl).toHaveValue("");
+      expect(requestedWorkspaces).toEqual([]);
+    } finally {
+      page.off("request", recordWorkspace);
+    }
+  }
+  opened = await choose(monthControl, month.slice(5)) ?? opened;
   const matching = picker.getByLabel("Planejamento", { exact: true });
   if (await matching.count()) opened = await choose(matching, workspace.id) ?? opened;
   const heading = page.locator("#escala-scenario-title");

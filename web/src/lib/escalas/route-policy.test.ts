@@ -198,7 +198,7 @@ describe("closed inventory of the current route files and literal action schemas
   });
 
   it("classifies every literal action of the two discriminated command schemas", () => {
-    const expected = ["CREATE", "CREATE_APPROVED", "APPLY_PROPOSAL", "ADD_EMPLOYEE", "ADMIN_REBASE", "UPGRADE_CALENDAR",
+    const expected = ["CREATE", "CREATE_APPROVED", "APPLY_PROPOSAL", "ADD_EMPLOYEE", "REMOVE_EMPLOYEE", "ADMIN_REBASE", "UPGRADE_CALENDAR",
       "SAVE", "VALIDATE", "GENERATE", "START_GENERATION", "CANCEL_GENERATION", "GENERATION_STATUS", "PUBLISH"].sort();
     expect(actions(source(""))).toEqual(expected);
     expect(actions(source("turnos"))).toEqual(["APPLY_SWAP", "PREVIEW_SWAP", "SYNC"]);

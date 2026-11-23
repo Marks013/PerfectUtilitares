@@ -6,7 +6,7 @@ import { POST } from "@/app/api/escalas/import/route";
 import { saveEscala } from "./service";
 import { buildEscalaApprovedPolicy } from "./approved-policy";
 import type { ImportSyncCommand, ImportSyncPreview, ImportSyncPreviewCommand } from "./import-sync-contracts";
-const mocks = vi.hoisted(() => ({ user: vi.fn(), transaction: vi.fn(), workspace: vi.fn(), update: vi.fn(), revision: vi.fn(), audit: vi.fn(), policy: vi.fn(), guard: vi.fn(), revisionRead: vi.fn(), approval: vi.fn() }));
+const mocks = vi.hoisted(() => ({ user: vi.fn(), transaction: vi.fn(), workspace: vi.fn(), update: vi.fn(), revision: vi.fn(), audit: vi.fn(), importSeed: vi.fn(), policy: vi.fn(), guard: vi.fn(), revisionRead: vi.fn(), approval: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {
   user: { findFirst: mocks.user }, escalaModuleAccessPolicy: { findUnique: mocks.policy },
   escalaWorkspace: { findFirst: mocks.workspace, updateMany: mocks.update }, escalaRevision: { findUnique: mocks.revisionRead, create: mocks.revision },
@@ -56,7 +56,7 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(async callback => {
     beforeTransaction?.();
     const snapshot = structuredClone({ value, revision, revisions, audits });
-    const tx = { user: { findFirst: mocks.user }, escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkspace: { findFirst: mocks.workspace, updateMany: mocks.update }, escalaRevision: { create: mocks.revision }, auditLog: { create: mocks.audit }, escalaBranchPolicyVersion: { findFirst: mocks.approval }, $executeRaw: async () => 1, $queryRaw: async () => [] };
+    const tx = { user: { findFirst: mocks.user }, escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkspace: { findFirst: mocks.workspace, updateMany: mocks.update }, escalaRevision: { create: mocks.revision }, auditLog: { create: mocks.audit }, escalaImportedTeam: { upsert: mocks.importSeed }, escalaBranchPolicyVersion: { findFirst: mocks.approval }, $executeRaw: async () => 1, $queryRaw: async () => [] };
     try { const result = await callback(tx); afterTransaction?.(); return result; }
     catch (error) { ({ value, revision, revisions, audits } = snapshot); throw error; }
   });
@@ -310,6 +310,21 @@ describe("administrative replacement with real service and authorization", () =>
     expect(first.impact.people.added[0].id).toBe(second.impact.people.added[0].id);
     await apply(command(), source, first);
     expect(value.employees.map(person => person.registration).sort()).toEqual(["0002", "2", "9", "A7"]);
+  });
+  it("restores a person removed manually and gives a complete import priority over manual team changes", async () => {
+    const [kept, removed] = value.employees;
+    kept.name = "Edição manual";
+    value.employees = [kept, { ...removed, id: "manual-person", registration: "0999", history: [] }];
+    const source = file([header, employeeRow(kept.registration, "Nome do arquivo"), employeeRow(removed.registration)].join("\n"));
+
+    const result = await apply(command(), source);
+    expect(result.workspace.input.employees).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: kept.id, registration: kept.registration, name: "Nome do arquivo" }),
+      expect.objectContaining({ registration: removed.registration }),
+    ]));
+    expect(result.workspace.input.employees).toHaveLength(2);
+    expect(result.summary.impact.people.removed).toEqual([expect.objectContaining({ id: "manual-person" })]);
+    expect(mocks.importSeed).toHaveBeenCalledOnce();
   });
   it("rejects lost admin status before reading the file into a candidate", async () => {
     mocks.user.mockResolvedValue({ ...user(), role: "OPERATOR" });

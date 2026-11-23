@@ -11,6 +11,12 @@ describe("plain language planning recovery", () => {
       expect(problem.message).not.toContain("outra aba");
     }
   });
+
+  it("distinguishes a duplicate registration from configuration approval", () => {
+    const problem = toEscalaProblem(new EscalaRequestError("ESCALA_DUPLICATE_REGISTRATION", 422, "private"));
+    expect(problem).toMatchObject({ message: "Esta matrícula já está cadastrada.", action: "team" });
+    expect(problem.explanation).not.toContain("aprova");
+  });
   it("does not call a published continuity dependency a concurrent editing conflict", () => {
     const problem = toEscalaProblem(new EscalaRequestError("ESCALA_DELETE_DEPENDENCY", 409, "raw"));
     expect(problem.message).toContain("continuidade");

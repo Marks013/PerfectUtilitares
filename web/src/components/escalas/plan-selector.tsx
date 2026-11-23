@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
 import { visibleDates } from "@/lib/escalas/dates";
 import { compareBranches } from "@/lib/escalas/order";
@@ -29,46 +30,47 @@ function newest(plans: readonly WorkspaceSummary[]) {
 }
 
 /** Choose only a real saved plan; opening still goes through the existing unsaved-change guard. */
-export function selectPlan(plans: readonly WorkspaceSummary[], selectedId: string | undefined, field: "branch" | "year" | "month", value: string, fixedBranch?: string): string | undefined {
+export function selectPlan(plans: readonly WorkspaceSummary[], selectedId: string | undefined, field: "branch" | "month", value: string, fixedBranch?: string, selectedYear?: string): string | undefined {
   if (fixedBranch && field === "branch") return undefined;
   const current = plans.find(plan => plan.id === selectedId), period = current && planPeriod(current);
-  const branch = period?.branch ?? fixedBranch;
+  const branch = fixedBranch ?? period?.branch;
+  const year = selectedYear ?? period?.year;
   let candidates = plans.filter(plan => {
     const item = planPeriod(plan);
     if (field === "branch") return item.branch === value;
-    if (!branch || item.branch !== branch) return false;
-    return field === "year" ? item.year === value : item.year === period?.year && item.month === value;
+    return item.branch === branch && item.year === year && item.month === value;
   });
   if (period && field === "branch") {
     const samePeriod = candidates.filter(plan => planPeriod(plan).key === period.key);
     if (samePeriod.length) candidates = samePeriod;
-  } else if (period && field === "year") {
-    const sameMonth = candidates.filter(plan => planPeriod(plan).month === period.month);
-    if (sameMonth.length) candidates = sameMonth;
   }
   return candidates.find(plan => plan.id === selectedId)?.id ?? newest(candidates)[0]?.id;
 }
 
-export function planSelection(plans: readonly WorkspaceSummary[], selectedId?: string, fixedBranch?: string) {
+export function planSelection(plans: readonly WorkspaceSummary[], selectedId?: string, fixedBranch?: string, requestedYear?: string) {
   const active = plans.find(plan => plan.id === selectedId), period = active && planPeriod(active);
   const branches = new Map<string, { branchCode: string; branchName: string }>();
   for (const plan of [...plans].sort((a, b) => compareBranches(a.input, b.input))) {
     const code = canonicalBranchCode(plan.input.branchCode);
     if (!branches.has(code)) branches.set(code, { branchCode: code, branchName: plan.input.branchName });
   }
-  const branch = period?.branch ?? fixedBranch;
+  const branch = fixedBranch ?? period?.branch;
   const branchPlans = branch ? plans.filter(plan => planPeriod(plan).branch === branch) : [];
-  const yearPlans = period ? branchPlans.filter(plan => planPeriod(plan).year === period.year) : [];
+  const years = [...new Set(branchPlans.map(plan => planPeriod(plan).year))].sort().reverse();
+  const year = requestedYear && years.includes(requestedYear) ? requestedYear : period?.year;
+  const month = year === period?.year ? period?.month : undefined;
+  const yearPlans = branchPlans.filter(plan => planPeriod(plan).year === year);
   return { active, period, branches: [...branches.values()].sort(compareBranches),
-    years: [...new Set(branchPlans.map(plan => planPeriod(plan).year))].sort().reverse(),
+    years, year, month,
     months: [...new Set(yearPlans.map(plan => planPeriod(plan).month))].sort(),
-    matching: period ? newest(yearPlans.filter(plan => planPeriod(plan).month === period.month)) : [] };
+    matching: month ? newest(yearPlans.filter(plan => planPeriod(plan).month === month)) : [] };
 }
 
 export function PlanSelector({ plans, selectedId, disabled, onSelect, showSummary = true }: {
   plans: readonly WorkspaceSummary[]; selectedId?: string; disabled: boolean; onSelect: (id: string) => void; showSummary?: boolean;
 }) {
   const access = useEscalaClientAccess();
+  const [yearFilter, setYearFilter] = useState<{ year: string; workspaceId?: string; fixedBranch?: string }>();
   const unrestricted = access?.channel === "ACCOUNT" && access.administrator && access.allBranches;
   const readableGrants = unrestricted ? [] : (access?.branches.filter(grant =>
     canDisplayEscalaAction(access, "workspace.read", grant.code)
@@ -76,10 +78,11 @@ export function PlanSelector({ plans, selectedId, disabled, onSelect, showSummar
   const fixedGrant = readableGrants.length === 1 ? readableGrants[0] : undefined;
   const fixedBranch = fixedGrant && canonicalBranchCode(fixedGrant.code);
   const allowedPlans = plans.filter(plan => canDisplayEscalaAction(access, "workspace.read", plan.input.branchCode));
-  const { active, period, branches, years, months, matching } = planSelection(allowedPlans, selectedId, fixedBranch);
-  const open = (field: "branch" | "year" | "month", value: string) => {
+  const requestedYear = yearFilter?.workspaceId === selectedId && yearFilter?.fixedBranch === fixedBranch ? yearFilter?.year : undefined;
+  const { active, period, branches, years, year, month, months, matching } = planSelection(allowedPlans, selectedId, fixedBranch, requestedYear);
+  const open = (field: "branch" | "month", value: string) => {
     if (disabled) return;
-    const id = selectPlan(allowedPlans, selectedId, field, value, fixedBranch);
+    const id = selectPlan(allowedPlans, selectedId, field, value, fixedBranch, year);
     if (id && id !== selectedId) onSelect(id);
   };
   const fixedName = fixedGrant?.label.trim();
@@ -96,6 +99,7 @@ export function PlanSelector({ plans, selectedId, disabled, onSelect, showSummar
       : !access ? "Não foi possível confirmar o acesso às filiais."
         : fixedBranch ? "Nenhum planejamento disponível nesta filial."
           : "Nenhum planejamento disponível para este acesso."}</p>
+    {!disabled && access && !unrestricted && <p className={styles.muted}>Se o período já existe, peça ao administrador para conferir a configuração vinculada ao planejamento.</p>}
   </div>;
 
   return <div className={styles.stackSmall}>
@@ -105,12 +109,12 @@ export function PlanSelector({ plans, selectedId, disabled, onSelect, showSummar
         <option value="" disabled>Selecione a filial</option>
         {branches.map(branch => <option key={branch.branchCode} value={branch.branchCode}>Filial {branch.branchCode} · {branch.branchName}</option>)}
       </select>}</Field>}
-      <Field label="Ano">{id => <select id={id} className={controlClass} disabled={!years.length} value={period?.year ?? ""} onChange={event => open("year", event.target.value)}>
-        {!active && <option value="" disabled>{fixedBranch ? "Selecione o ano" : "Selecione a filial primeiro"}</option>}
+      <Field label="Ano">{id => <select id={id} className={controlClass} disabled={!years.length} value={year ?? ""} onChange={event => setYearFilter({ year: event.target.value, workspaceId: selectedId, fixedBranch })}>
+        {!year && <option value="" disabled>{fixedBranch ? "Selecione o ano" : "Selecione a filial primeiro"}</option>}
         {years.map(year => <option key={year} value={year}>{year}</option>)}
       </select>}</Field>
-      <Field label="Mês">{id => <select id={id} className={controlClass} disabled={!active} value={period?.month ?? ""} onChange={event => open("month", event.target.value)}>
-        {!active && <option value="">{fixedBranch ? "Selecione o ano primeiro" : "Selecione a filial primeiro"}</option>}
+      <Field label="Mês">{id => <select id={id} className={controlClass} disabled={!months.length} value={month ?? ""} onChange={event => open("month", event.target.value)}>
+        {!month && <option value="" disabled>{year ? "Selecione o mês" : fixedBranch ? "Selecione o ano primeiro" : "Selecione a filial primeiro"}</option>}
         {months.map(month => <option key={month} value={month}>{MONTHS[Number(month) - 1]}</option>)}
       </select>}</Field>
       {matching.length > 1 && <Field label="Planejamento">{id => <select id={id} className={controlClass} value={selectedId} onChange={event => { if (!disabled && matching.some(plan => plan.id === event.target.value) && event.target.value !== selectedId) onSelect(event.target.value); }}>

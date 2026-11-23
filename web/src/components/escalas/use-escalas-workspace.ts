@@ -14,11 +14,12 @@ import { requestMassGeneration, type GeneratedProposal } from "./mass-generation
 import { GenerationOperation, generationCancellationNotice } from "./generation-operation";
 import { EscalaRequestError, invalidatesCandidate, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
 import { operationalCommand } from "./operational-client";
-import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
+import { canDisplayEscalaAction, isEscalaAdministrator, useEscalaClientAccess } from "./access-context";
 import { pendingNavigation } from "./workspace-navigation";
 import type { ImportSyncCommand } from "@/lib/escalas/import-sync-contracts";
 import { requestImportReplacement, type ImportReplacementResult } from "./import-replacement-client";
 import { planningWeekStartsOn } from "@/lib/escalas/planning-calendar";
+import { workspaceTeamActions } from "./workspace-team-actions";
 
 export type WorkspaceSummary = Pick<EscalaWorkspace, "id" | "revision" | "status" | "updatedAt"> & {
   input: Pick<EscalaInput, "branchCode" | "branchName" | "startDate" | "endDate" | "visibleMonth" | "planningWeekStartsOn">;
@@ -366,25 +367,10 @@ export function useEscalasWorkspace() {
     });
   }
 
-  function createApproved(approvedPolicyVersionId: string) {
-    if (dirty || generated || recovery) return;
-    void run("Criando planejamento com a configuração aprovada…", async (signal, isCurrent) => {
-      const saved = await operationalCommand({ action: "CREATE_APPROVED", approvedPolicyVersionId }, signal);
-      if (isCurrent()) { acceptWorkspace(saved); setNotice("Planejamento criado com a configuração aprovada. Confira a equipe antes de gerar."); }
-    });
-  }
-
-  async function addEmployee(regimeModelId: string, name: string, registration: string): Promise<boolean> {
-    if (!workspace || generated) return false;
-    let confirmed = false;
-    await run("Cadastrando colaborador pelo modelo aprovado…", async (signal, isCurrent) => {
-      const saved = await flushDraft();
-      if (!saved || !isCurrent()) return;
-      const result = await operationalCommand({ action: "ADD_EMPLOYEE", id: saved.id, expectedRevision: saved.revision, regimeModelId, name, registration }, signal);
-      if (isCurrent()) { acceptWorkspace(result); confirmed = true; setNotice("Colaborador cadastrado e salvo. Gere uma nova proposta para conferir a escala."); }
-    });
-    return confirmed;
-  }
+  const { createApproved, addEmployee, removeEmployee } = workspaceTeamActions({
+    workspaceId: workspace?.id, canCreate: !dirty && !generated && !recovery,
+    canChangeTeam: !generated && !recovery, run, flushDraft, acceptWorkspace, setNotice,
+  });
 
   function rebaseApproved(approvedPolicyVersionId: string) {
     if (!workspace || dirty || generated || recovery) return;
@@ -396,10 +382,11 @@ export function useEscalasWorkspace() {
 
   function upgradeCalendar() {
     const selected = latestWorkspace.current;
+    if (!isEscalaAdministrator(latestAccess.current)) return;
     if (!selected?.canEdit || !canCreate || working.current || !latestInput.current || planningWeekStartsOn(latestInput.current) === "SUNDAY") return;
     void run("Criando rascunho com semanas de domingo a sábado…", async (signal, isCurrent) => {
       const saved = await flushDraft();
-      if (!isCurrent() || latestWorkspace.current?.id !== selected.id || !saved) return;
+      if (!isCurrent() || !isEscalaAdministrator(latestAccess.current) || latestWorkspace.current?.id !== selected.id || !saved) return;
       const result = await post<EscalaWorkspace>({ action: "UPGRADE_CALENDAR", id: saved.id, expectedRevision: saved.revision }, signal);
       if (isCurrent()) { acceptWorkspace(result); setNotice("Novo rascunho de domingo a sábado criado. O planejamento original foi preservado. Gere uma proposta para redistribuir as folgas."); }
     });
@@ -702,6 +689,7 @@ export function useEscalasWorkspace() {
     create,
     createApproved,
     addEmployee,
+    removeEmployee,
     replaceImport,
     rebaseApproved,
     upgradeCalendar,

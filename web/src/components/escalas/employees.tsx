@@ -3,12 +3,13 @@
 import { isAdministrativeEscalaSector, isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import styles from "./escalas.module.css";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { revealRecoveryElement, type EscalaRecoveryRequest } from "./recovery-navigation";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, WeeklyHours } from "@/lib/escalas/types";
 import { indexEmployees, searchEmployees } from "./employee-search";
 import { validateEmployeeForm } from "./employee-form";
 import { canDisplayEscalaAction, useEscalaClientAccess } from "./access-context";
+import { canAssignCatalogShift } from "@/lib/escalas/shift-catalog/reference-choices";
 import { BulkControls } from "./bulk-controls";
 import { FixedRestFields } from "./fixed-rest-fields";
 import { ExcludedEmployees } from "./excluded-employees";
@@ -471,6 +472,7 @@ export function Employees({
   onChange,
   review,
   onSwap,
+  onRemoveEmployee,
   swapDisabled = false,
 }: {
   input: EscalaInput;
@@ -478,16 +480,27 @@ export function Employees({
   onChange: (input: EscalaInput) => void;
   review?: EscalaRecoveryRequest;
   onSwap?: (employee: EscalaEmployee) => void;
+  onRemoveEmployee?: (employeeId: string) => Promise<boolean>;
   swapDisabled?: boolean;
 }) {
   const access = useEscalaClientAccess();
   const administrative = canDisplayEscalaAction(access, "settings.manage", input.branchCode);
-  const canManage = !disabled && canDisplayEscalaAction(access, "employee.manage", input.branchCode)
+  const canChangeTeam = canDisplayEscalaAction(access, "employee.manage", input.branchCode)
     && canDisplayEscalaAction(access, "workspace.save", input.branchCode);
+  const canManage = !disabled && canChangeTeam;
+  const showRemoval = administrative || (Boolean(onRemoveEmployee) && canChangeTeam);
   const [editing, setEditing] = useState<EscalaEmployee | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [removalStatus, setRemovalStatus] = useState<"idle" | "saving" | "failed">("idle");
+  const removalInFlight = useRef(false);
+  const removalTrigger = useRef<HTMLElement | null>(null);
+  const removalHeading = useRef<HTMLHeadingElement>(null);
+  const removalTitle = useId();
   const [search, setSearch] = useState("");
   const reviewedRequest = useRef(0);
+  useEffect(() => {
+    if (removing) removalHeading.current?.focus();
+  }, [removing]);
   useEffect(() => {
     if (!canManage || !review?.employeeId || reviewedRequest.current === review.request) return;
     const employee = input.employees.find((person) => person.id === review.employeeId);
@@ -506,7 +519,51 @@ export function Employees({
   const employees = useMemo(() => searchEmployees(employeeIndex, search), [employeeIndex, search]);
   const included = employees.filter(isEscalaPlanningParticipant);
   const excluded = employees.filter(employee => !isEscalaPlanningParticipant(employee));
-  const removingEmployee = administrative ? input.employees.find((employee) => employee.id === removing) : undefined;
+  const removingEmployee = showRemoval ? input.employees.find((employee) => employee.id === removing) : undefined;
+  const protectedRemoval = removingEmployee && input.assignments.some(day => day.employeeId === removingEmployee.id &&
+    (onRemoveEmployee ? day.locked !== false || day.kind === "ABSENCE" || day.kind === "HOLIDAY" : day.locked === true));
+  const removalPending = removalStatus === "saving";
+
+  function startRemoval(employee: EscalaEmployee) {
+    if (!canManage || !showRemoval || removalInFlight.current) return;
+    removalTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setRemovalStatus("idle");
+    setRemoving(employee.id);
+  }
+
+  function cancelRemoval() {
+    if (removalInFlight.current) return;
+    setRemoving(null);
+    setRemovalStatus("idle");
+    removalTrigger.current?.focus();
+  }
+
+  async function confirmRemoval() {
+    if (!removingEmployee || !canManage || protectedRemoval || removalInFlight.current) return;
+    const employeeId = removingEmployee.id;
+    if (onRemoveEmployee) {
+      removalInFlight.current = true;
+      setRemovalStatus("saving");
+      try {
+        if (!await onRemoveEmployee(employeeId)) {
+          setRemovalStatus("failed");
+          return;
+        }
+      } catch {
+        setRemovalStatus("failed");
+        return;
+      } finally {
+        removalInFlight.current = false;
+      }
+    } else {
+      onChange({ ...input, employees: input.employees.filter(person => person.id !== employeeId), assignments: input.assignments.filter(day => day.employeeId !== employeeId) });
+    }
+    setEditing(current => current?.id === employeeId ? null : current);
+    setRemoving(null);
+    setRemovalStatus("idle");
+    searchInput.current?.focus();
+  }
+
   return (
     <section className={panelClass} aria-labelledby="escala-employees-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -586,17 +643,17 @@ export function Employees({
               <button type="button" className={buttonClass} disabled={!canManage} onClick={() => setEditing(employee)}>
                 Editar<span className="sr-only"> {employee.name}</span>
               </button>
-              {onSwap && input.generationMode !== "REST_ONLY" && <button type="button" className={buttonClass} disabled={disabled || swapDisabled} onClick={() => onSwap(employee)}>
+              {onSwap && input.generationMode !== "REST_ONLY" && canAssignCatalogShift(employee) && <button type="button" className={buttonClass} disabled={swapDisabled} onClick={() => onSwap(employee)}>
                 Trocar turno<span className="sr-only"> de {employee.name}</span>
               </button>}
-              {administrative && <button
+              {showRemoval && <button
                 type="button"
                 className={buttonClass}
                 disabled={
-                  !canManage ||
-                  input.assignments.some((assignment) => assignment.employeeId === employee.id && assignment.locked)
+                  !canManage || removalPending ||
+                  (!onRemoveEmployee && input.assignments.some(day => day.employeeId === employee.id && day.locked))
                 }
-                onClick={() => setRemoving(employee.id)}
+                onClick={() => startRemoval(employee)}
               >
                 Remover
                 <span className="sr-only"> {employee.name} da proposta</span>
@@ -607,16 +664,20 @@ export function Employees({
         ))}
       </section>
       {!included.length && input.employees.length > 0 && <p className="text-sm">Nenhum colaborador incluído corresponde à busca. Confira a relação de não incluídos abaixo.</p>}
-      <ExcludedEmployees employees={excluded} disabled={!canManage} onEdit={setEditing} onRemove={administrative ? (employee) => setRemoving(employee.id) : undefined} />
-      {removingEmployee && <div className={styles.feedback} role="alert">
-        <p>Remover {removingEmployee.name} e suas atribuições desta proposta? Revisões já salvas serão preservadas.</p>
-        <div className={styles.actions}><button type="button" className={buttonClass} disabled={!canManage || input.assignments.some((assignment) => assignment.employeeId === removingEmployee.id && assignment.locked)} onClick={() => {
-          if (!canManage || !administrative || input.assignments.some((assignment) => assignment.employeeId === removingEmployee.id && assignment.locked)) return;
-          onChange({ ...input, employees: input.employees.filter((item) => item.id !== removingEmployee.id), assignments: input.assignments.filter((assignment) => assignment.employeeId !== removingEmployee.id) });
-          if (editing?.id === removingEmployee.id) setEditing(null);
-          setRemoving(null);
-        }}>Confirmar remoção da proposta</button><button type="button" className={buttonClass} onClick={() => setRemoving(null)}>Manter colaborador</button></div>
-      </div>}
+      <ExcludedEmployees employees={excluded} disabled={!canManage || removalPending} onEdit={setEditing} onRemove={showRemoval ? startRemoval : undefined} />
+      {removingEmployee && <section className={styles.feedback} aria-labelledby={removalTitle}>
+        <h3 ref={removalHeading} id={removalTitle} tabIndex={-1} className={styles.sectionTitle}>Remover {removingEmployee.name} da proposta?</h3>
+        <p>As atribuições editáveis da proposta atual serão removidas. As revisões anteriores ficam no histórico. A próxima importação completa da equipe pode incluir o colaborador novamente.</p>
+        {protectedRemoval && <p className={styles.muted}>{onRemoveEmployee
+          ? "A remoção está indisponível porque há bloqueios, afastamentos, feriados ou dias sem indicação explícita de edição."
+          : "A remoção está indisponível porque há dias bloqueados."}</p>}
+        {removalStatus === "failed" && <p role="alert" className={styles.errorText}>A remoção não foi confirmada. Confira a orientação do planejamento antes de tentar novamente.</p>}
+        {removalPending && <p role="status" className={styles.muted}>Confirmando a remoção…</p>}
+        <div className={styles.actions}>
+          <button type="button" className={buttonClass} disabled={!canManage || protectedRemoval || removalPending} onClick={() => void confirmRemoval()}>Confirmar remoção da proposta</button>
+          <button type="button" className={buttonClass} disabled={removalPending} onClick={cancelRemoval}>Manter colaborador</button>
+        </div>
+      </section>}
       {editing && (
         <fieldset disabled={!canManage}>
           <EmployeeEditor

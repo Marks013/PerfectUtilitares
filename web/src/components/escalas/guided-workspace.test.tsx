@@ -1,6 +1,7 @@
 import { renderToStaticMarkup as renderMarkup } from "react-dom/server";
 import { renderAsAdministrator as renderToStaticMarkup } from "./access-test-support";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { EscalaWorkspaceAccessMetadata } from "@/lib/escalas/access-contracts";
 import type { EscalaClientAccess } from "@/lib/escalas/access-view";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { EscalaAccessProvider } from "./access-context";
@@ -20,7 +21,7 @@ function state(workspace: EscalaWorkspace | null = null) {
     canCreate: true, workspace, input: workspace?.input ?? null, validation: workspace?.validation ?? null,
     dirty: false, outdated: false, busy: "", error: "", problem: null, notice: "", generated: null,
     pendingOpen: null, setPendingOpen: action, update: action, open: action, create: action, createApproved: action,
-    addEmployee: vi.fn(async () => false), replaceImport: vi.fn(async () => null), rebaseApproved: action,
+    addEmployee: vi.fn(async () => false), removeEmployee: vi.fn(async () => false), replaceImport: vi.fn(async () => null), rebaseApproved: action,
     upgradeCalendar: action, save: action,
     validate: action, generate: action, canGenerate: Boolean(workspace?.canEdit), applyGenerated: action,
     undoRoster: vi.fn(async () => false), publish: action,
@@ -55,6 +56,37 @@ describe("guided scheduling workspace", () => {
     workspace.canEdit = false;
     vi.mocked(useEscalasWorkspace).mockReturnValue(state(workspace));
     expect(renderToStaticMarkup(<EscalasWorkspace />)).not.toContain("Usar semana de domingo a sábado");
+  });
+
+  it("directs an operator to approved employee registration and hides administrative actions", () => {
+    const workspace = { ...plan(), approvedPolicyVersionId: "approved" } satisfies EscalaWorkspace & Partial<EscalaWorkspaceAccessMetadata>;
+    workspace.input.planningWeekStartsOn = "MONDAY";
+    vi.mocked(useEscalasWorkspace).mockReturnValue(state(workspace));
+    const access: EscalaClientAccess = {
+      channel: "USERNAME", roleLabel: "Operador", administrator: false, allBranches: false,
+      branches: [{ code: "07", label: "Hiper", capabilities: ["workspace.read", "workspace.save", "workspace.create", "employee.manage"] }],
+    };
+    const html = renderMarkup(<EscalaAccessProvider value={access}><EscalasWorkspace /></EscalaAccessProvider>);
+    expect(html).toContain("Cadastre os colaboradores usando um modelo aprovado.");
+    expect(html).not.toContain("Importar equipe");
+    expect(html).not.toContain("Usar semana de domingo a sábado");
+  });
+
+  it("offers shift assignment independently of employee editing, for eligible people only", () => {
+    const workspace = plan();
+    const timed = newEmployee(42, workspace.input.shifts[0].id);
+    workspace.input.employees = [
+      { ...timed, id: "timed", name: "Pessoa com turno" },
+      { ...timed, id: "untimed", name: "Pessoa sem turno", scheduleMode: "UNTIMED", shiftIds: [] },
+    ];
+    vi.mocked(useEscalasWorkspace).mockReturnValue(state(workspace));
+    const access: EscalaClientAccess = {
+      channel: "USERNAME", roleLabel: "Operador", administrator: false, allBranches: false,
+      branches: [{ code: "07", label: "Hiper", capabilities: ["workspace.read", "workspace.save", "shift.manage"] }],
+    };
+    const html = renderMarkup(<EscalaAccessProvider value={access}><EscalasWorkspace /></EscalaAccessProvider>);
+    expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>Trocar turno<span[^>]*> de Pessoa com turno/);
+    expect(html.match(/>Trocar turno</g)).toHaveLength(1);
   });
 
   it("starts with an open creation form and does not ask for advanced rules", () => {

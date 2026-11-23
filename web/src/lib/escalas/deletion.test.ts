@@ -3,7 +3,7 @@ import { deleteEscala } from "./service";
 
 const mocks = vi.hoisted(() => ({ row: vi.fn(), revisions: vi.fn(), peers: vi.fn(), deleteVersions: vi.fn(), deleteWorkspace: vi.fn(),
   audit: vi.fn(), transaction: vi.fn(), grants: vi.fn(), lock: vi.fn(), accountLock: vi.fn(), approvalOrigins: vi.fn(),
-  user: vi.fn(), policy: vi.fn() }));
+  user: vi.fn(), policy: vi.fn(), importedTeam: vi.fn() }));
 const accessTables = vi.hoisted(() => ({
   escalaModuleAccessPolicy: { findUnique: mocks.policy },
   user: { findFirst: mocks.user },
@@ -28,13 +28,14 @@ beforeEach(() => {
   mocks.revisions.mockResolvedValue(null);
   mocks.peers.mockResolvedValue([]);
   mocks.approvalOrigins.mockResolvedValue(0);
+  mocks.importedTeam.mockResolvedValue(null);
   mocks.deleteVersions.mockResolvedValue({ count: 2 });
   mocks.deleteWorkspace.mockResolvedValue({ count: 1 });
   mocks.transaction.mockImplementation(callback => callback({
     ...accessTables, $executeRaw: mocks.lock, $queryRaw: mocks.accountLock,
     escalaWorkspace: { findFirst: mocks.row, findMany: mocks.peers, deleteMany: mocks.deleteWorkspace },
     escalaRevision: { findFirst: mocks.revisions, deleteMany: mocks.deleteVersions }, auditLog: { create: mocks.audit },
-    escalaBranchPolicyVersion: { count: mocks.approvalOrigins },
+    escalaBranchPolicyVersion: { count: mocks.approvalOrigins }, escalaImportedTeam: { findUnique: mocks.importedTeam },
   }));
 });
 describe("safe planning deletion", () => {
@@ -43,6 +44,8 @@ describe("safe planning deletion", () => {
     expect(mocks.deleteVersions).toHaveBeenCalledWith({ where: { tenantId: "tenant-a", workspaceId: "w" } });
     expect(mocks.deleteWorkspace).toHaveBeenCalledWith({ where: { tenantId: "tenant-a", id: "w", revision: 2 } });
     expect(mocks.deleteVersions.mock.invocationCallOrder[0]).toBeLessThan(mocks.deleteWorkspace.mock.invocationCallOrder[0]);
+    expect(mocks.importedTeam).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId_branchCode: { tenantId: "tenant-a", branchCode: "08" } } }));
+    expect(mocks.importedTeam.mock.invocationCallOrder[0]).toBeLessThan(mocks.deleteVersions.mock.invocationCallOrder[0]);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "DELETE", entity: "EscalaWorkspace", entityId: "w" }) }));
     expect(mocks.lock.mock.calls.map(([, key]) => key)).toEqual(["escala-access:tenant-a", 'escalas-publication:["tenant-a","08"]']);
     expect(mocks.accountLock).toHaveBeenCalledOnce();

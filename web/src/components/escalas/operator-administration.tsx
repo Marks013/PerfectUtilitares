@@ -9,8 +9,8 @@ import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } fro
 import styles from "./escalas.module.css";
 
 const capabilityLabels = {
-  "workspace.read": "Consultar planejamentos", "workspace.create": "Iniciar período aprovado", "workspace.save": "Salvar alterações permitidas",
-  "schedule.generate": "Gerar e recalcular propostas", "schedule.apply": "Aplicar propostas e editar dias", "employee.manage": "Cadastrar por modelo e editar dados permitidos",
+  "workspace.read": "Consultar planejamentos", "workspace.create": "Criar planejamento com configuração aprovada", "workspace.save": "Salvar alterações permitidas",
+  "schedule.generate": "Gerar e recalcular propostas", "schedule.apply": "Aplicar propostas e editar dias", "employee.manage": "Adicionar, remover e editar colaboradores",
   "shift.manage": "Atribuir horários já cadastrados", "export.schedule.pdf": "Baixar PDF básico", "export.schedule.xlsx": "Baixar XLSX básico",
 };
 

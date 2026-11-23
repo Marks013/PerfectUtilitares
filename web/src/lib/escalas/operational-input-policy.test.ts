@@ -38,6 +38,39 @@ describe("raw operational field comparison", () => {
     next.assignments = [{ ...old.assignments[0], locked: false }, old.assignments[1]];
     expect(() => assertEscalaOperationalInput(old, next, ["schedule.apply"])).toThrow();
   });
+  it("permits only an unlocked work shift change through the authorized catalog operation", () => {
+    const old = fixture(), next = structuredClone(old);
+    next.employees[0].shiftIds.push("approved");
+    next.assignments[0].shiftId = "approved";
+    const capabilities = ["workspace.save", "shift.manage"] as const;
+
+    expect(() => assertEscalaOperationalInput(old, next, capabilities, false, true)).not.toThrow();
+    expect(() => assertEscalaOperationalInput(old, next, capabilities)).toThrow();
+    expect(() => assertEscalaOperationalInput(old, next, ["workspace.save"], false, true)).toThrow();
+    expect(() => assertEscalaOperationalInput(old, next, ["shift.manage"], false, true)).toThrow();
+
+    const [changed, absence] = next.assignments;
+    for (const assignments of [
+      [{ ...changed, kind: "OFF" as const, shiftId: undefined }, absence],
+      [{ ...changed, locked: true }, absence],
+      [{ ...changed, date: "2026-12-03" }, absence],
+      [{ ...changed, employeeId: "other" }, absence],
+      [absence],
+      [changed, absence, { ...changed, date: "2026-12-03" }],
+    ]) {
+      expect(() => assertEscalaOperationalInput(old, { ...next, assignments }, capabilities, false, true)).toThrow();
+    }
+
+    for (const locked of [true, undefined]) {
+      old.assignments[0].locked = locked;
+      next.assignments[0].locked = locked;
+      expect(() => assertEscalaOperationalInput(old, next, capabilities, false, true)).toThrow();
+    }
+    old.assignments[0].locked = false;
+    next.assignments[0].locked = false;
+    next.employees[0].weeklyHours = 42;
+    expect(() => assertEscalaOperationalInput(old, next, capabilities, false, true)).toThrow();
+  });
   it("allows only canonical new closures in a signed proposal", () => {
     const old = fixture();
     old.demands = [];

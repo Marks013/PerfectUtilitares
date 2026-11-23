@@ -324,6 +324,15 @@ describe("trusted candidate lifecycle in the real workspace hook", () => {
       expect(calls.some(body => ["SAVE", "PUBLISH"].includes(String(body.action)))).toBe(false);
       expect(sources.get(source.id)).toEqual(previous);
     });
+    it("does not request a calendar upgrade for a branch operator who can create and save", async () => {
+      await legacy();
+      access = { channel: "USERNAME", roleLabel: "Operador", administrator: false, allBranches: false,
+        branches: [{ code: "08", label: "Filial 08", capabilities: ["workspace.read", "workspace.save", "workspace.create"] }] };
+      render(); await settle();
+      expect(current.canCreate).toBe(true);
+      current.upgradeCalendar(); await settle();
+      expect(calls.some(body => body.action === "UPGRADE_CALENDAR")).toBe(false);
+    });
     it("preserves the selected plan and provides the server error when an upgrade fails", async () => {
       const source = await legacy(), before = structuredClone(current.input), original = structuredClone(source);
       generation = async () => ({ status: 409, body: { code: "ESCALA_STALE_REVISION", error: "O planejamento mudou. Recarregue a revisão atual." } });

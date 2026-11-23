@@ -30,6 +30,13 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
   if (code === "ESCALA_CONFIG_APPROVAL_REQUIRED" || code === "ESCALA_CONFIG_REVOKED") return problem(
     code === "ESCALA_CONFIG_REVOKED" ? "A configuração desta filial foi revogada." : "Este período precisa de uma configuração aprovada.",
     "Seus dados foram preservados. Peça ao administrador para aprovar a configuração e vincular este planejamento à versão válida. Depois confira o período antes de continuar.");
+  if (code === "ESCALA_DUPLICATE_REGISTRATION") return problem("Esta matrícula já está cadastrada.",
+    "Confira a matrícula informada ou localize a pessoa na equipe para revisar o cadastro.", "team", "Conferir equipe");
+  if (code === "ESCALA_EMPLOYEE_REMOVAL_PROTECTED") return problem("A remoção afetaria um dia protegido.",
+    "Confira os dias bloqueados, os afastamentos e as escalas publicadas deste colaborador. A equipe foi preservada.", "team", "Conferir equipe");
+  if (code === "ESCALA_IMPORTED_TEAM_INVALID" || code === "ESCALA_IMPORTED_TEAM_SEED_CONFLICT") return problem(
+    "A equipe da última importação precisa de conferência.",
+    "Peça ao administrador para revisar a importação e a configuração aprovada deste período. Nenhum planejamento foi criado.");
   if (code === "ESCALA_PROPOSAL_INVALID") return problem("Esta proposta não pode mais ser aplicada.", "A revisão, a configuração ou o acesso mudou, ou a proposta expirou. Sua grade salva foi preservada. Gere uma nova proposta para conferir.", "generate", "Gerar nova proposta");
   if (code === "ESCALA_SAVE_UNCERTAIN") return problem("A gravação ainda não pôde ser confirmada.", "O rascunho foi preservado. Reconecte e use Tentar salvar; primeiro consultaremos a revisão salva, sem repetir uma gravação às cegas.");
   if (status === 403) return problem("Esta ação não está disponível para sua conta.", "Os dados foram preservados. Confira sua sessão ou peça acesso de edição a esta filial.");

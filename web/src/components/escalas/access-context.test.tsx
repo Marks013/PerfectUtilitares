@@ -98,8 +98,8 @@ describe("branch-scoped display permissions", () => {
     expect(html).toContain("regras desta filial foram definidas pelo administrador");
     expect(html).not.toContain("Importar ou atualizar arquivos"); expect(html).not.toContain("Relatórios e gráficos PDF");
     expect(html).not.toContain("Regras de jornada e intervalos"); expect(html).not.toContain("Configurações da filial</button>");
-    expect(html).toContain("Iniciar período com configuração aprovada");
-    expect(html).toContain("Criar planejamento aprovado");
+    expect(html).toContain("Criar planejamento");
+    expect(html).toContain("Criar com esta equipe");
     expect(html).not.toContain("Código da filial</label>");
     expect(html).toContain("Adicionar colaborador por modelo aprovado");
   });

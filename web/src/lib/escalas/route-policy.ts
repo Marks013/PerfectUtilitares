@@ -47,6 +47,8 @@ const workspaceCommands = new Map<string, EscalaResourcePolicy>([
     ["canonical-resource", "current-revision", "approved-period-policy", "protected-input-diff", "authorization-recheck"])],
   ["ADD_EMPLOYEE", resource("workspace.add-employee", ["workspace.save", "employee.manage"], "workspace",
     ["canonical-resource", "current-revision", "approved-period-policy", "authorization-recheck"])],
+  ["REMOVE_EMPLOYEE", resource("workspace.remove-employee", ["workspace.save", "employee.manage"], "workspace",
+    ["canonical-resource", "current-revision", "approved-period-policy", "protected-input-diff", "authorization-recheck"])],
   ["ADMIN_REBASE", resource("workspace.admin-rebase", ["settings.manage", "workspace.save"], "workspace",
     ["canonical-resource", "current-revision", "approved-period-policy", "authorization-recheck"])],
   ["UPGRADE_CALENDAR", resource("workspace.upgrade-calendar", ["workspace.read", "workspace.save", "workspace.create", "settings.manage"], "workspace",

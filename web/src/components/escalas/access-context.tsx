@@ -14,9 +14,13 @@ export function EscalaAccessProvider({ value, children }: { value: EscalaClientA
 
 export function useEscalaClientAccess() { return useContext(AccessContext); }
 
+export function isEscalaAdministrator(access: EscalaClientAccess | null): boolean {
+  return access?.channel === "ACCOUNT" && access.administrator && access.allBranches;
+}
+
 export function canDisplayEscalaAction(access: EscalaClientAccess | null, capability: EscalaCapability, branchCode?: string): boolean {
   if (!access) return false;
-  if (access.channel === "ACCOUNT" && access.administrator && access.allBranches) return true;
+  if (isEscalaAdministrator(access)) return true;
   if (access.channel === "USERNAME" && !(ESCALA_OPERATOR_CAPABILITIES as readonly string[]).includes(capability)) return false;
   const code = canonicalBranchCode(branchCode ?? "");
   const branches = access.branches.filter(branch => canonicalBranchCode(branch.code) === code);

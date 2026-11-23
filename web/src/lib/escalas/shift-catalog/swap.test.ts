@@ -229,6 +229,40 @@ describe("employee turn swap", () => {
     expect(saved.input.employees[0].manualShiftOverrides).toEqual([expect.objectContaining({ catalogCode: 1500, shiftId: "old" })]);
   });
 
+  it("applies an approved turno to an unlocked workday with branch shift and save permissions", async () => {
+    const branchActor = { ...actor, admin: false };
+    const [assigned, locked] = current().input.assignments;
+    const plan = current(undefined, [assigned, locked]);
+    const clock = (id: string, start: number) => ({
+      id, name: id, segments: [
+        { start, end: start + 240, kind: "WORK" },
+        { start: start + 240, end: start + 300, kind: "BREAK" },
+        { start: start + 300, end: start + 540, kind: "WORK" },
+      ],
+    });
+    const input = escalaInputSchema.parse({ ...plan.input,
+      employees: [{ ...plan.input.employees[0], scheduleMode: "TIMED", shiftIds: ["old", "approved"] }],
+      shifts: [clock("old", 480), clock("approved", 540)],
+    });
+    state.get.mockResolvedValue({ ...plan, input, approvedPolicyVersionId: "approved-policy" });
+    state.approval.mockResolvedValue({ snapshot: { seed: { employees: input.employees, shifts: input.shifts }, regimeModels: [] } });
+    state.parse.mockImplementation(value => escalaInputSchema.parse(value));
+    state.save.mockImplementation(async (_actor, _id, _revision, next, publish, options) => {
+      expect(publish).toBe(false);
+      expect(options).toEqual({ catalogIntent: true });
+      assertEscalaOperationalInput(input, next, ["workspace.read", "workspace.save", "shift.manage"], false, options.catalogIntent);
+      return { id: plan.id, revision: 4, input: next };
+    });
+
+    const swap = { ...request, effectiveUntil: assigned.date };
+    const preview = await previewTurnoSwap(branchActor, swap);
+    expect(preview).toMatchObject({ canApply: true, validationLevel: "FULL_SCHEDULE",
+      affected: [{ date: assigned.date, previousShiftId: "old", nextShiftId: "approved" }] });
+    const saved = await applyTurnoSwap(branchActor, { ...swap, previewId: preview.previewId, confirm: true });
+    expect(saved.revision).toBe(4);
+    expect(saved.input.assignments).toEqual([{ ...assigned, shiftId: "approved" }, locked]);
+  });
+
   it("rejects stale revision before applying the confirmed preview", async () => {
     state.get.mockResolvedValue({ ...current(), revision: 4 });
     await expect(previewTurnoSwap(actor, request)).rejects.toMatchObject({ code: "TURNO_REVISION_CONFLICT" });
