@@ -12,8 +12,8 @@ from coverage_service_protection import SERVICE_CONFLICT, add_service_protection
 from diagnostics import ConflictRegistry
 from hints import balanced_rest_hints, holiday_rest_forbidden, paid_holiday_dates, saturday_rest_forbidden
 from leadership import PRIORITY, leadership_objective, leadership_summary, movement_priority
-from model_input import (validate_fixed_rest_settings, validate_manual_shifts,
-                         validate_planning_horizon)
+from model_input import (coverage_advisory_estimate_dates, validate_fixed_rest_settings,
+                         validate_manual_shifts, validate_planning_horizon)
 from rest_configuration import add_variable_rest_constraints, effective_rest_input, repeated_variable_pattern
 from planning_calendar import is_december_cutover, planning_week_starts_on, planning_weeks
 from optimization import ImprovementContext, Snapshot, improve, remember
@@ -482,9 +482,13 @@ def _solve(data, control=None, started=None):
     daily_coverage, role_coverage = {}, {}
     movement_coverage, priority_coverage, movement_groups = [], {}, {}
     comparison_protected = "_coverageComparison" in data
+    advisory_dates = coverage_advisory_estimate_dates(data)
+    guarded_demands = ([demand for demand in data["demands"]
+                        if demand.get("estimated") is not True or demand["date"] not in advisory_dates]
+                       if advisory_dates else data["demands"])
 
-    def build_estimated_coverage(values=None):
-        return _coverage(model, data, employees, choices, shifts, started, "ESTIMATED", values, sunday_coverage, sector_coverage,
+    def build_estimated_coverage(values=None, scope="ESTIMATED"):
+        return _coverage(model, data, employees, choices, shifts, started, scope, values, sunday_coverage, sector_coverage,
                          visible_sunday_coverage, visible_sector_coverage, closing_coverage,
                          movement_terms=movement_coverage, priority_terms=priority_coverage,
                          movement_groups=movement_groups, daily_terms=daily_coverage, role_terms=role_coverage,
@@ -526,7 +530,7 @@ def _solve(data, control=None, started=None):
     baseline_hints = _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                        deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
                        mixed_people=mixed_people,
-                       estimated_demands=data["demands"],
+                       estimated_demands=guarded_demands,
                        initial_assignments=data.get('_initialAssignments'))
     remaining = MAX_SECONDS - (time.monotonic() - started)
     if remaining < 0.1:
@@ -552,7 +556,7 @@ def _solve(data, control=None, started=None):
         baseline_hints = _feasibility_hints(
             model, employees, dates, off, work, choices, active, baseline, metrics, policy,
             deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2),
-            control=control, mixed_people=mixed_people, estimated_demands=data["demands"])
+            control=control, mixed_people=mixed_people, estimated_demands=guarded_demands)
         remaining = MAX_SECONDS - (time.monotonic() - started)
         if remaining < 0.1:
             return _response('UNKNOWN', [], started)
@@ -567,7 +571,7 @@ def _solve(data, control=None, started=None):
             model.clear_hints()
             _feasibility_hints(model, employees, dates, off, work, choices, active, baseline, metrics, policy,
                                deadline=min(started + MAX_SECONDS - 2, time.monotonic() + 2), control=control,
-                               prefer_baseline=False, mixed_people=mixed_people, estimated_demands=data["demands"])
+                               prefer_baseline=False, mixed_people=mixed_people, estimated_demands=guarded_demands)
             # Symmetry reduction can discard a complete balanced hint. Verify it
             # as a fixed candidate before allowing an unrestricted replacement.
             remaining = MAX_SECONDS - (time.monotonic() - started)
@@ -606,9 +610,13 @@ def _solve(data, control=None, started=None):
     for variable in seed_variables:
         model.add_hint(variable, seed.value(variable))
     sunday_recovery = _preserve_daily_timed_presence(model, employees, dates, choices, shifts,
-                                                     data["demands"], values, control) or {}
+                                                     guarded_demands, values, control) or {}
     if coverage is None:
         coverage = build_estimated_coverage(values)
+    elif isinstance(coverage, list) and advisory_dates:
+        # Build only after feasibility: advisory estimates cannot exhaust its search budget.
+        advisory = build_estimated_coverage(values, "ADVISORY")
+        coverage = coverage + advisory if isinstance(advisory, list) else advisory
     if coverage is False or isinstance(coverage, str):
         finished = time.monotonic()
         response = _response("FEASIBLE", result, started)
@@ -1417,8 +1425,10 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
               movement_terms=None, priority_terms=None, movement_groups=None, daily_terms=None,
               role_terms=None, control=None):
     protected = scope == "PROTECTED"
+    advisory = scope == "ADVISORY"
     comparison = CoverageComparison(data["_coverageComparison"]) if scope == "ESTIMATED" and "_coverageComparison" in data else None
-    bounded_coverage = protected or comparison is not None
+    advisory_dates = coverage_advisory_estimate_dates(data) if advisory or comparison is not None else frozenset()
+    bounded_coverage = protected or advisory or comparison is not None
 
     def expired():
         if control is not None:
@@ -1431,7 +1441,9 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
         and not (comparison is None and d.get('estimated') is True and d['date'] in closed_holidays)
         and not (comparison is not None and not data["startDate"] <= d["date"] <= data["endDate"])
         and not (scope == 'HARD' and d.get('estimated') is True)
-        and not (scope == 'ESTIMATED' and d.get('estimated') is not True)]
+        and not (scope in ('ESTIMATED', 'ADVISORY') and d.get('estimated') is not True)
+        and not (comparison is not None and d['date'] in advisory_dates)
+        and not (advisory and d['date'] not in advisory_dates)]
     if not relevant:
         return []
     if comparison is not None:
@@ -1514,7 +1526,7 @@ def _coverage(model, data, employees, choices, shifts, started, scope="ALL", val
     common_boundaries = _coverage_common_boundaries(relevant, index) if role_terms is not None else {}
     for demand_index, demand in enumerate(_coverage_reference_slices(relevant)):
         estimated = demand.get("estimated") is True
-        if (scope == "HARD" and estimated) or (scope == "ESTIMATED" and not estimated):
+        if (scope == "HARD" and estimated) or (scope in ("ESTIMATED", "ADVISORY") and not estimated):
             continue
         if demand["minimum"] == 0:
             continue  # A zero floor adds no constraint or shortage; keep it only in the reported estimates.

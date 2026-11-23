@@ -61,18 +61,23 @@ describe("December conversion coverage", () => {
     origin.assignments = dateRange(origin.startDate, origin.endDate)
       .map(date => ({ employeeId: "p1", date, kind: "WORK", shiftId: "day" }));
     origin.demands = [{ id: "source-demand", date: "2026-12-07", sector: "Loja", role: "Repositor",
-      start: 1180, end: 1200, minimum: 1, estimated: true }];
+      start: 1180, end: 1200, minimum: 1, estimated: true },
+    { id: "early-estimate", date: "2026-12-05", sector: "Loja", role: "Repositor", start: 1180, end: 1200, minimum: 4, estimated: true }];
     const prepared = { ...origin, assignments: [] };
     const worker = vi.fn(async (_url: URL, options: RequestInit) => {
       const { input } = JSON.parse(String(options.body));
       expect(input.demands).toEqual(origin.demands);
       expect(input.assignments).toEqual([]);
+      expect(input._coverageComparison.advisoryEstimateDates).toEqual(dateRange("2026-12-01", "2026-12-05"));
+      expect(input._coverageComparison.dailyBands).not.toContainEqual(expect.objectContaining({ date: "2026-12-05" }));
+      expect(input._coverageComparison.sectors).toContainEqual(expect.objectContaining({ sector: "Loja", peak: 1, horizon: 20 }));
       expect(input).toHaveProperty("_coverageComparison.dailyBands", expect.arrayContaining([{
         date: "2026-12-07", sector: "Loja", role: "Repositor", start: 1180, end: 1200, maximum: 1,
       }]));
       expect(input).toHaveProperty("_coverageServiceProtection.days", expect.arrayContaining([{ date: "2026-12-07", sector: "Loja" }]));
+      expect(input._coverageServiceProtection.days).not.toContainEqual(expect.objectContaining({ date: "2026-12-05" }));
       expect(input).toHaveProperty("_coverageServiceProtection.bands", expect.arrayContaining([{
-        sector: "Loja", role: "Repositor", scope: "HORIZON", start: 480, end: 720, minimum: 31,
+        sector: "Loja", role: "Repositor", scope: "HORIZON", start: 480, end: 720, minimum: 26,
       }]));
       expect(input).not.toHaveProperty("admittedDecemberOrigin");
       expect(input).not.toHaveProperty("_monthlyClockOptions");

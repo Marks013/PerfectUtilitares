@@ -50,7 +50,7 @@ describe("verified processor quality delivery", () => {
     expect(requestSolver).toHaveBeenLastCalledWith(expect.objectContaining({ assignments: [], demands: origin.demands }), expect.objectContaining({
       coverageComparison: expect.objectContaining({ dailyBands: [] }),
       coverageServiceProtection: expect.objectContaining({ bands: expect.arrayContaining([{
-        sector: "Loja", role: "Operador", scope: "HORIZON", start: 480, end: 720, minimum: 21,
+        sector: "Loja", role: "Operador", scope: "HORIZON", start: 480, end: 720, minimum: 18,
       }]) }),
     }));
     vi.mocked(requestSolver).mockResolvedValueOnce({ status: "FEASIBLE", message: "Preserved", assignments: origin.assignments, wallTimeSeconds: 1 });

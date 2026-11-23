@@ -21,10 +21,10 @@ function missing(gap: SectorCoverageGap): number {
 }
 
 /** Exact report semantics, but across the complete technical horizon. */
-export function coverageQuality(input: EscalaInput) {
+export function coverageQuality(input: EscalaInput, dates = dateRange(input.startDate, input.endDate)) {
   const presence = buildCoveragePresence(input), daily = new Map<string, number>(), closing = new Map<string, number>();
   const peaks = new Map<string, number>();
-  const end = storeClosingMinutes(input), dates = dateRange(input.startDate, input.endDate);
+  const end = storeClosingMinutes(input), scope = new Set(dates);
   for (const gap of sectorCoverageGaps(input, presence, dates)) {
     const key = `${gap.sector}\0${gap.date}`, count = missing(gap);
     peaks.set(gap.sector, Math.max(peaks.get(gap.sector) ?? 0, count));
@@ -32,7 +32,7 @@ export function coverageQuality(input: EscalaInput) {
     closing.set(key, (closing.get(key) ?? 0) + count * Math.max(0, Math.min(end, gap.end) - Math.max(end - 60, gap.start)));
   }
   return { daily, closing, peaks, present: new Set([...presence.keys()].filter(key => {
-    const day = key.slice(0, key.indexOf("\0")); return day >= input.startDate && day <= input.endDate;
+    return scope.has(key.slice(0, key.indexOf("\0")));
   })) };
 }
 /** Dates may rotate inside each protected scope; role and clock dimensions remain distinct. */
@@ -129,8 +129,8 @@ export function alignPersistedCoverageTarget(persisted: EscalaInput, prepared: E
 }
 
 /** Exact civil boundaries shared by both candidates. Dates rotate inside each scope, not across roles or clocks. */
-function roleTimeQuality(reference: EscalaInput, proposal: EscalaInput, coverageReference: EscalaInput, includeService = true) {
-  const dates = dateRange(coverageReference.startDate, coverageReference.endDate);
+function roleTimeQuality(reference: EscalaInput, proposal: EscalaInput, coverageReference: EscalaInput, includeService = true,
+  dates = dateRange(coverageReference.startDate, coverageReference.endDate)) {
   const visible = new Set(visibleDates(coverageReference));
   const byDate = new Map(dates.map(date => [date, coverageServiceScopes(date, visible)]));
   const inputs = (includeService ? [reference, proposal] : [reference]).map(input => ({ ...input, demands: coverageReference.demands }));
@@ -141,10 +141,10 @@ function roleTimeQuality(reference: EscalaInput, proposal: EscalaInput, coverage
     const points = boundaries.get(sector) ?? new Set<number>();
     points.add(start); points.add(end); boundaries.set(sector, points);
   };
-  for (const demand of coverageReference.demands) add(demand.sector, demand.start, demand.end);
+  for (const demand of coverageReference.demands) if (byDate.has(demand.date)) add(demand.sector, demand.start, demand.end);
   for (const presence of presences) for (const [key, intervals] of presence) {
     const date = key.slice(0, key.indexOf("\0"));
-    if (date < coverageReference.startDate || date > coverageReference.endDate) continue;
+    if (!byDate.has(date)) continue;
     for (const interval of intervals) add(interval.employee.sector, interval.start, interval.end);
   }
   const closing = storeClosingMinutes(coverageReference);
@@ -172,7 +172,7 @@ function roleTimeQuality(reference: EscalaInput, proposal: EscalaInput, coverage
     if (!includeService) return { deficit, peak, service };
     for (const [key] of presences[index]) {
       const split = key.indexOf("\0"), date = key.slice(0, split), sector = key.slice(split + 1);
-      if (date < coverageReference.startDate || date > coverageReference.endDate) continue;
+      if (!byDate.has(date)) continue;
       const points = bands.get(sector) ?? [];
       for (let point = 0; point < points.length - 1; point++) {
         const start = points[point], end = points[point + 1];
@@ -200,14 +200,19 @@ export type CoverageComparisonBounds = {
   sectors: CoverageComparisonSector[];
   bands: CoverageComparisonBand[];
   dailyBands?: DatedDeficitBand[];
+  advisoryEstimateDates?: string[];
 };
 
+const DECEMBER_ADVISORY_DATES = dateRange("2026-12-01", "2026-12-05");
+function protectedDates(input: EscalaInput, advisoryDates: readonly string[]) {
+  return dateRange(input.startDate, input.endDate).filter(date => !advisoryDates.includes(date));
+}
+
 /** Store positive headcount gaps; absence of a band means zero allowable deficit. */
-function datedDeficitBands(input: EscalaInput, ruler: EscalaInput, estimated: boolean) {
+function datedDeficitBands(input: EscalaInput, ruler: EscalaInput, estimated: boolean, dates = dateRange(ruler.startDate, ruler.endDate)) {
   const demands = ruler.demands.filter(demand => (demand.estimated === true) === estimated);
   const groups = new Map<string, DatedDeficitBand[]>();
   if (!demands.length) return groups;
-  const dates = dateRange(ruler.startDate, ruler.endDate);
   for (const gap of sectorCoverageGaps({ ...input, demands }, undefined, dates)) {
     const counts = new Map<string | null, number>([[null, missing(gap)]]);
     for (const role of gap.roles) counts.set(role.role, Math.max(counts.get(role.role) ?? 0, role.minimum - role.present));
@@ -224,10 +229,12 @@ function datedDeficitBands(input: EscalaInput, ruler: EscalaInput, estimated: bo
   return groups;
 }
 
-function datedDeficitRegression(reference: EscalaInput, proposal: EscalaInput, ruler: EscalaInput): RosterCoverageRegression | undefined {
-  for (const estimated of [false, true]) {
-    const before = datedDeficitBands(reference, ruler, estimated);
-    for (const [key, proposalBands] of datedDeficitBands(proposal, ruler, estimated)) {
+function datedDeficitRegression(reference: EscalaInput, proposal: EscalaInput, ruler: EscalaInput,
+  estimateDates: string[], protectEstimates: boolean): RosterCoverageRegression | undefined {
+  for (const estimated of protectEstimates ? [false, true] : [false]) {
+    const dates = estimated ? estimateDates : undefined;
+    const before = datedDeficitBands(reference, ruler, estimated, dates);
+    for (const [key, proposalBands] of datedDeficitBands(proposal, ruler, estimated, dates)) {
       const referenceBands = before.get(key) ?? [];
       let position = 0;
       for (const band of proposalBands) {
@@ -262,15 +269,18 @@ function comparisonDates(input: EscalaInput) {
 /** Saved deficit ceilings share the verifier's scope and band semantics. Omitted ceilings are zero. */
 export function frozenCoverageComparison(rawReference: EscalaInput, mode?: RosterCoverageMode): CoverageComparisonBounds | null {
   const reference = operationalEscalaInput(rawReference);
+  // Only a server-admitted origin supplies bounds to the worker with this exception.
+  const advisoryEstimateDates = mode === "DECEMBER_DEMAND" && isDecember2026Cutover(reference) ? [...DECEMBER_ADVISORY_DATES] : undefined;
+  const dates = protectedDates(reference, advisoryEstimateDates ?? []);
   const { month, sundays, monthSundays } = comparisonDates(reference);
-  const saved = coverageQuality(reference);
+  const saved = coverageQuality(reference, dates);
   const coverage = sectorTotals(saved.daily), visible = sectorTotals(saved.daily, month);
   const sunday = sectorTotals(saved.daily, sundays), visibleSunday = sectorTotals(saved.daily, monthSundays);
   const closing = sectorTotals(saved.closing);
   const sectors = [...coverage].map(([sector, horizon]) => ({ sector, horizon, month: visible.get(sector) ?? 0,
     sundays: sunday.get(sector) ?? 0, monthSundays: visibleSunday.get(sector) ?? 0,
     closing: closing.get(sector) ?? 0, peak: saved.peaks.get(sector) ?? 0 }));
-  const [{ deficit, peak }] = roleTimeQuality(reference, reference, reference, false);
+  const [{ deficit, peak }] = roleTimeQuality(reference, reference, reference, false, dates);
   const bands: CoverageComparisonBand[] = [];
   for (const [key, value] of deficit) {
     if (!value) continue;
@@ -278,10 +288,9 @@ export function frozenCoverageComparison(rawReference: EscalaInput, mode?: Roste
     bands.push({ scope, sector, role, start, end, maximum: value / (end - start), peak: peak.get(key) ?? 0 });
     if (bands.length > 12_000) return null;
   }
-  const dailyBands = mode === "DECEMBER_DEMAND" && isDecember2026Cutover(reference)
-    ? [...datedDeficitBands(reference, reference, true).values()].flat() : undefined;
+  const dailyBands = advisoryEstimateDates ? [...datedDeficitBands(reference, reference, true, dates).values()].flat() : undefined;
   return sectors.length <= 250 && (dailyBands?.length ?? 0) <= 12_000
-    ? { sectors, bands, ...(dailyBands ? { dailyBands } : {}) } : null;
+    ? { sectors, bands, ...(advisoryEstimateDates ? { advisoryEstimateDates, dailyBands } : {}) } : null;
 }
 export type RosterCoverageRegression = {
   sector: string; scope: ComparisonScope; before: number; after: number; delta: number;
@@ -317,10 +326,13 @@ export function compareRosterCoverage(rawReference: EscalaInput, rawProposal: Es
   const result = (reason: RosterSelectionReason, regressed = false, improved = false, comparable = true) => ({ comparable, regressed, improved, reason });
   const reject = (reason: RosterSelectionReason, regression: RosterCoverageRegression) => ({ ...result(reason, true), regression });
   if (!comparableRoster(reference, proposal) || !comparableRoster(coverageReference, proposal)) return result("REFERENCE_NOT_COMPARABLE", false, false, false);
-  const protectDecemberDemand = mode === "DECEMBER_DEMAND"
-    && [reference, proposal, coverageReference].every(isDecember2026Cutover);
-  const before = coverageQuality({ ...reference, demands: coverageReference.demands });
-  const after = coverageQuality({ ...proposal, demands: coverageReference.demands });
+  // Also applies to already saved cutovers and direct drafts: no estimate-only
+  // veto for the first partial block when selecting or reusing a proposal.
+  const december = [reference, proposal, coverageReference].every(isDecember2026Cutover);
+  const protectDecemberDemand = december && mode === "DECEMBER_DEMAND";
+  const dates = protectedDates(coverageReference, december ? DECEMBER_ADVISORY_DATES : []);
+  const before = coverageQuality({ ...reference, demands: coverageReference.demands }, dates);
+  const after = coverageQuality({ ...proposal, demands: coverageReference.demands }, dates);
   const { month, sundays, monthSundays } = comparisonDates(coverageReference);
   let improved = false;
   const scopes: [ComparisonScope, Set<string> | undefined][] = [["HORIZON", undefined], ["MONTH", month], ["SUNDAYS", sundays], ["MONTH_SUNDAYS", monthSundays]];
@@ -344,14 +356,16 @@ export function compareRosterCoverage(rawReference: EscalaInput, rawProposal: Es
     const [date, sector] = emptyDay.split("\0");
     return reject("DAILY_PRESENCE", { date, sector, scope: "HORIZON", metric: "DAILY_PRESENCE", before: 1, after: 0, delta: -1 });
   }
-  const [oldRoles, newRoles] = roleTimeQuality(reference, proposal, coverageReference);
+  const [oldRoles, newRoles] = roleTimeQuality(reference, proposal, coverageReference, true, dates);
   const missedRole = largestIncrease(oldRoles.deficit, newRoles.deficit);
   if (missedRole) return reject("ROLE_TIME_COVERAGE", roleTimeRegression(missedRole, "DEFICIT_PERSON_MINUTES"));
   const peakRole = largestIncrease(oldRoles.peak, newRoles.peak);
   if (peakRole) return reject("ROLE_TIME_COVERAGE", roleTimeRegression(peakRole, "PEAK_MISSING"));
-  if (protectDecemberDemand) {
-    const datedLoss = datedDeficitRegression(reference, proposal, coverageReference);
+  if (december) {
+    const datedLoss = datedDeficitRegression(reference, proposal, coverageReference, dates, protectDecemberDemand);
     if (datedLoss) return reject(datedLoss.role ? "ROLE_TIME_COVERAGE" : "SECTOR_COVERAGE", datedLoss);
+  }
+  if (protectDecemberDemand) {
     const dayLoss = largestIncrease(before.daily, after.daily);
     if (dayLoss) {
       const [sector, date] = dayLoss.key.split("\0");

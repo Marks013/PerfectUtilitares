@@ -33,7 +33,7 @@ function mergedSpans(spans: Span[]) {
 }
 
 /** Reproduce the verifier's actual WORK presence, including windows with no demand. */
-export function frozenCoverageService(reference: EscalaInput): CoverageServiceProtection | null {
+export function frozenCoverageService(reference: EscalaInput, excludedDates: readonly string[] = []): CoverageServiceProtection | null {
   const input = operationalEscalaInput(reference);
   const visible = new Set(visibleDates(input));
   const days: ProtectedDay[] = [], bands: ProtectedBand[] = [];
@@ -41,7 +41,7 @@ export function frozenCoverageService(reference: EscalaInput): CoverageServicePr
   for (const [key, intervals] of buildCoveragePresence(input)) {
     if (!intervals.length) continue;
     const split = key.indexOf("\0"), date = key.slice(0, split), sector = key.slice(split + 1);
-    if (date < input.startDate || date > input.endDate) continue;
+    if (date < input.startDate || date > input.endDate || excludedDates.includes(date)) continue;
     days.push({ date, sector });
     if (days.length > 10_500) return null;
     const people = new Map<string, { role: string; spans: Span[] }>();

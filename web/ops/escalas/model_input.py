@@ -5,6 +5,7 @@ from planning_calendar import is_december_cutover, planning_week_starts_on, plan
 
 
 SERVICE_SCOPES = ("HORIZON", "MONTH", "SUNDAYS", "MONTH_SUNDAYS")
+DECEMBER_ADVISORY_DATES = frozenset(f"2026-12-{day:02d}" for day in range(1, 6))
 
 
 class ModelInputError(ValueError):
@@ -142,12 +143,28 @@ def _validate_service_protection(data, roles_by_sector):
         _integer(row["minimum"], prefix + ".minimum", 1, 10500)
 
 
+def coverage_advisory_estimate_dates(data):
+    """Admit only the confirmed five civil dates on an exact December cutover."""
+    comparison = data.get("_coverageComparison", {})
+    if "advisoryEstimateDates" not in comparison:
+        return frozenset()
+    path = "_coverageComparison.advisoryEstimateDates"
+    _require(is_december_cutover(data), path, "INVALID_SCOPE")
+    dates = _array(comparison["advisoryEstimateDates"], path, len(DECEMBER_ADVISORY_DATES))
+    _require(len(dates) == len(DECEMBER_ADVISORY_DATES) and all(isinstance(day, str) for day in dates)
+             and frozenset(dates) == DECEMBER_ADVISORY_DATES, path, "INVALID_DATES")
+    return DECEMBER_ADVISORY_DATES
+
+
 def _validate_coverage_comparison(data, roles_by_sector):
     path = "_coverageComparison"
     comparison = _object(data[path], path)
     fields = {"sectors", "bands"}
     if "dailyBands" in comparison and is_december_cutover(data):
         fields.add("dailyBands")
+    advisory_dates = coverage_advisory_estimate_dates(data)
+    if advisory_dates:
+        fields.add("advisoryEstimateDates")
     _require(comparison.keys() == fields, path, "INVALID_FIELDS")
     # A demand-only sector or function can have a real nonzero saved shortage.
     scopes = {sector: set(roles) for sector, roles in roles_by_sector.items()}
@@ -189,6 +206,7 @@ def _validate_coverage_comparison(data, roles_by_sector):
         row = _object(entry, prefix)
         _require(row.keys() == {"date", "sector", "role", "start", "end", "maximum"}, prefix, "INVALID_FIELDS")
         _date(row["date"], prefix + ".date")
+        _require(row["date"] not in advisory_dates, prefix + ".date", "ADVISORY_ESTIMATE_DATE")
         _require(data["startDate"] <= row["date"] <= data["endDate"], prefix + ".date", "OUTSIDE_HORIZON")
         sector, role = row["sector"], row["role"]
         _require(isinstance(sector, str) and sector in scopes, prefix + ".sector", "UNKNOWN_REFERENCE")

@@ -15,7 +15,6 @@ import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./date
 import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
 import { isDecember2026Cutover } from "./planning-calendar";
 import { admitDecemberCandidate, calculateWithDecemberFallback, prepareDecemberCoverage, selectDecemberCandidate } from "./december-origin.server";
-import { decemberCapacityConflicts } from "./december-capacity-diagnostic";
 import { fixedBoundaryReservations } from "./boundary";
 import { preservePublishedDays, publishedPlanningContext } from "./continuity";
 import { assertEscalaEmployeeRemovalAllowed, inputWithoutEscalaEmployee } from "./employee-removal";
@@ -625,7 +624,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
     origin && admission.input,
   );
   let result = calculation.status === "INFEASIBLE" ? {
-    ...calculation, conflicts: [...decemberCapacityConflicts(contextual, origin), ...findGenerationConflicts(contextual),
+    ...calculation, conflicts: [...findGenerationConflicts(contextual),
       ...(calculation.solverDiagnostics ?? []).map(diagnostic => ({
       code: `SOLVER_${diagnostic.family}`, message: diagnostic.message,
       target: diagnostic.family === "COVERAGE" ? "coverage" as const : "team" as const,

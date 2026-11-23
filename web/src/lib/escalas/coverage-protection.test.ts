@@ -4,6 +4,7 @@ import { frozenCoverageService } from "./coverage-protection";
 import { dateRange } from "./dates";
 import { compareRosterCoverage, frozenCoverageComparison } from "./roster-quality";
 import type { EscalaInput } from "./types";
+import { validateCoverage } from "./validation-coverage";
 
 function fixture(): EscalaInput {
   const input = newInput("07", "Teste", "2026-12", 42);
@@ -76,5 +77,29 @@ describe("frozen coverage service", () => {
     expect(frozenCoverageService(input)).toEqual({ days: [], bands: [] });
     input.policy.closedDates.push("2026-12-01");
     expect(frozenCoverageService(input)).toEqual({ days: [], bands: [] });
+  });
+
+  it.each([undefined, "DECEMBER_DEMAND"] as const)("keeps 01–05 advisory in comparison mode %s and protects December 06", mode => {
+    const original = fixture(), early = "2026-12-01", later = "2026-12-06";
+    Object.assign(original, { startDate: early, endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY" });
+    original.employees = [original.employees[0]];
+    original.employees[0].activeFrom = early;
+    original.assignments = dateRange(early, original.endDate).map(date => date === early || date === later
+      ? { employeeId: "timed", date, kind: "WORK", shiftId: "day" }
+      : { employeeId: "timed", date, kind: "OFF" });
+    original.demands = [early, later].map(date => ({ id: date, date, sector: "Loja", role: "Caixa",
+      start: 660, end: 690, minimum: 1, estimated: true }));
+    const drop = (date: string): EscalaInput => ({ ...original, assignments: original.assignments.map(row =>
+      row.date === date ? { employeeId: row.employeeId, date, kind: "OFF" } : row) });
+    expect(compareRosterCoverage(original, drop(early), original, mode)).toMatchObject({ comparable: true, regressed: false });
+    expect(compareRosterCoverage(original, drop(later), original, mode)).toMatchObject({ comparable: true, regressed: true });
+    expect(validateCoverage(drop(early)).issues).toContainEqual(expect.objectContaining({
+      code: "ESTIMATED_COVERAGE_GAP", severity: "WARNING", date: early,
+    }));
+    original.demands[0].estimated = false;
+    expect(compareRosterCoverage(original, drop(early), original, mode)).toMatchObject({ regressed: true, regression: { date: early } });
+    expect(validateCoverage(drop(early)).issues).toContainEqual(expect.objectContaining({
+      code: "COVERAGE_DEFICIT", severity: "ERROR", date: early,
+    }));
   });
 });

@@ -135,7 +135,7 @@ export async function solveEscala(
   const coverageMode = admittedDecemberOrigin ? "DECEMBER_DEMAND" : undefined;
   const assess = (roster: EscalaInput) => compareRosterCoverage(qualityReference, roster, qualityReference, coverageMode);
   const coverageComparison = admittedDecemberOrigin ? frozenCoverageComparison(qualityReference, coverageMode) : undefined;
-  const coverageServiceProtection = admittedDecemberOrigin ? frozenCoverageService(qualityReference) : undefined;
+  const coverageServiceProtection = admittedDecemberOrigin ? frozenCoverageService(qualityReference, coverageComparison?.advisoryEstimateDates) : undefined;
   if (coverageComparison === null || coverageServiceProtection === null) {
     throw new EscalaError(422, "ESCALA_COVERAGE_PROTECTION_LIMIT", "Há faixas protegidas demais para comparar com segurança. A grade salva foi mantida. Divida a revisão de cobertura por setor ou período.");
   }

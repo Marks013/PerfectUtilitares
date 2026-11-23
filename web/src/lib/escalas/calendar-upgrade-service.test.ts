@@ -181,6 +181,11 @@ describe("December origin ruler", () => {
       expect(retained.comparison).toMatchObject({ admission: "ADMITTED", selection: "REFERENCE_RETAINED", reason: "FROZEN_COVERAGE_REGRESSION" });
       expect(retained.proposalInput).toEqual(first.proposalInput);
       expect(retained.candidateReceipt?.inputHash).toBe(first.candidateReceipt?.inputHash);
+      for (const response of [first, retained]) {
+        expect(response.validation.issues).toContainEqual(expect.objectContaining({
+          code: "ESTIMATED_COVERAGE_GAP", severity: "WARNING", date: "2026-12-04",
+        }));
+      }
       await expect(generateEscala(actor, created.id, created.revision)).rejects.toBe(loss);
       expect(db.updates).not.toHaveBeenCalled();
     } finally {

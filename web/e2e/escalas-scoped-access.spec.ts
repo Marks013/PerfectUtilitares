@@ -260,12 +260,27 @@ test("nominal access owns its scope, preserves admin configuration, operates the
     expect((await readWorkspace(foreign.admin, foreignWorkspace.id)).revision).toBe(foreignWorkspace.revision);
     await page.reload();
     await selectEscalasWorkspace(page, workspace);
-    await expect(page.getByLabel("Ano", { exact: true }).locator('option[value="2027"]')).toHaveCount(0);
-    const list = await page.request.get("/api/escalas").then(response => response.json()) as { workspaces: EscalaWorkspace[] };
-    expect(list.workspaces.map(item => item.id)).toEqual([workspace.id]);
-    const legacyResponse = await page.request.get(`/api/escalas?id=${legacyWorkspace.id}`);
-    expect(legacyResponse.status()).toBe(409);
-    await expect(legacyResponse.json()).resolves.toMatchObject({ error: { code: "ESCALA_CONFIG_APPROVAL_REQUIRED" } });
+    await expect(page.getByLabel("Ano", { exact: true }).locator('option[value="2027"]')).toHaveCount(1);
+    const draftTarget = { id: importedWorkspace.id, expectedRevision: importedWorkspace.revision };
+    const [listResponse, draftResponse] = await Promise.all([
+      page.request.get("/api/escalas"), page.request.get(`/api/escalas?id=${draftTarget.id}`),
+    ]);
+    expect(listResponse.status()).toBe(200);
+    const list = await listResponse.json() as { workspaces: EscalaWorkspace[] };
+    expect(list.workspaces.map(({ id, revision }) => ({ id, revision }))).toEqual([
+      { id: draftTarget.id, revision: draftTarget.expectedRevision }, { id: workspace.id, revision: workspace.revision },
+    ]);
+    const draft = await responseWorkspace(draftResponse);
+    expect(draft).toMatchObject({ id: draftTarget.id, revision: draftTarget.expectedRevision, status: "DRAFT",
+      canEdit: false, canPublish: false, approvedPolicyVersionId: null, input: { visibleMonth: "2027-01" } });
+    const deniedDraftActions = await Promise.all([
+      post({ action: "GENERATE", ...draftTarget }), post({ action: "SAVE", ...draftTarget, input: draft.input }),
+      page.request.get(`/api/escalas/export?id=${draftTarget.id}&revision=${draftTarget.expectedRevision}&format=pdf`),
+    ]);
+    for (const denied of deniedDraftActions) {
+      expect(denied.status()).toBe(409);
+      expect(await denied.json()).toMatchObject({ error: { code: "ESCALA_CONFIG_APPROVAL_REQUIRED" } });
+    }
     expect((await page.request.get(`/api/escalas?id=${adminOnlyWorkspace.id}`)).status()).toBe(403);
     expect((await post({ action: "GENERATE", id: adminOnlyWorkspace.id, expectedRevision: adminOnlyWorkspace.revision })).status()).toBe(403);
     await openEscalasArea(page, "generate");
