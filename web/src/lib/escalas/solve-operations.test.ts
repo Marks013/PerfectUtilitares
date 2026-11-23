@@ -450,7 +450,8 @@ describe("generation operation ownership and atomic lifecycle", () => {
   });
 
   it.each(["RUNNING", "COMPLETED"] as const)("keeps a stale revision when the %s CAS loses", async state => {
-    const update = mocks.updateMany.getMockImplementation()!;
+    const update = mocks.updateMany.getMockImplementation();
+    if (!update) throw new Error("Missing operation update mock implementation");
     mocks.updateMany.mockImplementation(async args => args.data.state === state ? { count: 0 } : update(args));
     mocks.recheck.mockRejectedValueOnce(new EscalaError(409, "ESCALA_STALE_REVISION", "Synthetic"));
     await expect(runGenerationOperation(actor, "owner", operationId, "w1", 1, new AbortController().signal)).rejects.toMatchObject({ code: "ESCALA_STALE_REVISION" });
