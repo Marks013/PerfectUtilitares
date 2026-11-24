@@ -4,6 +4,7 @@ import { operationalEscalaInput } from "./eligibility";
 import { effectiveSundayLimit, effectiveWeeklyMinutes, isMixed42LongShift, usesMixed42Week } from "./labor-rules";
 import { storeClosingMinutes } from "./store-hours";
 import { validateEscala } from "./validation";
+import { isDecember2026Cutover } from "./planning-calendar";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "./types";
 import { manualShiftAt } from "./shift-catalog/manual-override";
 
@@ -70,18 +71,19 @@ function roundedTargets(expected: number[], group: Group, monday: string, days: 
 
 /** Browser-safe invalidation only: this fingerprint does not certify or authenticate demand. */
 export function coverageBasis(input: EscalaInput): string {
-  return coverageFingerprint(operationalEscalaInput(input), 2);
+  return coverageFingerprint(operationalEscalaInput(input), isDecember2026Cutover(input) ? 3 : 2);
 }
 
 /** A previously valid saved ruler may still contain the administrative sector in its fingerprint. */
 export function matchesCoverageBasis(input: EscalaInput): boolean {
   const operational = operationalEscalaInput(input);
-  return input.coverageBasis === coverageFingerprint(operational, 2)
-    || operational !== input && input.coverageBasis === coverageFingerprint(input, 2);
+  const version = isDecember2026Cutover(input) ? 3 : 2;
+  return input.coverageBasis === coverageFingerprint(operational, version)
+    || operational !== input && input.coverageBasis === coverageFingerprint(input, version);
 }
 
 /** The old fingerprint can retain an old ruler, never identify newly calculated estimates. */
-function coverageFingerprint(input: EscalaInput, version: 1 | 2): string {
+function coverageFingerprint(input: EscalaInput, version: 1 | 2 | 3): string {
   const shifts = new Map(input.shifts.map(shift => [shift.id, shift]));
   const clock = (shift?: EscalaShift) => shift?.segments.map(segment => [segment.kind, segment.start, segment.end]) ?? null;
   const sorted = <T>(items: T[]) => items.sort((a, b) => {
@@ -103,7 +105,7 @@ function coverageFingerprint(input: EscalaInput, version: 1 | 2): string {
       person.planningEnabled !== false, person.scheduleMode ?? "TIMED", person.activeFrom, person.activeUntil ?? "", person.offMode,
       [...person.fixedOffDays].sort(), person.offPattern, effectiveSundayLimit(person), [...person.preferredOffDays].sort(),
       sorted([...references.values()]),
-      ...(version === 2 ? [sorted((person.manualShiftOverrides ?? []).map(choice => [choice.effectiveFrom, choice.effectiveUntil,
+      ...(version >= 2 ? [sorted((person.manualShiftOverrides ?? []).map(choice => [choice.effectiveFrom, choice.effectiveUntil,
         choice.markings, clock(shifts.get(choice.shiftId))]))] : []),
       context(person.history), context(person.planningHistory ?? []), context(person.planningFuture ?? [])];
   });
@@ -112,9 +114,9 @@ function coverageFingerprint(input: EscalaInput, version: 1 | 2): string {
     [policy.weeklyLimit, policy.dailyLimitMinutes, policy.minInterShiftMinutes, policy.minWeeklyRestMinutes, policy.minMealMinutes,
       policy.maxConsecutiveWorkDays, policy.allowShortMealSimulation === true, policy.limitContinuousWorkBlocks === true,
       [...policy.closedDates].sort(), [...policy.holidayDates].sort(), [...policy.authorizedHolidayDates].sort(), policy.holidayRestAllowed,
-      ...(version === 2 ? [[...(policy.paidHolidayDates ?? [])].sort()] : []),
+      ...(version >= 2 ? [[...(policy.paidHolidayDates ?? [])].sort()] : []),
       policy.normativeProfile ?? "CUSTOM"], sorted(people),
-    sorted(input.assignments.filter(record => record.kind === "ABSENCE" || version === 2 && record.kind === "HOLIDAY" || record.locked).map(record => [record.employeeId, record.date, record.kind,
+    sorted(input.assignments.filter(record => record.kind === "ABSENCE" || version >= 2 && record.kind === "HOLIDAY" || record.locked).map(record => [record.employeeId, record.date, record.kind,
       record.kind === "WORK" ? clock(shifts.get(record.shiftId ?? "")) : null])),
     sorted(input.demands.filter(demand => demand.estimated !== true).map(demand => [demand.date, demand.sector, demand.role ?? "", demand.start, demand.end, demand.minimum]))];
   let first = 2166136261, second = 2246822519;
@@ -142,18 +144,18 @@ function completeRoster(input: EscalaInput): boolean {
 /**
  * Keep the ruler fixed while optimizing an unchanged, complete, independently valid roster.
  * Stable legacy targets retain a legacy fingerprint, including explicit generation-only bootstrap.
- * New estimates always use v2; a legacy ruler is never relabeled as a newly calculated one.
- * Both fingerprint versions must observe real input changes before targets can be retained.
+ * New December cutover estimates use v3. A retained legacy ruler keeps its original version.
+ * Retention always checks the current scenario fields, even for older fingerprints.
  */
 export function retainCoverageReference(previous: EscalaInput, prepared: EscalaInput, allowLegacy = false): EscalaInput | undefined {
   const before = operationalEscalaInput(previous), after = operationalEscalaInput(prepared);
   if (previous.needsRegeneration || prepared.needsRegeneration || !before.demands.some(demand => demand.estimated === true)
     || !completeRoster(before) || !completeRoster(after)) return undefined;
-  const current = coverageFingerprint(after, 2);
-  const version = previous.coverageBasis?.startsWith("coverage-v2:") ? 2
+  const version = previous.coverageBasis?.startsWith("coverage-v3:") && isDecember2026Cutover(after) ? 3
+    : previous.coverageBasis?.startsWith("coverage-v2:") ? 2
     : previous.coverageBasis?.startsWith("coverage-v1:") || allowLegacy ? 1 : undefined;
-  if (!version || coverageFingerprint(before, 2) !== current) return undefined;
-  const basis = version === 2 ? current : coverageFingerprint(after, 1);
+  if (!version || coverageFingerprint(before, 2) !== coverageFingerprint(after, 2)) return undefined;
+  const basis = coverageFingerprint(after, version);
   if (previous.coverageBasis ? previous.coverageBasis !== basis
     && !(before !== previous && previous.coverageBasis === coverageFingerprint(previous, version))
     : coverageFingerprint(before, 1) !== basis) return undefined;
@@ -206,10 +208,12 @@ export function proposeAutomaticCoverage(rawInput: EscalaInput): EscalaInput {
       const shift = referenceShift(person, shifts, mixed ? 480 : effectiveWeeklyMinutes(person, monday, input) / 5);
       const longShift = mixed ? referenceShift(person, shifts, 540, isMixed42LongShift) : undefined;
       const active = days.filter(day => day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil));
-      const limitedAvailability = active.length < 7 || active.some(day => assignments.get(JSON.stringify([person.id, day]))?.kind === "ABSENCE");
-      const closedWeekdays = active.filter(day => dayOfWeek(day) !== 6 && closedHolidays.has(day)
-        && (input.generationMode !== "HOURS_ONLY" || assignments.get(JSON.stringify([person.id, day]))?.kind === "HOLIDAY")).length;
-      const weeklyOpportunities = limitedAvailability ? 5 : Math.max(0, 5 - closedWeekdays);
+      const opening = isDecember2026Cutover(input) && monday === input.startDate;
+      const absence = active.some(day => assignments.get(JSON.stringify([person.id, day]))?.kind === "ABSENCE");
+      const limitedAvailability = active.length < (opening ? days.length : 7) || absence;
+      const closedWeekdays = active.filter(day => dayOfWeek(day) !== 6 && (opening && assignments.get(JSON.stringify([person.id, day]))?.kind === "HOLIDAY"
+        || closedHolidays.has(day) && (input.generationMode !== "HOURS_ONLY" || assignments.get(JSON.stringify([person.id, day]))?.kind === "HOLIDAY"))).length;
+      const weeklyOpportunities = limitedAvailability ? 5 : Math.max(0, (opening ? days.length - 2 : 5) - closedWeekdays);
       const referencesByDate = new Map(days.map(day => {
         const item = assignments.get(JSON.stringify([person.id, day]));
         const manual = manualShiftAt(person, day);

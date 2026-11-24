@@ -9,7 +9,7 @@ import type { EscalaInput, EscalaValidation, EscalaWorkspace } from "@/lib/escal
 import { coverageDefinitionChanged, hasOutdatedResults, isCurrentResponse, responseMessage, scenarioDefinitionChanged } from "./workspace-model";
 import { requestMassGeneration, type GeneratedProposal } from "./mass-generation";
 import { GenerationOperation, generationCancellationNotice } from "./generation-operation";
-import { EscalaRequestError, invalidatesCandidate, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
+import { EscalaRequestError, generationSuccessNotice, invalidatesCandidate, responseCode, solverProblem, toEscalaProblem, type EscalaProblem } from "./workspace-feedback-model";
 import { operationalCommand } from "./operational-client";
 import { canDisplayEscalaAction, isEscalaAdministrator, useEscalaClientAccess } from "./access-context";
 import { pendingNavigation } from "./workspace-navigation";
@@ -492,20 +492,10 @@ export function useEscalasWorkspace() {
               const canApply = Boolean(latestWorkspace.current?.canEdit
                 && canDisplayEscalaAction(latestAccess.current, "workspace.save", saved.input.branchCode)
                 && canDisplayEscalaAction(latestAccess.current, "schedule.apply", saved.input.branchCode));
-              const previewAction = "Confira a proposta. Para aplicar ou salvar alterações, peça ajuda a uma pessoa autorizada nesta filial.";
-              const comparisonNotice = result.comparison?.selection === "REFERENCE_RETAINED"
-                ? "A proposta anterior foi mantida para preservar a cobertura."
-                : result.comparison?.admission === "EXPIRED"
-                  ? "A comparação anterior expirou. Uma nova proposta foi calculada."
-                  : result.comparison && ["SCENARIO_CHANGED", "INCOMPATIBLE"].includes(result.comparison.admission)
-                    ? "A comparação anterior não pôde ser usada neste cenário." : "";
-              const warning = result.validation.issues.length ? "Proposta concluída com avisos." : "";
-              setNotice(comparisonNotice
-                ? [warning, comparisonNotice, canApply ? "Confira antes de aplicar." : previewAction].filter(Boolean).join(" ")
-                : `${warning || "Proposta concluída."} ${canApply ? "Confira e aplique à escala." : previewAction}`);
+              setNotice(generationSuccessNotice(result, canApply));
             } else {
-              const { status, message, conflicts, rejectionEvidence } = result.result; restorePrevious();
-              const problem = solverProblem(status, message, conflicts, rejectionEvidence); setProblem(problem); setNotice(problem?.message ?? "");
+              const { status, message, conflicts, rejectionEvidence, outcome } = result.result; restorePrevious();
+              const problem = solverProblem(status, message, conflicts, rejectionEvidence, outcome); setProblem(problem); setNotice(problem?.message ?? "");
             }
           }
         } catch (cause) {

@@ -29,7 +29,8 @@ Não copiar `.env`, dumps ou credenciais para a CI. Verificar volumes e schema a
 3. Verificar se há setores vazios em datas abertas e se a referência é `estimated` ou mínimo confirmado; uma estimativa não é obrigação operacional.
 4. Conferir períodos domingo–sábado, folgas fixas expressas, feriados, histórico, vínculos parciais e turnos noturnos cruzando domingos.
 5. Diante de proposta inválida, preservar a última revisão conferida. Não publicar ou aplicar resposta do solver sem verificador independente. `HOURS_ONLY` não gera folgas.
-6. Referências só são válidas para o contexto e revisão em que foram geradas. Revise todas as pendências antes de uma tentativa autorizada.
+6. Referências só são válidas para o contexto e revisão em que foram geradas. No calendário de dezembro de 2026, as estimativas novas consideram três dias de trabalho na abertura de 1 a 5/12 (menos feriados aplicáveis para a equipe elegível). Para uma referência antiga, use **Recalcular apenas estimativas** na área Cobertura: revise os valores antes de salvar. O comando não altera mínimos cadastrados nem dias da grade.
+7. Compare separadamente mínimos não atendidos, equipes inteiras de folga e desfalque estimado por faixa. Referência mantida e busca sem conclusão não equivalem a nova proposta nem provam inviabilidade. Em dezembro, a recuperação tenta primeiro as semanas com mais setores/dia vazios, sem relaxar as proteções ou ampliar os orçamentos de 12/23 s.
 
 ## Backups: verificação read-only
 

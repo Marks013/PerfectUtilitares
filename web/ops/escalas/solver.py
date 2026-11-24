@@ -942,7 +942,7 @@ def _solve(data, control=None, started=None):
         unstaffed, context.rest_spacing_groups = _rest_unstaffed_cells(
             model, employees, dates, off, baseline, closed_dates | paid_holidays, values)
         values, phases = improve_sector_presence(model, goals, rest_quality['people'], values,
-                                                  started + budget_seconds - 0.2, context, unstaffed)
+                                                  started + budget_seconds - 0.2, context, unstaffed, calendar=data)
         proven = False  # This optional search makes no claim about all objectives.
     else:
         values, proven, phases = improve(model, [objective for _, objective in goals], values,

@@ -65,6 +65,12 @@ describe("plain language planning recovery", () => {
     expect(solverProblem("FEASIBLE")).toBeNull();
     expect(solverProblem("OPTIMAL")).toBeNull();
   });
+  it("distingue reparo local esgotado de inviabilidade sob cobertura protegida", () => {
+    expect(solverProblem("UNKNOWN", "", [], undefined, { kind: "SEARCH_UNFINISHED", reason: "LOCAL_REPAIR_EXHAUSTED" }))
+      .toMatchObject({ action: "roster", explanation: expect.stringContaining("busca geral não foi iniciada") });
+    expect(solverProblem("INFEASIBLE", "", [], "MODEL_PROOF", { kind: "PROVEN_INFEASIBLE", scope: "PROTECTED_MODEL" })?.explanation)
+      .toContain("proteção de cobertura usada neste cálculo");
+  });
   it.each([["PRECHECK", "checagem de entrada ou cobertura"], ["MODEL_PROOF", "modelo não tem solução"]] as const)("shows %s only from verified evidence", (evidence, label) => {
     const conflicts = [{ code: "SOLVER_COVERAGE", message: "Synthetic", target: "coverage" as const }];
     const problem = solverProblem("INFEASIBLE", "private worker text", conflicts, evidence);

@@ -19,7 +19,7 @@ export async function precedingSchedule(db: Prisma.TransactionClient, actor: Esc
     select: { id: true, revision: true, status: true },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
   });
-  let published;
+  let published: { input: EscalaInput; approvedPolicyVersionId: string | null; workspaceId: string; revision: number } | undefined;
   for (const row of rows) {
     if (row.status !== "DRAFT" && row.status !== "PUBLISHED") continue;
     const version = await db.escalaRevision.findUnique({

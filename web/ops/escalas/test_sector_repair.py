@@ -1,15 +1,71 @@
-from optimization import ImprovementContext
 """Sector repair targets real empty operating days without weakening protection."""
 import time
 import unittest
 from unittest.mock import patch
 from ortools.sat.python import cp_model
-from optimization import Snapshot, improve
+from optimization import ImprovementContext, RestPresenceCell, Snapshot, improve, improve_sector_presence
 from solver import _repair_clock_fixes, _rest_repair_groups, days_between, solve
 from test_solver import fixture
 
 
 class SectorRepairTests(unittest.TestCase):
+    def test_concentrated_sector_gaps_are_repaired_together_before_global_search(self):
+        model = cp_model.CpModel()
+        sunday, wednesday, role, pair, staffed, outside = [model.new_bool_var(name) for name in
+            ("sunday", "wednesday", "role", "pair", "staffed", "outside")]
+        model.add(sunday == wednesday)
+        model.add(role >= sunday)
+        initial = {variable.index: 1 for variable in (sunday, wednesday, role, pair)}
+        initial.update({staffed.index: 0, outside.index: 0})
+        cells = {
+            "Bakery": [RestPresenceCell(sunday, 4, False, None, "2026-12-20"),
+                       RestPresenceCell(role, 2, False, "Baker", "2026-12-20"),
+                       RestPresenceCell(staffed, 4, False, None, "2026-12-21")],
+            "Checkout": [RestPresenceCell(wednesday, 4, False, None, "2026-12-23")],
+        }
+
+        class LocalOnly:
+            def __init__(self):
+                self.scopes = []
+
+            def checkpoint(self):
+                pass
+
+            def solve(self, engine, candidate):
+                domain = list(candidate.proto.variables[outside.index].domain)
+                self.scopes.append(domain)
+                # Simulate a large global search that finds no candidate in time.
+                return engine.solve(candidate) if domain == [0, 0] else cp_model.UNKNOWN
+
+        control = LocalOnly()
+        context = ImprovementContext(control=control,
+            rest_spacing_groups={"Bakery": ["b"], "Checkout": ["c"]},
+            decision_variables={sunday.index: ("b", "2026-12-20"), role.index: ("b", "2026-12-20"),
+                                wednesday.index: ("c", "2026-12-23"), pair.index: ("c", "2026-12-23"),
+                                staffed.index: ("b", "2026-12-21"), outside.index: ("c", "2026-12-12")})
+        values, phases = improve_sector_presence(model, [], {"c": [1 - role, pair, 1 - staffed]},
+                                                  initial, time.monotonic() + 12, context, cells,
+                                                  calendar={"planningWeekStartsOn": "SUNDAY"})
+        self.assertEqual(values, dict.fromkeys(initial, 0))
+        self.assertEqual(control.scopes, [[0, 0]])
+        self.assertEqual([(phase["searchScope"], phase["initialValue"], phase["incumbentValue"])
+                          for phase in phases], [("ROLLING_WEEKS", 5, 0)])
+
+    def test_later_repairs_cannot_trade_away_the_gap_closed_by_the_first_week(self):
+        model = cp_model.CpModel()
+        sunday, tuesday = [model.new_bool_var(day) for day in ("sunday", "tuesday")]
+        model.add(sunday + tuesday >= 1)
+        cells = {"Bakery": [RestPresenceCell(sunday, 6, False, None, "2026-12-20")],
+                 "Checkout": [RestPresenceCell(tuesday, 4, False, None, "2026-12-22")]}
+        context = ImprovementContext(rest_spacing_groups={"Bakery": ["b"], "Checkout": ["c"]},
+            decision_variables={sunday.index: ("b", "2026-12-20"), tuesday.index: ("c", "2026-12-22")})
+        values, phases = improve_sector_presence(model, [], {}, {sunday.index: 1, tuesday.index: 1},
+                                                  time.monotonic() + 12, context, cells)
+        self.assertEqual(values, {sunday.index: 0, tuesday.index: 1})
+        self.assertEqual([(phase["searchScope"], phase["status"]) for phase in phases[:2]],
+                         [("ROLLING_WEEKS", "OPTIMAL"), ("ROLLING_WEEKS", "INFEASIBLE")])
+        self.assertEqual(phases[-1]["searchScope"], "GLOBAL")
+
     def test_large_uniform_sector_is_not_excluded_by_the_old_mixed_size_limit(self):
         data = fixture(42, people=26)
         model = cp_model.CpModel()
