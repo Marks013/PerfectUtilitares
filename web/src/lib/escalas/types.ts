@@ -229,7 +229,7 @@ type EscalaOptimizationPhase = {
   }[];
 
 };
-export type EscalaGenerationOutcome =
+type EscalaGenerationOutcome =
   | { kind: "NEW_PROPOSAL" }
   | { kind: "REFERENCE_RETAINED" }
   | { kind: "SEARCH_UNFINISHED"; reason: "SOLVER_UNKNOWN" | "TIMED_OUT" | "LOCAL_REPAIR_EXHAUSTED" }
