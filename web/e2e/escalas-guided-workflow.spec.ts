@@ -26,6 +26,8 @@ async function fixture(page: Page, suffix: string) {
   const input = newInput("GUI-" + Date.now().toString(36) + suffix, "Fluxo sintético " + suffix, "2027-02", 42);
   input.employees = [{ ...newEmployee(42, input.shifts[0].id), id: "person", registration: "001", name: "Pessoa sintética", sector: "Loja", role: "Repositor", weeklyHoursMode: "BRANCH", activeFrom: "" }];
   input.assignments = dateRange(input.startDate, input.endDate).map(date => ({ employeeId: "person", date, kind: dayOfWeek(date) >= 1 && dayOfWeek(date) <= 5 ? "WORK" : "OFF", ...(dayOfWeek(date) >= 1 && dayOfWeek(date) <= 5 ? { shiftId: input.shifts[0].id } : {}) }));
+  // Warm the dev route with a read so cold compilation cannot expire the first write.
+  expect((await page.request.get("/api/escalas", { timeout: 30_000 })).status()).toBe(200);
   const response = await page.request.post("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { action: "CREATE", input } });
   expect(response.status()).toBe(201);
   return response.json() as Promise<EscalaWorkspace>;
