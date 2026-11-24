@@ -37,6 +37,8 @@ test("two personal fixed-rest controls save independently and retain disabled we
     expect(reloaded.status()).toBe(200);
     return reloaded.json() as Promise<EscalaWorkspace>;
   }
+  const firstRest = page.getByLabel("Primeira folga", { exact: true });
+  const secondRest = page.getByLabel("Segunda folga", { exact: true });
   try {
     await openEditor();
     const admission = page.getByLabel("Data real de admissão (opcional)", { exact: true });
@@ -52,37 +54,50 @@ test("two personal fixed-rest controls save independently and retain disabled we
     expect(beforeCorrection.input.employees[0].activeFrom).toBe("2020-01-01");
     await admission.fill("2020-01-01");
     await expect(admission).not.toHaveAttribute("aria-invalid", "true");
-    await expect(page.getByLabel("Habilitar folga fixa 1", { exact: true })).not.toBeChecked();
-    await expect(page.getByLabel("Habilitar folga fixa 2", { exact: true })).not.toBeChecked();
-    await page.getByLabel("Dia da folga fixa 1", { exact: true }).selectOption("2");
-    await page.getByLabel("Dia da folga fixa 2", { exact: true }).selectOption("6");
-    await page.getByLabel("Habilitar folga fixa 2", { exact: true }).focus();
-    await page.keyboard.press("Space");
+    await expect(firstRest).toHaveValue("");
+    await expect(secondRest).toHaveValue("");
+    await firstRest.selectOption("2");
+    await expect(secondRest.locator('option[value="2"]')).toBeDisabled();
+    await firstRest.selectOption("variable");
+    await expect(secondRest.locator('option[value="2"]')).toBeEnabled();
+    await secondRest.selectOption("6");
     let saved = await saveEditor();
     expect(saved.input.employees[0]).toMatchObject({ offMode: "MIXED", fixedOffDays: [6], fixedRestSlots: [
       { enabled: false, weekday: 2 }, { enabled: true, weekday: 6 },
     ] });
     await openEditor();
-    await expect(page.getByLabel("Dia da folga fixa 1", { exact: true })).toHaveValue("2");
-    await page.getByLabel("Habilitar folga fixa 1", { exact: true }).check();
+    await expect(firstRest).toHaveValue("variable");
+    await expect(firstRest.locator('option[value="variable"]')).toHaveText("No rodízio · dia guardado (quarta-feira)");
+    await expect(secondRest).toHaveValue("6");
+    await expect(firstRest.locator('option[value="6"]')).toBeDisabled();
+    await firstRest.selectOption("2");
     saved = await saveEditor();
     expect(saved.input.employees[0]).toMatchObject({ offMode: "FIXED", fixedOffDays: [2, 6] });
     await openEditor();
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.getByLabel("Habilitar folga fixa 2", { exact: true }).uncheck();
+    await expect(firstRest).toHaveValue("2");
+    await expect(secondRest).toHaveValue("6");
+    await secondRest.selectOption("variable");
     saved = await saveEditor();
     expect(saved.input.employees[0]).toMatchObject({ offMode: "MIXED", fixedOffDays: [2], fixedRestSlots: [
       { enabled: true, weekday: 2 }, { enabled: false, weekday: 6 },
     ] });
     await openEditor();
-    await expect(page.getByLabel("Dia da folga fixa 2", { exact: true })).toHaveValue("6");
-    await page.getByLabel("Habilitar folga fixa 1", { exact: true }).uncheck();
+    await expect(firstRest).toHaveValue("2");
+    await expect(secondRest).toHaveValue("variable");
+    await expect(secondRest.locator('option[value="variable"]')).toHaveText("No rodízio · dia guardado (domingo)");
+    await expect(firstRest.locator('option[value="6"]')).toBeEnabled();
+    await firstRest.selectOption("variable");
     saved = await saveEditor();
     expect(saved.input.employees[0]).toMatchObject({ offMode: "VARIABLE", fixedOffDays: [], fixedRestSlots: [
       { enabled: false, weekday: 2 }, { enabled: false, weekday: 6 },
     ] });
     expect(saved.input.assignments).toEqual([]);
     await openEditor();
+    await expect(firstRest).toHaveValue("variable");
+    await expect(secondRest).toHaveValue("variable");
+    await expect(firstRest.locator('option[value="variable"]')).toHaveText("No rodízio · dia guardado (quarta-feira)");
+    await expect(secondRest.locator('option[value="variable"]')).toHaveText("No rodízio · dia guardado (domingo)");
     for (const width of [375, 1280]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

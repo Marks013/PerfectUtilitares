@@ -2,6 +2,7 @@ import type { APIResponse, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { loginAsAdmin } from "./admin-session";
 import { newEmployee, newInput } from "../src/components/escalas/workspace-model";
+import { applyLocalHolidayCalendar, closedHolidayDates } from "../src/lib/escalas/calendar";
 import { addDays } from "../src/lib/escalas/dates";
 import type { EscalaInput, EscalaWorkspace } from "../src/lib/escalas/types";
 import { openEscalasArea, selectEscalasWorkspace } from "./escalas-selection";
@@ -206,6 +207,10 @@ test("FPRE136 complete report can remove a person with legacy work and automatic
   ];
   try {
     const saved = scope.trackWorkspace(await createdWorkspace(await scope.post({ action: "CREATE", input })));
+    // Drafts persist the calendar mode; official closing days are derived from the saved period and branch.
+    expect(saved.input.policy.calendarMode).toBe("LOCAL");
+    const calendar = applyLocalHolidayCalendar(saved.input);
+    expect(closedHolidayDates(calendar).has("2026-12-25")).toBe(true);
     await page.goto("/escala"); await selectEscalasWorkspace(page, saved);
     const reviewed = await previewReplacement(page, "EMPLOYEES", { name: "fpre-completo.csv", mimeType: "text/csv", buffer: fpre136Pages([1]) });
     expect(reviewed.preview.canApply).toBe(true);
@@ -215,8 +220,13 @@ test("FPRE136 complete report can remove a person with legacy work and automatic
     expect(workspace.revision).toBe(saved.revision + 1);
     expect(workspace.input.employees).toEqual([expect.objectContaining({ id: "B", activeFrom: "2026-12-01" })]);
     expect(workspace.input.assignments).toEqual(saved.input.assignments.filter(day => day.employeeId === "B"));
-    expect(workspace.input.policy.closedDates).toContain("2026-12-25");
-    expect((await readWorkspace(page, saved.id)).input).toEqual(workspace.input);
+    const reloaded = await readWorkspace(page, saved.id);
+    expect(reloaded.revision).toBe(saved.revision + 1);
+    expect(reloaded.input).toEqual(workspace.input);
+    expect(reloaded.input.policy).toEqual(saved.input.policy);
+    const reloadedCalendar = applyLocalHolidayCalendar(reloaded.input);
+    expect(closedHolidayDates(reloadedCalendar).has("2026-12-25")).toBe(true);
+    expect(reloadedCalendar.policy.calendarProvenance).toEqual(calendar.policy.calendarProvenance);
   } finally { await scope.cleanup(); }
 });
 
