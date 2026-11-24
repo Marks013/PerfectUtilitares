@@ -2,6 +2,7 @@
 
 import argparse
 import io
+import json
 import math
 import selectors
 import subprocess
@@ -113,9 +114,28 @@ def is_plain_jpeg(obj):
     return image_filter == pikepdf.Name.DCTDecode and params is None
 
 
-def transform(source, output, target_dpi, quality, grayscale, allow_partial=False):
-    changed = False
+def estimated_gain_priority(pdf, use, target_dpi):
+    key, (width, height, _color, supported, dpi) = use
+    pixels = width * height
+    if not supported or not 0 < pixels <= MAX_IMAGE_PIXELS or dpi <= target_dpi:
+        return (0.0, 0.0, key)
+    obj = pdf.get_object(key)
+    length = obj.get("/Length", 0) if isinstance(obj, pikepdf.Stream) else 0
+    if not isinstance(length, int) or length <= 0:
+        return (0.0, 0.0, key)
+    # An ordering heuristic, not a predicted compression result. No JPEG is
+    # loaded or decoded to score it, and ties use the PDF's object identity.
+    gain = length * (1 - (target_dpi / dpi) ** 2)
+    return (-gain / pixels, -gain, key)
+
+
+def transform(source, output, target_dpi, quality, grayscale, allow_partial=False, *, prioritize_savings=False):
+    if prioritize_savings and (grayscale or not allow_partial):
+        raise ValueError("Savings prioritization requires partial, tone-preserving recompression")
+    changed = 0
     pixels = 0
+    skipped = 0
+    stopped_early = False
     with pikepdf.Pdf.open(source, attempt_recovery=False) as pdf:
         if (
             pdf.is_encrypted
@@ -130,9 +150,10 @@ def transform(source, output, target_dpi, quality, grayscale, allow_partial=Fals
         ):
             raise NotApplicable()
 
-        for key, (width, height, color, supported, dpi) in get_uses(
-            source, grayscale
-        ).items():
+        uses = get_uses(source, grayscale).items()
+        if prioritize_savings:
+            uses = sorted(uses, key=lambda use: estimated_gain_priority(pdf, use, target_dpi))
+        for key, (width, height, color, supported, dpi) in uses:
             if grayscale and not supported and color not in ("gray", "mono"):
                 raise NotApplicable()
             if not supported:
@@ -165,6 +186,10 @@ def transform(source, output, target_dpi, quality, grayscale, allow_partial=Fals
             if pixels + image_pixels > MAX_TOTAL_PIXELS:
                 # Keep work already done only for a tone-preserving request.
                 if allow_partial and not grayscale:
+                    skipped += 1
+                    if prioritize_savings:
+                        continue
+                    stopped_early = True
                     break
                 raise NotApplicable()
             pixels += image_pixels
@@ -195,11 +220,17 @@ def transform(source, output, target_dpi, quality, grayscale, allow_partial=Fals
             obj["/Width"], obj["/Height"] = size
             if to_gray:
                 obj["/ColorSpace"] = pikepdf.Name.DeviceGray
-            changed = True
+            changed += 1
 
         if not changed:
             raise NotApplicable()
         pdf.save(output)
+    return {
+        "imagesRewritten": changed,
+        "decodedPixels": pixels,
+        "budgetSkippedImages": skipped,
+        "stoppedEarly": stopped_early,
+    }
 
 
 def main():
@@ -210,14 +241,23 @@ def main():
     parser.add_argument("--quality", type=int, required=True, choices=range(1, 96), metavar="1..95")
     parser.add_argument("--mode", choices=("grayscale", "preserve"), required=True)
     parser.add_argument("--allow-partial", action="store_true")
+    parser.add_argument("--prioritize-savings", action="store_true", help="Offline experiment: order eligible JPEGs by estimated savings per source pixel")
+    parser.add_argument("--report", action="store_true", help="Print aggregate recompression counters after success")
     args = parser.parse_args()
+    if args.prioritize_savings and (not args.allow_partial or args.mode != "preserve"):
+        parser.error("--prioritize-savings requires --mode preserve and --allow-partial")
 
     try:
-        transform(args.input, args.output, args.target_dpi, args.quality, args.mode == "grayscale", args.allow_partial)
+        stats = transform(
+            args.input, args.output, args.target_dpi, args.quality, args.mode == "grayscale", args.allow_partial,
+            prioritize_savings=args.prioritize_savings,
+        )
     except NotApplicable:
         return 2
     except (OSError, ValueError, RuntimeError, pikepdf.PdfError, Image.DecompressionBombError):
         return 1
+    if args.report:
+        print(json.dumps(stats, separators=(",", ":")))
     return 0
 
 
