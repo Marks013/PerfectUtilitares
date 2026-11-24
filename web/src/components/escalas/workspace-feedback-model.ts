@@ -74,14 +74,14 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
 
 export function generationSuccessNotice(result: import("./mass-generation").GeneratedProposal, canApply: boolean) {
   const preview = "Confira a proposta. Para aplicar ou salvar alterações, peça ajuda a uma pessoa autorizada nesta filial.";
-  if (result.result.outcome?.kind === "REFERENCE_RETAINED" || result.comparison?.selection === "REFERENCE_RETAINED") {
-    return `A referência verificada foi mantida. ${canApply ? "Confira antes de aplicar." : preview}`;
-  }
-  const comparison = result.comparison?.admission === "EXPIRED" ? "A comparação anterior expirou."
-    : result.comparison && ["SCENARIO_CHANGED", "INCOMPATIBLE"].includes(result.comparison.admission)
-      ? "A comparação anterior não pôde ser usada neste cenário." : "";
-  return [result.validation.issues.length ? "Proposta concluída com avisos." : "Proposta concluída.", comparison,
-    canApply ? "Confira e aplique à escala." : preview].filter(Boolean).join(" ");
+  const comparison = result.result.outcome?.kind === "REFERENCE_RETAINED" || result.comparison?.selection === "REFERENCE_RETAINED"
+    ? "A proposta anterior foi mantida para preservar a cobertura."
+    : result.comparison?.admission === "EXPIRED" ? "A comparação anterior expirou. Uma nova proposta foi calculada."
+      : result.comparison && ["SCENARIO_CHANGED", "INCOMPATIBLE"].includes(result.comparison.admission)
+        ? "A comparação anterior não pôde ser usada neste cenário." : "";
+  const warning = result.validation.issues.length ? "Proposta concluída com avisos." : "";
+  return comparison ? [warning, comparison, canApply ? "Confira antes de aplicar." : preview].filter(Boolean).join(" ")
+    : `${warning || "Proposta concluída."} ${canApply ? "Confira e aplique à escala." : preview}`;
 }
 
 export function solverProblem(status: string, message = "", conflicts: EscalaGenerationConflict[] = [], evidence?: EscalaSolveResult["rejectionEvidence"], outcome?: EscalaSolveResult["outcome"]): EscalaProblem | null {

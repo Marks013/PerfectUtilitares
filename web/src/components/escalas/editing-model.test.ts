@@ -10,8 +10,8 @@ function sample() {
     sector: "Padaria", role: "Atendente", activeFrom: "2020-01-01",
   }));
   input.assignments = [
-    { employeeId: "0", date: "2026-11-02", kind: "WORK", shiftId: "turno-inicial" },
-    { employeeId: "1", date: "2026-11-02", kind: "OFF" },
+    { employeeId: "0", date: "2026-11-03", kind: "WORK", shiftId: "turno-inicial" },
+    { employeeId: "1", date: "2026-11-03", kind: "OFF" },
   ];
   return input;
 }
@@ -50,9 +50,9 @@ describe("monthly roster editing and operational feedback", () => {
 
   it("swaps a rest and workday without changing the source or unrelated assignments", () => {
     const input = sample();
-    const next = swapRosterDays(input, { employeeId: "0", date: "2026-11-02" }, { employeeId: "1", date: "2026-11-02" });
-    expect(next.assignments).toContainEqual({ employeeId: "0", date: "2026-11-02", kind: "OFF", locked: true });
-    expect(next.assignments).toContainEqual({ employeeId: "1", date: "2026-11-02", kind: "WORK", shiftId: "turno-inicial", locked: true });
+    const next = swapRosterDays(input, { employeeId: "0", date: "2026-11-03" }, { employeeId: "1", date: "2026-11-03" });
+    expect(next.assignments).toContainEqual({ employeeId: "0", date: "2026-11-03", kind: "OFF", locked: true });
+    expect(next.assignments).toContainEqual({ employeeId: "1", date: "2026-11-03", kind: "WORK", shiftId: "turno-inicial", locked: true });
     expect(input.assignments[0].kind).toBe("WORK");
     expect(input.assignments[1].kind).toBe("OFF");
   });
@@ -60,16 +60,16 @@ describe("monthly roster editing and operational feedback", () => {
   it("refuses locked or incompatible swaps instead of silently overriding a decision", () => {
     const input = sample();
     input.assignments[0].locked = true;
-    expect(() => swapRosterDays(input, { employeeId: "0", date: "2026-11-02" }, { employeeId: "1", date: "2026-11-02" })).toThrow("bloqueada");
+    expect(() => swapRosterDays(input, { employeeId: "0", date: "2026-11-03" }, { employeeId: "1", date: "2026-11-03" })).toThrow("bloqueada");
     input.assignments[0].locked = false;
     input.employees[1].shiftIds = [];
-    expect(() => swapRosterDays(input, { employeeId: "0", date: "2026-11-02" }, { employeeId: "1", date: "2026-11-02" })).toThrow("horário permitido");
+    expect(() => swapRosterDays(input, { employeeId: "0", date: "2026-11-03" }, { employeeId: "1", date: "2026-11-03" })).toThrow("horário permitido");
   });
 
   it("preserves absences instead of transferring them in a shift or rest exchange", () => {
     const input = sample();
-    input.assignments[1] = { employeeId: "1", date: "2026-11-02", kind: "ABSENCE" };
-    expect(() => swapRosterDays(input, { employeeId: "0", date: "2026-11-02" }, { employeeId: "1", date: "2026-11-02" })).toThrow("Ausências não são transferidas");
+    input.assignments[1] = { employeeId: "1", date: "2026-11-03", kind: "ABSENCE" };
+    expect(() => swapRosterDays(input, { employeeId: "0", date: "2026-11-03" }, { employeeId: "1", date: "2026-11-03" })).toThrow("Ausências não são transferidas");
     expect(input.assignments[1].kind).toBe("ABSENCE");
   });
 
@@ -79,24 +79,24 @@ describe("monthly roster editing and operational feedback", () => {
     const unlocked = { ...input.assignments[0], locked: false };
     expect(() => applyRosterChanges(input, [unlocked])).toThrow("bloqueada");
     expect(applyRosterChanges(input, [unlocked], true).assignments[0].locked).toBe(false);
-    expect(() => applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "OFF", locked: false }], true)).toThrow("bloqueada");
+    expect(() => applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-03", kind: "OFF", locked: false }], true)).toThrow("bloqueada");
   });
 
   it("does not invent a clock schedule when editing an employee with missing imported hours", () => {
     const input = sample();
     input.employees[0].scheduleMode = "MISSING";
     input.employees[0].shiftIds = [];
-    expect(() => applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "WORK", shiftId: "turno-inicial" }])).toThrow("sem horário");
-    const next = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "DUTY", locked: true }]);
+    expect(() => applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-03", kind: "WORK", shiftId: "turno-inicial" }])).toThrow("sem horário");
+    const next = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-03", kind: "DUTY", locked: true }]);
     expect(next.assignments.find((item) => item.employeeId === "0")?.kind).toBe("DUTY");
   });
 
   it("previews actual coverage loss for the changed day before confirming an edit", () => {
     const input = sample();
-    input.demands = [{ id: "required", date: "2026-11-02", sector: "Padaria", start: 480, end: 600, minimum: 1 }];
-    const next = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "OFF", locked: true }]);
+    input.demands = [{ id: "required", date: "2026-11-03", sector: "Padaria", start: 480, end: 600, minimum: 1 }];
+    const next = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-03", kind: "OFF", locked: true }]);
     const impact = inspectRosterChanges(input, next);
-    expect(impact.coverageIssues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "COVERAGE_DEFICIT", date: "2026-11-02" })]));
+    expect(impact.coverageIssues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "COVERAGE_DEFICIT", date: "2026-11-03" })]));
     expect(impact.newErrors.some((issue) => issue.code === "COVERAGE_DEFICIT")).toBe(true);
     expect(impact.coverageIssues[0].message).toContain("0 presente(s)");
     expect(impact.coverageIssues[0].message).toContain("mínimo 1");
@@ -105,18 +105,18 @@ describe("monthly roster editing and operational feedback", () => {
   it("keeps estimates separate from mandatory minima in an edit preview", () => {
     const input = sample();
     input.policy.coverageReview = "SUGGESTED";
-    input.demands = [{ id: "estimated", date: "2026-11-02", sector: "Padaria", start: 480, end: 600, minimum: 1, estimated: true }];
-    const next = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "OFF" }]);
+    input.demands = [{ id: "estimated", date: "2026-11-03", sector: "Padaria", start: 480, end: 600, minimum: 1, estimated: true }];
+    const next = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-03", kind: "OFF" }]);
     const impact = inspectRosterChanges(input, next);
     expect(impact.coverageIssues[0]).toMatchObject({ code: "ESTIMATED_COVERAGE_GAP", severity: "WARNING" });
     expect(impact.newErrors.some((issue) => issue.code === "ESTIMATED_COVERAGE_GAP")).toBe(false);
   });
   it("keeps undo valid when the workspace only stamps regeneration metadata", () => {
     const input = sample();
-    const applied = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "OFF" }]);
+    const applied = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-03", kind: "OFF" }]);
     expect(isCurrentRosterChange(applied, applied)).toBe(true);
     expect(isCurrentRosterChange(applied, { ...applied, needsRegeneration: false })).toBe(true);
-    const absence = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-02", kind: "ABSENCE" }]);
+    const absence = applyRosterChanges(input, [{ employeeId: "0", date: "2026-11-03", kind: "ABSENCE" }]);
     expect(isCurrentRosterChange(absence, { ...absence, needsRegeneration: true })).toBe(true);
   });
   it("retains undo across an identical autosave acknowledgement but rejects real scenario or cell changes", () => {
