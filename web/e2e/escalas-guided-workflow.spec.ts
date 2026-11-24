@@ -23,7 +23,7 @@ function isSave(route: Route, id: string) {
   return request.method() === "POST" && request.postDataJSON()?.action === "SAVE" && request.postDataJSON()?.id === id;
 }
 async function fixture(page: Page, suffix: string) {
-  const input = newInput("GUI-" + Date.now().toString(36) + suffix, "Fluxo sintético " + suffix, "2026-11", 42);
+  const input = newInput("GUI-" + Date.now().toString(36) + suffix, "Fluxo sintético " + suffix, "2027-02", 42);
   input.employees = [{ ...newEmployee(42, input.shifts[0].id), id: "person", registration: "001", name: "Pessoa sintética", sector: "Loja", role: "Repositor", weeklyHoursMode: "BRANCH", activeFrom: "" }];
   input.assignments = dateRange(input.startDate, input.endDate).map(date => ({ employeeId: "person", date, kind: dayOfWeek(date) >= 1 && dayOfWeek(date) <= 5 ? "WORK" : "OFF", ...(dayOfWeek(date) >= 1 && dayOfWeek(date) <= 5 ? { shiftId: input.shifts[0].id } : {}) }));
   const response = await page.request.post("/api/escalas", { headers: { origin: new URL(page.url()).origin }, data: { action: "CREATE", input } });

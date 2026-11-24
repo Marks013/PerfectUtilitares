@@ -54,10 +54,10 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     const preparing = await page.request.post("/api/escalas", {
       headers: { origin }, data: { action: "SAVE", id: imported.id, expectedRevision: imported.revision,
         input: { ...imported.input,
-          demands: [{ id: "e2e-required", date: "2026-11-02", sector: "Padaria", start: 480, end: 600, minimum: 1 }],
+          demands: [{ id: "e2e-required", date: "2026-11-03", sector: "Padaria", start: 480, end: 600, minimum: 1 }],
           assignments: [
-            { employeeId: ana.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0] },
-            { employeeId: bruno.id, date: "2026-11-02", kind: "OFF" },
+            { employeeId: ana.id, date: "2026-11-03", kind: "WORK", shiftId: ana.shiftIds[0] },
+            { employeeId: bruno.id, date: "2026-11-03", kind: "OFF" },
           ],
         },
       },
@@ -75,8 +75,8 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     await expect(periodHeader).toContainText("01/11/2026 a 30/11/2026");
     expect(await roster.locator('button[aria-label*="31/10/2026"]').count()).toBe(0);
     expect(await roster.locator('button[aria-label*="01/12/2026"]').count()).toBe(0);
-    const anaCell = roster.getByRole("button", { name: /^Ana Sintética, 02\/11\/2026:/ });
-    const brunoCell = roster.getByRole("button", { name: /^Bruno Sintético, 02\/11\/2026:/ });
+    const anaCell = roster.getByRole("button", { name: /^Ana Sintética, 03\/11\/2026:/ });
+    const brunoCell = roster.getByRole("button", { name: /^Bruno Sintético, 03\/11\/2026:/ });
     await expect(anaCell).toContainText(/^T\d+/);
     const originalCode = await anaCell.locator("span").first().textContent();
     await anaCell.click();
@@ -84,7 +84,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     await expect(page.getByRole("region", { name: "Impacto da alteração", exact: true })).toContainText("0 presente(s), mínimo 1");
     await page.getByRole("button", { name: "Aplicar com conflitos ao rascunho", exact: true }).click();
     await expect(anaCell.locator("span").first()).toHaveText("F");
-    await expect(roster.getByRole("link", { name: /02\/11\/2026:.*cobertura/ })).toBeVisible();
+    await expect(roster.getByRole("link", { name: /03\/11\/2026:.*cobertura/ })).toBeVisible();
     await roster.getByRole("button", { name: "Desfazer última alteração", exact: true }).click();
     await expect(anaCell.locator("span").first()).toHaveText(originalCode ?? "");
     await expect(page.locator('[data-state="saved"]')).toBeVisible();
@@ -92,7 +92,7 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     await anaCell.click();
     await page.getByText("Trocar com outro dia", { exact: true }).click();
     await page.getByLabel("Colaborador para a troca", { exact: true }).selectOption(bruno.id);
-    await page.getByLabel("Data para a troca", { exact: true }).selectOption("2026-11-02");
+    await page.getByLabel("Data para a troca", { exact: true }).selectOption("2026-11-03");
     await page.getByRole("button", { name: "Conferir troca", exact: true }).click();
     const savingSwap = page.waitForResponse((response) => response.request().method() === "POST"
       && response.url().endsWith("/api/escalas") && response.request().postDataJSON()?.action === "SAVE"
@@ -106,8 +106,8 @@ test("monthly planning imports, previews real coverage loss, edits, undoes, swap
     expect(persistedResponse.status()).toBe(200);
     const persisted: EscalaWorkspace = await persistedResponse.json();
     expect(persisted.input.assignments).toEqual(expect.arrayContaining([
-      expect.objectContaining({ employeeId: ana.id, date: "2026-11-02", kind: "OFF", locked: true }),
-      expect.objectContaining({ employeeId: bruno.id, date: "2026-11-02", kind: "WORK", shiftId: ana.shiftIds[0], locked: true }),
+      expect.objectContaining({ employeeId: ana.id, date: "2026-11-03", kind: "OFF", locked: true }),
+      expect.objectContaining({ employeeId: bruno.id, date: "2026-11-03", kind: "WORK", shiftId: ana.shiftIds[0], locked: true }),
     ]));
     await page.setViewportSize({ width: 375, height: 812 });
     await openEscalasArea(page, "adjustments");
