@@ -9,7 +9,7 @@ import { analyzeCoverage, type CoverageAnalysis, type CoverageSectorAnalysis } f
 import { buildCoverageReport } from "./coverage-report";
 import type { CoverageReport } from "./coverage-report-contracts";
 import { coverageObservation, coverageReportRows } from "./operational-report";
-import { buildEscalaPresentation, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
+import { buildEscalaPresentation, CARRIED_HOLIDAY_REST_LEGEND, escalaDateLabel, escalaDuration, type EscalaExportMode } from "./presentation";
 import { mixedWeeklyApplication } from "./mixed-week-report";
 import { storeClosingLabel } from "./store-hours";
 import { visibleDates, weekStart } from "./dates";
@@ -102,12 +102,14 @@ function sheet(rows: SpreadsheetCell[][], widths: number[], grid = false, identi
 
 type ReportPerson = ReturnType<typeof buildEscalaPresentation>["people"][number];
 
-function reportLegend(model: ReturnType<typeof buildEscalaPresentation>): string {
+function reportLegend(model: ReturnType<typeof buildEscalaPresentation>, grid = true): string {
   if (!model.dates.length) return model.legend;
   const codes = new Set(model.people.flatMap(person => person.cells.map(cell => cell.code)));
+  const hasCarriedHolidayRest = grid && model.restPeople.some(person => person.cells.some(cell => cell.code === "FE*" || cell.code === "F*"));
   const entries = [["F", "Folga"], ["FE", "Feriado, fechado"], ["ENC", "Sem horário fixo"], ["NP", "Não processado"], ["AF", "Afastado"], ["FV", "Fora do vínculo"]];
   return [codes.size && [...codes].some(code => /^T\d+$/.test(code)) ? "Txx = Turno" : "",
-    ...entries.filter(([code]) => codes.has(code)).map(([code, meaning]) => `${code} = ${meaning}`),
+    ...entries.filter(([code]) => codes.has(code) || (grid && codes.has(`${code}*`))).map(([code, meaning]) => `${code} = ${meaning}`),
+    hasCarriedHolidayRest ? CARRIED_HOLIDAY_REST_LEGEND : "",
     model.excluded.length ? "X = Não incluído" : "", ROSTER_COLOR_LEGEND].filter(Boolean).join(". ");
 }
 
@@ -389,7 +391,7 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
     y -= rowHeight;
   };
   newPage(hasRest);
-  if (mode === "hours" && (!grouped || model.hoursPeople.length)) paragraph(reportLegend(model), 8);
+  if (mode === "hours" && (!grouped || model.hoursPeople.length)) paragraph(reportLegend(model, false), 8);
   /** A logical row can span pages; repeat short context cells beside continued content. */
   const paginatedRow = (lines: string[][], widths: number[], size: number, strong: (column: number, line: string) => boolean, continuePage: () => void) => {
     const count = Math.max(...lines.map(values => values.length));
@@ -437,8 +439,9 @@ function renderPdfSection(document: PDFDocument, font: PDFFont, bold: PDFFont, w
       const fill = rgb(...rosterPdfColor(cell.code));
       page.drawRectangle({ x, y: y - rowHeight + 12, width: cellWidth, height: rowHeight, color: fill, borderColor: rgb(0.79, 0.83, 0.88), borderWidth: 0.4 });
       const codeSize = cell.code.length > 2 ? 7 : 7.5;
-      const codeFont = cell.code === "F" ? bold : font;
-      write(cell.code, x + Math.max(1, (cellWidth - codeFont.widthOfTextAtSize(cell.code, codeSize)) / 2), y, codeSize, cell.code === "F");
+      const isRest = cell.code === "F" || cell.code === "F*";
+      const codeFont = isRest ? bold : font;
+      write(cell.code, x + Math.max(1, (cellWidth - codeFont.widthOfTextAtSize(cell.code, codeSize)) / 2), y, codeSize, isRest);
     });
     y -= rowHeight;
   }

@@ -2,13 +2,14 @@ import { requireEscalaAccess } from "@/lib/escalas/access.server";
 import { z } from "zod";
 import { enforcePersistentRateLimit, jsonError, methodNotAllowed, readJsonBody, requireContentType, requireMaxContentLength, requireSameOrigin } from "@/lib/api/security";
 import { allowedBranches, branchPermission, requireEscalaPermission, requireEscalaCapability } from "@/lib/escalas/access";
-import { createEscala, createEscalaApproved, addEscalaEmployee, removeEscalaEmployee, changeEscalaAbsence, rebaseEscalaApproval, validateEscalaOperational, deleteEscala, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
+import { createEscala, createEscalaApproved, createEscalaMonth, addEscalaEmployee, removeEscalaEmployee, changeEscalaAbsence, rebaseEscalaApproval, validateEscalaOperational, deleteEscala, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar } from "@/lib/escalas/service";
 import { isDate } from "@/lib/escalas/dates";
 import { validateEscala } from "@/lib/escalas/validation";
 import { reopenEscalaPublication } from "@/lib/escalas/reopen-publication";
 import { syncEscalaWorkforceDraft } from "@/lib/escalas/global-workforce-sync";
 import { solveOwner, startGenerationOperation, runGenerationOperation, cancelGenerationOperation, generationOperationStatus } from "@/lib/escalas/solve-operations";
 import { escalaFailure, escalaJson } from "./http";
+import { defaultNewEscalaWorkBlocks } from "@/lib/escalas/creation-policy-defaults";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -20,6 +21,7 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("CREATE"), input: z.unknown() }).strict(),
   z.object({ action: z.literal("UPGRADE_CALENDAR"), ...version }).strict(),
   z.strictObject({ action: z.literal("CREATE_APPROVED"), approvedPolicyVersionId: id }),
+  z.strictObject({ action: z.literal("CREATE_MONTH"), branchCode: z.string().trim().min(1).max(40), month: z.string().regex(/^20\d{2}-(?:0[1-9]|1[0-2])$/) }),
   z.strictObject({ action: z.literal("APPLY_PROPOSAL"), ...version, input: z.unknown(), proposalProof: z.string().min(1).max(4096) }),
   z.strictObject({ action: z.literal("ADD_EMPLOYEE"), ...version, regimeModelId: id, name: z.string().trim().min(1).max(160), registration: z.string().trim().min(1).max(160) }),
   z.strictObject({ action: z.literal("REMOVE_EMPLOYEE"), ...version, employeeId: z.string().trim().min(1).max(160) }),
@@ -68,10 +70,14 @@ export async function POST(request: Request) {
     const data = parsed.data;
     const expensive = data.action === "GENERATE";
     const control = data.action === "CANCEL_GENERATION" || data.action === "GENERATION_STATUS";
-    const limited = await enforcePersistentRateLimit(request, { keyPrefix: control ? "escalas-control" : expensive ? "escalas-solver" : "escalas-write", limit: control ? 90 : expensive ? 6 : 30, windowMs: expensive ? 600_000 : 60_000 });
+    const limited = await enforcePersistentRateLimit(request, { keyPrefix: control ? "escalas-control" : expensive ? "escalas-solver" : "escalas-write", limit: control ? 90 : expensive ? 6 : 30, windowMs: expensive ? 120_000 : 60_000 });
     if (limited) return limited;
     switch (data.action) {
-      case "CREATE": return escalaJson(await createEscala(actor, parseEscalaInput(data.input)), 201);
+      case "CREATE": return escalaJson(await createEscala(actor, parseEscalaInput(defaultNewEscalaWorkBlocks(data.input))), 201);
+      case "CREATE_MONTH": {
+        const workspace = await createEscalaMonth(actor, data.branchCode, data.month);
+        return escalaJson(workspace, workspace.openedExisting ? 200 : 201);
+      }
       case "UPGRADE_CALENDAR": return escalaJson(await upgradeEscalaCalendar(actor, data.id, data.expectedRevision), 201);
       case "CREATE_APPROVED": return escalaJson(await createEscalaApproved(actor, data.approvedPolicyVersionId), 201);
       case "APPLY_PROPOSAL": return escalaJson(await saveEscala(actor, data.id, data.expectedRevision, parseEscalaInput(data.input), false, { proposalProof: data.proposalProof }));

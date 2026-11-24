@@ -204,6 +204,42 @@ export type CoverageComparisonBounds = {
 };
 
 const DECEMBER_ADVISORY_DATES = dateRange("2026-12-01", "2026-12-05");
+
+/** Soft concentration metric for the first partial December week, not a coverage minimum. */
+function decemberOpeningRestExcess(input: EscalaInput, dates: readonly string[]): number {
+  if (dates.length < 2) return 0;
+  const days = new Set(dates);
+  const current = new Map(input.assignments.filter(day => days.has(day.date))
+    .map(day => [`${day.employeeId}\0${day.date}`, day.kind]));
+  const groups = new Map<string, string[]>();
+  for (const person of input.employees) {
+    if (person.planningEnabled === false || !dates.some(date => date >= person.activeFrom
+      && (!person.activeUntil || date <= person.activeUntil))) continue;
+    for (const group of ["all", JSON.stringify([person.sector]), JSON.stringify([person.sector, person.role])]) {
+      const ids = groups.get(group);
+      if (ids) ids.push(person.id);
+      else groups.set(group, [person.id]);
+    }
+  }
+  const seen = new Set<string>();
+  let excess = 0;
+  for (const ids of groups.values()) {
+    if (ids.length < 2) continue;
+    const signature = JSON.stringify(ids.sort());
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    for (const date of dates) {
+      let eligible = 0, off = 0;
+      for (const id of ids) {
+        const kind = current.get(`${id}\0${date}`);
+        if (kind === "OFF" || kind === "WORK" || kind === "DUTY") eligible++;
+        if (kind === "OFF") off++;
+      }
+      excess += Math.max(0, off - Math.ceil(2 * eligible / dates.length));
+    }
+  }
+  return excess;
+}
 function protectedDates(input: EscalaInput, advisoryDates: readonly string[]) {
   return dateRange(input.startDate, input.endDate).filter(date => !advisoryDates.includes(date));
 }
@@ -233,33 +269,51 @@ function datedDeficitRegression(reference: EscalaInput, proposal: EscalaInput, r
   estimateDates: string[], protectEstimates: boolean): RosterCoverageRegression | undefined {
   for (const estimated of protectEstimates ? [false, true] : [false]) {
     const dates = estimated ? estimateDates : undefined;
-    const before = datedDeficitBands(reference, ruler, estimated, dates);
-    for (const [key, proposalBands] of datedDeficitBands(proposal, ruler, estimated, dates)) {
-      const referenceBands = before.get(key) ?? [];
-      // Reports prioritize empty bands. The comparison cursor needs chronological order.
-      referenceBands.sort((a, b) => a.start - b.start);
-      proposalBands.sort((a, b) => a.start - b.start);
-      let position = 0;
-      for (const band of proposalBands) {
-        let start = band.start;
-        while (start < band.end) {
-          while (position < referenceBands.length && referenceBands[position].end <= start) position++;
-          const old = referenceBands[position];
-          const matched = old && old.start <= start;
-          const maximum = matched ? old.maximum : 0;
-          const end = Math.min(band.end, matched ? old.end : old?.start ?? band.end);
-          if (band.maximum > maximum) {
-            const duration = end - start;
-            return { date: band.date, sector: band.sector, ...(band.role ? { role: band.role } : {}), scope: "MONTH",
-              start, end, before: maximum * duration, after: band.maximum * duration,
-              delta: (band.maximum - maximum) * duration, metric: "DEFICIT_PERSON_MINUTES" };
-          }
-          start = end;
-        }
+    const increase = datedDeficitIncreases(datedDeficitBands(reference, ruler, estimated, dates),
+      datedDeficitBands(proposal, ruler, estimated, dates)).next().value;
+    if (!increase) continue;
+    const { date, sector, role, start, end, before, after } = increase;
+    const duration = end - start;
+    return { date, sector, ...(role ? { role } : {}), scope: "MONTH", start, end, before: before * duration,
+      after: after * duration, delta: (after - before) * duration, metric: "DEFICIT_PERSON_MINUTES" };
+  }
+  return undefined;
+}
+
+function* datedDeficitIncreases(before: Map<string, DatedDeficitBand[]>, after: Map<string, DatedDeficitBand[]>) {
+  for (const [key, proposalBands] of after) {
+    const referenceBands = before.get(key) ?? [];
+    // Reports prioritize empty bands. The comparison cursor needs chronological order.
+    referenceBands.sort((a, b) => a.start - b.start);
+    proposalBands.sort((a, b) => a.start - b.start);
+    let position = 0;
+    for (const band of proposalBands) {
+      let start = band.start;
+      while (start < band.end) {
+        while (position < referenceBands.length && referenceBands[position].end <= start) position++;
+        const old = referenceBands[position];
+        const matched = old && old.start <= start;
+        const maximum = matched ? old.maximum : 0;
+        const end = Math.min(band.end, matched ? old.end : old?.start ?? band.end);
+        if (band.maximum > maximum) yield { date: band.date, sector: band.sector, role: band.role, start, end, before: maximum, after: band.maximum };
+        start = end;
       }
     }
   }
-  return undefined;
+}
+
+/** This explicit notice does not change the estimate source, findings, or publication gates. */
+export function decemberEstimatedCoverageNotice(reference: EscalaInput, proposal: EscalaInput): string | undefined {
+  if (!isDecember2026Cutover(reference) || !isDecember2026Cutover(proposal) || !comparableRoster(reference, proposal)) return undefined;
+  const label = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  const examples: string[] = [];
+  for (const { date, sector, role, start, end, before, after } of datedDeficitIncreases(
+    datedDeficitBands(reference, reference, true), datedDeficitBands(proposal, reference, true))) {
+    const delta = after - before;
+    examples.push(`${date.slice(8, 10)}/${date.slice(5, 7)} ${label(start)}–${label(end)}, ${sector}${role ? ` / ${role}` : ""} (+${delta} ${delta === 1 ? "pessoa" : "pessoas"} de desfalque estimado)`);
+    if (examples.length === 3) break;
+  }
+  return examples.length ? `Aviso de cobertura estimada (não é mínimo obrigatório): ${examples.join("; ")}.` : undefined;
 }
 
 function comparisonDates(input: EscalaInput) {
@@ -271,9 +325,11 @@ function comparisonDates(input: EscalaInput) {
 
 /** Saved deficit ceilings share the verifier's scope and band semantics. Omitted ceilings are zero. */
 export function frozenCoverageComparison(rawReference: EscalaInput, mode?: RosterCoverageMode): CoverageComparisonBounds | null {
-  const reference = operationalEscalaInput(rawReference);
+  const operational = operationalEscalaInput(rawReference);
+  const softEstimates = mode === "DECEMBER_PRESENCE_PRIORITY" && isDecember2026Cutover(operational);
+  const reference = softEstimates ? { ...operational, demands: operational.demands.filter(demand => demand.estimated !== true) } : operational;
   // Only a server-admitted origin supplies bounds to the worker with this exception.
-  const advisoryEstimateDates = mode === "DECEMBER_DEMAND" && isDecember2026Cutover(reference) ? [...DECEMBER_ADVISORY_DATES] : undefined;
+  const advisoryEstimateDates = (mode === "DECEMBER_DEMAND" || softEstimates) && isDecember2026Cutover(reference) ? [...DECEMBER_ADVISORY_DATES] : undefined;
   const dates = protectedDates(reference, advisoryEstimateDates ?? []);
   const { month, sundays, monthSundays } = comparisonDates(reference);
   const saved = coverageQuality(reference, dates);
@@ -318,21 +374,23 @@ function roleTimeRegression(worst: NonNullable<ReturnType<typeof largestIncrease
 }
 
 /** Merit can be measured on an invalid old roster without ever returning it as a usable solution. */
-export type RosterCoverageMode = "DECEMBER_DEMAND";
+export type RosterCoverageMode = "DECEMBER_DEMAND" | "DECEMBER_PRESENCE_PRIORITY";
 
 export function compareRosterCoverage(rawReference: EscalaInput, rawProposal: EscalaInput, rawCoverageReference = rawReference, mode?: RosterCoverageMode): {
   comparable: boolean; regressed: boolean; improved: boolean; reason: RosterSelectionReason;
   regression?: RosterCoverageRegression;
 } {
   const reference = operationalEscalaInput(rawReference), proposal = operationalEscalaInput(rawProposal);
-  const coverageReference = rawCoverageReference === rawReference ? reference : operationalEscalaInput(rawCoverageReference);
+  const operationalRuler = rawCoverageReference === rawReference ? reference : operationalEscalaInput(rawCoverageReference);
   const result = (reason: RosterSelectionReason, regressed = false, improved = false, comparable = true) => ({ comparable, regressed, improved, reason });
   const reject = (reason: RosterSelectionReason, regression: RosterCoverageRegression) => ({ ...result(reason, true), regression });
-  if (!comparableRoster(reference, proposal) || !comparableRoster(coverageReference, proposal)) return result("REFERENCE_NOT_COMPARABLE", false, false, false);
+  if (!comparableRoster(reference, proposal) || !comparableRoster(operationalRuler, proposal)) return result("REFERENCE_NOT_COMPARABLE", false, false, false);
   // Also applies to already saved cutovers and direct drafts: no estimate-only
   // veto for the first partial block when selecting or reusing a proposal.
-  const december = [reference, proposal, coverageReference].every(isDecember2026Cutover);
-  const protectDecemberDemand = december && mode === "DECEMBER_DEMAND";
+  const december = [reference, proposal, operationalRuler].every(isDecember2026Cutover);
+  const softEstimates = december && mode === "DECEMBER_PRESENCE_PRIORITY";
+  const protectDecemberDemand = december && (mode === "DECEMBER_DEMAND" || softEstimates);
+  const coverageReference = softEstimates ? { ...operationalRuler, demands: operationalRuler.demands.filter(demand => demand.estimated !== true) } : operationalRuler;
   const dates = protectedDates(coverageReference, december ? DECEMBER_ADVISORY_DATES : []);
   const before = coverageQuality({ ...reference, demands: coverageReference.demands }, dates);
   const after = coverageQuality({ ...proposal, demands: coverageReference.demands }, dates);
@@ -365,7 +423,7 @@ export function compareRosterCoverage(rawReference: EscalaInput, rawProposal: Es
   const peakRole = largestIncrease(oldRoles.peak, newRoles.peak);
   if (peakRole) return reject("ROLE_TIME_COVERAGE", roleTimeRegression(peakRole, "PEAK_MISSING"));
   if (december) {
-    const datedLoss = datedDeficitRegression(reference, proposal, coverageReference, dates, protectDecemberDemand);
+    const datedLoss = datedDeficitRegression(reference, proposal, coverageReference, dates, protectDecemberDemand && !softEstimates);
     if (datedLoss) return reject(datedLoss.role ? "ROLE_TIME_COVERAGE" : "SECTOR_COVERAGE", datedLoss);
   }
   if (protectDecemberDemand) {
@@ -399,7 +457,8 @@ export type RosterSelectionReason = "REFERENCE_NOT_COMPARABLE" | "ROLE_TIME_COVE
   | "SECTOR_COVERAGE" | "SECTOR_PEAK" | "CLOSING_COVERAGE" | "DAILY_PRESENCE" | "PRIORITY_LEADERSHIP"
   | "OPERATIONAL_IMPROVEMENT" | "REST_DISTRIBUTION" | "REST_WINDOW" | "SATURDAY_BALANCE" | "SUNDAY_BALANCE" | "ACCEPTED";
 export function selectVerifiedRoster(rawReference: EscalaInput, rawProposal: EscalaInput,
-  onDecision?: (reason: RosterSelectionReason, regression?: RosterCoverageRegression) => void, coverageReference = rawReference, mode?: RosterCoverageMode): { input: EscalaInput; retainedReference: boolean } {
+  onDecision?: (reason: RosterSelectionReason, regression?: RosterCoverageRegression) => void, coverageReference = rawReference, mode?: RosterCoverageMode,
+  presenceRepair = false): { input: EscalaInput; retainedReference: boolean } {
   const decision = (retainedReference: boolean, reason: RosterSelectionReason, regression?: RosterCoverageRegression) => {
     onDecision?.(reason, regression);
     return { input: retainedReference ? rawReference : rawProposal, retainedReference };
@@ -434,10 +493,17 @@ export function selectVerifiedRoster(rawReference: EscalaInput, rawProposal: Esc
   // seed fairness into a hard ban on operational recovery in the same sector.
   if (comparison.improved) return decision(false, historicalComparison.comparable ? "OPERATIONAL_IMPROVEMENT" : "REFERENCE_NOT_COMPARABLE");
   // When operational coverage ties, retain the established quality policy.
-  if (!preservesRestDistribution(reference, proposal)) return decision(true, "REST_DISTRIBUTION");
+  if (!(presenceRepair && mode === "DECEMBER_PRESENCE_PRIORITY" && isDecember2026Cutover(reference) && isDecember2026Cutover(proposal))
+    && !preservesRestDistribution(reference, proposal)) return decision(true, "REST_DISTRIBUTION");
   for (const weekday of [5, 6] as const) {
     if (!noIncrease(weekendBalance(reference, weekday), weekendBalance(reference, weekday, proposal.assignments)))
       return decision(true, weekday === 5 ? "SATURDAY_BALANCE" : "SUNDAY_BALANCE");
+  }
+  if (proposal.generationMode !== "HOURS_ONLY" && isDecember2026Cutover(proposal)) {
+    const openDays = DECEMBER_ADVISORY_DATES.filter(date => !proposal.policy.closedDates.includes(date)
+      && ((proposal.restRulesVersion ?? 0) < 2 || dayOfWeek(date) !== 5));
+    if (decemberOpeningRestExcess(proposal, openDays) > decemberOpeningRestExcess(reference, openDays))
+      return decision(true, "REST_DISTRIBUTION");
   }
   return decision(false, historicalComparison.comparable ? "ACCEPTED" : "REFERENCE_NOT_COMPARABLE");
 }

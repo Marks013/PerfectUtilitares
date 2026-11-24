@@ -20,6 +20,7 @@ const configurationSchema = z.strictObject({
   defaultWeeklyHours: fields.defaultWeeklyHours, timeZone: fields.timeZone,
   storeClosingMinutes: fields.storeClosingMinutes, mixed42Sectors: fields.mixed42Sectors,
   policy: fields.policy, demands: fields.demands, movementPriorities: fields.movementPriorities,
+  carriedApproval: z.literal(true).optional(),
 });
 
 // Closed list: new employees inherit these fields from a server-resolved approved model.
@@ -96,13 +97,15 @@ function cleanSeedEmployee(person: EscalaEmployee): EscalaEmployee {
   return copy;
 }
 function inputOf(snapshot: EscalaApprovedPolicySnapshot): EscalaInput {
-  return { ...structuredClone(snapshot.configuration), ...structuredClone(snapshot.seed) };
+  const { carriedApproval: _carry, ...configuration } = snapshot.configuration;
+  return { ...structuredClone(configuration), ...structuredClone(snapshot.seed) };
 }
 
 function coherent(snapshot: EscalaApprovedPolicySnapshot): boolean {
   const input = inputOf(snapshot);
   if (!escalaInputSchema.safeParse(input).success || input.employees.length === 0) return false;
   if (input.branchCode !== canonicalBranchCode(input.branchCode)) return false;
+  if (snapshot.configuration.carriedApproval && !snapshot.provenance.origin) return false;
   if (/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u.test(input.branchCode)) return false;
   // An administrative grant to use these parameters does not record a labor review.
   if (input.policy.validFrom > input.startDate || input.policy.validUntil < input.endDate) return false;
@@ -134,7 +137,7 @@ function coherent(snapshot: EscalaApprovedPolicySnapshot): boolean {
 }
 
 const buildSchema = z.strictObject({
-  input: escalaInputSchema, version: positiveVersion, provenance: provenanceSchema,
+  input: escalaInputSchema, version: positiveVersion, provenance: provenanceSchema, carriedApproval: z.literal(true).optional(),
   selectedSeedAssignments: z.array(z.strictObject({ employeeId: id, date: z.string().refine(isDate),
     kind: z.enum(["ABSENCE", "HOLIDAY"]) })).max(10500),
   regimeModelSelections: z.array(z.strictObject({ id, label: z.string().trim().min(1).max(160), employeeId: id })).min(1).max(250),
@@ -157,7 +160,8 @@ export function buildEscalaApprovedPolicy(value: unknown): Result<EscalaApproved
     const entry = input.assignments.find(item => item.employeeId === choice.employeeId && item.date === choice.date && item.kind === choice.kind);
     if (selected.has(key) || !entry) return failure();
     selected.add(key);
-    assignments.push(structuredClone(entry));
+    const { monthlyCarry: _carry, carriedHolidayRest: _holidayRest, ...plain } = entry;
+    assignments.push(structuredClone(plain));
   }
   const models: EscalaApprovedRegimeModel[] = [];
   for (const choice of regimeModelSelections) {
@@ -166,7 +170,7 @@ export function buildEscalaApprovedPolicy(value: unknown): Result<EscalaApproved
     models.push({ id: choice.id, label: choice.label, sourceEmployeeId: person.id, protectedFields: regimeOf(person) });
   }
   const config = Object.fromEntries(Object.keys(configurationSchema.shape)
-    .map(key => [key, input[key as keyof EscalaInput]]));
+    .map(key => [key, key === "carriedApproval" ? parsed.data.carriedApproval : input[key as keyof EscalaInput]]));
   const snapshot = snapshotSchema.parse({ schemaVersion: 1, configuration: config,
     seed: { employees: input.employees.map(cleanSeedEmployee), shifts: input.shifts, assignments },
     regimeModels: models, provenance });

@@ -3,9 +3,13 @@ import { loginAction } from "./actions";
 
 const mocks = vi.hoisted(() => {
   class AuthError extends Error {}
+  class CredentialsSignin extends AuthError {
+    code = "credentials";
+  }
 
   return {
     AuthError,
+    CredentialsSignin,
     redirect: vi.fn((url: string) => {
       throw new Error(`REDIRECT:${url}`);
     }),
@@ -14,7 +18,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("next-auth", () => ({ AuthError: mocks.AuthError }));
+vi.mock("next-auth", () => ({ AuthError: mocks.AuthError, CredentialsSignin: mocks.CredentialsSignin }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/auth", () => ({
   signIn: mocks.signIn,
@@ -57,6 +61,16 @@ describe("loginAction", () => {
       "REDIRECT:/login?error=credentials&callbackUrl=%2Fjornada",
     );
     expect(mocks.redirect).not.toHaveBeenCalledWith("/jornada");
+  });
+
+  it("carries a login cooldown to the login page", async () => {
+    const error = new mocks.CredentialsSignin();
+    error.code = "rate-73";
+    mocks.signIn.mockRejectedValueOnce(error);
+
+    await expect(loginAction(loginForm())).rejects.toThrow(
+      "REDIRECT:/login?error=CredentialsSignin&code=rate-73&callbackUrl=%2Fjornada",
+    );
   });
 
   it("propagates unexpected authentication failures without a success redirect", async () => {

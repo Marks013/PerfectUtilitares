@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DraftSaveQueue, parseSavedWorkspace, sameDraft, type SaveState } from "./draft-persistence";
+import { parseRetryAfterSeconds } from "@/lib/api/retry-after";
 import { isCurrentRosterChange } from "./roster-model";
 import { clearRecovery, readRecovery, saveRecovery, type RecoverableDraft } from "./draft-recovery";
 import type { EscalaInput, EscalaValidation, EscalaWorkspace } from "@/lib/escalas/types";
@@ -31,11 +32,11 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     body = await response.json();
   } catch {
     init?.signal?.throwIfAborted();
-    throw new EscalaRequestError("INVALID_RESPONSE", response.status, "O servidor não retornou uma resposta válida.");
+    throw new EscalaRequestError("INVALID_RESPONSE", response.status, "O servidor não retornou uma resposta válida.", parseRetryAfterSeconds(response.headers.get("Retry-After")));
   }
   init?.signal?.throwIfAborted();
   if (!response.ok) {
-    throw new EscalaRequestError(responseCode(body), response.status, responseMessage(body));
+    throw new EscalaRequestError(responseCode(body), response.status, responseMessage(body), parseRetryAfterSeconds(response.headers.get("Retry-After")));
   }
   return body as T;
 }
@@ -374,7 +375,7 @@ export function useEscalasWorkspace() {
     });
   }
 
-  const { createApproved, addEmployee, removeEmployee, changeAbsence } = workspaceTeamActions({
+  const { createApproved, createMonth, addEmployee, removeEmployee, changeAbsence } = workspaceTeamActions({
     workspaceId: workspace?.id, canCreate: !dirty && !generated && !recovery,
     canChangeTeam: !generated && !recovery, run, flushDraft, acceptWorkspace, setNotice,
     absenceTarget: () => {
@@ -698,6 +699,7 @@ export function useEscalasWorkspace() {
     open,
     create,
     createApproved,
+    createMonth,
     addEmployee,
     removeEmployee,
     changeAbsence,

@@ -1,6 +1,7 @@
 "use client";
 
 import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
+import { holidayRestDates, manualHolidayRestMessage } from "@/lib/escalas/holiday-rest";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./escalas.module.css";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift } from "@/lib/escalas/types";
@@ -103,6 +104,7 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
   const [preview, setPreview] = useState<(Preview & { assignment: EscalaAssignment }) | null>(null);
   const [error, setError] = useState("");
   const wasLocked = assignment?.locked === true;
+  const holiday = holidayRestDates(input).has(date);
   const branchLocked = !administrative && assignment !== undefined && !canEditBranchRosterDay(assignment);
   const canChange = canApply && canChangeRosterDay(assignment, administrative, canUnlock);
   const current = canChange && preview?.source === input
@@ -133,9 +135,10 @@ export function CellEditor({ employee, date, assignment, input, canUnlock, onApp
     {wasLocked && <p className="text-sm">{canChange ? "Desmarque a proteção e confirme o desbloqueio antes de alterar este dia." : "Dia bloqueado. O administrador pode conferir a proteção."}</p>}
     {branchLocked && !protectedDay && !wasLocked && <p className={styles.muted}>Este dia registrado não está liberado para edição pela filial. Consulte o administrador.</p>}
     {protectedDay && <p className={styles.muted}>Afastamentos e feriados registrados são preservados. Consulte o administrador para corrigir este dia.</p>}
+    {holiday && canChange && <p className={styles.muted}>{manualHolidayRestMessage}</p>}
     {canChange && <fieldset disabled={Boolean(current)} className={styles.stackSmall}>
       {!wasLocked && <div className={styles.actions}>
-        <button ref={offTrigger} type="button" className={buttonClass} onClick={() => { setKind("OFF"); previewDay("OFF"); }}>Marcar folga</button>
+        {!holiday && <button ref={offTrigger} type="button" className={buttonClass} onClick={() => { setKind("OFF"); previewDay("OFF"); }}>Marcar folga</button>}
         <button type="button" className={`${buttonClass} ${styles.areaTab}`} aria-pressed={kind === workKind} onClick={() => { setError(""); setKind(workKind); }}>{untimed ? "Marcar presença" : "Definir horário"}</button>
       </div>}
       {!wasLocked && kind === "WORK" && !untimed && <Field label="Horário de trabalho neste dia">{(id) => <select id={id} required value={shiftId} className={controlClass} onChange={(event) => setShiftId(event.target.value)}>

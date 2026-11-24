@@ -8,13 +8,28 @@ import { EscalaError } from "./errors";
 import { escalaInputSchema } from "./schema";
 import type { EscalaInput } from "./types";
 import { canonicalBranchCode } from "./branch-code";
+import { precedingMonth, scheduledMonth } from "./monthly-creation";
 const approve = z.strictObject({ action: z.literal("APPROVE"), input: z.unknown(),
   origin: z.strictObject({ workspaceId: z.string().min(1).max(100), revision: z.number().int().positive() }).nullable(),
   selectedSeedAssignments: z.array(z.unknown()).max(10500), regimeModelSelections: z.array(z.unknown()).max(250) });
 const revoke = z.strictObject({ action: z.literal("REVOKE"), id: z.string().min(1).max(100) });
 
+/** A cheap discriminator for the read path; verify hash and ancestry before trusting the snapshot. */
+export function hasCarriedApproval(snapshot: unknown): boolean {
+  if (!snapshot || typeof snapshot !== "object" || !("configuration" in snapshot)) return false;
+  const configuration = snapshot.configuration;
+  return Boolean(configuration && typeof configuration === "object"
+    && "carriedApproval" in configuration && configuration.carriedApproval === true);
+}
+
 export async function loadEscalaApproval(actor: EscalaActor, id: string, db: Prisma.TransactionClient = prisma,
   scope?: Pick<EscalaInput, "branchCode" | "startDate" | "endDate" | "visibleMonth">) {
+  return readApprovalChain(actor, id, db, scope, new Set());
+}
+
+async function readApprovalChain(actor: EscalaActor, id: string, db: Prisma.TransactionClient,
+  scope: Pick<EscalaInput, "branchCode" | "startDate" | "endDate" | "visibleMonth"> | undefined,
+  seen: Set<string>): Promise<{ row: Awaited<ReturnType<Prisma.TransactionClient["escalaBranchPolicyVersion"]["findFirstOrThrow"]>>; snapshot: import("./approved-policy").EscalaApprovedPolicySnapshot }> {
   const row = await db.escalaBranchPolicyVersion.findFirst({ where: { tenantId: actor.tenantId, id } });
   if (!row || row.id !== id || row.tenantId !== actor.tenantId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "É necessária uma configuração administrativa aprovada para este período.");
   if (row.revokedAt) throw new EscalaError(409, "ESCALA_CONFIG_REVOKED", "A configuração foi revogada. Consulte o administrador.");
@@ -29,6 +44,23 @@ export async function loadEscalaApproval(actor: EscalaActor, id: string, db: Pri
   }
   if (scope && (row.branchCode !== scope.branchCode || row.startDate !== scope.startDate || row.endDate !== scope.endDate
     || row.visibleMonth !== (scope.visibleMonth ?? null))) throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "A aprovação não pertence a esta filial e período.");
+  if (config.carriedApproval) {
+    const origin = provenance.origin;
+    if (!origin || !config.visibleMonth || seen.has(id))
+      throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "A origem da configuração herdada não pôde ser conferida.");
+    seen.add(id);
+    const previous = await db.escalaRevision.findUnique({
+      where: { tenantId_workspaceId_revision: { tenantId: actor.tenantId, workspaceId: origin.workspaceId, revision: origin.revision } },
+      select: { input: true, approvedPolicyVersionId: true },
+    });
+    const source = escalaInputSchema.safeParse(previous?.input);
+    if (!previous?.approvedPolicyVersionId || !source.success || source.data.branchCode !== config.branchCode
+      || scheduledMonth(source.data) !== precedingMonth(config.visibleMonth))
+      throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "A origem da configuração herdada não pertence ao mês anterior desta filial.");
+    const parent = await readApprovalChain(actor, previous.approvedPolicyVersionId, db, source.data, seen);
+    if (parent.row.approvedById !== row.approvedById || parent.row.approvedAt.valueOf() !== row.approvedAt.valueOf())
+      throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "A autorização original da configuração herdada diverge.");
+  }
   return { row, snapshot };
 }
 export async function inputFromEscalaApproval(actor: EscalaActor, id: string) {

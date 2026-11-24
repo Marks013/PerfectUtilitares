@@ -312,6 +312,7 @@ model EscalaRevision {
   revision    Int
   status      String
   input       Json
+  restHiddenEmployeeIds Json?
   createdById String?
   accessChannel String @default("ACCOUNT")
   moduleSessionId String?

@@ -1,11 +1,12 @@
 import type { EscalaGenerationConflict, EscalaSolveResult } from "@/lib/escalas/types";
+import { retryAfterInstruction } from "@/lib/api/retry-after";
 
 export type EscalaRecoveryAction = "team" | "coverage" | "rules" | "reload" | "generate" | "login" | "roster";
 export type EscalaProblem = { message: string; explanation: string; tone: "error" | "warning"; action?: EscalaRecoveryAction; actionLabel?: string; conflicts?: EscalaGenerationConflict[]; outcome?: "not-generated" };
 
 /** Keep structured API context without exposing response bodies or stack traces in the workspace. */
 export class EscalaRequestError extends Error {
-  constructor(public readonly code: string | undefined, public readonly status: number, message: string) {
+  constructor(public readonly code: string | undefined, public readonly status: number, message: string, public readonly retryAfterSeconds?: number) {
     super(message); this.name = "EscalaRequestError";
   }
 }
@@ -63,7 +64,7 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
   if (code === "SOLVER_INVALID_RESPONSE") return problem("O cálculo não passou pela conferência de segurança.", "A resposta recebida não foi aplicada. Tente gerar novamente; se o problema continuar, informe ao suporte. Sua proposta anterior foi preservada.", "generate", "Gerar novamente");
   if (code === "SOLVER_INPUT_TOO_LARGE") return problem("Este planejamento ficou grande demais para o cálculo.", "Sua escala salva e o rascunho foram preservados. Informe o problema ao suporte para revisar o tamanho do envio; não apague colaboradores, ausências ou históricos para tentar novamente.");
   if (code === "SOLVER_BUSY") return problem("Já existe uma análise em andamento.", "Aguarde a análise terminar antes de gerar novamente. Sua equipe e suas alterações foram preservadas.", "generate", "Gerar novamente");
-  if (status === 429) return problem("Foram feitas muitas tentativas em pouco tempo.", "Espere um pouco e tente a mesma ação novamente. Não é necessário recarregar a página ou importar a equipe outra vez.");
+  if (status === 429 && cause instanceof EscalaRequestError) return problem("Foram feitas muitas tentativas em pouco tempo.", `${retryAfterInstruction(cause.retryAfterSeconds)} Não é necessário recarregar a página ou importar a equipe outra vez.`);
   if (code === "SOLVER_UNAVAILABLE") return problem("O serviço de cálculo não respondeu.", "Tente gerar novamente em alguns instantes. Sua equipe e a proposta anterior foram preservadas.", "generate", "Gerar novamente");
   if (code === "ESCALA_UNSAVED_CHANGES") return problem("Salve ou descarte a proposta atual antes de criar outra escala.", "Suas alterações ainda não fazem parte de uma revisão salva. Use Salvar revisão para mantê-las.");
   if (cause instanceof TypeError) return problem("A conexão com o servidor falhou.", "Confira sua conexão e tente a mesma ação novamente. Mantenha esta página aberta para preservar as alterações locais.");

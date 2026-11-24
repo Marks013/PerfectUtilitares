@@ -39,7 +39,7 @@ vi.mock("next/headers", async (original) => ({
   headers: async () => new Headers(),
 }));
 vi.mock("@/lib/api/security", async (original) => ({ ...await original<typeof import("@/lib/api/security")>(), enforcePersistentRateLimit: mocks.rate }));
-vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, getEscalaForRead: mocks.read, createEscala: mocks.create, createEscalaApproved: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
+vi.mock("@/lib/escalas/service", () => ({ listEscalas: mocks.list, getEscala: mocks.get, getEscalaForRead: mocks.read, createEscala: mocks.create, createEscalaApproved: mocks.create, createEscalaMonth: mocks.create, upgradeEscalaCalendar: mocks.upgrade,
   addEscalaEmployee: vi.fn(), removeEscalaEmployee: mocks.removeEmployee, changeEscalaAbsence: mocks.changeAbsence, rebaseEscalaApproval: vi.fn(), validateEscalaOperational: vi.fn(), saveEscala: mocks.save, generateEscala: mocks.generate, recheckEscalaGeneration: mocks.recheck, deleteEscala: mocks.remove, parseEscalaInput: (value: unknown) => value }));
 
 const input = { branchCode: "2", branchName: "Filial 2", startDate: "2026-10-26", endDate: "2026-11-01" };
@@ -337,7 +337,7 @@ describe("/api/escalas", () => {
     expect(generated.status).toBe(200);
     expect(await generated.json()).toMatchObject({ result: { status: "FEASIBLE" }, preparation: { includedEmployees: 81, untimedEmployees: 12, generatedCoverageSlots: 7 } });
     expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }), "w1", 1, expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(mocks.rate).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ keyPrefix: "escalas-solver", limit: 6 }));
+    expect(mocks.rate).toHaveBeenCalledWith(expect.any(Request), { keyPrefix: "escalas-solver", limit: 6, windowMs: 120_000 });
     expect(mocks.save).not.toHaveBeenCalled();
   });
   it("denies unauthenticated sessions, missing tenants and foreign origins", async () => {
@@ -377,8 +377,12 @@ describe("/api/escalas", () => {
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(409);
   });
   it("honors limits and method contracts", async () => {
-    mocks.rate.mockResolvedValue(Response.json({ error: "limit" }, { status: 429 }));
+    mocks.rate.mockResolvedValue(Response.json({ error: "limit" }, { status: 429, headers: { "Retry-After": "73" } }));
     expect((await POST(command({ action: "CREATE", input }))).status).toBe(429);
+    const generation = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
+    expect(generation.status).toBe(429);
+    expect(generation.headers.get("Retry-After")).toBe("73");
+    expect(mocks.generate).not.toHaveBeenCalled();
     expect(PATCH().headers.get("allow")).toBe("GET, POST, DELETE");
   });
 });
@@ -407,6 +411,20 @@ it("removes a collaborator through the scoped revision action and returns the sa
     { userId: null, tenantId: "default-company", admin: false, moduleSessionId: "module-1" }, "w1", 1, "p1");
   expect((await POST(command({ ...data, branchCode: "07" }))).status).toBe(400);
   expect(mocks.removeEmployee).toHaveBeenCalledTimes(1);
+});
+
+it("accepts the month command from a verified nominal session without accepting a caller-supplied policy", async () => {
+  mocks.session = null;
+  mocks.module.mockResolvedValue({ id: "module-1", tenantId: "default-company", expiresAt: new Date("2030-01-01") });
+  const data = { action: "CREATE_MONTH", branchCode: "07", month: "2027-01" };
+  const created = await POST(command(data));
+  expect(created.status).toBe(201);
+  expect(await created.json()).toEqual(workspace);
+  expect(mocks.create).toHaveBeenCalledWith({ userId: null, tenantId: "default-company", admin: false, moduleSessionId: "module-1" }, "07", "2027-01");
+  mocks.create.mockResolvedValueOnce({ ...workspace, openedExisting: true });
+  expect((await POST(command(data))).status).toBe(200);
+  expect((await POST(command({ ...data, approvedPolicyVersionId: "forged" }))).status).toBe(400);
+  expect(mocks.create).toHaveBeenCalledTimes(2);
 });
 
 it.each(["ADD_ABSENCE", "REMOVE_ABSENCE"] as const)("persists %s as a revisioned scoped absence action", async action => {

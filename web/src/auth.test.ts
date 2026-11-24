@@ -15,6 +15,7 @@ vi.mock("@/lib/api/rate-limit", async (importOriginal) => ({
 }));
 
 vi.mock("next-auth", () => ({
+  CredentialsSignin: class extends Error {},
   default: (config: unknown) => {
     mocks.config = config;
     return {
@@ -149,11 +150,11 @@ describe("NextAuth beta regression contract", () => {
     });
     expect(mocks.checkSharedRateLimit).toHaveBeenNthCalledWith(1,
       getHashedRateLimitKey("login", `203.0.113.10\0${activeUser.email}`),
-      { limit: 8, windowMs: 15 * 60_000 },
+      { limit: 8, windowMs: 5 * 60_000 },
     );
     expect(mocks.checkSharedRateLimit).toHaveBeenNthCalledWith(2,
       getHashedRateLimitKey("login-ip", "203.0.113.10"),
-      { limit: 80, windowMs: 15 * 60_000 },
+      { limit: 80, windowMs: 5 * 60_000 },
     );
   });
 
@@ -180,12 +181,12 @@ describe("NextAuth beta regression contract", () => {
 
   it.each(["login", "login-ip", "login-account"])("rejects credentials before lookup or bcrypt when %s is limited", async (prefix) => {
     mocks.checkSharedRateLimit.mockImplementation(async (key: string) => ({
-      limited: key.startsWith(`${prefix}:`), remaining: 0,
+      limited: key.startsWith(`${prefix}:`), remaining: 0, resetAt: Date.now() + 179_500,
     }));
 
     await expect(authConfig().providers[0]?.authorize({
       email: activeUser.email, password: "password",
-    }, loginRequest())).resolves.toBeNull();
+    }, loginRequest())).rejects.toMatchObject({ code: "rate-180" });
     expect(mocks.findUnique).not.toHaveBeenCalled();
     expect(mocks.compare).not.toHaveBeenCalled();
   });

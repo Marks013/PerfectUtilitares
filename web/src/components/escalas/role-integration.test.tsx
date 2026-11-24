@@ -21,12 +21,14 @@ describe("operational roles and contextual controls", () => {
     expect(html).not.toContain('type="password"');
     expect(html).not.toContain("Protected");
   });
-  it("offers only allowed branches and a blocked creation action until a real approval is selected", () => {
-    const create = vi.fn(), html = as(operator, <CreateApprovedPlan disabled={false} create={create} />);
+  it("offers only allowed branches and waits for the configuration lookup before opening a draft", () => {
+    const create = vi.fn(), createMonth = vi.fn();
+    const html = as(operator, <CreateApprovedPlan disabled={false} create={create} createMonth={createMonth} />);
     expect(html).toContain("07 · Centro");
     expect(html).not.toContain("Código da filial");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Criar com esta equipe/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Criar ou abrir rascunho/);
     expect(create).not.toHaveBeenCalled();
+    expect(createMonth).not.toHaveBeenCalled();
   });
   it("reserves operator administration and free shift definitions to the administrative account", () => {
     expect(as(operator, <OperatorAdministration />)).toBe("");

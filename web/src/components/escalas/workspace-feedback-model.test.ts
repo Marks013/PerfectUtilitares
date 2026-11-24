@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { EscalaRequestError, responseCode, solverProblem, toEscalaProblem } from "./workspace-feedback-model";
 
 describe("plain language planning recovery", () => {
+  it("shows the server's remaining time when generation is rate-limited", () => {
+    const problem = toEscalaProblem(new EscalaRequestError("RATE_LIMITED", 429, "raw", 61));
+    expect(problem.explanation).toContain("Tente novamente em 1 minuto e 1 segundo.");
+  });
+
   it("distinguishes a blocked absence range from a concurrent revision change", () => {
     expect(toEscalaProblem(new EscalaRequestError("ESCALA_ABSENCE_CONFLICT", 409, "raw"))).toMatchObject({
       message: "O período inclui dias protegidos.", explanation: expect.stringContaining("Nenhum dia foi alterado"),

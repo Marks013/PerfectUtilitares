@@ -8,6 +8,7 @@ import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaShift, Escala
 
 import { employeeReferenceShiftChoices } from "./shift-catalog/reference-choices";
 const ESCALA_LEGEND = "F = Folga | FE = Feriado, loja fechada | T01/T02 = Turno | ENC = Sem horário fixo | NP = Não processado | AF = Afastado | FV = Fora do vínculo | X = Não incluído ou não considerado";
+export const CARRIED_HOLIDAY_REST_LEGEND = "* na célula: feriado que coincide com folga mensal herdada";
 export type EscalaExportMode = "rest" | "hours" | "both";
 const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
@@ -34,8 +35,12 @@ export function assignmentPresentation(employee: EscalaEmployee, date: string, a
   if (employee.planningEnabled === false) return { code: "X", description: exclusionPresentation(employee).reason };
   if (date < employee.activeFrom || (employee.activeUntil && date > employee.activeUntil)) return { code: "FV", description: "Fora do período de vínculo" };
   if (!assignment) return { code: "NP", description: "Dia não processado: gere a proposta ou selecione um turno, uma folga ou um afastamento" };
-  if (assignment.kind === "HOLIDAY") return { code: "FE", description: "Feriado — loja fechada" };
-  if (assignment.kind === "OFF") return { code: "F", description: "Folga" };
+  if (assignment.kind === "HOLIDAY") return assignment.carriedHolidayRest
+    ? { code: "FE*", description: "Feriado — loja fechada; coincide com folga mensal herdada" }
+    : { code: "FE", description: "Feriado — loja fechada" };
+  if (assignment.kind === "OFF") return assignment.carriedHolidayRest
+    ? { code: "F*", description: "Folga mensal herdada em feriado de loja aberta" }
+    : { code: "F", description: "Folga" };
   if (assignment.kind === "ABSENCE") return { code: "AF", description: "Afastado; não conta como folga nem como presença na cobertura" };
   if (effectiveScheduleMode(employee) === "UNTIMED") return { code: "ENC", description: "Sem horário fixo: participa das folgas; não entra na contagem de pessoas por horário" };
   if (assignment.kind === "DUTY" || employee.scheduleMode === "MISSING") return { code: "NP", description: "Horário não processado: presença diária planejada sem horário informado; defina um horário para apurar horas e cobertura" };
@@ -53,7 +58,7 @@ function scheduleText(shift: EscalaShift, breaks: boolean) {
 }
 
 /** Exact schedule interpretation shared by screen, PDF and Excel; no clock rounding or role inference. */
-export function buildEscalaSchedule(raw: EscalaInput) {
+export function buildEscalaSchedule(raw: EscalaInput, openEndedAbsenceEmployeeIds?: readonly string[]) {
   const input = operationalEscalaInput(raw);
   const referencesOnly = isHoursReferenceOnly(input);
   const dates = referencesOnly ? [] : visibleDates(input), codes = escalaShiftCodes(input);
@@ -110,13 +115,18 @@ export function buildEscalaSchedule(raw: EscalaInput) {
     const person = byEmployee.get(employee.id);
     return person && (employee.planningEnabled !== false || employeeReferenceShiftChoices(input, employee).length) ? [person] : [];
   });
-  const restPeople = referencesOnly ? [] : people.filter(person => !isRestPlanningExcludedRole(person.employee.role));
-  return { dates, codes, people, hoursPeople, restPeople, excluded, legend: referencesOnly ? "Referências de horários, sem grade diária." : ESCALA_LEGEND, calendarLabel, holidayNotes };
+  const restOmissions = new Set(openEndedAbsenceEmployeeIds);
+  const restPeople = referencesOnly ? [] : people.filter(person => !restOmissions.has(person.employee.id)
+    && !isRestPlanningExcludedRole(person.employee.role));
+  const hasCarriedHolidayRest = restPeople.some(person => person.cells.some(cell => cell.code === "FE*" || cell.code === "F*"));
+  const legend = referencesOnly ? "Referências de horários, sem grade diária."
+    : hasCarriedHolidayRest ? `${ESCALA_LEGEND} | ${CARRIED_HOLIDAY_REST_LEGEND}` : ESCALA_LEGEND;
+  return { dates, codes, people, hoursPeople, restPeople, excluded, legend, calendarLabel, holidayNotes };
 }
 
 /** One immutable interpretation for screen cells, PDF and Excel. Technical boundary days remain in input. */
 export function buildEscalaPresentation(workspace: EscalaWorkspace) {
-  const { input } = workspace, base = buildEscalaSchedule(input);
+  const { input } = workspace, base = buildEscalaSchedule(input, workspace.workforce?.openEndedAbsenceEmployeeIds);
   const dates = visibleDates(input);
   return { ...base,
     branch: `Filial ${input.branchCode} - ${input.branchName}`, period: `${dates[0] ?? input.startDate} a ${dates.at(-1) ?? input.endDate}`,

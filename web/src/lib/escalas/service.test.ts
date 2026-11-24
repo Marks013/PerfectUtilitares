@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyTurnoSwap, previewTurnoSwap } from "./shift-catalog/swap";
 import type { EscalaInput } from "./types";
-import { createEscala, createEscalaApproved, addEscalaEmployee, changeEscalaAbsence, rebaseEscalaApproval, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration, validateEscalaOperational } from "./service";
+import { createEscala, createEscalaApproved, createEscalaMonth, addEscalaEmployee, changeEscalaAbsence, rebaseEscalaApproval, generateEscala, getEscala, getEscalaForRead, listEscalas, parseEscalaInput, saveEscala, upgradeEscalaCalendar, recheckEscalaGeneration, validateEscalaOperational } from "./service";
 import { preserveLockedAssignments } from "./draft-save-policy";
 import { removeEscalaEmployee } from "./service";
 import { reopenEscalaPublication } from "./reopen-publication";
@@ -17,18 +17,20 @@ import { publishedPlanningContext } from "./continuity";
 import { generationScenarioBasis } from "./hours-reference";
 import { withFixedRestSlots } from "./fixed-rest";
 import { admitCandidateReference, issueCandidateReceipt, selectCandidateReference } from "./candidate-reference.server";
+import { scopedMonthDraft } from "./scoped-month-draft";
+import { loadEscalaApproval } from "./approved-policy-service";
 
 import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
 const mocks = vi.hoisted(() => ({
   workspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   revision: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() }, grants: { findUnique: vi.fn(), findMany: vi.fn() },
   audit: { create: vi.fn(), findFirst: vi.fn() }, importedTeam: { findUnique: vi.fn(), upsert: vi.fn() }, transaction: vi.fn(), solve: vi.fn(), peers: vi.fn(), advisory: vi.fn(), catalogEntry: vi.fn(),
-  policy: vi.fn(), user: vi.fn(), session: vi.fn(), approval: vi.fn(), workforce: vi.fn(),
+  policy: vi.fn(), user: vi.fn(), session: vi.fn(), approval: vi.fn(), createApproval: vi.fn(), periodApprovals: vi.fn(), workforce: vi.fn(),
   solverSecretPath: undefined as string | undefined, solverSecretDescriptor: undefined as number | undefined,
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { escalaWorkspace: mocks.workspace, escalaRevision: mocks.revision, escalaBranchAccess: mocks.grants, auditLog: mocks.audit, $transaction: mocks.transaction,
   escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkforce: { findUnique: mocks.workforce }, user: { findFirst: mocks.user },
-  escalaModuleSession: { findFirst: mocks.session }, escalaBranchPolicyVersion: { findFirst: mocks.approval } } }));
+  escalaModuleSession: { findFirst: mocks.session }, escalaBranchPolicyVersion: { findFirst: mocks.approval, findMany: mocks.periodApprovals } } }));
 vi.mock("node:fs", async original => {
   const fs = await original<typeof import("node:fs")>();
   return {
@@ -118,7 +120,7 @@ beforeEach(() => {
   mocks.advisory.mockResolvedValue(1);
   mocks.transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({ escalaWorkspace: { ...mocks.workspace, findMany: mocks.peers }, escalaRevision: mocks.revision, auditLog: mocks.audit, escalaImportedTeam: mocks.importedTeam, $executeRaw: mocks.advisory,
     escalaModuleAccessPolicy: { findUnique: mocks.policy }, escalaWorkforce: { findUnique: mocks.workforce }, user: { findFirst: mocks.user }, escalaBranchAccess: mocks.grants,
-    escalaModuleSession: { findFirst: mocks.session }, escalaBranchPolicyVersion: { findFirst: mocks.approval }, $queryRaw: vi.fn() }));
+    escalaModuleSession: { findFirst: mocks.session }, escalaBranchPolicyVersion: { findFirst: mocks.approval, create: mocks.createApproval }, $queryRaw: vi.fn() }));
   mocks.solve.mockResolvedValue({ status: "FEASIBLE", assignments: generatedInput().assignments, wallTimeSeconds: 0.1, message: "Proposta viável" });
 });
 
@@ -880,6 +882,49 @@ describe("Escalas revision service", () => {
     mocks.workspace.findMany.mockResolvedValue([row({ id: "10", branchCode: "10" }), row({ id: "2", branchCode: "2" }), row({ id: "1", branchCode: "1" })]);
     expect((await listEscalas(actor)).map((workspace) => workspace.id)).toEqual(["1", "2", "10"]);
   });
+  it.each([actor, operator])("hides only replaced December drafts with revoked approvals from $userId's list", async (viewer) => {
+    const old = { startDate: "2026-11-30", endDate: "2027-01-03" };
+    const current = { startDate: "2026-12-01", endDate: "2026-12-31" };
+    const legacy = (branchCode: string) => row({ ...old, branchCode, id: `legacy-${branchCode}` });
+    const replacement = (branchCode: string) => row({ ...current, branchCode, id: `current-${branchCode}` });
+    const rows = [legacy("06"), replacement("06"), legacy("07"), replacement("07"),
+      legacy("08"), legacy("11"), replacement("11"), legacy("18"), replacement("18"), row()];
+    mocks.grants.findMany.mockResolvedValue(["02", "06", "07", "08", "11", "18"].map(branchCode => ({
+      tenantId: actor.tenantId, userId: viewer.userId, branchCode, role: "PLANNER",
+    })));
+    mocks.workspace.findMany.mockResolvedValueOnce(rows).mockResolvedValueOnce([{ id: "legacy-07" }]);
+    const revokedAt = new Date("2026-11-24T00:00:00Z");
+    mocks.periodApprovals.mockResolvedValue([
+      { branchCode: "06", originWorkspaceId: "legacy-06", revokedAt },
+      { branchCode: "06", originWorkspaceId: null, revokedAt: null },
+      { branchCode: "07", originWorkspaceId: "legacy-07", revokedAt },
+      { branchCode: "11", originWorkspaceId: "legacy-11", revokedAt },
+    ]);
+
+    const visible = (await listEscalas(viewer)).map(workspace => workspace.id);
+    expect(visible).not.toContain("legacy-07");
+    expect(visible).toHaveLength(rows.length - 1);
+    expect(visible).toEqual(expect.arrayContaining(["current-07", "legacy-06", "legacy-08", "legacy-11", "legacy-18"]));
+    expect(mocks.periodApprovals).toHaveBeenCalledExactlyOnceWith({
+      where: { tenantId: actor.tenantId, ...old, branchCode: { in: ["06", "07", "11", "18"] } },
+      select: { branchCode: true, originWorkspaceId: true, revokedAt: true },
+    });
+    expect(mocks.workspace.findMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        tenantId: actor.tenantId, id: { in: ["legacy-07", "legacy-11"] }, status: "DRAFT",
+        revisions: {
+          some: { policyOrigins: { some: { revokedAt: { not: null } } } },
+          none: { OR: [
+            { status: "PUBLISHED" },
+            { policyOrigins: { some: { revokedAt: null } } },
+            { approvedPolicyVersion: { is: { revokedAt: null } } },
+          ] },
+        },
+      },
+      select: { id: true },
+    });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
   it("lists and opens a current draft for its branch without expanding operational or historical access", async () => {
     const { scoped, baseline } = scopedSavedFixture();
     const approved = row({ revision: 2, status: "PUBLISHED" });
@@ -1351,6 +1396,80 @@ describe("coverage provenance is preserved across every branch", () => {
 
 describe("Shared operational provenance", () => {
   const shared = { tenantId: "company-a", userId: null, admin: false, moduleSessionId: "operational-session" };
+  it("uses the exact approved month even when the operator sends CREATE_MONTH directly", async () => {
+    const fixture = input();
+    const january = { ...scopedMonthDraft("02", "2027-01"), shifts: fixture.shifts,
+      employees: fixture.employees.map(person => ({ ...person, historyKnown: false, history: [], scheduleMode: "TIMED" as const })) };
+    january.policy.dailyLimitMinutes = 480;
+    const built = buildEscalaApprovedPolicy({ input: january, version: 1, selectedSeedAssignments: [],
+      provenance: { tenantId: actor.tenantId, approvedById: actor.userId, approvedAt: "2026-11-13T12:00:00.000Z", origin: null },
+      regimeModelSelections: [{ id: "model", label: "Modelo autorizado", employeeId: "e1" }] });
+    if (!built.ok) throw new Error("Invalid approval fixture");
+    mocks.approval.mockResolvedValue({ ...built.value, id: "jan-explicit", approvedAt: new Date(built.value.approvedAt), revokedAt: null });
+    mocks.session.mockResolvedValue({ id: shared.moduleSessionId, tenantId: actor.tenantId, operatorId: "named", permissionVersion: 1,
+      accessPolicyVersion: 1, createdAt: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 60000), revokedAt: null,
+      operator: { id: "named", tenantId: actor.tenantId, active: true, permissionVersion: 1, branchGrants: [{
+        tenantId: actor.tenantId, operatorId: "named", branchCode: "02", active: true, capabilities: [...ESCALA_OPERATOR_CAPABILITIES] }] } });
+    mocks.workspace.findFirst.mockResolvedValue(null);
+    const created = await createEscalaMonth(shared, "02", "2027-01");
+    expect(created).toMatchObject({ canEdit: true, canPublish: false, approvedPolicyVersionId: "jan-explicit" });
+    expect(created.input.policy.dailyLimitMinutes).toBe(480);
+    expect(mocks.createApproval).not.toHaveBeenCalled();
+  });
+
+  it("opens January with authenticated December configuration and keeps a closed holiday on the inherited Friday rest", async () => {
+    const seed = input();
+    const december = { ...seed, ...scopedMonthDraft("02", "2026-12"), defaultWeeklyHours: 42 as const,
+      shifts: seed.shifts, employees: seed.employees.map(person => ({ ...person, activeFrom: "2020-01-01", scheduleMode: "TIMED" as const,
+        historyKnown: false, history: [] })) };
+    december.policy.dailyLimitMinutes = 504;
+    december.policy.holidayDates = ["2026-12-25"];
+    december.policy.closedDates = ["2026-12-25"];
+    december.policy.paidHolidayDates = ["2026-12-25"];
+    december.assignments = dateRange(december.startDate, december.endDate).map(date => ({
+      employeeId: "e1", date, kind: date === "2026-12-25" ? "HOLIDAY" as const
+        : [4, 6].includes(dayOfWeek(date)) ? "OFF" as const : "WORK" as const,
+      ...(![4, 6].includes(dayOfWeek(date)) ? { shiftId: seed.shifts[0].id } : {}),
+    }));
+    const built = buildEscalaApprovedPolicy({ input: december, version: 1,
+      provenance: { tenantId: actor.tenantId, approvedById: actor.userId, approvedAt: "2026-11-13T12:00:00.000Z", origin: null },
+      selectedSeedAssignments: [], regimeModelSelections: [{ id: "model", label: "Modelo aprovado", employeeId: "e1" }] });
+    if (!built.ok) throw new Error("Invalid approval fixture");
+    const parent = { ...built.value, id: "dec-approval", approvedAt: new Date(built.value.approvedAt), revokedAt: null as Date | null };
+    let child: { id: string; revokedAt: null } | undefined;
+    mocks.approval.mockImplementation(async ({ where }) => where.id === parent.id ? parent : where.id === child?.id ? child : null);
+    mocks.createApproval.mockImplementation(async ({ data }) => (child = { ...data, id: "jan-derived", revokedAt: null }));
+    mocks.session.mockResolvedValue({ id: shared.moduleSessionId, tenantId: actor.tenantId, operatorId: "named", permissionVersion: 1,
+      accessPolicyVersion: 1, createdAt: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 60000), revokedAt: null,
+      operator: { id: "named", tenantId: actor.tenantId, active: true, permissionVersion: 1, branchGrants: [{
+        tenantId: actor.tenantId, operatorId: "named", branchCode: "02", active: true, capabilities: [...ESCALA_OPERATOR_CAPABILITIES] }] } });
+    mocks.workspace.findFirst.mockResolvedValue(null);
+    mocks.peers.mockResolvedValueOnce([{ id: "dec-draft", revision: 8, status: "DRAFT" }]);
+    mocks.revision.findUnique.mockResolvedValue({ input: december, approvedPolicyVersionId: parent.id });
+    const created = await createEscalaMonth(shared, "02", "2027-01");
+    expect(created.canEdit).toBe(true);
+    expect(created.canPublish).toBe(false);
+    expect(created.approvedPolicyVersionId).toBe("jan-derived");
+    expect(created.input.defaultWeeklyHours).toBe(42);
+    expect(created.input.policy.closedDates).toEqual(["2027-01-01"]);
+    expect(created.input.assignments).toContainEqual({
+      employeeId: "e1", date: "2027-01-01", kind: "HOLIDAY", monthlyCarry: true, carriedHolidayRest: true,
+    });
+    expect(created.input.assignments.some(day => day.date === "2027-01-02" && day.kind === "WORK" && day.monthlyCarry)).toBe(true);
+    expect(mocks.createApproval).toHaveBeenCalledWith({ data: expect.objectContaining({
+      originWorkspaceId: "dec-draft", originRevision: 8, approvedAt: parent.approvedAt,
+    }) });
+    parent.revokedAt = new Date();
+    await expect(loadEscalaApproval(shared, "jan-derived", undefined, created.input)).rejects.toMatchObject({ code: "ESCALA_CONFIG_REVOKED" });
+    mocks.workspace.findFirst.mockResolvedValue(row({ branchCode: "02", startDate: created.input.startDate, endDate: created.input.endDate }));
+    mocks.revision.findUnique.mockImplementation(async ({ where }) => where.tenantId_workspaceId_revision.workspaceId === "dec-draft"
+      ? { input: december, approvedPolicyVersionId: parent.id }
+      : { ...version(created.input), approvedPolicyVersionId: "jan-derived" });
+    const readOnly = await getEscalaForRead(shared, "w1");
+    expect(readOnly).toMatchObject({ canEdit: false, canPublish: false, approvedPolicyRevoked: true });
+    await expect(createEscalaMonth(shared, "07", "2027-01")).rejects.toMatchObject({ status: 403 });
+  });
+
   it.each([false, true])("creates and saves with a verified named session (reuse imported team: %s)", async reuseImport => {
     const seed = input(); seed.employees[0].scheduleMode = "TIMED";
     const built = buildEscalaApprovedPolicy({ input: seed, version: 1,

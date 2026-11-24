@@ -30,6 +30,18 @@ export function workspaceTeamActions({ workspaceId, canCreate, canChangeTeam, ab
     });
   }
 
+  function createMonth(branchCode: string, month: string) {
+    if (!canCreate) return;
+    void run("Abrindo o planejamento da filial…", async (signal, isCurrent) => {
+      const saved = await operationalCommand({ action: "CREATE_MONTH", branchCode, month }, signal);
+      if (!isCurrent()) return;
+      acceptWorkspace(saved);
+      setNotice(saved.canEdit
+        ? "Planejamento aberto com configuração válida. Confira as folgas e os horários herdados antes de gerar."
+        : "Planejamento aberto para consulta. Ainda não há configuração válida para gerar ou publicar.");
+    });
+  }
+
   async function changeTeam(command: TeamCommand) {
     if (!workspaceId || !canChangeTeam) return false;
     const adding = command.action === "ADD_EMPLOYEE";
@@ -66,6 +78,7 @@ export function workspaceTeamActions({ workspaceId, canCreate, canChangeTeam, ab
 
   return {
     createApproved,
+    createMonth,
     changeAbsence,
     addEmployee: (regimeModelId: string, name: string, registration: string) => changeTeam({ action: "ADD_EMPLOYEE", regimeModelId, name, registration }),
     removeEmployee: (employeeId: string) => changeTeam({ action: "REMOVE_EMPLOYEE", employeeId }),

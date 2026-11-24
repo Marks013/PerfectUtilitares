@@ -1,6 +1,7 @@
 """Bounded production scheduling with separate Sunday rotation and preserved hard rules."""
 import hashlib
 import time
+from unicodedata import normalize
 from functools import lru_cache
 from datetime import date, datetime, time as civil_time, timedelta
 from zoneinfo import ZoneInfo
@@ -16,10 +17,10 @@ from model_input import (coverage_advisory_estimate_dates, validate_fixed_rest_s
                          validate_manual_shifts, validate_planning_horizon)
 from rest_configuration import add_variable_rest_constraints, effective_rest_input, repeated_variable_pattern
 from planning_calendar import is_december_cutover, planning_week_starts_on, planning_weeks
-from optimization import ImprovementContext, Snapshot, improve, remember
-from rest_quality import build_rest_quality, visible_month
+from optimization import ImprovementContext, RestPresenceCell, Snapshot, improve, improve_sector_presence, remember
+from rest_quality import build_rest_quality, mutable_rest, person_records, visible_month
 from policy_reference import CCT_FROM, CCT_PROFILE, CCT_UNTIL, REFERENCE, TRANSITION_40_DATE, TRANSITION_42_DATE
-from runtime_settings import MAX_SECONDS, RANDOM_SEED
+from runtime_settings import MAX_SECONDS, RANDOM_SEED, REST_PAIR_SEARCH_SECONDS
 from sunday_peak import build_sunday_peaks
 from weekend_balance import available_weekends, preserve_sunday_presence, sunday_distribution, weekend_objectives
 
@@ -63,6 +64,165 @@ def _spacing_priority(quality):
     return {pid: [weight * quality['excess'][pid], *terms]
             for pid, terms in quality['people'].items()}
 
+
+def _cutover_rest_score(model, employees, days, off, baseline, policy, values):
+    """Penalize simultaneous rests, without creating a staffing minimum."""
+    holidays = paid_holiday_dates(policy)
+    rest_days = [day for day in days if day not in policy["closedDates"] and day not in holidays
+                 and not holiday_rest_forbidden(policy, day) and not saturday_rest_forbidden(policy, day)]
+    if len(rest_days) < 3:
+        return 0, 0, (), False
+    groups = {(): []}
+    for person in employees:
+        pid, sector, role = person["id"], person["sector"], person["role"].strip().upper()
+        groups[()].append(pid)
+        groups.setdefault((sector,), []).append(pid)
+        if role:
+            groups.setdefault((sector, role), []).append(pid)
+    terms, bound, concentrated = [], 0, False
+    for members in dict.fromkeys(tuple(pids) for pids in groups.values()):
+        for day in rest_days:
+            eligible = [off[pid, day] for pid in members if (pid, day) in off
+                        and baseline.get((pid, day), {}).get("kind") not in ("ABSENCE", "HOLIDAY")]
+            target = (2 * len(eligible) + len(rest_days) - 1) // len(rest_days)
+            cap = len(eligible) - target
+            if cap <= 0:
+                continue
+            excess = model.new_int_var(0, cap, "")
+            model.add_max_equality(excess, [0, sum(eligible) - target])
+            resting = sum(values[v.index] for v in eligible)
+            remember(model, values, excess, max(0, resting - target))
+            concentrated |= len(eligible) >= 4 and resting * 3 > len(eligible) * 2
+            terms.append(excess)
+            bound += cap
+    return sum(terms), bound, rest_days, concentrated
+
+
+def _pin_outside_opening(model, values, off, work, choices, rest_days):
+    days = set(rest_days)
+    for (pid, day), variable in off.items():
+        if day in days:
+            continue
+        for decision in (variable, work[pid, day], *choices[pid, day].values()):
+            domain = model.proto.variables[decision.index].domain
+            domain.clear()
+            value = values[decision.index]
+            domain.extend([value, value])
+
+
+def _opening_seed_preserves_saved_days(result, baseline, opening):
+    days = set(opening)
+    for entry in result:
+        if entry["date"] in days:
+            continue
+        old = baseline.get((entry["employeeId"], entry["date"]))
+        if not old or (entry["kind"], entry.get("shiftId")) != (old["kind"], old.get("shiftId")):
+            return False
+    return True
+
+
+def _rest_unstaffed_cells(model, employees, dates, off, baseline, closed, values):
+    """Track where a sector or role's entire available team is on regular rest."""
+    def label(value):
+        return " ".join(normalize("NFKC", value).split()).upper()
+
+    groups = {}
+    for person in employees:
+        sector, role = label(person["sector"]), label(person["role"])
+        groups.setdefault((sector, None), []).append(person["id"])
+        if role:
+            groups.setdefault((sector, role), []).append(person["id"])
+    cells, indicators = {}, {}
+    for (sector, role), members in groups.items():
+        for day in dates:
+            if day in closed:
+                continue
+            eligible = [(off[pid, day], baseline[pid, day]["kind"]) for pid in members
+                        if (pid, day) in off and baseline.get((pid, day), {}).get("kind") in ("WORK", "DUTY", "OFF")]
+            if len(eligible) < 2:
+                continue
+            signature = tuple(variable.index for variable, _ in eligible)
+            if signature not in indicators:
+                unstaffed = model.new_bool_var("")
+                model.add_min_equality(unstaffed, [variable for variable, _ in eligible])
+                remember(model, values, unstaffed, min(values[index] for index in signature))
+                indicators[signature] = unstaffed
+            # Reuse identical indicators without conflating the sector and the role.
+            weight = len(eligible) * (2 if role is None else 1)
+            staffed_before = any(kind != "OFF" for _, kind in eligible)
+            cells.setdefault(sector, []).append(RestPresenceCell(
+                indicators[signature], weight, staffed_before, role, day))
+    return cells, {sector: members for (sector, role), members in groups.items() if role is None}
+
+
+def _preserve_opening_pair_limits(model, data, employees, off, baseline, values, rest_days):
+    """A local redistribution must not transfer adjacent rests to another person."""
+    movable = set(rest_days)
+    start = (date.fromisoformat(rest_days[0]) - timedelta(days=1)).isoformat()
+    end = (date.fromisoformat(rest_days[-1]) + timedelta(days=1)).isoformat()
+    timeline = days_between(start, end)
+    for person in employees:
+        if person.get("offMode") != "VARIABLE" or person.get("offPattern") != "ANY":
+            continue
+        pid = person["id"]
+        records = person_records(person, ())
+        for day in timeline:
+            if (pid, day) not in off:
+                continue
+            old = baseline.get((pid, day), {})
+            records[day] = old if old.get("kind") in ("ABSENCE", "HOLIDAY") else {
+                **old, "kind": "OFF" if values[off[pid, day].index] else "WORK"}
+        terms, current = [], 0
+        for before, after in zip(timeline, timeline[1:]):
+            if after < data["startDate"] or after < person["activeFrom"] or (
+                    person.get("activeUntil") and after > person["activeUntil"]):
+                continue
+            if not any(day in movable and (pid, day) in off
+                       and mutable_rest(person, day, data, records) for day in (before, after)):
+                continue
+            pair = tuple(off[pid, day] if day in movable and (pid, day) in off
+                         else int(records.get(day, {}).get("kind") == "OFF") for day in (before, after))
+            if any(isinstance(term, int) and term == 0 for term in pair):
+                continue
+            selected = [term for term in pair if not isinstance(term, int)]
+            present = min(values[term.index] for term in selected)
+            current += present
+            if len(selected) == 1:
+                terms.append(selected[0])
+            else:
+                both = model.new_bool_var("")
+                model.add_min_equality(both, selected)
+                remember(model, values, both, present)
+                terms.append(both)
+        if terms:
+            model.add(sum(terms) <= current)
+
+
+def _balance_cutover_seed(model, score, values, off, work, choices, days, deadline, control):
+    """Repair only the first block of a legal seed in the same hard model."""
+    incumbent = Snapshot(values).value(score)
+    until = min(deadline - 0.7, time.monotonic() + 1.8)
+    if incumbent <= 0 or until - time.monotonic() < 0.1:
+        return values
+    repair = model.clone()
+    _pin_outside_opening(repair, values, off, work, choices, days)
+    repair.minimize(score)
+    remaining = until - time.monotonic()
+    if remaining < 0.1:
+        return values
+    engine = cp_model.CpSolver()
+    engine.parameters.max_time_in_seconds = remaining
+    engine.parameters.num_workers = 1
+    engine.parameters.linearization_level = 0
+    engine.parameters.random_seed = RANDOM_SEED
+    status = engine.solve(repair) if control is None else control.solve(engine, repair)
+    if status not in (cp_model.FEASIBLE, cp_model.OPTIMAL) or engine.value(score) >= incumbent:
+        return values
+    improved = {index: engine.value(repair.get_int_var_from_proto_index(index)) for index in values}
+    model.clear_hints()
+    for index, value in improved.items():
+        model.add_hint(model.get_int_var_from_proto_index(index), value)
+    return improved
 
 
 @lru_cache(maxsize=16384)
@@ -254,6 +414,8 @@ def solve(data, control=None):
 
 def _solve(data, control=None, started=None):
     started = time.monotonic() if started is None else started
+    presence_recovery = "_restPairTarget" in data
+    budget_seconds = REST_PAIR_SEARCH_SECONDS if presence_recovery else MAX_SECONDS
     if control is not None:
         control.checkpoint()
     weeks = planning_weeks(data)
@@ -481,9 +643,11 @@ def _solve(data, control=None, started=None):
     sunday_coverage, sector_coverage, visible_sunday_coverage, visible_sector_coverage, closing_coverage = {}, {}, {}, {}, {}
     daily_coverage, role_coverage = {}, {}
     movement_coverage, priority_coverage, movement_groups = [], {}, {}
-    comparison_protected = "_coverageComparison" in data
+    comparison_protected = "_coverageComparison" in data and not presence_recovery
     advisory_dates = coverage_advisory_estimate_dates(data)
     guarded_demands = ([demand for demand in data["demands"]
+                        if demand.get("estimated") is not True] if presence_recovery else
+                       [demand for demand in data["demands"]
                         if demand.get("estimated") is not True or demand["date"] not in advisory_dates]
                        if advisory_dates else data["demands"])
 
@@ -611,7 +775,36 @@ def _solve(data, control=None, started=None):
         model.add_hint(variable, seed.value(variable))
     sunday_recovery = _preserve_daily_timed_presence(model, employees, dates, choices, shifts,
                                                      guarded_demands, values, control) or {}
-    if coverage is None:
+    cutover_score, cutover_bound = 0, 0
+    if cutover and data.get("generationMode") != "HOURS_ONLY":
+        first_block = weeks[0]["dates"]
+        cutover_score, cutover_bound, rest_days, concentrated = _cutover_rest_score(
+            model, employees, first_block, off, baseline, policy, values)
+        preserve_month = (not presence_recovery and concentrated
+                          and _opening_seed_preserves_saved_days(result, baseline, rest_days))
+        if preserve_month:
+            _preserve_opening_pair_limits(model, data, employees, off, baseline, values, rest_days)
+        before = values
+        if not presence_recovery:
+            values = _balance_cutover_seed(model, cutover_score, values, off, work, choices, rest_days,
+                                           started + MAX_SECONDS, control)
+        if values is not before:
+            result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices,
+                                       paid_holidays) + retained_disabled_records(data)
+        if preserve_month:
+            # Severe opening pile-ups can be repaired independently. A later
+            # unrestricted optimization may lose role service elsewhere and
+            # force the application to discard the entire repaired proposal.
+            _pin_outside_opening(model, values, off, work, choices, rest_days)
+        if cutover_bound:
+            # Only subsequent refinements are subject to this incumbent bound.
+            # Estimated coverage must not undo a stagger already found legal.
+            model.add(cutover_score <= Snapshot(values).value(cutover_score))
+    if presence_recovery:
+        # Keep estimated demand in the input for the application's report,
+        # without adding estimator variables to this protected recovery model.
+        coverage = []
+    elif coverage is None:
         coverage = build_estimated_coverage(values)
     elif isinstance(coverage, list) and advisory_dates:
         # Build only after feasibility: advisory estimates cannot exhaust its search budget.
@@ -621,7 +814,7 @@ def _solve(data, control=None, started=None):
         finished = time.monotonic()
         response = _response("FEASIBLE", result, started)
         response['optimization'] = {
-            'budgetSeconds': MAX_SECONDS, 'phases': [],
+            'budgetSeconds': budget_seconds, 'phases': [],
             # Coverage is known to be unattempted. Later objectives have not
             # been constructed; do not invent their values or phase results.
             'unattemptedObjectives': ['COVERAGE'],
@@ -662,7 +855,10 @@ def _solve(data, control=None, started=None):
     sunday_objective = sum(term for terms in sunday_coverage.values() for term in terms)
     closing_objective = sum(term for terms in closing_coverage.values() for term in terms)
     leader_terms, leader_checks = leadership_objective(model, data, employees, dates, work, values)
-    goals = [("COVERAGE", sum(coverage)), ("SUNDAY_COVERAGE", sunday_objective),
+    # Preserve the original shortage priority, but do not treat equal estimates
+    # with very different operational staffing as equivalent in the first block.
+    coverage_objective = sum(coverage) * (cutover_bound + 1) + cutover_score
+    goals = [("COVERAGE", coverage_objective), ("SUNDAY_COVERAGE", sunday_objective),
              ("SUNDAY_PEAK", peak_plan.objective),
              ("MOVEMENT_COVERAGE", sum(movement_coverage)),
              ("CLOSING_COVERAGE", closing_objective),
@@ -702,8 +898,7 @@ def _solve(data, control=None, started=None):
     decisions.update({variable.index: key for key, variable in work.items()})
     decisions.update({variable.index: key for key, options in choices.items()
                       for variable in options.values()})
-    values, proven, phases = improve(model, [objective for _, objective in goals], values,
-                                     started + MAX_SECONDS, [name for name, _ in goals], context=ImprovementContext(control=control,
+    context = ImprovementContext(control=control,
                                      # Coverage may leave an equal-but-empty Sunday seed.
                                      # Fairness guards start only at their own later phase.
                                      protected_groups={goals[0][0]: [sum(terms) for terms in sunday_coverage.values()]
@@ -742,7 +937,16 @@ def _solve(data, control=None, started=None):
                                      coverage_repair_hint_builder=coverage_repair_hint_builder
                                      if data.get('generationMode') != 'HOURS_ONLY' else None,
                                      initial_repair_groups=repair_groups,
-                                     repair_clock_fixes=_repair_clock_fixes(choices, metrics, values)))
+                                     repair_clock_fixes=_repair_clock_fixes(choices, metrics, values))
+    if presence_recovery:
+        unstaffed, context.rest_spacing_groups = _rest_unstaffed_cells(
+            model, employees, dates, off, baseline, closed_dates | paid_holidays, values)
+        values, phases = improve_sector_presence(model, goals, rest_quality['people'], values,
+                                                  started + budget_seconds - 0.2, context, unstaffed)
+        proven = False  # This optional search makes no claim about all objectives.
+    else:
+        values, proven, phases = improve(model, [objective for _, objective in goals], values,
+                                         started + budget_seconds, [name for name, _ in goals], context=context)
     # Existing protected disabled records are retained, never allocated or counted as workforce.
     result = _read_assignments(Snapshot(values), employees, active, baseline, work, choices,
                                paid_holidays if data.get('generationMode') != 'HOURS_ONLY' else frozenset()) + retained_disabled_records(data)
@@ -754,13 +958,13 @@ def _solve(data, control=None, started=None):
         attempted.add(phase['objective'])
         attempted.update(member['objective'] for member in phase.get('members', [])
                          if 'searchSkippedReason' not in member)
-    response['optimization'] = {'budgetSeconds': MAX_SECONDS, 'phases': phases,
+    response['optimization'] = {'budgetSeconds': budget_seconds, 'phases': phases,
                                 'unattemptedObjectives': [name for name, _ in goals if name not in attempted],
                                 'constructionSeconds': round(construction_finished - started, 3),
                                 'feasibilitySeconds': round(feasibility_finished - construction_finished, 3),
                                 'refinementSeconds': round(time.monotonic() - feasibility_finished, 3),
                                 'stopReason': 'OBJECTIVES_PROVEN' if proven else 'TIME_BUDGET'
-                                if time.monotonic() >= started + MAX_SECONDS - 0.2 else 'BOUNDED_REFINEMENT'}
+                                if time.monotonic() >= started + budget_seconds - 0.2 else 'BOUNDED_REFINEMENT'}
     leader_metrics = leadership_summary(leader_checks, Snapshot(values))
     if not peak_plan.ready:
         response['optimization']['unattemptedObjectives'].append('SUNDAY_PEAK')
@@ -1423,10 +1627,11 @@ def _coverage_common_boundaries(references, presence):
 def _coverage(model, data, employees, choices, shifts, started, scope="ALL", values=None, sunday_terms=None,
               sector_terms=None, visible_sunday_terms=None, visible_sector_terms=None, closing_terms=None,
               movement_terms=None, priority_terms=None, movement_groups=None, daily_terms=None,
-              role_terms=None, control=None):
+               role_terms=None, control=None):
     protected = scope == "PROTECTED"
     advisory = scope == "ADVISORY"
-    comparison = CoverageComparison(data["_coverageComparison"]) if scope == "ESTIMATED" and "_coverageComparison" in data else None
+    comparison = (CoverageComparison(data["_coverageComparison"])
+                  if scope == "ESTIMATED" and "_coverageComparison" in data and "_restPairTarget" not in data else None)
     advisory_dates = coverage_advisory_estimate_dates(data) if advisory or comparison is not None else frozenset()
     bounded_coverage = protected or advisory or comparison is not None
 

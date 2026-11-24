@@ -6,6 +6,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from model_input import ModelInputError, validate_model_input
+from runtime_settings import REST_PAIR_PROCESS_TIMEOUT_SECONDS
 from service_operations import OperationError, Operations, PROCESS_TIMEOUT_SECONDS, run_operation
 from service_security import authorized, load_secret, operation_identity
 from worker import run_worker
@@ -126,7 +127,9 @@ class Handler(BaseHTTPRequestHandler):
             validate_model_input(payload["input"])
             operation = self.server.operations.start(request_id, token_hash)
             try:
-                outcome = run_operation(payload["input"], operation, self.server.operation_timeout, self.server.worker_target)
+                timeout = (REST_PAIR_PROCESS_TIMEOUT_SECONDS if "_restPairTarget" in payload["input"]
+                           else self.server.operation_timeout)
+                outcome = run_operation(payload["input"], operation, timeout, self.server.worker_target)
             except Exception:
                 outcome = {"state": "FAILED", "error": "SOLVER_FAILED"}
             state = self.server.operations.finish(operation, outcome["state"])

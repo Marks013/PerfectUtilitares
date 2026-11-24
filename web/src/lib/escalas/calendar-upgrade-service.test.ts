@@ -9,7 +9,8 @@ import type { EscalaInput } from "./types";
 import { validateEscala } from "./validation";
 
 const db = vi.hoisted(() => ({ rows: new Map<string, Record<string, unknown>>(), versions: new Map<string, Record<string, unknown>>(),
-  inserts: vi.fn(), updates: vi.fn(), audits: vi.fn(), published: vi.fn(), solve: vi.fn(), approval: vi.fn(), session: vi.fn(), stale: false }));
+  inserts: vi.fn(), updates: vi.fn(), audits: vi.fn(), deletion: vi.fn(), published: vi.fn(), solve: vi.fn(),
+  approval: vi.fn(), session: vi.fn(), stale: false }));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/escalas/access.server", () => ({ requireEscalaAccess: async () => ({ ok: true, actor: nominal }) }));
 vi.mock("@/lib/api/security", async original => ({
@@ -58,7 +59,8 @@ vi.mock("@/lib/prisma", () => {
       where.id === "synthetic-user" && where.tenantId === "synthetic-company"
         ? { ...where, status: "ACTIVE", role: "ADMIN", securityVersion: 1 } : null) },
   };
-  const tables = { ...access, escalaWorkspace: workspace, escalaRevision: revision, auditLog: { create: db.audits } };
+  const tables = { ...access, escalaWorkspace: workspace, escalaRevision: revision,
+    auditLog: { create: db.audits, findFirst: db.deletion } };
   const workforce = { escalaWorkforce: { findUnique: async () => null } };
   const tx = { ...tables, ...workforce, $executeRaw: vi.fn(async () => 1), $queryRaw: vi.fn(async () => []) };
   return { prisma: { ...tables, ...workforce, $transaction: async (callback: (connection: typeof tx) => unknown) => callback(tx) } };
@@ -75,6 +77,7 @@ function source(): EscalaInput {
 }
 
 beforeEach(() => {
+  db.deletion.mockReset().mockResolvedValue(null);
   db.published.mockReset().mockResolvedValue([]);
   db.solve.mockReset().mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 0.1, message: "Processador simulado" });
   db.approval.mockReset().mockResolvedValue(null);
@@ -166,6 +169,39 @@ describe("December origin ruler", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("uses the current saved reference after a tenant-audited deletion of the historical origin", async () => {
+    const { created, stored } = await approvedConversion();
+    db.rows.delete("source");
+    db.versions.delete(versionKey("source", 7));
+    db.deletion.mockResolvedValue({ metadata: { revision: 8 } });
+    const before = structuredClone(stored);
+
+    const response = await generateViaRoute(created.id, created.revision);
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await response.json()).toMatchObject({ result: { status: "UNKNOWN" } });
+    expect(db.deletion).toHaveBeenCalledWith(expect.objectContaining({
+      where: { entity: "EscalaWorkspace", action: "DELETE", entityId: "source",
+        metadata: { path: ["tenantId"], equals: nominal.tenantId } },
+    }));
+    expect(db.solve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ planningCalendarSource: created.input.planningCalendarSource }),
+      expect.objectContaining({ admittedDecemberOrigin: undefined,
+        qualityReference: expect.objectContaining({ assignments: created.input.assignments }) }));
+    expect(stored).toEqual(before);
+    expect(db.updates).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { metadata: { revision: 6 } }])("refuses a missing origin without an applicable deletion: %j", async deletion => {
+    const { created } = await approvedConversion();
+    db.rows.delete("source");
+    db.versions.delete(versionKey("source", 7));
+    db.deletion.mockResolvedValue(deletion);
+
+    const response = await generateViaRoute(created.id, created.revision);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "ESCALA_DECEMBER_ORIGIN_UNAVAILABLE" } });
+    expect(db.solve).not.toHaveBeenCalled();
   });
 
   it.each(["absent", "revoked"] as const)("refuses a nominal generation with %s current approval", async failure => {

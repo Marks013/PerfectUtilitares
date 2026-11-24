@@ -1,5 +1,6 @@
 import type { EscalaApprovedCreationMetadata, EscalaApprovedPolicyView, EscalaOperationalCommand, EscalaSessionResponse } from "@/lib/escalas/access-contracts";
 import { canonicalBranchCode } from "@/lib/escalas/branch-code";
+import { parseRetryAfterSeconds } from "@/lib/api/retry-after";
 import type { EscalaWorkspace } from "@/lib/escalas/types";
 import { EscalaRequestError, responseCode } from "./workspace-feedback-model";
 
@@ -29,7 +30,7 @@ async function readResponse<T>(response: Response, signal?: AbortSignal, notifyU
   signal?.throwIfAborted();
   if (!response.ok) {
     if (notifyUnauthorized && response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("escalas:unlock-required"));
-    throw new EscalaRequestError(responseCode(body), response.status, body?.error?.message || "Não foi possível concluir. Seus dados foram preservados.");
+    throw new EscalaRequestError(responseCode(body), response.status, body?.error?.message || "Não foi possível concluir. Seus dados foram preservados.", parseRetryAfterSeconds(response.headers.get("Retry-After")));
   }
   if (!body || typeof body !== "object") throw new Error("O servidor não confirmou a operação. Confira o resultado antes de tentar novamente.");
   return body as T;

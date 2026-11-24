@@ -72,7 +72,8 @@ export function admitCandidateReference(value: unknown, scope: Scope, base: Esca
   return { input, comparison: { admission: "ADMITTED", selection: "NOT_USED" } };
 }
 
-export function selectCandidateReference(admitted: Admission, candidate: EscalaInput, ruler: EscalaInput, mode?: RosterCoverageMode): { input: EscalaInput; comparison: EscalaCandidateComparison } {
+export function selectCandidateReference(admitted: Admission, candidate: EscalaInput, ruler: EscalaInput, mode?: RosterCoverageMode,
+  presenceOrder?: "PREVIOUS" | "TIE"): { input: EscalaInput; comparison: EscalaCandidateComparison } {
   if (!admitted.input) return { input: candidate, comparison: admitted.comparison };
   // Both current candidates have already adopted v3; the authenticated base may
   // still have no explicit Sunday closures. Align only this operational rule in
@@ -83,6 +84,9 @@ export function selectCandidateReference(admitted: Admission, candidate: EscalaI
     ? { ...applyBranchRestCalendar({ ...ruler, restRulesVersion: 3 }), demands: ruler.demands } : ruler;
   if (!compareRosterCoverage(admitted.input, candidate, effectiveRuler, mode).comparable) return { input: candidate, comparison: { admission: "INCOMPATIBLE", selection: "NOT_USED", reason: "REFERENCE_NOT_COMPARABLE" } };
   let reason = "ACCEPTED";
-  const selected = selectVerifiedRoster(admitted.input, candidate, value => { reason = value; }, effectiveRuler, mode);
-  return { input: selected.input, comparison: { admission: "ADMITTED", selection: selected.retainedReference ? "REFERENCE_RETAINED" : "CANDIDATE_SELECTED", reason } };
+  const preferPreviousPresence = presenceOrder === "PREVIOUS";
+  const selected = selectVerifiedRoster(preferPreviousPresence ? candidate : admitted.input,
+    preferPreviousPresence ? admitted.input : candidate, value => { reason = value; }, effectiveRuler, mode, presenceOrder !== undefined);
+  const retainedPrevious = preferPreviousPresence ? !selected.retainedReference : selected.retainedReference;
+  return { input: selected.input, comparison: { admission: "ADMITTED", selection: retainedPrevious ? "REFERENCE_RETAINED" : "CANDIDATE_SELECTED", reason } };
 }

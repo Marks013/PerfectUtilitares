@@ -8,7 +8,7 @@ import { isAdministrativeEscalaSector, operationalEscalaInput } from "./eligibil
 import type { EscalaInput, EscalaSolveResult } from "./types";
 import { refineRoster } from "./roster-refinement";
 import { restPairSummary } from "./rest-quality";
-import { compareRosterCoverage, completeRoster, frozenCoverageComparison, isOperationallyReusable, isReusableRoster, preservesAdmittedDecemberCoverage, sameCoverageScenario, selectVerifiedRoster } from "./roster-quality";
+import { alignPersistedCoverageTarget, compareRosterCoverage, completeRoster, frozenCoverageComparison, isOperationallyReusable, isReusableRoster, preservesAdmittedDecemberCoverage, sameCoverageScenario, selectVerifiedRoster } from "./roster-quality";
 import { validateEscala } from "./validation";
 import { matchesHoursOnlyAssignments } from "./hours-reference";
 import { matchesRestOnlyReferences } from "./generation";
@@ -17,13 +17,14 @@ import { EscalaError } from "./errors";
 import { frozenCoverageService } from "./coverage-protection";
 import { stableEscalaJson } from "./operational-input-policy";
 import { isDecember2026Cutover } from "./planning-calendar";
+import { compareCompetingRestPresence, competingRestCoverageZeros, preservesCompetingRestCoverage, repairCompetingRestCoverage, withCompetingRestWarning } from "./competing-rest-coverage";
 
 import { manualAssignmentIssues } from "./shift-catalog/manual-override";
 type Assignment = EscalaInput["assignments"][number];
 const assignmentKey = (day: Assignment) => `${day.employeeId}\0${day.date}`;
 
 function workerAssignments(days: Assignment[]): Assignment[] {
-  return days.map(({ absenceSource: _absenceSource, ...day }) => day);
+  return days.map(({ absenceSource: _absenceSource, monthlyCarry: _monthlyCarry, carriedHolidayRest: _holidayRest, ...day }) => day);
 }
 
 const objectiveName = z.enum(["COVERAGE", "MOVEMENT_COVERAGE", "SUNDAY_COVERAGE", "SUNDAY_PEAK", "CLOSING_COVERAGE", "REST_DISTRIBUTION", "WEEKEND_BALANCE", "SUNDAY_BALANCE", "LEADERSHIP", "REST_SPACING", "UNTIMED_ROTATION", "SATURDAY_BALANCE", "REST_ROTATION", "PEOPLE_CHANGED", "STABILITY", "PREFERENCES", "TIE_BREAK", "SECONDARY_POLISH"]);
@@ -120,9 +121,27 @@ function verifiedCompleteRoster(input: EscalaInput): boolean {
   return isReusableRoster(input) && matchesRestOnlyReferences(input, input.assignments);
 }
 
+const retainedSpacingMessage = "A busca não encontrou uma melhoria segura na presença dos setores e cargos. Mantivemos a grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos.";
+
+/** The spacing pass is elective, and can only return to the authenticated current roster. */
+function eligibleRestSpacingSeed(reference: EscalaInput, prepared: EscalaInput): boolean {
+  if (!isDecember2026Cutover(reference) || !isDecember2026Cutover(prepared)
+    || (reference.generationMode ?? "DAYS_AND_HOURS") !== "DAYS_AND_HOURS"
+    || (prepared.generationMode ?? "DAYS_AND_HOURS") !== "DAYS_AND_HOURS"
+    || reference.assignments.length !== prepared.assignments.length
+    || reference.coverageBasis !== prepared.coverageBasis || stableEscalaJson(reference.demands) !== stableEscalaJson(prepared.demands)
+    || alignPersistedCoverageTarget(reference, prepared) === prepared) return false;
+  const days = new Map(reference.assignments.map(day => [assignmentKey(day), day]));
+  const originalClocks = new Map(reference.shifts.map(shift => [shift.id, stableEscalaJson(shift.segments)]));
+  const clocks = new Map(prepared.shifts.map(shift => [shift.id, stableEscalaJson(shift.segments)]));
+  return prepared.assignments.every(day => stableEscalaJson(day) === stableEscalaJson(days.get(assignmentKey(day)))
+    && (day.kind !== "WORK" || clocks.get(day.shiftId ?? "") === originalClocks.get(day.shiftId ?? "")))
+    && completeRoster(prepared) && verifiedCompleteRoster(prepared) && verifiedCompleteRoster(reference);
+}
+
 export async function solveEscala(
   input: EscalaInput,
-  options?: SolverOptions & { qualityReference?: EscalaInput; admittedDecemberOrigin?: EscalaInput; preserveImplicitLocks?: boolean },
+  options?: SolverOptions & { qualityReference?: EscalaInput; admittedDecemberOrigin?: EscalaInput; preserveImplicitLocks?: boolean; onRestSpacingProtected?: () => void },
 ): Promise<EscalaSolveResult> {
   const started = performance.now();
   const saved = escalaInputSchema.parse(input);
@@ -131,15 +150,15 @@ export async function solveEscala(
   const administrativeDays = saved.assignments.filter(day => administrativeIds.has(day.employeeId));
   const withAdministrativeDays = (days: EscalaInput["assignments"]) => administrativeDays.length ? [...days, ...administrativeDays] : days;
   // The worker receives only protected coverage bounds, never the private source roster.
-  const { qualityReference: rawQualityReference, admittedDecemberOrigin, preserveImplicitLocks, ...transportOptions } = options ?? {};
+  const { qualityReference: rawQualityReference, admittedDecemberOrigin, preserveImplicitLocks, onRestSpacingProtected, ...transportOptions } = options ?? {};
   const implicit = new Map<string, Assignment>();
-  if (preserveImplicitLocks) {
+  if (preserveImplicitLocks || parsed.assignments.some(day => day.monthlyCarry)) {
     const beforePreparation = rawQualityReference ? operationalEscalaInput(escalaInputSchema.parse(rawQualityReference)) : parsed;
     const preparedDays = new Map(parsed.assignments.map(day => [assignmentKey(day), day]));
     for (const day of beforePreparation.assignments) {
-      if (day.locked !== undefined || day.kind === "ABSENCE" || day.kind === "HOLIDAY") continue;
+      if ((!day.monthlyCarry && (!preserveImplicitLocks || day.locked !== undefined)) || day.kind === "ABSENCE" || day.kind === "HOLIDAY") continue;
       const key = assignmentKey(day), prepared = preparedDays.get(key);
-      if (prepared?.kind !== day.kind || prepared.shiftId !== day.shiftId || prepared.locked !== undefined) {
+      if (prepared?.kind !== day.kind || prepared.shiftId !== day.shiftId || prepared.locked !== day.locked) {
         logSolverRejection("preservation", "LOCK_CHANGED");
         throw new EscalaSolverError("SOLVER_PROTECTED_RECORD_CHANGED");
       }
@@ -165,22 +184,39 @@ export async function solveEscala(
     || parsed.coverageBasis !== qualityReference.coverageBasis || stableEscalaJson(parsed.demands) !== stableEscalaJson(qualityReference.demands))) {
     throw new EscalaError(409, "ESCALA_CALENDAR_REFERENCE_MISMATCH", "A referência de cobertura da origem diverge da proposta de dezembro. Recarregue o planejamento.");
   }
-  const coverageMode = admittedDecemberOrigin ? "DECEMBER_DEMAND" : undefined;
-  const assess = (roster: EscalaInput) => compareRosterCoverage(qualityReference, roster, qualityReference, coverageMode);
-  const coverageComparison = admittedDecemberOrigin ? frozenCoverageComparison(qualityReference, coverageMode) : undefined;
-  const coverageServiceProtection = admittedDecemberOrigin ? frozenCoverageService(qualityReference, coverageComparison?.advisoryEstimateDates) : undefined;
-  if (coverageComparison === null || coverageServiceProtection === null) {
+  const seedEligible = !admittedDecemberOrigin && rawQualityReference && eligibleRestSpacingSeed(qualityReference, parsed);
+  const seedZeros = seedEligible ? competingRestCoverageZeros(parsed) : undefined;
+  const spacingEligible = Boolean(seedZeros?.size);
+  const frozenMode = admittedDecemberOrigin ? "DECEMBER_DEMAND" : spacingEligible ? "DECEMBER_PRESENCE_PRIORITY" : undefined;
+  const coverageComparison = frozenMode ? frozenCoverageComparison(qualityReference, frozenMode) : undefined;
+  const coverageServiceProtection = coverageComparison ? frozenCoverageService(qualityReference, coverageComparison.advisoryEstimateDates) : undefined;
+  if (admittedDecemberOrigin && (coverageComparison === null || coverageServiceProtection === null)) {
     throw new EscalaError(422, "ESCALA_COVERAGE_PROTECTION_LIMIT", "Há faixas protegidas demais para comparar com segurança. A grade salva foi mantida. Divida a revisão de cobertura por setor ou período.");
   }
+  const restSpacing = Boolean(spacingEligible && coverageComparison && coverageServiceProtection?.days.length && coverageServiceProtection.bands.length);
+  if (restSpacing) onRestSpacingProtected?.();
+  const protectCoverage = Boolean(admittedDecemberOrigin) || restSpacing;
+  const coverageMode = protectCoverage ? frozenMode : undefined;
+  const assess = (roster: EscalaInput) => compareRosterCoverage(qualityReference, roster, qualityReference, coverageMode);
+  const describeSpacing = (message: string, roster: EscalaInput) =>
+    restSpacing ? withCompetingRestWarning(message, competingRestCoverageZeros(roster)) : message;
+  const repairSpacing = (base: EscalaInput) => restSpacing ? repairCompetingRestCoverage(base, {
+    signal: options?.signal,
+    pinned: day => Boolean(day.locked || implicit.has(assignmentKey(day))),
+    accepts: (incumbent, proposal) => !manualAssignmentIssues(proposal, parsed.assignments).length
+      && !selectVerifiedRoster(incumbent, proposal, undefined, qualityReference, coverageMode, true).retainedReference
+      && (incumbent === parsed || preservesAdmittedDecemberCoverage(assess(proposal))),
+  }) : base;
+  const repairedSpacingMessage = "Ajustamos folgas na mesma semana para recuperar a presença na equipe, sem deixar novos setores ou cargos inteiros de folga nem perder cobertura protegida.";
   // Cheap verified day exchanges seed the bounded optimizer without changing its staffing target.
   if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   let refined: EscalaInput;
   try {
     // Clock-only generation must compare against the original days, even if moving rest days could improve their spacing.
-    const searched = parsed.generationMode === "HOURS_ONLY" ? searchInput : refineRoster(searchInput);
+    const searched = restSpacing || parsed.generationMode === "HOURS_ONLY" ? searchInput : refineRoster(searchInput);
     const proposal = searched === searchInput ? parsed
       : implicit.size ? { ...searched, assignments: searched.assignments.map(restore) } : searched;
-    refined = parsed.generationMode === "HOURS_ONLY" ? parsed : verifiedCompleteRoster(parsed)
+    refined = restSpacing || parsed.generationMode === "HOURS_ONLY" ? parsed : verifiedCompleteRoster(parsed)
       ? selectVerifiedRoster(parsed, proposal, undefined, qualityReference, coverageMode).input : proposal;
     if (admittedDecemberOrigin && refined !== parsed && !preservesAdmittedDecemberCoverage(assess(refined))) refined = parsed;
   } catch {
@@ -206,9 +242,13 @@ export async function solveEscala(
     })),
   }, {
     ...transportOptions,
-    ...(coverageComparison ? { coverageComparison } : {}),
-    ...(coverageServiceProtection && (coverageServiceProtection.days.length || coverageServiceProtection.bands.length) ? { coverageServiceProtection } : {}),
+    ...(protectCoverage && coverageComparison ? { coverageComparison } : {}),
+    ...(protectCoverage && coverageServiceProtection && (coverageServiceProtection.days.length || coverageServiceProtection.bands.length) ? { coverageServiceProtection } : {}),
+    ...(restSpacing ? { repairDecemberPresence: true } : {}),
     initialAssignments: refined === parsed || !verifiedCompleteRoster(refined) ? undefined : workerAssignments(pin(refined.assignments)),
+  }).catch(error => {
+    if (!restSpacing || !(error instanceof EscalaSolverError) || error.code !== "SOLVER_TIMED_OUT") throw error;
+    return { status: "UNKNOWN", assignments: [], message: retainedSpacingMessage, wallTimeSeconds: (performance.now() - started) / 1000 };
   });
   let stage = "result-schema", reason = "SCHEMA_INVALID";
   let details: Parameters<typeof logSolverRejection>[2];
@@ -284,15 +324,37 @@ export async function solveEscala(
       throw new Error("Unexpected assignments on unsuccessful solve");
     }
     if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+    if (restSpacing && (result.status === "INFEASIBLE" || result.status === "UNKNOWN")) {
+      const summary = restPairSummary(parsed);
+      const repaired = repairSpacing(parsed);
+      if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+      return {
+        status: "FEASIBLE", assignments: withAdministrativeDays(repaired.assignments), wallTimeSeconds: result.wallTimeSeconds,
+        message: describeSpacing(repaired === parsed ? retainedSpacingMessage : repairedSpacingMessage, repaired),
+        restQuality: { before: summary, after: repaired === parsed ? summary : restPairSummary(repaired),
+          search: { attempted: true, retainedReference: repaired === parsed, retentionReason: repaired === parsed ? "REST_SPACING_NO_GAIN" : "ACCEPTED" },
+          preparationSeconds: Math.round(preparationSeconds * 1000) / 1000,
+          requestSeconds: Math.round(performance.now() - started) / 1000 },
+      };
+    }
     if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
       stage = "selection-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const candidate = { ...parsed, assignments: result.assignments };
       let retentionReason = "REFERENCE_UNVERIFIED";
       let selected = verifiedCompleteRoster(refined)
         && (!admittedDecemberOrigin || preservesAdmittedDecemberCoverage(assess(refined))) ? selectVerifiedRoster(refined, candidate,
-        reason => { retentionReason = reason; }, qualityReference, coverageMode)
+        reason => { retentionReason = reason; }, qualityReference, coverageMode, restSpacing)
         : { input: candidate, retainedReference: false };
-      const merit = admittedDecemberOrigin ? undefined : assess(selected.input);
+      if (restSpacing && seedZeros && !selected.retainedReference) {
+        const newZeros = competingRestCoverageZeros(candidate);
+        if (!preservesAdmittedDecemberCoverage(assess(candidate))
+          || !preservesCompetingRestCoverage(seedZeros, newZeros)
+          || compareCompetingRestPresence(seedZeros, newZeros) <= 0) {
+          retentionReason = "REST_SPACING_NO_GAIN";
+          selected = { input: parsed, retainedReference: true };
+        }
+      }
+      const merit = protectCoverage ? undefined : assess(selected.input);
       if (merit?.comparable && merit.regressed) {
         // Reuse the old assignments only if their effective clocks and every protected record are still usable here.
         const oldShifts = new Map(qualityReference.shifts.map(shift => [shift.id, shift.segments]));
@@ -313,6 +375,12 @@ export async function solveEscala(
           && matchesRestOnlyReferences(parsed, reusable.assignments)) {
           selected = selectVerifiedRoster(reusable, selected.input, reason => { retentionReason = reason; }, qualityReference);
         }
+      }
+      const repaired = repairSpacing(selected.input);
+      const repairedSpacing = repaired !== selected.input;
+      if (repairedSpacing) {
+        selected = { input: repaired, retainedReference: false };
+        retentionReason = "ACCEPTED";
       }
       // A selector without a valid incumbent can return the proposal unchanged. It is never proof of feasibility.
       stage = "assignment-schema"; reason = "SCHEMA_INVALID";
@@ -346,7 +414,7 @@ export async function solveEscala(
       if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
       stage = "result-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const finalMerit = assess(finalInput);
-      if (admittedDecemberOrigin && !preservesAdmittedDecemberCoverage(finalMerit)) {
+      if (protectCoverage && !preservesAdmittedDecemberCoverage(finalMerit)) {
         reason = finalMerit.reason;
         throw new EscalaError(422, "ESCALA_FROZEN_COVERAGE_REGRESSION", "A proposta não preservou a cobertura da referência de dezembro. A grade salva foi mantida.");
       }
@@ -361,23 +429,25 @@ export async function solveEscala(
       if (!comparisonNotice && finalMerit.comparable && !originalReferenceReusable) retentionReason = `REPAIR_COMPARABLE:${finalMerit.reason}`;
       const restQuality = {
         before: restPairSummary(finalMerit.comparable ? qualityReference : parsed), after: restPairSummary(selected.input),
-        search: { attempted: refined.assignments !== parsed.assignments || (result.optimization?.phases.some(phase => phase.objective === "REST_SPACING") ?? false),
+        search: { attempted: restSpacing || refined.assignments !== parsed.assignments || (result.optimization?.phases.some(phase => phase.objective === "REST_SPACING") ?? false),
           retainedReference: selected.retainedReference, retentionReason },
         preparationSeconds: Math.round(preparationSeconds * 1000) / 1000,
         requestSeconds: Math.round((performance.now() - started)) / 1000,
       };
       // Diagnostics describe the returned processor candidate, never a different retained incumbent.
       const assignmentsWithAdministrativeDays = withAdministrativeDays(finalInput.assignments);
+      if (repairedSpacing) return { status: "FEASIBLE", assignments: assignmentsWithAdministrativeDays,
+        wallTimeSeconds: result.wallTimeSeconds, restQuality, message: describeSpacing(repairedSpacingMessage, finalInput) };
       if (selected.retainedReference) return {
         status: "FEASIBLE", assignments: assignmentsWithAdministrativeDays, wallTimeSeconds: result.wallTimeSeconds, restQuality,
-        message: "A alternativa calculada piorou uma condição protegida. Mantivemos a melhor grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos." + (comparisonNotice ? " " + comparisonNotice : ""),
+        message: restSpacing ? describeSpacing(retainedSpacingMessage, finalInput) : "A alternativa calculada piorou uma condição protegida. Mantivemos a melhor grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos." + (comparisonNotice ? " " + comparisonNotice : ""),
       };
       if (comparisonNotice) return {
         ...result, status: finalMerit.comparable && finalMerit.regressed ? "FEASIBLE" : result.status,
         assignments: assignmentsWithAdministrativeDays, restQuality,
         message: result.message + " " + comparisonNotice,
       };
-      return { ...result, assignments: assignmentsWithAdministrativeDays, restQuality };
+      return { ...result, message: describeSpacing(result.message, finalInput), assignments: assignmentsWithAdministrativeDays, restQuality };
     }
     if (rejectionStage === undefined) return result;
     return { ...result, rejectionEvidence: rejectionStage === "SEARCH" ? "MODEL_PROOF" : "PRECHECK" };

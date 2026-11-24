@@ -48,7 +48,8 @@ export async function GET(request: Request) {
       workspaceId: workspace.id, branchCode: workspace.input.branchCode, revision: workspace.revision, mode: parsed.data.mode,
       format: parsed.data.format, projection: parsed.data.projection, separateSectors });
     if (!descriptor) return jsonError(400, "ESCALA_INVALID_EXPORT", "Projeção inválida.");
-    const key = JSON.stringify([descriptor.cacheKey, owner]);
+    const restOmissions = parsed.data.mode === "hours" ? [] : [...(workspace.workforce?.openEndedAbsenceEmployeeIds ?? [])].sort();
+    const key = JSON.stringify([descriptor.cacheKey, owner, restOmissions]);
     const content = await escalaExportCache.get(key, async () => {
       await assertResourceCapacity({ inputBytes: Buffer.byteLength(JSON.stringify(workspace.input)), multiplier: 4 });
       return pdf ? exportEscalaPdf(workspace, parsed.data.mode, { separateSectors, projection: parsed.data.projection }) : exportEscalaXlsx(workspace, parsed.data.mode);

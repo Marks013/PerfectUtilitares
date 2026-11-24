@@ -427,6 +427,32 @@ describe("export availability and authorization on cache reuse", () => {
     expect(mocks.capacity).toHaveBeenCalledTimes(3);
   });
 
+  it("does not reuse rest export bytes when open-ended absence IDs change at the same revision", async () => {
+    const current = workspace();
+    current.input.startDate = "2026-12-01";
+    current.input.endDate = "2026-12-31";
+    current.input.planningWeekStartsOn = "SUNDAY";
+    current.input.assignments = current.input.employees.map(({ id }) => ({
+      employeeId: id, date: current.input.startDate, kind: "ABSENCE",
+    }));
+    mocks.get.mockResolvedValue(current);
+    const url = "http://localhost/api/escalas/export?id=w1&format=xlsx&mode=rest&revision=3";
+    const restSheet = async (absentId: string) => {
+      current.workforce = { needsSync: false, openEndedAbsenceEmployeeIds: [absentId] };
+      const response = await GET(new Request(url));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toContain("v3.xlsx");
+      return Buffer.from(await response.arrayBuffer());
+    };
+    const first = await restSheet("e1");
+    expect((await readSheet(first, "Escala")).slice(4).map(row => row[1])).toEqual(["0002"]);
+    const second = await restSheet("e2");
+    expect((await readSheet(second, "Escala")).slice(4).map(row => row[1])).toEqual(["0001"]);
+    expect(second).not.toEqual(first);
+    expect(await restSheet("e1")).toEqual(first);
+    expect(mocks.capacity).toHaveBeenCalledTimes(2);
+  });
+
   it("returns the persistent limiter response before loading or generating", async () => {
     mocks.limit.mockResolvedValue(new Response("limited", { status: 429, headers: { "Retry-After": "9" } }));
     const response = await GET(new Request("http://localhost/api/escalas/export?id=w1&format=pdf"));

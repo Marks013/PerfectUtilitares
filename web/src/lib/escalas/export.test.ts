@@ -142,6 +142,32 @@ describe("hours references without daily attendance", () => {
 });
 
 describe("Escalas shared monthly presentation and real exports", () => {
+  it("marks inherited monthly rests without changing holiday and rest semantics in PDF or Excel", async () => {
+    const workspace = fixture("2026-12");
+    workspace.input.policy.holidayDates = ["2026-12-24", "2026-12-25", "2026-12-26"];
+    workspace.input.policy.closedDates = ["2026-12-25", "2026-12-26"];
+    workspace.input.policy.holidayRestAllowed = true;
+    workspace.input.assignments = [
+      { employeeId: "p1", date: "2026-12-24", kind: "OFF", carriedHolidayRest: true },
+      { employeeId: "p1", date: "2026-12-25", kind: "HOLIDAY", carriedHolidayRest: true },
+      { employeeId: "p1", date: "2026-12-26", kind: "HOLIDAY" },
+    ];
+    const original = structuredClone(workspace.input);
+    const model = buildEscalaSchedule(workspace.input);
+    const days = model.restPeople.find(person => person.employee.id === "p1")?.cells.filter(cell => cell.date >= "2026-12-24" && cell.date <= "2026-12-26");
+    expect(days?.map(cell => [cell.code, cell.shiftId, cell.daily])).toEqual([
+      ["F*", undefined, "Não apurada"], ["FE*", undefined, "Não apurada"], ["FE", undefined, "Não apurada"],
+    ]);
+    const rows = await readSheet(Buffer.from(exportEscalaXlsx(workspace)), "Escala");
+    const rosterRow = rows.find(row => row[1] === "0001");
+    expect(rosterRow?.slice(28, 31)).toEqual(["F*", "FE*", "FE"]);
+    expect(rows[2][0]).toContain("* na célula: feriado que coincide com folga mensal herdada");
+    const items = (await pdfContent(await exportEscalaPdf(workspace, "rest"))).flat().map(item => item.str);
+    expect(items).toEqual(expect.arrayContaining(["F*", "FE*", "FE"]));
+    expect(items.join(" ")).toContain("* na célula: feriado que coincide com folga mensal herdada");
+    expect(workspace.input).toEqual(original);
+  });
+
   it("stores identifiers as text and durations as accumulated numeric time with compact calendar headers", async () => {
     const bytes = exportEscalaXlsx(fixture()), archive = unzipSync(bytes);
     const main = strFromU8(archive["xl/worksheets/sheet1.xml"]), hours = strFromU8(archive["xl/worksheets/sheet2.xml"]);

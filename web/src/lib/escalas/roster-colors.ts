@@ -4,7 +4,7 @@ export const ROSTER_STATE_TEXT = "#1E293B";
 export const ROSTER_COLOR_LEGEND = "Cores: F verde; ENC azul; FE amarelo; AF lilás; NP rosa. Domingo só no cabeçalho; cargo na identificação.";
 
 export function rosterStateIndex(code: string): number {
-  return code === "F" ? 1 : code === "ENC" ? 2 : code === "FE" ? 3 : code === "AF" ? 4 : code === "NP" ? 5 : ["X", "FV"].includes(code) ? 6 : 0;
+  return code === "F" || code === "F*" ? 1 : code === "ENC" ? 2 : code === "FE" || code === "FE*" ? 3 : code === "AF" ? 4 : code === "NP" ? 5 : ["X", "FV"].includes(code) ? 6 : 0;
 }
 
 export function rosterCellColors(code: string) {

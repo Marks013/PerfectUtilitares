@@ -22,11 +22,13 @@ import { inactiveViewPropsEqual, useActiveSnapshot } from "./view-activity";
 
 export { CellEditor } from "./roster-editor";
 
-export const Roster = memo(function Roster({ input: nextInput, validation, disabled, canUnlock, onChange, mode, onModeChange, onReviewEmployee, onReviewCoverage, onUndo, review, active = true }: {
+export const Roster = memo(function Roster({ input: nextInput, openEndedAbsenceEmployeeIds, validation, disabled, canUnlock, onChange, mode, onModeChange, onReviewEmployee, onReviewCoverage, onUndo, review, active = true }: {
   input: EscalaInput; validation: EscalaValidation | null; disabled: boolean; canUnlock: boolean; onChange: (input: EscalaInput) => void;
+  openEndedAbsenceEmployeeIds?: readonly string[];
   review?: EscalaRecoveryRequest; mode?: EscalaExportMode; onModeChange?: (mode: EscalaExportMode) => void; onReviewEmployee?: (employeeId: string) => void; onReviewCoverage?: () => void; onUndo?: (previous: EscalaInput, applied: EscalaInput) => Promise<boolean>; active?: boolean;
 }) {
   const input = useActiveSnapshot(nextInput, active);
+  const restOmissions = useActiveSnapshot(openEndedAbsenceEmployeeIds, active);
   const access = useEscalaClientAccess();
   const analytics = canDisplayEscalaAction(access, "report.analytics", input.branchCode);
   const administrative = canDisplayEscalaAction(access, "settings.manage", input.branchCode);
@@ -48,7 +50,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
   const [undo, setUndo] = useState<{ previous: EscalaInput; applied: EscalaInput } | null>(null);
   const [notice, setNotice] = useState("");
   const dates = useMemo(() => visibleDates(input), [input]);
-  const presentation = useMemo(() => buildEscalaSchedule(input), [input]);
+  const presentation = useMemo(() => buildEscalaSchedule(input, restOmissions), [input, restOmissions]);
   const scheduleByEmployee = new Map(presentation.people.map((person) => [person.employee.id, person]));
   const currentDate = dates.includes(hoursDate) ? hoursDate : dates[0];
   const assignments = useMemo(() => new Map(input.assignments.map((day) => [`${day.employeeId}:${day.date}`, day])), [input.assignments]);
@@ -170,6 +172,7 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
         : hasFilters ? "Nenhum colaborador corresponde aos filtros." : "Nenhum colaborador nesta visualização."}</p>
       {hasFilters && <button type="button" className={buttonClass} onClick={clearFilters}>Limpar filtros</button>}
     </div>
+    {view !== "hours" && !!restOmissions?.length && <p className={styles.muted}>Quem tem afastamento sem previsão de retorno não aparece na grade de folgas.</p>}
     <details>
       <summary className={styles.disclosureTrigger}>Legenda e calendário</summary>
       <div className={styles.stackSmall}>
@@ -257,12 +260,12 @@ export const Roster = memo(function Roster({ input: nextInput, validation, disab
       <p className={styles.muted}>Horários exatos da proposta neste dia. Pausas, folgas, afastamentos e pessoas sem horário fixo não entram na contagem por hora.</p>
       {displayedHours.length > 0 && <section className={styles.tableScroll}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to scroll the hours table independently.
-        tabIndex={0} aria-label="Horários da equipe, com rolagem horizontal"><table className={styles.hoursTable}><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Colaboradores por setor, cargo, horário completo crescente e nome. Mesmos colaboradores e filtros da escala de folgas.</caption>
+        tabIndex={0} aria-label="Horários da equipe, com rolagem horizontal"><table className={styles.hoursTable}><caption className="sr-only">Horários propostos em {displayDate(currentDate)}. Colaboradores por setor, cargo, horário completo crescente e nome. Usa os mesmos filtros de busca e setor da escala de folgas.</caption>
         <thead><tr><th scope="col" className={styles.hoursIdentity} style={{ background: "var(--app-input)", fontWeight: 700, zIndex: 2 }}>Colaborador / função</th><th scope="col" className="p-2">Horário proposto</th><th scope="col" className="p-2">Intervalo</th><th scope="col" className="p-2">Total / situação</th></tr></thead>
         <tbody>{displayedHours.flatMap((employee) => {
           const heading = employee.sector !== lastHoursSector; lastHoursSector = employee.sector;
           const cell = scheduleByEmployee.get(employee.id)?.cells.find((item) => item.date === currentDate);
-          const unavailable = cell?.code === "FV" || cell?.code === "FE";
+          const unavailable = cell?.code === "FV" || cell?.code === "FE" || cell?.code === "FE*";
           const action = !unavailable && !canChangeRosterDay(assignments.get(`${employee.id}:${currentDate}`), administrative, canUnlock) ? "Consultar dia" : "Revisar dia";
             return [...(heading ? [<tr key={"hours-sector-" + employee.sector}><th scope="rowgroup" colSpan={4} className={styles.sectorHeading}>{employee.sector || "Sem setor informado"}</th></tr>] : []), <tr key={employee.id} className="border-t border-[color:var(--app-border)]"><th scope="row" className={styles.hoursIdentity}><span className="block">{employee.registration} · {employee.name}</span><span className="block text-xs">{employee.sector} · {employee.role}</span>{hoursOnly ? onReviewEmployee && <button type="button" className={buttonClass} disabled={disabled} onClick={() => onReviewEmployee(employee.id)}>Conferir horários do colaborador</button> : <button type="button" className={buttonClass} disabled={disabled || unavailable} onClick={event => openEditor({ employeeId: employee.id, date: currentDate }, event.currentTarget)}>{action}</button>}</th>
             <td className="p-2">{cell?.shiftId ? cell.schedule : cell?.description ?? "Dia ainda sem definição"}</td><td className="p-2">{cell?.interval}</td><td className="p-2"><span className="block">{cell?.daily} · {cell?.code}</span></td></tr>];

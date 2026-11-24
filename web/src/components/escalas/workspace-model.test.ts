@@ -33,7 +33,16 @@ function employee(registration: string): EscalaEmployee {
 }
 
 describe("Escalas workspace model", () => {
-  it("toggles the default-off work-block preference and invalidates scenario and coverage without changing imported data", () => {
+  it("enables the 4h30 work-block preference for new December and January plans, not legacy snapshots", () => {
+    for (const month of ["2026-12", "2027-01"]) {
+      const input = newInput("07", "Hiper", month, 42);
+      expect(input.policy.limitContinuousWorkBlocks).toBe(true);
+      delete input.policy.limitContinuousWorkBlocks;
+      expect(escalaInputSchema.parse(input).policy.limitContinuousWorkBlocks).toBe(false);
+    }
+  });
+
+  it("toggles the legacy work-block preference and invalidates scenario and coverage without changing imported data", () => {
     const input = newInput("07", "Hiper", "2026-11", 42);
     delete input.policy.limitContinuousWorkBlocks;
     input.employees = [employee("one")];

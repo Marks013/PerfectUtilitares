@@ -27,7 +27,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const origin = requireSameOrigin(request);
   if (origin) return origin;
-  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-access-unlock", limit: 5, windowMs: 15 * 60_000 });
+  const limited = await enforcePersistentRateLimit(request, { keyPrefix: "escalas-access-unlock", limit: 5, windowMs: 5 * 60_000 });
   if (limited) return limited;
   const content = requireContentType(request, ["application/json"]) ?? requireMaxContentLength(request, 4096);
   if (content) return content;

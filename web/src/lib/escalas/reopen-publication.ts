@@ -47,5 +47,6 @@ export async function reopenEscalaPublication(actor: EscalaActor, id: string, ex
     return workforceDraftInfo(tx, actor.tenantId, current.input, saved?.workforceState);
   });
 
-  return { ...current, revision, status: "DRAFT" as const, validation, updatedAt: updatedAt.toISOString(), ...(workforce ? { workforce } : {}) };
+  const { workforce: _publishedWorkforce, ...metadata } = current;
+  return { ...metadata, revision, status: "DRAFT" as const, validation, updatedAt: updatedAt.toISOString(), ...(workforce ? { workforce } : {}) };
 }

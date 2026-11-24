@@ -14,17 +14,19 @@ import { compareBranches } from "./order";
 import { addDays, dateRange, dayOfWeek, monthBounds, visibleDates } from "./dates";
 import { preserveCalendarSourceContext, sundayCalendarDraft } from "./calendar-upgrade";
 import { isDecember2026Cutover } from "./planning-calendar";
+import { excludeSupersededDecemberDrafts } from "./active-december-drafts";
 import { admitDecemberCandidate, calculateWithDecemberFallback, prepareDecemberCoverage, selectDecemberCandidate } from "./december-origin.server";
 import { fixedBoundaryReservations } from "./boundary";
 import { publishedPlanningContext } from "./continuity";
 import { planningContext } from "./planning-context.server";
-import { carryWorkforceState, checkWorkforceReady, checkWorkforceWrite, workforceDraftInfo } from "./global-workforce-binding";
+import { removeReplacedDraftApprovals } from "./remove-replaced-draft-approvals";
+import { carryWorkforceState, checkWorkforceReady, checkWorkforceWrite, openEndedAbsenceEmployeeIds, workforceDraftInfo } from "./global-workforce-binding";
 import { assertTransferredWorkDoesNotOverlap } from "./global-workforce-publication";
 import { projectWorkforceForDraft, readWorkforceForDraft } from "./global-workforce-draft";
 import { assertEscalaEmployeeRemovalAllowed, inputWithoutEscalaEmployee } from "./employee-removal";
 import { matchesRestOnlyReferences, prepareGeneration } from "./generation";
 import { admitCandidateReference, issueCandidateReceipt } from "./candidate-reference.server";
-import { isOperationallyReusable } from "./roster-quality";
+import { decemberEstimatedCoverageNotice, isOperationallyReusable } from "./roster-quality";
 import type { EscalaCandidateResponse } from "./candidate-reference";
 import { dailyMinuteCeiling, isMixed42LongShift, SUPERMARKET_CCT, usesMixed42Week } from "./labor-rules";
 import type { EscalaAssignment, EscalaInput, EscalaWorkspace } from "./types";
@@ -32,15 +34,22 @@ import { fitsStoreClosing, storeClosingLabel, storeClosingMinutes, workAfterStor
 
 import { manualAssignmentIssues, manualShiftIssues, materializeManualShiftOverrides } from "./shift-catalog/manual-override";
 import { lockEscalaAccess, requireEscalaCapability } from "./access";
-import { loadEscalaApproval, inputFromEscalaApproval } from "./approved-policy-service";
+import { loadEscalaApproval, inputFromEscalaApproval, hasCarriedApproval } from "./approved-policy-service";
 import { loadLatestEscalaImportedTeam, persistEscalaImportedTeam, preserveLatestEscalaImportedTeamBeforeDelete } from "./latest-imported-team";
-import { addEmployeeFromEscalaApprovedModel } from "./approved-policy";
+import { addEmployeeFromEscalaApprovedModel, createInputFromEscalaApprovedPolicy } from "./approved-policy";
 import { assertEscalaOperationalInput, assertEscalaProtectedAssignments, stableEscalaJson } from "./operational-input-policy";
 import { ESCALA_CAPABILITIES, decideEscalaPermission } from "./permissions";
 import { signEscalaProposal, verifyEscalaProposal, type EscalaProposalScope } from "./proposal-proof";
 import type { EscalaAbsenceCommand, EscalaWorkspaceAccessMetadata } from "./access-contracts";
 import { assertNoPublishedAbsenceChanges, assignmentKey, editDraftAbsences, preserveManualAbsences } from "./manual-absence";
 import { excludeConfirmedImportAbsences, importAbsenceApprovalView, preserveLockedAssignments, type AdminImportSaveIntent } from "./draft-save-policy";
+import { scopedMonthDraft } from "./scoped-month-draft";
+import { assertNoNewManualHolidayRest } from "./holiday-rest";
+import { applyLocalHolidayCalendar } from "./calendar";
+import { precedingSchedule, authorizeMonthlyConfiguration } from "./monthly-creation.server";
+import { carryMonthlyConfiguration } from "./monthly-creation";
+import { inheritMonthlyPattern } from "./monthly-pattern";
+import { prepareWithMonthlyCarry, retainMonthlyCarry } from "./monthly-carry-guard";
 type WorkspaceRow = {
   id: string; tenantId: string; branchCode: string; branchName: string;
   startDate: string; endDate: string; revision: number; status: string; updatedAt: Date;
@@ -110,6 +119,7 @@ export async function listEscalas(actor: EscalaActor) {
     }
     rows = rows.filter(row => row.status === "DRAFT" || approvedWorkspaceIds.has(row.id));
   }
+  rows = await excludeSupersededDecemberDrafts(actor.tenantId, rows);
   return rows.sort((a, b) => compareBranches(a, b) || b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).map((row) => {
     const sunday = { planningWeekStartsOn: "SUNDAY" as const };
     const calendar = dayOfWeek(row.startDate) === 6 || isDecember2026Cutover({ ...row, ...sunday }) ? sunday : {};
@@ -142,46 +152,90 @@ async function loadEscala(actor: EscalaActor, id: string, revision: number | und
   }
   const input = parseEscalaInput(version.input);
   const linkedApproval = consultation && !actor.admin && version.status === "DRAFT" && version.approvedPolicyVersionId
-    ? await prisma.escalaBranchPolicyVersion.findFirst({ where: { tenantId: actor.tenantId, id: version.approvedPolicyVersionId }, select: { revokedAt: true } })
+    ? await prisma.escalaBranchPolicyVersion.findFirst({ where: { tenantId: actor.tenantId, id: version.approvedPolicyVersionId }, select: { revokedAt: true, snapshot: true } })
     : null;
-  const effectivePermission = readOnlyDraft || linkedApproval?.revokedAt ? { canEdit: false, canPublish: false } : permission;
-  const workforce = revision === undefined && version.status === "DRAFT"
-    ? await workforceDraftInfo(prisma, actor.tenantId, input, row.workforceState) : undefined;
+  let unavailable = Boolean(linkedApproval?.revokedAt);
+  if (version.approvedPolicyVersionId && linkedApproval && !unavailable && hasCarriedApproval(linkedApproval.snapshot)) {
+    try { await loadEscalaApproval(actor, version.approvedPolicyVersionId, prisma, input); }
+    catch (error) {
+      if (!(error instanceof EscalaError) || (error.status !== 403 && error.status !== 409)) throw error;
+      unavailable = true;
+    }
+  }
+  const effectivePermission = readOnlyDraft || unavailable ? { canEdit: false, canPublish: false } : permission;
+  let workforce: EscalaWorkspace["workforce"];
+  if (version.status === "DRAFT" && version.revision === row.revision) {
+    workforce = await workforceDraftInfo(prisma, actor.tenantId, input, row.workforceState);
+  } else if (version.status === "PUBLISHED" && Array.isArray(version.restHiddenEmployeeIds)) {
+    const ids = new Set(input.employees.map(person => person.id));
+    const hidden = version.restHiddenEmployeeIds.filter((id): id is string => typeof id === "string" && ids.has(id));
+    if (hidden.length) workforce = { needsSync: false, openEndedAbsenceEmployeeIds: hidden };
+  }
   return { ...view({ ...row, revision: version.revision, status: version.status, updatedAt: version.createdAt }, input, effectivePermission),
-    approvedPolicyVersionId: version.approvedPolicyVersionId, ...(linkedApproval?.revokedAt ? { approvedPolicyRevoked: true as const } : {}), ...(workforce ? { workforce } : {}) };
+    approvedPolicyVersionId: version.approvedPolicyVersionId, ...(unavailable ? { approvedPolicyRevoked: true as const } : {}), ...(workforce ? { workforce } : {}) };
 }
 
 export async function createEscala(actor: EscalaActor, input: EscalaInput, approvedPolicyVersionId?: string, origin?: EscalaWorkspace,
-  reuseImportedTeam = false): Promise<EscalaWorkspace & { approvedPolicyVersionId: string | null; teamSeed?: "LATEST_IMPORT" | "APPROVED_CONFIGURATION" }> {
+  reuseImportedTeam = false, scopedMonth = false): Promise<EscalaWorkspace & { approvedPolicyVersionId: string | null; teamSeed?: "LATEST_IMPORT" | "APPROVED_CONFIGURATION"; openedExisting?: true }> {
   if (input.planningCalendarSource && (!origin || input.planningCalendarSource.workspaceId !== origin.id
     || input.planningCalendarSource.revision !== origin.revision))
     throw new EscalaError(400, "ESCALA_CALENDAR_SOURCE_INVALID", "Use a ação de atualização da semana para criar uma proposta com origem conferida.");
   input = { ...input, branchCode: canonicalBranchCode(input.branchCode) };
+  input = retainMonthlyCarry(undefined, input);
   const permission = await branchPermission(actor, input.branchCode);
   await requireEscalaCapability(actor, "workspace.create", input.branchCode);
-  if (!actor.admin && !approvedPolicyVersionId) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Selecione uma configuração aprovada pelo administrador.");
+  if (!actor.admin && !approvedPolicyVersionId && !scopedMonth) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Selecione uma configuração aprovada pelo administrador.");
+  if (!approvedPolicyVersionId && !origin) assertNoNewManualHolidayRest(undefined, input);
   input = materializeManualShiftOverrides(input);
   await assertManualCatalogSelections(actor, input);
   // Coverage provenance belongs to each row; legacy global review never promotes estimates.
   input = preserveCalendarSourceContext(input, publishedPlanningContext(input, []));
   let importedFrom: { workspaceId: string; revision: number } | undefined;
+  let workforce: EscalaWorkspace["workforce"];
   const row = await prisma.$transaction(async (tx) => {
     await lockEscalaAccess(tx, actor.tenantId);
     await requireEscalaCapability(actor, "workspace.create", input.branchCode, tx);
+    if (scopedMonth) {
+      await requireEscalaCapability(actor, "workspace.read", input.branchCode, tx);
+      const existing = await tx.escalaWorkspace.findFirst({ where: {
+        tenantId: actor.tenantId, branchCode: input.branchCode, startDate: input.startDate, endDate: input.endDate,
+      }, select: { id: true } });
+      if (existing) return { kind: "existing", id: existing.id } as const;
+    }
     let originWorkforce: unknown;
     if (origin) {
       const latest = await tx.escalaWorkspace.findFirst({ where: { id: origin.id, tenantId: actor.tenantId, revision: origin.revision } });
       if (!latest || latest.revision !== origin.revision) throw new EscalaError(409, "ESCALA_STALE_REVISION", "O planejamento original mudou. Recarregue antes de atualizar a semana.");
       originWorkforce = latest.workforceState;
     }
+    const prior = origin ? undefined : await precedingSchedule(tx, actor, input);
+    const configured = scopedMonth ? await tx.escalaBranchPolicyVersion.findFirst({
+      where: { tenantId: actor.tenantId, branchCode: input.branchCode, startDate: input.startDate, endDate: input.endDate,
+        visibleMonth: input.visibleMonth, revokedAt: null },
+      orderBy: { version: "desc" }, select: { id: true },
+    }) : null;
+    if (configured) {
+      const approved = await loadEscalaApproval(actor, configured.id, tx, input);
+      const explicit = createInputFromEscalaApprovedPolicy(approved.row.snapshot, approved.row.snapshotHash);
+      if (!explicit.ok) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Configuração inválida.");
+      approvedPolicyVersionId = configured.id;
+      input = explicit.value;
+    }
+    const derived = scopedMonth && !configured && prior ? await authorizeMonthlyConfiguration(tx, actor, input, prior) : undefined;
+    if (derived) {
+      approvedPolicyVersionId = derived.id;
+      input = derived.input;
+    } else if (scopedMonth && !configured && prior) input = carryMonthlyConfiguration(input, prior.input);
     const base = await readWorkforceForDraft(tx, actor.tenantId, input.branchCode);
     if (approvedPolicyVersionId) {
       const approved = await loadEscalaApproval(actor, approvedPolicyVersionId, tx);
-      const expected = parseEscalaInput({ ...approved.snapshot.configuration, ...approved.snapshot.seed });
+      const approvedInput = createInputFromEscalaApprovedPolicy(approved.row.snapshot, approved.row.snapshotHash);
+      if (!approvedInput.ok) throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "Configuração inválida.");
+      const expected = parseEscalaInput(approvedInput.value);
       if (stableEscalaJson(publishedPlanningContext(materializeManualShiftOverrides(expected), [])) !== stableEscalaJson(input)) {
         throw new EscalaError(403, "ESCALA_PROTECTED_INPUT", "A criação deve usar a configuração aprovada exata.");
       }
-      if (reuseImportedTeam && !base) {
+      if ((reuseImportedTeam || configured) && !base) {
         const imported = await loadLatestEscalaImportedTeam(tx, actor.tenantId, input);
         if (imported) {
           input = imported.input;
@@ -196,12 +250,18 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput, appro
       startDate: input.startDate, endDate: input.endDate, ...(projection ? { workforceState: projection.state } : {}),
     } });
     input = await planningContext(actor, created.id, input, tx);
+    if (prior) input = parseEscalaInput(inheritMonthlyPattern(applyLocalHolidayCalendar(input), prior.input));
+    if (base) {
+      const hidden = openEndedAbsenceEmployeeIds(input, base.snapshot);
+      workforce = { needsSync: false, ...(hidden.length ? { openEndedAbsenceEmployeeIds: hidden } : {}) };
+    }
     await tx.escalaRevision.create({ data: { tenantId: actor.tenantId, workspaceId: created.id, revision: 1,
       status: "DRAFT", input: snapshotJson(input), createdById: actor.userId, approvedPolicyVersionId: approvedPolicyVersionId ?? null, ...actorProvenance(actor) } });
     await tx.auditLog.create({ data: { userId: actor.userId, action: "CREATE", entity: "EscalaWorkspace", entityId: created.id,
       metadata: { ...actorProvenance(actor), tenantId: actor.tenantId, revision: 1, employeeCount: input.employees.length,
-        ...(importedFrom ? { importedTeamOrigin: importedFrom } : {}) } } });
-    return created;
+        ...(importedFrom ? { importedTeamOrigin: importedFrom } : {}),
+        ...(derived && prior ? { inheritedConfiguration: { workspaceId: prior.workspaceId, revision: prior.revision, policyId: derived.id } } : {}) } } });
+    return { kind: "created", row: created } as const;
   }).catch((error: unknown) => {
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
       const target = "meta" in error && error.meta && typeof error.meta === "object" && "target" in error.meta ? error.meta.target : null;
@@ -212,12 +272,17 @@ export async function createEscala(actor: EscalaActor, input: EscalaInput, appro
     }
     throw error;
   });
-  return { ...view(row, input, permission), approvedPolicyVersionId: approvedPolicyVersionId ?? null, ...(row.workforceState ? { workforce: { needsSync: false } } : {}),
+  if (row.kind === "existing") return { ...await getEscalaForRead(actor, row.id), openedExisting: true };
+  return { ...view(row.row, input, scopedMonth && !actor.admin && !approvedPolicyVersionId ? { canEdit: false, canPublish: false } : permission), approvedPolicyVersionId: approvedPolicyVersionId ?? null, ...(workforce ? { workforce } : {}),
     ...(reuseImportedTeam ? { teamSeed: importedFrom ? "LATEST_IMPORT" : "APPROVED_CONFIGURATION" } : {}) };
 }
 
 export async function createEscalaApproved(actor: EscalaActor, approvedPolicyVersionId: string) {
   return createEscala(actor, await inputFromEscalaApproval(actor, approvedPolicyVersionId), approvedPolicyVersionId, undefined, true);
+}
+
+export async function createEscalaMonth(actor: EscalaActor, branchCode: string, month: string) {
+  return createEscala(actor, parseEscalaInput(scopedMonthDraft(branchCode, month)), undefined, undefined, false, true);
 }
 
 /** Explicit upgrade creates another revision history; the source is never overwritten. */
@@ -299,7 +364,8 @@ export async function rebaseEscalaApproval(actor: EscalaActor, id: string, expec
   if (stableEscalaJson(protectedPeople(current.input.employees)) !== stableEscalaJson(protectedPeople(approved.snapshot.seed.employees))) {
     throw new EscalaError(409, "ESCALA_CONFIG_APPROVAL_REQUIRED", "A aprovação precisa incluir os dados protegidos da equipe atual antes da vinculação.");
   }
-  const input = parseEscalaInput({ ...approved.snapshot.configuration, planningCalendarSource: current.input.planningCalendarSource,
+  const { carriedApproval: _inherited, ...configuration } = approved.snapshot.configuration;
+  const input = parseEscalaInput({ ...configuration, planningCalendarSource: current.input.planningCalendarSource,
     employees: current.input.employees,
     shifts: current.input.shifts, assignments: current.input.assignments, needsRegeneration: true });
   return saveEscala(actor, id, expectedRevision, input, false, { rebaseId: approvalId });
@@ -399,6 +465,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   const current = await getEscala(actor, id);
   requireEscalaPermission(current, publish ? "publish" : "edit");
   assertRevision(current, expectedRevision);
+  if (!options.proposalProof) input = retainMonthlyCarry(current.input, input);
   if (!publish && current.status === "PUBLISHED") throw new EscalaError(409, "ESCALA_REOPEN_REQUIRED", "Reabra a publicação como rascunho antes de editar.");
   if (JSON.stringify(input.planningCalendarSource) !== JSON.stringify(current.input.planningCalendarSource))
     throw new EscalaError(409, "ESCALA_CALENDAR_SOURCE_CHANGED", "A origem da atualização da semana não pode ser alterada. Recarregue o rascunho atual.");
@@ -452,6 +519,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   if (input.branchCode !== current.input.branchCode || input.startDate !== current.input.startDate || input.endDate !== current.input.endDate) {
     throw new EscalaError(409, "ESCALA_IDENTITY_CHANGED", "Filial e período identificam esta escala. Crie outra proposta para alterar esses campos.");
   }
+  if (!options.proposalProof) assertNoNewManualHolidayRest(current.input, input);
   if (absence && !absence.changedDates.size) return current;
   input = materializeManualShiftOverrides(input);
   await assertManualCatalogSelections(actor, input, current.input);
@@ -492,6 +560,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
   const alreadyPublished = publish && current.status === "PUBLISHED";
   const revision = expectedRevision + 1;
   const updatedAt = new Date();
+  let restHiddenEmployeeIds: string[] = [];
   await prisma.$transaction(async (tx) => {
     await lockEscalaAccess(tx, actor.tenantId);
     await requireEscalaCapability(actor, publish ? "workspace.publish" : "workspace.save", current.input.branchCode, tx);
@@ -527,6 +596,7 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
       if (workforce) await assertTransferredWorkDoesNotOverlap(tx, actor.tenantId, input, workforce.snapshot);
       validation = validateEscala(input);
       if (!validation.readyToPublish) throw new EscalaError(422, "ESCALA_NOT_READY", "A escala possui impedimentos ou pendências. Resolva a conferência antes de publicar.");
+      if (workforce) restHiddenEmployeeIds = openEndedAbsenceEmployeeIds(input, workforce.snapshot);
     }
     if (alreadyPublished) {
       const latest = await tx.escalaWorkspace.findFirst({ where: { id, tenantId: actor.tenantId, revision: expectedRevision }, select: { revision: true } });
@@ -539,7 +609,8 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
     });
     if (updated.count !== 1) throw new EscalaError(409, "ESCALA_STALE_REVISION", "Esta escala foi alterada por outra pessoa. Recarregue a versão atual antes de continuar.");
     await tx.escalaRevision.create({ data: { tenantId: actor.tenantId, workspaceId: id, revision, status,
-      input: snapshotJson(input), createdById: actor.userId, approvedPolicyVersionId: approvalId, ...actorProvenance(actor) } });
+      input: snapshotJson(input), createdById: actor.userId, approvedPolicyVersionId: approvalId, ...actorProvenance(actor),
+      ...(restHiddenEmployeeIds.length ? { restHiddenEmployeeIds } : {}) } });
     const importedTeam = options.adminImport?.audit;
     if (importedTeam?.purpose === "EMPLOYEES") await persistEscalaImportedTeam(tx, {
       tenantId: actor.tenantId, workspaceId: id, revision, startDate: importedTeam.startDate, endDate: importedTeam.endDate, input,
@@ -553,7 +624,12 @@ export async function saveEscala(actor: EscalaActor, id: string, expectedRevisio
         ...(options.serverEnrollment ? { employeeId: options.serverEnrollment.employeeId, regimeModelId: options.serverEnrollment.regimeModelId } : {}) } } });
   }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 15000 });
   if (alreadyPublished) return current;
-  return { ...current, revision, status, input, validation, approvedPolicyVersionId: approvalId, updatedAt: updatedAt.toISOString() } as EscalaWorkspace;
+  const { workforce: draftWorkforce, ...metadata } = current;
+  const workforce = publish
+    ? (restHiddenEmployeeIds.length ? { needsSync: false, openEndedAbsenceEmployeeIds: restHiddenEmployeeIds } : undefined)
+    : draftWorkforce;
+  return { ...metadata, revision, status, input, validation, approvedPolicyVersionId: approvalId,
+    updatedAt: updatedAt.toISOString(), ...(workforce ? { workforce } : {}) } as EscalaWorkspace;
 }
 
 function assertRevision(workspace: EscalaWorkspace, expectedRevision: number) {
@@ -597,7 +673,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   }
   const qualityReference = structuredClone(current.input);
   const scope = { tenantId: actor.tenantId, owner: JSON.stringify([actor.userId, actor.moduleSessionId, actor.accountSessionId]), workspaceId: id, revision: expectedRevision };
-  const prepared = prepareGeneration(current.input);
+  const prepared = prepareWithMonthlyCarry(current.input, prepareGeneration);
   if (isHoursReferenceOnly(prepared.input)) {
     const proposalInput = parseEscalaInput({ ...prepared.input, needsRegeneration: false, generationBasis: generationScenarioBasis(prepared.input) });
     try { preserveLockedAssignments(current.input, proposalInput); preserveManualAbsences(current.input, proposalInput); if (!actor.admin) assertEscalaProtectedAssignments(current.input, proposalInput, true); }
@@ -618,8 +694,10 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const closingConflict = workAfterStoreClosing(contextual).find(day => day.locked);
   if (closingConflict) throw new EscalaError(409, "ESCALA_CLOSING_PUBLISHED_CONFLICT", `Um dia já publicado em ${closingConflict.date} termina após o fechamento atual (${storeClosingLabel(contextual)}). Corrija o horário na escala publicada de origem ou ajuste o fechamento deste planejamento antes de gerar. O dia publicado foi preservado.`);
   const admission = admitDecemberCandidate(admitCandidateReference(comparisonReference, scope, qualityReference, contextual), origin);
+  let protectedRestSpacing = false;
   const { calculation, retainedReference } = await calculateWithDecemberFallback(
-    solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin, preserveImplicitLocks: !actor.admin }),
+    solveEscala(contextual, { ...solverOptions, qualityReference, admittedDecemberOrigin: origin, preserveImplicitLocks: !actor.admin,
+      onRestSpacingProtected: () => { protectedRestSpacing = true; } }),
     origin && admission.input,
   );
   let result = calculation.status === "INFEASIBLE" ? {
@@ -655,7 +733,7 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   }
   let comparison = admission.comparison;
   if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
-    const selected = selectDecemberCandidate(admission, proposalInput, qualityReference, origin, retainedReference);
+    const selected = selectDecemberCandidate(admission, proposalInput, qualityReference, origin, retainedReference, protectedRestSpacing);
     comparison = selected.comparison;
     if (comparison.selection === "REFERENCE_RETAINED") {
       proposalInput = parseEscalaInput(selected.input);
@@ -676,6 +754,8 @@ export async function generateEscala(actor: EscalaActor, id: string, expectedRev
   const extra: EscalaCandidateResponse = { comparison };
   if ((result.status === "FEASIBLE" || result.status === "OPTIMAL") && isOperationallyReusable(validation)) {
     extra.candidateReceipt = issueCandidateReceipt(scope, qualityReference, contextual, proposalInput);
+    const estimateNotice = protectedRestSpacing ? decemberEstimatedCoverageNotice(qualityReference, proposalInput) : undefined;
+    if (estimateNotice) result = { ...result, message: `${result.message} ${estimateNotice}` };
   }
   return { result, proposalInput, validation, preparation: prepared.preparation, ...extra,
     ...((result.status === "FEASIBLE" || result.status === "OPTIMAL") ? { proposalProof: signEscalaProposal(finalScope, proposalInput) } : {}) };
@@ -709,7 +789,8 @@ export async function deleteEscala(actor: EscalaActor, id: string, expectedRevis
       if (dependencies.length) throw new EscalaError(409, "ESCALA_DELETE_DEPENDENCY", "Há planejamentos publicados próximos que podem depender dos dias compartilhados ou do histórico desta filial. Revise essa continuidade antes de excluir; nenhuma revisão foi removida.");
     }
     const approvalOrigins = await tx.escalaBranchPolicyVersion.count({ where: { tenantId: actor.tenantId, originWorkspaceId: id } });
-    if (approvalOrigins) throw new EscalaError(409, "ESCALA_DELETE_DEPENDENCY", "Este planejamento é origem de uma aprovação administrativa. O histórico deve ser preservado.");
+    if (approvalOrigins && (!actor.admin || published)) throw new EscalaError(409, "ESCALA_DELETE_DEPENDENCY", "Este histórico de aprovação não pode ser excluído.");
+    if (approvalOrigins) await removeReplacedDraftApprovals(tx, actor.tenantId, current);
     await preserveLatestEscalaImportedTeamBeforeDelete(tx, actor.tenantId, row.branchCode, id);
     await tx.escalaRevision.deleteMany({ where: { tenantId: actor.tenantId, workspaceId: id } });
     const deleted = await tx.escalaWorkspace.deleteMany({ where: { tenantId: actor.tenantId, id, revision: expectedRevision } });

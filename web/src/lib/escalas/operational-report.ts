@@ -128,7 +128,9 @@ export function buildOperationalReport(workspace: EscalaWorkspace, rawOptions: O
         timedWorkMinutes: cells.reduce((sum, cell) => sum + cell.timedWorkMinutes, 0) } };
   });
   const dates = referencesOnly ? [] : presentation.dates;
-  const calendar = { people: calendarPeople, weeks: [...new Set(dates.map(date => weekStart(date, input)))].map(start => ({ start, dates: dates.filter(date => weekStart(date, input) === start) })),
+  const restOmissions = new Set(workspace.workforce?.openEndedAbsenceEmployeeIds);
+  // Omit only named rest rows; daily totals still represent the full selected roster.
+  const calendar = { people: calendarPeople.filter(row => !restOmissions.has(row.employeeId)), weeks: [...new Set(dates.map(date => weekStart(date, input)))].map(start => ({ start, dates: dates.filter(date => weekStart(date, input) === start) })),
     days: dates.map(date => {
       const cells = calendarPeople.flatMap(person => person.cells.filter(cell => cell.date === date));
       const count = (kind: typeof cells[number]["kind"]) => cells.filter(cell => cell.kind === kind).length;

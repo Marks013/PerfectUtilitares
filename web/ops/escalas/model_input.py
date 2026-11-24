@@ -329,6 +329,16 @@ def validate_model_input(data):
         _validate_service_protection(data, roles_by_sector)
     if "_coverageComparison" in data:
         _validate_coverage_comparison(data, roles_by_sector)
+    if "_restPairTarget" in data:
+        path = "_restPairTarget"
+        _integer(data[path], path, 20, 20)
+        _require(is_december_cutover(data) and data.get("generationMode") == "DAYS_AND_HOURS",
+                 path, "INVALID_SCOPE")
+        service = data.get("_coverageServiceProtection", {})
+        # A genuine historical service reference is mandatory. A reference
+        # containing only estimates may have no explicit minimum sectors.
+        _require("_coverageComparison" in data and bool(service.get("days") and service.get("bands")),
+                 path, "REQUIRED_COVERAGE_PROTECTION")
     if "_coverageProtection" in data:
         for index, floor in enumerate(_array(data["_coverageProtection"], "_coverageProtection", 12000)):
             prefix = f"_coverageProtection[{index}]"

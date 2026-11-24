@@ -110,6 +110,7 @@ function scopedHistory(entries: EscalaAssignment[]) {
 export async function requestSolver(input: EscalaInput, options: SolverOptions & {
   coverageComparison?: CoverageComparisonBounds;
   coverageServiceProtection?: CoverageServiceProtection;
+  repairDecemberPresence?: boolean;
 } = {}) {
   if (options.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   const body = JSON.stringify({ input: {
@@ -123,10 +124,12 @@ export async function requestSolver(input: EscalaInput, options: SolverOptions &
     ...(options.initialAssignments ? { _initialAssignments: options.initialAssignments } : {}),
     ...(options.coverageComparison ? { _coverageComparison: options.coverageComparison } : {}),
     ...(options.coverageServiceProtection ? { _coverageServiceProtection: options.coverageServiceProtection } : {}),
+    // The Python worker retains this private wire marker for compatibility; it is not a pair limit.
+    ...(options.repairDecemberPresence ? { _restPairTarget: 20 } : {}),
   } });
   if (Buffer.byteLength(body, "utf8") > maxSolverRequestBytes) throw new EscalaSolverError("SOLVER_INPUT_TOO_LARGE");
   const operation = { operationId: options.operationId || randomUUID(), cancelToken: options.cancelToken || randomBytes(32).toString("hex") };
-  const timeout = AbortSignal.timeout(20_000);
+  const timeout = AbortSignal.timeout(options.repairDecemberPresence ? 32_000 : 20_000);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   let response: Response;
   try {

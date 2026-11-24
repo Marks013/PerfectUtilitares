@@ -3,6 +3,7 @@ import { EscalaError, type EscalaActor } from "./access";
 import { type admitCandidateReference, selectCandidateReference } from "./candidate-reference.server";
 import { admitDecemberOriginReference } from "./december-origin-reference";
 import { isDecember2026Cutover } from "./planning-calendar";
+import { compareCompetingRestPresence, competingRestCoverageZeros, preservesCompetingRestCoverage } from "./competing-rest-coverage";
 import { alignPersistedCoverageTarget, compareRosterCoverage, preservesAdmittedDecemberCoverage } from "./roster-quality";
 import { escalaInputSchema } from "./schema";
 import type { solveEscala } from "./solver-client";
@@ -27,6 +28,17 @@ async function loadDecemberOrigin(actor: EscalaActor, id: string, saved: EscalaI
       const source = escalaInputSchema.safeParse(version.input);
       if (source.success) return admitDecemberOriginReference(source.data, saved, context);
     }
+  }
+  if (!row && origin.workspaceId !== id && (actor.admin || currentApprovalVerified)) {
+    const deletion = await prisma.auditLog.findFirst({
+      where: { entity: "EscalaWorkspace", action: "DELETE", entityId: origin.workspaceId,
+        metadata: { path: ["tenantId"], equals: actor.tenantId } },
+      orderBy: { createdAt: "desc" },
+      select: { metadata: true },
+    });
+    const revision = (deletion?.metadata as { revision?: unknown } | null | undefined)?.revision;
+    // Use the current saved reference, keeping the original calendar provenance and boundary protections.
+    if (typeof revision === "number" && Number.isSafeInteger(revision) && revision >= origin.revision) return undefined;
   }
   throw new EscalaError(409, "ESCALA_DECEMBER_ORIGIN_UNAVAILABLE",
     "A revisão de origem deste rascunho está indisponível. Confira a escala original antes de gerar dezembro.");
@@ -57,8 +69,20 @@ export async function calculateWithDecemberFallback(
   }
 }
 
-export function selectDecemberCandidate(admitted: Admission, candidate: EscalaInput, saved: EscalaInput, origin?: EscalaInput, retainedReference = false) {
-  if (!origin) return selectCandidateReference(admitted, candidate, saved);
+export function selectDecemberCandidate(admitted: Admission, candidate: EscalaInput, saved: EscalaInput, origin?: EscalaInput, retainedReference = false, protectedRestSpacing = false) {
+  if (!origin) {
+    if (protectedRestSpacing && admitted.input) {
+      const current = competingRestCoverageZeros(candidate);
+      const previous = competingRestCoverageZeros(admitted.input);
+      const improvement = compareCompetingRestPresence(current, previous);
+      if (!preservesAdmittedDecemberCoverage(compareRosterCoverage(saved, admitted.input, saved, "DECEMBER_PRESENCE_PRIORITY"))
+        || !preservesCompetingRestCoverage(current, previous) || improvement < 0) {
+        return { input: candidate, comparison: { admission: "INCOMPATIBLE" as const, selection: "NOT_USED" as const, reason: "DECEMBER_PRESENCE_PROTECTED" } };
+      }
+      return selectCandidateReference(admitted, candidate, saved, "DECEMBER_PRESENCE_PRIORITY", improvement > 0 ? "PREVIOUS" : "TIE");
+    }
+    return selectCandidateReference(admitted, candidate, saved);
+  }
   if (!retainedReference && meetsOrigin(origin, candidate)) return selectCandidateReference(admitted, candidate, origin, "DECEMBER_DEMAND");
   if (admitted.input) return { input: admitted.input, comparison: { ...admitted.comparison,
     selection: "REFERENCE_RETAINED" as const, reason: "FROZEN_COVERAGE_REGRESSION" } };

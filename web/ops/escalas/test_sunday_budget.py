@@ -11,6 +11,23 @@ from test_solver import fixture
 
 
 class SundayBudgetTests(unittest.TestCase):
+    def test_spacing_uses_only_usable_post_coverage_surplus(self):
+        names = ['COVERAGE', 'SUNDAY_COVERAGE', 'CLOSING_COVERAGE',
+                 'UNTIMED_ROTATION', 'SUNDAY_BALANCE', 'REST_SPACING', 'STABILITY']
+        reserve, setup = 0.8, 0.2
+        available = optimization._spacing_reserve_from_surplus
+        self.assertEqual(available(10.0, names, 0, reserve, setup), 0.0)
+        self.assertEqual(available(2.6, names, 1, reserve, setup), 0.0)
+        self.assertAlmostEqual(available(3.4, names, 1, reserve, setup), 0.6)
+        spacing = available(3.8, names, 1, reserve, setup)
+        self.assertAlmostEqual(spacing, 0.8)
+        for name in ('SUNDAY_COVERAGE', 'SUNDAY_BALANCE'):
+            self.assertEqual(optimization._refinement_reserve(name, names, reserve, spacing), reserve)
+        self.assertAlmostEqual(
+            optimization._future_refinement_reserve(names, 5, reserve, setup, spacing), 1.0)
+        self.assertGreaterEqual(
+            optimization._refinement_phase_budget(1.2, names, 5, reserve, setup, spacing), 1.0)
+
     def test_preparation_and_repeated_repairs_leave_both_net_sunday_reserves(self):
         model = cp_model.CpModel()
         names = ['COVERAGE', 'SUNDAY_COVERAGE', 'CLOSING_COVERAGE',

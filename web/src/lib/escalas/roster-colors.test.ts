@@ -27,7 +27,7 @@ describe("roster state palette", () => {
   });
 
   it("preserves state mapping and textual distinction without relying on color", () => {
-    for (const [code, index] of [["", 0], ["F", 1], ["ENC", 2], ["FE", 3], ["AF", 4], ["NP", 5], ["X", 6], ["FV", 6], ["08:00", 0]] as const) {
+    for (const [code, index] of [["", 0], ["F", 1], ["F*", 1], ["ENC", 2], ["FE", 3], ["FE*", 3], ["AF", 4], ["NP", 5], ["X", 6], ["FV", 6], ["08:00", 0]] as const) {
       expect(rosterStateIndex(code)).toBe(index);
       expect(rosterCellColors(code)).toEqual({ backgroundColor: ROSTER_STATE_COLORS[index], color: ROSTER_STATE_TEXT });
     }
@@ -35,7 +35,7 @@ describe("roster state palette", () => {
   });
 
   it("uses the exact shared RGB palette for PDF conversion", () => {
-    for (const code of ["F", "FE", "ENC", "AF", "NP", "X", "FV", ""]) {
+    for (const code of ["F", "F*", "FE", "FE*", "ENC", "AF", "NP", "X", "FV", ""]) {
       const rgb = rosterPdfColor(code);
       expect(rgb.map(value => Math.round(value * 255).toString(16).padStart(2, "0")).join("").toUpperCase()).toBe(rosterCellColors(code).backgroundColor.slice(1));
     }

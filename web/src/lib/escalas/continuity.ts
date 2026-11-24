@@ -120,7 +120,9 @@ export function preservePublishedDays(input: EscalaInput, published: EscalaInput
           }
           allowed.add(shiftId);
         }
-        assignments.set(key, { employeeId: person.id, date: item.date, kind: item.kind, ...(shiftId ? { shiftId } : {}), locked: true });
+        assignments.set(key, { employeeId: person.id, date: item.date, kind: item.kind, ...(shiftId ? { shiftId } : {}), locked: true,
+          ...(existing?.monthlyCarry ? { monthlyCarry: true } : {}),
+          ...(existing?.carriedHolidayRest ? { carriedHolidayRest: true } : {}) });
       }
     }
     if (allowed.size > 12) throw new EscalaError(422, "ESCALA_CONTINUITY_SHIFT_LIMIT", "Os dias já publicados excedem 12 horários por pessoa. Confira os períodos antes de gerar.");

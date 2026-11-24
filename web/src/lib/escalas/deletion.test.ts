@@ -3,6 +3,7 @@ import { deleteEscala } from "./service";
 
 const mocks = vi.hoisted(() => ({ row: vi.fn(), revisions: vi.fn(), peers: vi.fn(), deleteVersions: vi.fn(), deleteWorkspace: vi.fn(),
   audit: vi.fn(), transaction: vi.fn(), grants: vi.fn(), lock: vi.fn(), accountLock: vi.fn(), approvalOrigins: vi.fn(),
+  approvalRows: vi.fn(), activePolicy: vi.fn(), unlinkApprovals: vi.fn(), deleteApprovals: vi.fn(), solveOperation: vi.fn(),
   user: vi.fn(), policy: vi.fn(), importedTeam: vi.fn() }));
 const accessTables = vi.hoisted(() => ({
   escalaModuleAccessPolicy: { findUnique: mocks.policy },
@@ -34,8 +35,10 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(callback => callback({
     ...accessTables, $executeRaw: mocks.lock, $queryRaw: mocks.accountLock,
     escalaWorkspace: { findFirst: mocks.row, findMany: mocks.peers, deleteMany: mocks.deleteWorkspace },
-    escalaRevision: { findFirst: mocks.revisions, deleteMany: mocks.deleteVersions }, auditLog: { create: mocks.audit },
-    escalaBranchPolicyVersion: { count: mocks.approvalOrigins }, escalaImportedTeam: { findUnique: mocks.importedTeam },
+    escalaRevision: { findFirst: mocks.revisions, updateMany: mocks.unlinkApprovals, deleteMany: mocks.deleteVersions }, auditLog: { create: mocks.audit },
+    escalaBranchPolicyVersion: { count: mocks.approvalOrigins, findMany: mocks.approvalRows, findFirst: mocks.activePolicy, deleteMany: mocks.deleteApprovals },
+    escalaImportedTeam: { findUnique: mocks.importedTeam },
+    escalaSolveOperation: { findFirst: mocks.solveOperation },
   }));
 });
 describe("safe planning deletion", () => {
@@ -81,6 +84,41 @@ describe("safe planning deletion", () => {
     expect(mocks.approvalOrigins).toHaveBeenCalledWith({ where: { tenantId: actor.tenantId, originWorkspaceId: "w" } });
     expect(mocks.deleteVersions).not.toHaveBeenCalled();
     expect(mocks.deleteWorkspace).not.toHaveBeenCalled();
+  });
+  describe("replaced December drafts with revoked approvals", () => {
+    const legacy = { ...row, startDate: "2026-11-30", endDate: "2027-01-03" };
+    beforeEach(() => {
+      mocks.row.mockResolvedValueOnce(legacy).mockResolvedValueOnce(legacy);
+      mocks.row.mockResolvedValueOnce({ id: "current-december" });
+      mocks.approvalOrigins.mockResolvedValue(1);
+      mocks.approvalRows.mockResolvedValue([{ ...legacy, id: "revoked", revokedAt: new Date("2026-11-24") }]);
+      mocks.deleteApprovals.mockResolvedValue({ count: 1 });
+    });
+    it("removes only the revoked origin and its internal links before deleting the old revisions", async () => {
+      await expect(deleteEscala(actor, "w", 2)).resolves.toEqual({ deletedId: "w" });
+      expect(mocks.unlinkApprovals).toHaveBeenCalledExactlyOnceWith({
+        where: { tenantId: actor.tenantId, workspaceId: row.id, status: "DRAFT", approvedPolicyVersionId: { in: ["revoked"] } },
+        data: { approvedPolicyVersionId: null },
+      });
+      expect(mocks.deleteApprovals).toHaveBeenCalledExactlyOnceWith({
+        where: { tenantId: actor.tenantId, originWorkspaceId: row.id, id: { in: ["revoked"] }, revokedAt: { not: null } },
+      });
+      expect(mocks.deleteApprovals.mock.invocationCallOrder[0]).toBeLessThan(mocks.deleteVersions.mock.invocationCallOrder[0]);
+      expect(mocks.deleteWorkspace).toHaveBeenCalledExactlyOnceWith({ where: { tenantId: actor.tenantId, id: "w", revision: 2 } });
+      expect(mocks.audit).toHaveBeenCalledOnce();
+    });
+    it.each(["published", "active", "external", "busy", "team"])("keeps approval history with the %s protection", async (reason) => {
+      if (reason === "published") mocks.revisions.mockResolvedValueOnce({ revision: 1 });
+      if (reason === "active") mocks.activePolicy.mockResolvedValueOnce({ id: "active" });
+      if (reason === "external") mocks.revisions.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "external" });
+      if (reason === "busy") mocks.solveOperation.mockResolvedValueOnce({ id: "running" });
+      if (reason === "team") mocks.importedTeam.mockResolvedValueOnce({ sourceWorkspaceId: "w" });
+      await expect(deleteEscala(actor, "w", 2)).rejects.toMatchObject({ code: "ESCALA_DELETE_DEPENDENCY", status: 409 });
+      expect(mocks.unlinkApprovals).not.toHaveBeenCalled();
+      expect(mocks.deleteApprovals).not.toHaveBeenCalled();
+      expect(mocks.deleteVersions).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
   });
   it("checks revision again inside the transaction and aborts on a competing save", async () => {
     mocks.row.mockResolvedValueOnce(row).mockResolvedValueOnce({ ...row, revision: 3 });

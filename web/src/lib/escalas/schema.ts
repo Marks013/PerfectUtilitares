@@ -16,12 +16,19 @@ const days = z.array(z.number().int().min(0).max(6)).max(7).refine((value) => ne
 const assignment = z.strictObject({
   employeeId: identifier, date, kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE", "HOLIDAY"]),
   shiftId: identifier.optional(), locked: z.boolean().optional(), absenceSource: z.literal("MANUAL").optional(),
+  monthlyCarry: z.literal(true).optional(), carriedHolidayRest: z.literal(true).optional(),
 }).superRefine((value, context) => {
   if ((value.kind === "WORK") !== (value.shiftId !== undefined)) {
     context.addIssue({ code: "custom", path: ["shiftId"], message: "Somente trabalho deve ter um turno, e todo trabalho exige turno" });
   }
   if (value.absenceSource && value.kind !== "ABSENCE") {
     context.addIssue({ code: "custom", path: ["absenceSource"], message: "A origem manual exige afastamento" });
+  }
+  if (value.carriedHolidayRest && (value.kind !== "OFF" && value.kind !== "HOLIDAY" || !value.monthlyCarry)) {
+    context.addIssue({ code: "custom", path: ["carriedHolidayRest"], message: "A coincidência com feriado exige uma folga herdada" });
+  }
+  if (value.monthlyCarry && value.kind === "ABSENCE") {
+    context.addIssue({ code: "custom", path: ["monthlyCarry"], message: "Afastamentos não são herdados da escala anterior" });
   }
 });
 

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import styles from "./operational-access.module.css";
 import { buttonClass, controlClass, primaryClass } from "./controls";
 import type { EscalaClientAccess } from "@/lib/escalas/access-view";
+import { retryAfterInstruction } from "@/lib/api/retry-after";
 import { EscalaAccessProvider } from "./access-context";
 import { ESCALA_ACCESS_REQUEST_TIMEOUT_MS, startOperatorSession } from "./operational-client";
 import { EscalaRequestError } from "./workspace-feedback-model";
@@ -59,7 +60,7 @@ function usableContext(access: Access, context: unknown, expiresAt?: string): co
 function loginError(cause: unknown) {
   if (cause instanceof EscalaRequestError) {
     if (cause.status === 503) return "O serviço de acesso está indisponível agora. Tente novamente; nenhum novo acesso foi confirmado.";
-    if (cause.status === 429) return "Houve muitas tentativas. Aguarde um pouco antes de tentar novamente.";
+    if (cause.status === 429) return `Houve muitas tentativas. ${retryAfterInstruction(cause.retryAfterSeconds)}`;
     if (cause.status === 400) return "Informe um nome cadastrado válido e tente novamente.";
     if (cause.status === 401 || cause.status === 403) return "O acesso não foi liberado. Confira o nome cadastrado e a permissão com o administrador.";
   }

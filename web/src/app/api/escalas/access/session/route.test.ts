@@ -300,9 +300,11 @@ describe("username navigation session HTTP", () => {
   });
   it("enforces origin and rate limits before admission", async () => {
     expect((await POST(request({ username: "O" }, "https://foreign.test"))).status).toBe(403);
-    mocks.rate.mockResolvedValue(Response.json({}, { status: 429 }));
-    expect((await POST(request({ username: "O" }))).status).toBe(429);
-    expect(mocks.rate).toHaveBeenCalledWith(expect.any(Request), { keyPrefix: "escalas-access-unlock", limit: 5, windowMs: 900000 });
+    mocks.rate.mockResolvedValue(Response.json({}, { status: 429, headers: { "Retry-After": "73" } }));
+    const limited = await POST(request({ username: "O" }));
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("73");
+    expect(mocks.rate).toHaveBeenCalledWith(expect.any(Request), { keyPrefix: "escalas-access-unlock", limit: 5, windowMs: 300_000 });
     expect(mocks.create).not.toHaveBeenCalled();
   });
   it("denies missing admission and a revocation racing cookie delivery", async () => {

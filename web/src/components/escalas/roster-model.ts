@@ -2,6 +2,7 @@ import { isEscalaPlanningParticipant } from "@/lib/escalas/eligibility";
 import { sameDraft } from "./draft-persistence";
 import { buildCoveragePresence } from "@/lib/escalas/coverage-presence";
 import { addDays, isDate } from "@/lib/escalas/dates";
+import { holidayRestDates, manualHolidayRestMessage } from "@/lib/escalas/holiday-rest";
 import { manualShiftAt } from "@/lib/escalas/shift-catalog/manual-override";
 import type { EscalaAssignment, EscalaEmployee, EscalaInput, EscalaIssue } from "@/lib/escalas/types";
 import { validateEscala } from "@/lib/escalas/validation";
@@ -30,6 +31,7 @@ export function canEditBranchRosterDay(assignment: EscalaAssignment) {
 export function applyRosterChanges(input: EscalaInput, changes: EscalaAssignment[], canUnlock = false): EscalaInput {
   const assignments = new Map(input.assignments.map((day) => [key(day), day]));
   const employees = new Map(input.employees.map((person) => [person.id, person]));
+  const holidays = holidayRestDates(input);
   for (const next of changes) {
     const person = employees.get(next.employeeId);
     if (!person || !isEscalaPlanningParticipant(person)) throw new Error("Selecione um colaborador incluído no planejamento.");
@@ -38,6 +40,9 @@ export function applyRosterChanges(input: EscalaInput, changes: EscalaAssignment
       throw new Error("O dia precisa pertencer ao período de planejamento e ao vínculo do colaborador.");
     }
     const previous = assignments.get(key(next));
+    if (next.kind === "OFF" && previous?.kind !== "OFF" && holidays.has(next.date)) {
+      throw new Error(manualHolidayRestMessage);
+    }
     if (previous?.locked && (previous.kind !== next.kind || previous.shiftId !== next.shiftId
       || (!next.locked && !canUnlock))) {
       throw new Error("Esta decisão está bloqueada. Um aprovador precisa desbloqueá-la e salvar antes de alterar o dia.");

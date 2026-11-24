@@ -141,10 +141,10 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
         if (days.some(day => day.status === "PARTIAL")) paragraph("Dados com lacunas: horas totais não apuradas; os estados conhecidos foram preservados.");
       }
       if (section === "calendar") {
-        const calendarPeople = people.filter(person => person.employee.planningEnabled !== false);
         const weeks = model.calendar.weeks;
         const identityWidth = 220, totalsWidth = 102, totalWidth = totalsWidth / 3, cellSize = 7.4;
         const byEmployee = new Map(model.calendar.people.map(row => [row.employeeId, row]));
+        const calendarPeople = people.filter(person => byEmployee.has(person.employee.id));
         const largestCode = Math.max(0, ...model.calendar.people.flatMap(person => person.cells.map(cell => font.widthOfTextAtSize(clean(cell.code), cellSize))));
         const fullMonthFits = largestCode <= (available - identityWidth - totalsWidth) / model.dates.length - 2;
         const blocks = fullMonthFits ? [model.dates] : Array.from({ length: Math.ceil(weeks.length / 3) }, (_, i) =>
@@ -161,6 +161,9 @@ export async function exportOperationalReportPdf(model: OperationalReportModel):
           const header = () => {
             paragraph("FF = folga fixa configurada; FM = folga móvel; AF = afastamento (férias ou outro motivo não informado).", 8);
             paragraph("FE = feriado fechado; PL = plantão; SH = sem horário definido; P = dia pendente; FV = fora do vínculo; T01... = horários da escala.", 8);
+            if (calendarPeople.length < people.filter(person => person.employee.planningEnabled !== false).length) {
+              paragraph("Afastamentos sem retorno previsto não aparecem na grade de folgas; os totais do recorte foram mantidos.", 8);
+            }
             const includedDates = new Set(dates);
             const weekStarts = weeks.filter(week => week.dates.some(date => includedDates.has(date))).map(week => civilDate(week.start).slice(0, 5));
             paragraph(`Semanas iniciadas em ${weekStarts.join(", ")} | Domingos destacados no cabeçalho | Totais do mês no recorte`, 8);

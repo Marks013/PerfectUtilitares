@@ -3,6 +3,7 @@ import { Camera, Clock3, KeyRound, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { auth } from "@/auth";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
+import { parseRetryAfterSeconds, retryAfterInstruction } from "@/lib/api/retry-after";
 import { loginAction } from "./actions";
 
 export const metadata = {
@@ -13,7 +14,7 @@ export const metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ callbackUrl?: string; error?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; error?: string; code?: string }>;
 }) {
   const session = await auth();
   if (session?.user.status === "ACTIVE") {
@@ -36,7 +37,12 @@ export default async function LoginPage({
     credentials:
       "E-mail ou senha não conferem. Revise os dados ou use a recuperação de senha.",
   };
-  const errorMessage = params.error
+  const retrySeconds = params.error === "CredentialsSignin" && typeof params.code === "string" && params.code.startsWith("rate-")
+    ? parseRetryAfterSeconds(params.code.slice(5))
+    : undefined;
+  const errorMessage = retrySeconds !== undefined
+    ? `Muitas tentativas de acesso. ${retryAfterInstruction(retrySeconds)}`
+    : params.error
     ? errorMessageByCode[params.error] ?? errorMessageByCode.credentials
     : null;
 

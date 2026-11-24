@@ -1,6 +1,6 @@
 "use server";
 
-import { AuthError } from "next-auth";
+import { AuthError, CredentialsSignin } from "next-auth";
 import { redirect } from "next/navigation";
 import { signIn, signOut } from "@/auth";
 import { normalizeEmail } from "@/lib/auth/email";
@@ -12,8 +12,9 @@ function getSafeCallbackUrl(value: FormDataEntryValue | null) {
     : "/dashboard";
 }
 
-function loginErrorUrl(code: string, callbackUrl: string) {
-  const params = new URLSearchParams({ error: code });
+function loginErrorUrl(error: string, callbackUrl: string, code?: string) {
+  const params = new URLSearchParams({ error });
+  if (code) params.set("code", code);
   if (callbackUrl !== "/dashboard") {
     params.set("callbackUrl", callbackUrl);
   }
@@ -45,6 +46,9 @@ export async function loginAction(formData: FormData) {
     });
     redirect(callbackUrl);
   } catch (error) {
+    if (error instanceof CredentialsSignin && error.code.startsWith("rate-")) {
+      redirect(loginErrorUrl("CredentialsSignin", callbackUrl, error.code));
+    }
     if (error instanceof AuthError) {
       redirect(loginErrorUrl("credentials", callbackUrl));
     }

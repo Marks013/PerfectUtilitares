@@ -1,5 +1,6 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { EscalaAbsenceCommand } from "./access-contracts";
+import { canonicalBranchCode } from "./branch-code";
 import { visibleDates } from "./dates";
 import { EscalaError } from "./errors";
 import { parseWorkforceDraftState, readWorkforceForDraft } from "./global-workforce-draft";
@@ -11,6 +12,34 @@ const outdated = () => new EscalaError(409, "ESCALA_WORKFORCE_SYNC_REQUIRED", "A
 
 export function checkWorkforceReady(workspace: Pick<EscalaWorkspace, "workforce">) {
   if (workspace.workforce?.needsSync) throw outdated();
+}
+
+/** Only local employees with an actual visible absence in the confirmed branch. */
+export function openEndedAbsenceEmployeeIds(input: EscalaInput, snapshot: EscalaWorkforceSnapshot): string[] {
+  const branch = canonicalBranchCode(input.branchCode);
+  const official = new Map(snapshot.people.filter(person => person.branchCode === branch && person.listed !== false)
+    .map(person => [person.employee.registration, person]));
+  const openStarts = new Map<string, string>();
+  for (const event of snapshot.absences) {
+    if (event.endDate !== null || !official.has(event.registration)) continue;
+    const start = openStarts.get(event.registration);
+    if (!start || event.startDate < start) openStarts.set(event.registration, event.startDate);
+  }
+  if (!openStarts.size) return [];
+  const visible = new Set(visibleDates(input));
+  const people = new Map(input.employees.map(person => [person.id, person]));
+  const hidden = new Set<string>();
+  for (const day of input.assignments) {
+    if (day.kind !== "ABSENCE" || !visible.has(day.date) || hidden.has(day.employeeId)) continue;
+    const person = people.get(day.employeeId);
+    if (!person || day.date < person.activeFrom || (person.activeUntil && day.date > person.activeUntil)) continue;
+    const start = openStarts.get(person.registration);
+    const source = official.get(person.registration);
+    if (!start || day.date < start || !source || day.date < source.employee.activeFrom
+      || (source.dismissedFrom && day.date >= source.dismissedFrom)) continue;
+    hidden.add(day.employeeId);
+  }
+  return [...hidden].sort();
 }
 
 function removableLegacyDays(input: EscalaInput, state: NonNullable<ReturnType<typeof parseWorkforceDraftState>>,
@@ -25,12 +54,14 @@ function removableLegacyDays(input: EscalaInput, state: NonNullable<ReturnType<t
     && !absenceDates.get(registrations.get(day.employeeId) ?? "")?.has(day.date)).map(day => [day.employeeId, day.date]);
 }
 
-export async function workforceDraftInfo(tx: Prisma.TransactionClient, tenantId: string, input: EscalaInput, stored: unknown) {
+export async function workforceDraftInfo(tx: Prisma.TransactionClient, tenantId: string, input: EscalaInput, stored: unknown): Promise<EscalaWorkspace["workforce"]> {
   const base = await readWorkforceForDraft(tx, tenantId, input.branchCode);
   if (!base) return undefined;
   const state = parseWorkforceDraftState(stored);
-  return state?.baseRevision !== base.revision ? { needsSync: true }
-    : { needsSync: false, legacyAbsenceDays: removableLegacyDays(input, state, base.snapshot) };
+  if (state?.baseRevision !== base.revision) return { needsSync: true };
+  const hidden = openEndedAbsenceEmployeeIds(input, base.snapshot);
+  return { needsSync: false, legacyAbsenceDays: removableLegacyDays(input, state, base.snapshot),
+    ...(hidden.length ? { openEndedAbsenceEmployeeIds: hidden } : {}) };
 }
 
 export function carryWorkforceState(input: EscalaInput, stored: unknown) {

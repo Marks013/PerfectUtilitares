@@ -1,6 +1,7 @@
 import { absoluteMinute, addDays as importDate, dateRange, dayOfWeek, visibleDates, weekStart } from "./dates";
 import { keepsPriorityLeader } from "./movement";
 import { keepsSaturdayBalance } from "./saturday-balance";
+import { polishEqualClockRestPairs } from "./paired-rest-polish";
 import { regularRestQuality } from "./rest-spacing";
 import { exchangeRestImprovement, exchangeRestRepair } from "./rest-exchange";
 import { repairUntimedRests } from "./untimed-rest-repair";
@@ -29,6 +30,16 @@ export function refineRoster(input: EscalaInput, budgetMs?: number): EscalaInput
   let best = input;
   let validation = validateEscala(input);
   const repairing = validation.issues.some(issue => repairableRestIssue(issue.code));
+  // A successful pass can open a new safe exchange. Keep one shared deadline
+  // and preserve service minute-for-minute, while leaving time for normal repair.
+  const exactDeadline = deadline - Math.min(350, allotted / 2);
+  for (let pass = 0; pass < 3 && performance.now() < exactDeadline; pass++) {
+    const spaced = polishEqualClockRestPairs(proposal, validation, exactDeadline);
+    if (spaced === proposal) break;
+    proposal = spaced;
+    best = spaced;
+    validation = validateEscala(spaced);
+  }
   for (let pass = 0; pass < 32 && state.checked < 32 && performance.now() < deadline - 160; pass++) {
     // Offer a safe joint exchange before independent improvements consume every check.
     let next = validation.valid ? exchangeRestImprovement(proposal, validation, deadline - 120, state) : proposal;

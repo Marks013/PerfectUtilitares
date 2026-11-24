@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import NextAuth, { type DefaultSession } from "next-auth";
+import NextAuth, { CredentialsSignin, type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { z } from "zod";
@@ -54,6 +54,15 @@ const credentialsSchema = z.object({
 // Valid cost-12 hash for equivalent bcrypt work when no active account exists.
 // This value is not an account credential and is never accepted for login.
 const DUMMY_PASSWORD_HASH = "$2b$12$9.Gr/l7nnkQ8zLyDDU7.8OdefMiA02tk3ugaiDv29H0aZalB/HVgm";
+const LOGIN_ATTEMPT_WINDOW_MS = 5 * 60_000;
+
+class LoginRateLimit extends CredentialsSignin {
+  constructor(seconds: number) {
+    super();
+    // Auth.js may forward the code in a URL. It contains only a duration.
+    this.code = `rate-${seconds}`;
+  }
+}
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: siteSessionSecret,
@@ -80,16 +89,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // Both the form action and direct Auth.js callback enter this boundary.
         const limits = await Promise.all([
           checkSharedRateLimit(getHashedRateLimitKey("login", `${clientIp}\0${email}`), {
-            limit: 8, windowMs: 15 * 60_000,
+            limit: 8, windowMs: LOGIN_ATTEMPT_WINDOW_MS,
           }),
           checkSharedRateLimit(getHashedRateLimitKey("login-ip", clientIp), {
-            limit: 80, windowMs: 15 * 60_000,
+            limit: 80, windowMs: LOGIN_ATTEMPT_WINDOW_MS,
           }),
           checkSharedRateLimit(getHashedRateLimitKey("login-account", email), {
-            limit: 12, windowMs: 15 * 60_000,
+            limit: 12, windowMs: LOGIN_ATTEMPT_WINDOW_MS,
           }),
         ]);
-        if (limits.some((limit) => limit.limited)) return null;
+        const blocked = limits.filter((limit) => limit.limited);
+        if (blocked.length) {
+          const resetAt = Math.max(...blocked.map((limit) => limit.resetAt));
+          const seconds = Number.isFinite(resetAt)
+            ? Math.max(1, Math.ceil((resetAt - Date.now()) / 1_000))
+            : LOGIN_ATTEMPT_WINDOW_MS / 1_000;
+          throw new LoginRateLimit(seconds);
+        }
 
         const user = await prisma.user.findUnique({
           where: { email },

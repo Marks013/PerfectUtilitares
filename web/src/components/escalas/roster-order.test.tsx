@@ -114,6 +114,18 @@ describe("monthly roster presentation order", () => {
     expect(input).toEqual(before);
   });
 
+  it("marks the inherited rest on a closed holiday without making the day editable", () => {
+    const input = fixture();
+    input.assignments = input.assignments.map(assignment => assignment.employeeId === "4" && assignment.date === "2026-12-25"
+      ? { ...assignment, carriedHolidayRest: true as const } : assignment);
+    const { html, monthly } = render(input, "both");
+    expect(monthly).toContain('<span aria-hidden="true">FE*</span>');
+    expect(monthly).toContain('<span aria-hidden="true">FE</span>');
+    expect(monthly).toMatch(/<span class="sr-only">Bia Manhã, [^<]+: Feriado — loja fechada; coincide com folga mensal herdada<\/span>/);
+    expect(monthly).not.toContain('data-kind="HOLIDAY"');
+    expect(html).toContain("* na célula: feriado que coincide com folga mensal herdada");
+  });
+
   it("keeps combined sector and case-insensitive name/role/registration filtering on the same eligible population", () => {
     const input = fixture(), before = structuredClone(input);
     state.sector = "Açougue"; state.filter = "OPERADOR";

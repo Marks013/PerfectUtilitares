@@ -30,6 +30,21 @@ function fixture() {
 }
 
 describe("ajustes antigos com base global ativa", () => {
+  it("omite só a apresentação da folga de afastamento aberto na data projetada e atual", async () => {
+    const { tx, input, state, base } = fixture();
+    base.snapshot.absences[0].endDate = null;
+    const original = structuredClone(input);
+    await expect(workforceDraftInfo(tx, "empresa", input, state)).resolves.toMatchObject({
+      needsSync: false, openEndedAbsenceEmployeeIds: [person.id],
+    });
+    expect(input).toEqual(original);
+    await expect(workforceDraftInfo(tx, "empresa", input, { ...state, baseRevision: 1 })).resolves.toEqual({ needsSync: true });
+    expect(await workforceDraftInfo(tx, "empresa", { ...input, assignments: [] }, state)).not.toHaveProperty("openEndedAbsenceEmployeeIds");
+    expect(await workforceDraftInfo(tx, "empresa", { ...input, branchCode: "06" }, state)).not.toHaveProperty("openEndedAbsenceEmployeeIds");
+    base.snapshot.absences[0].startDate = "2026-12-07";
+    expect(await workforceDraftInfo(tx, "empresa", input, state)).not.toHaveProperty("openEndedAbsenceEmployeeIds");
+  });
+
   it("permite corrigir só o dia manual fora da base após o retorno, sem remover a base ou desbloquear dias", async () => {
     const { tx, input, state, draft, base } = fixture();
     await expect(workforceDraftInfo(tx, "empresa", input, state)).resolves.toEqual({

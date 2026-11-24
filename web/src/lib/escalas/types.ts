@@ -8,6 +8,8 @@ export type EscalaAssignment = {
   shiftId?: string;
   locked?: boolean;
   absenceSource?: "MANUAL";
+  monthlyCarry?: true;
+  carriedHolidayRest?: true;
 };
 export type EscalaShift = {
   id: string;
@@ -266,5 +268,10 @@ export type EscalaWorkspace = {
   canEdit: boolean;
   canPublish: boolean;
   updatedAt: string;
-  workforce?: { needsSync: boolean; legacyAbsenceDays?: [employeeId: string, date: string][] };
+  workforce?: {
+    needsSync: boolean;
+    legacyAbsenceDays?: [employeeId: string, date: string][];
+    /** Presentation only. Published revisions use the snapshot saved at publication. */
+    openEndedAbsenceEmployeeIds?: string[];
+  };
 };

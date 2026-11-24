@@ -43,6 +43,7 @@ export type EscalaAbsenceCommand = {
 };
 export type EscalaOperationalCommand =
   | { action: "CREATE_APPROVED"; approvedPolicyVersionId: string }
+  | { action: "CREATE_MONTH"; branchCode: string; month: string }
   | ({ action: "APPLY_PROPOSAL"; input: EscalaInput; proposalProof: string } & EscalaVersionTarget)
   | ({ action: "ADD_EMPLOYEE"; regimeModelId: string; name: string; registration: string } & EscalaVersionTarget)
   | ({ action: "REMOVE_EMPLOYEE"; employeeId: string } & EscalaVersionTarget)

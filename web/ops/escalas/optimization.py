@@ -4,6 +4,8 @@ import re
 from types import MappingProxyType
 from control import SolveCancelled, SolveTimedOut
 from dataclasses import dataclass
+from datetime import date, timedelta
+from typing import NamedTuple
 from ortools.sat.python import cp_model
 from runtime_settings import (COVERAGE_BUDGET_SHARE, LARGE_MODEL_VARIABLES, MOVABLE_PEOPLE_LIMIT,
                               POLISH_PEOPLE_LIMIT, RANDOM_SEED, SearchSettings)
@@ -254,30 +256,32 @@ def _phase_budget(remaining, names, index):
     return MIN_PHASE_BUDGET + surplus * weights[0] / sum(weights)
 
 
-def _reserved_refinement_names(names):
+def _reserved_refinement_names(names, spacing=0.0):
     # Both Sunday searches need their own net time. Spacing retains the former
     # fallback when this model has no Sunday objective at all.
     sunday = {'SUNDAY_COVERAGE', 'SUNDAY_PEAK', 'SUNDAY_BALANCE'} & set(names)
-    return sunday or {'REST_SPACING'}
+    return sunday | {'REST_SPACING'} if spacing > 0 else sunday or {'REST_SPACING'}
 
 
-def _refinement_reserve(name, names, reserve):
+def _refinement_reserve(name, names, reserve, spacing=0.0):
     # Total coverage and its peak refinement share the former coverage reserve.
     # Sunday fairness keeps its own existing net allocation. Setup is charged
     # separately for each actual phase, inside the same absolute deadline.
     coverage = {'SUNDAY_COVERAGE', 'SUNDAY_PEAK'} & set(names)
+    if name == 'REST_SPACING' and spacing > 0:
+        return spacing
     return reserve / len(coverage) if name in coverage else reserve
 
 
-def _future_refinement_reserve(names, index, reserve, preparation):
-    pending = set(names[index:]) & _reserved_refinement_names(names)
-    return sum(_refinement_reserve(name, names, reserve) + preparation
+def _future_refinement_reserve(names, index, reserve, preparation, spacing=0.0):
+    pending = set(names[index:]) & _reserved_refinement_names(names, spacing)
+    return sum(_refinement_reserve(name, names, reserve, spacing) + preparation
                for name in pending) if reserve > 0 else 0.0
 
 
 def _refinement_phase_budget(remaining, names, index, reserve,
-                             preparation=MIN_PHASE_BUDGET):
-    """Allocate net Sunday search plus charged setup inside the same deadline.
+                             preparation=MIN_PHASE_BUDGET, spacing=0.0):
+    """Allocate net refinement search plus charged setup inside the same deadline.
 
     The existing reserve is per Sunday objective, not a gross share consumed by
     cloning. Earlier phases, including coverage retries, leave both allocations.
@@ -287,10 +291,24 @@ def _refinement_phase_budget(remaining, names, index, reserve,
     budget = _phase_budget(remaining, names, index)
     if reserve <= 0:
         return budget
-    future = _future_refinement_reserve(names, index + 1, reserve, preparation)
-    if names[index] in _reserved_refinement_names(names):
-        budget = max(budget, _refinement_reserve(names[index], names, reserve) + preparation)
+    future = _future_refinement_reserve(names, index + 1, reserve, preparation, spacing)
+    if names[index] in _reserved_refinement_names(names, spacing):
+        budget = max(budget, _refinement_reserve(names[index], names, reserve, spacing) + preparation)
     return min(budget, max(0.0, remaining - future))
+
+
+def _spacing_reserve_from_surplus(remaining, names, index, reserve, preparation):
+    """Fund spacing after coverage without borrowing Sunday's or another phase's floor."""
+    if reserve <= 0 or names[index] == 'COVERAGE' or 'REST_SPACING' not in names[index:]:
+        return 0.0
+    reserved = _reserved_refinement_names(names)
+    if 'REST_SPACING' in reserved:
+        return 0.0  # Already reserved when the model has no Sunday objectives.
+    before = set(names[index:names.index('REST_SPACING', index)]) - reserved
+    sunday = _future_refinement_reserve(names, index, reserve, preparation)
+    surplus = remaining - sunday - len(before) * (preparation + MIN_SEARCH_SECONDS) - preparation
+    spacing = min(reserve, surplus)
+    return spacing if spacing >= MIN_SEARCH_SECONDS else 0.0
 
 
 def _global_coverage_reserve(context, preparation):
@@ -302,6 +320,157 @@ def _global_coverage_reserve(context, preparation):
     search = max(MIN_SEARCH_SECONDS, context.refinement_reserve_seconds)
     hint = MAX_COVERAGE_HINT_SECONDS if context.coverage_hint_builder else 0.0
     return preparation + hint + search
+
+
+class RestPresenceCell(NamedTuple):
+    variable: cp_model.IntVar
+    weight: int
+    staffed_before: bool
+    role: str | None
+    date: str
+
+
+def improve_sector_presence(model, goals, people, values, deadline, context, unstaffed):
+    """Restore whole sectors, then roles, without making pairs a minimum."""
+    cells = [cell for sector in unstaffed.values() for cell in sector]
+    sector_cells = [cell for cell in cells if cell.role is None]
+    role_cells = [cell for cell in cells if cell.role is not None]
+    closed_sectors = sum(cell.variable for cell in sector_cells)
+    closed_roles = sum(cell.variable for cell in role_cells)
+    impact = sum(cell.variable * cell.weight for cell in cells)
+    pairs = sum(term for terms in people.values() for term in terms)
+    missing = (len(role_cells) + 1) * closed_sectors + closed_roles
+    initial = Snapshot(values)
+    if initial.value(missing) == 0 or deadline - time.monotonic() < MIN_PHASE_BUDGET:
+        return values, []
+
+    # Actual service and declared minima already constrain the model. Estimated
+    # Sunday and closing shortfalls are guidance, not a veto on variable rest.
+    keep = {"SUNDAY_BALANCE", "LEADERSHIP", "SATURDAY_BALANCE"}
+    hard = model.clone()
+    for name, objective in goals:
+        if name in keep:
+            hard.add(objective <= initial.value(objective))
+    staffed_cells = {cell.variable.index: cell.variable for cell in cells if cell.staffed_before}
+    for variable in staffed_cells.values():
+        hard.add(variable == 0)
+    pair_weight = 1 + sum(len(terms) for terms in people.values())
+    impact_weight = 1 + sum(cell.weight for cell in cells)
+    objective = pair_weight * (impact_weight * missing + impact) + pairs
+    phases = []
+
+    def search(incumbent, seconds, *, focused=(), movers=None, days=None,
+               require_sector_gain=False, request_no_role_gaps=False, exact_presence=False):
+        if context.control is not None:
+            context.control.checkpoint()
+        before_values = Snapshot(incumbent)
+        baseline = before_values.value(missing)
+        if not baseline or deadline - time.monotonic() < MIN_PHASE_BUDGET:
+            return incumbent
+        candidate = hard.clone()
+        for variable in {cell.variable.index: cell.variable for cell in cells
+                         if not cell.staffed_before}.values():
+            if not before_values.value(variable):
+                candidate.add(variable == 0)  # Do not undo another optional phase's recovery.
+        candidate.add(missing <= baseline - 1)
+        if require_sector_gain:
+            candidate.add(closed_sectors <= before_values.value(closed_sectors) - 1)
+        if request_no_role_gaps:
+            candidate.add(closed_roles == 0)  # Only this optional attempt.
+        if exact_presence:
+            candidate.add(missing == 0)  # Do not impose this aspiration on the main model.
+        if focused:
+            gap = sum(cell.variable for cell in focused)
+            candidate.add(gap <= before_values.value(gap) - 1)
+        if movers is not None:
+            for index, (person, day) in (context.decision_variables or {}).items():
+                if person not in movers or days is not None and day not in days:
+                    domain = candidate.proto.variables[index].domain
+                    domain.clear()
+                    domain.extend([incumbent[index], incumbent[index]])
+        if not exact_presence:
+            candidate.minimize(objective)
+        _replace_hints(candidate, incumbent)
+        before = time.monotonic()
+        budget = min(seconds, deadline - before)
+        if budget < MIN_SEARCH_SECONDS:
+            return incumbent
+        engine = cp_model.CpSolver()
+        engine.parameters.max_time_in_seconds = budget
+        engine.parameters.num_workers = 1
+        engine.parameters.linearization_level = 0
+        engine.parameters.stop_after_first_solution = exact_presence
+        status = engine.solve(candidate) if context.control is None else context.control.solve(engine, candidate)
+        phase = {"objective": "REST_DISTRIBUTION", "status": engine.status_name(status),
+                 "wallTimeSeconds": round(time.monotonic() - before, 3), "budgetSeconds": round(budget, 3),
+                 "initialValue": baseline, "incumbentValue": baseline,
+                 "searchScope": "GLOBAL" if movers is None else "SELECTED_PEOPLE"}
+        if movers is not None:
+            phase["movablePeople"] = len(movers)
+        phases.append(phase)
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) and engine.value(missing) < baseline:
+            phase["incumbentValue"] = engine.value(missing)
+            return {index: engine.value(candidate.get_int_var_from_proto_index(index)) for index in incumbent}
+        return incumbent
+
+    # First offer a useful, small neighborhood before the global model consumes
+    # the remaining budget if a complete joint recovery was not found.
+    exact_seconds = min(7.0, deadline - time.monotonic() - 7.0)
+    if exact_seconds >= MIN_PHASE_BUDGET:
+        values = search(values, exact_seconds, exact_presence=True)
+        if Snapshot(values).value(missing) == 0:
+            return values, phases
+    exact_disproved = bool(phases and phases[0]["status"] == "INFEASIBLE")
+    groups = context.rest_spacing_groups or {}
+    pending = dict(groups)
+    local_limit = min(len(pending), 2)
+    for attempt in range(local_limit):
+        pressure = Snapshot(values)
+        local_seconds = min(5.0, (deadline - time.monotonic() - 5.0) / (local_limit - attempt))
+        if not pressure.value(closed_sectors) or local_seconds < MIN_PHASE_BUDGET:
+            break
+
+        def rank(sector):
+            selected = unstaffed.get(sector, ())
+            return (pressure.value(sum(cell.variable for cell in selected if cell.role is None)),
+                    pressure.value(sum(cell.variable * cell.weight for cell in selected)))
+
+        sector = max(sorted(pending), key=rank)
+        if rank(sector)[0] == 0:
+            break
+        focused = [cell for cell in unstaffed[sector] if cell.role is None]
+        values = search(values, local_seconds, focused=focused, movers=set(pending.pop(sector)),
+                        require_sector_gain=True)
+    if Snapshot(values).value(closed_sectors):
+        values = search(values, 12.0, require_sector_gain=True)
+    if not exact_disproved and Snapshot(values).value(closed_roles) and deadline - time.monotonic() >= 4.0:
+        values = search(values, 2.0, request_no_role_gaps=True)
+
+    remaining_roles = {}
+    for sector, selected in unstaffed.items():
+        if sector in groups:
+            for cell in selected:
+                if cell.role is not None:
+                    remaining_roles.setdefault((sector, cell.role), []).append(cell)
+    for _ in range(min(8, len(remaining_roles))):
+        pressure = Snapshot(values)
+        if not pressure.value(closed_roles) or deadline - time.monotonic() < MIN_PHASE_BUDGET:
+            break
+        key = max(sorted(remaining_roles), key=lambda item: (
+            pressure.value(sum(cell.variable for cell in remaining_roles[item])),
+            pressure.value(sum(cell.variable * cell.weight for cell in remaining_roles[item]))))
+        focused = [cell for cell in remaining_roles.pop(key) if pressure.value(cell.variable)]
+        if not focused:
+            break
+        days = set()
+        for cell in focused:
+            civil = date.fromisoformat(cell.date)
+            week = civil - timedelta(days=(civil.weekday() + 1) % 7)
+            # Allow the same Sunday-start week and its boundary days. All
+            # partners in the sector can compensate for transfers of service.
+            days.update((week + timedelta(days=offset)).isoformat() for offset in range(-1, 8))
+        values = search(values, 1.5, focused=focused, movers=set(groups[key[0]]), days=days)
+    return values, phases
 
 
 def improve(model, objectives, values, deadline, names=None, *, context=None):
@@ -459,9 +628,9 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                            'wallTimeSeconds': 0, 'budgetSeconds': 0, 'initialValue': incumbent,
                            'incumbentValue': incumbent, 'bestBound': lower, 'searchScope': 'GLOBAL'})
             continue
-        budget = _refinement_phase_budget(remaining, names, index,
-                                          context.refinement_reserve_seconds,
-                                          preparation_allowance)
+        reserve = context.refinement_reserve_seconds
+        spacing = _spacing_reserve_from_surplus(remaining, names, index, reserve, preparation_allowance)
+        budget = _refinement_phase_budget(remaining, names, index, reserve, preparation_allowance, spacing)
         if repair_phase:
             # Local repairs share only the remainder AFTER a global consumer's
             # setup, hint and net search have been reserved in this same cutoff.
@@ -597,20 +766,24 @@ def improve(model, objectives, values, deadline, names=None, *, context=None):
                     hint_status = 'FAILED'
         # Charge all preparation, including guard registration and cloning.
         # Recheck the absolute deadline AFTER setup. Earlier phases cannot spend
-        # a later Sunday's net search reserve through either setup or solving.
+        # a later refinement's net search reserve through setup or solving.
         prepared = time.monotonic()
         preparation_seconds = prepared - preparation_started
         preparation_allowance = max(preparation_allowance, preparation_seconds)
         admission_preparation = max(admission_preparation, preparation_seconds)
-        future_reserve = _future_refinement_reserve(
-            names, index + 1, context.refinement_reserve_seconds, preparation_allowance)
-        available = max(0.0, deadline - prepared - MIN_SEARCH_SECONDS - future_reserve)
+        remaining = deadline - prepared - MIN_SEARCH_SECONDS
+        if spacing:
+            # Current setup is already paid. Drop optional spacing first if a
+            # more expensive clone or guard setup consumed the usable surplus.
+            spacing = min(spacing, _spacing_reserve_from_surplus(
+                remaining + preparation_allowance, names, index, reserve, preparation_allowance))
+        future_reserve = _future_refinement_reserve(names, index + 1, reserve, preparation_allowance, spacing)
+        available = max(0.0, remaining - future_reserve)
         budget -= preparation_seconds
-        if (context.refinement_reserve_seconds > 0
-                and name in _reserved_refinement_names(names)):
+        if reserve > 0 and name in _reserved_refinement_names(names, spacing):
             # Recover the setup cost from unspent shared time, never by extending
-            # the deadline or taking the next Sunday's reserved allocation.
-            budget = max(budget, _refinement_reserve(name, names, context.refinement_reserve_seconds))
+            # the deadline or taking the next phase's reserved allocation.
+            budget = max(budget, _refinement_reserve(name, names, reserve, spacing))
         budget = min(budget, available)
         if budget < MIN_SEARCH_SECONDS:
             if name == 'COVERAGE' and phase_index == 0:
