@@ -41,7 +41,7 @@ As coordenadas de todas as extensões acima são oficiais; versões de módulos 
 - OptaPlanner e OR-Tools dentro do serviço Java, bibliotecas genéticas ou plugins CP-SAT: não duplicar o motor que está sendo substituído.
 - Lombok, MapStruct e frameworks de mapping: iniciar com records DTOs Java e mapeadores pequenos e explícitos; reavaliar só se o custo manual justificar.
 - Biblioteca extra de cálculo de datas: java.time já trata datas, ZoneId America/Sao_Paulo e instantes; testar DST com casos fixos. Não usar Joda-Time.
-- Async Profiler, custom move selector, Nearby Selection ou score calculators manuais na primeira versão: só após profile e prova de ganho em caso real/sintético.
+- Não instalar profiler adicional, custom move selector, Nearby Selection ou score calculators manuais na primeira versão. Na documentação oficial 2.8, Constraint Profiling, Score Analysis avançada e Nearby Selection aparecem entre recursos comerciais/Enterprise; não planejar seu uso na Community sem confirmação de disponibilidade/licença. Apenas adicionar algo após prova de ganho no benchmark sintético.
 - Agentes de logs que exportem stack trace com nomes ou payloads; nunca publicar dataset ou recibos assinados.
 
 ## Configuração Timefold inicial (conceitual, não aplicar no app atual)
@@ -128,6 +128,8 @@ Fontes:
 - https://maven.apache.org/enforcer/enforcer-rules/requireJavaVersion.html
 - https://maven.apache.org/enforcer/enforcer-rules/dependencyConvergence.html
 - https://cyclonedx.github.io/cyclonedx-maven-plugin/
+
+Auditoria do uso das métricas atuais: [PROTOCOLO-PARIDADE-ORTOOLS-TIMEFOLD-2026-11-25.md](PROTOCOLO-PARIDADE-ORTOOLS-TIMEFOLD-2026-11-25.md). A métrica de desfalque estimado não substitui a avaliação de cobertura confirmada/protegida; todos os resultados Timefold serão validados pelo código TypeScript original.
 
 ## Referências oficiais verificadas
 
