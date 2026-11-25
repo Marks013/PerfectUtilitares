@@ -45,8 +45,22 @@ public class Roster {
         this.windows = List.copyOf(windows);
         this.bands = List.copyOf(bands);
     }
-    public List<Day> days() { return days; }
-    public List<Window> windows() { return windows; }
-    public List<Band> bands() { return bands; }
-    public HardMediumSoftScore score() { return score; }
+    // Public JavaBean accessors for every private planning-annotated field.
+    // Collections of facts remain immutable; only planning entities and
+    // the score are mutable during the solve.
+    public List<Day.State> getStates() { return states; }
+    public void setStates(List<Day.State> states) { this.states = List.copyOf(states); }
+    public List<Window> getWindows() { return windows; }
+    public void setWindows(List<Window> windows) { this.windows = List.copyOf(windows); }
+    public List<Band> getBands() { return bands; }
+    public void setBands(List<Band> bands) { this.bands = List.copyOf(bands); }
+    public List<Day> getDays() { return days; }
+    public void setDays(List<Day> days) { this.days = days; }
+    public HardMediumSoftScore getScore() { return score; }
+    public void setScore(HardMediumSoftScore score) { this.score = score; }
+
+    public List<Day> days() { return getDays(); }
+    public List<Window> windows() { return getWindows(); }
+    public List<Band> bands() { return getBands(); }
+    public HardMediumSoftScore score() { return getScore(); }
 }

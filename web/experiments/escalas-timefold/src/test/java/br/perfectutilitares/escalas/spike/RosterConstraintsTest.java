@@ -82,5 +82,21 @@ class RosterConstraintsTest {
         assertTrue(result.days().stream().allMatch(day -> day.state() != null));
         assertEquals(Day.State.OFF, result.days().stream().filter(day -> day.index() == 0).findFirst().orElseThrow().state());
         assertEquals(Day.State.WORK, result.days().stream().filter(day -> day.index() == 6).findFirst().orElseThrow().state());
+        assertEquals(windows, result.windows());
+        assertEquals(bands, result.bands());
+        assertEquals(List.of(Day.State.WORK, Day.State.OFF), result.getStates());
+        for (Day solved : result.days()) {
+            Day original = cells.get(solved.index());
+            assertEquals(original.id(), solved.id());
+            assertEquals(original.person(), solved.person());
+            assertEquals(original.date(), solved.date());
+            assertEquals(original.shift(), solved.shift());
+            assertEquals(original.sector(), solved.sector());
+            assertEquals(original.role(), solved.role());
+            assertEquals(original.isPinned(), solved.isPinned());
+            assertEquals(original.originalLocked(), solved.originalLocked());
+            assertEquals(original.saved(), solved.saved());
+            assertEquals(original.getWorkSegments(), solved.getWorkSegments());
+        }
     }
 }
