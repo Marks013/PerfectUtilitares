@@ -19,7 +19,6 @@ import { getRequestContentLength } from "@/lib/system/resource-capacity";
 export const runtime = "nodejs";
 
 const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
-const MAX_MULTIPART_BYTES = MAX_IMPORT_BYTES + 64 * 1024;
 const ACCEPTED_IMPORT_EXTENSIONS = [".xlsx", ".csv", ".json"] as const;
 
 type ImportInput =
@@ -33,7 +32,7 @@ async function readImportInput(request: Request, isJson: boolean): Promise<Impor
     return { ok: true, parse: async () => parseCodigoJson(body.data) };
   }
 
-  const body = await readMultipartBody(request, MAX_MULTIPART_BYTES);
+  const body = await readMultipartBody(request, MAX_IMPORT_BYTES);
   if (!body.ok) return body;
   const file = body.data.get("file");
 
@@ -91,12 +90,11 @@ export async function POST(request: Request) {
 
     const mediaType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
     const isJson = mediaType === "application/json";
-    const maxBytes = isJson ? MAX_IMPORT_BYTES : MAX_MULTIPART_BYTES;
-    const tooLarge = requireMaxContentLength(request, maxBytes);
+    const tooLarge = requireMaxContentLength(request, MAX_IMPORT_BYTES);
     if (tooLarge) return tooLarge;
 
     const capacityError = await requireResourceCapacity({
-      inputBytes: getRequestContentLength(request) || maxBytes,
+      inputBytes: getRequestContentLength(request) || MAX_IMPORT_BYTES,
       multiplier: 2,
     });
     if (capacityError) return capacityError;
