@@ -5,6 +5,7 @@ import ai.timefold.solver.core.config.solver.SolverConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Duration;
+import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
@@ -27,7 +28,7 @@ public final class SpikeMain {
         long start = System.nanoTime();
         ObjectNode reply = JSON.createObjectNode();
         ObjectNode body = reply.putObject("body");
-        reply.putNull("maxRssKiB"); // JVM heap is not RSS; external cgroup/RSS measurement is pending.
+        reply.putNull("maxRssKiB"); // JVM heap is not RSS; cgroup counters are reported separately.
         int code = 200;
         String stage = "MAPPING";
         try {
@@ -113,6 +114,7 @@ public final class SpikeMain {
             body.put("failureType", type.matches("[A-Za-z0-9]{1,64}") ? type : "InternalError");
         }
         reply.put("httpStatus", code);
+        reply.set("cgroup", CgroupSample.read(JSON, Path.of("/sys/fs/cgroup")));
         // Error and proof texts are fixed; do not serialize stack traces, the input or internal scores.
         byte[] output = JSON.writeValueAsBytes(reply);
         if (code == 200 && body.path("status").asText().equals("FEASIBLE") && System.nanoTime() - start > BUDGET_NS) {

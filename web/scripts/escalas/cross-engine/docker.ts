@@ -7,9 +7,27 @@ import { inputDiagnosticFields, verifyReply } from "./core";
 export const baselineRevision = "f78c691edbeaf16283f534bcacd8db1b4b7d5e66";
 export const resources = { cpus: 1, memoryMiB: 1536, pids: 64 } as const;
 const python = String.raw`import json, resource, sys
+from pathlib import Path
 from model_input import ModelInputError, validate_model_input
 from runtime_settings import REST_PAIR_PROCESS_TIMEOUT_SECONDS
 from service_operations import Operations, PROCESS_TIMEOUT_SECONDS, run_operation
+def sample_cgroup():
+    root = Path("/sys/fs/cgroup")
+    try:
+        usage = next(int(line.split()[1]) for line in (root / "cpu.stat").read_text().splitlines()
+                     if line.split() and line.split()[0] == "usage_usec")
+        quota, period = map(int, (root / "cpu.max").read_text().split())
+        peak = int((root / "memory.peak").read_text())
+        memory = int((root / "memory.max").read_text())
+        pids = int((root / "pids.max").read_text())
+        if usage < 0 or min(quota, period, peak, memory, pids) <= 0:
+            return None
+        return {"version": 2, "scope": "container-before-response", "cpuUsageUsec": usage,
+                "memoryPeakBytes": peak, "memoryLimitBytes": memory, "cpuQuotaUsec": quota,
+                "cpuPeriodUsec": period, "pidsLimit": pids}
+    except (OSError, ValueError, IndexError, StopIteration):
+        return None
+
 if __name__ == "__main__":
     try:
         data = json.load(sys.stdin)["input"]
@@ -33,7 +51,7 @@ if __name__ == "__main__":
         status, body = 409, {"error": "SOLVER_CANCELLED"}
     else:
         status, body = (400 if outcome.get("error") == "INVALID_MODEL_INPUT" else 500), {"error": "SOLVER_FAILED"}
-    print(json.dumps({"httpStatus": status, "body": body, "maxRssKiB": resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss}))
+    print(json.dumps({"httpStatus": status, "body": body, "maxRssKiB": resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, "cgroup": sample_cgroup()}))
 `;
 
 const validationPython = String.raw`import json, sys
@@ -74,7 +92,7 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
   const special = JSON.parse(body).input._restPairTarget === 20;
   const timeout = validateOnly ? 10_000 : special ? 32_000 : 20_000;
   const args = ["run", "--rm", "--pull=never", "--name", name, "--label", "perfectutilitares.cross-engine=synthetic",
-    "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+    "--network", "none", "--cgroupns=private", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
     "--cpus", "1", "--memory", "1536m", "--memory-swap", "1536m", "--pids-limit", "64",
     "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=32m", "--user", "1001:1001", "--workdir", "/app",
     "--env", "PYTHONDONTWRITEBYTECODE=1", "--env", "ESCALAS_SOLVER_WORKERS=1",

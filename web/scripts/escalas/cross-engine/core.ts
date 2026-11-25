@@ -23,7 +23,9 @@ const maxBytes = 8 * 1024 * 1024;
 const statuses = ["FEASIBLE", "OPTIMAL", "UNKNOWN", "INFEASIBLE", "MODEL_INVALID"] as const;
 type SpikeTelemetry = { mappingSeconds: number; entities: number; initialized: number; bands: number; windows: number;
   firstFeasibleSeconds: number | null; partialModel: true };
-export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null; spike?: SpikeTelemetry };
+type CgroupTelemetry = { version: 2; scope: "container-before-response"; cpuUsageUsec: number;
+  memoryPeakBytes: number; memoryLimitBytes: number; cpuQuotaUsec: number; cpuPeriodUsec: number; pidsLimit: number };
+export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null; spike?: SpikeTelemetry; cgroup?: CgroupTelemetry | null };
 export type Adapter = (body: string) => WireReply;
 type Status = typeof statuses[number];
 type Stage = "NEW_PROPOSAL" | "REFERENCE_RETAINED" | "SEARCH_UNFINISHED" | "PROVEN_INFEASIBLE" | "OTHER";
@@ -69,7 +71,20 @@ export function verifyReply(value: unknown): WireReply {
     spike = { mappingSeconds: t.mappingSeconds, entities: t.entities, initialized: t.initialized,
       bands: t.bands, windows: t.windows, firstFeasibleSeconds: t.firstFeasibleSeconds, partialModel: true };
   }
-  return { httpStatus, body: record?.body, maxRssKiB: rss as number | null, ...(spike ? { spike } : {}) };
+  let cgroup: CgroupTelemetry | null = null;
+  if (record?.cgroup !== undefined && record.cgroup !== null) {
+    const t = asRecord(record.cgroup);
+    const nonnegativeInt = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+    if (!t || t.version !== 2 || t.scope !== "container-before-response"
+      || !nonnegativeInt(t.cpuUsageUsec) || !nonnegativeInt(t.memoryPeakBytes) || t.memoryPeakBytes === 0
+      || t.memoryLimitBytes !== 1536 * 1024 * 1024 || t.pidsLimit !== 64
+      || !nonnegativeInt(t.cpuQuotaUsec) || !nonnegativeInt(t.cpuPeriodUsec)
+      || t.cpuPeriodUsec === 0 || t.cpuQuotaUsec !== t.cpuPeriodUsec) throw new Error("CROSS_ENGINE_CGROUP_TELEMETRY_INVALID");
+    cgroup = { version: 2, scope: "container-before-response", cpuUsageUsec: t.cpuUsageUsec,
+      memoryPeakBytes: t.memoryPeakBytes, memoryLimitBytes: t.memoryLimitBytes,
+      cpuQuotaUsec: t.cpuQuotaUsec, cpuPeriodUsec: t.cpuPeriodUsec, pidsLimit: t.pidsLimit };
+  }
+  return { httpStatus, body: record?.body, maxRssKiB: rss as number | null, ...(spike ? { spike } : {}), cgroup };
 }
 
 // This function must never be called concurrently in one process. It restores every modified global.
@@ -273,7 +288,7 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   return { inputHash: digest(frozen), rawStatus, rawRejectionStage, rawDiagnosticFamilies,
     adapterError: safeError, failureStage, failureType,
     inputErrorFields: response?.httpStatus === 400 ? inputDiagnosticFields(raw?.fields) : [], httpStatus: response?.httpStatus ?? null,
-    processSeconds, engineSeconds, productSeconds, ...(response?.spike ? { spike: response.spike } : {}), maxRssKiB: response?.maxRssKiB ?? null, finalStatus, outcome,
+    processSeconds, engineSeconds, productSeconds, ...(response?.spike ? { spike: response.spike } : {}), maxRssKiB: response?.maxRssKiB ?? null, cgroup: response?.cgroup ?? null, finalStatus, outcome,
     rawAssessment, finalAssessment, sameAsRaw, unchangedReference, timely, errorCode,
     acceptedNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && !unchangedReference && finalAssessment?.valid === true
       && finalAssessment.comparison?.regressed !== true,

@@ -32,7 +32,8 @@ def rows():
         out.append(dict(shared, kind="summary", engine=engine, samples=1, validTimely=1, acceptedNew=1,
                         engineNew=1, notEngineNew=0, rejectedRawFeasible=0, decision="EXPLORATORY_NOT_CERTIFIED",
                         successP50Seconds=12, maxProductSeconds=12, medianEstimatedShortage=60,
-                        medianNormalizedEstimatedShortage=60, successP95Seconds=None, tailSampleSufficient=False))
+                        medianNormalizedEstimatedShortage=60, successP95Seconds=None, tailSampleSufficient=False,
+                        cgroupSamples=0, medianContainerCpuSeconds=None, maxContainerMemoryPeakBytes=None))
     return copy.deepcopy(out)
 
 
@@ -59,6 +60,21 @@ class EvidenceTests(unittest.TestCase):
                 data[index][key] = value
                 with self.assertRaises(ValueError):
                     self.validate(data)
+
+    def test_cgroup_samples_and_missing_are_distinct(self):
+        data = rows()
+        sample = dict(version=2, scope="container-before-response", cpuUsageUsec=1234567,
+                      memoryPeakBytes=167772160, memoryLimitBytes=1610612736,
+                      cpuQuotaUsec=100000, cpuPeriodUsec=100000, pidsLimit=64)
+        data[1]["cgroup"] = sample
+        data[4].update(cgroupSamples=1, medianContainerCpuSeconds=1.234567,
+                       maxContainerMemoryPeakBytes=167772160)
+        report = self.validate(data)[0]
+        self.assertEqual(report["timefold"]["cgroupSamples"], 1)
+        self.assertEqual(report["ortools"]["cgroupMissing"], 1)
+        data[1]["cgroup"]["cpuQuotaUsec"] = 200000
+        with self.assertRaises(ValueError):
+            self.validate(data)
 
     def test_incomplete_result(self):
         data = rows()

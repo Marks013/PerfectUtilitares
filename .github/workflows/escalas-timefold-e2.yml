@@ -60,8 +60,10 @@ jobs:
           set -euo pipefail
           baseline=$(docker image inspect escalas-e2-baseline:ci --format '{{.Id}}')
           candidate=$(docker image inspect escalas-timefold-spike:ci --format '{{.Id}}')
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts team-10-week 1 "$baseline" "$candidate" | tee "$RUNNER_TEMP/timefold-e2-smoke.jsonl"
+          failed=0
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts team-10-week 1 "$baseline" "$candidate" | tee "$RUNNER_TEMP/timefold-e2-smoke.jsonl" || failed=1
           python3 experiments/escalas-timefold/verify_e2.py "$RUNNER_TEMP/timefold-e2-smoke.jsonl" --smoke
+          test "$failed" = 0
       - name: Run partial-model paired exploration
         shell: bash
         run: |

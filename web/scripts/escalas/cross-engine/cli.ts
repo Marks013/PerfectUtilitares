@@ -76,11 +76,15 @@ async function main() {
     if (!trials.length) continue;
     const successes = trials.filter(row => row.engineNew);
     const seconds = successes.flatMap(row => row.productSeconds);
+    const samples = trials.flatMap(row => row.cgroup ? [row.cgroup] : []);
     console.log(JSON.stringify({ kind: "summary", ...metadata, engine, samples: trials.length,
       engineNew: successes.length, acceptedNew: trials.filter(row => row.acceptedNew).length,
       validTimely: trials.filter(row => row.timely && row.finalAssessment?.valid && !row.errorCode && row.finalAssessment.comparison?.regressed !== true).length,
       notEngineNew: trials.length - successes.length, rejectedRawFeasible: trials.filter(row => row.rawStatus === "FEASIBLE" || row.rawStatus === "OPTIMAL").filter(row => !row.rawAssessment?.valid).length,
       maxProductSeconds: Math.max(...trials.map(row => row.productSeconds)),
+      cgroupSamples: samples.length,
+      medianContainerCpuSeconds: quantile(samples.map(s => s.cpuUsageUsec / 1_000_000), .5),
+      maxContainerMemoryPeakBytes: samples.length ? Math.max(...samples.map(s => s.memoryPeakBytes)) : null,
       medianEstimatedShortage: quantile(successes.flatMap(row => row.finalAssessment?.metrics?.shortagePersonMinutes ?? []), .5),
       medianNormalizedEstimatedShortage: quantile(successes.flatMap(row => row.finalAssessment?.metrics?.normalizedEstimatedShortage ?? []), .5),
       successP50Seconds: quantile(seconds, .5), successP95Seconds: seconds.length >= 30 ? quantile(seconds, .95) : null,

@@ -40,6 +40,19 @@ def assessment_valid(value):
             and value.get("complete") is True and value.get("errors") == [])
 
 
+def verify_cgroup(sample):
+    if sample is None:
+        return None
+    check(isinstance(sample, dict) and sample.get("version") == 2
+          and sample.get("scope") == "container-before-response", "CGROUP_SCOPE")
+    check(integer(sample.get("cpuUsageUsec")) and integer(sample.get("memoryPeakBytes"))
+          and sample["memoryPeakBytes"] > 0 and sample.get("memoryLimitBytes") == RESOURCES["memoryMiB"] * 1024 * 1024
+          and sample.get("pidsLimit") == RESOURCES["pids"] and integer(sample.get("cpuQuotaUsec"))
+          and integer(sample.get("cpuPeriodUsec")) and sample["cpuPeriodUsec"] > 0
+          and sample["cpuQuotaUsec"] == sample["cpuPeriodUsec"], "CGROUP_LIMITS")
+    return sample
+
+
 def valid_timely(row):
     final = row.get("finalAssessment")
     return (row.get("timely") is True and row.get("errorCode") is None
@@ -88,6 +101,7 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
         report = {"scenario": case}
         for engine in ENGINES:
             trials = [r for r in measured if r["engine"] == engine]
+            resource_samples = [s for row in trials if (s := verify_cgroup(row.get("cgroup"))) is not None]
             for row in trials:
                 image = row.get("identity")
                 check(isinstance(image, dict) and image.get("architecture") == "arm64"
@@ -140,7 +154,14 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
                   and total.get("medianEstimatedShortage") == quantile([r["finalAssessment"]["metrics"]["shortagePersonMinutes"] for r in successes], .5)
                   and total.get("medianNormalizedEstimatedShortage") == quantile([r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"] for r in successes], .5)
                   and total.get("successP95Seconds") is None and total.get("tailSampleSufficient") is False, "SUMMARY_STATS")
-            report[engine] = {"valid": valid, "new": len(successes)}
+            check(total.get("cgroupSamples") == len(resource_samples)
+                  and total.get("medianContainerCpuSeconds") == quantile([s["cpuUsageUsec"] / 1_000_000 for s in resource_samples], .5)
+                  and total.get("maxContainerMemoryPeakBytes") == max((s["memoryPeakBytes"] for s in resource_samples), default=None),
+                  "CGROUP_SUMMARY")
+            report[engine] = {"valid": valid, "new": len(successes), "cgroupSamples": len(resource_samples),
+                              "cgroupMissing": repetitions - len(resource_samples),
+                              "medianContainerCpuSeconds": total["medianContainerCpuSeconds"],
+                              "maxContainerMemoryPeakBytes": total["maxContainerMemoryPeakBytes"]}
             # E2 generation must actually produce a new raw proposal every time.
             # Repair may legitimately retain its reference; it is not a gain.
             check(valid == repetitions, "VALID_TRIALS:" + case + ":" + engine)
