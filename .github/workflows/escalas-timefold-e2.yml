@@ -1,0 +1,77 @@
+name: Escalas Timefold E2 spike
+
+on:
+  pull_request:
+    paths:
+      - 'web/experiments/escalas-timefold/**'
+      - 'web/scripts/escalas/cross-engine/**'
+      - '.github/workflows/escalas-timefold-e2.yml'
+
+permissions:
+  contents: read
+concurrency:
+  group: escalas-timefold-e2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic:
+    name: Timefold partial-model proof (ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    env:
+      CI: 'true'
+      ESCALAS_CROSS_ENGINE_ISOLATED: '1'
+      BASE: 'f78c691edbeaf16283f534bcacd8db1b4b7d5e66'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Build and test Timefold Community
+        run: docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t escalas-timefold-spike:ci experiments/escalas-timefold
+      - name: Build exact original OR-Tools baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=$(mktemp -d)
+          trap 'rm -rf "$build"' EXIT
+          git -C .. archive "$BASE" web/ops/escalas | tar -x -C "$build"
+          docker build --target runtime --build-arg SOURCE_REVISION="$BASE" -t escalas-e2-baseline:ci "$build/web/ops/escalas"
+      - name: Refuse unsupported input without producing assignments
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate=$(docker image inspect escalas-timefold-spike:ci --format '{{.Id}}')
+          printf '{"input":{"schemaVersion":1,"branchCode":"07"}}' | docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --cpus 1 --memory 1536m --memory-swap 1536m --pids-limit 64 --user 1001:1001 -i "$candidate" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["httpStatus"] == 400 and "assignments" not in x["body"]'
+      - name: Run partial-model paired exploration
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=$(docker image inspect escalas-e2-baseline:ci --format '{{.Id}}')
+          candidate=$(docker image inspect escalas-timefold-spike:ci --format '{{.Id}}')
+          : > "$RUNNER_TEMP/timefold-e2.jsonl"
+          failed=0
+          for scenario in team-10-week branch-50-four-weeks team-10-week-repair; do
+            if ! node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" 5 "$baseline" "$candidate" | tee -a "$RUNNER_TEMP/timefold-e2.jsonl"; then
+              failed=1
+            fi
+          done
+          python3 experiments/escalas-timefold/verify_e2.py "$RUNNER_TEMP/timefold-e2.jsonl"
+          test "$failed" = 0
+      - name: Keep aggregate evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: timefold-e2-partial-model
+          path: ${{ runner.temp }}/timefold-e2.jsonl
+          if-no-files-found: ignore
+          retention-days: 7

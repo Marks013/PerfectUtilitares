@@ -1,0 +1,215 @@
+package br.perfectutilitares.escalas.spike;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+
+/** Strictly bounded subset of the private wire. Unsupported scenarios fail closed.
+ * E2 deliberately does not implement December, holidays, absences, histories, UNTIMED,
+ * variable clocks, protected coverage or the full lexicographic objective.
+ */
+final class WireModel {
+    static final class Unsupported extends IllegalArgumentException {
+        Unsupported(String code) { super(code); }
+    }
+    record Person(String id, String sector, String role, String shift, List<Day.Segment> work, int sundayCap) {}
+    record Key(String person, String date) {}
+    record Record(Day.State state, String shift, Boolean locked) {}
+    record DemandKey(int day, String sector, String role, boolean estimated) {}
+    record Demand(int start, int end, int minimum) {}
+
+    private static void check(boolean ok, String code) {
+        if (!ok) throw new Unsupported(code);
+    }
+    private static String str(JsonNode n, String key) {
+        JsonNode v = n.path(key);
+        check(v.isTextual(), "EXPECTED_TEXT");
+        return v.textValue();
+    }
+    private static int integer(JsonNode n, String key) {
+        JsonNode v = n.path(key);
+        check(v.isIntegralNumber() && v.canConvertToInt(), "EXPECTED_INTEGER");
+        return v.intValue();
+    }
+    private static List<JsonNode> array(JsonNode n, String key) {
+        JsonNode v = n.path(key);
+        check(v.isArray(), "EXPECTED_ARRAY");
+        List<JsonNode> out = new ArrayList<>();
+        v.forEach(out::add);
+        return out;
+    }
+    private static boolean empty(JsonNode n, String key) {
+        return !n.has(key) || n.path(key).isArray() && n.path(key).isEmpty()
+                || n.path(key).isObject() && n.path(key).isEmpty();
+    }
+
+    static Roster read(JsonNode root) {
+        check(root.isObject() && root.size() == 1 && root.path("input").isObject(), "ENVELOPE");
+        JsonNode input = root.path("input"), policy = input.path("policy");
+        check(integer(input, "schemaVersion") == 1 && str(input, "branchCode").equals("SYNTH")
+                && input.path("simulation").asBoolean(false), "SYNTHETIC_ONLY");
+        check(str(input, "timeZone").equals("America/Sao_Paulo")
+                && str(input, "planningWeekStartsOn").equals("SUNDAY")
+                && integer(input, "restRulesVersion") == 3
+                && input.path("generationMode").asText("DAYS_AND_HOURS").equals("DAYS_AND_HOURS")
+                && integer(input, "defaultWeeklyHours") == 42, "MODE");
+        // Exact November fixtures: no calendar clipping, DST, or transition assumptions.
+        LocalDate first = LocalDate.parse(str(input, "startDate"));
+        LocalDate last = LocalDate.parse(str(input, "endDate"));
+        int days = Math.toIntExact(ChronoUnit.DAYS.between(first, last) + 1);
+        check(first.equals(LocalDate.of(2026, 11, 1)) && (days == 7 || days == 28)
+                && !input.has("visibleMonth"), "HORIZON");
+        for (String field : List.of("_coverageComparison", "_coverageServiceProtection", "_coverageProtection", "_restPairTarget"))
+            check(!input.has(field), "PROTECTED_COVERAGE_UNSUPPORTED");
+        for (String field : List.of("mixed42Sectors", "movementPriorities"))
+            check(empty(input, field), "UNSUPPORTED_INPUT");
+        check(policy.path("calendarMode").asText().equals("MANUAL")
+                && policy.path("normativeProfile").asText("CUSTOM").equals("CUSTOM")
+                && integer(policy, "weeklyLimit") >= 42 && integer(policy, "dailyLimitMinutes") >= 504
+                && integer(policy, "maxConsecutiveWorkDays") == 5, "POLICY");
+        for (String field : List.of("closedDates", "holidayDates", "authorizedHolidayDates", "paidHolidayDates"))
+            check(empty(policy, field), "HOLIDAY_UNSUPPORTED");
+        check(!policy.has("mealIntervalAgreement"), "MEAL_AGREEMENT_UNSUPPORTED");
+        int closing = integer(input, "storeClosingMinutes");
+        Map<String, List<Day.Segment>> clocks = new HashMap<>();
+        for (JsonNode clock : array(input, "shifts")) {
+            String id = str(clock, "id");
+            List<JsonNode> segments = array(clock, "segments");
+            check(segments.size() == 3 && str(segments.get(0), "kind").equals("WORK")
+                    && str(segments.get(1), "kind").equals("BREAK") && str(segments.get(2), "kind").equals("WORK"), "CLOCK_KIND");
+            int a = integer(segments.get(0), "start"), b = integer(segments.get(0), "end");
+            int c = integer(segments.get(1), "start"), d = integer(segments.get(1), "end");
+            int e = integer(segments.get(2), "start"), f = integer(segments.get(2), "end");
+            check(a >= 300 && a < b && b == c && c < d && d == e && e < f && f <= Math.min(1200, closing)
+                    && b - a + f - e == 504 && d - c >= integer(policy, "minMealMinutes") && d - c <= 120
+                    && 1440 - (f - a) >= integer(policy, "minInterShiftMinutes")
+                    && 2880 - (f - a) >= integer(policy, "minWeeklyRestMinutes"), "CLOCK_GEOMETRY");
+            check(!policy.path("limitContinuousWorkBlocks").asBoolean(false) || Math.max(b - a, f - e) <= 270,
+                    "CLOCK_BLOCKS");
+            check(clocks.put(id, List.of(new Day.Segment(a, b), new Day.Segment(e, f))) == null, "DUPLICATE_CLOCK");
+        }
+
+        Map<String, Person> people = new LinkedHashMap<>();
+        for (JsonNode person : array(input, "employees")) {
+            String id = str(person, "id"), name = str(person, "name");
+            check(id.matches("person-[0-9]+") && name.startsWith("Synthetic person "), "SYNTHETIC_ID");
+            check(person.path("planningEnabled").asBoolean(true)
+                    && str(person, "scheduleMode").equals("TIMED") && integer(person, "weeklyHours") == 42
+                    && str(person, "offMode").equals("VARIABLE") && str(person, "offPattern").equals("ANY")
+                    && !person.path("historyKnown").asBoolean(false) && !person.has("simulationDailyMinutes")
+                    && !person.has("activeUntil") && (str(person, "activeFrom").isEmpty()
+                        || str(person, "activeFrom").compareTo(first.toString()) <= 0), "PERSON_PROFILE");
+            for (String field : List.of("history", "planningHistory", "planningFuture", "fixedOffDays",
+                    "preferredOffDays", "manualShiftByDate", "manualShiftOverrides", "manualShiftBaseIds"))
+                check(empty(person, field), "PERSON_RESTRICTION_UNSUPPORTED");
+            check(!person.has("fixedRestSlots"), "FIXED_REST_UNSUPPORTED");
+            List<JsonNode> options = array(person, "shiftIds");
+            String fixed = person.path("fixedImportedShiftId").asText("");
+            check(options.size() == 1 && options.getFirst().isTextual()
+                    && (fixed.isEmpty() || fixed.equals(options.getFirst().textValue())), "CLOCK_OPTIONS");
+            String shift = options.getFirst().textValue();
+            check(clocks.containsKey(shift), "CLOCK_REFERENCE");
+            int cap = integer(person, "maxConsecutiveSundays");
+            check(cap == 1 || cap == 2, "SUNDAY_CAP");
+            if (!person.path("sundayRestRule").asText().equals("COMMERCE")) cap = 1;
+            check(people.put(id, new Person(id, str(person, "sector"), str(person, "role"),
+                    shift, clocks.get(shift), cap)) == null, "DUPLICATE_PERSON");
+        }
+        check(!people.isEmpty() && people.size() <= 50, "PEOPLE_LIMIT");
+        Map<Key, Record> saved = records(input, "assignments", people, first, last);
+        Map<Key, Record> seed = input.has("_initialAssignments") ? records(input, "_initialAssignments", people, first, last) : saved;
+        check(seed.isEmpty() || seed.size() == people.size() * days, "INCOMPLETE_SEED");
+        List<Day> cells = new ArrayList<>();
+        List<Roster.Window> windows = new ArrayList<>();
+        int weeks = days / 7;
+        for (Person person : people.values()) {
+            Set<Integer> comparable = new HashSet<>();
+            for (int week = 0; week < weeks; week++) {
+                boolean hasLock = false;
+                for (int j = 0; j < 7; j++) {
+                    Record old = saved.get(new Key(person.id(), first.plusDays(week * 7 + j).toString()));
+                    hasLock |= old != null && Boolean.TRUE.equals(old.locked());
+                }
+                if (!hasLock) comparable.add(week);
+                windows.add(new Roster.Window(person.id(), week * 7, week * 7 + 6, 1, Day.State.WORK, 5, 5));
+            }
+            for (int i = 0; i + 5 < days; i++)
+                windows.add(new Roster.Window(person.id(), i, i + 5, 1, Day.State.WORK, 0, 5));
+            for (int i = 0; i + 2 < days; i++) {
+                // Fully imposed OFF runs are outside this spike: reject them rather than alter the rules.
+                boolean mutable = false;
+                for (int j = i; j <= i + 2; j++) {
+                    Record old = saved.get(new Key(person.id(), first.plusDays(j).toString()));
+                    mutable |= old == null || !Boolean.TRUE.equals(old.locked());
+                }
+                if (mutable) windows.add(new Roster.Window(person.id(), i, i + 2, 1, Day.State.OFF, 0, 2));
+            }
+            for (int week = 0; week + person.sundayCap() < weeks; week++)
+                windows.add(new Roster.Window(person.id(), week * 7, (week + person.sundayCap()) * 7,
+                        7, Day.State.WORK, 0, person.sundayCap()));
+            for (int i = 0; i < days; i++) {
+                String date = first.plusDays(i).toString();
+                Record old = saved.get(new Key(person.id(), date)), initial = seed.get(new Key(person.id(), date));
+                boolean locked = old != null && Boolean.TRUE.equals(old.locked());
+                boolean saturday = i % 7 == 6;
+                check(!saturday || !locked || old.state() == Day.State.WORK, "LOCKED_SATURDAY");
+                check(!locked || initial == null || initial.state() == old.state(), "SEED_LOCK_CONFLICT");
+                Day.State state = locked ? old.state() : saturday ? Day.State.WORK : initial == null ? null : initial.state();
+                var pattern = comparable.size() >= 2 && comparable.contains(i / 7)
+                        ? new Day.PatternKey(person.id(), i % 7, comparable.size()) : null;
+                cells.add(new Day(person.id(), person.sector(), person.role(), person.shift(), i, date,
+                        person.work(), saturday || locked, old == null ? null : old.locked(),
+                        old == null ? null : old.state(), state, pattern));
+            }
+        }
+        // Disjoint bands per day/sector/role/demand type. Max of overlapping rows, not sum.
+        Map<DemandKey, List<Demand>> grouped = new LinkedHashMap<>();
+        for (JsonNode demand : array(input, "demands")) {
+            int day = Math.toIntExact(ChronoUnit.DAYS.between(first, LocalDate.parse(str(demand, "date"))));
+            int a = integer(demand, "start"), b = integer(demand, "end"), min = integer(demand, "minimum");
+            check(day >= 0 && day < days && a >= 0 && b <= 1440 && a < b && min >= 0 && min <= 250, "DEMAND");
+            String role = demand.hasNonNull("role") ? str(demand, "role") : null;
+            DemandKey key = new DemandKey(day, str(demand, "sector"), role, demand.path("estimated").asBoolean(false));
+            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(new Demand(a, b, min));
+        }
+        List<Roster.Band> bands = new ArrayList<>();
+        for (var entry : grouped.entrySet()) {
+            DemandKey key = entry.getKey();
+            List<Demand> demands = entry.getValue();
+            var edges = new TreeSet<Integer>();
+            for (Demand demand : demands) { edges.add(demand.start()); edges.add(demand.end()); }
+            for (Person person : people.values()) {
+                if (!person.sector().equals(key.sector()) || key.role() != null && !person.role().equals(key.role())) continue;
+                for (var work : person.work()) { edges.add(work.start()); edges.add(work.end()); }
+            }
+            List<Integer> boundaries = new ArrayList<>(edges);
+            for (int i = 1; i < boundaries.size(); i++) {
+                int a = boundaries.get(i - 1), b = boundaries.get(i);
+                int min = demands.stream().filter(d -> d.start() <= a && d.end() >= b).mapToInt(Demand::minimum).max().orElse(0);
+                if (min > 0) bands.add(new Roster.Band(key.day(), key.sector(), key.role(), a, b, min, key.estimated()));
+            }
+        }
+        check(bands.size() <= 12000, "BAND_LIMIT");
+        return new Roster(cells, windows, bands);
+    }
+
+    private static Map<Key, Record> records(JsonNode input, String field, Map<String, Person> people,
+            LocalDate first, LocalDate last) {
+        Map<Key, Record> result = new HashMap<>();
+        for (JsonNode row : array(input, field)) {
+            String person = str(row, "employeeId"), date = str(row, "date");
+            LocalDate day = LocalDate.parse(date);
+            check(people.containsKey(person) && !day.isBefore(first) && !day.isAfter(last), "ASSIGNMENT_REFERENCE");
+            String kind = str(row, "kind");
+            check(kind.equals("WORK") || kind.equals("OFF"), "ASSIGNMENT_KIND_UNSUPPORTED");
+            String shift = row.hasNonNull("shiftId") ? str(row, "shiftId") : null;
+            check(kind.equals("WORK") ? people.get(person).shift().equals(shift) : shift == null, "ASSIGNMENT_CLOCK");
+            check(!row.has("locked") || row.path("locked").isBoolean(), "LOCK_TYPE");
+            var key = new Key(person, date);
+            var record = new Record(Day.State.valueOf(kind), shift, row.has("locked") ? row.path("locked").booleanValue() : null);
+            check(result.put(key, record) == null, "DUPLICATE_ASSIGNMENT");
+        }
+        return result;
+    }
+}
