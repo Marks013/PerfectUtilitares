@@ -136,11 +136,13 @@ export function buildGhostscriptImageArgs({
   outputPath,
   options,
   profile,
+  preserveDetectedColor = false,
 }: {
   inputPath: string;
   outputPath: string;
   options: PdfCompressionEffectiveOptions;
   profile: PdfCompressionProfile;
+  preserveDetectedColor?: boolean;
 }) {
   const colorMode = resolveSafeGhostscriptColorMode(options, profile);
   const args = [
@@ -178,7 +180,10 @@ export function buildGhostscriptImageArgs({
     `-dJPEGQ=${options.imageQuality}`,
   ];
 
-  if (colorMode === "GRAYSCALE") {
+  if (preserveDetectedColor) {
+    args.push("-sColorConversionStrategy=LeaveColorUnchanged");
+    if (colorMode === "MONOCHROME") args.push("-dMonoImageFilter=/CCITTFaxEncode");
+  } else if (colorMode === "GRAYSCALE") {
     args.push(
       "-sColorConversionStrategy=Gray",
       "-dProcessColorModel=/DeviceGray",
@@ -204,14 +209,15 @@ async function ghostscriptCandidate(
   outputPath: string,
   options: PdfCompressionEffectiveOptions,
   profile: PdfCompressionProfile,
-  timeoutMs?: number,
+  timeoutMs: number | undefined,
+  preserveDetectedColor: boolean,
 ) {
   throwIfPdfExecutionAborted();
   const hasSourceXmp = (await PDFDocument.load(
     await readFile(inputPath), { updateMetadata: false },
   )).catalog.has(PDFName.of("Metadata"));
   throwIfPdfExecutionAborted();
-  const args = buildGhostscriptImageArgs({ inputPath, outputPath, options, profile });
+  const args = buildGhostscriptImageArgs({ inputPath, outputPath, options, profile, preserveDetectedColor });
   // Preserve the original catalog shape; never discard XMP already in the source.
   if (!hasSourceXmp) args.unshift("-dOmitXMP=true");
   await runTool("gs", args, timeoutMs);
@@ -386,14 +392,30 @@ export async function buildPreservingImageCandidates({
     }
   };
 
+  const prioritizeJpegSavings =
+    options.quality === "BALANCED" &&
+    preserveDetectedColor &&
+    process.env.PDF_BALANCED_JPEG_PRIORITY === "1";
+  const extendedJpegBudget =
+    prioritizeJpegSavings && profile.pageCount > 300 && profile.pageCount <= 900;
+
+  const mixedWithHeavyImages = profile.optimizationClass === "MIXED_WITH_HEAVY_IMAGES";
+  const sourceDpi = preserveDetectedColor && mixedWithHeavyImages
+    ? profile.maximumDpi ?? profile.sourceDpi
+    : profile.sourceDpi;
+  const needsDownsample = sourceDpi !== null && options.dpi < sourceDpi;
+
   if (
-    (profile.contentKind === "SCANNED" || profile.contentKind === "SCANNED_OCR") &&
+    (profile.contentKind === "SCANNED" ||
+      profile.contentKind === "SCANNED_OCR" ||
+      (preserveDetectedColor && mixedWithHeavyImages)) &&
+    (!prioritizeJpegSavings || profile.pageCount <= 900) &&
     profile.predominantImageEncoding === "JPEG" &&
     profile.bitsPerComponent === 8 &&
     options.colorMode !== "MONOCHROME" &&
     (options.colorMode !== "COLOR" || profile.colorMode === "COLOR") &&
-    ((profile.sourceDpi !== null && profile.sourceDpi > options.dpi) ||
-      (options.colorMode === "GRAYSCALE" && profile.colorMode === "COLOR") ||
+    (needsDownsample ||
+      (!preserveDetectedColor && options.colorMode === "GRAYSCALE" && profile.colorMode === "COLOR") ||
       options.userOverrides.imageQuality)
   ) {
     const jpegPath = `${baseOutputPath}.jpeg-xobjects.pdf`;
@@ -412,8 +434,10 @@ export async function buildPreservingImageCandidates({
           "--mode",
           !preserveDetectedColor && options.colorMode === "GRAYSCALE" ? "grayscale" : "preserve",
           ...(preserveDetectedColor ? ["--allow-partial"] : []),
+          ...(prioritizeJpegSavings ? ["--prioritize-savings"] : []),
+          ...(extendedJpegBudget ? ["--extended-budget"] : []),
         ],
-        Math.min(compressionToolTimeoutMs(), 30_000),
+        Math.min(compressionToolTimeoutMs(), extendedJpegBudget ? 120_000 : 30_000),
       );
       const [input, output] = await Promise.all([
         stat(inputPath),
@@ -525,9 +549,7 @@ export async function buildPreservingImageCandidates({
     await rm(qpdfPath, { force: true }).catch(() => undefined);
   }
 
-  const needsDownsample =
-    profile.sourceDpi !== null && options.dpi < profile.sourceDpi;
-  const needsColor = options.colorMode !== profile.colorMode;
+  const needsColor = !preserveDetectedColor && options.colorMode !== profile.colorMode;
   const imageWork =
     needsDownsample ||
     needsColor ||
@@ -547,18 +569,20 @@ export async function buildPreservingImageCandidates({
     const gsPath = `${baseOutputPath}.gs-images.pdf`;
     try {
       const fallbackTimeout = adaptiveMonoTargetDpi === null ? undefined : Math.min(compressionToolTimeoutMs(), 30_000);
-      await ghostscriptCandidate(inputPath, gsPath, options, profile, fallbackTimeout);
+      await ghostscriptCandidate(inputPath, gsPath, options, profile, fallbackTimeout, preserveDetectedColor);
       candidates.push(
         candidate({
           path: gsPath,
           kind: "GS_IMAGE_RECOMPRESSION",
           engine: "ghostscript",
           description:
-            safeColorMode === "MONOCHROME"
-              ? "Reamostragem bilevel preservadora; CCITT foi usado como estágio/fallback seguro."
-              : safeColorMode === "GRAYSCALE"
-                ? "Reamostragem em tons de cinza com DCT/JPEG controlado e DPI efetivo."
-                : "Reamostragem colorida com DCT/JPEG controlado e DPI efetivo.",
+            preserveDetectedColor
+              ? "Imagens reamostradas sem pedir conversão global de cor."
+              : safeColorMode === "MONOCHROME"
+                ? "Reamostragem bilevel preservadora; CCITT foi usado como estágio/fallback seguro."
+                : safeColorMode === "GRAYSCALE"
+                  ? "Reamostragem em tons de cinza com DCT/JPEG controlado e DPI efetivo."
+                  : "Reamostragem colorida com DCT/JPEG controlado e DPI efetivo.",
           visualTransform: true,
           lossy: needsDownsample || needsColor || safeColorMode !== "MONOCHROME",
           notApplied,

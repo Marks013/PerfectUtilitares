@@ -352,7 +352,11 @@ export function PdfCompressWorkspaceView({ model }: { model: Model }) {
                 {settings.method === "LOSSLESS"
                   ? "Mantém texto pesquisável, elementos gráficos e imagens originais."
                   : settings.method === "AUTO"
-                    ? "Analisa cada documento e reduz imagens quando houver ganho seguro, mantendo texto pesquisável."
+                    ? settings.preset === "SOURCE"
+                      ? "Analisa cada PDF do lote. Mantém texto pesquisável e não força conversão de cor."
+                      : settings.colorMode === "KEEP_DETECTED"
+                      ? `Imagens: alvo de ${settings.dpi} DPI e qualidade JPEG de ${settings.imageQuality}%. Mantém texto pesquisável e não força conversão de cor.`
+                      : `Imagens: alvo de ${settings.dpi} DPI. Tratamento solicitado: ${COLOR_OPTIONS.find((option) => option.value === settings.colorMode)?.label}. Mantém texto pesquisável.`
                     : `Alvo: ${settings.dpi} DPI · ${
                         COLOR_OPTIONS.find(
                           (option) => option.value === settings.colorMode,

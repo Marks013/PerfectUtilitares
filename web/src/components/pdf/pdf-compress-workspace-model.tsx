@@ -180,9 +180,9 @@ export const QUALITY_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  { value: "SCREEN", label: "Compacto", description: "120 DPI · maior redução" },
-  { value: "BALANCED", label: "Equilibrado", description: "150 DPI · leitura e tamanho" },
-  { value: "PRINT", label: "Impressão", description: "220 DPI · maior definição" },
+  { value: "SCREEN", label: "Compacto", description: "Para envio · imagens até 120 DPI" },
+  { value: "BALANCED", label: "Equilibrado", description: "Para leitura · imagens até 150 DPI" },
+  { value: "PRINT", label: "Impressão", description: "Para gráficos e detalhes · imagens até 220 DPI" },
 ];
 
 export const METHOD_OPTIONS: Array<{
@@ -214,15 +214,15 @@ export const COLOR_OPTIONS: Array<{
 }> = [
   {
     value: "KEEP_DETECTED",
-    label: "Manter detectado",
-    description: "Mantém a tonalidade individual de cada PDF",
+    label: "Manter tons originais",
+    description: "Não força conversão: texto preto, imagens em cinza e elementos coloridos podem coexistir",
   },
-  { value: "COLOR", label: "Colorido", description: "24 bits" },
-  { value: "GRAYSCALE", label: "Tons de cinza", description: "8 bits" },
+  { value: "COLOR", label: "Colorido", description: "Usa cor no processamento visual" },
+  { value: "GRAYSCALE", label: "Tons de cinza", description: "Solicita conversão para cinza, mantendo gradações" },
   {
     value: "MONOCHROME",
     label: "Preto e branco",
-    description: "1 bit · JBIG2 lossless/CCITT conforme o conteúdo",
+    description: "Solicita apenas preto e branco; pode apagar gradações",
   },
 ];
 

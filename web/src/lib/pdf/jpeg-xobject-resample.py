@@ -2,6 +2,7 @@
 
 import argparse
 import io
+import json
 import math
 import selectors
 import subprocess
@@ -18,6 +19,10 @@ MAX_IMAGE_PIXELS = 24_000_000
 MAX_TOTAL_PIXELS = 250_000_000
 MAX_LIST_BYTES = 1_048_576
 LIST_TIMEOUT_SECONDS = 8
+EXTENDED_MAX_PAGES = 900
+EXTENDED_MAX_IMAGES = 1_800
+EXTENDED_MAX_TOTAL_PIXELS = 1_000_000_000
+EXTENDED_DECODE_SECONDS = 75
 
 
 class NotApplicable(Exception):
@@ -65,7 +70,9 @@ def list_images(source):
             raise NotApplicable()
 
 
-def get_uses(source, grayscale):
+def get_uses(source, grayscale, *, max_images=None):
+    if max_images is None:
+        max_images = MAX_IMAGES
     uses = {}
     for row in list_images(source):
         # Inline images have no stable object reference for in-place replacement.
@@ -97,7 +104,7 @@ def get_uses(source, grayscale):
                 min(previous[4], dpi),
             )
         uses[key] = current
-        if len(uses) > MAX_IMAGES:
+        if len(uses) > max_images:
             raise NotApplicable()
     return uses
 
@@ -113,13 +120,36 @@ def is_plain_jpeg(obj):
     return image_filter == pikepdf.Name.DCTDecode and params is None
 
 
-def transform(source, output, target_dpi, quality, grayscale, allow_partial=False):
-    changed = False
+def estimated_gain_priority(pdf, use, target_dpi):
+    key, (width, height, _color, supported, dpi) = use
+    pixels = width * height
+    if not supported or not 0 < pixels <= MAX_IMAGE_PIXELS or dpi <= target_dpi:
+        return (0.0, 0.0, key)
+    obj = pdf.get_object(key)
+    length = obj.get("/Length", 0) if isinstance(obj, pikepdf.Stream) else 0
+    if not isinstance(length, int) or length <= 0:
+        return (0.0, 0.0, key)
+    # An ordering heuristic, not a predicted compression result. No JPEG is
+    # loaded or decoded to score it, and ties use the PDF's object identity.
+    gain = length * (1 - (target_dpi / dpi) ** 2)
+    return (-gain / pixels, -gain, key)
+
+
+def transform(source, output, target_dpi, quality, grayscale, allow_partial=False, *, prioritize_savings=False, extended_budget=False):
+    if extended_budget and not prioritize_savings:
+        raise ValueError("Extended budget requires savings prioritization")
+    if prioritize_savings and (grayscale or not allow_partial):
+        raise ValueError("Savings prioritization requires partial, tone-preserving recompression")
+    max_pages = EXTENDED_MAX_PAGES if extended_budget else MAX_PAGES
+    max_pixels = EXTENDED_MAX_TOTAL_PIXELS if extended_budget else MAX_TOTAL_PIXELS
+    changed = 0
     pixels = 0
+    skipped = 0
+    stopped_early = False
     with pikepdf.Pdf.open(source, attempt_recovery=False) as pdf:
         if (
             pdf.is_encrypted
-            or len(pdf.pages) > MAX_PAGES
+            or len(pdf.pages) > max_pages
             or any(key in pdf.Root for key in ("/AcroForm", "/Perms"))
         ):
             raise NotApplicable()
@@ -130,9 +160,14 @@ def transform(source, output, target_dpi, quality, grayscale, allow_partial=Fals
         ):
             raise NotApplicable()
 
-        for key, (width, height, color, supported, dpi) in get_uses(
-            source, grayscale
-        ).items():
+        uses = get_uses(source, grayscale, max_images=EXTENDED_MAX_IMAGES if extended_budget else None).items()
+        if prioritize_savings:
+            uses = sorted(uses, key=lambda use: estimated_gain_priority(pdf, use, target_dpi))
+        decode_deadline = time.monotonic() + EXTENDED_DECODE_SECONDS if extended_budget else None
+        for key, (width, height, color, supported, dpi) in uses:
+            if decode_deadline is not None and time.monotonic() >= decode_deadline:
+                stopped_early = True
+                break
             if grayscale and not supported and color not in ("gray", "mono"):
                 raise NotApplicable()
             if not supported:
@@ -160,11 +195,18 @@ def transform(source, output, target_dpi, quality, grayscale, allow_partial=Fals
                     raise NotApplicable()
                 continue
             if width < 1 or height < 1 or width * height > MAX_IMAGE_PIXELS:
+                if prioritize_savings:
+                    skipped += 1
+                    continue
                 raise NotApplicable()
             image_pixels = width * height
-            if pixels + image_pixels > MAX_TOTAL_PIXELS:
+            if pixels + image_pixels > max_pixels:
                 # Keep work already done only for a tone-preserving request.
                 if allow_partial and not grayscale:
+                    skipped += 1
+                    if prioritize_savings:
+                        continue
+                    stopped_early = True
                     break
                 raise NotApplicable()
             pixels += image_pixels
@@ -195,11 +237,17 @@ def transform(source, output, target_dpi, quality, grayscale, allow_partial=Fals
             obj["/Width"], obj["/Height"] = size
             if to_gray:
                 obj["/ColorSpace"] = pikepdf.Name.DeviceGray
-            changed = True
+            changed += 1
 
         if not changed:
             raise NotApplicable()
         pdf.save(output)
+    return {
+        "imagesRewritten": changed,
+        "decodedPixels": pixels,
+        "budgetSkippedImages": skipped,
+        "stoppedEarly": stopped_early,
+    }
 
 
 def main():
@@ -210,14 +258,26 @@ def main():
     parser.add_argument("--quality", type=int, required=True, choices=range(1, 96), metavar="1..95")
     parser.add_argument("--mode", choices=("grayscale", "preserve"), required=True)
     parser.add_argument("--allow-partial", action="store_true")
+    parser.add_argument("--prioritize-savings", action="store_true", help="Order eligible JPEGs by estimated savings per source pixel")
+    parser.add_argument("--extended-budget", action="store_true", help="Use bounded long-document limits with savings prioritization")
+    parser.add_argument("--report", action="store_true", help="Print aggregate recompression counters after success")
     args = parser.parse_args()
+    if args.prioritize_savings and (not args.allow_partial or args.mode != "preserve"):
+        parser.error("--prioritize-savings requires --mode preserve and --allow-partial")
+    if args.extended_budget and not args.prioritize_savings:
+        parser.error("--extended-budget requires --prioritize-savings")
 
     try:
-        transform(args.input, args.output, args.target_dpi, args.quality, args.mode == "grayscale", args.allow_partial)
+        stats = transform(
+            args.input, args.output, args.target_dpi, args.quality, args.mode == "grayscale", args.allow_partial,
+            prioritize_savings=args.prioritize_savings, extended_budget=args.extended_budget,
+        )
     except NotApplicable:
         return 2
     except (OSError, ValueError, RuntimeError, pikepdf.PdfError, Image.DecompressionBombError):
         return 1
+    if args.report:
+        print(json.dumps(stats, separators=(",", ":")))
     return 0
 
 

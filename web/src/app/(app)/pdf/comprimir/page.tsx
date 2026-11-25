@@ -49,7 +49,7 @@ export default function ComprimirPdfPage() {
           },
           {
             title: "Tonalidade",
-            text: "Documentos coloridos podem permanecer em 24 bits ou ser convertidos para tons de cinza e preto e branco quando a cor não for essencial.",
+            text: "Mantenha os tons originais em PDFs que misturam texto preto, imagens em cinza e gráficos coloridos. Escolha cinza se a cor for dispensável; preto e branco pode apagar gradações que ajudam a ler gráficos e fotos.",
           },
           {
             title: "Resultado comparável",

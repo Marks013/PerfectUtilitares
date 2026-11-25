@@ -211,6 +211,65 @@ describe("PDF image recompression process control", () => {
     },
   );
 
+  it.each([
+    { pages: 100, enabled: "1", mixed: false, flags: ["--prioritize-savings"] },
+    { pages: 900, enabled: "1", mixed: true, flags: ["--prioritize-savings", "--extended-budget"] },
+    { pages: 900, enabled: "0", mixed: false, flags: [] },
+  ])("chooses the preserving JPEG budget for $pages pages (priority $enabled, mixed $mixed)", async ({ pages, enabled, mixed, flags }) => {
+    vi.stubEnv("PDF_BALANCED_JPEG_PRIORITY", enabled);
+    try {
+      const inputPath = join(directory, "input.pdf");
+      await writeFile(inputPath, await inputPdf());
+      processMock.jpegBytes = 850;
+      const candidates = await buildPreservingImageCandidates({
+        inputPath,
+        baseOutputPath: join(directory, "candidate"),
+        preserveDetectedColor: true,
+        options: options(),
+        profile: profile({
+          pageCount: pages,
+          sourceDpi: 300,
+          ...(mixed ? { contentKind: "MIXED", optimizationClass: "MIXED_WITH_HEAVY_IMAGES" } : {}),
+        }),
+      });
+      expect(vi.mocked(spawn).mock.calls[0]?.[1].slice(9)).toEqual([
+        "--allow-partial", ...flags,
+      ]);
+      expect(candidates[0]).toMatchObject({
+        kind: "JPEG_XOBJECT_RECOMPRESSION", visualOptionsScopedToImages: true,
+      });
+      expect(validateSemanticCandidate).toHaveBeenCalledWith(inputPath, candidates[0]?.path);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(["SCREEN", "BALANCED", "PRINT"] as const)(
+    "preserves individual tones in the Ghostscript fallback for %s",
+    async (quality) => {
+      const inputPath = join(directory, "input.pdf");
+      await writeFile(inputPath, await inputPdf());
+      processMock.gsBytes = 650;
+      const candidates = await buildPreservingImageCandidates({
+        inputPath,
+        baseOutputPath: join(directory, "candidate"),
+        preserveDetectedColor: true,
+        options: options({ quality, colorMode: "GRAYSCALE" }),
+        profile: profile({
+          colorMode: "GRAYSCALE", contentKind: "MIXED",
+          optimizationClass: "MIXED_WITH_HEAVY_IMAGES",
+          sourceDpi: 96, maximumDpi: 300,
+          predominantImageEncoding: "FLATE",
+        }),
+      });
+      const args = vi.mocked(spawn).mock.calls.find(([tool]) => tool === "gs")?.[1];
+      expect(args).toContain("-sColorConversionStrategy=LeaveColorUnchanged");
+      expect(args).not.toContain("-sColorConversionStrategy=Gray");
+      expect(args).not.toContain("-dProcessColorModel=/DeviceGray");
+      expect(candidates).toContainEqual(expect.objectContaining({ kind: "GS_IMAGE_RECOMPRESSION" }));
+    },
+  );
+
   it.each(["integrity failure", "insufficient savings"] as const)(
     "keeps the existing candidates after JPEG XObject %s",
     async (reason) => {
