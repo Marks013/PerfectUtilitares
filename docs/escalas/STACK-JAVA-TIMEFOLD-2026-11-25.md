@@ -60,12 +60,16 @@ O Compose atual do PerfectUtilitares dá ao OR-Tools Python: 1 vCPU, 1536 MiB RA
 
 Ensaios obrigatórios e separados:
 - Etapa A: execução ISO-RECURSOS, Python e JVM individualmente em 1 vCPU/1536 MiB, sem competirem entre si. Medir possibilidade de rodar o contrato atual.
-- Etapa B: benchmark isolado de capacidade com orçamento PROVISÓRIO de 2 vCPU e 3 a 4 GiB de RAM, apenas quando o host de teste demonstrar que esses recursos sobram. Aumentar cota na produção só depois de aval e dimensionamento.
+- Etapa B: no host A1 COMPARTILHADO (4 OCPUs ARM64/24 GB, também usado por outros projetos), testar primeiro cota piloto de 0,50-0,75 OCPU e 1,0-1,5 GiB, com no máximo um solve ativo. Isso é uma hipótese experimental: se o solver precisar de mais recursos, medir em staging isolado e NÃO aumentar a produção automaticamente. Nenhum ensaio reserva 2 OCPUs ou 3-4 GiB da VM como padrão.
 - Exigir no mínimo cerca de 25 a 30% de margem medida em RSS/cgroup, CPU e filas no p95 de cenários suportados; política exata de SLO e mínimo de reserva dependem da observabilidade real.
 - Heap inicial controlado por Xmx ou MaxRAMPercentage com suficiente margem para metaspace, stacks de threads, código JIT, buffers e cache; não assumir que heap equivale a RSS. Ajustar ao p99, OOMKills e GCTime, não apenas ao pico de um ensaio.
 - Limitar a uma otimização ativa por instância. Não manter OR-Tools e Timefold executando cenários pesados juntos na mesma máquina com memória insuficiente.
 - JVM em modo de PRODUÇÃO com JIT C2: a FAQ Timefold registra dev mode Quarkus até 10x-50x mais lento em casos de busca. Aquecer 1-2 solves sintéticos e registrar tempo frio e aquecido, sem excluir custo de startup do contrato.
 - Benchmarks com 10/1, 50/4, 115/6, até 250/6, e casos adversariais. Medir p50/p95, RSS, GC, CPU, init e duração, com cinco ou mais repetições e seeds controladas. Guardar só métricas agregadas e hashes de fontes. Nenhum payload de funcionário em artifacts.
+
+## Ativação sob demanda sem competir com outros projetos
+
+O Timefold não precisa otimizar continuamente: SolverManager pode ficar ocioso e consumir CPU de busca apenas quando há requisição. Com memória do host escassa, uma etapa posterior opcional pode iniciar o container no primeiro pedido e pará-lo após ociosidade confirmada. Isso requer controlador externo seguro e testes de cold start; Quarkus/Timefold NÃO iniciam Docker automaticamente, e o backend Next.js não deve ter o Docker socket. Admitir carga somente após verificar memória disponível, PSI CPU/RAM e utilização recente, com fila limitada e cancelamento cooperativo; sob pressão, preservar a escala e rejeitar/adiar o cálculo. Especificação e testes: [ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md](ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md).
 
 ## Segurança e operação: extensão não substitui os contratos
 
