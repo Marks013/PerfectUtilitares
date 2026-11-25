@@ -72,7 +72,7 @@ Categoria Desempenho (desde que resultados aceitos):
 
 ## 6. Cobertura de cenários
 
-Conjunto mínimo obrigatório: 1 pessoa/1 semana, 10/1, 50/4, 115/6, 115/6 com gestor UNT IMED (sem horário), 250/6; grupos de cargo/relógio diferentes no mesmo setor; casos com histórico e planningFuture, sábados e domingos, fechamento, feriados com e sem autorização, 40/42/44h e transição, jornada mista, overnight, manualShiftByDate, importações FPRE136, ausências FPHI105, bloqueios, mês visível, planningWeekStartsOn MONDAY/SUNDAY e referências salvas.
+Conjunto mínimo obrigatório: 1 pessoa/1 semana, 10/1, 50/4, 115/6, 115/6 com gestor UNTIMED (sem horário), 250/6; grupos de cargo/relógio diferentes no mesmo setor; casos com histórico e planningFuture, sábados e domingos, fechamento, feriados com e sem autorização, 40/42/44h e transição, jornada mista, overnight, manualShiftByDate, importações FPRE136, ausências FPHI105, bloqueios, mês visível, planningWeekStartsOn MONDAY/SUNDAY e referências salvas.
 
 Como 250/6 é o limite superior de entrada, medir memória e tempo até first-hard-feasible além da qualidade final. Não inventar demanda real onde só existe estimativa. Uma fixture artificialmente difícil deve indicar se a regressão é estrutural e não permitir publicação real.
 
