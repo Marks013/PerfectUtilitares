@@ -240,6 +240,9 @@ describe("Jornada batch validation upload", () => {
     );
     vi.mocked(prisma.codigoJornada.findMany).mockResolvedValue([]);
     const zip = new JSZip();
+    zip.file("[Content_Types].xml", "<Types/>");
+    zip.file("_rels/.rels", "<Relationships/>");
+    zip.file("xl/workbook.xml", "<workbook/>");
     zip.file("xl/worksheets/sheet1.xml", `<worksheet><sheetData>
       <row r="3"><c r="A3" t="inlineStr"><is><t>TESTE01</t></is></c>
       <c r="B3" t="inlineStr"><is><t>08:00 às 12:00 e 13:00 às 17:00</t></is></c></row>

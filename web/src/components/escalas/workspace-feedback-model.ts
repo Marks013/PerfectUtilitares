@@ -72,11 +72,25 @@ export function toEscalaProblem(cause: unknown): EscalaProblem {
   return problem("Não foi possível concluir esta ação.", "Sua equipe e suas alterações locais foram preservadas. Tente a mesma ação novamente; se continuar, informe o problema ao suporte.");
 }
 
-export function solverProblem(status: string, message = "", conflicts: EscalaGenerationConflict[] = [], evidence?: EscalaSolveResult["rejectionEvidence"]): EscalaProblem | null {
+export function generationSuccessNotice(result: import("./mass-generation").GeneratedProposal, canApply: boolean) {
+  const preview = "Confira a proposta. Para aplicar ou salvar alterações, peça ajuda a uma pessoa autorizada nesta filial.";
+  const comparison = result.result.outcome?.kind === "REFERENCE_RETAINED" || result.comparison?.selection === "REFERENCE_RETAINED"
+    ? "A proposta anterior foi mantida para preservar a cobertura."
+    : result.comparison?.admission === "EXPIRED" ? "A comparação anterior expirou. Uma nova proposta foi calculada."
+      : result.comparison && ["SCENARIO_CHANGED", "INCOMPATIBLE"].includes(result.comparison.admission)
+        ? "A comparação anterior não pôde ser usada neste cenário." : "";
+  const warning = result.validation.issues.length ? "Proposta concluída com avisos." : "";
+  return comparison ? [warning, comparison, canApply ? "Confira antes de aplicar." : preview].filter(Boolean).join(" ")
+    : `${warning || "Proposta concluída."} ${canApply ? "Confira e aplique à escala." : preview}`;
+}
+
+export function solverProblem(status: string, message = "", conflicts: EscalaGenerationConflict[] = [], evidence?: EscalaSolveResult["rejectionEvidence"], outcome?: EscalaSolveResult["outcome"]): EscalaProblem | null {
   if (status === "OPTIMAL" || status === "FEASIBLE") return null;
+  if (outcome?.kind === "SEARCH_UNFINISHED" && outcome.reason === "LOCAL_REPAIR_EXHAUSTED") return { outcome: "not-generated", tone: "warning", message: "O reparo local não encontrou uma proposta válida.", explanation: "A busca geral não foi iniciada. Confira as folgas e os bloqueios sem alterar a grade salva.", action: "roster", actionLabel: "Conferir dias na escala" };
   if (status === "UNKNOWN") return { outcome: "not-generated", tone: "warning", message: "O cálculo terminou sem uma proposta no tempo disponível.", explanation: "Isso não significa que a escala seja impossível. Tente gerar novamente; se repetir, confira os horários e bloqueios da equipe.", action: "generate", actionLabel: "Gerar novamente" };
   if (status === "INFEASIBLE") {
     const stage = evidence === "PRECHECK" ? "A checagem de entrada ou cobertura impediu o início da busca."
+      : outcome?.kind === "PROVEN_INFEASIBLE" && outcome.scope === "PROTECTED_MODEL" ? "A busca demonstrou que não há alternativa com a proteção de cobertura usada neste cálculo."
       : evidence === "MODEL_PROOF" ? "A busca demonstrou que o modelo não tem solução com as condições atuais."
         : undefined;
     if (conflicts.length) return { outcome: "not-generated", tone: "warning", message: "Há condições específicas que impedem esta proposta.", explanation: [stage, "Confira os motivos abaixo. Nenhuma ausência, dia bloqueado ou exigência de cobertura foi alterada automaticamente."].filter(Boolean).join(" "), conflicts, action: conflicts[0].target, actionLabel: recoveryActionLabel(conflicts[0].target) };

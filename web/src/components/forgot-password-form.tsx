@@ -29,14 +29,14 @@ export function ForgotPasswordForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
-      }).catch(() => null);
-      if (!response?.ok) {
+      });
+      if (!response.ok) {
         throw new Error(
-          response?.status === 429
+          response.status === 429
             ? "Muitas tentativas. Aguarde alguns minutos e tente novamente."
-            : response?.status === 503
+            : response.status === 503
               ? "A recuperação por e-mail está indisponível. Solicite ajuda ao administrador."
-            : "Não foi possível enviar o pedido. Tente novamente em instantes.",
+              : "Não foi possível enviar o pedido. Tente novamente em instantes.",
         );
       }
     },
@@ -44,12 +44,16 @@ export function ForgotPasswordForm() {
 
   return (
     <form
-      onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
+      aria-labelledby="recovery-title"
+      noValidate
+      onSubmit={form.handleSubmit((values) => {
+        if (!mutation.isPending) mutation.mutate(values);
+      })}
       className="auth-card w-full max-w-sm app-radius-lg border app-border app-bg-card p-6 app-shadow"
     >
       <div className="flex items-center gap-2">
         <Mail className="size-5 app-text-muted" aria-hidden="true" />
-        <h1 className="text-xl font-semibold app-text">
+        <h1 id="recovery-title" className="text-xl font-semibold app-text">
           Recuperar senha
         </h1>
       </div>
@@ -63,13 +67,16 @@ export function ForgotPasswordForm() {
           type="email"
           autoComplete="username"
           maxLength={254}
+          required
+          aria-invalid={Boolean(form.formState.errors.email)}
+          aria-describedby={form.formState.errors.email ? "recovery-email-error" : undefined}
           {...form.register("email")}
-          className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-base sm:text-sm outline-none app-focus-border"
+          className="mt-1 min-h-11 w-full app-radius-md border app-border px-3 py-2 text-base sm:text-sm outline-none app-focus-border"
           placeholder="nome@empresa.com"
         />
       </label>
       {form.formState.errors.email ? (
-        <p className="mt-1 text-xs app-text-danger">
+        <p id="recovery-email-error" role="alert" className="mt-1 text-xs app-text-danger">
           {form.formState.errors.email.message}
         </p>
       ) : null}
@@ -77,9 +84,11 @@ export function ForgotPasswordForm() {
       {mutation.isError ? (
         <p
           role="alert"
-          className="mt-4 app-radius-md border app-border app-bg-danger-soft p-3 text-sm app-text-danger"
+          className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger"
         >
-          {mutation.error.message}
+          {mutation.error instanceof TypeError
+            ? "Não foi possível conectar. Verifique sua conexão e tente novamente."
+            : mutation.error.message}
         </p>
       ) : null}
 
@@ -96,13 +105,13 @@ export function ForgotPasswordForm() {
       <button
         type="submit"
         disabled={mutation.isPending}
-        className="mt-5 w-full app-radius-md app-action-fill px-3 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
+        className="mt-5 min-h-11 w-full app-radius-md app-action-fill px-3 py-2 text-sm font-medium text-white app-hover-action disabled:opacity-60"
       >
         {mutation.isPending ? "Enviando..." : "Enviar link"}
       </button>
       <Link
         href="/login"
-        className="mt-3 inline-flex w-full justify-center app-radius-md border app-border px-3 py-2 text-sm font-medium app-text-muted app-hover-surface"
+        className="mt-3 inline-flex min-h-11 w-full items-center justify-center app-radius-md border app-border px-3 py-2 text-sm font-medium app-text-muted app-hover-surface"
       >
         Voltar ao login
       </Link>

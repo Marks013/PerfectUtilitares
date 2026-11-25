@@ -6,7 +6,8 @@ import type { EscalaInput } from "@/lib/escalas/types";
 import { compareSectors } from "@/lib/escalas/order";
 import { ImportReplacement, type ImportReplacementProps } from "./import-replacement";
 import { MovementPriorities } from "./movement-priorities";
-import { proposeAutomaticCoverage, summarizeAutomaticCoverage } from "@/lib/escalas/automatic-coverage";
+import { matchesCoverageBasis, proposeAutomaticCoverage, summarizeAutomaticCoverage } from "@/lib/escalas/automatic-coverage";
+import { isDecember2026Cutover } from "@/lib/escalas/planning-calendar";
 import { buttonClass, Check, controlClass, Field, panelClass, primaryClass } from "./controls";
 import {
   clock,
@@ -128,7 +129,7 @@ export function Coverage({
     <section className={panelClass} aria-labelledby="escala-coverage-title">
       <h2 id="escala-coverage-title" className="text-lg font-bold">Cobertura automática por setor</h2>
       <p className="text-sm text-[color:var(--app-muted)]">
-        As metas são definidas ao gerar a proposta, usando equipe, cargos, horários e capacidade de cinco dias por semana.
+        As metas são definidas ao gerar a proposta, usando equipe, cargos, horários e os dias de trabalho previstos para cada semana.
         Mudanças na equipe ou na carga horária recalculam as estimativas. Você não precisa cadastrar faixas nem aprovar estimativas para simular.
       </p>
       <p className="text-sm">Pausas não contam como atendimento. Pessoas sem horário participam do revezamento, mas não viram cobertura horária fictícia. Uma meta automática é uma referência de equilíbrio, não uma garantia de atendimento.</p>
@@ -151,6 +152,16 @@ export function Coverage({
       </div>
       {!summary.length && <p className="text-sm">Importe a equipe para o algoritmo dimensionar a cobertura.</p>}
       <p className="text-sm">{explicitCount} faixa(s) marcada(s) como mínimo obrigatório. Esses valores são preservados; só a estimativa automática se ajusta.</p>
+      {isDecember2026Cutover(input) && input.demands.some(demand => demand.estimated === true) && !matchesCoverageBasis(input) && <div className="space-y-2">
+        <p className="text-sm">A referência salva não corresponde ao cálculo atual. Recalcular atualiza só as estimativas do rascunho; os mínimos e os dias da grade não mudam.</p>
+        <button type="button" disabled={disabled} className={buttonClass} onClick={() => {
+          setError("");
+          try {
+            onChange(proposeAutomaticCoverage({ ...input, coverageBasis: undefined, demands: input.demands.filter(demand => demand.estimated !== true) }));
+            setNotice("Estimativas recalculadas no rascunho. Confira a cobertura antes de gerar uma proposta.");
+          } catch (cause) { setError(errorMessage(cause)); }
+        }}>Recalcular apenas estimativas</button>
+      </div>}
       {explicitCount > 0 && <div className="space-y-3 rounded-md border border-[color:var(--app-border)] p-3">
         {!resetRequested ? <button type="button" disabled={disabled} className={buttonClass} onClick={() => setResetRequested(true)}>Voltar à cobertura automática</button> : <fieldset className="space-y-3" disabled={disabled} aria-label="Confirmar volta à cobertura automática">
           <p className="text-sm">Isso retira os {explicitCount} mínimos obrigatórios deste rascunho. Ao gerar novamente, o algoritmo recalcula estimativas. Equipe, jornada, dias bloqueados e ausências não mudam. A revisão anterior permanece no histórico após salvar.</p>

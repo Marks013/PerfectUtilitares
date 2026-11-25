@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/server", async (importOriginal) => ({
@@ -67,30 +68,12 @@ vi.mock("@/lib/usage/record", () => ({
   recordUserUsage: vi.fn(),
 }));
 
-vi.mock("@/lib/codigos/importer", () => ({
-  parseCodigoImportBuffer: vi.fn(() => [
-    {
-      codigo: "A1",
-      nome: "Horario teste",
-      horariosOriginal: "08:00 17:00",
-      horariosNormalizado: "08:00 17:00",
-    },
-  ]),
-  parseCodigoJson: vi.fn(() => [
-    {
-      codigo: "A1",
-      nome: "Horario teste",
-      horariosOriginal: "08:00 17:00",
-      horariosNormalizado: "08:00 17:00",
-    },
-  ]),
-}));
-
 vi.mock("@/lib/codigos/repository", () => ({
-  persistCodigoImport: vi.fn(async () => ({
-    created: 1,
-    updated: 0,
-    total: 1,
+  persistCodigoImport: vi.fn(async (_db, parsed: import("@/lib/codigos/importer").CodigoImportParseResult) => ({
+    totalLido: parsed.totalLido,
+    importados: parsed.importaveis.length,
+    ignorados: parsed.ignorados,
+    erros: parsed.erros,
   })),
 }));
 
@@ -612,7 +595,7 @@ const cases: FunctionalRouteCase[] = [
       const form = new FormData();
       form.set(
         "file",
-        new File([Buffer.from("xlsx-test")], "jornadas.xlsx", {
+        new File([readFileSync(new URL("../../lib/codigos/__fixtures__/banco-horario.xlsx", import.meta.url))], "jornadas.xlsx", {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         }),
       );
@@ -653,6 +636,42 @@ describe("functional success paths for account, admin and Jornada routes", () =>
     delete process.env.RESEND_FROM_EMAIL;
   });
   afterEach(() => vi.unstubAllEnvs());
+
+  it("imports a multipart CSV and returns its real parser counts", async () => {
+    const form = new FormData();
+    form.set("file", new File(["Código;Horários\nA1;08:00 12:00 13:00 17:00\n"], "codigos.csv", { type: "text/csv" }));
+    const response = await importCodigos(new Request("http://localhost:3000/api/jornada/codigos/import", {
+      method: "POST",
+      body: form,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ totalLido: 2, importados: 1, ignorados: 1, erros: [] });
+  });
+
+  it("rejects an invalid batch workbook before querying rules", async () => {
+    const form = new FormData();
+    form.set("file", new File(["not a workbook"], "jornadas.xlsx"));
+    const response = await validarLote(new Request(`${origin}/api/jornada/validar-lote`, {
+      method: "POST",
+      headers: { origin },
+      body: form,
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.calls).not.toContain("jornadaRule.findMany");
+  });
+
+  it("preserves the JSON reader's error response", async () => {
+    const response = await importCodigos(new Request("http://localhost:3000/api/jornada/codigos/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: "INVALID_JSON" } });
+  });
 
   for (const routeCase of cases) {
     it(`route-success: ${routeCase.route}`, async () => {

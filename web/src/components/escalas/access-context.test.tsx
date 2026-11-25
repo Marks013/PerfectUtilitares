@@ -99,7 +99,7 @@ describe("branch-scoped display permissions", () => {
     expect(html).not.toContain("Importar ou atualizar arquivos"); expect(html).not.toContain("Relatórios e gráficos PDF");
     expect(html).not.toContain("Regras de jornada e intervalos"); expect(html).not.toContain("Configurações da filial</button>");
     expect(html).toContain("Criar planejamento");
-    expect(html).toContain("Criar com esta equipe");
+    expect(html).toContain("Criar ou abrir rascunho");
     expect(html).not.toContain("Código da filial</label>");
     expect(html).toContain("Adicionar colaborador por modelo aprovado");
   });

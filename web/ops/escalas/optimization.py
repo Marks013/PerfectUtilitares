@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import NamedTuple
 from ortools.sat.python import cp_model
+from planning_calendar import planning_week_start
 from runtime_settings import (COVERAGE_BUDGET_SHARE, LARGE_MODEL_VARIABLES, MOVABLE_PEOPLE_LIMIT,
                               POLISH_PEOPLE_LIMIT, RANDOM_SEED, SearchSettings)
 
@@ -207,6 +208,9 @@ def _polish_people(variables, values, groups, limit=POLISH_PEOPLE_LIMIT, coverag
 
 
 def _expression_terms(objective):
+    # A protected window without decision terms can have a constant deficit.
+    if isinstance(objective, int):
+        return (), (), objective
     expression = cp_model.FlatIntExpr(objective)
     return tuple(v.index for v in expression.vars), tuple(expression.coeffs), int(expression.offset)
 
@@ -330,7 +334,7 @@ class RestPresenceCell(NamedTuple):
     date: str
 
 
-def improve_sector_presence(model, goals, people, values, deadline, context, unstaffed):
+def improve_sector_presence(model, goals, people, values, deadline, context, unstaffed, *, calendar=None):
     """Restore whole sectors, then roles, without making pairs a minimum."""
     cells = [cell for sector in unstaffed.values() for cell in sector]
     sector_cells = [cell for cell in cells if cell.role is None]
@@ -361,11 +365,12 @@ def improve_sector_presence(model, goals, people, values, deadline, context, uns
 
     def search(incumbent, seconds, *, focused=(), movers=None, days=None,
                require_sector_gain=False, request_no_role_gaps=False, exact_presence=False):
+        attempt_deadline = min(deadline, time.monotonic() + seconds)
         if context.control is not None:
             context.control.checkpoint()
         before_values = Snapshot(incumbent)
         baseline = before_values.value(missing)
-        if not baseline or deadline - time.monotonic() < MIN_PHASE_BUDGET:
+        if not baseline or attempt_deadline - time.monotonic() < MIN_PHASE_BUDGET:
             return incumbent
         candidate = hard.clone()
         for variable in {cell.variable.index: cell.variable for cell in cells
@@ -388,23 +393,22 @@ def improve_sector_presence(model, goals, people, values, deadline, context, uns
                     domain = candidate.proto.variables[index].domain
                     domain.clear()
                     domain.extend([incumbent[index], incumbent[index]])
-        if not exact_presence:
-            candidate.minimize(objective)
+        candidate.minimize(objective)
         _replace_hints(candidate, incumbent)
         before = time.monotonic()
-        budget = min(seconds, deadline - before)
+        budget = attempt_deadline - before
         if budget < MIN_SEARCH_SECONDS:
             return incumbent
         engine = cp_model.CpSolver()
         engine.parameters.max_time_in_seconds = budget
         engine.parameters.num_workers = 1
         engine.parameters.linearization_level = 0
-        engine.parameters.stop_after_first_solution = exact_presence
         status = engine.solve(candidate) if context.control is None else context.control.solve(engine, candidate)
         phase = {"objective": "REST_DISTRIBUTION", "status": engine.status_name(status),
                  "wallTimeSeconds": round(time.monotonic() - before, 3), "budgetSeconds": round(budget, 3),
                  "initialValue": baseline, "incumbentValue": baseline,
-                 "searchScope": "GLOBAL" if movers is None else "SELECTED_PEOPLE"}
+                 "searchScope": ("GLOBAL" if movers is None else
+                                 "SELECTED_PEOPLE" if days is None else "ROLLING_WEEKS")}
         if movers is not None:
             phase["movablePeople"] = len(movers)
         phases.append(phase)
@@ -413,34 +417,62 @@ def improve_sector_presence(model, goals, people, values, deadline, context, uns
             return {index: engine.value(candidate.get_int_var_from_proto_index(index)) for index in incumbent}
         return incumbent
 
-    # First offer a useful, small neighborhood before the global model consumes
-    # the remaining budget if a complete joint recovery was not found.
+    def week_start(cell):
+        return planning_week_start(cell.date, calendar if calendar is not None else {})
+
+    def week_window(start):
+        week = date.fromisoformat(start)
+        return {(week + timedelta(days=offset)).isoformat() for offset in range(-1, 8)}
+
+    groups = context.rest_spacing_groups or {}
+    tried_weeks = set()
+    local_limit = min(len(groups), 2)
+    # Spend the existing local slots on calendar clusters before the global
+    # model. Release all affected sectors together, but only for that week.
+    for attempt in range(local_limit):
+        local_seconds = min(5.0, (deadline - time.monotonic() - 5.0) / (local_limit - attempt))
+        if local_seconds < MIN_PHASE_BUDGET:
+            break
+        by_week, by_sector = {}, {}
+        for sector, selected in unstaffed.items():
+            if not groups.get(sector):
+                continue
+            for cell in selected:
+                if cell.role is None and values[cell.variable.index]:
+                    by_sector.setdefault(sector, []).append(cell)
+                    week = week_start(cell)
+                    if week not in tried_weeks:
+                        by_week.setdefault(week, []).append((sector, cell))
+
+        def rank(selected):
+            return len(selected), sum(cell.weight for cell in selected)
+
+        if by_week and context.decision_variables:
+            week = max(sorted(by_week), key=lambda key: rank([cell for _, cell in by_week[key]]))
+            selected = by_week[week]
+            tried_weeks.add(week)
+            values = search(values, local_seconds, focused=[cell for _, cell in selected],
+                            movers={pid for sector, _ in selected for pid in groups[sector]},
+                            days=week_window(week), require_sector_gain=True)
+        elif by_sector:
+            # A repair that needs a compensation in another week can still
+            # use the next local slot without opening the full branch model.
+            sector = max(sorted(by_sector), key=lambda key: rank(by_sector[key]))
+            values = search(values, local_seconds, focused=by_sector[sector], movers=set(groups[sector]),
+                            require_sector_gain=True)
+        else:
+            break
+        if Snapshot(values).value(missing) == 0:
+            return values, phases
+
     exact_seconds = min(7.0, deadline - time.monotonic() - 7.0)
+    exact_disproved = False
     if exact_seconds >= MIN_PHASE_BUDGET:
+        count = len(phases)
         values = search(values, exact_seconds, exact_presence=True)
         if Snapshot(values).value(missing) == 0:
             return values, phases
-    exact_disproved = bool(phases and phases[0]["status"] == "INFEASIBLE")
-    groups = context.rest_spacing_groups or {}
-    pending = dict(groups)
-    local_limit = min(len(pending), 2)
-    for attempt in range(local_limit):
-        pressure = Snapshot(values)
-        local_seconds = min(5.0, (deadline - time.monotonic() - 5.0) / (local_limit - attempt))
-        if not pressure.value(closed_sectors) or local_seconds < MIN_PHASE_BUDGET:
-            break
-
-        def rank(sector):
-            selected = unstaffed.get(sector, ())
-            return (pressure.value(sum(cell.variable for cell in selected if cell.role is None)),
-                    pressure.value(sum(cell.variable * cell.weight for cell in selected)))
-
-        sector = max(sorted(pending), key=rank)
-        if rank(sector)[0] == 0:
-            break
-        focused = [cell for cell in unstaffed[sector] if cell.role is None]
-        values = search(values, local_seconds, focused=focused, movers=set(pending.pop(sector)),
-                        require_sector_gain=True)
+        exact_disproved = len(phases) > count and phases[-1]["status"] == "INFEASIBLE"
     if Snapshot(values).value(closed_sectors):
         values = search(values, 12.0, require_sector_gain=True)
     if not exact_disproved and Snapshot(values).value(closed_roles) and deadline - time.monotonic() >= 4.0:
@@ -462,13 +494,7 @@ def improve_sector_presence(model, goals, people, values, deadline, context, uns
         focused = [cell for cell in remaining_roles.pop(key) if pressure.value(cell.variable)]
         if not focused:
             break
-        days = set()
-        for cell in focused:
-            civil = date.fromisoformat(cell.date)
-            week = civil - timedelta(days=(civil.weekday() + 1) % 7)
-            # Allow the same Sunday-start week and its boundary days. All
-            # partners in the sector can compensate for transfers of service.
-            days.update((week + timedelta(days=offset)).isoformat() for offset in range(-1, 8))
+        days = set().union(*(week_window(week) for week in {week_start(cell) for cell in focused}))
         values = search(values, 1.5, focused=focused, movers=set(groups[key[0]]), days=days)
     return values, phases
 

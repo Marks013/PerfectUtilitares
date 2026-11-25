@@ -88,10 +88,10 @@ export function selectSalaryRevisionCandidates(
   query = "",
 ) {
   const unavailable = selectedByOtherRules(rules, rule.id);
+  const matchesSearch = createEmployeeSearchMatcher(query);
   const matches = candidatesForRule(analysis, rule)
-    .filter((employee) => employeeMatchesSearch(employee, query))
-    .map((employee) => employee.registration)
-    .filter((registration) => !unavailable.has(registration));
+    .filter((employee) => !unavailable.has(employee.registration) && matchesSearch(employee))
+    .map((employee) => employee.registration);
   return query.trim() ? [...new Set([...rule.selectedRegistrations, ...matches])] : matches;
 }
 
@@ -209,17 +209,17 @@ export function serializeSalaryRevisionRules(rules: SalaryRevisionRuleDraft[]) {
   );
 }
 
-export function employeeMatchesSearch(
-  employee: SalaryRevisionAnalysisEmployee,
-  query: string,
-) {
-  const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleUpperCase("pt-BR");
-  const normalized = normalize(query);
-  if (!normalized) return true;
-  return [
-    employee.employeeName,
-    employee.registration,
-    employee.role,
-    employee.branchAlias,
-  ].some((value) => normalize(value).includes(normalized));
+function normalizeSearch(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleUpperCase("pt-BR");
+}
+
+export function createEmployeeSearchMatcher(query: string) {
+  const normalized = normalizeSearch(query);
+  return (employee: SalaryRevisionAnalysisEmployee) =>
+    !normalized || [
+      employee.employeeName,
+      employee.registration,
+      employee.role,
+      employee.branchAlias,
+    ].some((value) => normalizeSearch(value).includes(normalized));
 }

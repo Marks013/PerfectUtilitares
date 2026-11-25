@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newLegacyInput as newInput } from "./legacy-calendar-test-fixture";
-import { coverageBasis, proposeAutomaticCoverage, retainCoverageReference } from "./automatic-coverage";
+import { coverageBasis, matchesCoverageBasis, proposeAutomaticCoverage, retainCoverageReference } from "./automatic-coverage";
 import { dateRange } from "./dates";
 import { validateEscala } from "./validation";
 import { materializeManualShiftOverrides, withManualShiftOverride } from "./shift-catalog/manual-override";
@@ -43,6 +43,29 @@ function manualFixture(from = "2026-11-02", until = "2026-11-08") {
 }
 
 describe("versioned calendar and effective manual coverage references", () => {
+  it("estimates three working days per person in the December opening instead of five", () => {
+    const input = fixture(10);
+    Object.assign(input, { startDate: "2026-12-01", endDate: "2026-12-31", visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY" });
+    const opening = (source: EscalaInput) => source.demands.filter(demand => demand.estimated && demand.date <= "2026-12-05" && demand.start === 480)
+      .reduce((total, demand) => total + demand.minimum, 0);
+    const result = proposeAutomaticCoverage(input);
+    expect(opening(result)).toBe(30);
+    expect(matchesCoverageBasis(result)).toBe(true);
+    expect(matchesCoverageBasis({ ...result, coverageBasis: result.coverageBasis?.replace("v3:", "v2:") })).toBe(false);
+    input.assignments = input.employees.map(person => ({ employeeId: person.id, date: "2026-12-03", kind: "HOLIDAY" }));
+    expect(opening(proposeAutomaticCoverage(input))).toBe(20);
+  });
+
+  it("bounds the December opening by actual availability when the person starts late or is absent", () => {
+    const input = fixture();
+    Object.assign(input, { startDate: "2026-12-01", endDate: "2026-12-31", visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY" });
+    input.employees[0].activeFrom = "2026-12-04";
+    input.assignments = [{ employeeId: "e0", date: "2026-12-04", kind: "ABSENCE", locked: true }];
+    const result = proposeAutomaticCoverage(input);
+    expect([...new Set(result.demands.filter(demand => demand.date <= "2026-12-05" && demand.minimum > 0).map(demand => demand.date))]).toEqual(["2026-12-05"]);
+    expect(result.assignments).toEqual(input.assignments);
+  });
+
   it("uses the existing Christmas regime: four WORK, two OFF and one closed HOLIDAY", () => {
     const input = christmasFixture(), before = structuredClone(input);
     const proposal = proposeAutomaticCoverage(input);

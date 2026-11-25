@@ -52,6 +52,37 @@ function expectViableWorkerResult(input: EscalaInput) {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("December conversion coverage", () => {
+  it.each([
+    ["UNKNOWN", { kind: "SEARCH_UNFINISHED", reason: "SOLVER_UNKNOWN" }],
+    ["TIMED_OUT", { kind: "SEARCH_UNFINISHED", reason: "TIMED_OUT" }],
+    ["INFEASIBLE", { kind: "PROVEN_INFEASIBLE", scope: "PROTECTED_MODEL" }],
+    ["FEASIBLE", { kind: "REFERENCE_RETAINED" }],
+  ] as const)("distinguishes %s when protected spacing cannot move locked days", async (status, outcome) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    const input: EscalaInput = { ...fixture(), startDate: "2026-12-01", endDate: "2026-12-31",
+      visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY", coverageBasis: "coverage-v2:aaaaaaaaaaaaaaaa" };
+    input.employees = ["p1", "p2"].map(id => ({ ...input.employees[0], id, registration: id,
+      activeFrom: "2026-12-06", activeUntil: "2026-12-12" }));
+    input.assignments = input.employees.flatMap(({ id }) => dateRange("2026-12-06", "2026-12-12").map((date, index) => ({
+      employeeId: id, date, locked: true,
+      ...(index === 0 || index === 6 ? { kind: "OFF" as const } : { kind: "WORK" as const, shiftId: "day" }),
+    })));
+    input.demands = [{ id: "estimate", date: "2026-12-08", sector: "Loja", role: "Repositor", start: 480, end: 540, minimum: 2, estimated: true }];
+    expect(validateEscala(input).valid).toBe(true);
+    const saved = structuredClone(input);
+    const onRestSpacingProtected = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => status === "TIMED_OUT" ? new Response(null, { status: 504 }) : Response.json({
+      status, assignments: status === "FEASIBLE" ? input.assignments : [], wallTimeSeconds: 1, message: "Resposta do cálculo",
+      ...(status === "INFEASIBLE" ? { rejectionStage: "SEARCH" } : {}),
+    })));
+    const result = await solveEscala(input, { qualityReference: saved, onRestSpacingProtected });
+    expect(onRestSpacingProtected).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ status: status === "TIMED_OUT" ? "UNKNOWN" : status, outcome });
+    expect(result.rejectionEvidence).toBe(status === "INFEASIBLE" ? "MODEL_PROOF" : undefined);
+    expect(result.assignments).toEqual(status === "FEASIBLE" ? saved.assignments : []);
+    expect(input).toEqual(saved);
+  });
+
   it("sends the frozen bounds without transporting the origin roster", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const origin: EscalaInput = { ...fixture(), startDate: "2026-12-01", endDate: "2026-12-31",
@@ -485,7 +516,12 @@ describe("isolated schedule processor client", () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "FEASIBLE", assignments: completeAssignments(), message: "Valid", wallTimeSeconds: 1 })));
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    try { expect((await solveEscala(fixture())).assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false }))); expect(log).not.toHaveBeenCalled(); }
+    try {
+      const result = await solveEscala(fixture());
+      expect(result.outcome).toEqual({ kind: "NEW_PROPOSAL" });
+      expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
+      expect(log).not.toHaveBeenCalled();
+    }
     finally { log.mockRestore(); }
   });
   it("keeps an established draft instead of replacing an unrepaired rest pattern with an unrestricted fallback", async () => {
@@ -498,7 +534,8 @@ describe("isolated schedule processor client", () => {
     });
     const before = structuredClone(input), fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
     expect(validateEscala(input).issues.filter(issue => issue.severity === "ERROR").every(issue => issue.code === "CONSECUTIVE_REST_LIMIT")).toBe(true);
-    await expect(solveEscala(input)).rejects.toMatchObject({ code: "ESCALA_REST_REPAIR_PENDING", status: 409 });
+    await expect(solveEscala(input)).resolves.toMatchObject({ status: "UNKNOWN", assignments: [],
+      outcome: { kind: "SEARCH_UNFINISHED", reason: "LOCAL_REPAIR_EXHAUSTED" }, message: expect.stringContaining("A busca global não foi executada") });
     expect(fetch).not.toHaveBeenCalled(); expect(input).toEqual(before);
   });
   it("sends scoped history without repeating IDs and preserves every scheduling field", async () => {

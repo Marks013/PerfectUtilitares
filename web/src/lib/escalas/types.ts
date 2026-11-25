@@ -229,7 +229,15 @@ type EscalaOptimizationPhase = {
   }[];
 
 };
+type EscalaGenerationOutcome =
+  | { kind: "NEW_PROPOSAL" }
+  | { kind: "REFERENCE_RETAINED" }
+  | { kind: "SEARCH_UNFINISHED"; reason: "SOLVER_UNKNOWN" | "TIMED_OUT" | "LOCAL_REPAIR_EXHAUSTED" }
+  | { kind: "PROVEN_INFEASIBLE"; scope: "SCENARIO" | "PROTECTED_MODEL" };
+
 export type EscalaSolveResult = {
+  /** Application outcome, distinct from processor feasibility and operation lifecycle. */
+  outcome?: EscalaGenerationOutcome;
   /** Independently derived diagnostics; never accepted as input or persisted as scheduling rules. */
   restQuality?: {
     before: import("./rest-quality").RestPairSummary; after: import("./rest-quality").RestPairSummary;

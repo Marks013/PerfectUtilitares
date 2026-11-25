@@ -7,6 +7,7 @@ import { analyzeCoverage, type CoverageAnalysisSlice, type CoverageDemandMetrics
 import { isHoursReferenceOnly } from "@/lib/escalas/hours-reference";
 import { summarizeCoverageGaps } from "@/lib/escalas/coverage-summary";
 import { sectorPresenceGaps } from "@/lib/escalas/coverage-presence";
+import { competingRestCoverageZeros, competingRestSectorCount } from "@/lib/escalas/competing-rest-coverage";
 import { LeadershipSummary } from "./leadership-summary";
 import { RestDistributionSummary, type RestDistributionSearch } from "./rest-distribution-summary";
 import { weeklyCapacityCaveat, weeklySectorCapacity } from "@/lib/escalas/weekly-capacity";
@@ -139,9 +140,12 @@ function CoverageMeasure({ label, value }: { label: string; value: CoverageDeman
 function CoverageGaps({ input, rows, emptySectors = [], onResolve, referenceOrigin = "PERSISTED" }: { input: EscalaInput; rows: ReturnType<typeof buildEscalaDiagnostics>["coverageGroups"]; emptySectors?: ReturnType<typeof sectorPresenceGaps>; onResolve?: ResolveReview; referenceOrigin?: "PREPARED" | "PERSISTED" }) {
   const capacities = useMemo(() => weeklySectorCapacity(input), [input]);
   const analysis = useMemo(() => analyzeCoverage(input, input, { referenceOrigin, details: true }), [input, referenceOrigin]);
+  const restZeros = useMemo(() => competingRestCoverageZeros(input), [input]);
+  const emptyRestSectors = competingRestSectorCount(restZeros);
+  const minimumGaps = new Set(rows.filter(row => !row.estimated).map(row => JSON.stringify([row.sector, row.date]))).size;
   const summaries = useMemo(() => {
     const groups = new Map(summarizeCoverageGaps(rows).map(row => [row.sector, row]));
-    for (const row of emptySectors) if (!groups.has(row.sector)) groups.set(row.sector, { sector: row.sector, dates: row.dates, noServiceDates: row.dates, minimumDates: [], hasEstimates: true, peakMissing: 0, peakSectorMissing: 0, hasRoleMismatch: false, windows: [] });
+    for (const row of emptySectors) if (!groups.has(row.sector)) groups.set(row.sector, { sector: row.sector, dates: row.dates, noServiceDates: row.dates, minimumDates: [], hasEstimates: false, peakMissing: 0, peakSectorMissing: 0, hasRoleMismatch: false, windows: [] });
     for (const row of capacities) if (!groups.has(row.sector)) groups.set(row.sector, { sector: row.sector, dates: [], noServiceDates: [], minimumDates: [], hasEstimates: false, peakMissing: 0, peakSectorMissing: 0, hasRoleMismatch: false, windows: [] });
     return [...groups.values()].sort((a, b) => compareSectors(a.sector, b.sector));
   }, [rows, emptySectors, capacities]);
@@ -151,7 +155,12 @@ function CoverageGaps({ input, rows, emptySectors = [], onResolve, referenceOrig
   return <div className={styles.reviewGroup}>
     <div><h3 className="font-semibold">Capacidade e desfalques por setor</h3><p className={styles.muted}>{weeklyCapacityCaveat}</p></div>
     {analysis.dates.length > 0 && <p className={styles.muted}>Período analisado: {displayDate(analysis.dates[0])} a {displayDate(analysis.dates[analysis.dates.length - 1])}. As horas de trabalho do período são diferentes da capacidade nominal semanal abaixo.</p>}
-    {referenceUnavailable && <p className={styles.muted}>Referência de cobertura indisponível ou desatualizada. Gere uma proposta atualizada para conferir as estimativas.</p>}
+    {referenceUnavailable && <p className={styles.muted}>Referência de cobertura indisponível ou desatualizada. Confira o cálculo das estimativas na área Cobertura.</p>}
+    <ul className="space-y-1 text-sm" aria-label="Tipos de lacuna de cobertura">
+      {minimumGaps > 0 && <li>Mínimo obrigatório não atendido: {minimumGaps} combinação(ões) de setor e dia.</li>}
+      {restZeros.size > 0 && <li>Toda a equipe elegível de folga: {emptyRestSectors} combinação(ões) de setor e dia; {restZeros.size - emptyRestSectors} de cargo, setor e dia.</li>}
+      <li>Desfalques estimados por faixa são avisos, não violações de mínimos obrigatórios.</li>
+    </ul>
     <ul className={styles.coverageGapList}>
       {summaries.map(row => {
         const open = selected?.sector === row.sector;
@@ -161,7 +170,7 @@ function CoverageGaps({ input, rows, emptySectors = [], onResolve, referenceOrig
         const noShortage = !referenceUnavailable && actual?.status === "READY" && metrics.length > 0
           && metrics.every(value => value.deficitPersonMinutes === 0);
         return <li key={row.sector} className={styles.reviewNotice} data-severity={row.minimumDates.length ? "ERROR" : "WARNING"}>
-          <div className={styles.header}><h4 className="font-semibold">{row.sector || "Setor não informado"}</h4><span className={styles.statusTag}>{row.minimumDates.length ? "Rever mínimo informado" : row.dates.length ? "Referência estimada" : "Capacidade nominal"}</span></div>
+          <div className={styles.header}><h4 className="font-semibold">{row.sector || "Setor não informado"}</h4><span className={styles.statusTag}>{row.minimumDates.length ? "Rever mínimo informado" : row.hasEstimates ? "Referência estimada" : row.noServiceDates.length ? "Sem presença com horário" : "Capacidade nominal"}</span></div>
           <WeeklyCapacity capacity={capacities.find(capacity => capacity.sector === row.sector)} />
           {actual && <div className="space-y-1 text-sm">
             <p>Horas de trabalho com horário no período: {coverageHours(actual.availablePersonMinutes)}{actual.status === "PARTIAL" ? " · informação parcial" : ""}.</p>
@@ -264,7 +273,7 @@ function OptimizationSearchSummary({ optimization }: { optimization?: Optimizati
 }
 
 export const Proposals = memo(function Proposals({ input: nextInput, generated: nextGenerated, disabled, onGenerated, onDismiss, active = true }: {
-  input: EscalaInput; generated: { result: { status: string; message: string; optimization?: EscalaSolveResult["optimization"]; restQuality?: { search: RestDistributionSearch } }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
+  input: EscalaInput; generated: { result: { status: string; message: string; outcome?: EscalaSolveResult["outcome"]; optimization?: EscalaSolveResult["optimization"]; restQuality?: { search: RestDistributionSearch } }; proposalInput: EscalaInput; validation: EscalaValidation } | null;
   disabled: boolean; onGenerated: () => void; onDismiss: () => void; active?: boolean;
 }) {
   const { input, generated } = useActiveSnapshot({ input: nextInput, generated: nextGenerated }, active);
@@ -273,9 +282,10 @@ export const Proposals = memo(function Proposals({ input: nextInput, generated: 
   const diagnostics = useActiveDiagnostics(generated?.proposalInput ?? input, generated?.validation.issues, active);
   const emptySectors = useMemo(() => generated && active ? sectorPresenceGaps(generated.proposalInput) : [], [generated, active]);
   if (!generated || !diagnostics) return null;
+  const retained = generated.result.outcome?.kind === "REFERENCE_RETAINED";
   return <section className={`${panelClass} border-[color:var(--app-teal)]`} aria-labelledby="escala-proposals-title">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">Proposta pronta para revisão</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">Proposta candidata. A sugestão ainda não foi aplicada à grade atual nem aos arquivos. Os horários originais e os dias bloqueados foram preservados.</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
-    <p className="text-sm">{generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo" : "Solução viável encontrada"}. {generated.result.message}</p>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="escala-proposals-title" className="text-lg font-bold">{retained ? "Referência mantida" : "Proposta pronta para revisão"}</h2><p className="mt-1 text-sm text-[color:var(--app-muted)]">{retained ? "O cálculo não substituiu a referência verificada. A grade salva não foi alterada." : "A sugestão ainda não foi aplicada à grade atual nem aos arquivos. Os horários originais e os dias bloqueados foram preservados."}</p></div><span className="text-sm font-semibold">{generated.proposalInput.defaultWeeklyHours}h por semana</span></div>
+    <p className="text-sm">{!retained && !isHoursReferenceOnly(generated.proposalInput) && (generated.result.status === "OPTIMAL" ? "Melhor solução comprovada para o modelo. " : "Solução viável encontrada. ")}{generated.result.message}</p>
     <OptimizationSearchSummary optimization={generated.result.optimization} />
     <LeadershipSummary counts={generated.result.optimization?.leadership} />
     <RestDistributionSummary input={generated.proposalInput} previousInput={input} search={generated.result.restQuality?.search} />

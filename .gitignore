@@ -48,6 +48,7 @@ releases/
 **/releases/
 Output/
 **/Output/
+/outputs/escalas-e2e-harness/
 
 # Runtime data kept on the server, outside Docker volumes
 storage/

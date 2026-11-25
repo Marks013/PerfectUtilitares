@@ -1,6 +1,7 @@
 import { parse as parseCsv } from "csv-parse/sync";
 import { readSheet } from "read-excel-file/node";
 import { z } from "zod";
+import { validateXlsxArchive } from "@/lib/spreadsheets/xlsx-security";
 import {
   normalizarHorarios,
   validarHorariosNormalizados,
@@ -148,6 +149,7 @@ function collectRows(
 export async function parseCodigoXlsxBuffer(
   buffer: Buffer,
 ): Promise<CodigoImportParseResult> {
+  validateXlsxArchive(buffer);
   const rows = await readSheet(buffer);
   return collectRows(rows as unknown[][], "XLSX");
 }

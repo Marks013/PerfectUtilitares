@@ -50,6 +50,26 @@ describe("planPdfCompression full32", () => {
       .toBe("GRAYSCALE");
   });
 
+  it.each([120, 150, 220])("mantém o alvo de %i DPI em PDFs com imagens de resoluções diferentes", (dpi) => {
+    const plan = planPdfCompression(options({ dpi }), {
+      ...profile,
+      contentKind: "MIXED",
+      optimizationClass: "MIXED_WITH_HEAVY_IMAGES",
+      sourceDpi: 96,
+      minimumDpi: 72,
+      maximumDpi: 300,
+    });
+    expect(plan.strategy).toBe("IMAGE_RECOMPRESSION");
+    expect(plan.effectiveOptions.dpi).toBe(dpi);
+  });
+
+  it("não usa a tonalidade predominante para converter a página inteira ao rasterizar com preservação de cor", () => {
+    const raster = options({ method: "RASTER", preserveTextLayer: false, allowSemanticLoss: true });
+    expect(planPdfCompression(raster, profile).effectiveOptions.colorMode).toBe("COLOR");
+    expect(planPdfCompression({ ...raster, colorMode: "GRAYSCALE" }, profile).effectiveOptions.colorMode)
+      .toBe("GRAYSCALE");
+  });
+
   it("nunca rasteriza OCR em AUTO", () => {
     const plan = planPdfCompression(
       options({

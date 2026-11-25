@@ -18,6 +18,7 @@ import {
 import { generateJornadaBatchReportPdf } from "@/lib/jornada/batch-pdf";
 import type { JornadaBatchConfig } from "@/lib/jornada/batch-validation";
 import { prisma } from "@/lib/prisma";
+import { validateXlsxArchive } from "@/lib/spreadsheets/xlsx-security";
 import { recordUserUsage } from "@/lib/usage/record";
 import { getRequestContentLength } from "@/lib/system/resource-capacity";
 
@@ -158,7 +159,7 @@ export async function POST(request: Request) {
     }
 
     const capacityError = await requireResourceCapacity({
-      inputBytes: getRequestContentLength(request),
+      inputBytes: getRequestContentLength(request) || MAX_IMPORT_BYTES,
       multiplier: 3,
     });
     if (capacityError) return capacityError;
@@ -167,6 +168,8 @@ export async function POST(request: Request) {
     if (!multipart.ok) return multipart.response;
     const formData = multipart.data;
     const file = getUploadedFile(formData);
+    const buffer = Buffer.from(await file.arrayBuffer());
+    validateXlsxArchive(buffer);
     const config = getConfig(formData);
     const [rules, codigos] = await Promise.all([
       prisma.jornadaRule.findMany({ where: { active: true } }),
@@ -175,7 +178,6 @@ export async function POST(request: Request) {
     const codigoByHorario = new Map(
       codigos.map((codigo) => [codigo.horariosNormalizado, codigo.codigo]),
     );
-    const buffer = Buffer.from(await file.arrayBuffer());
     const report = await validarJornadaBatchXlsx({
       buffer,
       fileName: file.name,

@@ -1070,11 +1070,16 @@ describe("Escalas revision service", () => {
     expect(result.validation.issues.some(issue => issue.code === "COVERAGE_REVIEW_PENDING")).toBe(true);
     expect(result.proposalInput.assignments).toEqual(generatedInput().assignments);
     expect(mocks.transaction).not.toHaveBeenCalled();
-    mocks.solve.mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 1, message: "Prazo encerrado" });
+    mocks.solve.mockResolvedValue({ status: "UNKNOWN", assignments: [], wallTimeSeconds: 1, message: "Prazo encerrado",
+      outcome: { kind: "SEARCH_UNFINISHED", reason: "TIMED_OUT" } });
     const unfinished = await generateEscala(actor, "w1", 1);
+    expect(unfinished.result.outcome).toEqual({ kind: "SEARCH_UNFINISHED", reason: "TIMED_OUT" });
+    expect(unfinished).not.toHaveProperty("proposalProof");
+    expect(unfinished).not.toHaveProperty("candidateReceipt");
     expect(unfinished.proposalInput.simulation).toBe(true);
     expect(unfinished.proposalInput.assignments).toEqual(generatedInput().assignments);
     expect(unfinished.proposalInput.demands.filter(demand => demand.estimated !== true)).toEqual(generatedInput().demands);
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
   it("passes skipped GLOBAL COVERAGE telemetry for the returned candidate without persisting", async () => {
     const value = generatedInput(); useCurrent(value);
@@ -1102,6 +1107,7 @@ describe("Escalas revision service", () => {
         preparationSeconds: 0.27, incumbentValue: 0, searchSkippedReason: "DEADLINE", decisionHintStatus: "NO_TIME" }] } });
     const second = await generateEscala(actor, "w1", 1, { comparisonReference: { input: first.proposalInput, receipt: first.candidateReceipt } });
     expect(second.comparison).toMatchObject({ admission: "ADMITTED", selection: "REFERENCE_RETAINED" });
+    expect(second.result.outcome).toEqual({ kind: "REFERENCE_RETAINED" });
     expect(second.proposalInput).toEqual(first.proposalInput);
     expect(second.result).not.toHaveProperty("optimization");
     expect(mocks.transaction).not.toHaveBeenCalled();

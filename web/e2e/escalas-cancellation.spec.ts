@@ -26,8 +26,9 @@ test("cancels a real generation, preserves the saved roster and allows a new cal
     expect(result.status).toBe(200);
     return result.state;
   };
-  const december = { visibleMonth: "2026-12", startDate: "2026-12-01", endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY" } as const;
+  const december = { visibleMonth: "2026-12", startDate: "2026-12-01", endDate: "2026-12-31", planningWeekStartsOn: "SUNDAY", storeClosingMinutes: 22 * 60 } as const;
   const input = newInput("CANCEL-" + Date.now().toString(36), "Cancelamento sintético", december.visibleMonth, 42);
+  input.storeClosingMinutes = december.storeClosingMinutes;
   input.shifts = [
     { id: "early", name: "Manhã", segments: [{ start: 420, end: 660, kind: "WORK" }, { start: 660, end: 720, kind: "BREAK" }, { start: 720, end: 984, kind: "WORK" }] },
     { id: "late", name: "Tarde", segments: [{ start: 720, end: 960, kind: "WORK" }, { start: 960, end: 1020, kind: "BREAK" }, { start: 1020, end: 1284, kind: "WORK" }] },

@@ -33,7 +33,11 @@ function effectiveOptions(
   options: PdfCompressionOptions,
   profile: PdfCompressionProfile | null,
 ): PdfCompressionEffectiveOptions {
-  const sourceDpi = profile?.sourceDpi ?? options.dpi;
+  const sourceDpi =
+    options.colorMode === "KEEP_DETECTED" &&
+    profile?.optimizationClass === "MIXED_WITH_HEAVY_IMAGES"
+      ? profile.maximumDpi ?? profile.sourceDpi ?? options.dpi
+      : profile?.sourceDpi ?? options.dpi;
   return {
     ...options,
     dpi:
@@ -136,7 +140,10 @@ export function planPdfCompression(
       reason:
         "Recompressão visual solicitada explicitamente; este caminho pode achatar estruturas semânticas.",
       expectedSavings: "MEDIUM",
-      effectiveOptions: applied,
+      // A document-wide grayscale classification can miss small color elements.
+      effectiveOptions: options.colorMode === "KEEP_DETECTED"
+        ? { ...applied, colorMode: "COLOR" }
+        : applied,
       notApplied: [],
       preservesSemantics: false,
     };

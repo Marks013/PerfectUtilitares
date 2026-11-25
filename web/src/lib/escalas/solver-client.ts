@@ -122,6 +122,7 @@ function verifiedCompleteRoster(input: EscalaInput): boolean {
 }
 
 const retainedSpacingMessage = "A busca não encontrou uma melhoria segura na presença dos setores e cargos. Mantivemos a grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos.";
+const unfinishedSpacingMessage = "A busca de presença não foi concluída. A grade salva foi mantida; o resultado não demonstra inviabilidade.";
 
 /** The spacing pass is elective, and can only return to the authenticated current roster. */
 function eligibleRestSpacingSeed(reference: EscalaInput, prepared: EscalaInput): boolean {
@@ -205,7 +206,7 @@ export async function solveEscala(
     pinned: day => Boolean(day.locked || implicit.has(assignmentKey(day))),
     accepts: (incumbent, proposal) => !manualAssignmentIssues(proposal, parsed.assignments).length
       && !selectVerifiedRoster(incumbent, proposal, undefined, qualityReference, coverageMode, true).retainedReference
-      && (incumbent === parsed || preservesAdmittedDecemberCoverage(assess(proposal))),
+      && preservesAdmittedDecemberCoverage(assess(proposal)),
   }) : base;
   const repairedSpacingMessage = "Ajustamos folgas na mesma semana para recuperar a presença na equipe, sem deixar novos setores ou cargos inteiros de folga nem perder cobertura protegida.";
   // Cheap verified day exchanges seed the bounded optimizer without changing its staffing target.
@@ -229,9 +230,13 @@ export async function solveEscala(
   if (initialValidation.issues.some(issue => issue.code === "CONSECUTIVE_REST_LIMIT")
     && !initialValidation.issues.some(issue => issue.severity === "ERROR" && issue.code !== "CONSECUTIVE_REST_LIMIT")
     && !validateEscala(refined).valid) {
-    throw new EscalaError(409, "ESCALA_REST_REPAIR_PENDING", "O cálculo não encontrou, no prazo disponível, uma redistribuição das folgas que preservasse a cobertura. A grade salva foi mantida; confira as folgas e os horários desse setor antes de aplicar outra proposta.");
+    if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+    return { status: "UNKNOWN", assignments: [], outcome: { kind: "SEARCH_UNFINISHED", reason: "LOCAL_REPAIR_EXHAUSTED" },
+      message: "O ajuste local não encontrou uma redistribuição segura das folgas. A busca global não foi executada e a grade salva foi mantida.",
+      wallTimeSeconds: (performance.now() - started) / 1000 };
   }
   const preparationSeconds = (performance.now() - started) / 1000;
+  let transportTimedOut = false;
   const payload = await requestSolver({
     ...searchInput,
     assignments: workerAssignments(searchInput.assignments),
@@ -248,7 +253,9 @@ export async function solveEscala(
     initialAssignments: refined === parsed || !verifiedCompleteRoster(refined) ? undefined : workerAssignments(pin(refined.assignments)),
   }).catch(error => {
     if (!restSpacing || !(error instanceof EscalaSolverError) || error.code !== "SOLVER_TIMED_OUT") throw error;
-    return { status: "UNKNOWN", assignments: [], message: retainedSpacingMessage, wallTimeSeconds: (performance.now() - started) / 1000 };
+    transportTimedOut = true;
+    return { status: "UNKNOWN", assignments: [], message: "O cálculo de presença atingiu o prazo disponível. A grade salva foi mantida; o resultado não demonstra inviabilidade.",
+      wallTimeSeconds: 0 };
   });
   let stage = "result-schema", reason = "SCHEMA_INVALID";
   let details: Parameters<typeof logSolverRejection>[2];
@@ -324,28 +331,19 @@ export async function solveEscala(
       throw new Error("Unexpected assignments on unsuccessful solve");
     }
     if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
-    if (restSpacing && (result.status === "INFEASIBLE" || result.status === "UNKNOWN")) {
-      const summary = restPairSummary(parsed);
-      const repaired = repairSpacing(parsed);
-      if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
-      return {
-        status: "FEASIBLE", assignments: withAdministrativeDays(repaired.assignments), wallTimeSeconds: result.wallTimeSeconds,
-        message: describeSpacing(repaired === parsed ? retainedSpacingMessage : repairedSpacingMessage, repaired),
-        restQuality: { before: summary, after: repaired === parsed ? summary : restPairSummary(repaired),
-          search: { attempted: true, retainedReference: repaired === parsed, retentionReason: repaired === parsed ? "REST_SPACING_NO_GAIN" : "ACCEPTED" },
-          preparationSeconds: Math.round(preparationSeconds * 1000) / 1000,
-          requestSeconds: Math.round(performance.now() - started) / 1000 },
-      };
-    }
-    if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
+    const fallbackRepair = restSpacing && (result.status === "INFEASIBLE" || result.status === "UNKNOWN") ? repairSpacing(parsed) : parsed;
+    if (options?.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
+    const locallyRepaired = fallbackRepair !== parsed;
+    if (result.status === "FEASIBLE" || result.status === "OPTIMAL" || locallyRepaired) {
       stage = "selection-recheck"; reason = "RECHECK_FAILED"; details = undefined;
       const candidate = { ...parsed, assignments: result.assignments };
       let retentionReason = "REFERENCE_UNVERIFIED";
-      let selected = verifiedCompleteRoster(refined)
+      let selected = locallyRepaired ? { input: fallbackRepair, retainedReference: false }
+        : verifiedCompleteRoster(refined)
         && (!admittedDecemberOrigin || preservesAdmittedDecemberCoverage(assess(refined))) ? selectVerifiedRoster(refined, candidate,
         reason => { retentionReason = reason; }, qualityReference, coverageMode, restSpacing)
         : { input: candidate, retainedReference: false };
-      if (restSpacing && seedZeros && !selected.retainedReference) {
+      if (!locallyRepaired && restSpacing && seedZeros && !selected.retainedReference) {
         const newZeros = competingRestCoverageZeros(candidate);
         if (!preservesAdmittedDecemberCoverage(assess(candidate))
           || !preservesCompetingRestCoverage(seedZeros, newZeros)
@@ -376,8 +374,8 @@ export async function solveEscala(
           selected = selectVerifiedRoster(reusable, selected.input, reason => { retentionReason = reason; }, qualityReference);
         }
       }
-      const repaired = repairSpacing(selected.input);
-      const repairedSpacing = repaired !== selected.input;
+      const repaired = locallyRepaired ? fallbackRepair : repairSpacing(selected.input);
+      const repairedSpacing = locallyRepaired || repaired !== selected.input;
       if (repairedSpacing) {
         selected = { input: repaired, retainedReference: false };
         retentionReason = "ACCEPTED";
@@ -436,21 +434,32 @@ export async function solveEscala(
       };
       // Diagnostics describe the returned processor candidate, never a different retained incumbent.
       const assignmentsWithAdministrativeDays = withAdministrativeDays(finalInput.assignments);
-      if (repairedSpacing) return { status: "FEASIBLE", assignments: assignmentsWithAdministrativeDays,
-        wallTimeSeconds: result.wallTimeSeconds, restQuality, message: describeSpacing(repairedSpacingMessage, finalInput) };
+      const wallTimeSeconds = transportTimedOut ? (performance.now() - started) / 1000 : result.wallTimeSeconds;
+      if (repairedSpacing) return { status: "FEASIBLE", outcome: { kind: "NEW_PROPOSAL" }, assignments: assignmentsWithAdministrativeDays,
+        wallTimeSeconds, restQuality, message: describeSpacing(repairedSpacingMessage, finalInput) };
       if (selected.retainedReference) return {
-        status: "FEASIBLE", assignments: assignmentsWithAdministrativeDays, wallTimeSeconds: result.wallTimeSeconds, restQuality,
+        status: "FEASIBLE", outcome: { kind: selected.input === refined && refined !== parsed ? "NEW_PROPOSAL" : "REFERENCE_RETAINED" },
+        assignments: assignmentsWithAdministrativeDays, wallTimeSeconds, restQuality,
         message: restSpacing ? describeSpacing(retainedSpacingMessage, finalInput) : "A alternativa calculada piorou uma condição protegida. Mantivemos a melhor grade verificada, sem alterar a cobertura, os bloqueios ou os afastamentos." + (comparisonNotice ? " " + comparisonNotice : ""),
       };
+      const proposal = { ...result, outcome: { kind: "NEW_PROPOSAL" as const }, assignments: assignmentsWithAdministrativeDays, restQuality };
       if (comparisonNotice) return {
-        ...result, status: finalMerit.comparable && finalMerit.regressed ? "FEASIBLE" : result.status,
-        assignments: assignmentsWithAdministrativeDays, restQuality,
+        ...proposal, status: finalMerit.comparable && finalMerit.regressed ? "FEASIBLE" : result.status,
         message: result.message + " " + comparisonNotice,
       };
-      return { ...result, message: describeSpacing(result.message, finalInput), assignments: assignmentsWithAdministrativeDays, restQuality };
+      return { ...proposal, message: describeSpacing(result.message, finalInput) };
     }
-    if (rejectionStage === undefined) return result;
-    return { ...result, rejectionEvidence: rejectionStage === "SEARCH" ? "MODEL_PROOF" : "PRECHECK" };
+    if (result.status === "UNKNOWN") return { ...result,
+      outcome: { kind: "SEARCH_UNFINISHED", reason: transportTimedOut ? "TIMED_OUT" : "SOLVER_UNKNOWN" },
+      message: restSpacing && !transportTimedOut ? unfinishedSpacingMessage : result.message,
+      wallTimeSeconds: transportTimedOut ? (performance.now() - started) / 1000 : result.wallTimeSeconds,
+    };
+    if (result.status === "INFEASIBLE") return { ...result,
+      outcome: { kind: "PROVEN_INFEASIBLE", scope: protectCoverage ? "PROTECTED_MODEL" : "SCENARIO" },
+      ...(restSpacing ? { message: "O cálculo comprovou que não há solução no modelo com a cobertura protegida. A grade salva foi mantida." } : {}),
+      ...(rejectionStage !== undefined ? { rejectionEvidence: rejectionStage === "SEARCH" ? "MODEL_PROOF" : "PRECHECK" } : {}),
+    };
+    return result;
   } catch (error) {
     if (!(error instanceof EscalaSolverError) || error.code !== "SOLVER_CANCELLED") {
       logSolverRejection(stage, reason, { ...details, issues: error instanceof z.ZodError ? error.issues : details?.issues });

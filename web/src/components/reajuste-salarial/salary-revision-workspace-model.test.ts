@@ -50,6 +50,15 @@ describe("salary revision workspace model", () => {
     expect(candidatesForRule(analysis, { ...rule, roleFilter: "CAIXA AUXILIAR" })).toHaveLength(0);
   });
 
+  it("selects by accented branch name without changing candidate order", () => {
+    const empty = { ...rule, selectedRegistrations: [] };
+    const withBranch = {
+      ...analysis,
+      employees: analysis.employees.map((employee) => ({ ...employee, branchAlias: "São João" })),
+    };
+    expect(selectSalaryRevisionCandidates(withBranch, [empty], empty, " sao joao ")).toEqual(["1", "2"]);
+  });
+
   it("supports general or individual percentages in rules-only without requiring fixed salary", () => {
     const file = new File(["xlsx"], "FPRE131.xlsx");
     const general = { ...rule, calculation: "general_percentage" as const, newSalary: "" };

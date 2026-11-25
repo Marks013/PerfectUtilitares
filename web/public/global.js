@@ -21,7 +21,10 @@
     storedTheme = null;
   }
 
-  applyTheme(storedTheme || root.dataset.theme || "dark");
+  var initialTheme = applyTheme(storedTheme || root.dataset.theme || "dark");
+  window.dispatchEvent(
+    new CustomEvent("app-theme-change", { detail: { theme: initialTheme } }),
+  );
 
   window.AppTheme = {
     get: function () {

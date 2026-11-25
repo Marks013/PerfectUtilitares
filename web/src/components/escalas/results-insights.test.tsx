@@ -13,10 +13,10 @@ function fixture() {
 }
 type Optimization = NonNullable<EscalaSolveResult["optimization"]>;
 
-function renderProposal(optimization?: Optimization) {
+function renderProposal(optimization?: Optimization, outcome?: EscalaSolveResult["outcome"]) {
   const { input, validation } = fixture();
   return renderToStaticMarkup(<Proposals input={input} generated={{
-    result: { status: "FEASIBLE", message: "Proposta de teste.", optimization },
+    result: { status: "FEASIBLE", message: "Proposta de teste.", optimization, outcome },
     proposalInput: input,
     validation,
   }} disabled={false} onGenerated={() => {}} onDismiss={() => {}} />);
@@ -28,6 +28,12 @@ describe("buscas no resumo da proposta", () => {
     wallTimeSeconds: 0, budgetSeconds: 0, incumbentValue: 1,
     searchSkippedReason: "PREPARATION_EXHAUSTED",
   };
+
+  it("não apresenta a referência mantida como uma nova solução", () => {
+    const html = renderProposal(undefined, { kind: "REFERENCE_RETAINED" });
+    expect(html).toContain("Referência mantida");
+    expect(html).not.toContain("Solução viável encontrada");
+  });
 
   it("separa a fase pulada dos objetivos sem registro de tentativa", () => {
     const html = renderProposal({

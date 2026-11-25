@@ -146,7 +146,7 @@ beforeEach(async () => {
         sources.set(saved.id, saved); reply = { status: 200, body: saved };
       } else reply = { status: 200, body: { operationId: "a3dfb1bc-a1d3-4fe8-aab9-3d527490a62c", state: body.action === "CANCEL_GENERATION" ? "CANCELLED" : "CREATED", expiresAt: "2026-11-15T10:00:00Z" } };
     }
-    return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, json: async () => structuredClone(reply.body) };
+    return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, headers: new Headers(), json: async () => structuredClone(reply.body) };
   }));
   render(); await settle(); await open();
 });

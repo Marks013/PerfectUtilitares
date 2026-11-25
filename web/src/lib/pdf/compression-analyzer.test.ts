@@ -1,8 +1,13 @@
+import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", { spy: true });
 import {
   analyzePdfCompressionProfile,
   parsePdfImagesList,
@@ -68,24 +73,26 @@ async function withFakePdfImages<T>(
   output: string,
   callback: () => Promise<T>,
 ): Promise<T> {
-  const directory = await mkdtemp(join(tmpdir(), "fake-pdfimages-"));
-  temporaryDirectories.push(directory);
-  const executable = join(directory, "pdfimages");
-  const script = `#!/bin/sh
-cat <<'PERFECT_PDFIMAGES_EOF'
-${output}
-PERFECT_PDFIMAGES_EOF
-`;
-  await writeFile(executable, script, { mode: 0o755 });
-
-  const previousPath = process.env.PATH;
-  process.env.PATH = previousPath
-    ? `${directory}${delimiter}${previousPath}`
-    : directory;
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(),
+  });
+  const mockSpawn = vi.mocked(spawn);
+  mockSpawn.mockImplementationOnce((executable, args) => {
+    expect(executable).toBe("pdfimages");
+    expect(args?.[0]).toBe("-list");
+    queueMicrotask(() => {
+      child.stdout.end(output);
+      child.stderr.end();
+      child.emit("close", 0);
+    });
+    return child as unknown as ReturnType<typeof spawn>;
+  });
   try {
     return await callback();
   } finally {
-    process.env.PATH = previousPath;
+    mockSpawn.mockReset();
   }
 }
 
