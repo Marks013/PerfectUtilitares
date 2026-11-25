@@ -74,6 +74,14 @@ F7: homologação e decisão explícita; sizing em host real, security review, e
 F8: troca controlada no servidor, health/latency/qualidade monitorados e retorno ao OR-Tools se falhar.
 F9: após estabilização autorizada, remoção completa de CP-SAT/Python e documentação/scripts obsoletos; garantir que nenhum consumidor dependa do processador antigo.
 
+## Paridade reutilizando parâmetros do PerfectUtilitares
+
+O protocolo de [comparação cruzada dos motores](PROTOCOLO-PARIDADE-ORTOOLS-TIMEFOLD-2026-11-25.md) é a fonte de verdade para entrada e métricas dos ensaios. Ambos recebem a **mesma EscalaInput já preparada** pelas rotinas TypeScript atuais: mesmas pessoas/atributos sintéticos, jornadas, turnos, locks, histórico, ausências, feriados, semanas, modo de geração e demandas. O score interno de Timefold nunca será usado para comparar diretamente com o objetivo CP-SAT; o resultado passa pelas mesmas rotinas `validateEscala`, `roster-quality`, `coverage-protection`, `independentShortage` e `weekendMetrics`.
+
+**Baseline atual, não histórica:** `benchmark-runtime.ts` ainda fixa `BASELINE_REVISION=2657f4...`, que é anterior às correções da `main` de 25/11/2026. Não interpretar uma comparação contra esse hash antigo como ganho do Timefold. O novo orquestrador de benchmark deve piná-lo à `main` auditada, registrar hashes imutáveis da fixture, validador, imagem OR-Tools e JAR Timefold, e atualizar sua referência apenas com nova rodada completa.
+
+Executar os dois motores **sequencialmente em containers de benchmark descartáveis**, nunca em paralelo, com ordem alternada por repetição e os mesmos limites de CPU/memória. **Não desligar o serviço produtivo `escalas-solver`** para liberar capacidade de testes. Dados reais de RH só após processamento local autorizado e controlado; pseudonimização de `benchmark-real.ts` não significa anonimização irreversível. A atual métrica `independentShortage` só cobre demandas estimadas, portanto as verificações independentes de cobertura confirmada e faixas protegidas são obrigatórias antes de qualquer aceite.
+
 ## Dimensionamento e desempenho
 
 A Oracle VM.Standard.A1.Flex do usuário tem **4 OCPUs ARM64 e 24 GB RAM, compartilhados com outros projetos**. O Compose do PerfectUtilitares já declara quotas de CPU superiores à capacidade física quando somadas (PostgreSQL 1,0, app 1,5, PDF 2,0 e solver Python 1,0), embora quotas não indiquem utilização real. O Timefold NÃO receberá 2 OCPUs ou 3-4 GiB por padrão. Ensaios iniciais em ambiente isolado usarão um teto piloto de 0,50 a 0,75 OCPU e 1,0 a 1,5 GiB, ajustável somente mediante medição, sem comprometer serviços existentes. Se esses limites não forem suficientes para regras, qualidade e tempo, o deployment será reprovado em vez de tomar CPU/memória dos outros projetos.
