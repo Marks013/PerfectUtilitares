@@ -23,6 +23,26 @@ RECOGNIZED = {"Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC",
               "GPL-2.0-with-classpath-exception", "GPL-2.0-only WITH Classpath-exception-2.0"}
 
 
+# Specific dual-license review, bound to the exact artifact observed in
+# GitHub Actions 45713735471. Do not globally allow CC0 or arbitrary OR expressions.
+HDR_COORD = ("org.hdrhistogram", "HdrHistogram", "2.2.2")
+HDR_SHA256 = "22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8"
+HDR_LICENSE_SOURCE = "https://github.com/HdrHistogram/HdrHistogram/blob/HdrHistogram-2.2.2/LICENSE.txt"
+
+
+def license_screen(key, item):
+    licenses = item["licenses"]
+    if key == HDR_COORD:
+        if (item["sha256"] == HDR_SHA256 and licenses == ["BSD-2-Clause", "CC0-1.0"]):
+            return False, "REVIEWED_BSD_2_CLAUSE_ALTERNATIVE", HDR_LICENSE_SOURCE
+        # A changed binary or license set needs review even when all new names
+        # happen to be recognized. Do not transfer a decision to another hash.
+        return True, "REVIEWED_ARTIFACT_DRIFT", None
+    if not licenses or not all(x in RECOGNIZED for x in licenses):
+        return True, "UNCLASSIFIED_LICENSE_METADATA", None
+    return False, "RECOGNIZED_METADATA_ONLY", None
+
+
 def require(ok, code):
     if not ok:
         raise ValueError(code)
@@ -137,10 +157,11 @@ def audit(folder, send=post):
     for key in sorted(all_deps):
         item = all_deps[key]
         licenses = item["licenses"]
+        review, basis, source = license_screen(key, item)
         rows.append({"group": key[0], "artifact": key[1], "version": key[2],
                      "scope": "runtime" if key in runtime else "test-only",
                      "sha256": item["sha256"], "licenses": licenses,
-                     "licenseReview": not licenses or not all(x in RECOGNIZED for x in licenses),
+                     "licenseReview": review, "licenseBasis": basis, "licenseSource": source,
                      "advisories": advisories[key]})
     findings = sum(bool(row["advisories"]) or row["licenseReview"] for row in rows)
     return {"status": "REVIEW_REQUIRED" if findings else "NO_MATCHES_IN_CHECKED_SCOPE",
@@ -162,6 +183,13 @@ def main():
                   "checkedAt": datetime.now(timezone.utc).isoformat()}
     (folder / "dependency-audit.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({k: v for k, v in report.items() if k != "components"}, separators=(",", ":")))
+    # Public coordinates only; the full license metadata stays in the artifact.
+    # Show the precise pending review without requiring a ZIP download.
+    for row in report.get("components", []):
+        if row["licenseReview"] or row["advisories"] or row["licenseSource"] is not None:
+            print(json.dumps({k: row[k] for k in ("group", "artifact", "version", "scope",
+                         "sha256", "licenseReview", "licenseBasis", "licenseSource", "advisories")},
+                             separators=(",", ":")))
     return 0 if report["status"] == "NO_MATCHES_IN_CHECKED_SCOPE" else 1
 
 

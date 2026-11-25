@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from audit_dependencies import audit, query_all
+from audit_dependencies import audit, query_all, HDR_COORD, HDR_SHA256, HDR_LICENSE_SOURCE
 
 
 def component(group, name, version, license_="Apache-2.0"):
@@ -51,6 +51,58 @@ class DependencyAuditTests(unittest.TestCase):
         result = audit(self.folder, self.empty)
         self.assertEqual(result["status"], "REVIEW_REQUIRED")
         self.assertEqual(result["componentsNeedingLicenseReview"], 1)
+
+    def hdr_component(self):
+        item = component(*HDR_COORD, license_="BSD-2-Clause")
+        item["licenses"].append({"license": {"id": "CC0-1.0"}})
+        item["hashes"][0]["content"] = HDR_SHA256
+        self.runtime.append(item)
+        self.write()
+        return item
+
+    def test_reviewed_dual_license_uses_exact_binary_and_metadata(self):
+        self.hdr_component()
+        result = audit(self.folder, self.empty)
+        row = next(row for row in result["components"] if row["artifact"] == "HdrHistogram")
+        self.assertEqual(result["status"], "NO_MATCHES_IN_CHECKED_SCOPE")
+        self.assertFalse(row["licenseReview"])
+        self.assertEqual(row["licenses"], ["BSD-2-Clause", "CC0-1.0"])
+        self.assertEqual(row["licenseBasis"], "REVIEWED_BSD_2_CLAUSE_ALTERNATIVE")
+        self.assertEqual(row["licenseSource"], HDR_LICENSE_SOURCE)
+
+    def test_review_does_not_transfer_to_changed_hash(self):
+        item = self.hdr_component()
+        item["hashes"][0]["content"] = "a" * 64
+        self.write()
+        result = audit(self.folder, self.empty)
+        row = next(row for row in result["components"] if row["artifact"] == "HdrHistogram")
+        self.assertEqual(result["status"], "REVIEW_REQUIRED")
+        self.assertEqual(row["licenseBasis"], "REVIEWED_ARTIFACT_DRIFT")
+
+    def test_review_does_not_transfer_to_new_license_set(self):
+        item = self.hdr_component()
+        item["licenses"] = [{"license": {"id": "MIT"}}]
+        self.write()
+        result = audit(self.folder, self.empty)
+        self.assertEqual(result["status"], "REVIEW_REQUIRED")
+
+    def test_review_does_not_transfer_to_other_version_or_library(self):
+        item = self.hdr_component()
+        item["version"] = "2.2.3"
+        self.runtime.append(component("org.example", "other-library", "1.0", "CC0-1.0"))
+        self.write()
+        result = audit(self.folder, self.empty)
+        self.assertEqual(result["status"], "REVIEW_REQUIRED")
+        self.assertEqual(result["componentsNeedingLicenseReview"], 2)
+
+    def test_reviewed_license_does_not_suppress_security_advisory(self):
+        self.hdr_component()
+        def send(qs):
+            return {"results": [{"vulns": [{"id": "CVE-2099-1234"}]}
+                    if q["package"]["name"] == "org.hdrhistogram:HdrHistogram" else {} for q in qs]}
+        result = audit(self.folder, send)
+        self.assertEqual(result["status"], "REVIEW_REQUIRED")
+        self.assertEqual(result["componentsWithAdvisories"], 1)
 
     def test_rejects_jar_mismatch(self):
         (self.folder / "runtime-jars.sha256").write_text("0" * 64 + "  wrong.jar\n")
