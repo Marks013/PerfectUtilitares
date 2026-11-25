@@ -47,6 +47,7 @@
     "test:e2e:isolated": "node scripts/run-isolated-e2e.mjs",
     "test:e2e:smoke": "playwright test e2e/auth.spec.ts",
     "benchmark:escalas": "node --conditions=react-server --import tsx scripts/escalas/benchmark-synthetic.ts",
+    "benchmark:escalas:cross-engine": "node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts",
     "benchmark:escalas:real": "node --conditions=react-server --import tsx scripts/escalas/benchmark-real.ts",
     "test:escalas:python": "node scripts/escalas/run-python-regressions.mjs",
     "test:escalas:model": "node --conditions=react-server --import tsx scripts/escalas/verify-model.mjs --docker web-escalas-solver",

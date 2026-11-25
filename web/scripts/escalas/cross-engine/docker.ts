@@ -75,7 +75,11 @@ export function dockerAdapter(image: string, engine: Engine): Adapter {
       else if (child.error || child.status !== 0)
         reply = { httpStatus: 500, body: { error: "BENCHMARK_CONTAINER_FAILED" }, maxRssKiB: null };
       else {
-        try { reply = verifyReply(JSON.parse(child.stdout)); }
+        try {
+          reply = verifyReply(JSON.parse(child.stdout));
+          if (engine === "timefold" && reply.httpStatus === 200 && ["OPTIMAL", "INFEASIBLE"].includes((reply.body as { status: string }).status))
+            throw new Error("CROSS_ENGINE_UNSUPPORTED_PROOF");
+        }
         catch { reply = { httpStatus: 500, body: { error: "BENCHMARK_OUTPUT_INVALID" }, maxRssKiB: null }; }
       }
     } finally { cleanup(name); }

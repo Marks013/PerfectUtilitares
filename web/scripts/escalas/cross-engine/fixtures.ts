@@ -9,9 +9,9 @@ import { syntheticInput } from "../benchmark-synthetic";
 
 export const scenarioIds = ["team-10-week", "branch-50-four-weeks", "branch-115-six-weeks",
   "branch-115-six-weeks-untimed", "december-representative", "hours-reference-only",
-  "hours-only-with-grid", "stress-250-six-weeks"] as const;
+  "hours-only-with-grid", "stress-250-six-weeks", "december-protected"] as const;
 export type ScenarioId = typeof scenarioIds[number];
-export type Scenario = { id: ScenarioId; prepared: EscalaInput; reference?: EscalaInput };
+export type Scenario = { id: ScenarioId; prepared: EscalaInput; reference?: EscalaInput; admittedDecemberOrigin?: EscalaInput };
 
 function prepare(raw: EscalaInput): EscalaInput {
   const input = escalaInputSchema.parse(prepareGeneration(raw).input);
@@ -49,6 +49,20 @@ function december(): EscalaInput {
 
 export function makeScenario(id: ScenarioId): Scenario {
   if (id === "december-representative") return { id, prepared: december() };
+  if (id === "december-protected") {
+    // Reproduce the admitted-reference edge from the current client regression, not a real saved roster.
+    const prepared = makeScenario("team-10-week").prepared;
+    const person = { ...prepared.employees[0], activeFrom: "2026-12-01" };
+    const origin: EscalaInput = { ...prepared, startDate: "2026-12-01", endDate: "2026-12-31",
+      planningWeekStartsOn: "SUNDAY", visibleMonth: "2026-12", needsRegeneration: true,
+      coverageBasis: "coverage-v2:aaaaaaaaaaaaaaaa",
+      employees: [person], assignments: dateRange("2026-12-01", "2026-12-31").map(date => ({
+        employeeId: person.id, date, kind: "WORK", shiftId: person.shiftIds[0],
+      })), demands: [{ id: "synthetic-origin-demand", date: "2026-12-07", sector: person.sector,
+        role: person.role, start: 480, end: 540, minimum: 1, estimated: true }] };
+    // Historical reference intentionally need not be reusable; the app validates comparability and protects service.
+    return { id, prepared: { ...origin, assignments: [] }, reference: origin, admittedDecemberOrigin: origin };
+  }
   const sizes = { "team-10-week": [10, 1], "branch-50-four-weeks": [50, 4],
     "branch-115-six-weeks": [115, 6], "branch-115-six-weeks-untimed": [115, 6],
     "stress-250-six-weeks": [250, 6], "hours-reference-only": [10, 1], "hours-only-with-grid": [10, 1] } as const;

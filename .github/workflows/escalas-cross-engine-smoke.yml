@@ -1,0 +1,65 @@
+name: Escalas cross-engine E1 smoke
+
+on:
+  pull_request:
+    paths:
+      - 'web/scripts/escalas/cross-engine/**'
+      - 'web/src/lib/escalas/cross-engine.test.ts'
+      - '.github/workflows/escalas-cross-engine-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-cross-engine-e1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Synthetic isolated baseline (ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    env:
+      CI: 'true'
+      ESCALAS_CROSS_ENGINE_ISOLATED: '1'
+      BASE: 'f78c691edbeaf16283f534bcacd8db1b4b7d5e66'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Targeted client and harness tests
+        run: npm exec -- vitest run src/lib/escalas/cross-engine.test.ts src/lib/escalas/benchmark-synthetic-input.test.ts src/lib/escalas/solver-client.test.ts
+      - name: Build exact baseline image in isolated checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=$(mktemp -d)
+          trap 'rm -rf "$build"' EXIT
+          git -C .. archive "$BASE" web/ops/escalas | tar -x -C "$build"
+          docker build --target runtime --build-arg SOURCE_REVISION="$BASE" -t escalas-cross-engine-baseline:ci "$build/web/ops/escalas"
+      - name: Run cold baseline smoke and reference-only flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=$(docker image inspect escalas-cross-engine-baseline:ci --format '{{.Id}}')
+          : > "$RUNNER_TEMP/cross-engine-smoke.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts hours-reference-only 1 | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts team-10-week 1 "$image" | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"
+      - name: Keep aggregate synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: escalas-cross-engine-smoke
+          path: ${{ runner.temp }}/cross-engine-smoke.jsonl
+          if-no-files-found: ignore
+          retention-days: 7

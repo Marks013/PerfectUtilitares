@@ -14,7 +14,7 @@ function git(args: string[]) {
   return value.stdout.trim();
 }
 function checkSource() {
-  if (git(["status", "--porcelain", "--untracked-files=no"])) throw new Error("CROSS_ENGINE_DIRTY_SOURCE");
+  if (git(["status", "--porcelain", "--untracked-files=normal"])) throw new Error("CROSS_ENGINE_DIRTY_SOURCE");
   // The new test file is the sole permitted source-side change in the experimental PR.
   git(["diff", "--quiet", baselineRevision, "--", "web/src", "web/ops/escalas", "web/package-lock.json",
     "web/scripts/escalas/benchmark-metrics.ts", "web/scripts/escalas/benchmark-synthetic.ts",
@@ -76,7 +76,7 @@ async function main() {
       successP50Seconds: quantile(seconds, .5), successP95Seconds: seconds.length >= 30 ? quantile(seconds, .95) : null,
       tailSampleSufficient: seconds.length >= 30, decision: "EXPLORATORY_NOT_CERTIFIED" }));
     // Keep all records, but fail the smoke if it did not produce a validated new proposal.
-    if (!successes.length) process.exitCode = 1;
+    if (!trials.some(row => row.timely && row.finalAssessment?.valid && !row.errorCode && row.finalAssessment.comparison?.regressed !== true)) process.exitCode = 1;
   }
 }
 main().catch(() => { console.error("Cross-engine benchmark stopped; no production service was targeted."); process.exitCode = 1; });

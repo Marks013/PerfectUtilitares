@@ -86,6 +86,7 @@ async function withTransport<T>(handler: (body: string) => WireReply, work: () =
 function runClient(scenario: Scenario) {
   return solveEscala(structuredClone(scenario.prepared), {
     ...(scenario.reference ? { qualityReference: structuredClone(scenario.reference) } : {}),
+    ...(scenario.admittedDecemberOrigin ? { admittedDecemberOrigin: structuredClone(scenario.admittedDecemberOrigin) } : {}),
   });
 }
 
@@ -109,7 +110,7 @@ export function measureReferences(scenario: Scenario) {
     readyToPublish: validation.readyToPublish, issueCodes: [...new Set(validation.issues.map(issue => issue.code))].sort() };
 }
 
-function evaluate(input: EscalaInput, reference?: EscalaInput) {
+function evaluate(input: EscalaInput, reference?: EscalaInput, admitted = false) {
   const parsed = escalaInputSchema.safeParse(input);
   if (!parsed.success) return { valid: false, complete: false, errors: ["SCHEMA_INVALID"], metrics: null, comparison: null };
   const proposal = operationalEscalaInput(parsed.data);
@@ -122,7 +123,7 @@ function evaluate(input: EscalaInput, reference?: EscalaInput) {
   if (!complete) errors.push("INCOMPLETE");
   if (keys.size !== proposal.assignments.length) errors.push("DUPLICATE_ASSIGNMENTS");
   if (!valid) return { valid, complete, errors, metrics: null, comparison: null };
-  const comparison = reference ? compareRosterCoverage(reference, proposal, reference) : undefined;
+  const comparison = reference ? compareRosterCoverage(reference, proposal, reference, admitted ? "DECEMBER_DEMAND" : undefined) : undefined;
   const shortage = independentShortage(proposal);
   return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total,
     ...weekendMetrics(proposal), ...sundaySectorVariation(sundaySectorObservations(proposal)) },
@@ -158,28 +159,42 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   let rawAssessment: ReturnType<typeof evaluate> | null = null;
   if (rawFeasible && Array.isArray(raw?.assignments)) {
     try { rawAssessment = evaluate({ ...operationalEscalaInput(scenario.prepared),
-      assignments: raw.assignments as EscalaInput["assignments"] }, scenario.reference); }
+      assignments: raw.assignments as EscalaInput["assignments"] }, scenario.reference, !!scenario.admittedDecemberOrigin); }
     catch { rawAssessment = { valid: false, complete: false, errors: ["RAW_EVALUATION_FAILED"], metrics: null, comparison: null }; }
   }
   const finalStatus = result?.status ?? null;
   const finalAssessment = result && (finalStatus === "FEASIBLE" || finalStatus === "OPTIMAL")
-    ? evaluate({ ...scenario.prepared, assignments: result.assignments }, scenario.reference) : null;
+    ? evaluate({ ...scenario.prepared, assignments: result.assignments }, scenario.reference, !!scenario.admittedDecemberOrigin) : null;
   const outcome = (result?.outcome?.kind ?? "OTHER") as Stage;
   const processSeconds = typeof raw?.wallTimeSeconds === "number" && Number.isFinite(raw.wallTimeSeconds) && raw.wallTimeSeconds >= 0
     ? raw.wallTimeSeconds : null;
-  const sameAsRaw = !!result && rawFeasible && Array.isArray(raw?.assignments)
-    && digest(JSON.stringify(result.assignments.map(({ employeeId, date, kind, shiftId }) => [employeeId,date,kind,shiftId]).sort()))
-    === digest(JSON.stringify((raw.assignments as EscalaInput["assignments"]).map(({ employeeId,date,kind,shiftId }) => [employeeId,date,kind,shiftId]).sort()));
+  // A malicious/malformed reply must not make the reporting path crash.
+  const dayIdentity = (days: unknown) => {
+    if (!Array.isArray(days)) return null;
+    const entries: string[] = [];
+    for (const day of days) {
+      const r = asRecord(day);
+      if (!r || typeof r.employeeId !== "string" || typeof r.date !== "string" || typeof r.kind !== "string"
+        || (r.shiftId !== undefined && typeof r.shiftId !== "string")) return null;
+      entries.push(JSON.stringify([r.employeeId, r.date, r.kind, r.shiftId]));
+    }
+    return digest(JSON.stringify(entries.sort()));
+  };
+  const finalIdentity = dayIdentity(result?.assignments);
+  const rawIdentity = dayIdentity(raw?.assignments);
+  const sameAsRaw = rawFeasible && finalIdentity !== null && rawIdentity !== null && finalIdentity === rawIdentity;
+  const unchangedReference = !!scenario.reference && finalIdentity !== null
+    && finalIdentity === dayIdentity(scenario.reference.assignments);
   const deadline = JSON.parse(frozen).input._restPairTarget === 20 ? 32 : 20;
   const timely = engineSeconds !== null && engineSeconds <= deadline && productSeconds <= deadline;
   const errorCode = invocationError instanceof EscalaSolverError ? invocationError.code : invocationError ? "CLIENT_ERROR" : null;
   return { inputHash: digest(frozen), rawStatus, httpStatus: response?.httpStatus ?? null,
     processSeconds, engineSeconds, productSeconds, maxRssKiB: response?.maxRssKiB ?? null, finalStatus, outcome,
-    rawAssessment, finalAssessment, sameAsRaw, timely, errorCode,
-    acceptedNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && finalAssessment?.valid === true
+    rawAssessment, finalAssessment, sameAsRaw, unchangedReference, timely, errorCode,
+    acceptedNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && !unchangedReference && finalAssessment?.valid === true
       && finalAssessment.comparison?.regressed !== true,
     // A TS repair or retained reference is never attributed to the optimizer.
-    engineNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && sameAsRaw && finalAssessment?.valid === true
+    engineNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && !unchangedReference && sameAsRaw && rawAssessment?.valid === true && finalAssessment?.valid === true
       && finalAssessment.comparison?.regressed !== true,
     // Used in memory for paired coverage evaluation, stripped before writing JSONL.
     proposal: finalAssessment?.valid && result ? { ...scenario.prepared, assignments: result.assignments } : undefined,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { dateRange } from "./dates";
 import { isHoursReferenceOnly } from "./hours-reference";
+import type { EscalaInput } from "./types";
 import { operationalEscalaInput } from "./eligibility";
 import { makeScenario } from "../../../scripts/escalas/cross-engine/fixtures";
 import { captureEnvelope, digest, measureReferences, pairOrder, runTrial, verifyReply } from "../../../scripts/escalas/cross-engine/core";
@@ -56,6 +57,41 @@ describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
     expect(trial.rawAssessment?.complete).toBe(false);
     expect(trial.engineNew).toBe(false);
     expect(trial.acceptedNew).toBe(false);
+  });
+  it("captures admitted December bounds without sending the historical roster", async () => {
+    const scenario = makeScenario("december-protected");
+    const envelope = JSON.parse(await captureEnvelope(scenario)).input;
+    expect(envelope.assignments).toEqual([]);
+    expect(envelope._coverageComparison).toBeDefined();
+    expect(envelope._coverageServiceProtection.days.length).toBeGreaterThan(0);
+    expect(envelope).not.toHaveProperty("admittedDecemberOrigin");
+  });
+  it("accepts a complete valid raw candidate through the actual TypeScript client", async () => {
+    const prepared: EscalaInput = {
+      schemaVersion: 1, branchCode: "SYNTH", branchName: "Synthetic",
+      startDate: "2026-11-02", endDate: "2026-11-08", defaultWeeklyHours: 42,
+      timeZone: "America/Sao_Paulo",
+      policy: { source: "Synthetic", validFrom: "2026-01-01", validUntil: "2026-12-31",
+        reviewed: true, reviewedBy: "Synthetic", weeklyLimit: 44, dailyLimitMinutes: 528,
+        compensationAuthorized: true, limitContinuousWorkBlocks: false, minInterShiftMinutes: 660,
+        minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5,
+        closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+      employees: [{ id: "p1", registration: "01", name: "Synthetic person", sector: "Synthetic sector", role: "Repositor",
+        weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-11-02", offMode: "VARIABLE", fixedOffDays: [],
+        offPattern: "ANY", maxConsecutiveSundays: 2, preferredOffDays: [], historyKnown: false, history: [] }],
+      shifts: [{ id: "day", name: "Day", segments: [{ start: 480, end: 720, kind: "WORK" },
+        { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
+      demands: [], assignments: [],
+    };
+    const scenario = { id: "team-10-week" as const, prepared };
+    const frozen = await captureEnvelope(scenario);
+    const assignments = dateRange(prepared.startDate, prepared.endDate).map((date, day) => ({
+      employeeId: "p1", date, ...(day === 0 || day === 6 ? { kind: "OFF" } : { kind: "WORK", shiftId: "day" }),
+    }));
+    const trial = await runTrial(scenario, frozen, () => ({ httpStatus: 200,
+      body: { status: "FEASIBLE", assignments, message: "Synthetic valid", wallTimeSeconds: 1 }, maxRssKiB: 1 }));
+    expect(trial.finalAssessment?.valid).toBe(true);
+    expect(trial.engineNew).toBe(true);
   });
   it("keeps a full HOURS_ONLY grid with original day classifications", () => {
     const scenario = makeScenario("hours-only-with-grid");
