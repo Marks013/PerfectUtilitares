@@ -4,7 +4,7 @@ import { arch } from "node:os";
 import { isHoursReferenceOnly } from "../../../src/lib/escalas/hours-reference";
 import { compareRosterCoverage } from "../../../src/lib/escalas/roster-quality";
 import { makeScenario, scenarioIds, type ScenarioId } from "./fixtures";
-import { captureEnvelope, digest, measureReferences, pairOrder, runTrial } from "./core";
+import { captureEnvelope, digest, envelopeProfile, measureReferences, pairOrder, runTrial } from "./core";
 import { baselineRevision, dockerAdapter, inspectImage, resources } from "./docker";
 import { quantile } from "../benchmark-runtime";
 
@@ -41,7 +41,8 @@ async function main() {
   if (identities.timefold && identities.timefold.architecture !== identities.ortools.architecture) throw new Error("CROSS_ENGINE_ARCH_MISMATCH");
   const adapters = { ortools: dockerAdapter(baselineImage, "ortools"), timefold: candidateImage ? dockerAdapter(candidateImage, "timefold") : undefined };
   const frozen = await captureEnvelope(scenario);
-  const metadata = { scenario: id, baselineRevision, ...source, inputHash: digest(frozen), arch: arch(), resources,
+  const profile = envelopeProfile(frozen);
+  const metadata = { scenario: id, baselineRevision, ...source, inputHash: digest(frozen), arch: arch(), resources, profile,
     sampleKind: "cold-container", hostCapacityMeasured: false, liveHttpMeasured: false };
   type Trial = Awaited<ReturnType<typeof runTrial>>;
   const rows: Record<"ortools" | "timefold", Trial[]> = { ortools: [], timefold: [] };
@@ -71,12 +72,16 @@ async function main() {
     const seconds = successes.flatMap(row => row.productSeconds);
     console.log(JSON.stringify({ kind: "summary", ...metadata, engine, samples: trials.length,
       engineNew: successes.length, acceptedNew: trials.filter(row => row.acceptedNew).length,
+      validTimely: trials.filter(row => row.timely && row.finalAssessment?.valid && !row.errorCode && row.finalAssessment.comparison?.regressed !== true).length,
       notEngineNew: trials.length - successes.length, rejectedRawFeasible: trials.filter(row => row.rawStatus === "FEASIBLE" || row.rawStatus === "OPTIMAL").filter(row => !row.rawAssessment?.valid).length,
       maxProductSeconds: Math.max(...trials.map(row => row.productSeconds)),
+      medianEstimatedShortage: quantile(successes.flatMap(row => row.finalAssessment?.metrics?.shortagePersonMinutes ?? []), .5),
       successP50Seconds: quantile(seconds, .5), successP95Seconds: seconds.length >= 30 ? quantile(seconds, .95) : null,
       tailSampleSufficient: seconds.length >= 30, decision: "EXPLORATORY_NOT_CERTIFIED" }));
-    // Keep all records, but fail the smoke if it did not produce a validated new proposal.
-    if (!trials.some(row => row.timely && row.finalAssessment?.valid && !row.errorCode && row.finalAssessment.comparison?.regressed !== true)) process.exitCode = 1;
+    // A known negative fixture must not be judged by a positive-generation gate.
+    // The maximum-load stress case records failures; it does not authorize release.
+    const observationOnly = id === "december-protected" || id === "december-presence-recovery" || id === "stress-250-six-weeks";
+    if (!observationOnly && !trials.some(row => row.timely && row.finalAssessment?.valid && !row.errorCode && row.finalAssessment.comparison?.regressed !== true)) process.exitCode = 1;
   }
 }
 main().catch(() => { console.error("Cross-engine benchmark stopped; no production service was targeted."); process.exitCode = 1; });

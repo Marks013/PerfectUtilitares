@@ -4,7 +4,7 @@ import { isHoursReferenceOnly } from "./hours-reference";
 import type { EscalaInput } from "./types";
 import { operationalEscalaInput } from "./eligibility";
 import { makeScenario } from "../../../scripts/escalas/cross-engine/fixtures";
-import { captureEnvelope, digest, measureReferences, pairOrder, runTrial, verifyReply } from "../../../scripts/escalas/cross-engine/core";
+import { captureEnvelope, digest, envelopeProfile, measureReferences, pairOrder, runTrial, verifyReply } from "../../../scripts/escalas/cross-engine/core";
 
 describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
   it("uses the real December calendar and synthetic operating cohorts", () => {
@@ -92,6 +92,31 @@ describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
       body: { status: "FEASIBLE", assignments, message: "Synthetic valid", wallTimeSeconds: 1 }, maxRssKiB: 1 }));
     expect(trial.finalAssessment?.valid).toBe(true);
     expect(trial.engineNew).toBe(true);
+  });
+  it("captures a shared saved roster for repair, rather than silently creating a new seed", async () => {
+    const scenario = makeScenario("team-10-week-repair");
+    const frozen = await captureEnvelope(scenario);
+    const profile = envelopeProfile(frozen);
+    expect(profile.savedAssignments).toBe(70);
+    expect(profile.activePositions).toBe(70);
+    expect(profile.mode).toBe("DAYS_AND_HOURS");
+    expect(profile.searchBudgetSeconds).toBe(12);
+    expect(await captureEnvelope(scenario)).toBe(frozen);
+  });
+  it("uses the actual 23-second presence-recovery marker and keeps all locks", async () => {
+    const scenario = makeScenario("december-presence-recovery");
+    const frozen = await captureEnvelope(scenario);
+    const wire = JSON.parse(frozen).input;
+    expect(wire._restPairTarget).toBe(20);
+    expect(wire._coverageComparison).toBeDefined();
+    expect(wire._coverageServiceProtection.bands.length).toBeGreaterThan(0);
+    expect(envelopeProfile(frozen)).toMatchObject({ days: 31, activePositions: 14, lockedAssignments: 14,
+      searchBudgetSeconds: 23, processBudgetSeconds: 27, transportBudgetSeconds: 32 });
+    const trial = await runTrial(scenario, frozen, () => ({ httpStatus: 200,
+      body: { status: "FEASIBLE", assignments: wire.assignments, message: "Synthetic retained", wallTimeSeconds: 1 }, maxRssKiB: 1 }));
+    expect(trial.unchangedReference).toBe(true);
+    expect(trial.engineNew).toBe(false);
+    expect(trial.acceptedNew).toBe(false);
   });
   it("keeps a full HOURS_ONLY grid with original day classifications", () => {
     const scenario = makeScenario("hours-only-with-grid");

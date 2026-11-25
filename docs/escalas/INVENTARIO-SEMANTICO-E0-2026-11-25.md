@@ -70,3 +70,8 @@ Convenções: PY = web/ops/escalas/; TS = web/src/lib/escalas/; testes PY listad
 ## Entrega E1 neste PR
 
 Comparador inicial em web/scripts/escalas/cross-engine: fixtures sintéticas, captura do envelope real de solveEscala via fetch isolado, execução fria de OR-Tools com worker/controle reais em Docker descartável e adaptador futuro de Timefold, avaliação do resultado bruto e do retorno final TypeScript. Testes em src/lib/escalas/cross-engine.test.ts; captura de referência de dezembro admitida sintética e workflow de smoke baseline. A integração HTTP real, recuperação especial de dezembro, seed compartilhada completa, medições aquecidas, cgroup/CPU-segundos e verificador final independente dos JSONL permanecem pendentes. Nenhuma execução real ou certificação foi feita pela revisão documental. Ver instruções E1.
+
+
+### Evidência E1 inicial (não encerra G0)
+
+Em e6ea6d8 o smoke ARM64, 552 testes Python/verificador TS e paridade de calendário passaram. A rodada seguinte adiciona caso de recuperação com locks via envelope real (23/27/32s), caso de grade comum de reparo, perfil de carga e validação independente das medições. Ver COMPARADOR-ISOLADO-E1-2026-11-25.md. A rastreabilidade I01–I52 continua um primeiro inventário: ainda requer revisão exaustiva de sub-regras e oráculos por caso, sem declarar a migração aprovada.

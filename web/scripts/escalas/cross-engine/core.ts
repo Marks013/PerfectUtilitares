@@ -7,8 +7,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { solveEscala, EscalaSolverError } from "../../../src/lib/escalas/solver-client";
-import { compareRosterCoverage, completeRoster, isOperationallyReusable } from "../../../src/lib/escalas/roster-quality";
+import { compareRosterCoverage, completeRoster, isOperationallyReusable, type RosterCoverageMode } from "../../../src/lib/escalas/roster-quality";
 import { operationalEscalaInput } from "../../../src/lib/escalas/eligibility";
+import { dateRange } from "../../../src/lib/escalas/dates";
 import { validateEscala } from "../../../src/lib/escalas/validation";
 import { isHoursReferenceOnly, validateHoursReferences } from "../../../src/lib/escalas/hours-reference";
 import { escalaInputSchema } from "../../../src/lib/escalas/schema";
@@ -110,7 +111,7 @@ export function measureReferences(scenario: Scenario) {
     readyToPublish: validation.readyToPublish, issueCodes: [...new Set(validation.issues.map(issue => issue.code))].sort() };
 }
 
-function evaluate(input: EscalaInput, reference?: EscalaInput, admitted = false) {
+function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCoverageMode) {
   const parsed = escalaInputSchema.safeParse(input);
   if (!parsed.success) return { valid: false, complete: false, errors: ["SCHEMA_INVALID"], metrics: null, comparison: null };
   const proposal = operationalEscalaInput(parsed.data);
@@ -123,12 +124,51 @@ function evaluate(input: EscalaInput, reference?: EscalaInput, admitted = false)
   if (!complete) errors.push("INCOMPLETE");
   if (keys.size !== proposal.assignments.length) errors.push("DUPLICATE_ASSIGNMENTS");
   if (!valid) return { valid, complete, errors, metrics: null, comparison: null };
-  const comparison = reference ? compareRosterCoverage(reference, proposal, reference, admitted ? "DECEMBER_DEMAND" : undefined) : undefined;
+  const comparison = reference ? compareRosterCoverage(reference, proposal, reference, mode) : undefined;
   const shortage = independentShortage(proposal);
-  return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total,
+  return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total, shortageBySector: shortage.bySector,
     ...weekendMetrics(proposal), ...sundaySectorVariation(sundaySectorObservations(proposal)) },
     comparison: comparison ? { comparable: comparison.comparable, regressed: comparison.regressed,
       improved: comparison.improved, reason: comparison.reason } : null };
+}
+
+/** Counts the transported workload, not internal CP variables or the exact search space. */
+export function envelopeProfile(frozen: string) {
+  const input = JSON.parse(frozen).input as EscalaInput & {
+    _initialAssignments?: unknown[]; _restPairTarget?: number;
+    _coverageComparison?: { bands?: unknown[]; dailyBands?: unknown[] };
+    _coverageServiceProtection?: { bands?: unknown[]; days?: unknown[] };
+  };
+  const dates = dateRange(input.startDate, input.endDate);
+  const active = input.employees.filter(person => person.planningEnabled !== false);
+  let positions = 0, timedPositions = 0, untimedPositions = 0;
+  let catalogOptions = 0, fixedClockPeople = 0;
+  for (const person of active) {
+    const days = dates.filter(day => day >= person.activeFrom && (!person.activeUntil || day <= person.activeUntil)).length;
+    positions += days;
+    const untimed = person.scheduleMode === "UNTIMED" || person.scheduleMode === "MISSING";
+    if (untimed) untimedPositions += days;
+    else {
+      timedPositions += days;
+      const fixed = !!person.fixedImportedShiftId && person.shiftIds.includes(person.fixedImportedShiftId);
+      if (fixed) fixedClockPeople++;
+      // Catalog count only; date-specific locks, overrides and legality affect true domains.
+      catalogOptions += (fixed ? 1 : person.shiftIds.length) * days;
+    }
+  }
+  const special = input._restPairTarget === 20;
+  return { days: dates.length, employeesOnWire: input.employees.length, includedOnWire: active.length,
+    activePositions: positions, timedPositions, untimedPositions, fixedClockPeople, catalogOptionPositions: catalogOptions,
+    shifts: input.shifts.length, estimatedDemands: input.demands.filter(demand => demand.estimated === true).length,
+    confirmedDemands: input.demands.filter(demand => demand.estimated !== true).length,
+    savedAssignments: input.assignments.length, lockedAssignments: input.assignments.filter(day => day.locked).length,
+    initialAssignmentCount: input._initialAssignments?.length ?? 0,
+    protectedBands: input._coverageServiceProtection?.bands?.length ?? 0,
+    protectedDays: input._coverageServiceProtection?.days?.length ?? 0,
+    comparisonBands: input._coverageComparison?.bands?.length ?? 0,
+    comparisonDailyBands: input._coverageComparison?.dailyBands?.length ?? 0,
+    mode: input.generationMode ?? "DAYS_AND_HOURS", searchBudgetSeconds: special ? 23 : 12,
+    processBudgetSeconds: special ? 27 : 18, transportBudgetSeconds: special ? 32 : 20 };
 }
 
 export async function runTrial(scenario: Scenario, frozen: string, adapter: Adapter) {
@@ -151,6 +191,9 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   } catch (error) { invocationError = error; }
   const productSeconds = (performance.now() - started) / 1000;
   if (adapterFailure || invoked !== 1) throw new Error("CROSS_ENGINE_TRIAL_INFRASTRUCTURE");
+  const wire = JSON.parse(frozen).input;
+  const coverageMode = wire._restPairTarget === 20 ? "DECEMBER_PRESENCE_PRIORITY"
+    : scenario.admittedDecemberOrigin ? "DECEMBER_DEMAND" : undefined;
   const raw = asRecord(response?.body);
   const rawStatus = knownStatus(raw?.status);
   const rawFeasible = rawStatus === "FEASIBLE" || rawStatus === "OPTIMAL";
@@ -159,12 +202,12 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   let rawAssessment: ReturnType<typeof evaluate> | null = null;
   if (rawFeasible && Array.isArray(raw?.assignments)) {
     try { rawAssessment = evaluate({ ...operationalEscalaInput(scenario.prepared),
-      assignments: raw.assignments as EscalaInput["assignments"] }, scenario.reference, !!scenario.admittedDecemberOrigin); }
+      assignments: raw.assignments as EscalaInput["assignments"] }, scenario.reference, coverageMode); }
     catch { rawAssessment = { valid: false, complete: false, errors: ["RAW_EVALUATION_FAILED"], metrics: null, comparison: null }; }
   }
   const finalStatus = result?.status ?? null;
   const finalAssessment = result && (finalStatus === "FEASIBLE" || finalStatus === "OPTIMAL")
-    ? evaluate({ ...scenario.prepared, assignments: result.assignments }, scenario.reference, !!scenario.admittedDecemberOrigin) : null;
+    ? evaluate({ ...scenario.prepared, assignments: result.assignments }, scenario.reference, coverageMode) : null;
   const outcome = (result?.outcome?.kind ?? "OTHER") as Stage;
   const processSeconds = typeof raw?.wallTimeSeconds === "number" && Number.isFinite(raw.wallTimeSeconds) && raw.wallTimeSeconds >= 0
     ? raw.wallTimeSeconds : null;
@@ -185,7 +228,7 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   const sameAsRaw = rawFeasible && finalIdentity !== null && rawIdentity !== null && finalIdentity === rawIdentity;
   const unchangedReference = !!scenario.reference && finalIdentity !== null
     && finalIdentity === dayIdentity(scenario.reference.assignments);
-  const deadline = JSON.parse(frozen).input._restPairTarget === 20 ? 32 : 20;
+  const deadline = wire._restPairTarget === 20 ? 32 : 20;
   const timely = engineSeconds !== null && engineSeconds <= deadline && productSeconds <= deadline;
   const errorCode = invocationError instanceof EscalaSolverError ? invocationError.code : invocationError ? "CLIENT_ERROR" : null;
   return { inputHash: digest(frozen), rawStatus, httpStatus: response?.httpStatus ?? null,

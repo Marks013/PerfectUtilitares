@@ -9,7 +9,8 @@ import { syntheticInput } from "../benchmark-synthetic";
 
 export const scenarioIds = ["team-10-week", "branch-50-four-weeks", "branch-115-six-weeks",
   "branch-115-six-weeks-untimed", "december-representative", "hours-reference-only",
-  "hours-only-with-grid", "stress-250-six-weeks", "december-protected"] as const;
+  "hours-only-with-grid", "stress-250-six-weeks", "december-protected",
+  "team-10-week-repair", "december-presence-recovery"] as const;
 export type ScenarioId = typeof scenarioIds[number];
 export type Scenario = { id: ScenarioId; prepared: EscalaInput; reference?: EscalaInput; admittedDecemberOrigin?: EscalaInput };
 
@@ -62,6 +63,43 @@ export function makeScenario(id: ScenarioId): Scenario {
         role: person.role, start: 480, end: 540, minimum: 1, estimated: true }] };
     // Historical reference intentionally need not be reusable; the app validates comparability and protects service.
     return { id, prepared: { ...origin, assignments: [] }, reference: origin, admittedDecemberOrigin: origin };
+  }
+  if (id === "team-10-week-repair") {
+    const hours = makeScenario("hours-only-with-grid");
+    const prepared = prepare({ ...hours.prepared, generationMode: "DAYS_AND_HOURS" });
+    return { id, prepared, reference: structuredClone(prepared) };
+  }
+  if (id === "december-presence-recovery") {
+    // The same locked two-person negative regression as solver-client.test.ts.
+    // Both take OFF together, but their locks forbid a safe repair. A retained
+    // reference/UNKNOWN/INFEASIBLE is evidence, not a failed legal schedule.
+    const prepared: EscalaInput = {
+      schemaVersion: 1, branchCode: "SYNTH", branchName: "Synthetic recovery",
+      startDate: "2026-12-01", endDate: "2026-12-31", defaultWeeklyHours: 42,
+      visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY", timeZone: "America/Sao_Paulo",
+      coverageBasis: "coverage-v2:aaaaaaaaaaaaaaaa",
+      policy: { source: "Synthetic", validFrom: "2026-01-01", validUntil: "2026-12-31",
+        reviewed: true, reviewedBy: "Synthetic", weeklyLimit: 44, dailyLimitMinutes: 528,
+        compensationAuthorized: true, limitContinuousWorkBlocks: false, minInterShiftMinutes: 660,
+        minWeeklyRestMinutes: 2100, minMealMinutes: 60, maxConsecutiveWorkDays: 5,
+        closedDates: [], holidayDates: [], authorizedHolidayDates: [], holidayRestAllowed: false, nightWorkReviewed: false },
+      employees: ["synthetic-recovery-1", "synthetic-recovery-2"].map(id => ({
+        id, registration: id, name: "Synthetic person", sector: "Synthetic sector", role: "Repositor",
+        weeklyHours: 42, shiftIds: ["day"], activeFrom: "2026-12-06", activeUntil: "2026-12-12",
+        offMode: "VARIABLE", fixedOffDays: [], offPattern: "ANY", maxConsecutiveSundays: 2,
+        preferredOffDays: [], historyKnown: false, history: [],
+      })),
+      shifts: [{ id: "day", name: "Synthetic day", segments: [{ start: 480, end: 720, kind: "WORK" },
+        { start: 720, end: 780, kind: "BREAK" }, { start: 780, end: 1044, kind: "WORK" }] }],
+      assignments: ["synthetic-recovery-1", "synthetic-recovery-2"].flatMap(employeeId =>
+        dateRange("2026-12-06", "2026-12-12").map((date, day) => ({
+          employeeId, date, locked: true,
+          ...(day === 0 || day === 6 ? { kind: "OFF" as const } : { kind: "WORK" as const, shiftId: "day" }),
+        }))),
+      demands: [{ id: "synthetic-estimate", date: "2026-12-08", sector: "Synthetic sector",
+        role: "Repositor", start: 480, end: 540, minimum: 2, estimated: true }],
+    };
+    return { id, prepared: escalaInputSchema.parse(prepared), reference: escalaInputSchema.parse(prepared) };
   }
   const sizes = { "team-10-week": [10, 1], "branch-50-four-weeks": [50, 4],
     "branch-115-six-weeks": [115, 6], "branch-115-six-weeks-untimed": [115, 6],
