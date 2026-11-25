@@ -167,7 +167,8 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
             check(valid == repetitions, "VALID_TRIALS:" + case + ":" + engine)
             if case != "team-10-week-repair":
                 check(len(successes) == repetitions, "NEW_TRIALS:" + case + ":" + engine)
-        comparable = 0
+        comparable = regressed = improved = 0
+        reasons = {}
         for pair in pairs:
             actual = [r for r in measured if r["repetition"] == pair["repetition"]]
             both_new = all(r["engineNew"] for r in actual)
@@ -175,9 +176,27 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
             if both_new:
                 comparable += 1
                 check(type(pair.get("regressed")) is bool and type(pair.get("improved")) is bool
-                      and isinstance(pair.get("reason"), str), "PAIR_RESULT")
+                      and isinstance(pair.get("reason"), str) and not (pair["regressed"] and pair["improved"]), "PAIR_RESULT")
+                regressed += int(pair["regressed"])
+                improved += int(pair["improved"])
+                reasons[pair["reason"]] = reasons.get(pair["reason"], 0) + 1
+                if pair["regressed"]:
+                    loss = pair.get("regression")
+                    check(isinstance(loss, dict) and set(loss) == {"metric", "scope", "before", "after", "delta"}
+                          and isinstance(loss["metric"], str) and isinstance(loss["scope"], str)
+                          and numeric(loss["before"]) and numeric(loss["after"])
+                          and type(loss["delta"]) in (int, float) and math.isfinite(loss["delta"])
+                          and loss["delta"] != 0, "PAIR_REGRESSION_DETAIL")
+                else:
+                    check("regression" not in pair, "PAIR_REGRESSION_DETAIL")
         report["comparablePairs"] = comparable
         report["nonComparablePairs"] = repetitions - comparable
+        report["regressedPairs"] = regressed
+        report["improvedPairs"] = improved
+        report["pairReasons"] = reasons
+        report["qualityDecision"] = ("REGRESSION_OBSERVED" if regressed
+                                    else "INSUFFICIENT_COMPARABLE_PAIRS" if comparable < repetitions
+                                    else "NO_REGRESSION_OBSERVED_EXPLORATORY")
         reports.append(report)
     return reports
 

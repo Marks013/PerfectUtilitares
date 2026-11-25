@@ -67,7 +67,12 @@ async function main() {
     if (pair.ortools?.proposal && pair.timefold?.proposal && pair.ortools.engineNew && pair.timefold.engineNew) {
       const comparison = compareRosterCoverage(pair.ortools.proposal, pair.timefold.proposal, pair.ortools.proposal);
       console.log(JSON.stringify({ kind: "paired-coverage", ...metadata, repetition,
-        comparable: comparison.comparable, regressed: comparison.regressed, improved: comparison.improved, reason: comparison.reason }));
+        comparable: comparison.comparable, regressed: comparison.regressed, improved: comparison.improved, reason: comparison.reason,
+        // Numeric comparison only. Never record sector, date or role labels.
+        ...(comparison.regression ? { regression: {
+          metric: comparison.regression.metric, scope: comparison.regression.scope,
+          before: comparison.regression.before, after: comparison.regression.after, delta: comparison.regression.delta,
+        } } : {}) }));
     } else if (candidateImage) console.log(JSON.stringify({ kind: "paired-coverage", ...metadata, repetition, comparable: false }));
   }
   if (checkSource().revision !== source.revision) throw new Error("CROSS_ENGINE_SOURCE_CHANGED");

@@ -76,6 +76,25 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.validate(data)
 
+    def test_quality_regression_is_visible_not_confused_with_validity(self):
+        data = rows()
+        data[2].update(regressed=True, improved=False, reason="SECTOR_COVERAGE",
+                       regression=dict(metric="DEFICIT_PERSON_MINUTES", scope="SUNDAYS",
+                                       before=0, after=60, delta=60))
+        report = self.validate(data)[0]
+        self.assertEqual(report["regressedPairs"], 1)
+        self.assertEqual(report["qualityDecision"], "REGRESSION_OBSERVED")
+        self.assertEqual(report["pairReasons"], {"SECTOR_COVERAGE": 1})
+        del data[2]["regression"]
+        with self.assertRaises(ValueError):
+            self.validate(data)
+
+    def test_contradictory_pair_outcomes_are_rejected(self):
+        data = rows()
+        data[2].update(regressed=True, improved=True)
+        with self.assertRaises(ValueError):
+            self.validate(data)
+
     def test_incomplete_result(self):
         data = rows()
         data[1]["finalAssessment"]["complete"] = False
