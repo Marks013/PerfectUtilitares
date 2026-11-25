@@ -1,5 +1,7 @@
 # Protocolo de paridade dos dados e métricas existentes: OR-Tools × Timefold
 
+> **Protocolo normativo revisado:** [especificação executável](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) e [seleção comparativa](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md). Congelar o envelope privado completo de requestSolver, não apenas EscalaInput; separar saída do motor bruto, correções TypeScript e resultado de produto; amostras, gates e quotas da nova especificação prevalecem. Comparar todos os candidatos sequencialmente, sem tocar na produção.
+
 Estado: PLANEJAMENTO. Nenhum benchmarking com dados reais executado, nenhum serviço produtivo parado, nenhum dado exportado. Em 25/11/2026, a referência da aplicação auditada é o commit main f78c691edbeaf16283f534bcacd8db1b4b7d5e66. Revalidar main antes dos experimentos.
 
 Objetivo: reutilizar os mesmos dados, configurações, verificadores e indicadores do PerfectUtilitares como "régua" externa dos dois motores. Não comparar score Timefold contra objetivo CP-SAT, pois escalas numéricas não são equivalentes. Não reescrever as métricas independentes em Java como critério de aprovação.
@@ -32,7 +34,7 @@ O benchmarkPython injeta fontes Python num subprocesso Docker. Um Java JAR não 
 
 ## 3. Identidade imutável da entrada
 
-Por cenário, derivar UMA EscalaInput pré-processada. Registrar sem gravar PII:
+Por cenário, derivar UMA EscalaInput pré-processada e o envelope privado integral capturado no limite de requestSolver, com seed, bounds, proteções, histórico recortado, relógio de fechamento e marcador de operação quando aplicável. Registrar sem gravar PII:
 - scenarioId e nome de fixture sem informação pessoal;
 - schemaVersion, generationMode, planningWeekStartsOn, restRulesVersion, timeZone e tamanho da semana;
 - contagem de pessoas por TIMED/UNTIMED/MISSING/excluídas, turnos, demandas estimated/confirmed, bloqueios, feriados, dias e histórico;
@@ -47,7 +49,7 @@ A mesma fixture deve receber o MESMO identificador de cenário de referência e 
 - Nunca executar OR-Tools benchmark e Timefold benchmark ao mesmo tempo. Primeiro Docker descartável do OR-Tools, encerrar e garantir limpeza, depois Docker descartável do Timefold, alternando a ordem A/B e B/A entre blocos.
 - Não parar, nem alterar limite, nem reiniciar o serviço produtivo escalas-solver. A instância produtiva usa /solve e /cancel e precisa estar disponível para seus usuários.
 - Preferir runner CI Linux ARM64 isolado; testes no host Oracle A1 somente com autorização e baseline de carga de outros projetos, pressão do host admissível e limite cgroup conservador.
-- Mesmos limites do container por variante (CPU, memória, PIDs, network=none, runtime read-only), distinguindo tempo de startup, parsing, preparação, tempo de primeira solução hard-válida, busca ativa e validação pós-resposta.
+- Mesmos limites do container por variante (CPU, memória, PIDs, runtime read-only; network=none para motor bruto, rede interna descartável sem egress para HTTP), distinguindo tempo de startup, parsing, preparação, tempo de primeira solução hard-válida, busca ativa e validação pós-resposta.
 - Rodar Quarkus Timefold em JVM production mode e JIT aquecido para testes de busca; medir também cold start separadamente. O warmup não conta na métrica de busca, mas conta na latência fim-a-fim de ativação.
 - Sob pressão ou métricas indisponíveis, não iniciar o benchmarking no servidor compartilhado. Não montar Docker socket no app e não acessar banco/secret de produção.
 
@@ -78,9 +80,9 @@ Como 250/6 é o limite superior de entrada, medir memória e tempo até first-ha
 
 ## 7. Procedimento de aprovação
 
-G0: fonte da main/regras mapeada e fixture + verificador com hash idêntico; G1: JVM/Quarkus/Timefold e Java AArch64 compilam; G2: 100% de validações hard; G3: contrato privado com auth/cancelamento; G4: nenhuma piora por faixa/scope protegido; G5: 250/6 e desempenho dentro do limite aprovado; G6: sem prejudicar outros projetos; G7: E2E isolado e rollback; G8: autorização específica para cutover.
+G0-G9 seguem a tabela canônica da especificação executável: inventário; seleção/spike; semântica; contrato; paridade; qualidade/desempenho; capacidade; E2E/rollback; autorização de implantação; remoção após estabilidade.
 
-Rodada exploratória: cinco repetições por variante/cenário, ordem alternada, triagem de bugs e revisão de métricas. Aceite final de qualidade: cinco ou mais sementes distintas com cinco ou mais repetições sob configuração estável, sem esconder variabilidade; latência/p95: pelo menos trinta execuções válidas ou falhas contabilizadas por cenário/configuração; cold starts: pelo menos trinta se scale-to-zero estiver em consideração.
+Rodada exploratória: cinco repetições por variante/cenário, ordem alternada, triagem de bugs e revisão de métricas. Aceite final de qualidade: cinco ou mais sementes distintas com cinco ou mais repetições sob configuração estável, sem esconder variabilidade; latência/p95: 30 pares para triagem; amostra final proposta >=100 pares nos cenários críticos, com falhas contabilizadas; cold starts 30 para triagem e >=100 se decidirem adoção. p99 apenas diagnóstico até amostra apropriada. Ver especificação normativa.
 
 Uma falha hard ou do validador independente reprova imediatamente; perda de cobertura protegida também. Não aceitar ganho de 115/6 para justificar regressão no 50/4, nem ganho de velocidade que reduza disponibilidade do outro projeto. Resultados inferiores precisam de análise e correção antes de propor implantação.
 

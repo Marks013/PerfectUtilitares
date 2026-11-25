@@ -1,5 +1,7 @@
 # Timefold sob demanda e controle de recursos da OCI A1 compartilhada
 
+> **Revisão normativa:** [especificação executável](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) e [seleção de motores](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md). READY_IDLE somente se o candidato vencedor exigir serviço residente; para o primeiro protótipo, sem fila interna (429 em ocupação), sem scale-to-zero e sem tocar no solver produtivo. Os gates A0-A4 são subtestes de G6/G7, não autorização. Cancelamento cooperativo requer prova de encerramento e política de falha.
+
 Status: arquitetura para futura prova de conceito. Somente documentação; nao instalar controlador, acionar Docker ou alterar servicos agora.
 VM informada: Oracle VM.Standard.A1.Flex, 4 OCPUs ARM64, 24 GB, Ubuntu 24.04. Outros projetos utilizam o mesmo host. Nao reservar a VM inteira para escalas.
 
@@ -7,7 +9,7 @@ VM informada: Oracle VM.Standard.A1.Flex, 4 OCPUs ARM64, 24 GB, Ubuntu 24.04. Ou
 
 Adotar dois niveis, nesta ordem:
 
-1. Basico, obrigatorio: executar Timefold com quota cgroup de CPU/RAM, SolverManager com um calculo simultaneo, admissao sob pressao e fila curta. Enquanto nao esta resolvendo, o Timefold fica ocioso. E a abordagem mais simples, com tempo de resposta estavel e sem controlador privilegiado de start/stop.
+1. Basico, obrigatorio: executar Timefold com quota cgroup de CPU/RAM, SolverManager com um calculo simultaneo, admissao sob pressao sem fila interna inicialmente. Enquanto nao esta resolvendo, o Timefold fica ocioso. E a abordagem mais simples, com tempo de resposta estavel e sem controlador privilegiado de start/stop.
 2. Opcional, DESLIGADO POR PADRAO: escala-a-zero fisica somente se cold start comprovado for rapido e se a memoria residente representar um problema real. Nao desligar a JVM automaticamente apos 5-10 minutos por padrao. O modo inicial obrigatorio e READY_IDLE: JVM Quarkus pronta, nenhum solve ativo, com quota rigida e CPU de otimizacao ociosa. Se startup nao cumprir o limite, manter READY_IDLE sem permitir espera longa ao usuario.
 
 O motor Timefold oferece SolverManager assíncrono e terminateEarly por identificador. Isso NAO sobe nem para um container Docker automaticamente. A ativacao fisica requer componente separado.
@@ -18,7 +20,7 @@ O motor Timefold oferece SolverManager assíncrono e terminateEarly por identifi
 
 **Distincao importante:** quarkus.timefold.solver.daemon=true **NAO** suspende a JVM quando o sistema esta ocioso. Esse modo espera mudanças de fatos do mesmo problema, usado no planejamento continuo e pode manter uma tarefa ocupada. Para escalas solicitadas sob demanda, configurar daemon=false e usar SolverManager para iniciar somente uma busca quando for necessario. O servico REST permanece pronto/ocioso.
 
-**Condicao de resposta rapida:** nenhum usuario deve aguardar varios minutos pela ativacao. O padrao sera READY_IDLE permanente enquanto o monitor confirmar memoria disponivel. O controlador de recursos calcula medias em segundo plano, nao inicia uma nova janela de observacao de 30-60 s somente apos o clique. Em recurso insuficiente, responder OCUPADO/INDISPONIVEL de forma imediata ou permitir uma espera pequena e explicita; nunca manter fila por 15 minutos.
+**Condicao de resposta rapida:** nenhum usuario deve aguardar varios minutos pela ativacao. O padrao sera READY_IDLE permanente enquanto o monitor confirmar memoria disponivel. O controlador de recursos calcula medias em segundo plano, nao inicia uma nova janela de observacao de 30-60 s somente apos o clique. Em recurso insuficiente, responder OCUPADO/INDISPONIVEL de forma imediata sem fila interna na primeira versao; nunca manter fila por 15 minutos.
 
 Metas para POC, **nao promessas de latencia medida**:
 - READY_IDLE: resposta de admissao interna p95 <= 1 s; inicio efetivo da busca p95 <= 2 s depois de receber pedido admitido, sem incluir os 12 s de busca de otimizacao.
@@ -47,10 +49,10 @@ Proposta de ensaio isolado, nao de producao:
 
 OFF -> CHECKING -> STARTING -> READY -> SOLVING -> COOLDOWN -> STOPPING -> OFF.
 
-De CHECKING ir a BUSY/WAITING_CAPACITY quando host sobrecarregado; no maximo uma tarefa ativa e uma pendente por instancia no ensaio. De STARTING e SOLVING poder ir a ERROR/CANCELLED. Nunca confundir resposta HTTP cancelada com solver realmente encerrado.
+De CHECKING ir a BUSY/WAITING_CAPACITY quando host sobrecarregado; no maximo uma tarefa ativa, sem pendencia interna no ensaio. De STARTING e SOLVING poder ir a ERROR/CANCELLED. Nunca confundir resposta HTTP cancelada com solver realmente encerrado.
 
 1. Usuario aciona a geracao pelo fluxo autenticado atual; o Next.js verifica tenant, permissao, revisao, aprovacao da politica e idempotencia.
-2. O controlador recebe apenas pedido interno autorizado e IDs opacos, checa a pressao do host e a quota. Se nao houver capacidade, nao inicia Java; devolve ocupacao ou espera limitada.
+2. O controlador recebe apenas pedido interno autorizado e IDs opacos, checa a pressao do host e a quota. Se nao houver capacidade, nao inicia Java; devolve ocupacao ou indisponibilidade sem espera interna na primeira versao.
 3. Se OFF e capacidade suficiente, o controlador inicia apenas o servico Java. Aguarda readiness. Opcionalmente aquece JIT com problema sintetico nao sensivel.
 4. Timefold executa com limite de tempo e de recursos; o retorno e validado independentemente no TypeScript. Um resultado incompleto, nao verificado ou pior em cobertura nunca substitui a grade.
 5. Cancelamento antes da partida evita spawn; durante SOLVING usa terminateEarly e confirma estado terminal antes de liberar vaga.
@@ -70,14 +72,14 @@ Revisar no spike o comportamento de Docker restart: unless-stopped, Compose prof
 
 O transporte atual trabalha com /solve e /cancel, com timeout de HTTP privado por volta de 20s no fluxo normal, enquanto o backend ja possui operacoes de geracao assincronas. Nao incorporar espera de fila e cold start dentro do prazo de busca de 12s. Verificar se o START_GENERATION permite informar preparacao e disponibilidade sem alterar indevidamente o contrato. Se forem necessarios estados novos, evoluir os DTOs e testes do API de forma versionada.
 
-Fila sempre limitada e com tempo maximo de espera. Em host ocupado: preservar o rascunho e oferecer tentar novamente, sem aumentar CPU para passar pelo prazo. Nao usar background tasks sem estado persistido/contrato e sem idempotencia.
+Sem fila interna na primeira versao; fila limitada externa e timeout so em revisao posterior do contrato. Em host ocupado: preservar o rascunho e oferecer tentar novamente, sem aumentar CPU para passar pelo prazo. Nao usar background tasks sem estado persistido/contrato e sem idempotencia.
 
 Quando a pressao aumenta durante uma busca, utilizar cancelamento cooperativo seguro e a ultima proposta comprovadamente viavel, se existir; caso contrario, reter a grade anterior. Uma falha OOM nao pode causar nova tentativa automatica infinita.
 
 ## Testes de admissao e de nao interferencia
 
 - Medir consumo OFF, STARTING, READY e SOLVING; tempo de cold start, RSS/cgroup, heap, metaspace, GC, CPU, PSI e consumo do controlador.
-- Comparar 10/1, 50/4, 115/6, 250/6 dias/equipe, com ao menos cinco repeticoes por variacao e limite identico. Nao piorar cobertura por cargo/faixa, folgas obrigatorias nem estado protegido.
+- Comparar 10/1, 50/4, 115/6, 250/6 dias/equipe, com cinco repeticoes exploratorias por variacao e amostra final conforme especificacao normativa e limite identico. Nao piorar cobertura por cargo/faixa, folgas obrigatorias nem estado protegido.
 - Testar host livre e host ocupado artificialmente EM STAGING; validar que outros servicos continuam saudaveis e respondem sem degradacao superior ao SLO aprovado.
 - Testar fila cheia, usuario sem autorizacao, cancelamento antes/depois de ativacao, erro de readiness, cold start demorado, reboot, encerramento durante solve e erro de memoria.
 - Nao incluir dados de colaboradores no controlador, logs ou metricas. Apenas contadores de fila, CPU/RAM agregados, identificador opaco da operacao e erros saneados.

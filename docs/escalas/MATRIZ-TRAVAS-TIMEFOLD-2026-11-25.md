@@ -1,5 +1,7 @@
 # Inventário de regras e travas CP-SAT para substituição por Timefold
 
+> **Revisão:** as famílias R01-R20 precisam de desdobramento exaustivo, precedência condicional, casos negativos/fronteira e fonte da verdade no SHA. A obrigação semântica de recuperação, liderança, serviço e janelas longas não é artefato a eliminar. Ver [F20-F26 e G0/G2/G4](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md).
+
 Status: AUDITORIA INICIAL; toda linha precisa de teste semântico e revisão antes de implementação. Código de referência: main f78c691edbeaf16283f534bcacd8db1b4b7d5e66 em 25/11/2026. Atualizar com novos arquivos e mudanças da main antes de iniciar a migração.
 
 Classificação:
@@ -24,7 +26,7 @@ Classificação:
 | R10 | solver.py:_coverage; coverage_service_protection.py | D/S | Cobertura hard confirmada e faixas de serviço protegidas por setor, cargo e horário civil, inclusive abertura/fechamento | Pré-computar janelas imutáveis; Constraint Streams hard e comparação independente TS | Fiscal não substitui zelador; presença por minuto e fechamento |
 | R11 | coverage_comparison.py; roster-quality.ts | D/S | Não piorar cobertura e serviço publicado em horizontes/mês/domingos comparáveis | Fato de limites de comparação + veto independente de aceitação | Recorte dezembro, dia/semana/setor e horários |
 | R12 | solver.py:_coverage; schema coverageReview | P/D | Demanda ESTIMATED é objetivo operacional, não mínimo aprovado; CONFIRMED depende do dado explícito | Medium score de pessoas-minutos faltantes; hard somente aprovado | Nenhum número presumido, aviso de estimativa |
-| R13 | solver.py:_coverage; sunday_peak.py; leadership.py | D/P | Priorização de domingos, fechamento, movimentação e presença de líder, sem contar líder como substituto de função | Medium para risco operacional, soft para preferências, conforme regra documentada | Sem demanda não inventar pico; líder com cargo distinto |
+| R13 | solver.py:_coverage; sunday_peak.py; leadership.py | D/P | Priorização de domingos, fechamento, movimentação e presença de líder, sem contar líder como substituto de função | Preservar liderança declarada e guardas conforme seletor TS; medium/soft apenas onde permitido | Sem demanda não inventar pico; líder com cargo distinto |
 | R14 | weekend_balance.py; rest_quality.py; optimization.py | D/P | Justiça de sábados/domingos somente entre comparáveis por função e relógio; pares e espaçamento de folgas | Score soft com dados de oportunidade; nenhum mínimo de pares inventado | Coortes unitárias, ausências, feriados, rodízio |
 | R15 | solver.py:_solve; planning_calendar.py | D/S | Histórico real, planejamento publicado anterior e futuro, revisão imutável e continuidade | Fatos imutáveis; decisões já publicadas fixadas por opção válida | Margem de -21/+21 dias, não duplicar registros |
 | R16 | labor-rules TS; policy_reference.py; solver.py:cct_admissible | P | Documentos coletivos/certidões só habilitam regras aprovadas explicitamente. Na main, cct_admissible retorna True; não inventar veto documental novo | Validação de política no aplicativo; fatos confiáveis no Solver | Documento vencido, simulação e alteração de regime |
@@ -33,7 +35,7 @@ Classificação:
 | R19 | model_input.py; service_security.py; service_operations.py | S | Auth Bearer, requestId/cancelToken, limite 8 MiB, 1 operação pesada, cancel/timeout e erros saneados | Quarkus REST + Java security adapter + SolverManager lifecycle | Interrupção, 429, 409, cancel antes e depois |
 | R20 | types.ts; policy + shifts | D | Pausa paga ou não, limiar de refeição, jornada > 1440 offsets, hora na região de São Paulo | Precomputar intervalos efetivos, Constraint Streams | Segmentos, pausas e fronteira civil |
 
-**G0 exige** que cada R01-R20 tenha pelo menos um teste com ID rastreável, preferência por reutilizar fixtures sintéticas e implementação espelhada do verificador independente. A matriz não equivale a prova de que a regra já está implantada em Java.
+**G0 exige** que cada família R01-R20 seja desdobrada em sub-regras com ID, precedência e testes positivos, negativos e de fronteira, preferência por reutilizar fixtures sintéticas e implementação espelhada do verificador independente. A matriz não equivale a prova de que a regra já está implantada em Java.
 
 ## 2. Travas que existem para trabalhar em volta do CP-SAT e NÃO devem migrar
 
@@ -43,7 +45,7 @@ Classificação:
 | A02 | solver.py:_feasibility_hints; hints.py | Heurística de seed com tentativas, rechecagens e fixed hints | Construction Heuristic, solução inicial pinada/salva quando compatível | SUBSTITUIR; manter só mapping válido |
 | A03 | optimization.py:Snapshot/remember | Índices de variáveis, snapshots e hints de estado booleano | Score incremental, SolutionManager e planning clone | ELIMINAR |
 | A04 | optimization.py:_movable_people/_coverage_people/_polish_people | Bairros de otimização por grupo liberando variáveis manualmente | Local Search nativa e seleção de move sob avaliação | ELIMINAR na primeira versão |
-| A05 | optimization.py:_phase_budget, reserves, multi-phases | Microgerenciamento de segundos do CP-SAT e sequenciamento de objetivos | Hierarquia HardMediumSoftScore e terminação nativa; limites de tempo operacionais permanecem | ELIMINAR mecanística |
+| A05 | optimization.py:_phase_budget, reserves, multi-phases | Microgerenciamento de segundos do CP-SAT e sequenciamento de objetivos | Hierarquia testada por contraexemplos (HardMediumSoftScore ou BendableScore) e terminação nativa; limites de tempo operacionais permanecem | ELIMINAR mecanística |
 | A06 | optimization.py/model.clone/domain.clear | Copiar CP-SAT, congelar índice, resolver reparos | @PlanningPin, Value Range, move filtering nativo e hard constraints | ELIMINAR |
 | A07 | sunday_peak.py; weekend_balance.py | max/min/div igualdade com variáveis auxiliares | Constraint Streams com agregação ou penalty de justiça, sem booleanos extras | REIMPLEMENTAR sem artefatos CP |
 | A08 | diagnostics.py:ConflictRegistry | Prova diagnóstica por famílias de constraint CP-SAT | Códigos semânticos + verificação e métricas independentes TypeScript; não assumir Score Analysis Enterprise na edição Community nem fingir prova de inviabilidade | REDESENHAR |

@@ -1,5 +1,7 @@
 # Auditoria crítica da migração para Timefold Solver
 
+> **Revisão integral:** [F20-F33, gates e critérios](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) e [parecer de seleção](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md). A auditoria F01-F19 permanece histórico de achados; as novas condições prevalecem. Timefold não é vencedor presumido.
+
 Data: 2026-11-25. Estado: AUDITORIA DOCUMENTAL, SEM execução Java no host, sem deploy, sem mudança de backend ou dados. Base: PerfectUtilitares main f78c691edbeaf16283f534bcacd8db1b4b7d5e66 e documentação do PR #70 no commit 86bdd5e668c2878eb8323834c0605212dfe03df6. Este documento inclui constatações do código-fonte, informações de documentação externa e hipóteses que só um spike confirma.
 
 ## Sumário e veredito

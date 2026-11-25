@@ -1,5 +1,7 @@
 # Java/Timefold: bibliotecas, complementos, compatibilidade e margem operacional
 
+> **Stack condicional:** estas escolhas valem apenas se Timefold vencer a [seleção matemática](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md); [especificação executável](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) determina deadlines, amostras, cancelamento, quotas e gates. Sem fila interna inicial, sem recursos Enterprise, sem dependência nova em produção até aprovação.
+
 Data da verificação pública: 25/11/2026. Estado: recomendação para protótipo, SEM instalação em produção.
 Versão de referência do repositório: main f78c691edbeaf16283f534bcacd8db1b4b7d5e66.
 
@@ -82,11 +84,11 @@ Ensaios obrigatórios e separados:
 - Heap inicial controlado por Xmx ou MaxRAMPercentage com suficiente margem para metaspace, stacks de threads, código JIT, buffers e cache; não assumir que heap equivale a RSS. Ajustar ao p99, OOMKills e GCTime, não apenas ao pico de um ensaio.
 - Limitar a uma otimização ativa por instância. Não manter OR-Tools e Timefold executando cenários pesados juntos na mesma máquina com memória insuficiente.
 - JVM em modo de PRODUÇÃO com JIT C2: a FAQ Timefold registra dev mode Quarkus até 10x-50x mais lento em casos de busca. Aquecer 1-2 solves sintéticos e registrar tempo frio e aquecido, sem excluir custo de startup do contrato.
-- Benchmarks com 10/1, 50/4, 115/6, até 250/6, e casos adversariais. Medir p50/p95, RSS, GC, CPU, init e duração, com cinco ou mais repetições e seeds controladas. Guardar só métricas agregadas e hashes de fontes. Nenhum payload de funcionário em artifacts.
+- Benchmarks com 10/1, 50/4, 115/6, até 250/6, e casos adversariais. Medir p50/p95, RSS, GC, CPU, init e duração, com cinco repetições exploratórias e amostras finais conforme especificação normativa, seeds controladas. Guardar só métricas agregadas e hashes de fontes. Nenhum payload de funcionário em artifacts.
 
 ## Ativação sob demanda sem competir com outros projetos
 
-O Timefold não precisa otimizar continuamente: SolverManager pode ficar ocioso e consumir CPU de busca apenas quando há requisição. Com memória do host escassa, uma etapa posterior opcional pode iniciar o container no primeiro pedido e pará-lo após ociosidade confirmada. Isso requer controlador externo seguro e testes de cold start; Quarkus/Timefold NÃO iniciam Docker automaticamente, e o backend Next.js não deve ter o Docker socket. Admitir carga somente após verificar memória disponível, PSI CPU/RAM e utilização recente, com fila limitada e cancelamento cooperativo; sob pressão, preservar a escala e rejeitar/adiar o cálculo. Especificação e testes: [ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md](ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md).
+O Timefold não precisa otimizar continuamente: SolverManager pode ficar ocioso e consumir CPU de busca apenas quando há requisição. Com memória do host escassa, uma etapa posterior opcional pode iniciar o container no primeiro pedido e pará-lo após ociosidade confirmada. Isso requer controlador externo seguro e testes de cold start; Quarkus/Timefold NÃO iniciam Docker automaticamente, e o backend Next.js não deve ter o Docker socket. Admitir carga somente após verificar memória disponível, PSI CPU/RAM e utilização recente, sem fila interna inicial e com cancelamento cooperativo cuja conclusão real seja testada; sob pressão, preservar a escala e rejeitar/adiar o cálculo. Especificação e testes: [ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md](ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md).
 
 ## Segurança e operação: extensão não substitui os contratos
 
@@ -99,7 +101,7 @@ O Timefold não precisa otimizar continuamente: SolverManager pode ficar ocioso 
 ## Segurança de dependências e cadeia de build
 
 - Maven Wrapper com versão fixa; dependências e plugins governados pelas BOMs + verificação de árvore e duplicatas antes de merge. O build não deve baixar versões mutáveis de runtime.
-- CI adiciona compile, unit/ConstraintVerifier, native-independent REST tests, package, SBOM, vulnerabilidade, licença, Docker digest e teste de arquitetura am64/arm64 conforme host. Não exigir GraalVM/native build para o primeiro runtime.
+- CI adiciona compile, unit/ConstraintVerifier, native-independent REST tests, package, SBOM, vulnerabilidade, licença, Docker digest e teste de arquitetura amd64/arm64 conforme host. Não exigir GraalVM/native build para o primeiro runtime.
 - Maven Enforcer para JDK 21, versões estáveis e convergência de dependências. Relatório SBOM CycloneDX e scan de imagem Docker podem ser ativados no CI sem virar dependência runtime.
 - Toda atualização de Timefold/Quarkus exige executar novamente os benchmarks e testes de paridade, não só as verificações de Maven.
 

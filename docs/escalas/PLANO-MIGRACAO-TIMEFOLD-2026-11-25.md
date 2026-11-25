@@ -1,4 +1,6 @@
-# Plano integral de substituição OR-Tools por Timefold Solver
+# Plano condicional de substituição OR-Tools por Timefold Solver
+
+> **DECISÃO REVISADA:** a substituição é condicional à [seleção comparativa de motores](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md); OR-Tools pode permanecer se vencer ou se os resultados forem inconclusivos. Este plano Java descreve o caminho **somente se Timefold vencer**. [Especificação executável e G0-G9](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) prevalecem sobre cronogramas e limites divergentes. Nenhuma integração definitiva antes da triagem e da prova semântica.
 
 Estado: PLANEJAMENTO PARA REVISÃO. Auditoria crítica complementar em [AUDITORIA-CRITICA-TIMEFOLD-2026-11-25.md](AUDITORIA-CRITICA-TIMEFOLD-2026-11-25.md): nenhum gate de implantação está aprovado. Nenhuma implantação, teste com dados reais, exclusão do OR-Tools ou alteração de configuração do servidor está autorizada por este documento.
 
@@ -8,7 +10,7 @@ Referência auditada em 2026-11-25: main f78c691edbeaf16283f534bcacd8db1b4b7d5e6
 
 ## Meta e princípio de redução de complexidade
 
-Substituir integralmente o mecanismo de otimização Python/OR-Tools CP-SAT por uma implementação dedicada Java/Timefold, mantendo comportamento e regras aprovados do PerfectUtilitares. NÃO portar tentativas heurísticas manuais, propagadores auxiliares, booleanos e clones do CP-SAT quando Timefold já fornece mecanismos de busca nativos.
+Se vencer a seleção comparativa, substituir integralmente o mecanismo de otimização Python/OR-Tools CP-SAT por uma implementação dedicada Java/Timefold, mantendo comportamento e regras aprovados do PerfectUtilitares. NÃO portar tentativas heurísticas manuais, propagadores auxiliares, booleanos e clones do CP-SAT quando Timefold já fornece mecanismos de busca nativos.
 
 O motor novo será dono de calcular um planejamento, não de autenticar usuários, gravar PostgreSQL, administrar tenants, inferir direitos trabalhistas, publicar escalas ou alterar históricos. O projeto continua a usar os validadores independentes TypeScript para decidir se a proposta pode ser aceita.
 
@@ -63,7 +65,7 @@ Qualquer falta de cobertura, dia ilegal, perda de registro protegido, resultado 
 
 ## Fases propostas
 
-F0: congelamento lógico da especificação, não da main, com auditoria de regras e licenças. Aprovação da matriz.
+F0: inventário exaustivo, congelamento lógico da especificação, harness e baseline, triagem comparativa de motores/modelos. Aprovação da matriz e seleção preliminar antes de F1.
 F1: protótipo Java isolado, projeto Maven/Quarkus/Timefold sem endpoint conectado ao app. Primeiro provar compatibilidade ARM64/JDK/BOM/Quarkus e comparar representação por empregado-dia versus bloco semanal, tamanho do domínio admissível, startup e primeira solução viável. Sem compromisso prematuro com um modelo.
 F2: regras hard e três modos de geração, calendário civil/histórico/futuro, preservação de referências. ConstraintVerifier com casos fronteira.
 F3: cobertura por cargo/horário e metas soft, Score semântico e testes de prioridade. Sem reprodução de fases CP-SAT.
