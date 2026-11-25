@@ -29,6 +29,8 @@ Parecer de engenharia: manter Timefold Community 2.8.0 + Quarkus 3.40.1.2 + JDK 
 | F15 | P1 | Constraint Streams com join cartesiano ou calculando cobertura minuto-a-minuto em todo move pode gerar enorme sobrecarga. | Pré-computar janelas por turno/setor/cargo/fuso como fatos imutáveis; usar groupBy/joiner somente quando reduz cardinalidade; evitar I/O remoto e cálculos mutáveis dentro do score. Comparar modelagem simples antes de otimizar selectores. |
 | F16 | P1 | O rollback do endpoint não garante recuperabilidade se schemas/operation states mudarem. | Fase de homologação deve ensaiar atualização de schema versionada/reversível, status de cancelamento e falhas de runtime; nenhuma perda de revisão/prova/publicação. Não conectar Java ao banco. |
 | F17 | P0 | Se dois motores forem medidos simultaneamente na VM A1, a concorrência distorce CPU/RSS/latência e pode prejudicar outros projetos. Desligar o serviço PRODUTIVO de escalas para testar também interromperia geração e cancelamentos. | Benchmark de OR-Tools e Timefold SEMPRE sequencial em containers descartáveis/ambiente isolado, com orçamento idêntico; encerrar processo de teste antes do próximo; alternar ordem A/B e B/A em blocos; nunca parar o escalas-solver produtivo. Ensaiar eventual parada apenas no stack de homologação e, no cutover, em janela expressamente autorizada e sem jobs ativos. |
+| F18 | P0 | O benchmark atual usa baseline histórico 2657f4a... e não a main corrigida f78c691...; independentShortage só mede demandas estimadas. Comparação direta com Java usando essas duas referências daria conclusão enganosa. | Criar harness cross-engine pinado à main auditada, entrada preparada uma vez, hashes de origem idênticos, avaliação única via validateEscala/roster-quality/coverage-protection e métricas por setor/cargo/faixa. Não comparar os scores internos. Procedimento no PROTOCOLO-PARIDADE-ORTOOLS-TIMEFOLD-2026-11-25.md. |
+| F19 | P0 | benchmark-real.ts substitui nomes/IDs, mas conserva setor, horários, afastamentos e histórico. Essa pseudonimização NÃO prova anonimização e não autoriza publicar fixtures no GitHub ou fornecedores externos. | Primeira comparação só com dados sintéticos e testes do projeto; eventual ensaio real precisa autorização operacional específica, processamento local controlado, minimização e nenhum payload em artifacts/logs. |
 
 ## Condições corrigidas da documentação oficial de 2026
 
@@ -55,6 +57,8 @@ Parecer de engenharia: manter Timefold Community 2.8.0 + Quarkus 3.40.1.2 + JDK 
 **Reprovação:** sobreposição de buscas, perda de acesso ao solver produtivo, CPU/RAM acima do envelope, OOM, processo órfão, ausência de hashes de entrada/versão ou monitoramento incompleto invalida o benchmark.
 
 Fonte Docker Compose: https://docs.docker.com/reference/cli/docker/compose/stop/ ; Timefold Benchmarker (paralelismo limitado e execução sequencial): https://docs.timefold.ai/timefold-solver/latest/using-timefold-solver/benchmarking-and-tweaking ; Docker cgroups: https://docs.docker.com/engine/containers/resource_constraints/ .
+
+O protocolo específico de [dados e métricas existentes](PROTOCOLO-PARIDADE-ORTOOLS-TIMEFOLD-2026-11-25.md) é obrigatório: transforma o mesmo EscalaInput pré-processado em duas execuções isoladas e aplica o mesmo verificador TypeScript. A baseline histórica do benchmark de 20/11 não pode ser confundida com o estado atual da main; nenhuma diferença de score matemático entre motores autoriza automaticamente uma implantação.
 
 ### Três níveis de prova
 
