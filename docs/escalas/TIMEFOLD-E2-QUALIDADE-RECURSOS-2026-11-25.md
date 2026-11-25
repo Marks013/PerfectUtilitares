@@ -25,3 +25,10 @@ Testes: manter os testes anteriores adaptados ao vetor de score; acrescentar con
 - Oracle A1 4 OCPUs/24 GB compartilhada: até 2 CPUs/2 GiB apenas **hipótese para futuro ensaio** após aprovação da capacidade; preservar pelo menos 2 OCPUs para sistema/aplicação/outros serviços, verificar memória disponível real e coexistência. Não executar aqui nem mudar limites produtivos sem autorização e gates E5/E6. Nenhum merge/deploy.
 
 Estado: E2.2 implementação experimental, testes e comparação pendentes. G0/G1 formais não encerrados; E3/E4 não aprovados.
+
+
+## Correção de compilação de E2.2
+
+A revisão 8b78843d5bdb56cddaec960cb3b2ea948829bf45 falhou nos workflows [E2](https://github.com/Marks013/PerfectUtilitares/actions/runs/45718532187) e [auditoria de dependências](https://github.com/Marks013/PerfectUtilitares/actions/runs/45718532362) pelo mesmo erro de compilação em RosterConstraints.java: inferência de tipos dos coletores min/max combinados com groupBy, em sectorPeak e sundaySpread. A CI geral e E1 foram aprovadas. O benchmark E2.2 ainda não foi executado, e a auditoria não chegou a consultar OSV nessa revisão.
+
+As assinaturas públicas de [ConstraintCollectors v2.8.0](https://github.com/TimefoldAI/timefold-solver/blob/v2.8.0/core/src/main/java/ai/timefold/solver/core/api/score/stream/ConstraintCollectors.java) e [BiConstraintStream v2.8.0](https://github.com/TimefoldAI/timefold-solver/blob/v2.8.0/core/src/main/java/ai/timefold/solver/core/api/score/stream/bi/BiConstraintStream.java) foram conferidas. Os três coletores passam a declarar explicitamente A, B e Mapped: Band/Long/Long e SectorPerson/Long/Long. Um teste local de tipos com Java 21, reproduzindo as assinaturas e sobrecargas relevantes sem o JAR do Timefold, compilou. Isso não substitui a compilação Maven completa e os testes Java do runner ARM64. Nenhuma fórmula, restrição hard, nível do score, seed, teste existente, limite de tempo, quota ou versão de dependência foi alterada. O controle E2.1 permanece congelado no PR #72. Novos checks obrigatórios; PR draft, sem deploy.

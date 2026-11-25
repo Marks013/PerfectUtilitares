@@ -3,14 +3,13 @@ package br.perfectutilitares.escalas.spike;
 import ai.timefold.solver.core.api.score.BendableScore;
 import ai.timefold.solver.core.api.score.stream.Constraint;
 import ai.timefold.solver.core.api.score.stream.ConstraintFactory;
+import ai.timefold.solver.core.api.score.stream.ConstraintCollectors;
 import ai.timefold.solver.core.api.score.stream.ConstraintProvider;
 import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.count;
 import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.countBi;
 import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.toMap;
 import java.util.Map;
 import ai.timefold.solver.core.api.score.stream.bi.BiConstraintStream;
-import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.max;
-import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.min;
 import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.sum;
 import static ai.timefold.solver.core.api.score.stream.Joiners.equal;
 import static ai.timefold.solver.core.api.score.stream.Joiners.filtering;
@@ -93,7 +92,8 @@ public class RosterConstraints implements ConstraintProvider {
     Constraint sectorPeak(ConstraintFactory f) {
         return deficits(f, true)
                 .groupBy((band, gap) -> band.sector(),
-                        max((band, gap) -> gap / (band.end() - band.start())))
+                        ConstraintCollectors.<Roster.Band, Long, Long>max(
+                                (band, gap) -> gap / (band.end() - band.start())))
                 .filter((sector, peak) -> peak > 0)
                 .penalize(level(2), (sector, peak) -> peak).asConstraint("Sector peak shortage");
     }
@@ -112,7 +112,8 @@ public class RosterConstraints implements ConstraintProvider {
                 .groupBy(day -> new SectorPerson(day.sector(), day.person()),
                         sum(day -> day.working() ? 1L : 0L))
                 .groupBy((person, count) -> person.sector(),
-                        min((person, count) -> count), max((person, count) -> count))
+                        ConstraintCollectors.<SectorPerson, Long, Long>min((person, count) -> count),
+                        ConstraintCollectors.<SectorPerson, Long, Long>max((person, count) -> count))
                 .filter((sector, low, high) -> high > low)
                 .penalize(level(4), (sector, low, high) -> high - low).asConstraint("Sunday sector spread");
     }
