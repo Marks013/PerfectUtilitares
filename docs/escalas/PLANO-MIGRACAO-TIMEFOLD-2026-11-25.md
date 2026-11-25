@@ -86,6 +86,16 @@ Adotar inicialmente ativação lógica: Timefold executa somente quando pedido, 
 
 Especificação detalhada: [ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md](ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md). A prova de não interferência sobre outros serviços é condição formal de G6 e G8.
 
+## Parecer de compatibilidade para retomada imediata
+
+Verificação das fontes oficiais em 25/11/2026: Timefold Solver 2.x integra com Quarkus 3.x e exige Java 21+; existem runtimes Java 21 para Linux AArch64 (Oracle A1). SolverManager permite execução sob demanda e terminateEarly; Quarkus SmallRye Health oferece readiness para uma JVM já iniciada. **Isso comprova a arquitetura possível, não a latência medida neste host nem o build exato das dependências.**
+
+**A solução principal NÃO será um container que desliga após poucos minutos.** O Timefold ficará em estado READY_IDLE, com JVM viva, nenhuma otimização ativa e limite rígido de CPU e RAM. O request usa amostras de pressão de host recolhidas continuamente por um controlador leve para admissão imediata. Se a VM estiver ocupada, o backend responde ocupado/indisponível ou espera curta, nunca aguarda 15 minutos.
+
+Configuração inicial a testar: parallel-solver-count=1, move-thread-count=NONE, daemon=false e nenhuma fila interna ilimitada. `daemon=true` em Timefold é planejamento contínuo aguardando alterações de fatos, não suspensão de JVM nem economia de memória. Se iniciar/desligar container sob demanda se mostrar útil, só permitir após prova de readiness p95 <= 5s e prazo máximo de ativação 10s e após adaptar corretamente o fluxo assíncrono de operações à janela de HTTP de 20s. Caso contrário, desabilitar scale-to-zero.
+
+**Gates adicionais do protótipo**: estado READY_IDLE -> admissão p95 <= 1s, início de solve <= 2s, sem violar limite de 12s do cálculo; CPU, RSS e GC ociosos medidos; outros projetos não degradados. Se meta falhar, ajustar modelo/runtime, não conceder CPU exclusiva silenciosamente. Referência operacional detalhada em [ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md](ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md).
+
 ## Publicação/rollback
 
 A aplicação mantém snapshot e revisão; nenhuma proposta é publicada automaticamente. Antes de mudança de endpoint, executar npm run quality completo vinculado à fonte exata em checkout limpo, validar Compose com segredos sem revelá-los, um único npm run docker:deploy conforme AGENTS.md, health e E2E pós-release. O rollback deve voltar para imagem e URL anteriores sem reverter dados do Postgres ou destruir históricos. Produção só com aprovação posterior.
