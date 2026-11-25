@@ -6,6 +6,7 @@ import ai.timefold.solver.core.api.domain.solution.PlanningSolution;
 import ai.timefold.solver.core.api.domain.solution.ProblemFactCollectionProperty;
 import ai.timefold.solver.core.api.domain.valuerange.ValueRangeProvider;
 import ai.timefold.solver.core.api.score.HardMediumSoftScore;
+import java.util.ArrayList;
 import java.util.List;
 
 @PlanningSolution
@@ -40,7 +41,7 @@ public class Roster {
 
     public Roster() {}
     Roster(List<Day> days, List<Window> windows, List<Band> bands) {
-        this.days = List.copyOf(days);
+        this.days = new ArrayList<>(days);
         this.windows = List.copyOf(windows);
         this.bands = List.copyOf(bands);
     }

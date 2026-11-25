@@ -21,7 +21,9 @@ import type { Scenario } from "./fixtures";
 const endpoint = "http://cross-engine.invalid";
 const maxBytes = 8 * 1024 * 1024;
 const statuses = ["FEASIBLE", "OPTIMAL", "UNKNOWN", "INFEASIBLE", "MODEL_INVALID"] as const;
-export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null };
+type SpikeTelemetry = { mappingSeconds: number; entities: number; initialized: number; bands: number; windows: number;
+  firstFeasibleSeconds: number | null; partialModel: true };
+export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null; spike?: SpikeTelemetry };
 export type Adapter = (body: string) => WireReply;
 type Status = typeof statuses[number];
 type Stage = "NEW_PROPOSAL" | "REFERENCE_RETAINED" | "SEARCH_UNFINISHED" | "PROVEN_INFEASIBLE" | "OTHER";
@@ -56,7 +58,18 @@ export function verifyReply(value: unknown): WireReply {
     throw new Error("CROSS_ENGINE_REPLY_INVALID");
   if (httpStatus === 200 && !knownStatus(asRecord(record?.body)?.status)) throw new Error("CROSS_ENGINE_STATUS_INVALID");
   if (Buffer.byteLength(JSON.stringify(record?.body), "utf8") > maxBytes) throw new Error("CROSS_ENGINE_REPLY_LIMIT");
-  return { httpStatus, body: record?.body, maxRssKiB: rss as number | null };
+  let spike: SpikeTelemetry | undefined;
+  if (record?.spike !== undefined) {
+    const t = asRecord(record.spike);
+    const nonnegative = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+    const count = (v: unknown): v is number => nonnegative(v) && Number.isInteger(v) && v <= 100_000;
+    if (!t || t.partialModel !== true || !nonnegative(t.mappingSeconds) || !count(t.entities) || !count(t.initialized)
+      || t.initialized > t.entities || !count(t.bands) || !count(t.windows)
+      || (t.firstFeasibleSeconds !== null && !nonnegative(t.firstFeasibleSeconds))) throw new Error("CROSS_ENGINE_SPIKE_TELEMETRY_INVALID");
+    spike = { mappingSeconds: t.mappingSeconds, entities: t.entities, initialized: t.initialized,
+      bands: t.bands, windows: t.windows, firstFeasibleSeconds: t.firstFeasibleSeconds, partialModel: true };
+  }
+  return { httpStatus, body: record?.body, maxRssKiB: rss as number | null, ...(spike ? { spike } : {}) };
 }
 
 // This function must never be called concurrently in one process. It restores every modified global.
@@ -250,7 +263,7 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   const errorCode = invocationError instanceof EscalaSolverError ? invocationError.code : invocationError ? "CLIENT_ERROR" : null;
   return { inputHash: digest(frozen), rawStatus, rawRejectionStage, rawDiagnosticFamilies,
     inputErrorFields: response?.httpStatus === 400 ? inputDiagnosticFields(raw?.fields) : [], httpStatus: response?.httpStatus ?? null,
-    processSeconds, engineSeconds, productSeconds, maxRssKiB: response?.maxRssKiB ?? null, finalStatus, outcome,
+    processSeconds, engineSeconds, productSeconds, ...(response?.spike ? { spike: response.spike } : {}), maxRssKiB: response?.maxRssKiB ?? null, finalStatus, outcome,
     rawAssessment, finalAssessment, sameAsRaw, unchangedReference, timely, errorCode,
     acceptedNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && !unchangedReference && finalAssessment?.valid === true
       && finalAssessment.comparison?.regressed !== true,

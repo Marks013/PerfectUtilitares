@@ -22,6 +22,7 @@ public class Day {
     private int index;
     private String date;
     private List<Segment> workSegments;
+    @PlanningPin
     private boolean pinned;
     private Boolean originalLocked;
     private State saved;
@@ -57,7 +58,6 @@ public class Day {
     public String shift() { return shift; }
     public String date() { return date; }
     public int index() { return index; }
-    @PlanningPin
     public boolean isPinned() { return pinned; }
     public Boolean originalLocked() { return originalLocked; }
     public State saved() { return saved; }

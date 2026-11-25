@@ -48,6 +48,14 @@ def verify(rows):
                 feasible = r.get("rawStatus") in ("FEASIBLE", "OPTIMAL")
                 if engine == "timefold":
                     check(r.get("rawStatus") in ("FEASIBLE", "UNKNOWN") and r.get("httpStatus") == 200, "CANDIDATE_STATUS:" + case)
+                    t = r.get("spike") or {}
+                    check(t.get("partialModel") is True and t.get("entities") == first["profile"]["activePositions"]
+                          and 0 <= t.get("initialized", -1) <= t["entities"] and t.get("bands", 0) > 0
+                          and t.get("windows", 0) > 0 and 0 <= t.get("mappingSeconds", -1) <= 12, "CANDIDATE_TELEMETRY:" + case)
+                    first_time = t.get("firstFeasibleSeconds")
+                    check(first_time is None or isinstance(first_time, (int, float)) and math.isfinite(first_time)
+                          and 0 <= first_time <= r["engineSeconds"], "FIRST_FEASIBLE:" + case)
+                    check(not feasible or r["processSeconds"] <= 12.1, "SEARCH_DEADLINE:" + case)
                 if feasible:
                     check((r.get("rawAssessment") or {}).get("valid") is True
                           and (r.get("rawAssessment") or {}).get("complete") is True, "INVALID_FEASIBLE:" + case)

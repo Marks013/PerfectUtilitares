@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 
 /** Single request over stdin/stdout. No HTTP, persistent state, secrets or production use. */
 public final class SpikeMain {
@@ -49,9 +51,24 @@ public final class SpikeMain {
                                 && event.getNewBestSolution().days().stream().allMatch(day -> day.state() != null))
                             firstFeasible.compareAndSet(-1L, System.nanoTime() - start);
                     });
-                    // Recompute remaining time via a watchdog. Native termination is not a hard process deadline.
-                    // The enclosing Docker runner owns process cleanup. Never accept an over-budget result.
-                    result = solver.solve(input);
+                    // Cooperative watchdog includes SolverFactory construction in the 12s deadline.
+                    // Retry termination in case the first call preceded native solve startup.
+                    var finished = new AtomicBoolean(false);
+                    Thread watchdog = Thread.ofPlatform().daemon().name("e2-deadline").unstarted(() -> {
+                        long stop = start + BUDGET_NS - Duration.ofMillis(250).toNanos();
+                        while (!finished.get()) {
+                            long remaining = stop - System.nanoTime();
+                            if (remaining <= 0) {
+                                solver.terminateEarly();
+                                LockSupport.parkNanos(Duration.ofMillis(10).toNanos());
+                            } else LockSupport.parkNanos(Math.min(remaining, Duration.ofMillis(50).toNanos()));
+                        }
+                    });
+                    if (System.nanoTime() - start < BUDGET_NS - Duration.ofMillis(250).toNanos()) {
+                        watchdog.start();
+                        try { result = solver.solve(input); }
+                        finally { finished.set(true); watchdog.interrupt(); }
+                    }
                 }
                 boolean valid = result != null && result.score() != null && result.score().isFeasible()
                         && result.days().size() == cells && result.days().stream().allMatch(day -> day.state() != null)
@@ -66,7 +83,7 @@ public final class SpikeMain {
                     if (day.working()) row.put("shiftId", day.shift());
                     if (day.originalLocked() != null) row.put("locked", day.originalLocked());
                 }
-                body.put("wallTimeSeconds", elapsed(start));
+                body.put("wallTimeSeconds", Math.min(60.0, elapsed(start)));
                 var telemetry = reply.putObject("spike");
                 telemetry.put("mappingSeconds", mappingSeconds);
                 telemetry.put("entities", cells);
