@@ -82,6 +82,7 @@ async function main() {
       notEngineNew: trials.length - successes.length, rejectedRawFeasible: trials.filter(row => row.rawStatus === "FEASIBLE" || row.rawStatus === "OPTIMAL").filter(row => !row.rawAssessment?.valid).length,
       maxProductSeconds: Math.max(...trials.map(row => row.productSeconds)),
       medianEstimatedShortage: quantile(successes.flatMap(row => row.finalAssessment?.metrics?.shortagePersonMinutes ?? []), .5),
+      medianNormalizedEstimatedShortage: quantile(successes.flatMap(row => row.finalAssessment?.metrics?.normalizedEstimatedShortage ?? []), .5),
       successP50Seconds: quantile(seconds, .5), successP95Seconds: seconds.length >= 30 ? quantile(seconds, .95) : null,
       tailSampleSufficient: seconds.length >= 30, decision: "EXPLORATORY_NOT_CERTIFIED" }));
     // A known negative fixture must not be judged by a positive-generation gate.

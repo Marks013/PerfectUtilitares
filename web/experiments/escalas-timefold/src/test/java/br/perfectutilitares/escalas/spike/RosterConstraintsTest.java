@@ -72,6 +72,10 @@ class RosterConstraintsTest {
                 first.getWorkSegments(), false, false, null, Day.State.WORK, null);
         verifier.verifyThat().given(band, first, second).scores(HardMediumSoftScore.of(-60, 0, 0));
     }
+    @Test void residualBudgetIsRoundedDownToMilliseconds() {
+        var config = SpikeMain.config(Duration.ofNanos(1_234_567_891L));
+        assertEquals(1234L, config.getTerminationConfig().calculateTimeMillisSpentLimit().longValue());
+    }
     @Test void buildsAndSolvesWithPinnedDaysOnVersionTwo() {
         // A complete legal initial solution keeps this smoke independent of
         // stochastic convergence, while exercising real solver construction,
@@ -90,7 +94,7 @@ class RosterConstraintsTest {
                 new Roster.Window("person-0", 0, 5, 1, Day.State.WORK, 0, 5),
                 new Roster.Window("person-0", 1, 6, 1, Day.State.WORK, 0, 5));
         var bands = List.of(new Roster.Band(6, "Sector 1", "Repositor", 480, 540, 1, false));
-        var result = SolverFactory.<Roster>create(SpikeMain.config(Duration.ofSeconds(1)))
+        var result = SolverFactory.<Roster>create(SpikeMain.config(Duration.ofNanos(1_000_123_456L)))
                 .buildSolver().solve(new Roster(cells, windows, bands));
         assertNotNull(result.score());
         assertTrue(result.score().isFeasible());

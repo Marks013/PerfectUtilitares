@@ -20,7 +20,7 @@ public final class SpikeMain {
     static SolverConfig config(Duration budget) {
         return new SolverConfig().withSolutionClass(Roster.class).withEntityClasses(Day.class)
                 .withConstraintProviderClass(RosterConstraints.class).withRandomSeed(37L)
-                .withTerminationSpentLimit(budget);
+                .withTerminationSpentLimit(Duration.ofMillis(budget.toMillis())); // Timefold 2.8 rejects sub-microsecond durations.
     }
 
     public static void main(String[] args) throws Exception {
@@ -29,6 +29,7 @@ public final class SpikeMain {
         ObjectNode body = reply.putObject("body");
         reply.putNull("maxRssKiB"); // JVM heap is not RSS; external cgroup/RSS measurement is pending.
         int code = 200;
+        String stage = "MAPPING";
         try {
             byte[] bytes = System.in.readNBytes(LIMIT + 1);
             if (bytes.length > LIMIT) {
@@ -44,8 +45,10 @@ public final class SpikeMain {
                 residual -= Duration.ofMillis(500).toNanos();
                 Roster result = null;
                 var firstFeasible = new AtomicLong(-1L);
-                if (residual > 0) {
-                    var solver = SolverFactory.<Roster>create(config(Duration.ofNanos(residual))).buildSolver();
+                if (residual >= 1_000_000L) {
+                    stage = "FACTORY";
+                    var solver = SolverFactory.<Roster>create(config(Duration.ofMillis(residual / 1_000_000L))).buildSolver();
+                    stage = "SEARCH";
                     solver.addEventListener(event -> {
                         if (event.getNewBestSolution().score() != null && event.getNewBestSolution().score().isFeasible()
                                 && event.getNewBestSolution().days().stream().allMatch(day -> day.state() != null))
@@ -70,6 +73,7 @@ public final class SpikeMain {
                         finally { finished.set(true); watchdog.interrupt(); }
                     }
                 }
+                stage = "RESULT";
                 boolean valid = result != null && result.score() != null && result.score().isFeasible()
                         && result.days().size() == cells && result.days().stream().allMatch(day -> day.state() != null)
                         && System.nanoTime() - start <= BUDGET_NS;
@@ -83,7 +87,7 @@ public final class SpikeMain {
                     if (day.working()) row.put("shiftId", day.shift());
                     if (day.originalLocked() != null) row.put("locked", day.originalLocked());
                 }
-                body.put("wallTimeSeconds", Math.min(60.0, elapsed(start)));
+                body.put("wallTimeSeconds", elapsed(start));
                 var telemetry = reply.putObject("spike");
                 telemetry.put("mappingSeconds", mappingSeconds);
                 telemetry.put("entities", cells);
@@ -98,15 +102,26 @@ public final class SpikeMain {
             code = 400;
             body.removeAll();
             body.put("error", "SPIKE_UNSUPPORTED_INPUT");
-        } catch (Exception error) {
+            body.put("failureStage", stage);
+            if (error instanceof WireModel.Unsupported && error.getMessage().matches("[A-Z_]{1,60}")) body.put("failureType", error.getMessage());
+        } catch (Exception | LinkageError error) {
             code = 500;
             body.removeAll();
             body.put("error", "SPIKE_FAILED");
-            System.err.println("E2 internal failure: " + error.getClass().getSimpleName());
+            body.put("failureStage", stage);
+            String type = error.getClass().getSimpleName();
+            body.put("failureType", type.matches("[A-Za-z0-9]{1,64}") ? type : "InternalError");
         }
         reply.put("httpStatus", code);
         // Error and proof texts are fixed; do not serialize stack traces, the input or internal scores.
         byte[] output = JSON.writeValueAsBytes(reply);
+        if (code == 200 && body.path("status").asText().equals("FEASIBLE") && System.nanoTime() - start > BUDGET_NS) {
+            body.put("status", "UNKNOWN");
+            body.put("message", "Synthetic E2 result exceeded internal deadline");
+            body.putArray("assignments");
+            body.put("wallTimeSeconds", elapsed(start));
+            output = JSON.writeValueAsBytes(reply);
+        }
         if (output.length > LIMIT) {
             System.out.println("{\"httpStatus\":500,\"body\":{\"error\":\"SPIKE_OUTPUT_LIMIT\"},\"maxRssKiB\":null}");
         } else System.out.println(new String(output, java.nio.charset.StandardCharsets.UTF_8));

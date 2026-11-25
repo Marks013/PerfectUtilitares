@@ -37,3 +37,23 @@ A [migração oficial 1.x → 2.x](https://docs.timefold.ai/timefold-solver/late
 [Execução 45707002387](https://github.com/Marks013/PerfectUtilitares/actions/runs/45707002387), commit 52f0a910c6f3e52191402dd9cfc8b19d9ed15de7: dependências e compilação Java resolvidas; sete testes descobertos e sete erros na construção do ConstraintVerifier, todos no acesso ao campo privado Roster.bands anotado com ProblemFactCollectionProperty. O benchmark não chegou a executar. Causa: os acessores antigos tinham nomes de record (bands(), days(), state(), score()) em classes Java comuns, não getters JavaBean. A [documentação Timefold 2.x sobre acesso a campos](https://docs.timefold.ai/timefold-solver/latest/upgrading-timefold-solver/upgrade-from-v1) e os logs confirmam o requisito de acesso público.
 
 Correção: getters/setters JavaBean para todos os campos de instância de Roster e Day, inclusive os oito campos anotados e os fatos usados na clonagem; aliases existentes delegam aos getters, sem duplicação de anotações nem alteração das variáveis/score. Fatos e segmentos continuam copiados para listas imutáveis; os setters de fatos existem para infraestrutura do modelo, não são variáveis de planejamento. DomainAccessTest verifica public constructor e tipo/acesso de todos os getters e setters antes da prova de score; teste real do solver também verifica preservação dos fatos, das identidades e dos pins. Oito testes Java previstos. Não foi alterado o modelo matemático, política de aceitação, orçamento, dependências, quotas ou casos. A aprovação depende do novo workflow, não de inspeção estática. Ambiente da conversa com JDK 21, mas sem Maven/Docker e sem resolução DNS do Maven Central, impedindo execução local integral.
+
+
+## Auditoria E2.1 — correções prioritárias (25/11/2026)
+
+Evidência preservada: [45709123324](https://github.com/Marks013/PerfectUtilitares/actions/runs/45709123324), SHA 6c04f16. Build Java e 8 testes aprovados, OR-Tools 15/15, Timefold 0/15 (HTTP 500), 0 pares comparáveis. Nenhuma conclusão sobre qualidade. Os logs anteriores descartavam o motivo interno. Encontrado defeito concreto que explica a falha: Timefold 2.8.0 em [TerminationConfig.calculateTimeMillisSpentLimit](https://github.com/TimefoldAI/timefold-solver/blob/v2.8.0/core/src/main/java/ai/timefold/solver/core/config/solver/termination/TerminationConfig.java#L356-L364) rejeita Duration com nanos não múltiplos de 1000; SpikeMain fornecia Duration.ofNanos(residual) e o teste usava segundos inteiros. Corrigido arredondamento para baixo em milissegundos no config e na chamada, com teste de valor fracionário e solve real. O diagnóstico do adapter agora preserva códigos de erro e estágio/tipo sanitizados. O smoke real 10/1 com 1 par antecede as 15 comparações; falha interrompe a rodada completa.
+
+| Achado | Tratamento nesta revisão |
+|---|---|
+| A01 | Bandas disjuntas por dia/setor/tipo; máximos por cargo, min total max(geral, soma cargos), falta max(falta total, soma faltas cargo). Constraint Streams agrupam membros por cargo; setores sem presença continuam pontuados. Avaliação TS normalizada via coverageQuality em demandas estimadas; a métrica histórica independentShortage permanece rotulada separadamente. Testes overlap/cargo/sem presença. |
+| A02 | Recalcula flags, contagem, identidade global, prazos, p50, desfalques normalizados e comparabilidade; testes de mutação. |
+| A03 | Exige todas as 5 execuções válidas no prazo em cada cenário; em criação sem referência, 5 propostas novas do motor. Retenção no reparo é válida mas não nova e fica fora dos pares comparáveis. |
+| A04 | Pendente E3: 16 objetivos/guardas; não autoriza E4. |
+| A05 | Testes Java de mapeamento e rejeição; smoke real obrigatório antes de medir. |
+| A06 | Grade salva parcial pode pinçar locks legítimos; _initialAssignments explícito continua exigindo grade completa. |
+| A07/A08 | Movimentos compostos, pré-indexação adicional e custo do collector de cargos: medir após obter primeiro baseline válido; não introduzir API Preview nem novos pesos antes de diagnóstico. |
+| A09 | Corrigida precisão de prazo; resposta FEASIBLE que excede orçamento durante montagem/serialização torna-se UNKNOWN. Watchdog e cleanup mantidos. Garantia absoluta sob travamento depende de supervisão externa (pendente). |
+| A10/A11 | CPU-segundos, memória cgroup e JVM aquecida permanecem pendentes; RSS não é heap. |
+| A12 | Auditoria de dependências/SBOM/CVEs pendente antes de integração; sem atualização especulativa de versões. |
+
+A validação da nova revisão depende dos checks. Nenhuma regra de negócio, baseline, recurso, política de privacidade ou autorização de produção foi flexibilizada. A comparação de um modelo parcial continua exclusivamente exploratória.

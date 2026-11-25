@@ -227,6 +227,9 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
     : scenario.admittedDecemberOrigin ? "DECEMBER_DEMAND" : undefined;
   const raw = asRecord(response?.body);
   const rawStatus = knownStatus(raw?.status);
+  const safeError = typeof raw?.error === "string" && /^[A-Z_]{1,60}$/.test(raw.error) ? raw.error : null;
+  const failureStage = ["MAPPING", "FACTORY", "SEARCH", "RESULT"].includes(String(raw?.failureStage)) ? raw?.failureStage : null;
+  const failureType = typeof raw?.failureType === "string" && /^[A-Za-z0-9_]{1,64}$/.test(raw.failureType) ? raw.failureType : null;
   const rawRejectionStage = ["INPUT_CHECK", "COVERAGE_CHECK", "SEARCH"].includes(String(raw?.rejectionStage)) ? raw?.rejectionStage : null;
   const rawDiagnosticFamilies = Array.isArray(raw?.solverDiagnostics) ? [...new Set(raw.solverDiagnostics.flatMap(entry => {
     const family = asRecord(entry)?.family;
@@ -268,6 +271,7 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   const timely = engineSeconds !== null && engineSeconds <= deadline && productSeconds <= deadline;
   const errorCode = invocationError instanceof EscalaSolverError ? invocationError.code : invocationError ? "CLIENT_ERROR" : null;
   return { inputHash: digest(frozen), rawStatus, rawRejectionStage, rawDiagnosticFamilies,
+    adapterError: safeError, failureStage, failureType,
     inputErrorFields: response?.httpStatus === 400 ? inputDiagnosticFields(raw?.fields) : [], httpStatus: response?.httpStatus ?? null,
     processSeconds, engineSeconds, productSeconds, ...(response?.spike ? { spike: response.spike } : {}), maxRssKiB: response?.maxRssKiB ?? null, finalStatus, outcome,
     rawAssessment, finalAssessment, sameAsRaw, unchangedReference, timely, errorCode,

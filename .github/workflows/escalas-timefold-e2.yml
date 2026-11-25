@@ -36,6 +36,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      - name: Verify evidence validator mutations
+        run: python3 -m unittest discover -s experiments/escalas-timefold -p 'test_verify_e2.py'
       - name: Build and test Timefold Community
         run: docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t escalas-timefold-spike:ci experiments/escalas-timefold
       - name: Build exact original OR-Tools baseline
@@ -52,6 +54,14 @@ jobs:
           set -euo pipefail
           candidate=$(docker image inspect escalas-timefold-spike:ci --format '{{.Id}}')
           printf '{"input":{"schemaVersion":1,"branchCode":"07"}}' | docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --cpus 1 --memory 1536m --memory-swap 1536m --pids-limit 64 --user 1001:1001 -i "$candidate" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["httpStatus"] == 400 and "assignments" not in x["body"]'
+      - name: Run single paired smoke through actual runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=$(docker image inspect escalas-e2-baseline:ci --format '{{.Id}}')
+          candidate=$(docker image inspect escalas-timefold-spike:ci --format '{{.Id}}')
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts team-10-week 1 "$baseline" "$candidate" | tee "$RUNNER_TEMP/timefold-e2-smoke.jsonl"
+          python3 experiments/escalas-timefold/verify_e2.py "$RUNNER_TEMP/timefold-e2-smoke.jsonl" --smoke
       - name: Run partial-model paired exploration
         shell: bash
         run: |
@@ -72,6 +82,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: timefold-e2-partial-model
-          path: ${{ runner.temp }}/timefold-e2.jsonl
+          path: |
+            ${{ runner.temp }}/timefold-e2-smoke.jsonl
+            ${{ runner.temp }}/timefold-e2.jsonl
           if-no-files-found: ignore
           retention-days: 7
