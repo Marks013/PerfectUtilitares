@@ -1,0 +1,46 @@
+name: Escalas Timefold dependency audit
+
+on:
+  pull_request:
+    paths:
+      - 'web/experiments/escalas-timefold/**'
+      - '.github/workflows/escalas-timefold-dependency-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-timefold-dependencies-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Java dependency inventory and advisory review (ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test inventory and query validation offline
+        run: python3 -m unittest discover -s experiments/escalas-timefold -p 'test_audit_dependencies.py'
+      - name: Export resolved dependency inventories and runtime JAR hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/timefold-audit"
+          docker build --target audit-export --output "type=local,dest=$RUNNER_TEMP/timefold-audit" experiments/escalas-timefold
+          git rev-parse HEAD > "$RUNNER_TEMP/timefold-audit/revision.txt"
+      - name: Validate inventory and query public Maven advisories
+        run: python3 experiments/escalas-timefold/audit_dependencies.py "$RUNNER_TEMP/timefold-audit"
+      - name: Retain dependency audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: timefold-java-dependency-audit
+          path: ${{ runner.temp }}/timefold-audit/
+          if-no-files-found: ignore
+          retention-days: 7

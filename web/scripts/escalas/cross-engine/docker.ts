@@ -69,7 +69,7 @@ else:
 type Engine = "ortools" | "timefold";
 export function inspectImage(image: string, engine: Engine) {
   if (!/^sha256:[a-f0-9]{64}$/.test(image)) throw new Error("CROSS_ENGINE_IMMUTABLE_IMAGE_REQUIRED");
-  const output = spawnSync("docker", ["image", "inspect", image, "--format", "{{json .}}"], { encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 });
+  const output = spawnSync("docker", ["image", "inspect", image, "--format", "{{json .}}"], { encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
   if (output.status !== 0 || output.error) throw new Error("CROSS_ENGINE_IMAGE_MISSING");
   const value = JSON.parse(output.stdout);
   const revision = value.Config?.Labels?.["org.opencontainers.image.revision"];
@@ -80,8 +80,8 @@ export function inspectImage(image: string, engine: Engine) {
 
 function cleanup(name: string) {
   // The unique generated name is the only object this adapter may stop/remove.
-  spawnSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: 5000 });
-  const check = spawnSync("docker", ["ps", "-aq", "--filter", "name=^/" + name + "$"], { encoding: "utf8", timeout: 5000 });
+  spawnSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: 5000, killSignal: "SIGKILL" });
+  const check = spawnSync("docker", ["ps", "-aq", "--filter", "name=^/" + name + "$"], { encoding: "utf8", timeout: 5000, killSignal: "SIGKILL" });
   if (check.error || check.status !== 0 || check.stdout.trim()) throw new Error("CROSS_ENGINE_CLEANUP_FAILED");
 }
 
@@ -100,7 +100,7 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
   if (engine === "ortools") args.push("--entrypoint", "python", image, "-B", "-c", validateOnly ? validationPython : python);
   else args.push(image);
   try {
-    return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, maxBuffer: 9 * 1024 * 1024 });
+    return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: 9 * 1024 * 1024 });
   } finally { cleanup(name); }
 }
 
@@ -123,7 +123,10 @@ export function dockerAdapter(image: string, engine: Engine): Adapter {
   return body => {
     const child = runIsolated(image, engine, body);
     let reply: WireReply;
-    if ((child.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT")
+    // GNU timeout 124 is a known Timefold supervisor deadline. 137 is ambiguous
+    // (OOM or forced termination); do not misreport it as a normal timeout.
+    if ((child.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"
+      || engine === "timefold" && !child.error && child.status === 124)
       reply = { httpStatus: 504, body: { error: "SOLVER_TIMED_OUT" }, maxRssKiB: null };
     else if (child.error || child.status !== 0)
       reply = { httpStatus: 500, body: { error: "BENCHMARK_CONTAINER_FAILED" }, maxRssKiB: null };
