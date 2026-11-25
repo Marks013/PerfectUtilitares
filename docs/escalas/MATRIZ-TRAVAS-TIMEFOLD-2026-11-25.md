@@ -46,7 +46,7 @@ Classificação:
 | A05 | optimization.py:_phase_budget, reserves, multi-phases | Microgerenciamento de segundos do CP-SAT e sequenciamento de objetivos | Hierarquia HardMediumSoftScore e terminação nativa; limites de tempo operacionais permanecem | ELIMINAR mecanística |
 | A06 | optimization.py/model.clone/domain.clear | Copiar CP-SAT, congelar índice, resolver reparos | @PlanningPin, Value Range, move filtering nativo e hard constraints | ELIMINAR |
 | A07 | sunday_peak.py; weekend_balance.py | max/min/div igualdade com variáveis auxiliares | Constraint Streams com agregação ou penalty de justiça, sem booleanos extras | REIMPLEMENTAR sem artefatos CP |
-| A08 | diagnostics.py:ConflictRegistry | Prova diagnóstica por famílias de constraint CP-SAT | Códigos semânticos + Score Analysis sanitizada; não fingir prova de infeasibilidade | REDESENHAR |
+| A08 | diagnostics.py:ConflictRegistry | Prova diagnóstica por famílias de constraint CP-SAT | Códigos semânticos + verificação e métricas independentes TypeScript; não assumir Score Analysis Enterprise na edição Community nem fingir prova de inviabilidade | REDESENHAR |
 | A09 | Python Dockerfile, requirements, Ruff, OR-Tools wheels | Imagem Python e locks, treinamento do CI | Gradle/Maven, Java 21, container JVM fixado | REMOVER só após cutover |
 | A10 | 12s/23s, 18s/27s, busy slot | Limites da operação privada e da experiência | **NÃO remover**; trocar aplicação por contrato Timefold e cancelamento cooperativo | MANTER limite, trocar implementação |
 | A11 | compare coverage/advisory repair | Alguns reparos locais de proteção do cenário salvo | A regra de não piorar é D/S; estratégia de busca CP é A | DIVIDIR obrigação da técnica |
