@@ -54,6 +54,23 @@ EnvironmentMode em CI de regras: PHASE_ASSERT para smoke, STEP_ASSERT em testes 
 
 Usar Construction Heuristic + Local Search padrão no spike, HardMediumSoftScore com long na Timefold 2.x, Constraint Streams para regras. Pinning e filtros de alternativas por data, não mecânica manual de fixação de domínios. Não ligar automaticamente Nearby Selection; primeiro testar que troca entre cargos e setores não cria comportamento injusto.
 
+## Modo READY_IDLE comprovadamente compatível em arquitetura
+
+Timefold 2.8.0 é biblioteca Java (21+) oficialmente integrável com Quarkus 3.x; Java 21 AArch64 tem builds de runtime Eclipse Temurin. Quarkus SmallRye Health oferece /q/health/ready, /q/health/started e /q/health/live. SolverManager é assíncrono e permite terminateEarly por problemId. Isso permite manter Quarkus iniciado, sem otimização ativa, aceitar uma geração imediatamente quando os recursos autorizarem. O startup da combinação exata ainda não foi medido na A1 nem comprovado pela CI.
+
+Configuração a validar na PoC, sem ativá-la em produção:
+- quarkus.timefold.solver-manager.parallel-solver-count=1 (evita AUTO); limitar também fila por admissão independente do SolverManager.
+- quarkus.timefold.solver.move-thread-count=NONE (sem paralelismo extra de moves); uma tarefa de solve ativa.
+- quarkus.timefold.solver.daemon=false. O `daemon=true` do Timefold significa pausa em um *problema contínuo*, esperando mudança de fatos, e NAO hiberna a JVM ou reduz consumo residente como ocioso.
+- quarkus.timefold.solver.termination.spent-limit=12s para caminho normal após confirmação de equivalência de semântica e duração.
+- Quarkus empacotado para JVM production-mode; teste de ready idle com pressões reais de host e cold start em cgroup limitado. Startup nao pode usar toda a CPU durante a geracao de PDF/outros projetos.
+
+Metas propostas para teste, não resultados: admissão READY_IDLE p95 <=1s, solve start <=2s; apenas se scale-to-zero for aprovado, readiness cold p95 <=5s e hard timeout 10s. Se o objetivo de cold não for cumprido, manter JVM aquecida e bloquear desligamento físico automático. Contabilizar uso residual real de RAM da JVM.
+
+Timefold `SolverManager` nao inicia processo ou container e Quarkus `daemon` nao substitui supervisor. O endpoint HTTP de cancelamento e a operacao assincrona do Next.js exigem adaptador, cuja semantica precisa ser provada. [Detalhes do fluxo](ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md).
+
+Fontes: https://docs.timefold.ai/timefold-solver/latest/frequently-asked-questions ; https://docs.timefold.ai/timefold-solver/latest/running-timefold-solver/library/quarkus ; https://docs.timefold.ai/timefold-solver/latest/running-timefold-solver/library/library-integration ; https://quarkus.io/guides/smallrye-health/ ; https://adoptium.net/supported-platforms/ .
+
 ## Margem de CPU e memória: NÃO prometer folga sem mensuração
 
 O Compose atual do PerfectUtilitares dá ao OR-Tools Python: 1 vCPU, 1536 MiB RAM, 64 PIDs, serviço interno, root filesystem read-only e tmpfs de 32 MiB. A mesma quota da JVM **não garante** disponibilidade, pois JIT, heap, metaspace, threads e GC consomem memória além do heap.
