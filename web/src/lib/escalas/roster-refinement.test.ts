@@ -23,7 +23,71 @@ function fixture(): EscalaInput {
   };
 }
 
+function twoWeekSundayFixture(): EscalaInput {
+  const input = fixture();
+  input.endDate = "2026-11-15";
+  const rests = new Set([3, 6, 11, 15]);
+  const editable = new Set([6, 8, 13, 15]);
+  input.assignments = input.employees.flatMap(person => Array.from({ length: 14 }, (_, offset) => {
+    const day = offset + 2;
+    return { employeeId: person.id, date: `2026-11-${String(day).padStart(2, "0")}`,
+      kind: rests.has(day) ? "OFF" as const : "WORK" as const, ...(rests.has(day) ? {} : { shiftId: "day" }),
+      locked: person.id !== "p1" || !editable.has(day) };
+  }));
+  input.demands = [8, 13, 15].flatMap(day => [[480, 720], [780, 1044]].map(([start, end]) => ({
+    id: `${day}-${start}`, date: `2026-11-${day === 8 ? "08" : day}`, sector: "Loja", start, end,
+    minimum: 1, estimated: true,
+    // A broad surplus on the busy donor Sunday does not imply this role is replaceable.
+    ...(day === 8 && start === 480 ? { role: "Repositor" } : {}),
+  })));
+  return input;
+}
+
 describe("bounded roster refinement against fixed staffing references", () => {
+  it("moves one Sunday and compensates both weeks when a same-week exchange violates rotation", () => {
+    const input = twoWeekSundayFixture(), original = structuredClone(input);
+    expect(validateEscala(input).valid).toBe(true);
+    const onlyThisWeek = { ...input, assignments: input.assignments.map(day => {
+      if (day.employeeId !== "p1") return day;
+      if (day.date === "2026-11-13") return { ...day, kind: "OFF" as const, shiftId: undefined };
+      if (day.date === "2026-11-15") return { ...day, kind: "WORK" as const, shiftId: "day" };
+      return day;
+    }) };
+    expect(validateEscala(onlyThisWeek).issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "SUNDAY_ROTATION" })]));
+
+    const result = refineRoster(input);
+    expect(result.assignments.filter((day, index) => day !== input.assignments[index]).map(day => [day.employeeId, day.date, day.kind, day.shiftId]))
+      .toEqual([
+        ["p1", "2026-11-06", "WORK", "day"], ["p1", "2026-11-08", "OFF", undefined],
+        ["p1", "2026-11-13", "OFF", undefined], ["p1", "2026-11-15", "WORK", "day"],
+      ]);
+    expect(validateEscala(result).valid).toBe(true);
+    expect(compareRosterCoverage(input, result, input)).toMatchObject({ comparable: true, regressed: false, improved: true });
+    expect(result.demands).toBe(input.demands);
+    expect(input).toEqual(original);
+  });
+
+  it.each(["sunday-donor", "weekday-donor", "locked-compensation"] as const)("refuses a four-day repair when the %s cannot move", reason => {
+    const input = twoWeekSundayFixture();
+    if (reason === "sunday-donor") input.employees[1].role = "Outro cargo";
+    if (reason === "weekday-donor") input.demands = input.demands.map(demand =>
+      demand.id === "13-480" ? { ...demand, minimum: 2 } : demand);
+    if (reason === "locked-compensation") input.assignments = input.assignments.map(day =>
+      day.employeeId === "p1" && day.date === "2026-11-06" ? { ...day, locked: true } : day);
+    expect(validateEscala(input).valid).toBe(true);
+    expect(refineRoster(input)).toBe(input);
+  });
+
+  it("discards a Sunday transfer if the monotonic budget expires during search", () => {
+    const input = twoWeekSundayFixture(), original = structuredClone(input);
+    let ticks = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => ticks++ < 12 ? 0 : 1500);
+    try { expect(refineRoster(input)).toBe(input); } finally { clock.mockRestore(); }
+    expect(ticks).toBeGreaterThanOrEqual(12);
+    expect(input).toEqual(original);
+  });
+
+
   it.each(["MONDAY", "SUNDAY"] as const)("recovers an unstaffed open Sunday within its %s week", weekStart => {
     const input = fixture();
     input.planningWeekStartsOn = weekStart;
@@ -64,7 +128,7 @@ describe("bounded roster refinement against fixed staffing references", () => {
     expect(refineRoster(closed)).toBe(closed);
   });
 
-  it("repairs a repeated weekday pair without discarding a saved roster", () => {
+  it.each([false, true])("repairs a repeated weekday pair without discarding a saved roster (Sunday transfer: %s)", includeSunday => {
     const input = fixture();
     input.endDate = "2026-11-15";
     input.restRulesVersion = 3;
@@ -76,13 +140,23 @@ describe("bounded roster refinement against fixed staffing references", () => {
     input.assignments = [...firstWeek, ...firstWeek.map(day => ({
       ...day, date: `2026-11-${String(Number(day.date.slice(-2)) + 7).padStart(2, "0")}`,
     }))];
+    if (includeSunday) {
+      const sunday = twoWeekSundayFixture();
+      input.employees.push(...sunday.employees.map(person => ({ ...person, id: "sunday-" + person.id, registration: "sunday-" + person.registration, sector: "Padaria" })));
+      input.assignments.push(...sunday.assignments.map(day => ({ ...day, employeeId: "sunday-" + day.employeeId })));
+      input.demands.push(...sunday.demands.map(demand => ({ ...demand, sector: "Padaria" })));
+    }
     expect(validateEscala(input).issues.filter(issue => issue.severity === "ERROR").map(issue => issue.code))
       .toEqual(["VARIABLE_REST_PATTERN_FIXED"]);
 
     const refined = refineRoster(input);
     expect(validateEscala(refined).valid).toBe(true);
     expect(compareRosterCoverage(input, refined)).toMatchObject({ comparable: true, regressed: false });
-    expect(refined.assignments.filter((day, index) => day !== input.assignments[index])).toHaveLength(2);
+    expect(refined.assignments.filter((day, index) => day !== input.assignments[index])).toHaveLength(includeSunday ? 6 : 2);
+    if (includeSunday) {
+      expect(refined.assignments.find(day => day.employeeId === "sunday-p1" && day.date === "2026-11-15"))
+        .toMatchObject({ kind: "WORK", shiftId: "day" });
+    }
     expect(refined.assignments.filter(day => day.employeeId === "p2")).toEqual(input.assignments.filter(day => day.employeeId === "p2"));
     expect(refined.demands).toBe(input.demands);
   });

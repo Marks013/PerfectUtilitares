@@ -22,6 +22,20 @@ class CoveragePolishTests(unittest.TestCase):
             self.calls += 1
             return cp_model.UNKNOWN if self.calls <= 2 else engine.solve(model)
 
+    def test_frozen_coverage_can_include_constant_and_variable_guards(self):
+        model = cp_model.CpModel()
+        shortage = model.new_int_var(0, 2, 'shortage')
+        other_sector = model.new_int_var(0, 2, 'other-sector')
+        model.add(shortage + other_sector == 2)
+        values = {shortage.index: 2, other_sector.index: 0}
+        # Legacy demand can contain an unstaffable window with no decision terms.
+        guards = {'COVERAGE': [0, 7, other_sector]}
+        result, _, phases = improve(
+            model, [shortage], values, time.monotonic() + 2,
+            ['COVERAGE'], context=ImprovementContext(protected_groups=guards))
+        self.assertTrue(phases)
+        self.assertEqual(result, values)
+
     def test_joint_polish_reduces_real_weekend_gaps_after_unfinished_searches(self):
         model = cp_model.CpModel()
         days = ['2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08']

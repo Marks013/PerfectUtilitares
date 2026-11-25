@@ -21,6 +21,12 @@ Pendências para a próxima rodada, em ordem:
 
 Não houve deploy.
 
+## Conciliação do servidor com o PR #69 — 2026-11-24
+
+- Base da candidata: `6bcb456`. As 21 mudanças de código do servidor foram preservadas separadamente no snapshot local `1bd7b03`, sobre `7cccaa2`, sem copiar dados de operação.
+- A fusão direta apresentou 13 conflitos. A candidata mantém o calendário, a proteção da cobertura de dezembro e o contrato do Solver do PR. Foram portadas separadamente duas melhorias do snapshot: a compensação de folga entre semanas com limites de cobertura e tempo, e o tratamento de um desfalque constante ao fixar objetivos de cobertura.
+- O snapshot integral foi mantido para revisão. A candidata não substitui o checkout de produção e não é um comprovante de aprovação do gate de release.
+
 ## Histórico — 2026-05-07
 
 Data: 2026-05-07

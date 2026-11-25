@@ -208,6 +208,9 @@ def _polish_people(variables, values, groups, limit=POLISH_PEOPLE_LIMIT, coverag
 
 
 def _expression_terms(objective):
+    # A protected window without decision terms can have a constant deficit.
+    if isinstance(objective, int):
+        return (), (), objective
     expression = cp_model.FlatIntExpr(objective)
     return tuple(v.index for v in expression.vars), tuple(expression.coeffs), int(expression.offset)
 
