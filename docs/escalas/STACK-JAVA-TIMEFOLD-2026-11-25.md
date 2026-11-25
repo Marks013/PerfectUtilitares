@@ -1,5 +1,7 @@
 # Java/Timefold: bibliotecas, complementos, compatibilidade e margem operacional
 
+> **Prioridade operacional revisada:** consultar primeiro o [roteiro de execução](ROTEIRO-EXECUCAO-ESCALAS-2026-11-25.md) e a [especificação executável](ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md). A primeira comparação é OR-Tools atual × Timefold Community. SolverForge é a segunda opção condicional; CP-SAT reformulado, SCIP/HiGHS e híbridos ficam em reserva. A referência é o produto real, não o benchmark genérico.
+
 > **Stack condicional:** estas escolhas valem apenas se Timefold vencer a [seleção matemática](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md); [especificação executável](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) determina deadlines, amostras, cancelamento, quotas e gates. Sem fila interna inicial, sem recursos Enterprise, sem dependência nova em produção até aprovação.
 
 Data da verificação pública: 25/11/2026. Estado: recomendação para protótipo, SEM instalação em produção.
@@ -50,7 +52,7 @@ As coordenadas de todas as extensões acima são oficiais; versões de módulos 
 
 Propriedade quarkus.timefold.solver-manager.parallel-solver-count = 1: evita que AUTO abra mais solves do que o limite do servidor. O gate HTTP preserva a política atual de uma operação pesada, com 429/503 para excedentes e cancelamento proprietário.
 
-Propriedade quarkus.timefold.solver.termination.spent-limit = 12s: equivalente ao orçamento normal de busca atual. Operação excepcional de pares de folga usa outra configuração privada de tempo após testes específicos, sem substituir o deadline da API por um valor novo silencioso.
+Propriedade quarkus.timefold.solver.termination.spent-limit: usar prazo residual de no máximo 12s no caminho normal, considerando preparação/modelagem no mesmo orçamento; não adicionar 12s de busca após esgotar tempo de construção. Operação excepcional de pares de folga usa outra configuração privada de tempo após testes específicos, sem substituir o deadline da API por um valor novo silencioso.
 
 EnvironmentMode em CI de regras: PHASE_ASSERT para smoke, STEP_ASSERT em testes pequenos, FULL_ASSERT/ NON_INTRUSIVE_FULL_ASSERT em jobs dedicados e curtos. Em produção usar PHASE_ASSERT ou valor comprovado por testes, nunca modos assertivos pesados sem medir.
 
@@ -64,7 +66,7 @@ Configuração a validar na PoC, sem ativá-la em produção:
 - quarkus.timefold.solver-manager.parallel-solver-count=1 (evita AUTO); limitar também fila por admissão independente do SolverManager.
 - quarkus.timefold.solver.move-thread-count=NONE (sem paralelismo extra de moves); uma tarefa de solve ativa.
 - quarkus.timefold.solver.daemon=false. O `daemon=true` do Timefold significa pausa em um *problema contínuo*, esperando mudança de fatos, e NAO hiberna a JVM ou reduz consumo residente como ocioso.
-- quarkus.timefold.solver.termination.spent-limit=12s para caminho normal após confirmação de equivalência de semântica e duração.
+- quarkus.timefold.solver.termination.spent-limit com prazo residual <=12s para caminho normal; especial <=23s sob contrato distinto, após confirmação de equivalência.
 - Quarkus empacotado para JVM production-mode; teste de ready idle com pressões reais de host e cold start em cgroup limitado. Startup nao pode usar toda a CPU durante a geracao de PDF/outros projetos.
 
 Metas propostas para teste, não resultados: admissão READY_IDLE p95 <=1s, solve start <=2s; apenas se scale-to-zero for aprovado, readiness cold p95 <=5s e hard timeout 10s. Se o objetivo de cold não for cumprido, manter JVM aquecida e bloquear desligamento físico automático. Contabilizar uso residual real de RAM da JVM.
@@ -84,7 +86,7 @@ Ensaios obrigatórios e separados:
 - Heap inicial controlado por Xmx ou MaxRAMPercentage com suficiente margem para metaspace, stacks de threads, código JIT, buffers e cache; não assumir que heap equivale a RSS. Ajustar ao p99, OOMKills e GCTime, não apenas ao pico de um ensaio.
 - Limitar a uma otimização ativa por instância. Não manter OR-Tools e Timefold executando cenários pesados juntos na mesma máquina com memória insuficiente.
 - JVM em modo de PRODUÇÃO com JIT C2: a FAQ Timefold registra dev mode Quarkus até 10x-50x mais lento em casos de busca. Aquecer 1-2 solves sintéticos e registrar tempo frio e aquecido, sem excluir custo de startup do contrato.
-- Benchmarks com 10/1, 50/4, 115/6, até 250/6, e casos adversariais. Medir p50/p95, RSS, GC, CPU, init e duração, com cinco repetições exploratórias e amostras finais conforme especificação normativa, seeds controladas. Guardar só métricas agregadas e hashes de fontes. Nenhum payload de funcionário em artifacts.
+- Benchmarks conforme roteiro, com 10/1, 50/4, 115/6, caso operacional grande de dezembro/31 dias, horários e recuperação especial, até 250/6 como stress, e casos adversariais. Medir p50/p95, RSS, GC, CPU, init e duração, com cinco repetições exploratórias e amostras finais conforme especificação normativa, seeds controladas. Guardar só métricas agregadas e hashes de fontes. Nenhum payload de funcionário em artifacts.
 
 ## Ativação sob demanda sem competir com outros projetos
 

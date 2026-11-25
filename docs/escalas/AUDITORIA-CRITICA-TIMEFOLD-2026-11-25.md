@@ -1,5 +1,7 @@
 # Auditoria crítica da migração para Timefold Solver
 
+> **Prioridade operacional revisada:** consultar primeiro o [roteiro de execução](ROTEIRO-EXECUCAO-ESCALAS-2026-11-25.md) e a [especificação executável](ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md). A primeira comparação é OR-Tools atual × Timefold Community. SolverForge é a segunda opção condicional; CP-SAT reformulado, SCIP/HiGHS e híbridos ficam em reserva. A referência é o produto real, não o benchmark genérico.
+
 > **Revisão integral:** [F20-F33, gates e critérios](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) e [parecer de seleção](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md). A auditoria F01-F19 permanece histórico de achados; as novas condições prevalecem. Timefold não é vencedor presumido.
 
 Data: 2026-11-25. Estado: AUDITORIA DOCUMENTAL, SEM execução Java no host, sem deploy, sem mudança de backend ou dados. Base: PerfectUtilitares main f78c691edbeaf16283f534bcacd8db1b4b7d5e66 e documentação do PR #70 no commit 86bdd5e668c2878eb8323834c0605212dfe03df6. Este documento inclui constatações do código-fonte, informações de documentação externa e hipóteses que só um spike confirma.
@@ -33,6 +35,10 @@ Parecer de engenharia: manter Timefold Community 2.8.0 + Quarkus 3.40.1.2 + JDK 
 | F17 | P0 | Se dois motores forem medidos simultaneamente na VM A1, a concorrência distorce CPU/RSS/latência e pode prejudicar outros projetos. Desligar o serviço PRODUTIVO de escalas para testar também interromperia geração e cancelamentos. | Benchmark de OR-Tools e Timefold SEMPRE sequencial em containers descartáveis/ambiente isolado, com orçamento idêntico; encerrar processo de teste antes do próximo; alternar ordem A/B e B/A em blocos; nunca parar o escalas-solver produtivo. Ensaiar eventual parada apenas no stack de homologação e, no cutover, em janela expressamente autorizada e sem jobs ativos. |
 | F18 | P0 | O benchmark atual usa baseline histórico 2657f4a... e não a main corrigida f78c691...; independentShortage só mede demandas estimadas. Comparação direta com Java usando essas duas referências daria conclusão enganosa. | Criar harness cross-engine pinado à main auditada, entrada preparada uma vez, hashes de origem idênticos, avaliação única via validateEscala/roster-quality/coverage-protection e métricas por setor/cargo/faixa. Não comparar os scores internos. Procedimento no PROTOCOLO-PARIDADE-ORTOOLS-TIMEFOLD-2026-11-25.md. |
 | F19 | P0 | benchmark-real.ts substitui nomes/IDs, mas conserva setor, horários, afastamentos e histórico. Essa pseudonimização NÃO prova anonimização e não autoriza publicar fixtures no GitHub ou fornecedores externos. | Primeira comparação só com dados sintéticos e testes do projeto; eventual ensaio real precisa autorização operacional específica, processamento local controlado, minimização e nenhum payload em artifacts/logs. |
+
+## Achados adicionais F34–F42 e revisão de prioridade
+
+O [roteiro de execução](ROTEIRO-EXECUCAO-ESCALAS-2026-11-25.md) documenta a conferência agregada dos anexos, o histórico de experimentos CP-SAT, o fluxo de horários sem grade, a exceção dezembro e as novas ações. O total passa a 42 achados rastreáveis (F01–F42); ainda não constitui inventário exaustivo de sub-regras nem prova de qualidade. Timefold é o primeiro desafiante; SolverForge e as demais alternativas são condicionais.
 
 ## Condições corrigidas da documentação oficial de 2026
 
@@ -76,8 +82,8 @@ G0: rastreabilidade exaustiva por regra e teste; G1: versões exatas compilando 
 
 ## Próximos PRs técnicos recomendados (não criados aqui)
 
-- P1: compile-only Maven/JDK21/Quarkus3.40/Timefold2.8 ARM64, sem URL nem container produtivo; verificar BOM, plugin, segurança e startup, sem modelo completo.
-- P2: modelo A/B de entidade diária vs semanal, Value Range por modo, benchmarks de volume de decisões e first feasible em datasets sintéticos.
+- P1: após E0/E1 do roteiro (inventário e comparador com baseline), compile-only Maven/JDK21/Quarkus3.40/Timefold2.8 ARM64, sem URL nem container produtivo; verificar BOM, plugin, segurança e startup, sem modelo completo.
+- P2: modelo diário com domínio efetivo; semanal só se perfil indicar gargalo, Value Range por modo, benchmarks de volume de decisões e first feasible em datasets sintéticos.
 - P3: constraints hard, testes por ID do inventário e verificador TS, sem pontuação estética ou endpoints.
 - P4: prioridades/score com contraexemplos, cobertura por faixa, API privada compatível.
 - P5: teste de recursos READY_IDLE e E2E isolado. Considerar escala-a-zero apenas depois do aceite de startup/segurança.

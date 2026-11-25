@@ -1,5 +1,7 @@
 # Plano condicional de substituição OR-Tools por Timefold Solver
 
+> **Prioridade operacional revisada:** consultar primeiro o [roteiro de execução](ROTEIRO-EXECUCAO-ESCALAS-2026-11-25.md) e a [especificação executável](ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md). A primeira comparação é OR-Tools atual × Timefold Community. SolverForge é a segunda opção condicional; CP-SAT reformulado, SCIP/HiGHS e híbridos ficam em reserva. A referência é o produto real, não o benchmark genérico.
+
 > **DECISÃO REVISADA:** a substituição é condicional à [seleção comparativa de motores](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md); OR-Tools pode permanecer se vencer ou se os resultados forem inconclusivos. Este plano Java descreve o caminho **somente se Timefold vencer**. [Especificação executável e G0-G9](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) prevalecem sobre cronogramas e limites divergentes. Nenhuma integração definitiva antes da triagem e da prova semântica.
 
 Estado: PLANEJAMENTO PARA REVISÃO. Auditoria crítica complementar em [AUDITORIA-CRITICA-TIMEFOLD-2026-11-25.md](AUDITORIA-CRITICA-TIMEFOLD-2026-11-25.md): nenhum gate de implantação está aprovado. Nenhuma implantação, teste com dados reais, exclusão do OR-Tools ou alteração de configuração do servidor está autorizada por este documento.
@@ -65,12 +67,12 @@ Qualquer falta de cobertura, dia ilegal, perda de registro protegido, resultado 
 
 ## Fases propostas
 
-F0: inventário exaustivo, congelamento lógico da especificação, harness e baseline, triagem comparativa de motores/modelos. Aprovação da matriz e seleção preliminar antes de F1.
+F0: inventário exaustivo, congelamento lógico da especificação, harness e baseline. F1 começa com Timefold como primeiro desafiante, sem presumir vitória; alternativas condicionais.
 F1: protótipo Java isolado, projeto Maven/Quarkus/Timefold sem endpoint conectado ao app. Primeiro provar compatibilidade ARM64/JDK/BOM/Quarkus e comparar representação por empregado-dia versus bloco semanal, tamanho do domínio admissível, startup e primeira solução viável. Sem compromisso prematuro com um modelo.
 F2: regras hard e três modos de geração, calendário civil/histórico/futuro, preservação de referências. ConstraintVerifier com casos fronteira.
 F3: cobertura por cargo/horário e metas soft, Score semântico e testes de prioridade. Sem reprodução de fases CP-SAT.
 F4: endpoints compatíveis, auth secret-file, requestId/cancelToken, cancelamento, limites, readiness e métricas sanitizadas.
-F5: paridade sintética com datasets 1/1, 10/1, 50/4, 115/6, 250/6. Mesmas entradas, limites CPU/tempo, JVM fria/quente e sementes fixas. Exploratório: 5 repetições; aceite de qualidade: >=5 sementes × >=5 repetições; aceite de latência p95: >=30 execuções por cenário e pelo menos 30 cold starts se scale-to-zero proposto. Comparar métricas por cargo/faixa e não score interno; registrar também variabilidade e não forçar a mesma solução final.
+F5: paridade sintética com fixtures 1/1, 10/1, 50/4, 115/6, referência operacional grande de dezembro de 31 dias, meses regulares, modos de geração e 250/6 como stress. Mesmas entradas, limites, sementes e avaliações; amostragem escalonada conforme roteiro e especificação. Separar somente preparação de horários, kernel e fluxo do produto.
 F6: integração desabilitada por padrão em Compose CI e testes Playwright isolados com DB descartável. Teste de falha, rollback e conflito de revisão.
 F7: homologação e decisão explícita; sizing em host real, security review, evidência de qualidade e qualidade local completa, sem dados reais externos.
 F8: troca controlada no servidor, health/latency/qualidade monitorados e retorno ao OR-Tools se falhar.

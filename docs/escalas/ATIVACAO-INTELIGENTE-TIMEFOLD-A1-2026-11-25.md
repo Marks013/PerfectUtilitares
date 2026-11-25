@@ -1,5 +1,7 @@
 # Timefold sob demanda e controle de recursos da OCI A1 compartilhada
 
+> **Prioridade operacional revisada:** consultar primeiro o [roteiro de execução](ROTEIRO-EXECUCAO-ESCALAS-2026-11-25.md) e a [especificação executável](ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md). A primeira comparação é OR-Tools atual × Timefold Community. SolverForge é a segunda opção condicional; CP-SAT reformulado, SCIP/HiGHS e híbridos ficam em reserva. A referência é o produto real, não o benchmark genérico.
+
 > **Revisão normativa:** [especificação executável](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) e [seleção de motores](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md). READY_IDLE somente se o candidato vencedor exigir serviço residente; para o primeiro protótipo, sem fila interna (429 em ocupação), sem scale-to-zero e sem tocar no solver produtivo. Os gates A0-A4 são subtestes de G6/G7, não autorização. Cancelamento cooperativo requer prova de encerramento e política de falha.
 
 Status: arquitetura para futura prova de conceito. Somente documentação; nao instalar controlador, acionar Docker ou alterar servicos agora.
@@ -79,7 +81,7 @@ Quando a pressao aumenta durante uma busca, utilizar cancelamento cooperativo se
 ## Testes de admissao e de nao interferencia
 
 - Medir consumo OFF, STARTING, READY e SOLVING; tempo de cold start, RSS/cgroup, heap, metaspace, GC, CPU, PSI e consumo do controlador.
-- Comparar 10/1, 50/4, 115/6, 250/6 dias/equipe, com cinco repeticoes exploratorias por variacao e amostra final conforme especificacao normativa e limite identico. Nao piorar cobertura por cargo/faixa, folgas obrigatorias nem estado protegido.
+- Comparar casos do roteiro, inclusive 10/1, 50/4, 115/6, maior filial sintética de dezembro/31 dias, HOURS_ONLY, recuperação especial e 250/6 de stress, com cinco repeticoes exploratorias por variacao e amostra final conforme especificacao normativa e limite identico. Nao piorar cobertura por cargo/faixa, folgas obrigatorias nem estado protegido.
 - Testar host livre e host ocupado artificialmente EM STAGING; validar que outros servicos continuam saudaveis e respondem sem degradacao superior ao SLO aprovado.
 - Testar fila cheia, usuario sem autorizacao, cancelamento antes/depois de ativacao, erro de readiness, cold start demorado, reboot, encerramento durante solve e erro de memoria.
 - Nao incluir dados de colaboradores no controlador, logs ou metricas. Apenas contadores de fila, CPU/RAM agregados, identificador opaco da operacao e erros saneados.

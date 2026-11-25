@@ -1,5 +1,7 @@
 # Protocolo de paridade dos dados e métricas existentes: OR-Tools × Timefold
 
+> **Prioridade operacional revisada:** consultar primeiro o [roteiro de execução](ROTEIRO-EXECUCAO-ESCALAS-2026-11-25.md) e a [especificação executável](ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md). A primeira comparação é OR-Tools atual × Timefold Community. SolverForge é a segunda opção condicional; CP-SAT reformulado, SCIP/HiGHS e híbridos ficam em reserva. A referência é o produto real, não o benchmark genérico.
+
 > **Protocolo normativo revisado:** [especificação executável](./ESPECIFICACAO-EXECUTAVEL-TIMEFOLD-2026-11-25.md) e [seleção comparativa](./SELECAO-COMPARATIVA-MOTORES-2026-11-25.md). Congelar o envelope privado completo de requestSolver, não apenas EscalaInput; separar saída do motor bruto, correções TypeScript e resultado de produto; amostras, gates e quotas da nova especificação prevalecem. Comparar todos os candidatos sequencialmente, sem tocar na produção.
 
 Estado: PLANEJAMENTO. Nenhum benchmarking com dados reais executado, nenhum serviço produtivo parado, nenhum dado exportado. Em 25/11/2026, a referência da aplicação auditada é o commit main f78c691edbeaf16283f534bcacd8db1b4b7d5e66. Revalidar main antes dos experimentos.
@@ -74,15 +76,15 @@ Categoria Desempenho (desde que resultados aceitos):
 
 ## 6. Cobertura de cenários
 
-Conjunto mínimo obrigatório: 1 pessoa/1 semana, 10/1, 50/4, 115/6, 115/6 com gestor UNTIMED (sem horário), 250/6; grupos de cargo/relógio diferentes no mesmo setor; casos com histórico e planningFuture, sábados e domingos, fechamento, feriados com e sem autorização, 40/42/44h e transição, jornada mista, overnight, manualShiftByDate, importações FPRE136, ausências FPHI105, bloqueios, mês visível, planningWeekStartsOn MONDAY/SUNDAY e referências salvas.
+Conjunto mínimo obrigatório conforme roteiro H0/H1/R0-R4/S0/O0: só horários sem grade (preparação, não solve), HOURS_ONLY sobre grade completa, 1 pessoa/1 semana, 10/1, 50/4, 115/6, 115/6 com gestor UNTIMED, caso grande representativo de 31 dias em dezembro/2026 (~143 cadastros/~124 participantes), mês regular, recuperação especial, 250/6 como stress; grupos de cargo/relógio diferentes no mesmo setor; casos com histórico e planningFuture, sábados e domingos, fechamento, feriados com e sem autorização, 40/42/44h e transição, jornada mista, overnight, manualShiftByDate, importações FPRE136, ausências FPHI105, bloqueios, mês visível, planningWeekStartsOn MONDAY/SUNDAY e referências salvas.
 
-Como 250/6 é o limite superior de entrada, medir memória e tempo até first-hard-feasible além da qualidade final. Não inventar demanda real onde só existe estimativa. Uma fixture artificialmente difícil deve indicar se a regressão é estrutural e não permitir publicação real.
+Como 250/6 é o limite superior de entrada, não a carga típica, medir memória e tempo até first-hard-feasible além da qualidade final. Não inventar demanda real onde só existe estimativa. Uma fixture artificialmente difícil deve indicar se a regressão é estrutural e não permitir publicação real.
 
 ## 7. Procedimento de aprovação
 
 G0-G9 seguem a tabela canônica da especificação executável: inventário; seleção/spike; semântica; contrato; paridade; qualidade/desempenho; capacidade; E2E/rollback; autorização de implantação; remoção após estabilidade.
 
-Rodada exploratória: cinco repetições por variante/cenário, ordem alternada, triagem de bugs e revisão de métricas. Aceite final de qualidade: cinco ou mais sementes distintas com cinco ou mais repetições sob configuração estável, sem esconder variabilidade; latência/p95: 30 pares para triagem; amostra final proposta >=100 pares nos cenários críticos, com falhas contabilizadas; cold starts 30 para triagem e >=100 se decidirem adoção. p99 apenas diagnóstico até amostra apropriada. Ver especificação normativa.
+Rodada exploratória: cinco repetições por variante/cenário, ordem alternada, triagem de bugs e revisão de métricas. Aceite final de qualidade: seeds pré-registradas, baseline seed 37 fixa e configuração estável; latência/p95: 30 pares para triagem; amostra final proposta >=100 pares apenas nas combinações críticas do roteiro, com falhas contabilizadas; cold starts 30 para triagem e >=100 se decidirem adoção. p99 apenas diagnóstico até amostra apropriada. Ver especificação normativa.
 
 Uma falha hard ou do validador independente reprova imediatamente; perda de cobertura protegida também. Não aceitar ganho de 115/6 para justificar regressão no 50/4, nem ganho de velocidade que reduza disponibilidade do outro projeto. Resultados inferiores precisam de análise e correção antes de propor implantação.
 
