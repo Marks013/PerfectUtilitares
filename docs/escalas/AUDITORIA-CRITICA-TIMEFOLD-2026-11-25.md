@@ -28,6 +28,7 @@ Parecer de engenharia: manter Timefold Community 2.8.0 + Quarkus 3.40.1.2 + JDK 
 | F14 | P1 | Janela de otimização curta pode levar score hard negativo ou plano incompleto, mesmo com solução boa no começo. Hard 0 interno não substitui checagem cross-language. | Exigir preenchimento de todas as decisões e validação independente TS sem ERROR; comparar também proteção de cobertura por setor/cargo/faixa e dados publicados. Se não houver candidato admissível, conservar referência e retornar UNKNOWN/erro apropriado. |
 | F15 | P1 | Constraint Streams com join cartesiano ou calculando cobertura minuto-a-minuto em todo move pode gerar enorme sobrecarga. | Pré-computar janelas por turno/setor/cargo/fuso como fatos imutáveis; usar groupBy/joiner somente quando reduz cardinalidade; evitar I/O remoto e cálculos mutáveis dentro do score. Comparar modelagem simples antes de otimizar selectores. |
 | F16 | P1 | O rollback do endpoint não garante recuperabilidade se schemas/operation states mudarem. | Fase de homologação deve ensaiar atualização de schema versionada/reversível, status de cancelamento e falhas de runtime; nenhuma perda de revisão/prova/publicação. Não conectar Java ao banco. |
+| F17 | P0 | Se dois motores forem medidos simultaneamente na VM A1, a concorrência distorce CPU/RSS/latência e pode prejudicar outros projetos. Desligar o serviço PRODUTIVO de escalas para testar também interromperia geração e cancelamentos. | Benchmark de OR-Tools e Timefold SEMPRE sequencial em containers descartáveis/ambiente isolado, com orçamento idêntico; encerrar processo de teste antes do próximo; alternar ordem A/B e B/A em blocos; nunca parar o escalas-solver produtivo. Ensaiar eventual parada apenas no stack de homologação e, no cutover, em janela expressamente autorizada e sem jobs ativos. |
 
 ## Condições corrigidas da documentação oficial de 2026
 
@@ -40,6 +41,20 @@ Parecer de engenharia: manter Timefold Community 2.8.0 + Quarkus 3.40.1.2 + JDK 
 - Terminação por tempo interrompe busca quando vence o prazo, não prova otimalidade e pode produzir resultados diferentes com competição por CPU. Terminações por step count e seed fixa ajudam a depurar reproduzibilidade mas não substituem ensaios de latência real.
 
 ## Estratégia de benchmark e gates revisados
+
+### Isolamento de motores na comparação OR-Tools × Timefold
+
+**Regra central:** não executar duas buscas pesadas simultaneamente, mas também não desligar a instância produtiva de OR-Tools. No repositório, o serviço produtivo chama-se `escalas-solver` no Compose e atende `/solve` e `/cancel`. Parar esse container enquanto a aplicação estiver em uso torna a geração indisponível e pode interromper a operação ativa. O atual servidor Java ainda não foi implantado.
+
+**Harness recomendado:** gerar a mesma fixture sintética e a mesma referência de cobertura; iniciar um único container descartável da imagem baseline sob CPU, RAM e PIDs limitados; executar, registrar hashes/metadados sanitizados, encerrar e verificar que não há processo órfão. Repetir com a imagem Timefold em outro container descartável. Não reutilizar o serviço de produção nem usar volume/banco/secret de RH. Em validação final, alternar a sequência `OR-Tools -> Timefold` e `Timefold -> OR-Tools` por blocos para conter viés de temperatura/cache/carga. Aquecimento da JVM deve acontecer na sua própria janela, sem contabilizar artificialmente como tempo de busca; registrar separadamente tempo frio e quente.
+
+**Local de teste:** preferir runner CI ARM64 isolado. Se a Oracle A1 compartilhada for indispensável, executar ensaio restrito fora do horário de pico, mediante admissão por pressão do host e sem reservar CPU/RAM dos demais projetos. Um serviço Python ocioso praticamente não usa CPU de busca, mas pode manter RAM; a decisão de parar o serviço de produção exige medição real e autorização, não suposição.
+
+**Parada controlada somente em homologação:** `docker compose stop <servico-de-teste>` interrompe containers sem removê-los; não executá-lo no Compose de produção. Antes de parar em staging, verificar jobs 0, cancelamentos concluídos e readiness de outros componentes; após o teste, restaurar o serviço de homologação e validar health. Uma janela produtiva de troca definitiva exige plano específico de rollout/rollback e autorização posterior.
+
+**Reprovação:** sobreposição de buscas, perda de acesso ao solver produtivo, CPU/RAM acima do envelope, OOM, processo órfão, ausência de hashes de entrada/versão ou monitoramento incompleto invalida o benchmark.
+
+Fonte Docker Compose: https://docs.docker.com/reference/cli/docker/compose/stop/ ; Timefold Benchmarker (paralelismo limitado e execução sequencial): https://docs.timefold.ai/timefold-solver/latest/using-timefold-solver/benchmarking-and-tweaking ; Docker cgroups: https://docs.docker.com/engine/containers/resource_constraints/ .
 
 ### Três níveis de prova
 
