@@ -13,11 +13,12 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
+import { useMemo } from "react";
 import { bytesLabel } from "./reajuste-salarial-workspace-model";
 import type { useSalaryRevisionWorkspaceController } from "./salary-revision-workspace";
 import {
   candidatesForRule,
-  employeeMatchesSearch,
+  createEmployeeSearchMatcher,
   formatClientCents,
   normalizeMoneyInput,
   selectedByOtherRules,
@@ -28,8 +29,13 @@ const MAX_VISIBLE_CANDIDATES_PER_RULE = 100;
 
 export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
   const analysis = model.analysis;
-  const roles = [...new Set(analysis?.employees.map((employee) => employee.role) ?? [])]
-    .sort((left, right) => left.localeCompare(right, "pt-BR"));
+  const employees = analysis?.employees;
+  const roles = useMemo(
+    () => [...new Set(employees?.map((employee) => employee.role) ?? [])]
+      .sort((left, right) => left.localeCompare(right, "pt-BR")),
+    [employees],
+  );
+  const matchesSearch = createEmployeeSearchMatcher(model.search);
   return (
     <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(290px,0.7fr)]">
       <section className="rounded-3xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)] p-5 app-shadow sm:p-7">
@@ -178,7 +184,7 @@ export function SalaryRevisionWorkspaceView({ model }: { model: Model }) {
               {model.rules.map((rule) => {
                 const candidates = candidatesForRule(analysis, rule);
                 const unavailable = selectedByOtherRules(model.rules, rule.id);
-                const visible = candidates.filter((employee) => employeeMatchesSearch(employee, model.search));
+                const visible = candidates.filter(matchesSearch);
                 const visibleCandidates = visible.slice(
                   0,
                   MAX_VISIBLE_CANDIDATES_PER_RULE,

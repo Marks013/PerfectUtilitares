@@ -1,45 +1,40 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 type AppTheme = "dark" | "light";
+const THEME_EVENT = "app-theme-change";
 
 function readTheme(): AppTheme {
-  if (typeof document === "undefined") {
-    return "dark";
-  }
-
   return document.documentElement.dataset.theme === "light" ? "light" : "dark";
 }
 
-function applyTheme(theme: AppTheme) {
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.classList.toggle("light", theme === "light");
-  document.documentElement.classList.toggle("dark", theme === "dark");
-  window.localStorage.setItem("app-theme", theme);
+function readServerTheme(): AppTheme {
+  return "dark";
+}
+
+function subscribeToTheme(onChange: () => void) {
+  window.addEventListener(THEME_EVENT, onChange);
+  return () => window.removeEventListener(THEME_EVENT, onChange);
+}
+
+function toggleTheme() {
+  const nextTheme = readTheme() === "dark" ? "light" : "dark";
+  const root = document.documentElement;
+  root.dataset.theme = nextTheme;
+  root.classList.toggle("light", nextTheme === "light");
+  root.classList.toggle("dark", nextTheme === "dark");
+  try {
+    window.localStorage.setItem("app-theme", nextTheme);
+  } catch {
+    // The toggle still works for the current page when storage is blocked.
+  }
+  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: { theme: nextTheme } }));
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<AppTheme>("dark");
-
-  useEffect(() => {
-    setTheme(readTheme());
-
-    function syncTheme(event: Event) {
-      const customEvent = event as CustomEvent<{ theme?: AppTheme }>;
-      setTheme(customEvent.detail?.theme === "light" ? "light" : readTheme());
-    }
-
-    window.addEventListener("app-theme-change", syncTheme);
-    return () => window.removeEventListener("app-theme-change", syncTheme);
-  }, []);
-
-  function toggleTheme() {
-    const nextTheme = theme === "dark" ? "light" : "dark";
-    applyTheme(nextTheme);
-    setTheme(nextTheme);
-  }
+  const theme = useSyncExternalStore(subscribeToTheme, readTheme, readServerTheme);
 
   const isDark = theme === "dark";
 

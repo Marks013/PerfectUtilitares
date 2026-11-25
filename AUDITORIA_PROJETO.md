@@ -1,5 +1,28 @@
 # Auditoria do Projeto
 
+## Revisão incremental — 2026-11-24
+
+A revisão inventariou a aplicação Web e priorizou achados reproduzíveis, sem alterar dados ou configurações de produção.
+
+| Área | Achado e correção | Evidência |
+| --- | --- | --- |
+| Jornada — importação | A leitura multipart agora é limitada pelo tamanho efetivamente recebido. O limite de arquivo continua em 8 MiB, com margem separada para os cabeçalhos do formulário. Planilhas XLSX passam pela validação de arquivo compartilhada antes da abertura. Falhas de persistência retornam mensagem genérica, enquanto erros do leitor mantêm seu status HTTP. | [Sucesso da rota com CSV real](web/src/app/api/route-success-admin-jornada.test.ts) e [testes de leitura XLSX](web/src/lib/codigos/importer.test.ts). |
+| Conta e hidratação | A recuperação de senha não confirma sucesso em respostas HTTP de erro. O formulário associa a validação ao campo, anuncia o resultado e mantém o alvo de envio de 44 px em dispositivo móvel. O seletor acompanha o tema do documento e funciona mesmo sem acesso de escrita ao armazenamento local. | [Dois cenários no Chromium](web/e2e/password-recovery.spec.ts), incluindo largura de 390 px. |
+| Reajuste salarial | A pesquisa normaliza a consulta uma vez por filtragem, e a lista ordenada de cargos só é recalculada quando muda a relação de empregados. A seleção mantém a ordem e a comparação sem acentos. | [Testes do modelo do reajuste](web/src/components/reajuste-salarial/salary-revision-workspace-model.test.ts). |
+| PDF | Os testes de classificação não exigem um executável POSIX de simulação, e o teste de exportação usa os separadores de caminho do sistema. O teste de subprocesso verifica apenas as variáveis relevantes, sem imprimir o ambiente herdado quando uma asserção falha. | [Análise de compressão](web/src/lib/pdf/compression-analyzer.test.ts) e [exportação Office](web/src/lib/pdf/office-export.test.ts). |
+
+A verificação na base atual encontrou 81 rotas elegíveis com teste dedicado e cenário 2xx. TypeScript, lint, os testes focados e o Chromium passaram com Node 24. O teste de recuperação no navegador simula as respostas HTTP; não verifica entrega de e-mail. O gate integral do release não foi concluído.
+
+Pendências para a próxima rodada, em ordem:
+
+1. Na base `da95c5b`, as 11 rotas que aceitam formulários multipart já usam o leitor compartilhado. A revisão acrescentou a validação da estrutura XLSX à [validação em lote de Jornada](web/src/app/api/jornada/validar-lote/route.ts) antes de consultas e processamento, com cobertura de planilha válida e rejeição de arquivo inválido. A validação de conteúdo e o isolamento por empresa das demais rotas devem ser verificados por fluxo.
+2. Validar fluxos autenticados, workers e integrações reais em ambiente isolado com banco e o runtime Node 24 do projeto. Executar a validação completa de release antes de qualquer deploy.
+3. Medir tempos e responsividade em listas grandes e revisar acessibilidade com navegação por teclado e contraste em outros módulos. A revisão visual no navegador se concentrou na recuperação de senha; não comprova conformidade WCAG global nem desempenho em produção. Os apontamentos estáticos de Jornada, PDF e Eventos são cosméticos; a tipografia de impressão foi preservada.
+
+Não houve deploy.
+
+## Histórico — 2026-05-07
+
 Data: 2026-05-07
 Atualizacao: paridade revisada com legado; PDF de historico, ajustes de foto, regras de almoco, interjornada/sabado combinado e deteccao facial automatica implantados no web.
 

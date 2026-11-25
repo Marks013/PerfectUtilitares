@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), mkdir: vi.fn(), rm: vi.fn(), stat: vi.fn(), readFile: vi.fn() }));
@@ -42,12 +43,18 @@ describe("PDF-to-Office subprocess boundary", () => {
     const progress = vi.fn().mockResolvedValue(undefined);
     expect(await convertPdfToOffice({ ...input, onProgress: progress })).toEqual(new Uint8Array(Buffer.from("PKok")));
     expect(progress.mock.calls).toEqual([[35], [95]]);
-    expect(mocks.spawn).toHaveBeenCalledWith("/runtime/python3", ["/runtime/export.py", "/storage/job-1/input/source.pdf", expect.stringMatching(/converted\.docx$/), "docx"], expect.objectContaining({
-      shell: false, stdio: ["ignore", "pipe", "ignore"],
-      env: expect.objectContaining({ OMP_THREAD_LIMIT: "1", PYTHONDONTWRITEBYTECODE: "1", TMPDIR: expect.stringContaining("/storage/job-1/work/"), XDG_CACHE_HOME: expect.stringMatching(/\/work\/[^/]+\/cache$/) }),
-    }));
-    expect(mocks.rm).toHaveBeenCalledOnce();
-    expect(mocks.rm).toHaveBeenCalledWith(expect.stringContaining("/storage/job-1/work/"), { recursive: true, force: true });
+    expect(mocks.spawn).toHaveBeenCalledOnce();
+    const [executable, args, { shell, stdio, env }] = mocks.spawn.mock.calls[0];
+    expect(executable).toBe("/runtime/python3");
+    expect(shell).toBe(false);
+    expect(stdio).toEqual(["ignore", "pipe", "ignore"]);
+    const { OMP_THREAD_LIMIT, PYTHONDONTWRITEBYTECODE, TMPDIR, XDG_CACHE_HOME } = env;
+    expect(OMP_THREAD_LIMIT).toBe("1");
+    expect(PYTHONDONTWRITEBYTECODE).toBe("1");
+    expect(TMPDIR).toMatch(/^\/storage\/job-1\/work\/[^/]+$/);
+    expect(XDG_CACHE_HOME).toBe(join(TMPDIR, "cache"));
+    expect(args).toEqual(["/runtime/export.py", "/storage/job-1/input/source.pdf", join(TMPDIR, "converted.docx"), "docx"]);
+    expect(mocks.rm).toHaveBeenCalledExactlyOnceWith(TMPDIR, { recursive: true, force: true });
   });
 
   it("reports unreadable OCR text with a safe actionable error", async () => {

@@ -1,63 +1,61 @@
 import { NextResponse } from "next/server";
 import { readMultipartBody } from "@/lib/api/multipart";
-import { parseCodigoImportBuffer, parseCodigoJson } from "@/lib/codigos/importer";
-import { persistCodigoImport } from "@/lib/codigos/repository";
+import { requireResourceCapacity } from "@/lib/api/resource-capacity";
 import {
   enforcePersistentRateLimit,
   jsonError,
   methodNotAllowed,
   readJsonBody,
+  requireAdmin,
   requireContentType,
   requireMaxContentLength,
-  requireAdmin,
   requireSameOrigin,
 } from "@/lib/api/security";
-import { requireResourceCapacity } from "@/lib/api/resource-capacity";
+import { type CodigoImportParseResult, parseCodigoImportBuffer, parseCodigoJson } from "@/lib/codigos/importer";
+import { persistCodigoImport } from "@/lib/codigos/repository";
 import { prisma } from "@/lib/prisma";
 import { getRequestContentLength } from "@/lib/system/resource-capacity";
 
 export const runtime = "nodejs";
 
 const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
+const MAX_MULTIPART_BYTES = MAX_IMPORT_BYTES + 64 * 1024;
 const ACCEPTED_IMPORT_EXTENSIONS = [".xlsx", ".csv", ".json"] as const;
 
-function hasAcceptedExtension(fileName: string) {
-  const lowerName = fileName.toLowerCase();
-  return ACCEPTED_IMPORT_EXTENSIONS.some((extension) =>
-    lowerName.endsWith(extension),
-  );
-}
+type ImportInput =
+  | { ok: true; parse: () => Promise<CodigoImportParseResult> }
+  | { ok: false; response: NextResponse };
 
-async function parseMultipartImport(formData: FormData) {
-  const file = formData.get("file");
+async function readImportInput(request: Request, isJson: boolean): Promise<ImportInput> {
+  if (isJson) {
+    const body = await readJsonBody(request);
+    if (!body.ok) return body;
+    return { ok: true, parse: async () => parseCodigoJson(body.data) };
+  }
+
+  const body = await readMultipartBody(request, MAX_MULTIPART_BYTES);
+  if (!body.ok) return body;
+  const file = body.data.get("file");
 
   if (!(file instanceof File)) {
-    throw new Error("Envie um arquivo .xlsx, .csv ou .json no campo 'file'.");
+    return { ok: false, response: jsonError(400, "CODIGO_IMPORT_FAILED", "Envie um arquivo .xlsx, .csv ou .json no campo 'file'.") };
   }
 
-  if (!hasAcceptedExtension(file.name)) {
-    throw new Error("Formato não suportado. Use .xlsx, .csv ou .json.");
+  const fileName = file.name.toLowerCase();
+  if (!ACCEPTED_IMPORT_EXTENSIONS.some((extension) => fileName.endsWith(extension))) {
+    return { ok: false, response: jsonError(400, "CODIGO_IMPORT_FAILED", "Formato não suportado. Use .xlsx, .csv ou .json.") };
   }
-
   if (file.size === 0) {
-    throw new Error("O arquivo enviado está vazio.");
+    return { ok: false, response: jsonError(400, "CODIGO_IMPORT_FAILED", "O arquivo enviado está vazio.") };
   }
-
   if (file.size > MAX_IMPORT_BYTES) {
-    throw new Error("O arquivo ultrapassa o limite de 8MB.");
+    return { ok: false, response: jsonError(413, "PAYLOAD_TOO_LARGE", "O arquivo ultrapassa o limite de 8MB.") };
   }
 
-  const buffer = Buffer.from(await file.arrayBuffer());
-  return parseCodigoImportBuffer(buffer, file.name);
-}
-
-async function parseJsonRequest(request: Request) {
-  const json = await readJsonBody(request);
-  if (!json.ok) {
-    throw new Error("JSON inválido");
-  }
-
-  return parseCodigoJson(json.data);
+  return {
+    ok: true,
+    parse: async () => parseCodigoImportBuffer(Buffer.from(await file.arrayBuffer()), file.name),
+  };
 }
 
 export function GET() {
@@ -85,34 +83,33 @@ export async function POST(request: Request) {
       return limited;
     }
 
-    const tooLarge = requireMaxContentLength(request, MAX_IMPORT_BYTES);
-    if (tooLarge) {
-      return tooLarge;
-    }
-
-    const contentType = request.headers.get("content-type") ?? "";
     const contentTypeError = requireContentType(request, [
       "application/json",
       "multipart/form-data",
     ]);
-    if (contentTypeError) {
-      return contentTypeError;
-    }
+    if (contentTypeError) return contentTypeError;
+
+    const mediaType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+    const isJson = mediaType === "application/json";
+    const maxBytes = isJson ? MAX_IMPORT_BYTES : MAX_MULTIPART_BYTES;
+    const tooLarge = requireMaxContentLength(request, maxBytes);
+    if (tooLarge) return tooLarge;
 
     const capacityError = await requireResourceCapacity({
-      inputBytes: getRequestContentLength(request),
+      inputBytes: getRequestContentLength(request) || maxBytes,
       multiplier: 2,
     });
     if (capacityError) return capacityError;
 
-    const multipart = contentType.includes("application/json")
-      ? null
-      : await readMultipartBody(request, MAX_IMPORT_BYTES);
-    if (multipart && !multipart.ok) return multipart.response;
+    const input = await readImportInput(request, isJson);
+    if (!input.ok) return input.response;
 
-    const parsed = multipart
-      ? await parseMultipartImport(multipart.data)
-      : await parseJsonRequest(request);
+    let parsed: CodigoImportParseResult;
+    try {
+      parsed = await input.parse();
+    } catch {
+      return jsonError(400, "CODIGO_IMPORT_FAILED", "Não foi possível ler os códigos. Confira o formato e o conteúdo e tente novamente.");
+    }
 
     const result = await persistCodigoImport(prisma, parsed);
 
@@ -122,13 +119,11 @@ export async function POST(request: Request) {
       ignorados: result.ignorados,
       erros: result.erros,
     });
-  } catch (error) {
+  } catch {
     return jsonError(
-      400,
+      500,
       "CODIGO_IMPORT_FAILED",
-      error instanceof Error
-        ? error.message
-        : "Erro inesperado ao importar códigos",
+      "Não foi possível concluir a importação. Tente novamente mais tarde.",
     );
   }
 }

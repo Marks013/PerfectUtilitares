@@ -32,6 +32,12 @@ describe("codigo import parser", () => {
     });
   });
 
+  it("rejeita conteúdo que não é uma planilha XLSX", async () => {
+    await expect(parseCodigoXlsxBuffer(Buffer.from("Código;Horários\n"))).rejects.toMatchObject({
+      code: "XLSX_UNSAFE",
+    });
+  });
+
   it("importa CSV com separador variavel", () => {
     const result = parseCodigoCsvBuffer(
       Buffer.from("Horario;Descricao\n1038;06:00 10:00 12:00 15:20\n"),
