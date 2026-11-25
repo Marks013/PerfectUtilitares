@@ -5,6 +5,7 @@ import ai.timefold.solver.core.api.solver.SolverFactory;
 import ai.timefold.solver.core.api.score.stream.test.ConstraintVerifier;
 import org.junit.jupiter.api.Test;
 import java.util.List;
+import java.util.Map;
 import java.util.ArrayList;
 import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.*;
@@ -54,6 +55,22 @@ class RosterConstraintsTest {
         var band = new Roster.Band(0, "Sector 1", "Repositor", 480, 540, 1, true);
         verifier.verifyThat().given(band, day(0, Day.State.WORK, null))
                 .scores(HardMediumSoftScore.of(0, 0, 0));
+    }
+    @Test void generalAndRoleShortagesDoNotDoubleCount() {
+        var band = new Roster.Band(0, "Sector 1", 480, 540, 2,
+                Map.of("Caixa", 1, "Repositor", 1), true);
+        verifier.verifyThat().given(band, day(0, Day.State.WORK, null))
+                .scores(HardMediumSoftScore.of(0, -60, 0));
+        verifier.verifyThat().given(band, day(0, Day.State.OFF, null))
+                .scores(HardMediumSoftScore.of(0, -120, 0));
+    }
+    @Test void differentRoleFloorsCannotBeSatisfiedByTotalSurplus() {
+        var band = new Roster.Band(0, "Sector 1", 480, 540, 1,
+                Map.of("Caixa", 1, "Repositor", 1), false);
+        Day first = day(0, Day.State.WORK, null);
+        Day second = new Day("person-1", "Sector 1", "Repositor", "clock", 0, first.date(),
+                first.getWorkSegments(), false, false, null, Day.State.WORK, null);
+        verifier.verifyThat().given(band, first, second).scores(HardMediumSoftScore.of(-60, 0, 0));
     }
     @Test void buildsAndSolvesWithPinnedDaysOnVersionTwo() {
         // A complete legal initial solution keeps this smoke independent of

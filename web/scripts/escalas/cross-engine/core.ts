@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { solveEscala, EscalaSolverError } from "../../../src/lib/escalas/solver-client";
-import { compareRosterCoverage, completeRoster, isOperationallyReusable, type RosterCoverageMode } from "../../../src/lib/escalas/roster-quality";
+import { compareRosterCoverage, completeRoster, coverageQuality, isOperationallyReusable, type RosterCoverageMode } from "../../../src/lib/escalas/roster-quality";
 import { operationalEscalaInput } from "../../../src/lib/escalas/eligibility";
 import { dateRange } from "../../../src/lib/escalas/dates";
 import { validateEscala } from "../../../src/lib/escalas/validation";
@@ -150,7 +150,13 @@ function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCove
   if (!valid) return { valid, complete, errors, metrics: null, comparison: null };
   const comparison = reference ? compareRosterCoverage(reference, proposal, reference, mode) : undefined;
   const shortage = independentShortage(proposal);
+  // Keep the E1 legacy sum for historical comparison. Use the same frozen
+  // estimated-only ruler for both engines; no double counting of role/general.
+  const estimated = { ...proposal, demands: proposal.demands.filter(d => d.estimated === true) };
+  const quality = coverageQuality(estimated);
+  const normalized = [...quality.daily.values()].reduce((sum, count) => sum + count, 0);
   return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total, shortageBySector: shortage.bySector,
+    normalizedEstimatedShortage: normalized,
     ...weekendMetrics(proposal), ...sundaySectorVariation(sundaySectorObservations(proposal)) },
     comparison: comparison ? { comparable: comparison.comparable, regressed: comparison.regressed,
       improved: comparison.improved, reason: comparison.reason } : null };

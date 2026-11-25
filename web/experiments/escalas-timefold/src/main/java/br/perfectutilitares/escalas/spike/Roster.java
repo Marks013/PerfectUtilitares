@@ -8,6 +8,8 @@ import ai.timefold.solver.core.api.domain.valuerange.ValueRangeProvider;
 import ai.timefold.solver.core.api.score.HardMediumSoftScore;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @PlanningSolution
 public class Roster {
@@ -19,12 +21,31 @@ public class Roster {
         }
         public long violation(long count) { return Math.max(0, min - count) + Math.max(0, count - max); }
     }
-    /** A civil half-open interval split at every eligible WORK segment edge. */
-    public record Band(int day, String sector, String role, int start, int end, int minimum, boolean estimated) {
-        public boolean matches(Day item) {
-            return item.working() && (role == null || role.equals(item.role())) && item.covers(start, end);
+    /** One disjoint sector/date/type slice; role and general minima are not additive. */
+    public record Band(int day, String sector, int start, int end, int generalMinimum,
+                       Map<String, Integer> roleMinima, boolean estimated) {
+        public Band {
+            roleMinima = Map.copyOf(roleMinima);
         }
-        public long missing(long count) { return (long) (end - start) * Math.max(0, minimum - count); }
+        // Convenience constructor for isolated single-floor tests.
+        public Band(int day, String sector, String role, int start, int end, int minimum, boolean estimated) {
+            this(day, sector, start, end, role == null ? minimum : 0,
+                    role == null ? Map.of() : Map.of(role, minimum), estimated);
+        }
+        public int minimum() {
+            return Math.max(generalMinimum, roleMinima.values().stream().mapToInt(Integer::intValue).sum());
+        }
+        public boolean matches(Day item) {
+            return item.working() && item.covers(start, end);
+        }
+        public long missing(long count, Map<String, Set<String>> roleMembers) {
+            long roleGap = 0;
+            for (var floor : roleMinima.entrySet()) {
+                Set<String> members = roleMembers.get(floor.getKey());
+                roleGap += Math.max(0, floor.getValue() - (members == null ? 0 : members.size()));
+            }
+            return (long) (end - start) * Math.max(Math.max(0, minimum() - count), roleGap);
+        }
     }
 
     @ValueRangeProvider(id = "states")

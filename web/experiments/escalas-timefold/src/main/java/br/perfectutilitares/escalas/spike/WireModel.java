@@ -16,8 +16,8 @@ final class WireModel {
     record Person(String id, String sector, String role, String shift, List<Day.Segment> work, int sundayCap) {}
     record Key(String person, String date) {}
     record Record(Day.State state, String shift, Boolean locked) {}
-    record DemandKey(int day, String sector, String role, boolean estimated) {}
-    record Demand(int start, int end, int minimum) {}
+    record DemandKey(int day, String sector, boolean estimated) {}
+    record Demand(int start, int end, int minimum, String role) {}
 
     private static void check(boolean ok, String code) {
         if (!ok) throw new Unsupported(code);
@@ -35,6 +35,7 @@ final class WireModel {
     private static List<JsonNode> array(JsonNode n, String key) {
         JsonNode v = n.path(key);
         check(v.isArray(), "EXPECTED_ARRAY");
+        check(v.size() <= 12000, "ARRAY_LIMIT");
         List<JsonNode> out = new ArrayList<>();
         v.forEach(out::add);
         return out;
@@ -45,7 +46,7 @@ final class WireModel {
     }
 
     static Roster read(JsonNode root) {
-        check(root.isObject() && root.size() == 1 && root.path("input").isObject(), "ENVELOPE");
+        check(root != null && root.isObject() && root.size() == 1 && root.path("input").isObject(), "ENVELOPE");
         JsonNode input = root.path("input"), policy = input.path("policy");
         check(integer(input, "schemaVersion") == 1 && str(input, "branchCode").equals("SYNTH")
                 && input.path("simulation").asBoolean(false), "SYNTHETIC_ONLY");
@@ -103,7 +104,11 @@ final class WireModel {
             for (String field : List.of("history", "planningHistory", "planningFuture", "fixedOffDays",
                     "preferredOffDays", "manualShiftByDate", "manualShiftOverrides", "manualShiftBaseIds"))
                 check(empty(person, field), "PERSON_RESTRICTION_UNSUPPORTED");
-            check(!person.has("fixedRestSlots"), "FIXED_REST_UNSUPPORTED");
+            check(!person.has("fixedRestSlots") || person.path("fixedRestSlots").isArray()
+                    && person.path("fixedRestSlots").size() == 2
+                    && java.util.stream.StreamSupport.stream(person.path("fixedRestSlots").spliterator(), false)
+                        .allMatch(slot -> slot.path("enabled").isBoolean() && !slot.path("enabled").booleanValue()),
+                    "FIXED_REST_UNSUPPORTED");
             List<JsonNode> options = array(person, "shiftIds");
             String fixed = person.path("fixedImportedShiftId").asText("");
             check(options.size() == 1 && options.getFirst().isTextual()
@@ -119,7 +124,7 @@ final class WireModel {
         check(!people.isEmpty() && people.size() <= 50, "PEOPLE_LIMIT");
         Map<Key, Record> saved = records(input, "assignments", people, first, last);
         Map<Key, Record> seed = input.has("_initialAssignments") ? records(input, "_initialAssignments", people, first, last) : saved;
-        check(seed.isEmpty() || seed.size() == people.size() * days, "INCOMPLETE_SEED");
+        // A partial saved grid can contain legitimate locks; an explicit private\n        // warm-start must still be complete, rather than silently padded.\n        check(!input.has("_initialAssignments") || seed.size() == people.size() * days, "INCOMPLETE_SEED");
         List<Day> cells = new ArrayList<>();
         List<Roster.Window> windows = new ArrayList<>();
         int weeks = days / 7;
@@ -163,15 +168,15 @@ final class WireModel {
                         old == null ? null : old.state(), state, pattern));
             }
         }
-        // Disjoint bands per day/sector/role/demand type. Max of overlapping rows, not sum.
+        // Disjoint bands per day/sector/demand type; preserve all function floors.
         Map<DemandKey, List<Demand>> grouped = new LinkedHashMap<>();
         for (JsonNode demand : array(input, "demands")) {
             int day = Math.toIntExact(ChronoUnit.DAYS.between(first, LocalDate.parse(str(demand, "date"))));
             int a = integer(demand, "start"), b = integer(demand, "end"), min = integer(demand, "minimum");
             check(day >= 0 && day < days && a >= 0 && b <= 1440 && a < b && min >= 0 && min <= 250, "DEMAND");
             String role = demand.hasNonNull("role") ? str(demand, "role") : null;
-            DemandKey key = new DemandKey(day, str(demand, "sector"), role, demand.path("estimated").asBoolean(false));
-            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(new Demand(a, b, min));
+            DemandKey key = new DemandKey(day, str(demand, "sector"), demand.path("estimated").asBoolean(false));
+            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(new Demand(a, b, min, role));
         }
         List<Roster.Band> bands = new ArrayList<>();
         for (var entry : grouped.entrySet()) {
@@ -180,14 +185,23 @@ final class WireModel {
             var edges = new TreeSet<Integer>();
             for (Demand demand : demands) { edges.add(demand.start()); edges.add(demand.end()); }
             for (Person person : people.values()) {
-                if (!person.sector().equals(key.sector()) || key.role() != null && !person.role().equals(key.role())) continue;
+                if (!person.sector().equals(key.sector())) continue;
                 for (var work : person.work()) { edges.add(work.start()); edges.add(work.end()); }
             }
             List<Integer> boundaries = new ArrayList<>(edges);
             for (int i = 1; i < boundaries.size(); i++) {
                 int a = boundaries.get(i - 1), b = boundaries.get(i);
-                int min = demands.stream().filter(d -> d.start() <= a && d.end() >= b).mapToInt(Demand::minimum).max().orElse(0);
-                if (min > 0) bands.add(new Roster.Band(key.day(), key.sector(), key.role(), a, b, min, key.estimated()));
+                int general = 0;
+                Map<String, Integer> floors = new TreeMap<>();
+                for (Demand demand : demands) {
+                    if (demand.start() > a || demand.end() < b || demand.minimum() == 0) continue;
+                    if (demand.role() == null || demand.role().isEmpty()) general = Math.max(general, demand.minimum());
+                    else floors.merge(demand.role(), demand.minimum(), Math::max);
+                }
+                if (general > 0 || !floors.isEmpty()) {
+                    bands.add(new Roster.Band(key.day(), key.sector(), a, b, general, floors, key.estimated()));
+                    check(bands.size() <= 12000, "BAND_LIMIT");
+                }
             }
         }
         check(bands.size() <= 12000, "BAND_LIMIT");

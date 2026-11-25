@@ -6,6 +6,8 @@ import ai.timefold.solver.core.api.score.stream.ConstraintFactory;
 import ai.timefold.solver.core.api.score.stream.ConstraintProvider;
 import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.count;
 import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.countBi;
+import static ai.timefold.solver.core.api.score.stream.ConstraintCollectors.toMap;
+import java.util.Map;
 import static ai.timefold.solver.core.api.score.stream.Joiners.equal;
 import static ai.timefold.solver.core.api.score.stream.Joiners.filtering;
 
@@ -52,10 +54,12 @@ public class RosterConstraints implements ConstraintProvider {
         return f.forEach(Roster.Band.class).filter(band -> band.estimated() == estimated)
                 .join(Day.class, equal(Roster.Band::day, Day::index),
                         equal(Roster.Band::sector, Day::sector), filtering(Roster.Band::matches))
-                .groupBy((band, day) -> band, countBi())
-                .filter((band, count) -> band.missing(count) > 0)
+                // Indexed by civil day and sector. Count role members incrementally;
+                // recompute only the small set of role floors in the affected slice.
+                .groupBy((band, day) -> band, countBi(), toMap((band, day) -> day.role(), (band, day) -> day.id()))
+                .filter((band, count, members) -> band.missing(count, members) > 0)
                 .penalize(estimated ? HardMediumSoftScore.ONE_MEDIUM : HardMediumSoftScore.ONE_HARD,
-                        (band, count) -> band.missing(count))
+                        (band, count, members) -> band.missing(count, members))
                 .asConstraint(estimated ? "Estimated coverage" : "Confirmed coverage");
     }
 
@@ -64,7 +68,7 @@ public class RosterConstraints implements ConstraintProvider {
                 .ifNotExists(Day.class, equal(Roster.Band::day, Day::index),
                         equal(Roster.Band::sector, Day::sector), filtering(Roster.Band::matches))
                 .penalize(estimated ? HardMediumSoftScore.ONE_MEDIUM : HardMediumSoftScore.ONE_HARD,
-                        band -> band.missing(0))
+                        band -> band.missing(0, Map.of()))
                 .asConstraint(estimated ? "Estimated coverage without service" : "Confirmed coverage without service");
     }
 
