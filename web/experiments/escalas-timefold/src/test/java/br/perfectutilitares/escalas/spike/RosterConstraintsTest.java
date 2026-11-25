@@ -1,6 +1,6 @@
 package br.perfectutilitares.escalas.spike;
 
-import ai.timefold.solver.core.api.score.HardMediumSoftScore;
+import ai.timefold.solver.core.api.score.BendableScore;
 import ai.timefold.solver.core.api.solver.SolverFactory;
 import ai.timefold.solver.core.api.score.stream.test.ConstraintVerifier;
 import org.junit.jupiter.api.Test;
@@ -19,6 +19,10 @@ class RosterConstraintsTest {
                 "2026-11-" + String.format("%02d", index + 1),
                 List.of(new Day.Segment(420, 660), new Day.Segment(780, 1044)),
                 false, false, null, state, key);
+    }
+
+    private static BendableScore score(long hard, long total, long sundays, long peak, long empty, long spread, long changes) {
+        return BendableScore.of(new long[]{hard}, new long[]{total, sundays, peak, empty, spread, changes});
     }
 
     @Test void countsAnEntirelyEmptyWeek() {
@@ -44,25 +48,25 @@ class RosterConstraintsTest {
         var missing = new Roster.Band(0, "Missing sector", null, 480, 540, 2, false);
         var meal = new Roster.Band(0, "Sector 1", "Repositor", 660, 780, 1, true);
         verifier.verifyThat().given(missing, meal, day(0, Day.State.WORK, null))
-                .scores(HardMediumSoftScore.of(-120, -120, 0));
+                .scores(score(-120, -120, -120, -1, 0, 0, 0));
     }
     @Test void aDifferentRoleCannotSupplyCoverage() {
         var band = new Roster.Band(0, "Sector 1", "Caixa", 480, 540, 1, false);
         verifier.verifyThat().given(band, day(0, Day.State.WORK, null))
-                .scores(HardMediumSoftScore.of(-60, 0, 0));
+                .scores(score(-60, 0, 0, 0, 0, 0, 0));
     }
     @Test void supportedWorkSuppliesTheBand() {
         var band = new Roster.Band(0, "Sector 1", "Repositor", 480, 540, 1, true);
         verifier.verifyThat().given(band, day(0, Day.State.WORK, null))
-                .scores(HardMediumSoftScore.of(0, 0, 0));
+                .scores(score(0, 0, 0, 0, 0, 0, 0));
     }
     @Test void generalAndRoleShortagesDoNotDoubleCount() {
         var band = new Roster.Band(0, "Sector 1", 480, 540, 2,
                 Map.of("Caixa", 1, "Repositor", 1), true);
         verifier.verifyThat().given(band, day(0, Day.State.WORK, null))
-                .scores(HardMediumSoftScore.of(0, -60, 0));
+                .scores(score(0, -60, -60, -1, 0, 0, 0));
         verifier.verifyThat().given(band, day(0, Day.State.OFF, null))
-                .scores(HardMediumSoftScore.of(0, -120, 0));
+                .scores(score(0, -120, -120, -2, -1, 0, 0));
     }
     @Test void differentRoleFloorsCannotBeSatisfiedByTotalSurplus() {
         var band = new Roster.Band(0, "Sector 1", 480, 540, 1,
@@ -70,8 +74,37 @@ class RosterConstraintsTest {
         Day first = day(0, Day.State.WORK, null);
         Day second = new Day("person-1", "Sector 1", "Repositor", "clock", 0, first.date(),
                 first.getWorkSegments(), false, false, null, Day.State.WORK, null);
-        verifier.verifyThat().given(band, first, second).scores(HardMediumSoftScore.of(-60, 0, 0));
+        verifier.verifyThat().given(band, first, second).scores(score(-60, 0, 0, 0, 0, 0, 0));
     }
+    @Test void sundayIsPreferredWhenTotalDeficitTies() {
+        var sun = new Roster.Band(0, "Sector 1", null, 480, 540, 1, true);
+        var mon = new Roster.Band(1, "Sector 1", null, 480, 540, 1, true);
+        var worksSunday = score(0, -60, 0, -1, -1, 0, 0);
+        var restsSunday = score(0, -60, -60, -1, -1, 0, 0);
+        verifier.verifyThat().given(sun, mon, day(0, Day.State.WORK, null), day(1, Day.State.OFF, null))
+                .scores(worksSunday);
+        verifier.verifyThat().given(sun, mon, day(0, Day.State.OFF, null), day(1, Day.State.WORK, null))
+                .scores(restsSunday);
+        assertTrue(worksSunday.compareTo(restsSunday) > 0);
+        assertTrue(score(0, -59, -59, -100, -100, -100, -100).compareTo(worksSunday) > 0);
+        assertTrue(score(-1, 0, 0, 0, 0, 0, 0).compareTo(restsSunday) < 0);
+    }
+
+    @Test void peakAndEmptyDayAreAggregatedWithoutDoubleCountingBands() {
+        var band1 = new Roster.Band(1, "Sector 1", null, 480, 540, 2, true);
+        var band2 = new Roster.Band(1, "Sector 1", null, 540, 600, 2, true);
+        var band3 = new Roster.Band(2, "Sector 1", null, 480, 540, 1, true);
+        verifier.verifyThat().given(band1, band2, band3, day(1, Day.State.OFF, null), day(2, Day.State.WORK, null))
+                .scores(score(0, -240, 0, -2, -1, 0, 0));
+    }
+
+    @Test void sundaySpreadIncludesPersonWithNoWorkedSundays() {
+        Day first = day(0, Day.State.WORK, null);
+        Day second = new Day("person-1", "Sector 1", "Repositor", "clock", 0, first.date(),
+                first.getWorkSegments(), false, false, null, Day.State.OFF, null);
+        verifier.verifyThat().given(first, second).scores(score(0, 0, 0, 0, 0, -1, 0));
+    }
+
     @Test void residualBudgetIsRoundedDownToMilliseconds() {
         var config = SpikeMain.config(Duration.ofNanos(1_234_567_891L));
         assertEquals(1234L, config.getTerminationConfig().calculateTimeMillisSpentLimit().longValue());

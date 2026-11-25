@@ -5,7 +5,7 @@ import ai.timefold.solver.core.api.domain.solution.PlanningScore;
 import ai.timefold.solver.core.api.domain.solution.PlanningSolution;
 import ai.timefold.solver.core.api.domain.solution.ProblemFactCollectionProperty;
 import ai.timefold.solver.core.api.domain.valuerange.ValueRangeProvider;
-import ai.timefold.solver.core.api.score.HardMediumSoftScore;
+import ai.timefold.solver.core.api.score.BendableScore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -57,8 +57,8 @@ public class Roster {
     private List<Band> bands;
     @PlanningEntityCollectionProperty
     private List<Day> days;
-    @PlanningScore
-    private HardMediumSoftScore score;
+    @PlanningScore(bendableHardLevelsSize = 1, bendableSoftLevelsSize = RosterConstraints.SOFT_LEVELS)
+    private BendableScore score;
 
     public Roster() {}
     Roster(List<Day> days, List<Window> windows, List<Band> bands) {
@@ -77,11 +77,11 @@ public class Roster {
     public void setBands(List<Band> bands) { this.bands = List.copyOf(bands); }
     public List<Day> getDays() { return days; }
     public void setDays(List<Day> days) { this.days = days; }
-    public HardMediumSoftScore getScore() { return score; }
-    public void setScore(HardMediumSoftScore score) { this.score = score; }
+    public BendableScore getScore() { return score; }
+    public void setScore(BendableScore score) { this.score = score; }
 
     public List<Day> days() { return getDays(); }
     public List<Window> windows() { return getWindows(); }
     public List<Band> bands() { return getBands(); }
-    public HardMediumSoftScore score() { return getScore(); }
+    public BendableScore score() { return getScore(); }
 }
