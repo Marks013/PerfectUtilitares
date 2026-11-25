@@ -49,6 +49,14 @@ jobs:
           trap 'rm -rf "$build"' EXIT
           git -C .. archive "$BASE" web/ops/escalas | tar -x -C "$build"
           docker build --target runtime --build-arg SOURCE_REVISION="$BASE" -t escalas-cross-engine-baseline:ci "$build/web/ops/escalas"
+      - name: Preflight all measured envelopes against the real Python validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=$(docker image inspect escalas-cross-engine-baseline:ci --format '{{.Id}}')
+          for scenario in december-representative december-presence-recovery team-10-week branch-50-four-weeks branch-115-six-weeks hours-only-with-grid team-10-week-repair stress-250-six-weeks; do
+            node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" preflight "$image"
+          done
       - name: Run bounded exploratory baseline and reference-only flow
         shell: bash
         run: |
@@ -57,7 +65,7 @@ jobs:
           : > "$RUNNER_TEMP/cross-engine-smoke.jsonl"
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts hours-reference-only 1 | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"
           failed=0
-          for scenario in team-10-week branch-50-four-weeks branch-115-six-weeks december-representative hours-only-with-grid team-10-week-repair; do
+          for scenario in december-representative team-10-week branch-50-four-weeks branch-115-six-weeks hours-only-with-grid team-10-week-repair; do
             if ! node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" 5 "$image" | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"; then
               failed=1
             fi

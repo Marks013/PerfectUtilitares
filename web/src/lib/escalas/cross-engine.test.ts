@@ -4,14 +4,19 @@ import { isHoursReferenceOnly } from "./hours-reference";
 import type { EscalaInput } from "./types";
 import { operationalEscalaInput } from "./eligibility";
 import { makeScenario } from "../../../scripts/escalas/cross-engine/fixtures";
-import { captureEnvelope, digest, envelopeProfile, measureReferences, pairOrder, runTrial, verifyReply } from "../../../scripts/escalas/cross-engine/core";
+import { captureEnvelope, digest, envelopeProfile, inputDiagnosticFields, measureReferences, pairOrder, runTrial, verifyReply } from "../../../scripts/escalas/cross-engine/core";
 
 describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
-  it("uses the real December calendar and synthetic operating cohorts", () => {
-    const { prepared } = makeScenario("december-representative");
+  it("uses the real December calendar and synthetic operating cohorts", async () => {
+    const scenario = makeScenario("december-representative");
+    const { prepared } = scenario;
     expect(prepared.startDate).toBe("2026-12-01");
     expect(prepared.endDate).toBe("2026-12-31");
     expect(prepared.policy.closedDates).toContain("2026-12-25");
+    expect(prepared.policy.holidayDates).toContain("2026-12-25");
+    expect(prepared.policy.paidHolidayDates).toEqual(["2026-12-25"]);
+    const wire = JSON.parse(await captureEnvelope(scenario)).input;
+    expect(wire.policy.paidHolidayDates).toEqual(["2026-12-25"]);
     expect(prepared.employees).toHaveLength(140);
     expect(operationalEscalaInput(prepared).employees.filter(person => person.planningEnabled !== false)).toHaveLength(125);
     expect(prepared.assignments).toEqual([]);
@@ -108,6 +113,7 @@ describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
     const frozen = await captureEnvelope(scenario);
     const wire = JSON.parse(frozen).input;
     expect(wire._restPairTarget).toBe(20);
+    expect(wire.generationMode).toBe("DAYS_AND_HOURS");
     expect(wire._coverageComparison).toBeDefined();
     expect(wire._coverageServiceProtection.bands.length).toBeGreaterThan(0);
     expect(envelopeProfile(frozen)).toMatchObject({ days: 31, activePositions: 14, lockedAssignments: 14,
@@ -117,6 +123,20 @@ describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
     expect(trial.unchangedReference).toBe(true);
     expect(trial.engineNew).toBe(false);
     expect(trial.acceptedNew).toBe(false);
+  });
+  it("keeps only safe input rejection fields and never reports payload or values", async () => {
+    expect(inputDiagnosticFields([{ path: "_restPairTarget", reason: "INVALID_SCOPE" },
+      { path: "employees[2].activeFrom", reason: "INVALID_VALUE" },
+      { path: "not a schema path", reason: "SECRET" }, { path: "policy", reason: "not a code" }])).toEqual([
+      { path: "_restPairTarget", reason: "INVALID_SCOPE" }, { path: "employees[2].activeFrom", reason: "INVALID_VALUE" }]);
+    const scenario = makeScenario("team-10-week");
+    const frozen = await captureEnvelope(scenario);
+    const trial = await runTrial(scenario, frozen, () => ({ httpStatus: 400,
+      body: { error: "INVALID_MODEL_INPUT", fields: [{ path: "_restPairTarget", reason: "INVALID_SCOPE" }] },
+      maxRssKiB: null }));
+    expect(trial.inputErrorFields).toEqual([{ path: "_restPairTarget", reason: "INVALID_SCOPE" }]);
+    expect(trial.errorCode).toBe("SOLVER_INVALID_INPUT");
+    expect(trial.engineNew).toBe(false);
   });
   it("keeps a full HOURS_ONLY grid with original day classifications", () => {
     const scenario = makeScenario("hours-only-with-grid");

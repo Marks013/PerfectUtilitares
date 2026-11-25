@@ -23,9 +23,13 @@ CASES = {
 }
 
 
+class EvidenceError(ValueError):
+    """Fixed diagnostic code, never a row or input value."""
+
+
 def require(condition, code):
     if not condition:
-        raise ValueError(code)
+        raise EvidenceError(code)
 
 
 def sha(value, length):
@@ -77,7 +81,10 @@ def verify(rows, cases=CASES):
                 and profile.get("transportBudgetSeconds") == budget, "DEADLINE")
         require(type(profile.get("activePositions")) is int and profile["activePositions"] > 0, "WORKLOAD")
         if special:
-            require(profile.get("lockedAssignments") == 14 and profile.get("protectedBands", 0) > 0, "SPECIAL_FIXTURE")
+            require(profile.get("lockedAssignments") == 14 and profile.get("protectedBands", 0) > 0
+                    and profile.get("mode") == "DAYS_AND_HOURS", "SPECIAL_FIXTURE")
+        if name == "december-representative":
+            require(profile.get("paidHolidayCount") == 1, "DECEMBER_PAID_HOLIDAY_MISSING")
         for row in trials + totals:
             require(row.get("engine") == "ortools" and row.get("baselineRevision") == BASE
                     and row.get("revision") == revision and row.get("evaluatorTree") == evaluator
@@ -118,7 +125,11 @@ def verify(rows, cases=CASES):
                                and raw.get("valid") is True)
             require(row.get("acceptedNew") is expected_new and row.get("engineNew") is expected_engine, "ATTRIBUTION")
             if special:
+                require(row.get("httpStatus") == 200 and row.get("errorCode") is None
+                        and row.get("rawStatus") in ("FEASIBLE", "OPTIMAL", "UNKNOWN", "INFEASIBLE"), "SPECIAL_NOT_SOLVED")
                 require(not expected_new, "LOCKED_RECOVERY_CHANGED")
+                if row.get("finalStatus") in ("FEASIBLE", "OPTIMAL"):
+                    require(row.get("unchangedReference") is True, "LOCKED_RECOVERY_CHANGED")
         valid = sum(valid_timely(row) for row in trials)
         accepted = sum(row["acceptedNew"] for row in trials)
         engine_new = sum(row["engineNew"] for row in trials)
@@ -128,9 +139,9 @@ def verify(rows, cases=CASES):
                 and summary.get("rejectedRawFeasible") == 0, "SUMMARY_COUNTS")
         require(summary.get("decision") == "EXPLORATORY_NOT_CERTIFIED", "DECISION")
         require(summary.get("successP95Seconds") is None and summary.get("tailSampleSufficient") is False, "UNSUPPORTED_TAIL")
-        require(not expect_valid or valid > 0, "NO_VALID_BASELINE")
+        require(not expect_valid or valid > 0, "NO_VALID_BASELINE:" + name)
         if name in ("team-10-week", "branch-50-four-weeks", "branch-115-six-weeks", "december-representative"):
-            require(engine_new > 0, "NO_NEW_ENGINE_PROPOSAL")
+            require(engine_new > 0, "NO_NEW_ENGINE_PROPOSAL:" + name)
         reports.append({"scenario": name, "samples": count, "validTimely": valid, "engineNew": engine_new})
     return reports
 
@@ -140,6 +151,9 @@ if __name__ == "__main__":
         with open(sys.argv[1], encoding="utf-8") as stream:
             result = verify([json.loads(line) for line in stream if line.strip()])
         print(json.dumps({"verification": "EXPLORATORY_EVIDENCE_COMPLETE", "scenarios": result}, separators=(",", ":")))
+    except EvidenceError as error:
+        print("Cross-engine exploratory evidence rejected: " + str(error), file=sys.stderr)
+        sys.exit(1)
     except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError):
         print("Cross-engine exploratory evidence rejected.", file=sys.stderr)
         sys.exit(1)

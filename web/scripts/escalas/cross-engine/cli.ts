@@ -5,7 +5,7 @@ import { isHoursReferenceOnly } from "../../../src/lib/escalas/hours-reference";
 import { compareRosterCoverage } from "../../../src/lib/escalas/roster-quality";
 import { makeScenario, scenarioIds, type ScenarioId } from "./fixtures";
 import { captureEnvelope, digest, envelopeProfile, measureReferences, pairOrder, runTrial } from "./core";
-import { baselineRevision, dockerAdapter, inspectImage, resources } from "./docker";
+import { baselineRevision, dockerAdapter, inspectImage, resources, validateBaselineEnvelope } from "./docker";
 import { quantile } from "../benchmark-runtime";
 
 function git(args: string[]) {
@@ -24,8 +24,9 @@ function checkSource() {
 async function main() {
   if (process.env.ESCALAS_CROSS_ENGINE_ISOLATED !== "1") throw new Error("CROSS_ENGINE_ISOLATED_RUNNER_REQUIRED");
   const [id, repetitionText, baselineImage, candidateImage, ...rest] = process.argv.slice(2);
+  const preflightOnly = repetitionText === "preflight";
   const repeats = Number(repetitionText);
-  if (rest.length || !scenarioIds.includes(id as ScenarioId) || !Number.isInteger(repeats) || repeats < 1 || repeats > 100)
+  if (rest.length || !scenarioIds.includes(id as ScenarioId) || (preflightOnly ? !!candidateImage : !Number.isInteger(repeats) || repeats < 1 || repeats > 100))
     throw new Error("CROSS_ENGINE_ARGUMENTS");
   const source = checkSource();
   const scenario = makeScenario(id as ScenarioId);
@@ -39,9 +40,14 @@ async function main() {
   const identities = { ortools: inspectImage(baselineImage, "ortools"),
     timefold: candidateImage ? inspectImage(candidateImage, "timefold") : undefined };
   if (identities.timefold && identities.timefold.architecture !== identities.ortools.architecture) throw new Error("CROSS_ENGINE_ARCH_MISMATCH");
-  const adapters = { ortools: dockerAdapter(baselineImage, "ortools"), timefold: candidateImage ? dockerAdapter(candidateImage, "timefold") : undefined };
   const frozen = await captureEnvelope(scenario);
+  validateBaselineEnvelope(baselineImage, frozen);
   const profile = envelopeProfile(frozen);
+  if (preflightOnly) {
+    console.log(JSON.stringify({ kind: "preflight", scenario: id, valid: true, inputHash: digest(frozen), profile }));
+    return;
+  }
+  const adapters = { ortools: dockerAdapter(baselineImage, "ortools"), timefold: candidateImage ? dockerAdapter(candidateImage, "timefold") : undefined };
   const metadata = { scenario: id, baselineRevision, ...source, inputHash: digest(frozen), arch: arch(), resources, profile,
     sampleKind: "cold-container", hostCapacityMeasured: false, liveHttpMeasured: false };
   type Trial = Awaited<ReturnType<typeof runTrial>>;
@@ -84,4 +90,8 @@ async function main() {
     if (!observationOnly && !trials.some(row => row.timely && row.finalAssessment?.valid && !row.errorCode && row.finalAssessment.comparison?.regressed !== true)) process.exitCode = 1;
   }
 }
-main().catch(() => { console.error("Cross-engine benchmark stopped; no production service was targeted."); process.exitCode = 1; });
+main().catch((error: unknown) => {
+  const code = error instanceof Error && /^CROSS_ENGINE_[A-Z_]+$/.test(error.message) ? error.message : "CROSS_ENGINE_FAILED";
+  console.error("Cross-engine benchmark stopped: " + code + "; no production service was targeted.");
+  process.exitCode = 1;
+});

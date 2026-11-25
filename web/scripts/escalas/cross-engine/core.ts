@@ -36,6 +36,17 @@ function knownStatus(value: unknown): Status | null {
   return statuses.includes(value as Status) ? value as Status : null;
 }
 
+/** ModelInputError contains schema paths/reason codes, never a value. Mask anything else. */
+export function inputDiagnosticFields(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).flatMap(entry => {
+    const record = asRecord(entry);
+    if (!record || typeof record.path !== "string" || typeof record.reason !== "string"
+      || !/^(?:input|startDate|endDate|planningWeekStartsOn|generationMode|defaultWeeklyHours|restRulesVersion|simulation|storeClosingMinutes|policy|employees|shifts|assignments|demands|movementPriorities|_initialAssignments|_coverageProtection|_coverageComparison|_coverageServiceProtection|_restPairTarget)(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d{1,5}\])*$/.test(record.path)
+      || record.path.length > 120 || !/^[A-Z_]{1,60}$/.test(record.reason)) return [];
+    return [{ path: record.path, reason: record.reason }];
+  });
+}
 export function verifyReply(value: unknown): WireReply {
   const record = asRecord(value);
   const httpStatus = record?.httpStatus;
@@ -159,7 +170,8 @@ export function envelopeProfile(frozen: string) {
   const special = input._restPairTarget === 20;
   return { days: dates.length, employeesOnWire: input.employees.length, includedOnWire: active.length,
     activePositions: positions, timedPositions, untimedPositions, fixedClockPeople, catalogOptionPositions: catalogOptions,
-    shifts: input.shifts.length, estimatedDemands: input.demands.filter(demand => demand.estimated === true).length,
+    shifts: input.shifts.length, paidHolidayCount: input.policy.paidHolidayDates?.length ?? 0,
+    estimatedDemands: input.demands.filter(demand => demand.estimated === true).length,
     confirmedDemands: input.demands.filter(demand => demand.estimated !== true).length,
     savedAssignments: input.assignments.length, lockedAssignments: input.assignments.filter(day => day.locked).length,
     initialAssignmentCount: input._initialAssignments?.length ?? 0,
@@ -196,6 +208,11 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
     : scenario.admittedDecemberOrigin ? "DECEMBER_DEMAND" : undefined;
   const raw = asRecord(response?.body);
   const rawStatus = knownStatus(raw?.status);
+  const rawRejectionStage = ["INPUT_CHECK", "COVERAGE_CHECK", "SEARCH"].includes(String(raw?.rejectionStage)) ? raw?.rejectionStage : null;
+  const rawDiagnosticFamilies = Array.isArray(raw?.solverDiagnostics) ? [...new Set(raw.solverDiagnostics.flatMap(entry => {
+    const family = asRecord(entry)?.family;
+    return typeof family === "string" && ["AVAILABILITY", "BLOCKS", "DAYS_WORKED", "WEEKLY_MINUTES", "COVERAGE", "REST"].includes(family) ? [family] : [];
+  }))].sort() : [];
   const rawFeasible = rawStatus === "FEASIBLE" || rawStatus === "OPTIMAL";
   // Wire assignments omit application metadata and exclude administrative records.
   // Raw evaluation is diagnostic; the real client below is the acceptance oracle.
@@ -231,7 +248,8 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   const deadline = wire._restPairTarget === 20 ? 32 : 20;
   const timely = engineSeconds !== null && engineSeconds <= deadline && productSeconds <= deadline;
   const errorCode = invocationError instanceof EscalaSolverError ? invocationError.code : invocationError ? "CLIENT_ERROR" : null;
-  return { inputHash: digest(frozen), rawStatus, httpStatus: response?.httpStatus ?? null,
+  return { inputHash: digest(frozen), rawStatus, rawRejectionStage, rawDiagnosticFamilies,
+    inputErrorFields: response?.httpStatus === 400 ? inputDiagnosticFields(raw?.fields) : [], httpStatus: response?.httpStatus ?? null,
     processSeconds, engineSeconds, productSeconds, maxRssKiB: response?.maxRssKiB ?? null, finalStatus, outcome,
     rawAssessment, finalAssessment, sameAsRaw, unchangedReference, timely, errorCode,
     acceptedNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && !unchangedReference && finalAssessment?.valid === true

@@ -24,7 +24,7 @@ function december(): EscalaInput {
   const raw = newInput("SYNTH", "Synthetic December", "2026-12", 42);
   raw.generationMode = "DAYS_AND_HOURS";
   raw.policy = { ...raw.policy, calendarMode: "MANUAL", holidayDates: ["2026-12-25"],
-    closedDates: ["2026-12-25"], limitContinuousWorkBlocks: false };
+    closedDates: ["2026-12-25"], paidHolidayDates: ["2026-12-25"], limitContinuousWorkBlocks: false };
   const starts = [390, 435, 465, 510, 555, 580];
   raw.shifts = starts.map((start, index) => ({
     id: "synthetic-clock-" + index, name: "Synthetic clock " + index,
@@ -77,6 +77,7 @@ export function makeScenario(id: ScenarioId): Scenario {
       schemaVersion: 1, branchCode: "SYNTH", branchName: "Synthetic recovery",
       startDate: "2026-12-01", endDate: "2026-12-31", defaultWeeklyHours: 42,
       visibleMonth: "2026-12", planningWeekStartsOn: "SUNDAY", timeZone: "America/Sao_Paulo",
+      generationMode: "DAYS_AND_HOURS",
       coverageBasis: "coverage-v2:aaaaaaaaaaaaaaaa",
       policy: { source: "Synthetic", validFrom: "2026-01-01", validUntil: "2026-12-31",
         reviewed: true, reviewedBy: "Synthetic", weeklyLimit: 44, dailyLimitMinutes: 528,
