@@ -8,9 +8,28 @@ VM informada: Oracle VM.Standard.A1.Flex, 4 OCPUs ARM64, 24 GB, Ubuntu 24.04. Ou
 Adotar dois niveis, nesta ordem:
 
 1. Basico, obrigatorio: executar Timefold com quota cgroup de CPU/RAM, SolverManager com um calculo simultaneo, admissao sob pressao e fila curta. Enquanto nao esta resolvendo, o Timefold fica ocioso. E a abordagem mais simples, com tempo de resposta estavel e sem controlador privilegiado de start/stop.
-2. Opcional apos medicao: ativacao fisica automatica. Container Java fica desligado quando sem trabalho, e um controlador de host de privilegio minimo o inicia para resolver pedidos, aguarda /health, e o para apos 5 a 10 minutos de inatividade, apenas se nao houver trabalhos ativos ou pendentes. Nao presumir que ganhos de RAM compensam o cold start e o custo operacional.
+2. Opcional, DESLIGADO POR PADRAO: escala-a-zero fisica somente se cold start comprovado for rapido e se a memoria residente representar um problema real. Nao desligar a JVM automaticamente apos 5-10 minutos por padrao. O modo inicial obrigatorio e READY_IDLE: JVM Quarkus pronta, nenhum solve ativo, com quota rigida e CPU de otimizacao ociosa. Se startup nao cumprir o limite, manter READY_IDLE sem permitir espera longa ao usuario.
 
 O motor Timefold oferece SolverManager assíncrono e terminateEarly por identificador. Isso NAO sobe nem para um container Docker automaticamente. A ativacao fisica requer componente separado.
+
+## Parecer de viabilidade/compatibilidade (fontes oficiais, 25/11/2026)
+
+**COMPATIVEL em arquitetura; NAO homologado neste host.** Timefold 2.x suporta Java 21+ e Quarkus 3.x. Java Temurin 21 possui runtime Linux ARM64/AArch64. Quarkus SmallRye Health fornece /q/health/live, /q/health/ready e /q/health/started. Timefold SolverManager agenda solves de forma assincrona e suporta terminateEarly; parallel-solver-count=1 impede mais de uma otimizacao simultanea. A compatibilidade efetiva Timefold 2.8.0 + Quarkus 3.40.1.2 + imagem ARM64 ainda depende de compilacao, container e testes reais da POC.
+
+**Distincao importante:** quarkus.timefold.solver.daemon=true **NAO** suspende a JVM quando o sistema esta ocioso. Esse modo espera mudanças de fatos do mesmo problema, usado no planejamento continuo e pode manter uma tarefa ocupada. Para escalas solicitadas sob demanda, configurar daemon=false e usar SolverManager para iniciar somente uma busca quando for necessario. O servico REST permanece pronto/ocioso.
+
+**Condicao de resposta rapida:** nenhum usuario deve aguardar varios minutos pela ativacao. O padrao sera READY_IDLE permanente enquanto o monitor confirmar memoria disponivel. O controlador de recursos calcula medias em segundo plano, nao inicia uma nova janela de observacao de 30-60 s somente apos o clique. Em recurso insuficiente, responder OCUPADO/INDISPONIVEL de forma imediata ou permitir uma espera pequena e explicita; nunca manter fila por 15 minutos.
+
+Metas para POC, **nao promessas de latencia medida**:
+- READY_IDLE: resposta de admissao interna p95 <= 1 s; inicio efetivo da busca p95 <= 2 s depois de receber pedido admitido, sem incluir os 12 s de busca de otimizacao.
+- JVM JVM-mode cold start (se habilitar escala-a-zero): readiness p95 <= 5 s e timeout total de ativacao <= 10 s no AArch64 sob limites aprovados, medidos sem competicao indevida com outros projetos. Se falhar, desabilitar escala-a-zero e conservar READY_IDLE.
+- O contrato de transporte atual tem aproximadamente 20 s na chamada normal do Node; nunca somar 10 s de partida, 12 s de busca e outros custos dentro dessa chamada esperando que nao haja timeout. Qualquer escala-a-zero so cabe mediante fluxo assincrono e estados versionados/validados de preparacao ou mecanismo que inicie o Java antes do prazo de busca.
+- CPU de otimizacao durante READY_IDLE deve ser nula, mas a JVM ainda consome RAM e alguma CPU de housekeeping. Medir CPU/RSS/GC e impacto do Quarkus no host em repouso; nao prometer uso de CPU do processo igual a zero.
+- Limitar move-thread-count=NONE e parallel-solver-count=1, e ter uma trava de admissao no servico. O SolverManager pode manter fila interna, portanto impedir fila ilimitada mesmo com paralelo em 1.
+
+**Quarkus em JVM-mode** e a primeira escolha: startup costuma ser rapido nas cargas de referencia do Quarkus, mas nenhum benchmark generico comprova desempenho de Timefold na VM A1 compartilhada. Native image pode acelerar startup e economizar RAM, porem a ausencia de JIT pode piorar a qualidade da otimizacao em 12 s; so adotar se os benchmarks da POC provarem a vantagem.
+
+Fontes oficiais: https://docs.timefold.ai/timefold-solver/latest/frequently-asked-questions ; https://docs.timefold.ai/timefold-solver/latest/running-timefold-solver/library/quarkus ; https://docs.timefold.ai/timefold-solver/latest/running-timefold-solver/library/library-integration ; https://quarkus.io/guides/smallrye-health/ ; https://quarkus.io/guides/building-native-image-guide/ ; https://adoptium.net/supported-platforms/ .
 
 ## Capacidade real e envelope inicial
 
@@ -35,7 +54,7 @@ De CHECKING ir a BUSY/WAITING_CAPACITY quando host sobrecarregado; no maximo uma
 3. Se OFF e capacidade suficiente, o controlador inicia apenas o servico Java. Aguarda readiness. Opcionalmente aquece JIT com problema sintetico nao sensivel.
 4. Timefold executa com limite de tempo e de recursos; o retorno e validado independentemente no TypeScript. Um resultado incompleto, nao verificado ou pior em cobertura nunca substitui a grade.
 5. Cancelamento antes da partida evita spawn; durante SOLVING usa terminateEarly e confirma estado terminal antes de liberar vaga.
-6. Depois de ficar ocioso pelo TTL escolhido, suspende somente se nao houver jobs, respostas ou cancelamentos pendentes. Evitar ciclos de liga/desliga e colocar cooldown minimo.
+6. NO PADRAO READY_IDLE, nao suspender o processo: apenas deixar SolverManager sem tarefa ativa. SO NO MODO OPCIONAL scale-to-zero, apos TTL comprovado, desligar quando nao houver jobs, respostas ou cancelamentos pendentes. Evitar ciclos de liga/desliga.
 
 ## Seguranca da ativacao
 
