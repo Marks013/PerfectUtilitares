@@ -76,9 +76,15 @@ F9: após estabilização autorizada, remoção completa de CP-SAT/Python e docu
 
 ## Dimensionamento e desempenho
 
-O Compose atual aloca ao motor Python 1 CPU, 1536 MiB, 64 PIDs e tmpfs de 32 MiB. Isso **não é evidência de que a JVM teria folga**. Primeiro benchmark isorrecursos, sem alterar produção. Segundo ensaio em ambiente isolado com orçamento provisório de 2 vCPU e 3-4 GiB, se a capacidade disponível permitir, uma solução por vez e heap limitado; estimar margens por p95/p99 RSS e GC, não por palpite. Não executar Python e JVM pesados juntos em host sem reserva de memória.
+A Oracle VM.Standard.A1.Flex do usuário tem **4 OCPUs ARM64 e 24 GB RAM, compartilhados com outros projetos**. O Compose do PerfectUtilitares já declara quotas de CPU superiores à capacidade física quando somadas (PostgreSQL 1,0, app 1,5, PDF 2,0 e solver Python 1,0), embora quotas não indiquem utilização real. O Timefold NÃO receberá 2 OCPUs ou 3-4 GiB por padrão. Ensaios iniciais em ambiente isolado usarão um teto piloto de 0,50 a 0,75 OCPU e 1,0 a 1,5 GiB, ajustável somente mediante medição, sem comprometer serviços existentes. Se esses limites não forem suficientes para regras, qualidade e tempo, o deployment será reprovado em vez de tomar CPU/memória dos outros projetos.
 
 Benchmark representativo precisa rodar Java em production mode, com compilador JIT C2 ativo e warmup medido. Não avaliar desempenho por quarkus:dev nem assumir que native-image/GraalVM é mais rápido; a própria documentação Timefold registra que JIT frequentemente vence na busca.
+
+## Ativação inteligente por demanda (VM compartilhada)
+
+Adotar inicialmente ativação lógica: Timefold executa somente quando pedido, com uma operação por vez, quota rígida e admissão sob pressão. O motor pode ficar pronto e ocioso entre pedidos, sem gastar CPU de busca. Escala-a-zero física por desligamento/partida automática é opcional e só será adicionada após prova de ganho de memória, testes de cold start e controlador de host com privilégio mínimo. O Next.js jamais recebe o Docker socket. Uma fila curta ou recusa controlada protege os outros projetos quando o host estiver pressionado; cancelar e terminar operações não autoriza publicar proposta incompleta. Toda alteração do protocolo de status de operações precisa de testes e versão.
+
+Especificação detalhada: [ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md](ATIVACAO-INTELIGENTE-TIMEFOLD-A1-2026-11-25.md). A prova de não interferência sobre outros serviços é condição formal de G6 e G8.
 
 ## Publicação/rollback
 
