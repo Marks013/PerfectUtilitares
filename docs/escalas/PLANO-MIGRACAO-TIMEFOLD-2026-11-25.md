@@ -1,6 +1,6 @@
 # Plano integral de substituição OR-Tools por Timefold Solver
 
-Estado: PLANEJAMENTO PARA REVISÃO. Nenhuma implantação, teste com dados reais, exclusão do OR-Tools ou alteração de configuração do servidor está autorizada por este documento.
+Estado: PLANEJAMENTO PARA REVISÃO. Auditoria crítica complementar em [AUDITORIA-CRITICA-TIMEFOLD-2026-11-25.md](AUDITORIA-CRITICA-TIMEFOLD-2026-11-25.md): nenhum gate de implantação está aprovado. Nenhuma implantação, teste com dados reais, exclusão do OR-Tools ou alteração de configuração do servidor está autorizada por este documento.
 
 Referência auditada em 2026-11-25: main f78c691edbeaf16283f534bcacd8db1b4b7d5e66. Revalidar o SHA antes de qualquer implementação. Documentos complementares obrigatórios:
 - MATRIZ-TRAVAS-TIMEFOLD-2026-11-25.md: inventário de regras e gambiarras CP-SAT.
@@ -25,13 +25,13 @@ O motor novo será dono de calcular um planejamento, não de autenticar usuário
 
 Planning Solution: quadro de funcionários, calendário, intervalos de turno, demandas e políticas como fatos imutáveis, e decisões de cada empregado/data.
 
-Planning Entity: dia ativo do empregado; planejamento variável via valor AssignmentOption, incluindo WORK com shiftId, DUTY sem relógio, OFF. ABSENCE, HOLIDAY, WORK/OFF bloqueados e períodos publicados devem ser fixados e validados. Padrões de horas existentes restringem as alternativas em vez de inventar relógios.
+Planning Entity por empregado/dia é HIPÓTESE inicial, não arquitetura decidida: 250 colaboradores × 42 dias podem atingir 10.500 entidades. O primeiro spike deve comparar entidade diária com bloco semanal ou alternativa compacta, usando valores legais de AssignmentOption e a mesma verificação independente. WORK com shiftId, DUTY sem relógio e OFF são candidatos; ABSENCE, HOLIDAY, dias bloqueados e períodos publicados permanecem fatos/decisões fixadas. Padrões de horas restringem alternativas sem inventar relógios.
 
 Regras:
 - Hard: descanso obrigatório, compatibilidade de cargo/turno/horário, contrato/intervalos, licenças, férias/ausências, dias bloqueados e serviço explicitamente obrigatório/protegido. Sem hard score negativo aceito.
 - Medium: minimizar desfalque estimado por setor/cargo/faixa e perda de serviço existente, respeitando prioridades de negócio estabelecidas. Estimativas não viram mínimos hard sem aprovação.
 - Soft: justiça de domingos e sábados entre grupos comparáveis, descanso espaçado, estabilidade, preferências e liderança conforme semântica aprovada.
-- HardMediumSoftScore do Timefold usa inteiros long na versão 2.x; usar pontos por minuto, sem double. Não dobrar pesos enormes para simular níveis. Se três níveis não expressarem a prioridade comprovada, testar BendableScore conscientemente.
+- A versão 2.x usa long nos tipos HardMediumSoftScore e BendableScore, sem as antigas classes sufixadas LongScore. O score de três níveis é só candidato: primeiro testar uma matriz de PRECEDÊNCIA em cenários conflitantes por setor, cargo, horário, mês visível e domingo. Sem equivalência, testar BendableScore com o menor número necessário de níveis ou um veto por cenário protegido na aplicação; nunca simular prioridades por pesos enormes nem permitir que soma global esconda piora local. Usar minutos inteiros e checar overflow.
 - Uso nativo: Construction Heuristic, Local Search, pinning, Value Ranges, Constraint Streams, SolverManager, terminação e ConstraintVerifier. Não reproduzir toda a máquina de fases e bairros CP-SAT.
 
 A regra de HOURS_ONLY preserva o tipo de cada dia e deixa ajustar somente horários permitidos. REST_ONLY preserva as referências de turno quando houver WORK. Um @PlanningPin indiscriminado congelaria também o horário em HOURS_ONLY: filtrar opções ou separar entidades/variáveis conforme teste de domínio.
@@ -48,27 +48,27 @@ A regra de HOURS_ONLY preserva o tipo de cada dia e deixa ajustar somente horár
 
 | Porta | Resultado obrigatório para avançar |
 | --- | --- |
-| G0 Inventário | Todas as regras atuais classificadas e assinadas; fontes de verdade e casos de fronteira enumerados |
+| G0 Inventário | R01-R20 são famílias iniciais, NÃO um inventário exaustivo. Desdobrar sub-regras, código de origem, fixtures positivas/negativas, fonte de verdade e revisão funcional/jurídica antes de iniciar o porte |
 | G1 Spike | Java 21, Quarkus e Timefold compilam em CI isolada e executam um exemplo de uma semana |
 | G2 Regras hard | Testes unitários por restrição (ConstraintVerifier), completos e compatíveis com TypeScript |
 | G3 Contrato | /solve, /cancel, /health, auth, idempotência e timeout compatíveis, sem acesso a banco ou PII nos logs |
 | G4 Paridade | Entradas controladas e mesmo cenário, sem violação; estados DAYS_AND_HOURS, REST_ONLY e HOURS_ONLY |
-| G5 Cobertura/qualidade | Não aumentar faltas de pessoas-minutos por setor/cargo/faixa em 10/1, 50/4, 115/6; domingos e descanso sem regressão |
-| G6 Capacidade | p50/p95, RSS, GC, memória, CPU, startup e testes de pico até 250 pessoas/42 dias medidos com margem real |
+| G5 Cobertura/qualidade | Modelo encontra solução hard-válida dentro do orçamento operacional medido; não aumentar faltas de pessoas-minutos por setor/cargo/faixa em 10/1, 50/4, 115/6, nem domingos/descansos protegidos. Resultado FEASIBLE não é OPTIMAL |
+| G6 Capacidade | Quotas conservadoras na A1 compartilhada, cold/hot, p50/p95, RSS/cgroup, GC, PSI, CPU e interferência nos outros serviços. Amostra final >=30 execuções para p95 por cenário e >=30 partidas frias se opcional; 250 pessoas/42 dias testados |
 | G7 E2E isolado | Testes Playwright, verificador independente, persistência descartável e recuperação/rollback completos |
 | G8 Implantação | Somente autorização posterior, qualidade total/release gates e procedimento de troca/retorno ensaiado |
 | G9 Remoção | Depois de estabilidade, retirar Python/OR-Tools e scripts de CP-SAT, preservar testes semânticos e fallback de rollback |
 
-Qualquer falta de cobertura, dia ilegal, perda de registro protegido, resultado incompleto, falha de autenticação/cancelamento ou degradação de latência/capacidade bloqueia G8. A aplicação não pode apresentar solução Timefold sem verificador independente.
+Qualquer falta de cobertura, dia ilegal, perda de registro protegido, resultado incompleto, falha de autenticação/cancelamento ou degradação de latência/capacidade bloqueia G8. A aplicação não pode apresentar solução Timefold sem verificador independente. A saída Zod do cliente é estrita: traduzir apenas campos semanticamente válidos; não simular metadados de fases/bounds CP-SAT. Um solve Timefold incompleto ou com hard score negativo não substitui a escala; ausência de prova não vira INFEASIBLE.
 
 ## Fases propostas
 
 F0: congelamento lógico da especificação, não da main, com auditoria de regras e licenças. Aprovação da matriz.
-F1: protótipo Java isolado, projeto Maven/Quarkus/Timefold sem endpoint conectado ao app. Testes simples e Dockerfile com limites.
+F1: protótipo Java isolado, projeto Maven/Quarkus/Timefold sem endpoint conectado ao app. Primeiro provar compatibilidade ARM64/JDK/BOM/Quarkus e comparar representação por empregado-dia versus bloco semanal, tamanho do domínio admissível, startup e primeira solução viável. Sem compromisso prematuro com um modelo.
 F2: regras hard e três modos de geração, calendário civil/histórico/futuro, preservação de referências. ConstraintVerifier com casos fronteira.
 F3: cobertura por cargo/horário e metas soft, Score semântico e testes de prioridade. Sem reprodução de fases CP-SAT.
 F4: endpoints compatíveis, auth secret-file, requestId/cancelToken, cancelamento, limites, readiness e métricas sanitizadas.
-F5: paridade sintética com datasets 1/1, 10/1, 50/4, 115/6, 250/6. Mesmas entradas, limite de CPU e tempo, JVM aquecida, cinco ou mais repetições por semente/configuração. Instrumentar a qualidade independentemente e não confiar na comparabilidade do score entre motores.
+F5: paridade sintética com datasets 1/1, 10/1, 50/4, 115/6, 250/6. Mesmas entradas, limites CPU/tempo, JVM fria/quente e sementes fixas. Exploratório: 5 repetições; aceite de qualidade: >=5 sementes × >=5 repetições; aceite de latência p95: >=30 execuções por cenário e pelo menos 30 cold starts se scale-to-zero proposto. Comparar métricas por cargo/faixa e não score interno; registrar também variabilidade e não forçar a mesma solução final.
 F6: integração desabilitada por padrão em Compose CI e testes Playwright isolados com DB descartável. Teste de falha, rollback e conflito de revisão.
 F7: homologação e decisão explícita; sizing em host real, security review, evidência de qualidade e qualidade local completa, sem dados reais externos.
 F8: troca controlada no servidor, health/latency/qualidade monitorados e retorno ao OR-Tools se falhar.
