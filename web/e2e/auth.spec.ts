@@ -36,7 +36,8 @@ test("login, session projection and authenticated navigation", async ({
     ),
   ).toBe(true);
 
-  const accountResponse = await page.request.get("/api/account");
+  // In the isolated dev runner this endpoint may still need its first compile.
+  const accountResponse = await page.request.get("/api/account", { timeout: 30_000 });
   expect(accountResponse.status()).toBe(405);
   expect(accountResponse.headers().allow).toContain("PATCH");
 });
