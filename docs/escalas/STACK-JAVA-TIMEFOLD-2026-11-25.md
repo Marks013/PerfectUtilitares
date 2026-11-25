@@ -82,6 +82,32 @@ Ensaios obrigatórios e separados:
 - Maven Enforcer para JDK 21, versões estáveis e convergência de dependências. Relatório SBOM CycloneDX e scan de imagem Docker podem ser ativados no CI sem virar dependência runtime.
 - Toda atualização de Timefold/Quarkus exige executar novamente os benchmarks e testes de paridade, não só as verificações de Maven.
 
+## Plugins de build Maven: conjunto mínimo, com os papéis definidos
+
+O plugin de build não entra no classpath de runtime do Timefold. Fixar a versão de cada plugin no POM e ativar objetivos em fases apropriadas, sem duplicar execuções configuradas pela plataforma Quarkus.
+
+| Plugin Maven | Grupo/artefato | Quando usar |
+| --- | --- | --- |
+| Quarkus Maven Plugin | io.quarkus:quarkus-maven-plugin | Empacotamento Quarkus em modo production, geração de código e builds testáveis |
+| Compiler | org.apache.maven.plugins:maven-compiler-plugin | Compilar para release Java 21 e impedir bytecode de versão incorreta; Quarkus gerencia configuração básica |
+| Surefire | org.apache.maven.plugins:maven-surefire-plugin | JUnit e ConstraintVerifier na fase test, sem fork ou plugins extras de execução se desnecessário |
+| Failsafe | org.apache.maven.plugins:maven-failsafe-plugin | Testes de integração Java/REST no verify, só se necessário separá-los do Surefire |
+| Enforcer | org.apache.maven.plugins:maven-enforcer-plugin | requireJavaVersion, requireMavenVersion, requirePluginVersions, requireReleaseDeps, dependencyConvergence; não encobrir conflitos Quarkus/Timefold |
+| Dependency | org.apache.maven.plugins:maven-dependency-plugin | dependency:tree para comparar versões transitivas e evitar dupla versão Jackson/Quarkus |
+| CycloneDX | org.cyclonedx:cyclonedx-maven-plugin | Gerar SBOM no CI de release sem depender de exportação de dados de RH |
+| Versions | org.codehaus.mojo:versions-maven-plugin | Apenas auditoria controlada de upgrades; não atualizar automaticamente dependências no runtime |
+
+Usar Maven Wrapper para a versão Maven escolhida e exigir plugins versionados. Não adicionar checkstyle, SpotBugs, OWASP Dependency Check e ferramentas de análise estática em massa antes do primeiro build: aproveitar os checks já existentes no repositório e introduzir cada gate adicional somente quando houver um caso não coberto. Segurança de dependências é obrigatória; ferramenta específica pode ser definida na CI após detectar cobertura existente.
+
+**Compatibilidade ainda não provada em build:** a matriz Timefold 2.8.0 × Quarkus 3.40.1.2 × Java 21 foi confirmada em documentação de compatibilidade de linhas principais (Timefold 2.x/Quarkus 3.x/Java 21+), mas ainda precisa compilar/testar com versões exatas no spike G1. Não confundir compatibilidade anunciada de linhas com build aprovado.
+
+Fontes:
+- https://quarkus.io/version/3.40/guides/quarkus-maven-plugin/
+- https://maven.apache.org/surefire/
+- https://maven.apache.org/enforcer/enforcer-rules/requireJavaVersion.html
+- https://maven.apache.org/enforcer/enforcer-rules/dependencyConvergence.html
+- https://cyclonedx.github.io/cyclonedx-maven-plugin/
+
 ## Referências oficiais verificadas
 
 Timefold:
