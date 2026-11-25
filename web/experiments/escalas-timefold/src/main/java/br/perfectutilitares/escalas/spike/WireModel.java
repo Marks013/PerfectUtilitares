@@ -124,7 +124,11 @@ final class WireModel {
         check(!people.isEmpty() && people.size() <= 50, "PEOPLE_LIMIT");
         Map<Key, Record> saved = records(input, "assignments", people, first, last);
         Map<Key, Record> seed = input.has("_initialAssignments") ? records(input, "_initialAssignments", people, first, last) : saved;
-        // A partial saved grid can contain legitimate locks; an explicit private\n        // warm-start must still be complete, rather than silently padded.\n        check(!input.has("_initialAssignments") || seed.size() == people.size() * days, "INCOMPLETE_SEED");
+        // Saved grids may contain only a few locks. Explicit private warm-starts
+        // must contain every expected person/date once (records checks duplicates).
+        if (input.has("_initialAssignments")) {
+            check(seed.size() == Math.multiplyExact(people.size(), days), "INCOMPLETE_SEED");
+        }
         List<Day> cells = new ArrayList<>();
         List<Roster.Window> windows = new ArrayList<>();
         int weeks = days / 7;

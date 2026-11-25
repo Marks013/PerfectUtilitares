@@ -49,7 +49,44 @@ class WireModelTest {
         assertTrue(model.days().getLast().isPinned());
         assertEquals(Day.State.WORK, model.days().getLast().state());
         input.set("_initialAssignments", input.get("assignments"));
-        assertThrows(WireModel.Unsupported.class, () -> WireModel.read(root));
+        assertEquals("INCOMPLETE_SEED", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+    }
+    @Test void rejectsEmptyAndConflictingExplicitWarmStarts() throws Exception {
+        var root = envelope();
+        var input = (ObjectNode) root.path("input");
+        input.set("assignments", JSON.readTree("""
+            [{"employeeId":"person-0","date":"2026-11-01","kind":"OFF","locked":true}]
+            """));
+        var seed = input.putArray("_initialAssignments");
+        assertEquals("INCOMPLETE_SEED", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+        for (int i = 1; i <= 7; i++) {
+            var row = seed.addObject();
+            row.put("employeeId", "person-0");
+            row.put("date", "2026-11-0" + i);
+            if (i == 1 || i == 4) row.put("kind", "OFF");
+            else { row.put("kind", "WORK"); row.put("shiftId", "clock"); }
+        }
+        var model = WireModel.read(root);
+        assertEquals(7, model.days().stream().filter(day -> day.state() != null).count());
+        assertTrue(model.days().getFirst().isPinned());
+        assertEquals(Day.State.OFF, model.days().getFirst().state());
+        var conflict = (ObjectNode) seed.get(0);
+        conflict.put("kind", "WORK");
+        conflict.put("shiftId", "clock");
+        assertEquals("SEED_LOCK_CONFLICT", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+    }
+    @Test void rejectsDuplicateExplicitWarmStartCells() throws Exception {
+        var root = envelope();
+        var input = (ObjectNode) root.path("input");
+        input.set("_initialAssignments", JSON.readTree("""
+            [{"employeeId":"person-0","date":"2026-11-01","kind":"OFF"},
+             {"employeeId":"person-0","date":"2026-11-01","kind":"OFF"}]
+            """));
+        assertEquals("DUPLICATE_ASSIGNMENT", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
     }
     @Test void rejectsPrivateProtectionAndOtherGenerationModes() throws Exception {
         var root = envelope();

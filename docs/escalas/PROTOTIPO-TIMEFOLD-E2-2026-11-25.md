@@ -57,3 +57,8 @@ Evidência preservada: [45709123324](https://github.com/Marks013/PerfectUtilitar
 | A12 | Auditoria de dependências/SBOM/CVEs pendente antes de integração; sem atualização especulativa de versões. |
 
 A validação da nova revisão depende dos checks. Nenhuma regra de negócio, baseline, recurso, política de privacidade ou autorização de produção foi flexibilizada. A comparação de um modelo parcial continua exclusivamente exploratória.
+
+
+### Regressão da revisão f22b426
+
+[Workflow 45710152795](https://github.com/Marks013/PerfectUtilitares/actions/runs/45710152795): 14/15 testes Java aprovados (DomainAccess 1/1, RosterConstraints 10/10, WireModel 3/4). Verificador Python E2 5/5. O único teste Java reprovado detectou o guard INCOMPLETE_SEED comentado por duas sequências literais de barra invertida+n. Corrigido com linhas reais e bloco if explícito. Novos casos exigem códigos exatos para seed parcial/vazia/duplicada e conflito com lock; seed completa válida aceita, grade salva parcial continua aceita. Não houve benchmark no SHA anterior, pois a etapa de teste falhou. Nenhuma alteração de regra de produção.
