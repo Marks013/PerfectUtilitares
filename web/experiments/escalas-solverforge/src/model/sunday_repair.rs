@@ -190,7 +190,7 @@ fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;28
         if facts.bands.iter().any(|b|{
             let eligible=b.eligible&group_bits;
             (!eligible.is_empty()&&eligible!=group_bits)||b.role_floors.iter().any(|(m,_)|{
-                let part=m&group_bits;!part.is_empty()&&part!=group_bits
+                let part=*m&group_bits;!part.is_empty()&&part!=group_bits
             })
         }){continue;}
         let Some(states)=projections(&domains,deadline) else{
@@ -210,7 +210,7 @@ fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;28
                     for bit in bits.iter().take(counts[w] as usize){sunday[w]|=*bit;}
                 }
                 let rank=projected_rank(facts,&sunday);
-                if next.len()==BEAM_WIDTH && next.last().is_some_and(|p:&Projection|p.rank<rank){continue;}
+                if next.len()==BEAM_WIDTH && next.last().is_some_and(|p:&Projection|p.rank<=rank){continue;}
                 let mut sigs=state.signatures.clone();
                 for (&slot,&sig) in group.iter().zip(choices){sigs[slot]=sig;}
                 insert_projection(&mut next,Projection{sunday,signatures:sigs,rank});

@@ -24,13 +24,13 @@ impl Band {
         let presence=attended&self.eligible;
         std::iter::once((self.minimum-presence.count_ones() as i64).max(0))
             .chain(self.role_floors.iter().map(|(eligible,minimum)|
-                (*minimum-(presence&eligible).count_ones() as i64).max(0))).collect()
+                (*minimum-(presence&*eligible).count_ones() as i64).max(0))).collect()
     }
     pub fn gap(&self, attended: Presence) -> i64 {
         let presence = attended & self.eligible;
         let total = (self.minimum - presence.count_ones() as i64).max(0);
         let roles: i64 = self.role_floors.iter()
-            .map(|(eligible, minimum)| (*minimum - (presence & eligible).count_ones() as i64).max(0))
+            .map(|(eligible, minimum)| (*minimum - (presence & *eligible).count_ones() as i64).max(0))
             .sum();
         total.max(roles)
     }
