@@ -5,8 +5,8 @@ use std::collections::{BTreeMap,BTreeSet};
 use crate::temporal_domain::{TemporalEmployee,TemporalPlan};
 use super::clock;
 
-type ServiceKey=(usize,usize,bool,i32,i32);
-type GapKey=(usize,bool,Option<usize>,bool,i32,i32);
+type ServiceKey=(usize,usize,u8,i32,i32);
+type GapKey=(usize,bool,Option<usize>,u8,i32,i32);
 #[derive(Default)]
 pub(super) struct Snapshot{
     days:BTreeSet<(usize,usize)>,
@@ -33,9 +33,9 @@ impl Snapshot{
                     for (part,bounds) in edges.windows(2).enumerate(){
                         if c.covers(bounds[0],bounds[1]){
                             *counts.entry((day,p.role,part)).or_default()+=1;
-                            *result.service.entry((sector,p.role,false,bounds[0],bounds[1])).or_default()+=1;
-                            if day.is_multiple_of(7){
-                                *result.service.entry((sector,p.role,true,bounds[0],bounds[1])).or_default()+=1;
+                            for scope in 0..4u8{
+                                if scope&1!=0&&!facts.visible[day]||scope&2!=0&&facts.weekday(day)!=0{continue;}
+                                *result.service.entry((sector,p.role,scope,bounds[0],bounds[1])).or_default()+=1;
                             }
                         }
                     }
@@ -51,9 +51,9 @@ impl Snapshot{
                     }).collect();
                     let gap=(b.general-present).max(0).max(role_gaps.iter().map(|x|x.1).sum());
                     for (role,n) in std::iter::once((None,gap)).chain(role_gaps){
-                        for sunday in [false,true]{
-                            if sunday&&!b.day.is_multiple_of(7){continue;}
-                            let entry=result.gaps.entry((sector,b.estimated,role,sunday,bounds[0],bounds[1])).or_default();
+                        for scope in 0..4u8{
+                            if scope&1!=0&&!facts.visible[b.day]||scope&2!=0&&facts.weekday(b.day)!=0{continue;}
+                            let entry=result.gaps.entry((sector,b.estimated,role,scope,bounds[0],bounds[1])).or_default();
                             entry.0+=n*i64::from(bounds[1]-bounds[0]);entry.1=entry.1.max(n);
                         }
                     }

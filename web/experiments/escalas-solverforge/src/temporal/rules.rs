@@ -12,31 +12,40 @@ const WEEK_TRIES:usize=64;
 
 #[derive(Clone,Debug,PartialEq,Eq,PartialOrd,Ord)]
 pub(super) struct Rules{
-    pub days:usize,pub personal:PersonalRules,pub fixed:u8,pub cap:i32,pub target:i32,
-    pub weekly_limit:i32,pub inter:i32,pub weekly_rest:i32,pub mixed:bool,pub untimed:bool,
+    pub days:usize,pub personal:PersonalRules,pub fixed:u8,pub cap:i32,
+    pub weeks:Vec<(usize,usize)>,pub targets:[i32;6],pub mixed:[bool;6],pub offset:usize,pub cutover:bool,
+    pub weekly_limit:i32,pub inter:i32,pub weekly_rest:i32,pub untimed:bool,
     pub hours_only:bool,pub closed:[bool;MAX_DAYS],pub holiday:[bool;MAX_DAYS],
     pub old:[Option<Record>;MAX_DAYS],pub context:BTreeMap<i32,u8>,pub rest_weight:i64,
 }
 impl Rules{
-    fn week_legal(&self,states:&[u8],clocks:&[Clock])->bool{
+    fn weekday(&self,d:i32)->usize{(d+self.offset as i32).rem_euclid(7) as usize}
+    fn week_legal(&self,week:usize,states:&[u8],clocks:&[Clock])->bool{
         let count=states.iter().filter(|&&s|work(s)).count() as i32;
         let off=states.iter().filter(|&&s|s==OFF).count() as i32;
         let absent=states.contains(&ABS);
-        let weekdays=states[1..].iter().filter(|&&s|s==HOL).count() as i32;
-        let sunday=i32::from(states[0]==HOL);
+        let a=self.weeks[week].0;
+        let weekdays=states.iter().enumerate().filter(|(d,s)|**s==HOL&&self.weekday((a+*d) as i32)!=0).count() as i32;
+        let sunday=states.iter().enumerate().filter(|(d,s)|**s==HOL&&self.weekday((a+*d) as i32)==0).count() as i32;
         let minutes:i32=states.iter().filter_map(|&s|clock(clocks,s)).map(|c|c.paid).sum();
-        if count>5||!self.untimed&&minutes>self.target.min(self.weekly_limit){return false;}
-        if !absent&&(count!=(5-weekdays).max(0)||off!=(2-sunday).max(0)
-            ||!self.untimed&&weekdays==0&&minutes!=self.target){return false;}
-        if self.mixed&&states.iter().filter_map(|&s|clock(clocks,s)).filter(|c|c.paid==540).count()>2{return false;}
+        let complete=states.len()==7;
+        let first_partial=self.cutover&&week==0;
+        let target=self.targets[week];
+        if count>5||!self.untimed&&minutes>target.min(self.weekly_limit){return false;}
+        if !absent&&(complete||first_partial){
+            if count!=((if first_partial{3}else{5})-weekdays).max(0)||off!=(2-sunday).max(0){return false;}
+            if complete&&!self.untimed&&weekdays==0&&minutes!=target{return false;}
+        }
+        if self.mixed[week]&&states.iter().filter_map(|&s|clock(clocks,s)).filter(|c|c.paid==540).count()>2{return false;}
         true
     }
     fn mutable(&self,d:usize)->bool{
-        !self.closed[d]&&self.fixed&(1<<(d%7))==0&&self.old[d].is_none_or(|r|r.locked!=Some(true)&&r.state!=ABS&&r.state!=HOL)
+        !self.closed[d]&&self.fixed&(1<<self.weekday(d as i32))==0&&self.old[d].is_none_or(|r|r.locked!=Some(true)&&r.state!=ABS&&r.state!=HOL)
     }
     pub fn legal_prefix(&self,states:&[u8],clocks:&[Clock])->bool{
         let len=states.len() as i32;let horizon=self.days as i32;
-        if len==0||len>horizon||!states.len().is_multiple_of(7)||!states.as_chunks::<7>().0.iter().all(|w|self.week_legal(w,clocks)){return false;}
+        if len==0||len>horizon||!self.weeks.iter().any(|&(_,b)|b==states.len())
+            ||!self.weeks.iter().enumerate().filter(|(_,(_,b))|*b<=states.len()).all(|(i,&(a,b))|self.week_legal(i,&states[a..b],clocks)){return false;}
         let full=len==horizon;
         let state=|d:i32|if (0..len).contains(&d){Some(states[d as usize])}
             else if d<0||full&&d>=horizon{self.context.get(&d).copied()}else{None};
@@ -44,8 +53,9 @@ impl Rules{
         for start in -max..len{
             if (start..=start+max).all(|d|state(d).is_some_and(work)){return false;}
         }
-        for start in -self.cap..len/7{
-            if (start..=start+self.cap).all(|w|state(w*7).is_some_and(work)){return false;}
+        let sunday=-(self.offset as i32);
+        for start in (sunday-self.cap*7..len).step_by(7){
+            if (start..=start+self.cap*7).step_by(7).all(|d|state(d).is_some_and(work)){return false;}
         }
         if self.personal.variable{
             for start in -2..len{
@@ -54,10 +64,10 @@ impl Rules{
             }
         }
         if self.personal.consecutive{
-            let rest=|d:i32|state(d)==Some(OFF)||d.rem_euclid(7)==0&&state(d)==Some(HOL);
+            let rest=|d:i32|state(d)==Some(OFF)||self.weekday(d)==0&&state(d)==Some(HOL);
             for d in 0..len{
                 if d==len-1&&!full{continue;}
-                let fixed_next=full&&d==len-1&&self.fixed&1!=0&&state(len).is_none();
+                let fixed_next=full&&d==len-1&&self.fixed&(1<<self.weekday(len))!=0&&state(len).is_none();
                 if rest(d)&&!rest(d-1)&&!rest(d+1)&&!fixed_next{return false;}
             }
             if full&&state(len)==Some(OFF)&&state(len+1).is_some_and(|s|work(s)||s==ABS)&&state(len-1)!=Some(OFF){return false;}
@@ -74,8 +84,9 @@ impl Rules{
         }
         if full&&!self.hours_only&&!self.personal.consecutive&&self.fixed.count_ones()<2{
             let mut groups=BTreeMap::<u8,(usize,u8)>::new();
-            for (week,part) in states.as_chunks::<7>().0.iter().enumerate(){
-                let a=week*7;let b=a+7;
+            for &(a,b) in &self.weeks{
+                if b-a!=7{continue;}
+                let part=&states[a..b];
                 if self.holiday[a..b].iter().any(|&x|x)||self.old[a..b].iter().flatten().any(|r|r.locked==Some(true)||matches!(r.state,ABS|HOL)){continue;}
                 let imposed=self.closed[a..b].iter().enumerate().fold(self.fixed,|m,(d,c)|if *c{m|1<<d}else{m});
                 if imposed.count_ones()>=2{continue;}
@@ -90,7 +101,7 @@ impl Rules{
         let active=&states[..self.days];let mut cost=[0;17];
         let changes=active.iter().enumerate().filter(|(d,s)|self.old[*d].is_some_and(|r|r.state!=ABS&&r.state!=**s)).count() as i64;
         cost[13]=i64::from(changes>0);cost[14]=changes;
-        cost[15]=active.iter().enumerate().filter(|(d,s)|work(**s)&&self.personal.preferred&(1<<(*d%7))!=0).count() as i64;
+        cost[15]=active.iter().enumerate().filter(|(d,s)|work(**s)&&self.personal.preferred&(1<<self.weekday(*d as i32))!=0).count() as i64;
         if self.personal.prefer_consecutive{cost[15]+=(self.days-1) as i64-active.windows(2).filter(|w|*w==[OFF,OFF]).count() as i64;}
         if self.personal.adjustable(){
             let mut pairs=0i64;let mut imposed=0i64;
@@ -104,8 +115,8 @@ impl Rules{
         }
         let mut rates=[None;2];let mut sunday_opportunities=0u64;
         for weekday in 0..7{
-            let prior:Vec<_>=self.context.iter().filter(|(d,s)|(-21..0).contains(*d)&&d.rem_euclid(7)==weekday as i32&&(work(**s)||**s==OFF)).map(|(_,s)|*s).collect();
-            let actual=(weekday..self.days).step_by(7);
+            let prior:Vec<_>=self.context.iter().filter(|(d,s)|(-21..0).contains(*d)&&self.weekday(**d)==weekday&&(work(**s)||**s==OFF)).map(|(_,s)|*s).collect();
+            let actual=(0..self.days).filter(|&d|self.weekday(d as i32)==weekday);
             let opportunities=prior.len() as i64+actual.clone().filter(|&d|active[d]!=ABS).count() as i64;
             let rests=prior.iter().filter(|&&s|s==OFF).count() as i64+actual.clone().filter(|&d|active[d]==OFF).count() as i64;
             let deviation=(7*rests-2*opportunities).abs();
@@ -125,19 +136,19 @@ impl Rules{
     }
 }
 
-fn weekly(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline:Instant)->Result<Vec<[u8;7]>>{
-    fn visit(day:usize,states:&mut [u8;7],options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline:Instant,out:&mut Vec<[u8;7]>)->Result<()>{
+fn weekly(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],week:usize,deadline:Instant)->Result<Vec<[u8;7]>>{
+    fn visit(day:usize,states:&mut [u8;7],options:&[Vec<u8>],profile:(&Rules,usize),clocks:&[Clock],deadline:Instant,out:&mut Vec<[u8;7]>)->Result<()>{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
-        if day==7{
-            if rules.week_legal(states,clocks){
+        if day==options.len(){
+            if profile.0.week_legal(profile.1,&states[..day],clocks){
                 check(out.len()<MAX_WEEK,"TEMPORAL_DOMAIN_LIMIT")?;out.push(*states);
             }
         }else{
-            for &state in &options[day]{states[day]=state;visit(day+1,states,options,rules,clocks,deadline,out)?;}
+            for &state in &options[day]{states[day]=state;visit(day+1,states,options,profile,clocks,deadline,out)?;}
         }
         Ok(())
     }
-    let mut out=Vec::new();visit(0,&mut [OFF;7],options,rules,clocks,deadline,&mut out)?;
+    let mut out=Vec::new();visit(0,&mut [OFF;7],options,(rules,week),clocks,deadline,&mut out)?;
     Ok(out)
 }
 fn mix(mut n:u64)->u64{
@@ -145,11 +156,14 @@ fn mix(mut n:u64)->u64{
     n=(n^(n>>27)).wrapping_mul(0x94d049bb133111eb);n^(n>>31)
 }
 pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline:Instant)->Result<Vec<Pattern>>{
-    let mut cache=BTreeMap::<Vec<Vec<u8>>,Vec<[u8;7]>>::new();
+    type WeeklyKey=(Vec<Vec<u8>>,i32,bool,bool,usize);
+    let mut cache=BTreeMap::<WeeklyKey,Vec<[u8;7]>>::new();
     let mut weeks=Vec::new();
-    for part in options.as_chunks::<7>().0{
-        let values=if let Some(v)=cache.get(part.as_slice()){v.clone()}else{
-            let v=weekly(part,rules,clocks,deadline)?;cache.insert(part.to_vec(),v.clone());v
+    for (week,&(a,b)) in rules.weeks.iter().enumerate(){
+        let part=&options[a..b];
+        let key=(part.to_vec(),rules.targets[week],rules.mixed[week],rules.cutover&&week==0,rules.weekday(a as i32));
+        let values=if let Some(v)=cache.get(&key){v.clone()}else{
+            let v=weekly(part,rules,clocks,week,deadline)?;cache.insert(key,v.clone());v
         };
         check(!values.is_empty(),"NO_PERSONAL_PATTERN")?;weeks.push(values);
     }
@@ -168,11 +182,11 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
             check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
             let mut path=[OFF;MAX_DAYS];let mut complete=true;
             for (week,values) in weeks.iter().enumerate(){
-                let len=values.len();let a=week*7;let b=a+7;
+                let len=values.len();let (a,b)=rules.weeks[week];
                 let start=(mix((attempt as u64+1)*67+week as u64)%(len as u64)) as usize;
                 let mut found=false;
                 for offset in 0..len.min(WEEK_TRIES){
-                    path[a..b].copy_from_slice(&values[(start+offset)%len]);
+                    path[a..b].copy_from_slice(&values[(start+offset)%len][..b-a]);
                     if rules.legal_prefix(&path[..b],clocks){found=true;break;}
                 }
                 if !found{complete=false;break;}

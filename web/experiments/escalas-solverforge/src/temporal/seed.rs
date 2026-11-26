@@ -44,7 +44,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                     if b.clock_mask&(1u16<<state)==0{continue;}
                     if b.estimated{
                         benefit[1]+=gain;
-                        if b.day.is_multiple_of(7){benefit[2]+=gain;}
+                        if sector.facts.weekday(b.day)==0{benefit[2]+=gain;}
                         if sector.facts.movement_enabled{benefit[4]+=gain*sector.facts.priority[b.day].unwrap_or(2);}
                         let close=(b.end.min(sector.facts.closing)-b.start.max(sector.facts.closing-60)).max(0);
                         benefit[5]+=count.gain(b,p.role)*i64::from(close);
@@ -61,12 +61,12 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                     for (cost,gain) in score[..6].iter_mut().zip(benefits[day][usize::from(state)]){*cost-=gain;}
                     if work(state){
                         score[11]+=sector.presence[day];
-                        if day.is_multiple_of(7){sunday_days+=1;sunday_load+=sector.presence[day];}
+                        if sector.facts.weekday(day)==0{sunday_days+=1;sunday_load+=sector.presence[day];}
                     }
                     if let Some(c)=clock(&sector.facts.clocks,state){
                         new_timed_days+=i64::from(sector.timed[day]==0);
                         clock_changes+=i64::from(!p.preferred_clock[usize::from(state)]);
-                        if day.is_multiple_of(7){sunday_minutes+=i64::from(c.paid);}
+                        if sector.facts.weekday(day)==0{sunday_minutes+=i64::from(c.paid);}
                     }
                 }
                 // These are construction preferences, not invented hard

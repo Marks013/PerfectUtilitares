@@ -362,7 +362,7 @@ fn residual_repair(plan:&mut Plan,members:&[usize],facts:&Sector,deadline:Instan
                 for (d,states) in cost.iter().enumerate().take(facts.days){
                     let w=usize::from(worked(mask,d));
                     if !allowed[d][w]{return None;}
-                    for k in 0..4{total[k]+=states[w][k];}
+                    for (a,b) in total[..4].iter_mut().zip(&states[w][..4]){*a+=b;}
                     total[4]=total[4].max(states[w][4]);
                 }
                 Some(total)
