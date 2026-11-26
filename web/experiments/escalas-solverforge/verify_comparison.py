@@ -3,6 +3,8 @@ import json
 import math
 import re
 import sys
+from itertools import permutations
+from statistics import median
 
 SCENARIOS = ("team-10-week", "branch-50-four-weeks", "team-10-week-repair")
 ENGINES = ("ortools", "timefold", "solverforge")
@@ -31,8 +33,18 @@ def sha(value, size):
     return isinstance(value, str) and re.fullmatch("[0-9a-f]{%d}" % size, value) is not None
 
 
-def quantile(values, fraction):
-    return sorted(values)[max(0, math.ceil(len(values) * fraction) - 1)] if values else None
+def p50(values):
+    # Six exploratory repetitions have an even sample count: use the midpoint
+    # of the two central observations, not the lower nearest-rank quantile.
+    return median(values) if values else None
+
+def paired_stats(before, after):
+    """Signed paired deltas (candidate minus reference); no invented ratio at zero."""
+    check(len(before) == len(after), "PAIRED_SAMPLE_COUNT")
+    deltas = [b - a for a, b in zip(before, after)]
+    reductions = [100 * (a - b) / a for a, b in zip(before, after) if a > 0]
+    return {"samples": len(deltas), "deltaP50": p50(deltas),
+            "reductionPercentP50": p50(reductions), "positiveBaselineSamples": len(reductions)}
 
 
 def assessment_valid(value):
@@ -104,9 +116,6 @@ def first_sector_regression(before, after):
     return None
 
 
-
-from itertools import permutations
-
 CONTROL = "71945cd6e73c48b424dab1297fbc3bf8a15ae585"
 ORDERS = list(permutations(ENGINES))
 PAIRS = [("ortools", "timefold"), ("ortools", "solverforge"), ("timefold", "solverforge")]
@@ -139,7 +148,8 @@ def valid(row, profile):
     check(row.get("acceptedNew") is accepted and row.get("engineNew") is engine_new, "ATTRIBUTION")
     if engine_new:
         check(row["rawAssessment"]["metrics"] == final["metrics"], "RAW_FINAL_DRIFT")
-    return engine_new and verify_cgroup(row.get("cgroup")) is not None
+    sample = verify_cgroup(row.get("cgroup"))
+    return engine_new and sample is not None
 
 
 def native(row, profile, seed=False):
@@ -269,11 +279,13 @@ def verify(rows, mode):
             pair_detail(r["againstNative"],r,ref,profile,ok and good[(r["repetition"],"solverforge")])
         def stats(values):
             if not values:
-                return {"validNew":0,"shortageP50":None,"productP50Seconds":None,"cpuP50Seconds":None,"peakMemoryBytes":None}
+                return {"validNew":0,"shortageP50":None,"productP50Seconds":None,"cpuP50Seconds":None,
+                        "peakMemoryBytes":None,"productMaxSeconds":None}
             return {"validNew":len(values),
-                    "shortageP50":quantile([r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"] for r in values],.5),
-                    "productP50Seconds":quantile([r["productSeconds"] for r in values],.5),
-                    "cpuP50Seconds":quantile([r["cgroup"]["cpuUsageUsec"]/1e6 for r in values],.5),
+                    "shortageP50":p50([r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"] for r in values]),
+                    "productP50Seconds":p50([r["productSeconds"] for r in values]),
+                    "cpuP50Seconds":p50([r["cgroup"]["cpuUsageUsec"]/1e6 for r in values]),
+                    "productMaxSeconds":max(r["productSeconds"] for r in values),
                     "peakMemoryBytes":max(r["cgroup"]["memoryPeakBytes"] for r in values)}
         report={"scenario":case,"samplesPerEngine":rounds,
                 "engines":{e:stats([r for r in measurements if r["engine"]==e and good[(r["repetition"],e)]]) for e in ENGINES},
@@ -282,6 +294,21 @@ def verify(rows, mode):
                      "productRetentions":sum(r["retained"] is True for r in comparisons if (r["before"],r["after"])==(a,b)),
                      "improvements":sum(r["improved"] is True for r in comparisons if (r["before"],r["after"])==(a,b))}
                      for a,b in PAIRS}}
+        # Pair observations by repetition; unpaired feasible samples cannot
+        # masquerade as evidence of a performance improvement.
+        for a, b in PAIRS:
+            pairs = [(indexed[(rep,a)], indexed[(rep,b)]) for rep in range(rounds)
+                     if good[(rep,a)] and good[(rep,b)]]
+            pair = report["pairs"][a+"->"+b]
+            for name, metric in (
+                ("shortage", lambda r: r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"]),
+                ("productSeconds", lambda r: r["productSeconds"]),
+                ("cpuSeconds", lambda r: r["cgroup"]["cpuUsageUsec"]/1e6),
+                ("memoryPeakBytes", lambda r: r["cgroup"]["memoryPeakBytes"]),
+            ):
+                pair[name] = paired_stats([metric(x) for x,y in pairs], [metric(y) for x,y in pairs])
+            pair["allPairsValid"] = len(pairs) == rounds
+        report["tailSampleSufficient"] = False
         if seeds:
             report["seedOnly"]=stats(seed_valid)
             report["seedVsNative"]={"samples":len(seeds),"comparable":sum(r["againstNative"]["comparable"] for r in seeds),

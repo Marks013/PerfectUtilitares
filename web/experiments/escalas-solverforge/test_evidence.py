@@ -1,7 +1,7 @@
 import copy
 import unittest
 from audit_dependencies import inventory
-from verify_comparison import native, pair_detail, sector_vector
+from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats
 
 class EvidenceTests(unittest.TestCase):
     def test_resolved_lock_checksum_required(self):
@@ -22,6 +22,20 @@ class EvidenceTests(unittest.TestCase):
         after["finalAssessment"]["metrics"]["coverageAudit"][0].update(horizon=60,month=60,sundays=60,monthSundays=60,peak=1)
         pair={"comparable":True,"regressed":False,"improved":False,"retained":False,"reason":"ACCEPTED","productReason":"ACCEPTED"}
         with self.assertRaises(ValueError):pair_detail(pair,before,after,profile,True)
+
+    def test_even_sample_median_is_midpoint(self):
+        self.assertEqual(p50([6, 1, 3, 2, 5, 4]), 3.5)
+        self.assertIsNone(p50([]))
+
+    def test_paired_delta_and_zero_baseline(self):
+        result = paired_stats([0, 100, 200], [60, 80, 150])
+        self.assertEqual(result["samples"], 3)
+        self.assertEqual(result["deltaP50"], -20)
+        self.assertEqual(result["positiveBaselineSamples"], 2)
+        self.assertEqual(result["reductionPercentP50"], 22.5)
+        self.assertIsNone(paired_stats([0], [60])["reductionPercentP50"])
+        with self.assertRaises(ValueError):
+            paired_stats([1, 2], [1])
 
     def test_seed_only_cannot_claim_native_search(self):
         profile={"includedOnWire":10,"activePositions":70}

@@ -59,6 +59,10 @@ fn records(input: &V, field: &str, people: &[Person], by_id: &HashMap<String, us
     -> Result<BTreeMap<(usize, usize), Row>> {
     let mut result = BTreeMap::new();
     for row in array(input, field)? {
+        // Carry/absence metadata has semantics beyond this experiment.
+        for key in ["absenceSource", "monthlyCarry", "carriedHolidayRest"] {
+            check(row.get(key).is_none(), "ASSIGNMENT_METADATA_UNSUPPORTED")?;
+        }
         let person = *by_id.get(text(row, "employeeId")?).ok_or("ASSIGNMENT_REFERENCE")?;
         let day = date_index(text(row, "date")?, days)?;
         let work = match text(row, "kind")? { "WORK" => true, "OFF" => false, _ => return Err("ASSIGNMENT_KIND") };
@@ -85,6 +89,10 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(!k.starts_with('_') || k == "_initialAssignments", "PRIVATE_FIELD_UNSUPPORTED")?;
     }
     for k in ["mixed42Sectors","movementPriorities"] { check(empty(input,k), "UNSUPPORTED_INPUT")?; }
+    check(input.get("planningCalendarSource").is_none(), "CALENDAR_SOURCE_UNSUPPORTED")?;
+    for k in ["calendarProvenance", "collectiveAgreement", "operationalCertificate"] {
+        check(policy.get(k).is_none(), "POLICY_METADATA_UNSUPPORTED")?;
+    }
     check(text(policy,"calendarMode")? == "MANUAL" && optional_text(policy,"normativeProfile","CUSTOM")? == "CUSTOM"
         && number(policy,"weeklyLimit")? >= 42 && number(policy,"dailyLimitMinutes")? >= 504
         && number(policy,"maxConsecutiveWorkDays")? == 5 && policy.get("mealIntervalAgreement").is_none(), "POLICY")?;
@@ -125,6 +133,11 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
             && person.get("activeUntil").is_none() && person.get("simulationDailyMinutes").is_none()
             && (active.is_empty() || civil_date(active) && active <= "2026-11-01"), "PERSON_PROFILE")?;
         check(["INDIVIDUAL","BRANCH"].contains(&optional_text(person,"weeklyHoursMode","INDIVIDUAL")?), "WEEKLY_MODE")?;
+        // The E2 model does not score manually assigned leadership responsibilities.
+        if let Some(leadership) = person.get("leadership") {
+            check(leadership.is_object() && text(leadership, "source")? == "INFERRED",
+                "LEADERSHIP_UNSUPPORTED")?;
+        }
         for k in ["history","planningHistory","planningFuture","fixedOffDays","preferredOffDays","manualShiftByDate","manualShiftOverrides","manualShiftBaseIds"] {
             check(empty(person,k), "PERSON_RESTRICTION_UNSUPPORTED")?;
         }
@@ -152,7 +165,11 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     if explicit { check(initial.len()==people.len()*days, "INCOMPLETE_SEED")?; }
 
     let mut demand_groups=BTreeMap::<(usize,usize,bool),Vec<(i32,i32,i64,Option<String>)>>::new();
+    let mut demand_ids = BTreeSet::new();
     for demand in array(input,"demands")? {
+        // The real schema requires unique IDs. The minimal Rust test fixture
+        // also supplies them; a duplicate must not disappear into a max floor.
+        check(demand_ids.insert(text(demand, "id")?), "DUPLICATE_DEMAND")?;
         let day=date_index(text(demand,"date")?,days)?;
         let a=number(demand,"start")?;let b=number(demand,"end")?;let minimum=number(demand,"minimum")?;
         check(a>=0 && a<b && b<=1440 && range(minimum,0,250), "DEMAND")?;
@@ -169,6 +186,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         for person in people.iter().filter(|p|p.sector==sector) {for (a,b) in person.segments {edges.insert(a);edges.insert(b);}}
         let edges:Vec<i32>=edges.into_iter().collect();
         for bounds in edges.windows(2) {
+            check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
             let (a,b)=(bounds[0],bounds[1]);
             let mut general=0;
             let mut floors=BTreeMap::<String,i64>::new();

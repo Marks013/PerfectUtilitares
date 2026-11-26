@@ -127,7 +127,7 @@ mod integration {
                 "offMode":"VARIABLE","offPattern":"ANY","activeFrom":"","maxConsecutiveSundays":1,
                 "historyKnown":false,"history":[],"fixedOffDays":[],"preferredOffDays":[]})).collect::<Vec<_>>(),
             "assignments":[{"employeeId":"person-0","date":"2026-11-01","kind":"OFF","locked":true}],
-            "demands": (1..=7).map(|i|json!({"date":format!("2026-11-{i:02}"),"sector":"S",
+            "demands": (1..=7).map(|i|json!({"id":format!("synthetic-demand-{i}"),"date":format!("2026-11-{i:02}"),"sector":"S",
                 "start":480,"end":540,"minimum":1,"estimated":true})).collect::<Vec<_>>()}})
     }
 
@@ -159,6 +159,32 @@ mod integration {
         let mut value=input();
         value["input"]["_restPairTarget"]=json!(20);
         assert!(matches!(wire::read(&value,Instant::now()+Duration::from_secs(5)),Err("PRIVATE_FIELD_UNSUPPORTED")));
+    }
+
+    #[test]
+    fn rejects_unmodeled_metadata_and_duplicate_demands() {
+        let deadline = || Instant::now() + Duration::from_secs(5);
+        for (key, value) in [
+            ("monthlyCarry", json!(true)),
+            ("carriedHolidayRest", json!(true)),
+            ("absenceSource", json!("MANUAL")),
+        ] {
+            let mut data = input();
+            data["input"]["assignments"][0][key] = value;
+            assert!(matches!(wire::read(&data, deadline()), Err("ASSIGNMENT_METADATA_UNSUPPORTED")));
+        }
+        let mut data = input();
+        data["input"]["planningCalendarSource"] = json!({"workspaceId":"synthetic","revision":1});
+        assert!(matches!(wire::read(&data, deadline()), Err("CALENDAR_SOURCE_UNSUPPORTED")));
+        let mut data = input();
+        data["input"]["employees"][0]["leadership"] = json!({"source":"MANUAL","role":"SECTOR","sectors":["S"]});
+        assert!(matches!(wire::read(&data, deadline()), Err("LEADERSHIP_UNSUPPORTED")));
+        let mut data = input();
+        data["input"]["policy"]["operationalCertificate"] = json!({});
+        assert!(matches!(wire::read(&data, deadline()), Err("POLICY_METADATA_UNSUPPORTED")));
+        let mut data = input();
+        data["input"]["demands"][1]["id"] = data["input"]["demands"][0]["id"].clone();
+        assert!(matches!(wire::read(&data, deadline()), Err("DUPLICATE_DEMAND")));
     }
 
     #[test]
