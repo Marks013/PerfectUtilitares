@@ -4,7 +4,7 @@
 
 ## Instalação e proveniência
 
-- Upstream: [SolverForge v0.31.2](https://github.com/SolverForge/solverforge/tree/78889c3ff9fda158c70e6a1f67f8c7f0fdae922e), commit exato 78889c3ff9fda158c70e6a1f67f8c7f0fdae922e, Apache-2.0. [Crate 0.31.2](https://docs.rs/crate/solverforge/0.31.2). A MSRV é Rust 1.95; a toolchain do upstream nesta tag é 1.99.1. Usar esta última. Não instalar CLI/scaffold/UI/MCP/mapas.
+- Upstream: [SolverForge v0.31.2](https://github.com/SolverForge/solverforge/tree/78889c3ff9fda158c70e6a1f67f8c7f0fdae922e), commit exato 78889c3ff9fda158c70e6a1f67f8c7f0fdae922e, Apache-2.0. [Crate 0.31.2](https://docs.rs/crate/solverforge/0.31.2). A MSRV é Rust 1.95; a toolchain do upstream nesta tag é 1.99.1. Usar esta última como referência; a CI SF61 qualifica também o Rust estável 1.100.0 com o mesmo lock. Não instalar CLI/scaffold/UI/MCP/mapas.
 - Cargo.lock: cópia do workspace upstream na tag, com a entrada do pacote local e a única correção de segurança revisada: anyhow 1.0.102 → 1.0.103 (RUSTSEC-2026-0190, checksum oficial). O script prepare_workspace.py verifica o checkout limpo, SHA e igualdade byte a byte após reverter exclusivamente a correção e a entrada local, depois aplica o overlay em examples/perfectutilitares-solverforge-spike. As bibliotecas SolverForge vêm dos paths oficiais da tag (não de HEAD/main). Dependência direta adicional: serde_json = 1.0.149, já presente no lock. Resolver o grafo inteiro novamente seria erro.
 - No runner descartável, instalar toolchain via rustup, alvo aarch64-unknown-linux-musl e musl-tools/binutils via APT assinado. Registrar versão do compilador/linker e pacotes. Cargo fetch --locked baixa as dependências verificadas pelo lock; os testes e build release rodam --locked --offline. Build falha em divergência do lock. Arquivo Cargo.toml depende do workspace oficial, não é um pacote standalone para cargo install.
 - O binário deve ser ELF AArch64 sem INTERP/NEEDED, com SHA-256 registrado. Imagem scratch apenas com o binário, usuário 1001, sem shell, biblioteca de sistema dinâmica ou banco. O linker e a stdlib estática ainda precisam de auditoria própria; não concluir que imagem scratch significa ausência de vulnerabilidades.
@@ -170,3 +170,41 @@ Evidence for 40bb3dc (run 45826881176): 51 Rust and 17 Python tests and strict C
 - Extend original-client temporal qualification from six cases/24 trials to eleven cases/44 trials (same-day night, 42h and 40h transition weeks, December monthly cutover, cross-sector leadership). Independently reconstruct visible-month and cutover comparison coverage, SHA rank, rest pair totals/weight and weighted missing leadership. Keep original OR-Tools control, original TS client and evaluator, lockfile, quotas, fixed E2 and independent adaptive tail gate. A private service floor is unit-tested; the full original protected December reference envelope has not yet been qualified.
 
 Compilation and all independent pairwise quality gates on this new combined revision remain mandatory. The selected multiday search domain is bounded, not complete. Remaining scope includes actual overnight/civil-day split work, night-credit semantics, partial employment, full original private comparison/recovery/initial-assignment contracts, exact original objective phase semantics (including opening concentration, Sunday peak and guards), broader holdouts and production integration. No E3/E4 certification or production deployment; no edits to main or PR #74.
+
+## SF61 — Rust stable compatibility without dependency drift (2026-11-26)
+
+Official source verification: Rust 1.100.0 was released 2026-11-12
+(https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/).
+SolverForge v0.31.2, released 2026-11-17, is the current published native core
+(https://solverforge.org/docs/status-and-roadmap/).
+Its exact reviewed upstream revision 78889c3ff9fda158c70e6a1f67f8c7f0fdae922e
+declares workspace edition 2021 and MSRV 1.95, and its own rust-toolchain.toml
+pins Rust 1.99.1. The local candidate declares rust-version 1.99.1; upstream
+MSRV is not proof that the full candidate supports 1.95.
+
+Add an independent native ARM64/musl CI matrix for **both exact compiler
+pins: 1.99.1 and 1.100.0**. Each leg checks the real compiler release,
+runs the complete Rust/Python tests, strict Clippy and warnings-as-errors
+release build, static ELF checks, unchanged Cargo.lock verification and
+the original OSV inventory/audit; retain public per-toolchain evidence.
+Disable matrix fail-fast so failure on either leg cannot hide the other.
+Retain the existing 1.99.1 check name and original long comparison compiler,
+immutable controls and resource gates. The 1.100.0 leg is an actual
+qualification, not a declaration of measured compatibility or a performance
+improvement. Promotion of the latest stable to the canonical benchmark
+requires successful compilation/tests/lint/security checks followed by
+the same independent comparison and tail/quality gates.
+
+The 2021 edition remains deliberate: upgrading the compiler alone does not
+make edition-2024-only syntax legal. No blanket cargo update, no toolchain
+alias, no upstream fork, no added dependency, no lockfile or MSRV change.
+The lock includes 102 packages (87 crates.io records, 15 workspace
+records); native core family 0.31.2, serde 1.0.228, serde_json 1.0.149,
+thiserror 2.0.18, toml 1.1.2+spec-1.1.0, rand 0.10.1, rayon 1.12.0,
+smallvec 1.15.1, tokio 1.54.1 and the reviewed anyhow 1.0.103 correction.
+The lock inventory is not a claim that every crate is reachable by the
+candidate. OSV scope is the resolved graph and registry lock, not
+compiler/stdlib/musl or production certification. Update a dependency only
+with a concrete security/compatibility justification and review of the
+resulting locked graph. Existing SF58–SF60 qualification remains pending;
+do not infer a successful new compiler run before actual CI evidence.

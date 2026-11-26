@@ -220,3 +220,41 @@ Compilation and all independent pairwise quality gates on this new combined revi
 
 
 SF60 compilation follow-up: fast ARM64 run 45838257803 on 341a88c (job 139972771180) passed 18 Python tests but failed before Rust tests, exit 101 at temporal.rs:160: let chains require Rust edition 2024 or later. The candidate Cargo.toml intentionally remains edition 2021 on pinned Rust 1.99.1. Replace the chained conditional with let-else followed by the identical ABS predicate. Unassigned rows and absences still do not enter the rest-group eligible count; OFF accounting is unchanged. No lint suppression, edition bump, dependency/lockfile change, test removal, or quality-gate relaxation. Require a fresh fast qualification and complete benchmark at the corrected revision.
+
+## SF61 — Rust stable compatibility without dependency drift (2026-11-26)
+
+Official source verification: Rust 1.100.0 was released 2026-11-12
+(https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/).
+SolverForge v0.31.2, released 2026-11-17, is the current published native core
+(https://solverforge.org/docs/status-and-roadmap/).
+Its exact reviewed upstream revision 78889c3ff9fda158c70e6a1f67f8c7f0fdae922e
+declares workspace edition 2021 and MSRV 1.95, and its own rust-toolchain.toml
+pins Rust 1.99.1. The local candidate declares rust-version 1.99.1; upstream
+MSRV is not proof that the full candidate supports 1.95.
+
+Add an independent native ARM64/musl CI matrix for **both exact compiler
+pins: 1.99.1 and 1.100.0**. Each leg checks the real compiler release,
+runs the complete Rust/Python tests, strict Clippy and warnings-as-errors
+release build, static ELF checks, unchanged Cargo.lock verification and
+the original OSV inventory/audit; retain public per-toolchain evidence.
+Disable matrix fail-fast so failure on either leg cannot hide the other.
+Retain the existing 1.99.1 check name and original long comparison compiler,
+immutable controls and resource gates. The 1.100.0 leg is an actual
+qualification, not a declaration of measured compatibility or a performance
+improvement. Promotion of the latest stable to the canonical benchmark
+requires successful compilation/tests/lint/security checks followed by
+the same independent comparison and tail/quality gates.
+
+The 2021 edition remains deliberate: upgrading the compiler alone does not
+make edition-2024-only syntax legal. No blanket cargo update, no toolchain
+alias, no upstream fork, no added dependency, no lockfile or MSRV change.
+The lock includes 102 packages (87 crates.io records, 15 workspace
+records); native core family 0.31.2, serde 1.0.228, serde_json 1.0.149,
+thiserror 2.0.18, toml 1.1.2+spec-1.1.0, rand 0.10.1, rayon 1.12.0,
+smallvec 1.15.1, tokio 1.54.1 and the reviewed anyhow 1.0.103 correction.
+The lock inventory is not a claim that every crate is reachable by the
+candidate. OSV scope is the resolved graph and registry lock, not
+compiler/stdlib/musl or production certification. Update a dependency only
+with a concrete security/compatibility justification and review of the
+resulting locked graph. Existing SF58–SF60 qualification remains pending;
+do not infer a successful new compiler run before actual CI evidence.

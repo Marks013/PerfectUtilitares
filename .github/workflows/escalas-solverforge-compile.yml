@@ -15,7 +15,17 @@ concurrency:
 
 jobs:
   compile:
-    name: Pinned native ARM64 tests and strict lint
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Keep the original check identity and reviewed upstream compiler.
+          - rust: '1.99.1'
+            label: Pinned native ARM64 tests and strict lint
+          # Explicit stable pin, not a floating channel or an upstream fork.
+          - rust: '1.100.0'
+            label: Current stable Rust 1.100.0 ARM64 qualification
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     defaults:
@@ -24,7 +34,7 @@ jobs:
     env:
       CI: 'true'
       UPSTREAM: '78889c3ff9fda158c70e6a1f67f8c7f0fdae922e'
-      RUST_VERSION: '1.99.1'
+      RUST_VERSION: ${{ matrix.rust }}
       RUST_TARGET: 'aarch64-unknown-linux-musl'
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
       CARGO_INCREMENTAL: '0'
@@ -47,6 +57,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/forge-evidence"
           rustc +"$RUST_VERSION" -Vv > "$RUNNER_TEMP/forge-evidence/rustc-version.txt"
           cargo +"$RUST_VERSION" --version > "$RUNNER_TEMP/forge-evidence/cargo-version.txt"
+          grep -Fx "release: $RUST_VERSION" "$RUNNER_TEMP/forge-evidence/rustc-version.txt"
+          cat "$RUNNER_TEMP/forge-evidence/rustc-version.txt" "$RUNNER_TEMP/forge-evidence/cargo-version.txt"
           dpkg-query -W musl musl-dev musl-tools binutils > "$RUNNER_TEMP/forge-evidence/linker-packages.txt"
       - name: Compile and test pinned native Rust workspace
         shell: bash
@@ -72,3 +84,17 @@ jobs:
           if readelf -lW "$binary" | grep -q ' INTERP '; then exit 1; fi
           if readelf -dW "$binary" | grep -q '(NEEDED)'; then exit 1; fi
           sha256sum "$binary" | cut -d ' ' -f 1 > "$RUNNER_TEMP/forge-evidence/binary.sha256"
+
+      - name: Audit identical locked graph for selected Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
+      - name: Retain public per-toolchain qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: solverforge-fast-arm64-rust-${{ matrix.rust }}
+          path: ${{ runner.temp }}/forge-evidence/
+          if-no-files-found: ignore
+          retention-days: 7
