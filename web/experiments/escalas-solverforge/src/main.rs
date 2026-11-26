@@ -266,6 +266,58 @@ mod integration {
     }
 
     #[test]
+    fn custom_fixed_clock_profiles_preserve_individual_rules() {
+        for (hours,end) in [(40,1020),(42,1044),(44,1068)] {
+            let mut data=input();
+            data["input"]["defaultWeeklyHours"]=json!(hours);
+            data["input"]["shifts"][0]["segments"][2]["end"]=json!(end);
+            for p in data["input"]["employees"].as_array_mut().unwrap(){p["weeklyHours"]=json!(hours);}
+            data["input"]["assignments"]=json!([]);
+            let p=&mut data["input"]["employees"][0];
+            p["offMode"]=json!("MIXED");p["fixedOffDays"]=json!([0]);
+            p["fixedRestSlots"]=json!([{"enabled":true,"weekday":0},{"enabled":false,"weekday":4}]);
+            p["offPattern"]=json!("CONSECUTIVE");
+            let p=&mut data["input"]["employees"][1];
+            p["offMode"]=json!("FIXED");p["fixedOffDays"]=json!([1,4]);
+            let p=&mut data["input"]["employees"][2];
+            p["offPattern"]=json!("PREFER_CONSECUTIVE");p["preferredOffDays"]=json!([2]);
+            data["input"]["generationMode"]=json!("REST_ONLY");
+            let mut plan=wire::read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+            assert!(model::seed(&mut plan,Instant::now()+Duration::from_secs(5)).0);
+            assert!(model::validate_complete(&plan));
+            for p in &plan.employees{
+                let m=p.mask().unwrap();
+                assert_eq!(m.count_ones(),5);
+                assert!(model::worked(m,6));
+            }
+            let m=plan.employees[0].mask().unwrap();
+            assert!(!model::worked(m,1));
+            let off=!m&127;assert_ne!(off&(off>>1),0);
+            let m=plan.employees[1].mask().unwrap();
+            assert!(!model::worked(m,2)&&!model::worked(m,5));
+            let config=SolverConfig::from_toml_str("environment_mode = \"fast_assert\"\nrandom_seed = 37\nmove_thread_count = \"none\"\n[termination]\nseconds_spent_limit = 1\n").unwrap();
+            let solved=plan.solve_with_config(config).unwrap();
+            assert!(model::validate_complete(&solved));
+            let costs=model::evaluate(&solved);
+            assert_eq!(solved.score,Some(score::EscalasScore::of([-costs[0]],std::array::from_fn(|i|-costs[i+1]))));
+        }
+    }
+
+    #[test]
+    fn fixed_rest_and_weekly_caps_are_not_silently_relaxed(){
+        let mut data=input();
+        data["input"]["employees"][0]["offMode"]=json!("MIXED");
+        data["input"]["employees"][0]["fixedOffDays"]=json!([5]);
+        assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("FIXED_SATURDAY")));
+        data["input"]["employees"][0]["fixedOffDays"]=json!([0]);
+        data["input"]["employees"][0]["fixedRestSlots"]=json!([{"enabled":true,"weekday":1},{"enabled":false,"weekday":null}]);
+        assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("FIXED_REST_PROJECTION")));
+        let mut data=input();
+        data["input"]["policy"]["weeklyLimit"]=json!(40);
+        assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("WEEKLY_MINUTES")));
+    }
+
+    #[test]
     fn seed_only_is_not_reported_as_native_search() {
         let bytes=serde_json::to_vec(&input()).unwrap();
         let reply=solve(&bytes,Instant::now(),true,BUDGET,false);

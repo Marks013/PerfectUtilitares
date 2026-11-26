@@ -164,7 +164,7 @@ def native(row, profile, seed=False, budget=12, adaptive=False):
           and type(t.get("seedComplete")) is bool and all(numeric(t.get(k)) for k in ("mapSeconds", "seedSeconds", "searchSeconds")),
           "NATIVE_TELEMETRY")
     for name in ("initialCost", "finalCost"):
-        check(isinstance(t.get(name), list) and len(t[name]) == 9 and all(integer(v) for v in t[name]), "COST_VECTOR")
+        check(isinstance(t.get(name), list) and len(t[name]) == 11 and all(integer(v) for v in t[name]), "COST_VECTOR")
     check(t["finalCost"][0] == 0 and t["finalCost"][3] == row["finalAssessment"]["metrics"]["normalizedEstimatedShortage"],
           "NATIVE_SCORE_DRIFT")
     check(t["mapSeconds"] + t["seedSeconds"] + t["searchSeconds"] <= row["processSeconds"] + .01, "NATIVE_TIMING")
@@ -178,7 +178,7 @@ def native(row, profile, seed=False, budget=12, adaptive=False):
     check(type(t.get("stagnationApplied")) is bool and (not t["stagnationApplied"] or adaptive and attempted),"STAGNATION")
     if attempted:
         cost=t.get("nativeCost")
-        check(isinstance(cost,list) and len(cost)==9 and all(integer(v) for v in cost) and t["searchSeconds"]>0,"NATIVE_COST")
+        check(isinstance(cost,list) and len(cost)==11 and all(integer(v) for v in cost) and t["searchSeconds"]>0,"NATIVE_COST")
     else:
         check(t.get("nativeCost") is None and t["searchSeconds"]==0,"NATIVE_NOT_ATTEMPTED")
     if seed:

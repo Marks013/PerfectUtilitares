@@ -71,8 +71,8 @@ class EvidenceTests(unittest.TestCase):
         profile={"includedOnWire":10,"activePositions":70}
         row={"forge":{"version":"0.31.2","budgetSeconds":12,"partialModel":True,"mode":"ADAPTIVE","nativeSearch":True,
              "entities":10,"positions":70,"initialized":10,"allowedPatterns":150,"seedComplete":True,
-             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":1,"initialCost":[0]*9,"finalCost":[0]*9,
-             "nativeCost":[0,1,0,0,0,0,0,0,0],"stagnationApplied":True,"resultSource":"SEED_RETAINED",
+             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":1,"initialCost":[0]*11,"finalCost":[0]*11,
+             "nativeCost":[0,1,0,0,0,0,0,0,0,0,0],"stagnationApplied":True,"resultSource":"SEED_RETAINED",
              "repair":{"sectors":1,"projections":10,"reconstructed":2,"accepted":1,"deadlineReached":False,"projectionLimitHits":0}},
              "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0}},"processSeconds":1.3}
         native(row,profile,adaptive=True)
@@ -86,7 +86,7 @@ class EvidenceTests(unittest.TestCase):
         profile={"includedOnWire":10,"activePositions":70}
         row={"forge":{"version":"0.31.2","budgetSeconds":12,"partialModel":True,"mode":"SEED_ONLY","nativeSearch":True,
              "entities":10,"positions":70,"initialized":10,"allowedPatterns":150,"seedComplete":True,
-             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":0,"initialCost":[0]*9,"finalCost":[0]*9},
+             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":0,"initialCost":[0]*11,"finalCost":[0]*11},
              "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0}},"processSeconds":.2}
         with self.assertRaises(ValueError):native(row,profile,True)
 
