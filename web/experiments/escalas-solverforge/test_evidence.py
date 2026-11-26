@@ -128,7 +128,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_temporal_requires_combined_cases_not_only_weekly_results(self):
         from verify_comparison import verify_temporal
-        for incomplete in ([],[{}]*16,[{}]*23):
+        for incomplete in ([],[{}]*16,[{}]*23,[{}]*24,[{}]*43):
             with self.assertRaises(ValueError):verify_temporal(incomplete)
 
     def test_rest_audit_must_be_complete_nonnegative_and_consistent(self):
@@ -151,6 +151,16 @@ class EvidenceTests(unittest.TestCase):
         for invalid in (dict(rejected,nativeAccepted=True),dict(accepted,guardPreserved=False),
                         dict(rejected,finalCost=candidate),dict(accepted,nativeCandidateCost=initial)):
             with self.assertRaises(ValueError):verify_temporal_search(invalid)
+
+    def test_visible_month_vector_keeps_padding_distinct(self):
+        from verify_comparison import sector_vector
+        vector=[{"horizon":100,"month":70,"sundays":30,"monthSundays":20,"closing":0,"peak":2,"presence":[0,1]}]
+        metrics={"coverageAudit":vector,"normalizedEstimatedShortage":100}
+        profile={"days":35,"includedOnWire":3,"confirmedDemands":0,"visibleDays":30}
+        self.assertEqual(sector_vector(metrics,profile),vector)
+        with self.assertRaises(ValueError):sector_vector(metrics,dict(profile,visibleDays=35))
+        bad=copy.deepcopy(metrics);bad["coverageAudit"][0]["month"]=101
+        with self.assertRaises(ValueError):sector_vector(bad,profile)
 
 if __name__=="__main__":
     unittest.main()

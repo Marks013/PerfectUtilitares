@@ -240,11 +240,12 @@ export function solverforgeAdapter(image: string, seedOnly = false, budgetSecond
 
 type TemporalTelemetry = {
   version: 2; scope: "SYNTHETIC_TEMPORAL"; partialModel: true;
-  days: number; untimed: number; domainMode: "EXACT_WEEK" | "BOUNDED_PATHS"; pathLimit: number;
+  days: number; visibleDays: number; untimed: number; domainMode: "EXACT_WEEK" | "BOUNDED_PATHS"; pathLimit: number;
   mapSeconds: number; seedSeconds: number; searchSeconds: number; nativeSearch: boolean;
   nativeCandidateCost: number[] | null; nativeAccepted: boolean; guardPreserved: boolean | null;
   resultSource: "NATIVE" | "SEED_RETAINED" | "CONSTRUCTOR_ONLY";
   entities: number; patterns: number; initialCost: number[]; finalCost: number[];
+  restWeight: number; restPairs: number; restExcess: number;
   objectives: {name: string; status: string; cost: number | null}[];
 };
 export function temporalForgeAdapter(image: string) {
@@ -264,12 +265,14 @@ export function temporalForgeAdapter(image: string) {
         const t=value.temporal,integer=(x:unknown)=>typeof x==="number"&&Number.isSafeInteger(x)&&x>=0;
         const vector=(x:unknown)=>Array.isArray(x)&&x.length===17&&x.every(integer);
         if(!t||t.version!==2||t.scope!=="SYNTHETIC_TEMPORAL"||t.partialModel!==true
-          ||![7,14,21,28,35,42].includes(t.days)||!integer(t.entities)||t.entities<1||t.entities>(t.days===7?12:250)
+          ||![7,14,21,28,31,35,42].includes(t.days)||!integer(t.visibleDays)||t.visibleDays<1||t.visibleDays>t.days||!integer(t.entities)||t.entities<1||t.entities>(t.days===7?12:250)
           ||!integer(t.untimed)||t.untimed>t.entities
           ||t.domainMode!==(t.days===7?"EXACT_WEEK":"BOUNDED_PATHS")||t.pathLimit!==(t.days===7?30000:384)
           ||!integer(t.patterns)||t.patterns<t.entities||t.patterns>t.entities*t.pathLimit
           ||typeof t.seedSeconds!=="number"||!Number.isFinite(t.seedSeconds)||t.seedSeconds<0
           ||!vector(t.initialCost)||!vector(t.finalCost)||t.finalCost[0]!==0
+          ||!integer(t.restWeight)||t.restWeight<1||!integer(t.restPairs)||!integer(t.restExcess)||t.restExcess>t.restPairs
+          ||t.finalCost[8]!==t.restWeight*t.restExcess+t.restPairs
           ||typeof t.nativeSearch!=="boolean"||typeof t.mapSeconds!=="number"||!Number.isFinite(t.mapSeconds)||t.mapSeconds<0
           ||typeof t.searchSeconds!=="number"||!Number.isFinite(t.searchSeconds)||t.searchSeconds<0
           ||typeof t.nativeAccepted!=="boolean"

@@ -638,6 +638,9 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
             assignments.push(row);
         }
     }
+    let rest_weight=plan.employees[0].rest_weight;
+    let rest_pairs:i64=plan.employees.iter().map(|p|p.catalog[p.pattern.unwrap()].rest[1]).sum();
+    let rest_excess:i64=plan.employees.iter().map(|p|p.catalog[p.pattern.unwrap()].rest[0]).sum();
     let priorities=plan.employees.iter().any(|p|p.facts.movement_enabled);
     let days=plan.employees[0].facts.days;
     let untimed=plan.employees.iter().filter(|p|p.untimed).count();
@@ -658,7 +661,7 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
             "searchSeconds":if attempted{search_start.elapsed().as_secs_f64()}else{0.0},"nativeSearch":attempted,
             "nativeCandidateCost":native_candidate,"nativeAccepted":native_accepted,"guardPreserved":guard_preserved,
             "resultSource":if native_accepted{"NATIVE"}else if attempted{"SEED_RETAINED"}else{"CONSTRUCTOR_ONLY"},
-            "entities":plan.employees.len(),"patterns":patterns,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}})
+            "entities":plan.employees.len(),"patterns":patterns,"restWeight":rest_weight,"restPairs":rest_pairs,"restExcess":rest_excess,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}})
 }
 #[cfg(test)]
 mod tests{

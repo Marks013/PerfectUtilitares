@@ -76,21 +76,24 @@ COVERAGE_METRICS = {
 }
 
 
-def sector_vector(metrics, profile):
+def sector_vector(metrics, profile, reconcile_shortage=True):
     vector = metrics.get("coverageAudit")
     check(isinstance(vector, list) and 0 < len(vector) <= profile["includedOnWire"] + 250, "COVERAGE_VECTOR")
     fields = ("horizon", "month", "sundays", "monthSundays", "closing", "peak")
     for sector in vector:
         check(isinstance(sector, dict) and set(sector) == {*fields, "presence"}
               and all(integer(sector[k]) for k in fields), "COVERAGE_VECTOR")
-        # E2 fixtures cover the complete visible horizon.
-        check(sector["month"] == sector["horizon"] and sector["monthSundays"] == sector["sundays"]
+        # E2 covers the complete visible horizon. Temporal monthly
+        # padding is reported independently instead of equated to the month.
+        full=profile.get("visibleDays",profile["days"])==profile["days"]
+        check((not full or sector["month"]==sector["horizon"] and sector["monthSundays"]==sector["sundays"])
+              and sector["month"]<=sector["horizon"] and sector["monthSundays"]<=min(sector["sundays"],sector["month"])
               and sector["sundays"] <= sector["horizon"] and sector["closing"] <= sector["horizon"],
               "COVERAGE_VECTOR_TOTALS")
         presence = sector["presence"]
         check(isinstance(presence, list) and all(integer(day) and day < profile["days"] for day in presence)
               and presence == sorted(set(presence)), "COVERAGE_VECTOR_PRESENCE")
-    if profile.get("confirmedDemands") == 0:
+    if reconcile_shortage and profile.get("confirmedDemands") == 0:
         check(sum(row["horizon"] for row in vector) == metrics["normalizedEstimatedShortage"],
               "COVERAGE_VECTOR_SHORTAGE")
     return vector
@@ -284,6 +287,13 @@ def pair_detail(pair, a, b, profile, comparable):
           and not (pair["regressed"] and pair["improved"]), "PAIR_FLAGS")
     def vector(row):
         metrics=row["finalAssessment"]["metrics"]
+        if profile.get("cutover") is True:
+            vector=sector_vector({**metrics,"coverageAudit":row.get("comparisonCoverageAudit")},profile,False)
+            full=sector_vector({**metrics,"coverageAudit":row.get("scaleCoverageAudit")},profile)
+            check(len(vector)==len(full) and all(all(x[k]<=y[k] for k in ("horizon","month","sundays","monthSundays","closing","peak"))
+                and set(x["presence"]).issubset(set(y["presence"])) and all(d>=5 for d in x["presence"])
+                for x,y in zip(vector,full)),"CUTOVER_COMPARISON_SCOPE")
+            return vector
         if profile["days"]==42 or row.get("kind")=="temporal":
             metrics={**metrics,"coverageAudit":row.get("scaleCoverageAudit")}
         return sector_vector(metrics,profile)
@@ -592,7 +602,8 @@ def adaptive_gain(paired,comparisons):
 
 
 
-TEMPORAL_CASES=("mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks")
+TEMPORAL_CASES=("mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks",
+    "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership")
 TEMPORAL_OBJECTIVES=("COVERAGE","SUNDAY_COVERAGE","SUNDAY_PEAK","MOVEMENT_COVERAGE","CLOSING_COVERAGE",
     "UNTIMED_ROTATION","SUNDAY_BALANCE","REST_SPACING","LEADERSHIP","SATURDAY_BALANCE","REST_DISTRIBUTION",
     "REST_ROTATION","PEOPLE_CHANGED","STABILITY","PREFERENCES","TIE_BREAK")
@@ -620,11 +631,14 @@ def verify_temporal(rows):
     for offset,case in enumerate(TEMPORAL_CASES):
         group=rows[offset*4:(offset+1)*4];first=group[0];profile=first["profile"]
         people={"combined-115-six-weeks":115,"combined-250-six-weeks":250}.get(case,3)
-        days=7 if people==3 else 42
+        cutover=case=="monthly-cutover-december"
+        days=31 if cutover else 7 if people==3 else 42
         check(first["scenario"]==case and profile["days"]==days and profile["includedOnWire"]==people
-              and profile["activePositions"]==people*days
-              and (days==7 or profile["untimedPositions"]>0 and profile["paidHolidayCount"]==1)
-              and profile["paidHolidayCount"]==(1 if case=="holiday-absence-history" or days==42 else 0)
+              and profile["activePositions"]==people*days and profile.get("cutover") is cutover
+              and integer(profile.get("visibleDays")) and 1<=profile["visibleDays"]<=days
+              and (days!=42 or profile["untimedPositions"]>0 and profile["paidHolidayCount"]==1)
+              and (case!="cross-sector-leadership" or profile["untimedPositions"]==7)
+              and profile["paidHolidayCount"]==(1 if case=="holiday-absence-history" or days==42 or cutover else 0)
               and profile["searchBudgetSeconds"]==12
               and profile["processBudgetSeconds"]==18 and profile["transportBudgetSeconds"]==20,"TEMPORAL_PROFILE")
         records={"ortools":[],"temporal":[]}
@@ -655,7 +669,7 @@ def verify_temporal(rows):
                 if ok:
                     check(isinstance(t,dict) and t.get("version")==2 and t.get("scope")=="SYNTHETIC_TEMPORAL"
                           and t.get("partialModel") is True and t.get("entities")==people and t.get("days")==days
-                          and t.get("untimed")==profile["untimedPositions"]//days
+                          and t.get("untimed")==profile["untimedPositions"]//days and t.get("visibleDays")==profile["visibleDays"]
                           and t.get("domainMode")==("EXACT_WEEK" if days==7 else "BOUNDED_PATHS")
                           and t.get("pathLimit")== (30000 if days==7 else 384)
                           and integer(t.get("patterns")) and people<=t["patterns"]<=people*t["pathLimit"]
@@ -668,6 +682,10 @@ def verify_temporal(rows):
                           and t["finalCost"][16]==r["tieBreakAudit"],"TEMPORAL_SCORE")
                     check(t["finalCost"]<=t["initialCost"],"TEMPORAL_SCORE_REGRESSED")
                     verify_temporal_search(t)
+                    rest=r["scaleRestAudit"]
+                    check(integer(t.get("restWeight")) and 1<=t["restWeight"]<=1+people*days
+                          and t.get("restPairs")==rest["adjustablePairs"] and t.get("restExcess")==rest["correctableExcess"]
+                          and t["finalCost"][8]==t["restWeight"]*t["restExcess"]+t["restPairs"],"TEMPORAL_REST_SCORE")
                     objs=t.get("objectives")
                     check(isinstance(objs,list) and len(objs)==16 and tuple(o["name"] for o in objs)==TEMPORAL_OBJECTIVES,"TEMPORAL_OBJECTIVES")
                     for j,o in enumerate(objs):

@@ -112,10 +112,11 @@ function personalChecks(scenario:Scenario,trial:Trial){
 // The frozen E2 evaluator exports coverageAudit only for 7/28 days.
 // Reconstruct the same independent aggregate on the validated 42-day proposal,
 // without changing the pinned core or fabricating raw measurements.
-function scaleCoverageAudit(trial:Trial){
+function scaleCoverageAudit(trial:Trial,comparison=false){
   if(!valid(trial)||!trial.proposal)return null;
   const input=trial.proposal,days=dateRange(input.startDate,input.endDate),visible=new Set(visibleDates(input));
-  const quality=coverageQuality(input);
+  const cutover=input.startDate==="2026-12-01"&&input.endDate==="2026-12-31"&&input.planningWeekStartsOn==="SUNDAY";
+  const quality=coverageQuality(input,comparison&&cutover?days.slice(5):days);
   const sectors=[...new Set([...input.employees.map(p=>p.sector),...input.demands.map(d=>d.sector)])].sort();
   return sectors.map(sector=>{
     let horizon=0,month=0,sundays=0,monthSundays=0,closing=0;
@@ -138,12 +139,14 @@ function scaleRestAudit(trial:Trial){
     concentration:r.concentration,weeklyRepetitions:r.weeklyRepetitions};
 }
 
-const TEMPORAL_CASES=["mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks"] as const;
+const TEMPORAL_CASES=["mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks",
+  "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership"] as const;
 type TemporalCase=typeof TEMPORAL_CASES[number];
 function combinedSize(name:TemporalCase){return name==="combined-115-six-weeks"?115:name==="combined-250-six-weeks"?250:0;}
 function temporalScenario(name:TemporalCase):Scenario{
   const size=combinedSize(name);
   if(size)return combinedTemporalScenario(size);
+  if(name==="night-same-day"||name==="weekly-transition-42"||name==="weekly-transition-40"||name==="monthly-cutover-december"||name==="cross-sector-leadership")return extendedTemporalScenario(name);
   const input=newInput("SYNTH","Synthetic temporal settings","2026-11",42);
   Object.assign(input,{startDate:"2026-11-01",endDate:"2026-11-07",visibleMonth:undefined,
     simulation:true,restRulesVersion:3,storeClosingMinutes:1200,generationMode:name==="hours-only"?"HOURS_ONLY":name==="rest-only"?"REST_ONLY":"DAYS_AND_HOURS",
@@ -181,6 +184,49 @@ function temporalScenario(name:TemporalCase):Scenario{
   return {id:"team-10-week",prepared:{...parsed,needsRegeneration:false,generationBasis:generationScenarioBasis(parsed)}};
 }
 
+type ExtendedCase="night-same-day"|"weekly-transition-42"|"weekly-transition-40"|"monthly-cutover-december"|"cross-sector-leadership";
+function extendedTemporalScenario(name:ExtendedCase):Scenario{
+  const hours=name==="night-same-day"||name==="cross-sector-leadership"?40:name==="weekly-transition-40"?42:44;
+  const input=newInput("SYNTH","Synthetic dated and protected temporal settings","2026-11",hours);
+  Object.assign(input,{startDate:"2026-11-01",endDate:"2026-11-07",visibleMonth:undefined,
+    simulation:true,restRulesVersion:3,storeClosingMinutes:name==="night-same-day"?1380:1200,
+    generationMode:"DAYS_AND_HOURS"});
+  const shift=(id:string,start:number,block:number):EscalaInput["shifts"][number]=>({id,name:id,segments:[
+    {kind:"WORK",start,end:start+block},{kind:"BREAK",start:start+block,end:start+block+60},
+    {kind:"WORK",start:start+block+60,end:start+2*block+60}]});
+  if(name==="night-same-day")input.shifts=[shift("night",840,240)];
+  else if(name==="cross-sector-leadership")input.shifts=[shift("day",420,240)];
+  else if(name==="weekly-transition-40"){
+    input.startDate="2027-12-12";input.endDate="2027-12-18";
+    input.shifts=[shift("before",420,252),shift("after",420,240)];
+  }else{
+    input.startDate=name==="monthly-cutover-december"?"2026-12-01":"2026-12-13";
+    input.endDate=name==="monthly-cutover-december"?"2026-12-31":"2026-12-19";
+    if(name==="monthly-cutover-december"){
+      input.visibleMonth="2026-12";
+      input.policy.closedDates=["2026-12-25"];input.policy.holidayDates=["2026-12-25"];
+      input.policy.paidHolidayDates=["2026-12-25"];
+    }
+    input.shifts=[shift("before",420,264),shift("after",420,252)];
+  }
+  Object.assign(input.policy,{calendarMode:"MANUAL",validFrom:input.startDate,validUntil:input.endDate,transitionWeekAccepted:true});
+  input.employees=Array.from({length:3},(_,i)=>({...newEmployee(hours,input.shifts.map(s=>s.id)),
+    id:"person-"+i,name:"Synthetic person "+i,registration:String(i),sector:"S",role:"Repositor",scheduleMode:"TIMED" as const}));
+  const day=name==="weekly-transition-42"||name==="monthly-cutover-december"?"2026-12-16":
+    name==="weekly-transition-40"?"2027-12-16":"2026-11-04";
+  input.demands=[{id:"d",date:day,sector:"S",start:name==="night-same-day"?1320:480,
+    end:name==="night-same-day"?1380:540,minimum:1,estimated:false}];
+  if(name==="cross-sector-leadership"){
+    Object.assign(input.employees[0],{scheduleMode:"UNTIMED",shiftIds:[],role:"Gerente",
+      leadership:{role:"BRANCH",source:"MANUAL",sectors:["S","T"]}});
+    input.employees[2].sector="T";
+    input.assignments=[{employeeId:"person-0",date:day,kind:"DUTY",locked:true}];
+    input.movementPriorities=[{startDate:day,endDate:day,level:"HIGH"}];
+    input.demands.push({id:"d-t",date:day,sector:"T",role:"Repositor",start:480,end:540,minimum:1,estimated:false});
+  }
+  const parsed=escalaInputSchema.parse(input);
+  return {id:"team-10-week",prepared:{...parsed,needsRegeneration:false,generationBasis:generationScenarioBasis(parsed)}};
+}
 function combinedTemporalScenario(size:number):Scenario{
   const input=newInput("SYNTH","Synthetic six-week combined temporal","2026-11",42);
   Object.assign(input,{startDate:"2026-04-05",endDate:"2026-05-16",visibleMonth:undefined,
@@ -274,6 +320,31 @@ function temporalTieAudit(trial:Trial){
 }
 function temporalChecks(name:TemporalCase,scenario:Scenario,trial:Trial){
   if(combinedSize(name))return combinedChecks(scenario,trial);
+  if(name==="night-same-day"||name==="weekly-transition-42"||name==="weekly-transition-40"||name==="monthly-cutover-december"||name==="cross-sector-leadership"){
+    if(!valid(trial)||!trial.proposal)return false;
+    const rows=trial.proposal.assignments,input=scenario.prepared;
+    if(name==="cross-sector-leadership")return rows.some(a=>a.employeeId==="person-0"&&a.date==="2026-11-04"&&a.kind==="DUTY"&&a.locked)
+      &&!rows.some(a=>a.employeeId==="person-0"&&a.kind==="WORK")
+      &&["person-1","person-2"].every(id=>rows.some(a=>a.employeeId===id&&a.date==="2026-11-04"&&a.kind==="WORK"));
+    const paid=(own:EscalaInput["assignments"])=>own.reduce((sum,a)=>sum+
+      (input.shifts.find(s=>s.id===a.shiftId)?.segments.filter(s=>s.kind==="WORK").reduce((n,s)=>n+s.end-s.start,0)??0),0);
+    for(const p of input.employees){
+      const own=rows.filter(a=>a.employeeId===p.id);
+      if(name==="monthly-cutover-december"){
+        if(own.length!==31||own.filter(a=>a.date<="2026-12-05"&&a.kind==="WORK").length!==3
+          ||own.filter(a=>a.date<="2026-12-05"&&a.kind==="OFF").length!==2
+          ||paid(own.filter(a=>a.date>="2026-12-06"&&a.date<="2026-12-12"))!==2640
+          ||paid(own.filter(a=>a.date>="2026-12-13"&&a.date<="2026-12-19"))!==2520
+          ||own.some(a=>a.date>="2026-12-16"&&a.shiftId==="before")
+          ||!own.some(a=>a.date==="2026-12-25"&&a.kind==="HOLIDAY"))return false;
+      }else{
+        const required=name==="weekly-transition-42"?2520:2400;
+        if(own.length!==7||own.filter(a=>a.kind==="WORK").length!==5||paid(own)!==required
+          ||own.some(a=>a.kind==="WORK"&&a.shiftId!==(name==="night-same-day"?"night":"after")))return false;
+      }
+    }
+    return true;
+  }
   if(!valid(trial)||!trial.proposal)return false;
   const rows=trial.proposal.assignments,old=scenario.prepared.assignments;
   const lookup=new Map(rows.map(a=>[a.employeeId+"\0"+a.date,a]));
@@ -311,10 +382,12 @@ async function main() {
       stage="PREFLIGHT";
       validateBaselineEnvelope(baseline,frozen);
       stage="MEASURE";
-      const profile=envelopeProfile(frozen);
-      const size=combinedSize(name)||3,days=combinedSize(name)?42:7;
+      const cutover=name==="monthly-cutover-december";
+      const profile={...envelopeProfile(frozen),visibleDays:visibleDates(scenario.prepared).length,cutover};
+      const size=combinedSize(name)||3,days=combinedSize(name)?42:cutover?31:7;
       if(profile.includedOnWire!==size||profile.days!==days||profile.activePositions!==size*days
-        ||(days===42&&(!profile.untimedPositions||profile.paidHolidayCount!==1)))throw Error("FORGE_TEMPORAL_PROFILE");
+        ||(days===42&&(!profile.untimedPositions||profile.paidHolidayCount!==1))
+        ||(cutover&&(profile.visibleDays!==31||profile.paidHolidayCount!==1)))throw Error("FORGE_TEMPORAL_PROFILE");
       const shared={...snapshot,scenario:name,inputHash:digest(frozen),baselineRevision,timefoldRevision:CONTROL,
         arch:arch(),resources,profile,sampleKind:"cold-container",hostCapacityMeasured:false,liveHttpMeasured:false};
       for(let repetition=0;repetition<2;repetition++){
@@ -328,7 +401,8 @@ async function main() {
           round.push({variant,trial,record:{kind:"temporal",...shared,repetition,position,variant,
             identity:images[variant==="ortools"?"ortools":"solverforge"],temporal:adapter?.telemetry()??null,
             featureChecks:temporalChecks(name,scenario,trial),tieBreakAudit:temporalTieAudit(trial),
-            scaleCoverageAudit:scaleCoverageAudit(trial),scaleRestAudit:scaleRestAudit(trial),...record}});
+            scaleCoverageAudit:scaleCoverageAudit(trial),scaleRestAudit:scaleRestAudit(trial),
+            comparisonCoverageAudit:cutover?scaleCoverageAudit(trial,true):null,...record}});
         }
         const control=round.find(x=>x.variant==="ortools")!.trial;
         for(const item of round)console.log(JSON.stringify({...item.record,againstOrtools:compare(control,item.trial)}));
