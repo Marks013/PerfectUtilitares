@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use crate::domain::{Employee, Plan};
-use crate::model::{Band, Sector, Presence, allowed_indices, catalog, full_mask};
+use crate::model::{Band, Sector, Presence, PersonalRules, allowed_indices, catalog, full_mask};
 
 type Result<T> = std::result::Result<T, &'static str>;
 fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
@@ -16,10 +16,44 @@ fn identifier<'a>(v: &'a V, k: &str) -> Result<&'a str> {
 fn empty_array(v:&V,k:&str)->bool {
     v.get(k).is_none_or(|x|x.as_array().is_some_and(Vec::is_empty))
 }
-fn valid_inactive_slot(slot:&V)->bool {
-    slot.as_object().is_some_and(|o|o.len()==2)
-        && slot.get("enabled").and_then(V::as_bool)==Some(false)
-        && slot.get("weekday").is_some_and(|d|d.is_null()||d.as_i64().is_some_and(|n|(0..=6).contains(&n)))
+fn weekday_bit(v:&V)->Result<u8>{
+    let n=v.as_i64().filter(|n|(0..=6).contains(n)).ok_or("WEEKDAY")?;
+    Ok(1u8<<((n+1)%7))
+}
+fn weekday_mask(person:&V,key:&str)->Result<u8>{
+    let mut mask=0;
+    for v in array(person,key)?{
+        let bit=weekday_bit(v)?;
+        check(mask&bit==0,"DUPLICATE_WEEKDAY")?;
+        mask|=bit;
+    }
+    Ok(mask)
+}
+fn personal_rules(person:&V,max_run:u8)->Result<(u8,PersonalRules)>{
+    let fixed=weekday_mask(person,"fixedOffDays")?;
+    let mode=text(person,"offMode")?;
+    check(match mode{"VARIABLE"=>fixed==0,"MIXED"=>fixed.count_ones()==1,
+        "FIXED"=>fixed.count_ones()==2,_=>false},"FIXED_REST_PROJECTION")?;
+    if let Some(slots)=person.get("fixedRestSlots"){
+        let slots=slots.as_array().filter(|a|a.len()==2).ok_or("FIXED_REST_SLOTS")?;
+        let mut projected=0;
+        for slot in slots{
+            check(slot.as_object().is_some_and(|o|o.len()==2),"FIXED_REST_SLOT")?;
+            let enabled=slot.get("enabled").and_then(V::as_bool).ok_or("FIXED_REST_SLOT")?;
+            let value=slot.get("weekday").ok_or("FIXED_REST_SLOT")?;
+            let bit=if value.is_null(){0}else{weekday_bit(value)?};
+            if enabled{
+                check(bit!=0&&projected&bit==0,"FIXED_REST_SLOT")?;
+                projected|=bit;
+            }
+        }
+        check(projected==fixed,"FIXED_REST_PROJECTION")?;
+    }
+    check(fixed&64==0,"FIXED_SATURDAY")?;
+    let pattern=text(person,"offPattern")?;
+    check(["ANY","CONSECUTIVE","PREFER_CONSECUTIVE"].contains(&pattern),"OFF_PATTERN")?;
+    Ok((fixed,PersonalRules{max_run,variable:mode=="VARIABLE",consecutive:pattern=="CONSECUTIVE",
+        prefer_consecutive:pattern=="PREFER_CONSECUTIVE",preferred:weekday_mask(person,"preferredOffDays")?}))
 }
 fn number(v: &V, k: &str) -> Result<i32> {
     v.get(k).and_then(V::as_i64).and_then(|n| i32::try_from(n).ok()).ok_or("EXPECTED_INTEGER")
@@ -63,7 +97,7 @@ pub fn date(index: usize) -> String { format!("2026-11-{:02}", index + 1) }
 #[derive(Clone, Debug)]
 struct Person {
     id: String, sector: usize, role: String, shift: String,
-    segments: [(i32, i32); 2], cap: usize,
+    segments: [(i32, i32); 2], cap: usize, fixed:u8, rules:PersonalRules,
 }
 #[derive(Clone, Copy, Debug)]
 struct Row { work: bool, locked: Option<bool> }
@@ -94,8 +128,8 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     check(number(input,"schemaVersion")? == 1 && text(input,"branchCode")? == "SYNTH"
         && boolean(input,"simulation",false)? && text(input,"timeZone")? == "America/Sao_Paulo"
         && text(input,"planningWeekStartsOn")? == "SUNDAY" && number(input,"restRulesVersion")? == 3
-        && number(input,"defaultWeeklyHours")? == 42
-        && optional_text(input,"generationMode","DAYS_AND_HOURS")? == "DAYS_AND_HOURS", "SYNTHETIC_ONLY")?;
+        && matches!(number(input,"defaultWeeklyHours")?,40|42|44)
+        && ["DAYS_AND_HOURS","REST_ONLY"].contains(&optional_text(input,"generationMode","DAYS_AND_HOURS")?), "SYNTHETIC_ONLY")?;
     check(text(input,"startDate")? == "2026-11-01" && input.get("visibleMonth").is_none(), "HORIZON")?;
     let days = match text(input,"endDate")? { "2026-11-07" => 7, "2026-11-28" => 28, _ => return Err("HORIZON") };
     for k in input.as_object().unwrap().keys() {
@@ -107,8 +141,11 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(policy.get(k).is_none(), "POLICY_METADATA_UNSUPPORTED")?;
     }
     check(text(policy,"calendarMode")? == "MANUAL" && optional_text(policy,"normativeProfile","CUSTOM")? == "CUSTOM"
-        && matches!(number(policy,"weeklyLimit")?,42|44) && range(number(policy,"dailyLimitMinutes")?,504,600)
-        && number(policy,"maxConsecutiveWorkDays")? == 5 && policy.get("mealIntervalAgreement").is_none(), "POLICY")?;
+        && matches!(number(policy,"weeklyLimit")?,40|42|44) && range(number(policy,"dailyLimitMinutes")?,1,600)
+        && range(number(policy,"maxConsecutiveWorkDays")?,1,6) && policy.get("mealIntervalAgreement").is_none(), "POLICY")?;
+    let max_run=number(policy,"maxConsecutiveWorkDays")?.min(5) as u8;
+    let weekly_limit=number(policy,"weeklyLimit")?;
+    let daily_limit=number(policy,"dailyLimitMinutes")?;
     for k in ["closedDates","holidayDates","authorizedHolidayDates","paidHolidayDates"] { check(empty(policy,k), "HOLIDAY_UNSUPPORTED")?; }
     let closing = number(input,"storeClosingMinutes")?;
     let meal = number(policy,"minMealMinutes")?;
@@ -129,7 +166,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         let e=number(&segments[2],"start")?; let f=number(&segments[2],"end")?;
         check([a,b,c,d,e,f].iter().all(|&v|range(v,0,1440)), "CLOCK_RANGE")?;
         check(a >= 300 && a < b && b == c && c < d && d == e && e < f && f <= closing.min(1200)
-            && b-a+f-e == 504 && d-c >= meal && d-c <=120 && 1440-(f-a) >= inter
+            && matches!(b-a+f-e,480|504|528) && d-c >= meal && d-c <=120 && 1440-(f-a) >= inter
             && 2880-(f-a) >= weekly_rest && (!limit_blocks || (b-a).max(f-e) <= 270), "CLOCK_GEOMETRY")?;
         check(clocks.insert(identifier(clock,"id")?.to_string(),[(a,b),(e,f)]).is_none(), "DUPLICATE_CLOCK")?;
     }
@@ -144,8 +181,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
             && text(person,"name")?.starts_with("Synthetic person "), "SYNTHETIC_ID")?;
         let active = text(person,"activeFrom")?;
         check(boolean(person,"planningEnabled",true)? && text(person,"scheduleMode")? == "TIMED"
-            && number(person,"weeklyHours")? == 42 && text(person,"offMode")? == "VARIABLE"
-            && text(person,"offPattern")? == "ANY" && !boolean(person,"historyKnown",false)?
+            && matches!(number(person,"weeklyHours")?,40|42|44) && !boolean(person,"historyKnown",false)?
             && person.get("activeUntil").is_none() && person.get("simulationDailyMinutes").is_none()
             && (active.is_empty() || civil_date(active) && active <= "2026-11-01"), "PERSON_PROFILE")?;
         check(["INDIVIDUAL","BRANCH"].contains(&optional_text(person,"weeklyHoursMode","INDIVIDUAL")?), "WEEKLY_MODE")?;
@@ -154,25 +190,29 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
             check(leadership.is_object() && text(leadership, "source")? == "INFERRED",
                 "LEADERSHIP_UNSUPPORTED")?;
         }
-        for k in ["history","planningHistory","planningFuture","fixedOffDays","preferredOffDays","manualShiftOverrides","manualShiftBaseIds"] {
+        for k in ["history","planningHistory","planningFuture","manualShiftOverrides","manualShiftBaseIds"] {
             check(empty_array(person,k), "PERSON_RESTRICTION_UNSUPPORTED")?;
         }
         check(empty(person,"manualShiftByDate"),"PERSON_RESTRICTION_UNSUPPORTED")?;
-        if let Some(slots) = person.get("fixedRestSlots") {
-            check(slots.as_array().is_some_and(|a| a.len()==2 && a.iter().all(valid_inactive_slot)), "FIXED_REST_UNSUPPORTED")?;
-        }
+        let (fixed_rest,rules)=personal_rules(person,max_run)?;
         let options=array(person,"shiftIds")?;
-        check(options.len()==1, "CLOCK_OPTIONS")?;
-        let shift=options[0].as_str().ok_or("CLOCK_OPTIONS")?;
+        let mut unique=BTreeSet::new();
+        check(!options.is_empty()&&options.len()<=12&&options.iter().all(|v|
+            v.as_str().is_some_and(|id|clocks.contains_key(id)&&unique.insert(id))),"CLOCK_OPTIONS")?;
         let fixed=optional_text(person,"fixedImportedShiftId","")?;
-        check(fixed.is_empty() || fixed==shift, "CLOCK_OPTIONS")?;
+        let shift=if fixed.is_empty(){check(options.len()==1,"CLOCK_OPTIONS")?;options[0].as_str().unwrap()}
+            else{check(unique.contains(fixed),"CLOCK_OPTIONS")?;fixed};
+        let segments=*clocks.get(shift).ok_or("CLOCK_REFERENCE")?;
+        let hours=number(person,"weeklyHours")?;
+        let paid=segments.iter().map(|(a,b)|b-a).sum::<i32>();
+        check(hours<=weekly_limit&&paid*5==hours*60&&paid<=daily_limit,"WEEKLY_MINUTES")?;
         let cap=number(person,"maxConsecutiveSundays")?;
         let rule=optional_text(person,"sundayRestRule","PROTECTIVE")?;
         check((cap==1 || cap==2) && ["PROTECTIVE","UNREVIEWED","CLT_386","COMMERCE"].contains(&rule), "SUNDAY_RULE")?;
         let next=sectors.len();
         let sector=*sectors.entry(text(person,"sector")?.to_string()).or_insert(next);
         let p=Person { id:id.to_string(),sector, role:text(person,"role")?.to_string(),shift:shift.to_string(),
-            segments:*clocks.get(shift).ok_or("CLOCK_REFERENCE")?,cap:if rule=="COMMERCE" {cap as usize} else {1} };
+            segments,cap:if rule=="COMMERCE" {cap as usize} else {1},fixed:fixed_rest,rules };
         check(by_id.insert(id.to_string(),people.len()).is_none(), "DUPLICATE_PERSON")?;
         people.push(p);
     }
@@ -225,34 +265,37 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     }
     let facts:Vec<Arc<Sector>>=facts.into_iter().map(Arc::new).collect();
     let catalogue=Arc::new(catalog(days));
-    let mut cache=HashMap::<(u32,u32,usize,u32),Arc<[usize]>>::new();
+    let mut cache=HashMap::<(u32,u32,usize,u32,PersonalRules),Arc<[usize]>>::new();
     let mut entities=Vec::with_capacity(people.len());
     let mut cohorts=BTreeMap::new();
     for (i,p) in people.into_iter().enumerate() {
         let(mut lock_work,mut lock_off,mut saved_known,mut saved_work,mut seed_known,mut seed_work)=(0u32,0u32,0u32,0u32,0u32,0u32);
-        let mut comparable=(1u32<<(days/7))-1;
+        let mut comparable=if p.fixed.count_ones()==2||p.rules.consecutive{0}else{(1u32<<(days/7))-1};
         let mut lock_flags=Vec::with_capacity(days);
         for day in 0..days {
             let bit=1u32<<day;
             let old=saved.get(&(i,day));let init=initial.get(&(i,day));
             let locked=old.is_some_and(|r|r.locked==Some(true));
             let saturday=day%7==6;
+            let fixed_rest=p.fixed&(1<<(day%7))!=0;
+            if fixed_rest {lock_off|=bit;}
             if locked {
                 comparable&=!(1u32<<(day/7));
                 let old=old.unwrap();
                 check(!saturday||old.work,"LOCKED_SATURDAY")?;
+                check(!fixed_rest||!old.work,"LOCKED_FIXED_REST")?;
                 check(init.is_none_or(|r|r.work==old.work),"SEED_LOCK_CONFLICT")?;
                 if old.work {lock_work|=bit;} else {lock_off|=bit;}
             }
             if saturday {lock_work|=bit;}
             if let Some(row)=old {saved_known|=bit;if row.work {saved_work|=bit;}}
             lock_flags.push(old.and_then(|row|row.locked));
-            if locked || saturday {seed_known|=bit;if lock_work&bit!=0{seed_work|=bit;}}
+            if locked || saturday || fixed_rest {seed_known|=bit;if lock_work&bit!=0{seed_work|=bit;}}
             else if let Some(row)=init {seed_known|=bit;if row.work {seed_work|=bit;}}
         }
-        let key=(lock_work,lock_off,p.cap,comparable);
+        let key=(lock_work,lock_off,p.cap,comparable,p.rules);
         if !cache.contains_key(&key) {
-            let allowed = allowed_indices(&catalogue, days, lock_work, lock_off, p.cap, comparable, deadline)
+            let allowed = allowed_indices(&catalogue, days, lock_work, lock_off, p.cap, comparable, p.rules, deadline)
                 .ok_or("MAPPING_TIMEOUT")?;
             cache.insert(key, Arc::from(allowed));
         }
@@ -262,7 +305,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         let pinned=allowed.len()==1;
         let next=cohorts.len();
         let cohort=*cohorts.entry((p.sector,p.role.clone(),p.segments,p.cap)).or_insert(next);
-        entities.push(Employee{id:i,name_id:p.id,shift:p.shift,sector:p.sector,cohort,sunday_cap:p.cap,locked_work:lock_work,locked_off:lock_off,
+        entities.push(Employee{id:i,name_id:p.id,shift:p.shift,sector:p.sector,cohort,sunday_cap:p.cap,rules:p.rules,locked_work:lock_work,locked_off:lock_off,
             saved_known,saved_work,lock_flags,comparable_weeks:comparable,facts:Arc::clone(&facts[p.sector]),
             catalog:Arc::clone(&catalogue),pattern:if pinned {Some(allowed[0])} else {initial_index},allowed,pinned});
     }

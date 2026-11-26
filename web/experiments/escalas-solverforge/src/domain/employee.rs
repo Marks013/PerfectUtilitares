@@ -1,6 +1,6 @@
 use solverforge::prelude::*;
 use std::sync::Arc;
-use crate::model::{Member, Sector};
+use crate::model::{Member, Sector, PersonalRules};
 
 #[planning_entity]
 pub struct Employee {
@@ -11,6 +11,7 @@ pub struct Employee {
     pub sector: usize,
     pub cohort: usize,
     pub sunday_cap: usize,
+    pub rules: PersonalRules,
     pub locked_work: u32,
     pub locked_off: u32,
     pub saved_known: u32,
@@ -35,6 +36,7 @@ impl Employee {
         Member {
             id: self.id,
             cohort: self.cohort,
+            rules: self.rules,
             mask: self.mask(),
             locked_off: self.locked_off,
             saved_known: self.saved_known,

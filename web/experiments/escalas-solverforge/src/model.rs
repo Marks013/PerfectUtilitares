@@ -13,7 +13,7 @@ pub use coverage::{Band, Cost, Member, Sector, evaluate, validate_complete};
 pub use incremental::SectorAccumulator;
 pub use presence::Presence;
 pub use guard::SeedGuard;
-pub use patterns::{allowed_indices, catalog, full_mask, worked};
+pub use patterns::{PersonalRules, allowed_indices, catalog, full_mask, worked};
 #[cfg(test)]
 use patterns::legal;
 pub use seed::seed;
