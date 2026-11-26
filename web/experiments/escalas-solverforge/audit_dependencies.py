@@ -70,7 +70,7 @@ def query(items):
     matches={i:set() for i in range(len(items))}
     for _ in range(30):
         if not pending:
-            return {i:sorted(v) for i,v in matches.items()}
+            break
         batch,pending=pending[:50],pending[50:]
         queries=[]
         for i,token in batch:
@@ -94,11 +94,13 @@ def query(items):
                 require(isinstance(value,str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,120}",value),"ADVISORY_ID")
                 matches[i].add(value)
             token=r.get("next_page_token")
+            require(token is None or isinstance(token,str),"PAGINATION")
             if token:
-                require(isinstance(token,str) and len(token)<=4096 and (i,token) not in seen,"PAGINATION")
+                require(len(token)<=4096 and (i,token) not in seen,"PAGINATION")
                 seen.add((i,token))
                 pending.append((i,token))
-    raise ValueError("PAGINATION_LIMIT")
+    require(not pending,"PAGINATION_LIMIT")
+    return {i:sorted(v) for i,v in matches.items()}
 
 def main():
     metadata_path,lock_path,output=map(pathlib.Path,sys.argv[1:4])
