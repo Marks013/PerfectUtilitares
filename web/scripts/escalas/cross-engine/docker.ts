@@ -242,6 +242,8 @@ type TemporalTelemetry = {
   version: 2; scope: "SYNTHETIC_TEMPORAL"; partialModel: true;
   days: number; untimed: number; domainMode: "EXACT_WEEK" | "BOUNDED_PATHS"; pathLimit: number;
   mapSeconds: number; seedSeconds: number; searchSeconds: number; nativeSearch: boolean;
+  nativeCandidateCost: number[] | null; nativeAccepted: boolean; guardPreserved: boolean | null;
+  resultSource: "NATIVE" | "SEED_RETAINED" | "CONSTRUCTOR_ONLY";
   entities: number; patterns: number; initialCost: number[]; finalCost: number[];
   objectives: {name: string; status: string; cost: number | null}[];
 };
@@ -270,6 +272,11 @@ export function temporalForgeAdapter(image: string) {
           ||!vector(t.initialCost)||!vector(t.finalCost)||t.finalCost[0]!==0
           ||typeof t.nativeSearch!=="boolean"||typeof t.mapSeconds!=="number"||!Number.isFinite(t.mapSeconds)||t.mapSeconds<0
           ||typeof t.searchSeconds!=="number"||!Number.isFinite(t.searchSeconds)||t.searchSeconds<0
+          ||typeof t.nativeAccepted!=="boolean"
+          ||(t.nativeSearch?(!vector(t.nativeCandidateCost)||typeof t.guardPreserved!=="boolean"||t.searchSeconds<=0):
+            (t.nativeCandidateCost!==null||t.guardPreserved!==null||t.nativeAccepted||t.searchSeconds!==0))
+          ||(t.nativeAccepted?(!t.guardPreserved||t.resultSource!=="NATIVE"||JSON.stringify(t.finalCost)!==JSON.stringify(t.nativeCandidateCost)):
+            (t.resultSource!==(t.nativeSearch?"SEED_RETAINED":"CONSTRUCTOR_ONLY")||JSON.stringify(t.finalCost)!==JSON.stringify(t.initialCost)))
           ||!Array.isArray(t.objectives)||t.objectives.length!==16||!reply.cgroup)
           throw Error("FORGE_TEMPORAL_TELEMETRY");
         telemetry=t as TemporalTelemetry;

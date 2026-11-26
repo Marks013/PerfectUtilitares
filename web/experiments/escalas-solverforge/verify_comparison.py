@@ -597,6 +597,23 @@ TEMPORAL_OBJECTIVES=("COVERAGE","SUNDAY_COVERAGE","SUNDAY_PEAK","MOVEMENT_COVERA
     "UNTIMED_ROTATION","SUNDAY_BALANCE","REST_SPACING","LEADERSHIP","SATURDAY_BALANCE","REST_DISTRIBUTION",
     "REST_ROTATION","PEOPLE_CHANGED","STABILITY","PREFERENCES","TIE_BREAK")
 
+def verify_temporal_search(t):
+    attempted=t.get("nativeSearch")
+    accepted=t.get("nativeAccepted")
+    guard=t.get("guardPreserved")
+    candidate=t.get("nativeCandidateCost")
+    check(type(attempted) is bool and type(accepted) is bool,"TEMPORAL_SEARCH_TRACE")
+    initial=t["initialCost"];final=t["finalCost"]
+    if attempted:
+        check(isinstance(candidate,list) and len(candidate)==17 and all(integer(x) for x in candidate)
+              and type(guard) is bool and t["searchSeconds"]>0,"TEMPORAL_NATIVE_TRACE")
+        check(accepted==(guard and candidate<initial),"TEMPORAL_NATIVE_ACCEPTANCE")
+    else:
+        check(candidate is None and guard is None and not accepted and t["searchSeconds"]==0,"TEMPORAL_NATIVE_NOT_RUN")
+    check(t.get("resultSource")==("NATIVE" if accepted else "SEED_RETAINED" if attempted else "CONSTRUCTOR_ONLY")
+          and final==(candidate if accepted else initial),"TEMPORAL_RESULT_SOURCE")
+
+
 def verify_temporal(rows):
     check(len(rows)==4*len(TEMPORAL_CASES) and all(isinstance(r,dict) for r in rows),"TEMPORAL_COUNT")
     reports={}
@@ -650,6 +667,7 @@ def verify_temporal(rows):
                     check(t["finalCost"][0]==0 and t["finalCost"][1]==r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"]
                           and t["finalCost"][16]==r["tieBreakAudit"],"TEMPORAL_SCORE")
                     check(t["finalCost"]<=t["initialCost"],"TEMPORAL_SCORE_REGRESSED")
+                    verify_temporal_search(t)
                     objs=t.get("objectives")
                     check(isinstance(objs,list) and len(objs)==16 and tuple(o["name"] for o in objs)==TEMPORAL_OBJECTIVES,"TEMPORAL_OBJECTIVES")
                     for j,o in enumerate(objs):
@@ -671,6 +689,8 @@ def verify_temporal(rows):
             "candidateP50Seconds":p50([r["productSeconds"] for r,ok in candidate if ok]),
             "candidateCpuP50Seconds":p50([r["cgroup"]["cpuUsageUsec"]/1e6 for r,ok in candidate if ok]),
             "candidatePeakMemoryBytes":max((r["cgroup"]["memoryPeakBytes"] for r,ok in candidate if ok),default=None),
+            "nativeAccepted":sum(bool(r["temporal"]["nativeAccepted"]) for r,ok in candidate if ok),
+            "guardRejected":sum(r["temporal"]["guardPreserved"] is False for r,ok in candidate if ok),
         }
     observed=all(v["ortoolsValid"]==2 and v["temporalValid"]==2 for v in reports.values())
     return {"decision":"TEMPORAL_VALIDITY_OBSERVED" if observed else "TEMPORAL_VALIDITY_REVIEW_REQUIRED",
@@ -810,6 +830,10 @@ if __name__ == "__main__":
             report=verify_curve(rows) if sys.argv[2]=="curve" else verify_tail(rows) if sys.argv[2]=="tail" else verify_personal(rows) if sys.argv[2]=="personal" else verify_scale(rows) if sys.argv[2]=="scale" else verify_temporal(rows) if sys.argv[2]=="temporal" else verify(rows,sys.argv[2])
         print(json.dumps(report,separators=(",",":")))
         sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY","E2_TAIL_NONINFERIORITY_OBSERVED","E3A_FIXED_CLOCK_NONINFERIORITY_OBSERVED","SCALE_VALIDITY_OBSERVED","TEMPORAL_VALIDITY_OBSERVED") else 1)
+    except EvidenceError as error:
+        code=str(error)
+        print("SolverForge comparison rejected: "+(code if re.fullmatch(r"[A-Z_0-9]+",code) else "EVIDENCE_ERROR"),file=sys.stderr)
+        sys.exit(1)
     except (ValueError,KeyError,TypeError,IndexError,AttributeError,OSError,OverflowError):
         print("SolverForge comparison rejected: invalid or inconsistent evidence",file=sys.stderr)
         sys.exit(1)

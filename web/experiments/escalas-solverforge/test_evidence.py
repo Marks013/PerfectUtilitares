@@ -138,5 +138,19 @@ class EvidenceTests(unittest.TestCase):
         for invalid in (None,{},dict(rest,correctableExcess=3),dict(rest,concentration=-1)):
             with self.assertRaises(ValueError):verify_rest_metrics(invalid)
 
+    def test_temporal_search_trace_distinguishes_seed_and_native_improvement(self):
+        from verify_comparison import verify_temporal_search
+        initial=[0,1]+[0]*15
+        candidate=[0]*17
+        rejected={"nativeSearch":True,"nativeAccepted":False,"guardPreserved":False,
+                  "nativeCandidateCost":candidate,"searchSeconds":2,"resultSource":"SEED_RETAINED",
+                  "initialCost":initial,"finalCost":initial}
+        verify_temporal_search(rejected)
+        accepted=dict(rejected,nativeAccepted=True,guardPreserved=True,resultSource="NATIVE",finalCost=candidate)
+        verify_temporal_search(accepted)
+        for invalid in (dict(rejected,nativeAccepted=True),dict(accepted,guardPreserved=False),
+                        dict(rejected,finalCost=candidate),dict(accepted,nativeCandidateCost=initial)):
+            with self.assertRaises(ValueError):verify_temporal_search(invalid)
+
 if __name__=="__main__":
     unittest.main()

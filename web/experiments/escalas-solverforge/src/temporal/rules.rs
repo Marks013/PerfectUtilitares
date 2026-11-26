@@ -148,7 +148,7 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
     let mut cache=BTreeMap::<Vec<Vec<u8>>,Vec<[u8;7]>>::new();
     let mut weeks=Vec::new();
     for part in options.as_chunks::<7>().0{
-        let values=if let Some(v)=cache.get(part){v.clone()}else{
+        let values=if let Some(v)=cache.get(part.as_slice()){v.clone()}else{
             let v=weekly(part,rules,clocks,deadline)?;cache.insert(part.to_vec(),v.clone());v
         };
         check(!values.is_empty(),"NO_PERSONAL_PATTERN")?;weeks.push(values);

@@ -104,7 +104,51 @@ jobs:
           docker build --target runtime --build-arg SOURCE_REVISION="$BASE" -t escalas-forge-baseline:ci "$build/web/ops/escalas"
           git -C .. archive "$TIMEFOLD_CONTROL" web/experiments/escalas-timefold | tar -x -C "$build"
           docker build --build-arg SOURCE_REVISION="$TIMEFOLD_CONTROL" -t escalas-forge-timefold:ci "$build/web/experiments/escalas-timefold"
+      - name: Audit resolved and full locked public Rust dependencies
+        id: security
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/forge-evidence"
+          python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
+      - name: SF54 six-week 115 and 250 employee diagnostic
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          output="$RUNNER_TEMP/forge-evidence/scale.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" scale | tee "$output"
+          python3 experiments/escalas-solverforge/verify_comparison.py "$output" scale | tee "$RUNNER_TEMP/forge-evidence/scale-summary.json"
+      - name: SF54d-f combined temporal feature and scale comparison through original client
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          output="$RUNNER_TEMP/forge-evidence/temporal.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" temporal | tee "$output"
+          python3 experiments/escalas-solverforge/verify_comparison.py "$output" temporal | tee "$RUNNER_TEMP/forge-evidence/temporal-summary.json"
+      - name: Expanded scale and temporal noninferiority qualification (not production parity)
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        run: |
+          python3 - "$RUNNER_TEMP/forge-evidence/scale-summary.json" "$RUNNER_TEMP/forge-evidence/temporal-summary.json" <<'PY'
+          import json,sys
+          failures=[]
+          for name,path in zip(("SCALE","TEMPORAL"),sys.argv[1:]):
+              try:
+                  with open(path,encoding="utf-8") as source:
+                      report=json.load(source)
+                  if report.get("noninferiorityObserved") is not True:
+                      failures.append(name+"_NONINFERIORITY_NOT_PROVEN")
+              except (OSError,ValueError):
+                  failures.append(name+"_EVIDENCE_INCOMPLETE")
+          if failures:
+              raise SystemExit(",".join(failures))
+          PY
       - name: Three-engine smoke and balanced paired comparison
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -145,14 +189,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 experiments/escalas-solverforge/verify_comparison.py "$RUNNER_TEMP/forge-evidence/paired-summary.json" quality | tee "$RUNNER_TEMP/forge-evidence/quality-summary.json"
-      - name: Audit resolved and full locked public Rust dependencies
-        id: security
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/forge-evidence"
-          python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
       - name: Independent 32-repeat tail latency and adaptive qualification
         if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
         shell: bash
@@ -171,24 +207,6 @@ jobs:
               result=json.load(source)
           assert result["adaptiveGain"]["decision"]=="ADAPTIVE_GAIN_OBSERVED","ADAPTIVE_GAIN_NOT_PROVEN"
           PY
-      - name: SF54 six-week 115 and 250 employee diagnostic
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          image() { docker image inspect "$1" --format '{{.Id}}'; }
-          output="$RUNNER_TEMP/forge-evidence/scale.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" scale | tee "$output"
-          python3 experiments/escalas-solverforge/verify_comparison.py "$output" scale | tee "$RUNNER_TEMP/forge-evidence/scale-summary.json"
-      - name: SF54d-f combined temporal feature and scale comparison through original client
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          image() { docker image inspect "$1" --format '{{.Id}}'; }
-          output="$RUNNER_TEMP/forge-evidence/temporal.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" temporal | tee "$output"
-          python3 experiments/escalas-solverforge/verify_comparison.py "$output" temporal | tee "$RUNNER_TEMP/forge-evidence/temporal-summary.json"
       - name: Require zero candidate Clippy warnings
         if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
         shell: bash
