@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use crate::domain::{Employee, Plan};
-use crate::model::{Band, Sector, Presence, PersonalRules, allowed_indices, catalog, full_mask};
+use crate::model::{Band, Sector, Presence, PersonalRules, allowed_indices, catalog, full_mask, legal_profile};
 
 type Result<T> = std::result::Result<T, &'static str>;
 fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
@@ -102,7 +102,8 @@ struct Person {
 #[derive(Clone, Copy, Debug)]
 struct Row { work: bool, locked: Option<bool> }
 
-fn records(input: &V, field: &str, people: &[Person], by_id: &HashMap<String, usize>, days: usize)
+fn records(input: &V, field: &str, people: &[Person], by_id: &HashMap<String, usize>, days: usize,
+           clocks:&BTreeMap<String,[(i32,i32);2]>,hours_only:bool)
     -> Result<BTreeMap<(usize, usize), Row>> {
     let mut result = BTreeMap::new();
     for row in array(input, field)? {
@@ -113,9 +114,11 @@ fn records(input: &V, field: &str, people: &[Person], by_id: &HashMap<String, us
         let person = *by_id.get(text(row, "employeeId")?).ok_or("ASSIGNMENT_REFERENCE")?;
         let day = date_index(text(row, "date")?, days)?;
         let work = match text(row, "kind")? { "WORK" => true, "OFF" => false, _ => return Err("ASSIGNMENT_KIND") };
-        check(if work { row.get("shiftId").and_then(V::as_str) == Some(people[person].shift.as_str()) }
-            else { row.get("shiftId").is_none() }, "ASSIGNMENT_CLOCK")?;
         let locked = match row.get("locked") { None => None, Some(v) => Some(v.as_bool().ok_or("LOCK_TYPE")?) };
+        check(if work {
+            let sid=text(row,"shiftId")?;
+            sid==people[person].shift || hours_only&&locked!=Some(true)&&clocks.contains_key(sid)
+        } else { row.get("shiftId").is_none() }, "ASSIGNMENT_CLOCK")?;
         check(result.insert((person, day), Row { work, locked }).is_none(), "DUPLICATE_ASSIGNMENT")?;
     }
     Ok(result)
@@ -129,7 +132,9 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         && boolean(input,"simulation",false)? && text(input,"timeZone")? == "America/Sao_Paulo"
         && text(input,"planningWeekStartsOn")? == "SUNDAY" && number(input,"restRulesVersion")? == 3
         && matches!(number(input,"defaultWeeklyHours")?,40|42|44)
-        && ["DAYS_AND_HOURS","REST_ONLY"].contains(&optional_text(input,"generationMode","DAYS_AND_HOURS")?), "SYNTHETIC_ONLY")?;
+        && ["DAYS_AND_HOURS","REST_ONLY","HOURS_ONLY"].contains(&optional_text(input,"generationMode","DAYS_AND_HOURS")?), "SYNTHETIC_ONLY")?;
+    let mode=optional_text(input,"generationMode","DAYS_AND_HOURS")?;
+    let hours_only=mode=="HOURS_ONLY";
     check(text(input,"startDate")? == "2026-11-01" && input.get("visibleMonth").is_none(), "HORIZON")?;
     let days = match text(input,"endDate")? { "2026-11-07" => 7, "2026-11-28" => 28, _ => return Err("HORIZON") };
     for k in input.as_object().unwrap().keys() {
@@ -200,8 +205,16 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(!options.is_empty()&&options.len()<=12&&options.iter().all(|v|
             v.as_str().is_some_and(|id|clocks.contains_key(id)&&unique.insert(id))),"CLOCK_OPTIONS")?;
         let fixed=optional_text(person,"fixedImportedShiftId","")?;
-        let shift=if fixed.is_empty(){check(options.len()==1,"CLOCK_OPTIONS")?;options[0].as_str().unwrap()}
-            else{check(unique.contains(fixed),"CLOCK_OPTIONS")?;fixed};
+        let shift=if fixed.is_empty(){
+            let first=options[0].as_str().unwrap();
+            // In REST_ONLY, OR-Tools retains the first clock per duration.
+            // Only admit the single-duration case here; different durations
+            // require the later temporal-domain model, never silently prune.
+            let paid=clocks[first].iter().map(|(a,b)|b-a).sum::<i32>();
+            check(options.len()==1 || mode=="REST_ONLY"&&unique.iter().all(|id|
+                clocks[*id].iter().map(|(a,b)|b-a).sum::<i32>()==paid),"CLOCK_OPTIONS")?;
+            first
+        }else{check(unique.contains(fixed),"CLOCK_OPTIONS")?;fixed};
         let segments=*clocks.get(shift).ok_or("CLOCK_REFERENCE")?;
         let hours=number(person,"weeklyHours")?;
         let paid=segments.iter().map(|(a,b)|b-a).sum::<i32>();
@@ -216,9 +229,10 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(by_id.insert(id.to_string(),people.len()).is_none(), "DUPLICATE_PERSON")?;
         people.push(p);
     }
-    let saved=records(input,"assignments",&people,&by_id,days)?;
+    let saved=records(input,"assignments",&people,&by_id,days,&clocks,hours_only)?;
     let explicit=input.get("_initialAssignments").is_some();
-    let initial=if explicit { records(input,"_initialAssignments",&people,&by_id,days)? } else {saved.clone()};
+    check(!hours_only||!explicit&&saved.len()==people.len()*days,"HOURS_ONLY_GRID")?;
+    let initial=if explicit { records(input,"_initialAssignments",&people,&by_id,days,&clocks,false)? } else {saved.clone()};
     if explicit { check(initial.len()==people.len()*days, "INCOMPLETE_SEED")?; }
 
     let mut demand_groups=BTreeMap::<(usize,usize,bool),Vec<(i32,i32,i64,Option<String>)>>::new();
@@ -271,7 +285,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     let mut rest_groups=BTreeMap::new();
     for (i,p) in people.into_iter().enumerate() {
         let(mut lock_work,mut lock_off,mut saved_known,mut saved_work,mut seed_known,mut seed_work)=(0u32,0u32,0u32,0u32,0u32,0u32);
-        let mut comparable=if p.fixed.count_ones()==2||p.rules.consecutive{0}else{(1u32<<(days/7))-1};
+        let mut comparable=if hours_only||p.fixed.count_ones()==2||p.rules.consecutive{0}else{(1u32<<(days/7))-1};
         let mut lock_flags=Vec::with_capacity(days);
         for day in 0..days {
             let bit=1u32<<day;
@@ -295,12 +309,20 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
             else if let Some(row)=init {seed_known|=bit;if row.work {seed_work|=bit;}}
         }
         let key=(lock_work,lock_off,p.cap,comparable,p.rules);
-        if !cache.contains_key(&key) {
-            let allowed = allowed_indices(&catalogue, days, lock_work, lock_off, p.cap, comparable, p.rules, deadline)
-                .ok_or("MAPPING_TIMEOUT")?;
-            cache.insert(key, Arc::from(allowed));
-        }
-        let allowed=cache[&key].clone();
+        let allowed:Arc<[usize]>=if hours_only {
+            // Singleton legal personal domain, but keep actual lock masks
+            // untouched for rest-quality and opportunity accounting.
+            check(saved_known==full_mask(days)&&legal_profile(saved_work,days,lock_work,lock_off,p.cap,comparable,p.rules),
+                "HOURS_ONLY_GRID_CONFLICT")?;
+            Arc::from(vec![catalogue.binary_search(&saved_work).map_err(|_|"HOURS_ONLY_GRID_CONFLICT")?])
+        }else{
+            if !cache.contains_key(&key) {
+                let allowed = allowed_indices(&catalogue, days, lock_work, lock_off, p.cap, comparable, p.rules, deadline)
+                    .ok_or("MAPPING_TIMEOUT")?;
+                cache.insert(key, Arc::from(allowed));
+            }
+            cache[&key].clone()
+        };
         check(!allowed.is_empty(),"NO_PERSONAL_PATTERN")?;
         let initial_index=if seed_known==full_mask(days) {catalogue.binary_search(&seed_work).ok().filter(|j|allowed.binary_search(j).is_ok())} else {None};
         let pinned=allowed.len()==1;

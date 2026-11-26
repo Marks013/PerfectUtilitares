@@ -355,6 +355,48 @@ mod integration {
     }
 
     #[test]
+    fn fixed_clock_hours_only_changes_clocks_without_moving_days_or_locks(){
+        let mut data=input();
+        data["input"]["generationMode"]=json!("HOURS_ONLY");
+        let mut old=data["input"]["shifts"][0].clone();
+        old["id"]=json!("old");old["segments"][2]["end"]=json!(1020);
+        data["input"]["shifts"].as_array_mut().unwrap().push(old);
+        data["input"]["assignments"]=Value::Array((0..3).flat_map(|i|(0..7).map(move |d|{
+            let rest=d==0||d==3;
+            let mut row=json!({"employeeId":format!("person-{i}"),"date":wire::date(d),
+                "kind":if rest{"OFF"}else{"WORK"},"locked":d==6});
+            if !rest{row["shiftId"]=json!(if d==6{"clock"}else{"old"});}
+            row
+        })).collect());
+        let bytes=serde_json::to_vec(&data).unwrap();
+        let answer=solve(&bytes,Instant::now(),true,BUDGET,false);
+        assert_eq!(answer["body"]["status"],"FEASIBLE");
+        for (before,after) in data["input"]["assignments"].as_array().unwrap().iter()
+            .zip(answer["body"]["assignments"].as_array().unwrap()){
+            for key in ["employeeId","date","kind","locked"]{assert_eq!(before[key],after[key]);}
+            if before["kind"]=="WORK"{assert_eq!(after["shiftId"],"clock");}
+        }
+        data["input"]["assignments"][6]["shiftId"]=json!("old");
+        assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("ASSIGNMENT_CLOCK")));
+        data["input"]["assignments"].as_array_mut().unwrap().pop();
+        assert!(wire::read(&data,Instant::now()+Duration::from_secs(5)).is_err());
+    }
+
+    #[test]
+    fn rest_only_selects_first_reference_of_the_same_duration(){
+        let mut data=input();
+        let mut alternate=data["input"]["shifts"][0].clone();
+        alternate["id"]=json!("other");
+        data["input"]["shifts"].as_array_mut().unwrap().push(alternate);
+        data["input"]["employees"][0]["shiftIds"]=json!(["other","clock"]);
+        data["input"]["generationMode"]=json!("REST_ONLY");
+        let plan=wire::read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert_eq!(plan.employees[0].shift,"other");
+        data["input"]["generationMode"]=json!("DAYS_AND_HOURS");
+        assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_OPTIONS")));
+    }
+
+    #[test]
     fn seed_only_is_not_reported_as_native_search() {
         let bytes=serde_json::to_vec(&input()).unwrap();
         let reply=solve(&bytes,Instant::now(),true,BUDGET,false);

@@ -50,12 +50,13 @@ fn sunday_cost(facts:&Sector,att:&[Presence;28])->[i64;2] {
     }
     result
 }
-type SignatureCache=BTreeMap<(u32,u32,usize,u32,PersonalRules),Vec<Vec<usize>>>;
+type SignatureCache=BTreeMap<(u32,u32,usize,u32,PersonalRules,Option<usize>),Vec<Vec<usize>>>;
 fn signature_domains(plan:&Plan,members:&[usize],deadline:Instant)->Option<SignatureCache>{
     let mut cache=SignatureCache::new();
     for &i in members{
         let p=&plan.employees[i];
-        let key=(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules);
+        let key=(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules,
+            if p.allowed.len()==1{Some(p.allowed[0])}else{None});
         if let std::collections::btree_map::Entry::Vacant(entry)=cache.entry(key){
             let mut buckets=vec![Vec::new();16];
             for (n,&index) in p.allowed.iter().enumerate(){
@@ -68,7 +69,8 @@ fn signature_domains(plan:&Plan,members:&[usize],deadline:Instant)->Option<Signa
     Some(cache)
 }
 fn buckets<'a>(cache:&'a SignatureCache,p:&Employee)->&'a [Vec<usize>]{
-    &cache[&(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules)]
+    &cache[&(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules,
+            if p.allowed.len()==1{Some(p.allowed[0])}else{None})]
 }
 fn choose(p:&Employee,att:&[Presence;28],candidates:&[usize],deadline:Instant)->Option<usize>{
     let mut hard=[0i64;28];let mut estimated=[0i64;28];
