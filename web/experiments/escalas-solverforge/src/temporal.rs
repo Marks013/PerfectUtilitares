@@ -31,8 +31,8 @@ const OBJECTIVES:[(&str,&str);16]=[
     ("COVERAGE","SCOPED"),("SUNDAY_COVERAGE","SCOPED"),("SUNDAY_PEAK","PARTIAL_GLOBAL_BOUND"),
     ("MOVEMENT_COVERAGE","SCOPED"),("CLOSING_COVERAGE","SCOPED"),
     ("UNTIMED_ROTATION","SCOPED_WEEKDAY_AND_SUNDAY"),("SUNDAY_BALANCE","SCOPED_COHORT_AND_DATES"),
-    ("REST_SPACING","SCOPED_MONTHLY_EXCESS_AND_PAIRS"),("LEADERSHIP","PARTIAL_LOCAL_RESPONSIBILITY"),
-    ("SATURDAY_BALANCE","SCOPED_COHORT"),("REST_DISTRIBUTION","PARTIAL_SECTOR_ROLE"),
+    ("REST_SPACING","SCOPED_MONTHLY_EXCESS_AND_PAIRS"),("LEADERSHIP","SCOPED_EXPLICIT_RESPONSIBILITY"),
+    ("SATURDAY_BALANCE","SCOPED_COHORT"),("REST_DISTRIBUTION","SCOPED_SECTOR_ROLE_AND_LEADERS"),
     ("REST_ROTATION","SCOPED"),("PEOPLE_CHANGED","SCOPED"),("STABILITY","SCOPED"),
     ("PREFERENCES","SCOPED"),("TIE_BREAK","SCOPED_ORIGINAL_SHA256"),
 ];
@@ -60,7 +60,7 @@ impl TemporalFacts{
 }
 #[derive(Clone)]
 pub struct Member{
-    pub id:usize,pub role:usize,pub cohort:usize,pub leader:bool,pub untimed:bool,pub facts:Arc<TemporalFacts>,pub pattern:Option<Pattern>,
+    pub id:usize,pub sector:usize,pub role:usize,pub rest_role:usize,pub cohort:usize,pub leader_targets:Arc<Vec<usize>>,pub leader_label:bool,pub untimed:bool,pub facts:Arc<TemporalFacts>,pub pattern:Option<Pattern>,
 }
 #[derive(Default)]
 pub struct TemporalAccumulator{members:BTreeMap<usize,Member>}
@@ -112,11 +112,6 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     if sunday_ref.iter().filter(|&&r|r).count()>=2{
         result[3]=sunday.iter().max().copied().unwrap_or(0)*facts.peak_weight+sunday.iter().map(|x|x*x).sum::<i64>();
     }
-    for (day,weight) in facts.priority.iter().enumerate().take(facts.days){
-        if !facts.closed[day]&&weight.is_some()&&!rows.iter().any(|r|r.leader&&r.pattern.is_some_and(|p|work(p.states[day]))){
-            result[9]+=weight.unwrap_or(0);
-        }
-    }
     let mut cohorts=BTreeMap::<(usize,usize),(i64,i64)>::new();
     let mut sunday_cohorts=BTreeMap::<usize,Vec<&Member>>::new();
     for row in &rows{sunday_cohorts.entry(row.cohort).or_default().push(row);}
@@ -146,19 +141,81 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     }
     // Unique sector + role groups; don't double-count a sector with one role.
     let mut groups=BTreeMap::<usize,Vec<&Member>>::new();
-    for row in &rows{groups.entry(row.role).or_default().push(row);}
+    for row in &rows{groups.entry(row.rest_role).or_default().push(row);}
     let mut all_groups=vec![rows.clone()];
     if groups.len()>1{all_groups.extend(groups.into_values());}
-    for group in all_groups{
-        for day in 0..facts.days{
-            if facts.closed[day]{continue;}
-            let states:Vec<_>=group.iter().filter_map(|r|r.pattern.map(|p|p.states[day])).filter(|&s|s!=ABS).collect();
-            if states.len()>=2{
-                result[11]+=(7*states.iter().filter(|&&s|s==OFF).count() as i64-2*states.len() as i64).abs();
+    for group in all_groups{result[11]+=rest_group_cost(&group,facts);}
+    result
+}
+
+fn rest_group_cost(rows:&[&Member],facts:&TemporalFacts)->i64{
+    let mut total=0;
+    for day in 0..facts.days{
+        if facts.closed[day]{continue;}
+        let (mut eligible,mut off)=(0i64,0i64);
+        for row in rows{
+            if let Some(p)=row.pattern{
+                if p.states[day]!=ABS{eligible+=1;off+=i64::from(p.states[day]==OFF);}
+            }
+        }
+        if eligible>=2{total+=(7*off-2*eligible).abs();}
+    }
+    total
+}
+fn leadership_presence(rows:&[&Member])->BTreeSet<(usize,usize)>{
+    let mut present=BTreeSet::new();
+    for row in rows{
+        if row.leader_targets.is_empty(){continue;}
+        if let Some(p)=row.pattern{
+            for (day,&state) in p.states.iter().enumerate().take(row.facts.days){
+                if work(state){for &sector in row.leader_targets.iter(){present.insert((sector,day));}}
             }
         }
     }
-    result
+    present
+}
+fn critical_leadership(plan:&TemporalPlan)->BTreeSet<(usize,usize)>{
+    let members:Vec<_>=plan.employees.iter().map(TemporalEmployee::member).collect();
+    let rows:Vec<_>=members.iter().collect();
+    let sectors:BTreeMap<_,_>=rows.iter().map(|r|(r.sector,&r.facts)).collect();
+    leadership_presence(&rows).into_iter().filter(|(s,d)|sectors.get(s).is_some_and(|f|!f.closed[*d]&&f.priority[*d]==Some(3))).collect()
+}
+fn global_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
+    let rows:Vec<_>=members.collect();
+    let mut out=[0;17];
+    let Some(first)=rows.first() else{return out;};
+    let facts=rows.iter().map(|r|(r.sector,&r.facts)).collect::<BTreeMap<_,_>>();
+    if facts.values().any(|f|f.movement_enabled){
+        let present=leadership_presence(&rows);
+        for (&sector,f) in &facts{
+            for (day,&weight) in f.priority.iter().enumerate().take(f.days){
+                if !f.closed[day]&&!present.contains(&(sector,day)){out[9]+=weight.unwrap_or(0);}
+            }
+        }
+    }
+    // Original REST_DISTRIBUTION adds one distinct leadership-label group
+    // across sectors. Deduplicate against the sector and role groups.
+    let leaders:Vec<_>=rows.iter().copied().filter(|r|r.leader_label).collect();
+    if leaders.len()>1{
+        let sector=leaders[0].sector;let role=leaders[0].rest_role;
+        let same_sector=leaders.iter().all(|r|r.sector==sector);
+        let duplicate=same_sector&&(rows.iter().filter(|r|r.sector==sector).count()==leaders.len()
+            ||leaders.iter().all(|r|r.rest_role==role)&&rows.iter().filter(|r|r.sector==sector&&r.rest_role==role).count()==leaders.len());
+        if !duplicate{out[11]+=rest_group_cost(&leaders,&first.facts);}
+    }
+    out
+}
+
+#[derive(Default)]
+pub struct GlobalAccumulator{members:BTreeMap<usize,Member>}
+impl Accumulator<Member,Cost> for GlobalAccumulator{
+    type Retraction=usize;
+    fn accumulate(&mut self,value:Member)->usize{
+        let id=value.id;assert!(self.members.insert(id,value).is_none());id
+    }
+    fn retract(&mut self,id:usize){assert!(self.members.remove(&id).is_some());}
+    fn with_result<T>(&self,f:impl FnOnce(&Cost)->T)->T{f(&global_cost(self.members.values()))}
+    fn reset(&mut self){self.members.clear();}
 }
 fn evaluate(plan:&TemporalPlan)->Cost{
     let mut groups=BTreeMap::<usize,Vec<Member>>::new();let mut total=[0;17];
@@ -167,6 +224,7 @@ fn evaluate(plan:&TemporalPlan)->Cost{
         groups.entry(person.sector).or_default().push(person.member());
     }
     for rows in groups.values(){add(&mut total,sector_cost(rows.iter()));}
+    add(&mut total,global_cost(groups.values().flatten()));
     total
 }
 fn sector_prefix(plan:&TemporalPlan)->BTreeMap<usize,[i64;5]>{
@@ -297,9 +355,11 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     let people=array(input,"employees")?;
     check(!people.is_empty()&&people.len()<=if days==7{12}else{250},"TEMPORAL_PEOPLE_LIMIT")?;
     let mut sectors=BTreeMap::<String,usize>::new();let mut roles=BTreeMap::<String,usize>::new();
+    let mut rest_roles=BTreeMap::<String,usize>::new();
     for row in people{
         let n=sectors.len();sectors.entry(text(row,"sector")?.to_string()).or_insert(n);
         let n=roles.len();roles.entry(text(row,"role")?.to_string()).or_insert(n);
+        let n=rest_roles.len();rest_roles.entry(text(row,"role")?.trim().to_uppercase()).or_insert(n);
     }
     check(mixed_sectors.iter().all(|s|sectors.contains_key(*s)),"MIXED_SECTOR")?;
     type DemandGroups=BTreeMap<(usize,usize,bool),Vec<(i32,i32,i64,Option<usize>)>>;
@@ -389,19 +449,25 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
             }
         }
         let sector_name=text(p,"sector")?;let sector=sectors[sector_name];let role_name=text(p,"role")?;let role=roles[role_name];
-        let leader=if let Some(l)=p.get("leadership"){
+        let upper=role_name.trim().to_uppercase();
+        let rest_role=rest_roles[&upper];
+        let leader_label=upper.starts_with("ENC.")||upper.contains("ENCARREGAD")||upper.contains("GERENTE");
+        let leader_targets=if let Some(l)=p.get("leadership"){
             check(["MANUAL","INFERRED"].contains(&text(l,"source")?),"LEADERSHIP_UNSUPPORTED")?;
             let responsibility=text(l,"role")?;let scope=array(l,"sectors")?;
-            check(["NONE","SECTOR","BRANCH"].contains(&responsibility)&&scope.len()<=1
-                &&scope.iter().all(|s|s.as_str()==Some(sector_name))
-                &&(responsibility!="NONE"||scope.is_empty()),"CROSS_SECTOR_LEADERSHIP_PENDING")?;
-            responsibility!="NONE"&&!scope.is_empty()
-        }else{
-            // Admit only the unambiguous ASCII local-role inference. Other
-            // spellings must supply the prepared explicit responsibility.
-            let upper=role_name.to_uppercase();
-            upper.starts_with("ENCARREGAD")||upper.starts_with("ENC.")||upper.starts_with("ENC ")
-        };
+            check(["NONE","SECTOR","BRANCH"].contains(&responsibility)&&scope.len()<=250
+                &&(responsibility!="NONE"||scope.is_empty()),"LEADERSHIP_SCOPE")?;
+            let mut targets=BTreeSet::new();
+            for item in scope{
+                let name=item.as_str().ok_or("LEADERSHIP_SCOPE")?;
+                check(targets.insert(*sectors.get(name).ok_or("LEADERSHIP_SECTOR")?),"LEADERSHIP_DUPLICATE")?;
+            }
+            targets.into_iter().collect::<Vec<_>>()
+        }else if !upper.split(|c:char|!c.is_alphanumeric()).any(|word|word=="GERENTE")
+            &&(upper.contains("ENCARREGAD")||upper.split(|c:char|!c.is_alphanumeric()).any(|word|word=="ENC")){
+            vec![sector]
+        }else{Vec::new()};
+        let leader_targets=Arc::new(leader_targets);
         let hours=number(p,"weeklyHours")?;check(matches!(hours,40|42|44),"WEEKLY_MINUTES")?;
         let targets:[i32;6]=std::array::from_fn(|w|calendar.weeks.get(w).map_or(0,|&(_,end)|
             hours.min(calendar::weekly_ceiling(&labels[end-1]))*60));
@@ -501,7 +567,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         let next=cohorts.len();let cohort=*cohorts.entry((sector,role,untimed,profile,if untimed{[0;6]}else{targets},cap)).or_insert(next);
         let next=rest_groups.len();let rest_group=*rest_groups.entry((sector,untimed,if untimed{[0;6]}else{targets},cap)).or_insert(next);
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader,untimed,rest_group,rest_weight:0,preferred_clock,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader_targets,leader_label,rest_role,untimed,rest_group,rest_weight:0,preferred_clock,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
@@ -523,21 +589,9 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
     seed::construct(&mut plan,(seed_start+Duration::from_millis(1500)).min(start+budget-Duration::from_millis(700)));
     let seed_seconds=seed_start.elapsed().as_secs_f64();
     let initial=evaluate(&plan);
-    // Preserve observed high-priority local leadership, independent of
-    // the ordinal position of LEADERSHIP in the soft score.
-    let critical=|plan:&TemporalPlan|->BTreeSet<(usize,usize)>{
-        let mut out=BTreeSet::new();
-        for p in &plan.employees{
-            if !p.leader{continue;}
-            if let Some(i)=p.pattern{
-                for (day,&s) in p.catalog[i].states.iter().enumerate().take(p.facts.days){
-                    if work(s)&&p.facts.priority[day]==Some(3)&&!p.facts.closed[day]{out.insert((p.sector,day));}
-                }
-            }
-        }
-        out
-    };
-    let protected=if initial[0]==0{critical(&plan)}else{BTreeSet::new()};
+    // Explicit responsibilities are global; a leader's presence can cover
+    // another named sector, but never becomes that sector's hourly WORK.
+    let protected=if initial[0]==0{critical_leadership(&plan)}else{BTreeSet::new()};
     let sector_guard=if initial[0]==0{Some(sector_prefix(&plan))}else{None};
     let service_guard=if initial[0]==0{Some(service_guard::Snapshot::capture(&plan))}else{None};
     let rest_guard=if initial[0]==0{Some(rest_guard::Snapshot::capture(&plan))}else{None};
@@ -556,7 +610,7 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         let cost=evaluate(&plan);
         if plan.score!=Some(expected(cost)){return super::failure(500,"SPIKE_FAILED","RESULT","TEMPORAL_SCORE_DRIFT");}
         native_candidate=Some(cost);
-        let preserves=protected.is_subset(&critical(&plan))
+        let preserves=protected.is_subset(&critical_leadership(&plan))
             &&sector_guard.as_ref().is_none_or(|before|prefix_preserved(before,&sector_prefix(&plan)))
             &&service_guard.as_ref().is_none_or(|before|before.preserves(&plan))
             &&rest_guard.as_ref().is_none_or(|before|before.preserves(&plan));
@@ -672,7 +726,7 @@ mod tests{
             {"startDate":"2026-11-01","endDate":"2026-11-07","level":"NORMAL"},
             {"startDate":"2026-11-04","endDate":"2026-11-04","level":"HIGH","sector":"S"}]);
         let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
-        let p=&mut plan.employees[0];assert!(p.leader);assert_eq!(p.facts.priority[3],Some(3));
+        let p=&mut plan.employees[0];assert_eq!(p.leader_targets.as_slice(),&[0]);assert_eq!(p.facts.priority[3],Some(3));
         p.pattern=p.catalog.iter().position(|p|p.states[3]==OFF);
         let miss=evaluate(&plan)[9];
         assert!(miss>=3);
@@ -683,6 +737,26 @@ mod tests{
         let mut data=fixture();data["input"]["generationMode"]=json!("REST_ONLY");
         let plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
         assert!(plan.employees[0].catalog.iter().all(|p|!p.states.contains(&5)));
+    }
+    #[test]
+    fn explicit_cross_sector_leadership_does_not_invent_hourly_coverage(){
+        let mut data=fixture();
+        let mut peer=data["input"]["employees"][0].clone();
+        peer["id"]=json!("person-1");peer["name"]=json!("Synthetic person 1");peer["sector"]=json!("T");
+        peer["history"]=json!([]);
+        data["input"]["employees"].as_array_mut().unwrap().push(peer);
+        data["input"]["employees"][0]["leadership"]=json!({"source":"MANUAL","role":"BRANCH","sectors":["S","T"]});
+        data["input"]["movementPriorities"]=json!([{"startDate":"2026-11-04","endDate":"2026-11-04","level":"HIGH"}]);
+        data["input"]["demands"]=json!([{"id":"d","date":"2026-11-04","sector":"T","start":480,"end":540,"minimum":1,"estimated":false}]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        let a=plan.employees[0].catalog.iter().position(|p|work(p.states[3])).unwrap();
+        let b=plan.employees[1].catalog.iter().position(|p|p.states[3]==OFF).unwrap();
+        plan.employees[0].pattern=Some(a);plan.employees[1].pattern=Some(b);
+        assert_eq!(evaluate(&plan)[9],0);
+        assert_eq!(evaluate(&plan)[0],60);
+        assert_eq!(critical_leadership(&plan).len(),2);
+        plan.employees[0].pattern=plan.employees[0].catalog.iter().position(|p|p.states[3]==OFF);
+        assert_eq!(evaluate(&plan)[9],6);
     }
     #[test]
     fn multiweek_temporal_catalogues_are_bounded_and_shared_at_scale(){

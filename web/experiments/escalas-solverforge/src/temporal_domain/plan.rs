@@ -1,7 +1,7 @@
 use solverforge::prelude::*;
 use solverforge::stream::collector::Collector;
 use super::TemporalEmployee;
-use crate::temporal::{Cost,Member,TemporalAccumulator};
+use crate::temporal::{Cost,Member,TemporalAccumulator,GlobalAccumulator};
 use crate::temporal_score::TemporalScore;
 
 #[planning_solution(constraints = "define_temporal_constraints")]
@@ -22,6 +22,16 @@ impl Collector<&TemporalEmployee> for Members {
     fn create_accumulator(&self)->TemporalAccumulator {TemporalAccumulator::default()}
 }
 
+#[derive(Clone,Copy)]
+struct GlobalMembers;
+impl Collector<&TemporalEmployee> for GlobalMembers{
+    type Value=Member;
+    type Result=Cost;
+    type Accumulator=GlobalAccumulator;
+    fn extract(&self,input:&TemporalEmployee)->Member{input.member()}
+    fn create_accumulator(&self)->GlobalAccumulator{GlobalAccumulator::default()}
+}
+
 #[solverforge_constraints]
 fn define_temporal_constraints() -> impl ConstraintSet<TemporalPlan, TemporalScore> {
     let g=ConstraintFactory::<TemporalPlan,TemporalScore>::new();
@@ -30,9 +40,13 @@ fn define_temporal_constraints() -> impl ConstraintSet<TemporalPlan, TemporalSco
             .filter(|p:&TemporalEmployee|p.pattern.is_none())
             .penalize(fixed_weight(TemporalScore::of([1],[0;16])))
             .named("Missing legal temporal pattern"),
-        g.for_each(TemporalPlan::employees())
+        g.clone().for_each(TemporalPlan::employees())
             .group_by(|p:&TemporalEmployee|p.sector,Members)
             .penalize(|_sector:&usize,cost:&Cost|TemporalScore::of([cost[0]],std::array::from_fn(|i|cost[i+1])))
             .named("Temporal sector score"),
+        g.for_each(TemporalPlan::employees())
+            .group_by(|_:&TemporalEmployee|0usize,GlobalMembers)
+            .penalize(|_:&usize,cost:&Cost|TemporalScore::of([cost[0]],std::array::from_fn(|i|cost[i+1])))
+            .named("Global leadership and rest groups"),
     )
 }

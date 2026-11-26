@@ -10,7 +10,9 @@ pub struct TemporalEmployee {
     pub sector: usize,
     pub role: usize,
     pub cohort: usize,
-    pub leader: bool,
+    pub leader_targets: Arc<Vec<usize>>,
+    pub leader_label: bool,
+    pub rest_role: usize,
     pub untimed: bool,
     pub preferred_clock: [bool;16],
     pub rest_group: usize,
@@ -35,7 +37,7 @@ impl TemporalEmployee {
         cost
     }
     pub fn member(&self)->Member {
-        Member{id:self.id,role:self.role,cohort:self.cohort,leader:self.leader,untimed:self.untimed,facts:Arc::clone(&self.facts),
+        Member{id:self.id,sector:self.sector,role:self.role,rest_role:self.rest_role,cohort:self.cohort,leader_targets:Arc::clone(&self.leader_targets),leader_label:self.leader_label,untimed:self.untimed,facts:Arc::clone(&self.facts),
             pattern:self.pattern.and_then(|i|self.catalog.get(i).copied().map(|mut p|{p.personal=self.pattern_cost(i);p}))}
     }
 }
