@@ -581,18 +581,22 @@ def adaptive_gain(paired,comparisons):
 
 
 
-TEMPORAL_CASES=("mixed-variable","holiday-absence-history","hours-only","rest-only")
+TEMPORAL_CASES=("mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks")
 TEMPORAL_OBJECTIVES=("COVERAGE","SUNDAY_COVERAGE","SUNDAY_PEAK","MOVEMENT_COVERAGE","CLOSING_COVERAGE",
     "UNTIMED_ROTATION","SUNDAY_BALANCE","REST_SPACING","LEADERSHIP","SATURDAY_BALANCE","REST_DISTRIBUTION",
     "REST_ROTATION","PEOPLE_CHANGED","STABILITY","PREFERENCES","TIE_BREAK")
 
 def verify_temporal(rows):
-    check(len(rows)==16 and all(isinstance(r,dict) for r in rows),"TEMPORAL_COUNT")
+    check(len(rows)==4*len(TEMPORAL_CASES) and all(isinstance(r,dict) for r in rows),"TEMPORAL_COUNT")
     reports={}
     for offset,case in enumerate(TEMPORAL_CASES):
         group=rows[offset*4:(offset+1)*4];first=group[0];profile=first["profile"]
-        check(first["scenario"]==case and profile["days"]==7 and profile["includedOnWire"]==3
-              and profile["activePositions"]==21 and profile["searchBudgetSeconds"]==12
+        people={"combined-115-six-weeks":115,"combined-250-six-weeks":250}.get(case,3)
+        days=7 if people==3 else 42
+        check(first["scenario"]==case and profile["days"]==days and profile["includedOnWire"]==people
+              and profile["activePositions"]==people*days
+              and (days==7 or profile["untimedPositions"]>0 and profile["paidHolidayCount"]==1)
+              and profile["searchBudgetSeconds"]==12
               and profile["processBudgetSeconds"]==18 and profile["transportBudgetSeconds"]==20,"TEMPORAL_PROFILE")
         records={"ortools":[],"temporal":[]}
         for i,r in enumerate(group):
@@ -610,25 +614,40 @@ def verify_temporal(rows):
                   and isinstance(im.get("image"),str) and im["image"].startswith("sha256:") and sha(im["image"][7:],64),"TEMPORAL_IMAGE")
             check(type(r.get("featureChecks")) is bool,"TEMPORAL_FEATURE_CHECK")
             ok=valid(r,profile)
+            if ok:
+                check(integer(r.get("tieBreakAudit")),"TEMPORAL_TIE_AUDIT")
+                metrics=r["finalAssessment"]["metrics"]
+                if days==42:
+                    sector_vector({**metrics,"coverageAudit":r.get("scaleCoverageAudit")},profile)
             t=r.get("temporal")
             if name=="ortools":
                 check(t is None,"TEMPORAL_CONTROL")
             else:
                 check(r.get("rawStatus") not in ("OPTIMAL","INFEASIBLE"),"TEMPORAL_PROOF")
                 if ok:
-                    check(isinstance(t,dict) and t.get("version")==1 and t.get("scope")=="SYNTHETIC_ONE_WEEK_TIMED"
-                          and t.get("partialModel") is True and t.get("entities")==3 and integer(t.get("patterns"))
-                          and 3<=t["patterns"]<=90000 and type(t.get("nativeSearch")) is bool
-                          and numeric(t.get("mapSeconds")) and numeric(t.get("searchSeconds"))
-                          and t["mapSeconds"]+t["searchSeconds"]<=r["processSeconds"]+.01,"TEMPORAL_TELEMETRY")
+                    check(isinstance(t,dict) and t.get("version")==2 and t.get("scope")=="SYNTHETIC_TEMPORAL"
+                          and t.get("partialModel") is True and t.get("entities")==people and t.get("days")==days
+                          and t.get("untimed")==profile["untimedPositions"]//days
+                          and t.get("domainMode")==("EXACT_WEEK" if days==7 else "BOUNDED_PATHS")
+                          and t.get("pathLimit")== (30000 if days==7 else 384)
+                          and integer(t.get("patterns")) and people<=t["patterns"]<=people*t["pathLimit"]
+                          and type(t.get("nativeSearch")) is bool
+                          and all(numeric(t.get(k)) for k in ("mapSeconds","seedSeconds","searchSeconds"))
+                          and t["mapSeconds"]+t["seedSeconds"]+t["searchSeconds"]<=r["processSeconds"]+.01,"TEMPORAL_TELEMETRY")
                     for k in ("initialCost","finalCost"):
                         check(isinstance(t.get(k),list) and len(t[k])==17 and all(integer(x) for x in t[k]),"TEMPORAL_COST")
-                    check(t["finalCost"][0]==0 and t["finalCost"][1]==r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"],"TEMPORAL_SCORE")
+                    check(t["finalCost"][0]==0 and t["finalCost"][1]==r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"]
+                          and t["finalCost"][16]==r["tieBreakAudit"],"TEMPORAL_SCORE")
+                    check(t["finalCost"]<=t["initialCost"],"TEMPORAL_SCORE_REGRESSED")
                     objs=t.get("objectives")
                     check(isinstance(objs,list) and len(objs)==16 and tuple(o["name"] for o in objs)==TEMPORAL_OBJECTIVES,"TEMPORAL_OBJECTIVES")
                     for j,o in enumerate(objs):
                         check(isinstance(o.get("status"),str) and (o["cost"]==t["finalCost"][j+1]
                               if o["status"].startswith(("SCOPED","PARTIAL")) else o["cost"] is None),"TEMPORAL_OBJECTIVE_STATUS")
+                    check(objs[15]["status"]=="SCOPED_ORIGINAL_SHA256","TEMPORAL_TIE_STATUS")
+                    check(objs[2]["status"]==("NOT_APPLICABLE_ONE_WEEK" if days==7 else "PARTIAL_GLOBAL_BOUND")
+                          and objs[5]["status"]==("NOT_APPLICABLE_TIMED_ONLY" if t["untimed"]==0 else "SCOPED_WEEKDAY_AND_SUNDAY"),
+                          "TEMPORAL_APPLICABILITY")
             records[name].append((r,ok))
         candidate=records["temporal"];control=records["ortools"]
         for (a,aok),(b,bok) in zip(control,candidate):
@@ -639,6 +658,8 @@ def verify_temporal(rows):
             "pairedNoninferior":sum(r["againstOrtools"]["comparable"] is True and r["againstOrtools"]["regressed"] is False
                 and r["againstOrtools"]["retained"] is False for r,_ in candidate),
             "candidateP50Seconds":p50([r["productSeconds"] for r,ok in candidate if ok]),
+            "candidateCpuP50Seconds":p50([r["cgroup"]["cpuUsageUsec"]/1e6 for r,ok in candidate if ok]),
+            "candidatePeakMemoryBytes":max((r["cgroup"]["memoryPeakBytes"] for r,ok in candidate if ok),default=None),
         }
     observed=all(v["ortoolsValid"]==2 and v["temporalValid"]==2 for v in reports.values())
     return {"decision":"TEMPORAL_VALIDITY_OBSERVED" if observed else "TEMPORAL_VALIDITY_REVIEW_REQUIRED",

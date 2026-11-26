@@ -130,8 +130,12 @@ function scaleCoverageAudit(trial:Trial){
   });
 }
 
-const TEMPORAL_CASES=["mixed-variable","holiday-absence-history","hours-only","rest-only"] as const;
-function temporalScenario(name:typeof TEMPORAL_CASES[number]):Scenario{
+const TEMPORAL_CASES=["mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks"] as const;
+type TemporalCase=typeof TEMPORAL_CASES[number];
+function combinedSize(name:TemporalCase){return name==="combined-115-six-weeks"?115:name==="combined-250-six-weeks"?250:0;}
+function temporalScenario(name:TemporalCase):Scenario{
+  const size=combinedSize(name);
+  if(size)return combinedTemporalScenario(size);
   const input=newInput("SYNTH","Synthetic temporal settings","2026-11",42);
   Object.assign(input,{startDate:"2026-11-01",endDate:"2026-11-07",visibleMonth:undefined,
     simulation:true,restRulesVersion:3,storeClosingMinutes:1200,generationMode:name==="hours-only"?"HOURS_ONLY":name==="rest-only"?"REST_ONLY":"DAYS_AND_HOURS",
@@ -164,7 +168,99 @@ function temporalScenario(name:typeof TEMPORAL_CASES[number]):Scenario{
   return {id:"team-10-week",prepared:{...parsed,needsRegeneration:false,generationBasis:generationScenarioBasis(parsed)}};
 }
 
-function temporalChecks(name:typeof TEMPORAL_CASES[number],scenario:Scenario,trial:Trial){
+function combinedTemporalScenario(size:number):Scenario{
+  const input=newInput("SYNTH","Synthetic six-week combined temporal","2026-11",42);
+  Object.assign(input,{startDate:"2026-11-01",endDate:"2026-12-12",visibleMonth:undefined,
+    simulation:true,restRulesVersion:3,storeClosingMinutes:1200,generationMode:"DAYS_AND_HOURS"});
+  const holiday="2026-11-20";
+  Object.assign(input.policy,{calendarMode:"MANUAL",validFrom:input.startDate,validUntil:input.endDate,
+    closedDates:[holiday],holidayDates:[holiday],paidHolidayDates:[holiday]});
+  const shift=(id:string,start:number,block:number,meal:number):EscalaInput["shifts"][number]=>({id,name:id,segments:[
+    {kind:"WORK",start,end:start+block},{kind:"BREAK",start:start+block,end:start+block+meal},
+    {kind:"WORK",start:start+block+meal,end:start+2*block+meal}]});
+  input.shifts=[shift("eight",420,240,60),shift("nine",420,270,180),shift("late",480,240,60),
+    shift("fortyfour",420,264,60),shift("fortyfour-late",480,264,60)];
+  input.employees=Array.from({length:size},(_,i)=>{
+    const sector="Sector "+(Math.floor(i/12)+1),untimed=i%12===0;
+    const hours=i%3===1?40:i%3===2?44:42;
+    const clocks=untimed?[]:hours===40?["eight","late"]:hours===44?["fortyfour","fortyfour-late"]:["eight","nine","late"];
+    const id="person-"+i;
+    const person:EscalaInput["employees"][number]={...newEmployee(hours,clocks),id,registration:String(i),
+      name:"Synthetic person "+i,sector,role:untimed?"Encarregado":"Repositor",scheduleMode:untimed?"UNTIMED":"TIMED",
+      ...(untimed?{leadership:{role:"SECTOR",source:"MANUAL",sectors:[sector]}}:{})};
+    if(i%12===0||i%12===3){
+      person.historyKnown=true;
+      person.history=[untimed?{employeeId:id,date:"2026-10-25",kind:"DUTY"}:
+        {employeeId:id,date:"2026-10-25",kind:"WORK",shiftId:clocks[0]}];
+    }
+    return person;
+  });
+  const sectors=[...new Set(input.employees.map(p=>p.sector))];
+  input.mixed42Sectors=sectors;
+  input.movementPriorities=[{startDate:"2026-11-04",endDate:"2026-11-04",level:"HIGH"}];
+  input.assignments=input.employees.filter((_,i)=>i%12===1).map(p=>({employeeId:p.id,date:"2026-11-12",
+    kind:"ABSENCE" as const,locked:true,absenceSource:"MANUAL" as const}));
+  // Explicitly retain one timed clock and one duty in each sector.
+  for(const p of input.employees.filter((_,i)=>i%12===0||i%12===2)){
+    input.assignments.push(p.scheduleMode==="UNTIMED"?{employeeId:p.id,date:"2026-11-04",kind:"DUTY",locked:true}:
+      {employeeId:p.id,date:"2026-11-04",kind:"WORK",shiftId:p.shiftIds[0],locked:true});
+  }
+  const days=dateRange(input.startDate,input.endDate);
+  input.demands=sectors.flatMap((sector,s)=>days.flatMap((date,d)=>{
+    if(date===holiday)return [];
+    const base:EscalaInput["demands"]=[{id:"coverage-"+s+"-"+d,date,sector,start:480,end:540,minimum:3,estimated:true}];
+    if(dayOfWeek(date)===6)base.push({id:"sunday-"+s+"-"+d,date,sector,start:1050,end:1140,minimum:1,estimated:true});
+    if(date==="2026-11-04")base.push({id:"confirmed-"+s,date,sector,role:"Repositor",start:480,end:540,minimum:1,estimated:false});
+    return base;
+  }));
+  const parsed=escalaInputSchema.parse(input);
+  return {id:size===115?"branch-115-six-weeks":"stress-250-six-weeks",
+    prepared:{...parsed,needsRegeneration:false,generationBasis:generationScenarioBasis(parsed)}};
+}
+function combinedChecks(scenario:Scenario,trial:Trial){
+  if(!valid(trial)||!trial.proposal)return false;
+  const input=scenario.prepared,rows=trial.proposal.assignments,days=dateRange(input.startDate,input.endDate);
+  const byPerson=new Map<string,EscalaInput["assignments"]>();
+  for(const a of rows){const list=byPerson.get(a.employeeId)??[];list.push(a);byPerson.set(a.employeeId,list);}
+  const lookup=new Map(rows.map(a=>[a.employeeId+"\0"+a.date,a]));
+  for(const old of input.assignments){
+    const next=lookup.get(old.employeeId+"\0"+old.date);
+    if(!next||next.kind!==old.kind||next.shiftId!==old.shiftId||next.locked!==old.locked)return false;
+    if(old.absenceSource&&next.absenceSource!==old.absenceSource)return false;
+  }
+  const paid=input.policy.paidHolidayDates??[];
+  for(const p of input.employees){
+    const roster=byPerson.get(p.id);
+    if(!roster||roster.length!==days.length)return false;
+    const ordered=days.map(day=>lookup.get(p.id+"\0"+day)!);
+    if(ordered.some(a=>!a))return false;
+    if(ordered.some(a=>paid.includes(a.date)&&a.kind!=="HOLIDAY"))return false;
+    if(p.history.length&&["WORK","DUTY"].includes(ordered[0].kind))return false;
+    if(p.scheduleMode==="UNTIMED"){
+      if(ordered.some(a=>a.kind==="WORK"||a.shiftId!==undefined))return false;
+    }else if(ordered.some(a=>a.kind==="DUTY"||a.kind==="WORK"&&!p.shiftIds.includes(a.shiftId??"")))return false;
+    for(let w=0;w<days.length;w+=7){
+      const week=ordered.slice(w,w+7);
+      if(week.some(a=>["ABSENCE","HOLIDAY"].includes(a.kind)))continue;
+      if(p.scheduleMode==="UNTIMED"){
+        if(week.filter(a=>a.kind==="DUTY").length!==5)return false;
+      }else{
+        const work=week.filter(a=>a.kind==="WORK");
+        if(work.length!==5||p.weeklyHours===42&&work.filter(a=>a.shiftId==="nine").length!==2)return false;
+        const minutes=work.reduce((n,a)=>n+(input.shifts.find(s=>s.id===a.shiftId)?.segments
+          .filter(s=>s.kind==="WORK").reduce((sum,s)=>sum+s.end-s.start,0)??0),0);
+        if(minutes!==p.weeklyHours*60)return false;
+      }
+    }
+  }
+  return true;
+}
+function temporalTieAudit(trial:Trial){
+  if(!valid(trial)||!trial.proposal)return null;
+  return trial.proposal.assignments.reduce((sum,a)=>sum+(a.kind==="OFF"?parseInt(digest(a.employeeId+":"+a.date).slice(0,6),16)%97:0),0);
+}
+function temporalChecks(name:TemporalCase,scenario:Scenario,trial:Trial){
+  if(combinedSize(name))return combinedChecks(scenario,trial);
   if(!valid(trial)||!trial.proposal)return false;
   const rows=trial.proposal.assignments,old=scenario.prepared.assignments;
   const lookup=new Map(rows.map(a=>[a.employeeId+"\0"+a.date,a]));
@@ -196,7 +292,9 @@ async function main() {
       const scenario=temporalScenario(name),frozen=await captureEnvelope(scenario);
       validateBaselineEnvelope(baseline,frozen);
       const profile=envelopeProfile(frozen);
-      if(profile.includedOnWire!==3||profile.activePositions!==21)throw Error("FORGE_TEMPORAL_PROFILE");
+      const size=combinedSize(name)||3,days=combinedSize(name)?42:7;
+      if(profile.includedOnWire!==size||profile.days!==days||profile.activePositions!==size*days
+        ||(days===42&&(!profile.untimedPositions||profile.paidHolidayCount!==1)))throw Error("FORGE_TEMPORAL_PROFILE");
       const shared={...snapshot,scenario:name,inputHash:digest(frozen),baselineRevision,timefoldRevision:CONTROL,
         arch:arch(),resources,profile,sampleKind:"cold-container",hostCapacityMeasured:false,liveHttpMeasured:false};
       for(let repetition=0;repetition<2;repetition++){
@@ -209,7 +307,8 @@ async function main() {
           const {proposal:_proposal,...record}=trial;
           round.push({variant,trial,record:{kind:"temporal",...shared,repetition,position,variant,
             identity:images[variant==="ortools"?"ortools":"solverforge"],temporal:adapter?.telemetry()??null,
-            featureChecks:temporalChecks(name,scenario,trial),...record}});
+            featureChecks:temporalChecks(name,scenario,trial),tieBreakAudit:temporalTieAudit(trial),
+            scaleCoverageAudit:days===42?scaleCoverageAudit(trial):null,...record}});
         }
         const control=round.find(x=>x.variant==="ortools")!.trial;
         for(const item of round)console.log(JSON.stringify({...item.record,againstOrtools:compare(control,item.trial)}));

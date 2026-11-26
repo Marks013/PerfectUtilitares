@@ -126,5 +126,10 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):verify_scale([])
         with self.assertRaises(ValueError):verify_scale([{}]*17)
 
+    def test_temporal_requires_combined_cases_not_only_weekly_results(self):
+        from verify_comparison import verify_temporal
+        for incomplete in ([],[{}]*16,[{}]*23):
+            with self.assertRaises(ValueError):verify_temporal(incomplete)
+
 if __name__=="__main__":
     unittest.main()

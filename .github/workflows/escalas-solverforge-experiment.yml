@@ -180,7 +180,7 @@ jobs:
           output="$RUNNER_TEMP/forge-evidence/scale.jsonl"
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" scale | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" scale | tee "$RUNNER_TEMP/forge-evidence/scale-summary.json"
-      - name: SF54b temporal feature comparison through original client
+      - name: SF54d-f combined temporal feature and scale comparison through original client
         if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
         shell: bash
         run: |
